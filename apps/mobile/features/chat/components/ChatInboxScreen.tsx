@@ -167,6 +167,14 @@ export function ChatInboxScreen({
     token && dmsEnabled && communityId ? { token, communityId } : "skip",
   );
 
+  // Summary for the synthetic "Notifications" inbox row: the latest
+  // notification (preview + sort timestamp) and unread count. The row is
+  // hidden entirely when the user has zero notifications.
+  const notificationSummary = useQuery(
+    api.functions.notifications.queries.inboxSummary,
+    token ? { token } : "skip",
+  );
+
   // Cache inbox data for offline use
   useEffect(() => {
     if (inboxChannels && inboxChannels.length > 0 && communityId) {
@@ -180,10 +188,19 @@ export function ChatInboxScreen({
   // reads like iMessage rather than a categorized list. Announcement group
   // stays pinned on top of the groups+events block.
   type DirectInboxRow = NonNullable<typeof directInbox>[number];
+  // The synthetic Notifications row carries its own sort timestamp (the latest
+  // notification's createdAt) so it competes naturally with channels'
+  // lastMessageAt — it is not pinned.
+  type NotificationsRow = {
+    sortTime: number;
+    previewTitle: string;
+    unreadCount: number;
+  };
   type InboxListItem =
     | { kind: "group"; item: InboxGroup }
     | { kind: "event"; item: EventInboxRow }
     | { kind: "dm"; item: DirectInboxRow }
+    | { kind: "notifications"; item: NotificationsRow }
     | { kind: "requests-link"; count: number };
 
   // Render a single inbox row (group, event, dm, section header, or
@@ -230,6 +247,16 @@ export function ChatInboxScreen({
           </Pressable>
         );
       }
+      if (item.kind === "notifications") {
+        return (
+          <NotificationsInboxRow
+            row={item.item}
+            primaryColor={primaryColor}
+            colors={colors}
+            onPress={() => router.push("/notifications" as any)}
+          />
+        );
+      }
       if (item.kind === "dm") {
         return (
           <DirectMessageRow
@@ -267,6 +294,7 @@ export function ChatInboxScreen({
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
     if (item.kind === "requests-link") return "requests-link";
+    if (item.kind === "notifications") return "notifications";
     if (item.kind === "dm") return `dm:${item.item.channelId}`;
     return item.kind === "event"
       ? `event:${item.item.channel._id}`
@@ -419,6 +447,22 @@ export function ChatInboxScreen({
   // sneak into the active chat list.
   const dmRows = directInbox ?? [];
   const requestCount = chatRequests?.length ?? 0;
+  // Synthetic Notifications entry — present only when the user actually has
+  // notifications. It carries its latest notification's createdAt as a sort
+  // key so it interleaves by recency with channels/events/DMs (not pinned).
+  const notificationsItem = useMemo<InboxListItem | null>(() => {
+    const latest = notificationSummary?.latest;
+    if (!latest) return null;
+    return {
+      kind: "notifications" as const,
+      item: {
+        sortTime: latest.createdAt,
+        previewTitle: latest.title,
+        unreadCount: notificationSummary?.unreadCount ?? 0,
+      },
+    };
+  }, [notificationSummary]);
+
   const listItemsWithDm = useMemo<InboxListItem[]>(() => {
     const dmItems: InboxListItem[] = dmRows.map((row) => ({
       kind: "dm" as const,
@@ -444,6 +488,9 @@ export function ChatInboxScreen({
           ...entry.item.channels.map((c) => c.lastMessageAt ?? 0),
         );
       }
+      if (entry.kind === "notifications") {
+        return entry.item.sortTime;
+      }
       return 0;
     };
 
@@ -463,7 +510,9 @@ export function ChatInboxScreen({
       }
     }
 
-    const merged = [...rest, ...dmItems];
+    // The Notifications row joins the same recency-sorted pool — not pinned.
+    const merged: InboxListItem[] = [...rest, ...dmItems];
+    if (notificationsItem) merged.push(notificationsItem);
     merged.sort((a, b) => {
       const aT = a.kind === "dm" ? dmTime(a) : otherTime(a);
       const bT = b.kind === "dm" ? dmTime(b) : otherTime(b);
@@ -476,7 +525,7 @@ export function ChatInboxScreen({
     }
     items.push(...pinned, ...merged);
     return items;
-  }, [requestCount, dmRows, listItems]);
+  }, [requestCount, dmRows, listItems, notificationsItem]);
   const hasInboxItems = listItemsWithDm.length > 0;
 
   // Show message when user has no community context
@@ -1139,9 +1188,87 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
   );
 }
 
+// ============================================================================
+// Notifications row
+// ============================================================================
+
+interface NotificationsInboxRowProps {
+  row: { sortTime: number; previewTitle: string; unreadCount: number };
+  primaryColor: string;
+  colors: {
+    text: string;
+    textSecondary: string;
+    surface: string;
+  };
+  onPress: () => void;
+}
+
+/**
+ * Synthetic inbox row that opens the in-app Notifications feed. Renders like a
+ * normal channel/group row — a bell icon in place of an avatar, the latest
+ * notification's title as the preview line, and an unread-count badge.
+ */
+function NotificationsInboxRow({
+  row,
+  primaryColor,
+  colors,
+  onPress,
+}: NotificationsInboxRowProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={styles.dmRow}
+      accessibilityRole="button"
+      accessibilityLabel={`Notifications${
+        row.unreadCount > 0 ? `, ${row.unreadCount} unread` : ""
+      }`}
+    >
+      <View
+        style={[styles.notificationsIcon, { backgroundColor: primaryColor }]}
+      >
+        <Ionicons name="notifications" size={26} color="#ffffff" />
+      </View>
+      <View style={styles.dmRowContent}>
+        <View style={styles.dmRowTopLine}>
+          <Text
+            numberOfLines={1}
+            style={[styles.dmRowName, { color: colors.text }]}
+          >
+            Notifications
+          </Text>
+          {row.unreadCount > 0 && (
+            <View
+              style={[styles.dmUnreadBadge, { backgroundColor: primaryColor }]}
+            >
+              <Text style={styles.dmUnreadBadgeText}>
+                {row.unreadCount > 99 ? "99+" : row.unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
+        <Text
+          numberOfLines={1}
+          style={[styles.dmRowPreview, { color: colors.textSecondary }]}
+        >
+          {row.previewTitle}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  // Bell-icon avatar for the synthetic Notifications row — sized to match the
+  // 56pt avatars used by DM / event rows so it lines up in the mixed list.
+  notificationsIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
   header: {
     paddingHorizontal: 16,

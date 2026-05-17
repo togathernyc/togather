@@ -12,6 +12,7 @@ import type * as __mocks____generated_api from "../__mocks__/_generated/api.js";
 import type * as __mocks____generated_server from "../__mocks__/_generated/server.js";
 import type * as __mocks___auth from "../__mocks__/auth.js";
 import type * as __tests___pco_fixtures from "../__tests__/pco/fixtures.js";
+import type * as __tests___scheduling_fixtures from "../__tests__/scheduling/fixtures.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as functions_admin_auth from "../functions/admin/auth.js";
@@ -199,6 +200,7 @@ declare const fullApi: ApiFromModules<{
   "__mocks__/_generated/server": typeof __mocks____generated_server;
   "__mocks__/auth": typeof __mocks___auth;
   "__tests__/pco/fixtures": typeof __tests___pco_fixtures;
+  "__tests__/scheduling/fixtures": typeof __tests___scheduling_fixtures;
   auth: typeof auth;
   crons: typeof crons;
   "functions/admin/auth": typeof functions_admin_auth;

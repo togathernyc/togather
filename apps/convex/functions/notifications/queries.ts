@@ -62,6 +62,51 @@ export const list = query({
 });
 
 /**
+ * Inbox summary for a user.
+ *
+ * Returns just what the Inbox "Notifications" row needs: the single most
+ * recent notification (for the preview line + a sort timestamp competing with
+ * channels' lastMessageAt) and the unread count. Returns `latest: null` when
+ * the user has no notifications so the Inbox can hide the row entirely.
+ */
+export const inboxSummary = query({
+  args: {
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // by_user is created-order; .order("desc").first() is the newest row.
+    const latest = await ctx.db
+      .query("notifications")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("desc")
+      .first();
+
+    const unread = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_read_created", (q) =>
+        q.eq("userId", userId).eq("isRead", false)
+      )
+      .collect();
+
+    return {
+      latest: latest
+        ? {
+            id: latest._id,
+            notificationType: latest.notificationType,
+            title: latest.title,
+            body: latest.body,
+            createdAt: latest.createdAt,
+            isRead: latest.isRead,
+          }
+        : null,
+      unreadCount: unread.length,
+    };
+  },
+});
+
+/**
  * Get unread notification count for a user
  */
 export const unreadCount = query({
