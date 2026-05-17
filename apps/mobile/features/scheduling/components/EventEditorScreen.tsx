@@ -30,7 +30,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { DatePicker } from "@components/ui/DatePicker";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -38,12 +37,10 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import {
-  formatEventDateLong,
-  DEFAULT_ROLE_COLOR,
-} from "../utils/format";
+import { DEFAULT_ROLE_COLOR } from "../utils/format";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
+import { TimesEditor } from "./TimesEditor";
 
 /** Formats a Date as a display time label, e.g. "9:00 AM". */
 function formatTimeLabel(date: Date): string {
@@ -388,49 +385,15 @@ export function EventEditorScreen() {
           </Pressable>
         )}
 
-        {/* Date */}
-        <View style={styles.dateRow}>
-          <Text style={[styles.dateLabel, { color: colors.textSecondary }]}>
-            {formatEventDateLong(event.eventDate)}
-          </Text>
-          <DatePicker
-            value={new Date(event.eventDate)}
-            onChange={handleChangeDate}
-            mode="date"
-          />
-        </View>
-        {/* Times — one or more (e.g. a 9 AM and an 11 AM service). */}
-        {event.times.map((t, index) => (
-          <View key={`${t.startsAt}-${index}`} style={styles.dateRow}>
-            <Text style={[styles.dateLabel, { color: colors.textSecondary }]}>
-              {t.label}
-            </Text>
-            <View style={styles.timeControls}>
-              <DatePicker
-                value={new Date(t.startsAt)}
-                onChange={(d) => handleChangeTimeAt(index, d)}
-                mode="time"
-              />
-              <TouchableOpacity
-                onPress={() => handleRemoveTime(index)}
-                hitSlop={8}
-                style={styles.removeTimeBtn}
-              >
-                <Ionicons name="close" size={18} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        ))}
-        <TouchableOpacity
-          onPress={handleAddTime}
-          style={styles.addTimeRow}
-          hitSlop={6}
-        >
-          <Ionicons name="add" size={18} color={primaryColor} />
-          <Text style={[styles.addTimeText, { color: primaryColor }]}>
-            Add time
-          </Text>
-        </TouchableOpacity>
+        {/* When — date + one or more times, as one cohesive section. */}
+        <TimesEditor
+          eventDate={event.eventDate}
+          times={event.times}
+          onChangeDate={handleChangeDate}
+          onChangeTimeAt={handleChangeTimeAt}
+          onRemoveTime={handleRemoveTime}
+          onAddTime={handleAddTime}
+        />
 
         {/* Status pill */}
         <View
@@ -769,38 +732,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-  },
-  dateRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 14,
-  },
-  dateLabel: {
-    fontSize: 15,
-    flex: 1,
-  },
-  timeControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  removeTimeBtn: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addTimeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 12,
-    paddingVertical: 4,
-  },
-  addTimeText: {
-    fontSize: 14,
-    fontWeight: "600",
   },
   autoSaveHint: {
     fontSize: 12,

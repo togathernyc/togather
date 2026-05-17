@@ -18,6 +18,9 @@ import {
   Pressable,
   TouchableOpacity,
   ActivityIndicator,
+  ActionSheetIOS,
+  Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -62,6 +65,12 @@ export function EventListScreen() {
   const createEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.createEvent,
   );
+  const duplicateEvent = useAuthenticatedMutation(
+    api.functions.scheduling.events.duplicateEvent,
+  );
+  const deleteEvent = useAuthenticatedMutation(
+    api.functions.scheduling.events.deleteEvent,
+  );
   const [creating, setCreating] = useState(false);
 
   const handleBack = useCallback(() => {
@@ -88,6 +97,72 @@ export function EventListScreen() {
       setCreating(false);
     }
   }, [creating, createEvent, groupId, router]);
+
+  const handleDuplicate = useCallback(
+    async (event: EventRow) => {
+      const result = await duplicateEvent({ planId: event._id });
+      router.push(
+        `/rostering/${groupId}/event/${result.planId}` as any,
+      );
+    },
+    [duplicateEvent, groupId, router],
+  );
+
+  const handleDelete = useCallback(
+    (event: EventRow) => {
+      Alert.alert(
+        "Delete event plan?",
+        `"${event.title}" and its roster will be permanently deleted.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => {
+              void deleteEvent({ planId: event._id });
+            },
+          },
+        ],
+      );
+    },
+    [deleteEvent],
+  );
+
+  // Contextual ⋯ menu for an event card — Duplicate / Delete.
+  const handleEventMenu = useCallback(
+    (event: EventRow) => {
+      if (Platform.OS === "ios") {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            title: event.title,
+            options: ["Cancel", "Duplicate", "Delete"],
+            cancelButtonIndex: 0,
+            destructiveButtonIndex: 2,
+          },
+          (buttonIndex) => {
+            if (buttonIndex === 1) void handleDuplicate(event);
+            else if (buttonIndex === 2) handleDelete(event);
+          },
+        );
+      } else {
+        Alert.alert(event.title, undefined, [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Duplicate",
+            onPress: () => {
+              void handleDuplicate(event);
+            },
+          },
+          {
+            text: "Delete",
+            style: "destructive",
+            onPress: () => handleDelete(event),
+          },
+        ]);
+      }
+    },
+    [handleDuplicate, handleDelete],
+  );
 
   return (
     <View
@@ -193,6 +268,22 @@ export function EventListScreen() {
                         : colors.border
                     }
                   />
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      // Keep the ⋯ tap distinct from the card's open-editor press.
+                      e.stopPropagation();
+                      handleEventMenu(event);
+                    }}
+                    hitSlop={12}
+                    style={styles.menuButton}
+                    accessibilityLabel="Event plan options"
+                  >
+                    <Ionicons
+                      name="ellipsis-horizontal"
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </TouchableOpacity>
                 </View>
                 <View style={styles.fillRow}>
                   <View
@@ -306,6 +397,10 @@ const styles = StyleSheet.create({
   },
   cardTitleWrap: {
     flex: 1,
+  },
+  menuButton: {
+    padding: 2,
+    marginLeft: 2,
   },
   cardTitle: {
     fontSize: 16,

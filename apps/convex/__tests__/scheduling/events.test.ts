@@ -141,6 +141,71 @@ describe("fill summary", () => {
   });
 });
 
+describe("duplicateEvent", () => {
+  it("structure-only copies: draft status, +7d date, same roles, no assignments", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday Service",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+        notes: "Bring music stands",
+      },
+    );
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leaderToken,
+      planId,
+      roles: [{ channelId: world.channelId, roleId: world.roleId, count: 3 }],
+    });
+    // Source has an assignment that must NOT be copied.
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leaderToken,
+      planId,
+      channelId: world.channelId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+    });
+
+    const { planId: copyId } = await t.mutation(
+      api.functions.scheduling.events.duplicateEvent,
+      { token: leaderToken, planId },
+    );
+
+    const copy = await t.query(api.functions.scheduling.events.getEvent, {
+      token: leaderToken,
+      planId: copyId,
+    });
+    expect(copy).not.toBeNull();
+    expect(copy!.status).toBe("draft");
+    expect(copy!.title).toBe("Sunday Service");
+    expect(copy!.notes).toBe("Bring music stands");
+    expect(copy!.eventDate).toBe(eventDate + 7 * DAY);
+
+    // Same needed role, fully open — zero assignments copied.
+    expect(copy!.roles).toHaveLength(1);
+    const role = copy!.roles[0];
+    expect(role.roleId).toBe(world.roleId);
+    expect(role.needed).toBe(3);
+    expect(role.filled).toBe(0);
+    expect(role.assignments).toHaveLength(0);
+
+    // No roleAssignments rows leaked onto the copy.
+    await t.run(async (ctx) => {
+      const assignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", copyId))
+        .collect();
+      expect(assignments).toHaveLength(0);
+    });
+  });
+});
+
 describe("deleteEvent cascade", () => {
   it("deletes the plan, its neededRoles, and its roleAssignments", async () => {
     const { t, world } = await setupSchedulingWorld();

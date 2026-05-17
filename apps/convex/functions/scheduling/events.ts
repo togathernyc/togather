@@ -70,6 +70,68 @@ export const createEvent = mutation({
   },
 });
 
+/** Seven days in milliseconds — duplicated events default to next week. */
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Duplicate an event plan as a structure-only copy. Copies the title, times,
+ * notes, and needed roles; the new plan starts in `draft` one week after the
+ * source. Assignees (`roleAssignments`), `meetingIds`, and `pcoPlanId` are
+ * deliberately NOT copied — duplication seeds a fresh roster to fill.
+ *
+ * Auth: group leader or community admin for the event's group (same as
+ * `createEvent`).
+ */
+export const duplicateEvent = mutation({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const source = await ctx.db.get(args.planId);
+    if (!source) {
+      throw new ConvexError("Event not found");
+    }
+
+    // Same auth as createEvent: group leader or community admin for the group.
+    const group = await requireGroupScheduler(ctx, source.groupId, userId);
+
+    const nowMs = Date.now();
+    const newPlanId = await ctx.db.insert("eventPlans", {
+      groupId: source.groupId,
+      communityId: group.communityId,
+      title: source.title,
+      eventDate: source.eventDate + ONE_WEEK_MS,
+      times: source.times,
+      status: "draft",
+      notes: source.notes,
+      createdAt: nowMs,
+      createdById: userId,
+      updatedAt: nowMs,
+    });
+
+    // Copy needed-role declarations; leave assignments unfilled.
+    const neededRoles = await ctx.db
+      .query("neededRoles")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+    await Promise.all(
+      neededRoles.map((role) =>
+        ctx.db.insert("neededRoles", {
+          planId: newPlanId,
+          channelId: role.channelId,
+          roleId: role.roleId,
+          count: role.count,
+        }),
+      ),
+    );
+
+    return { planId: newPlanId };
+  },
+});
+
 /**
  * Update an event's editable fields. Only provided fields change.
  *
