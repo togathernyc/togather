@@ -267,7 +267,7 @@ export default function CreateChannelScreen() {
                     ],
                   ]}
                 >
-                  Team
+                  Event Team
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -313,9 +313,9 @@ export default function CreateChannelScreen() {
             </View>
             <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
               {channelType === "custom"
-                ? "Manually manage who is in this channel"
+                ? "A permanent channel — you choose who is in it. Best for ongoing, not time-bound groups."
                 : channelType === "team"
-                  ? "Membership syncs automatically from event plans — whoever is scheduled to a role is added around the event date and removed afterward."
+                  ? "Time-bound: membership syncs automatically from event plans — whoever is scheduled to a role is added around the event date and removed afterward."
                   : "Automatically sync members from Planning Center Services"}
             </Text>
             {!isCommunityAdmin && (
