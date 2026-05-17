@@ -192,6 +192,25 @@ function TeamSection({
     return map;
   }, [roles, channel._id]);
 
+  // Seed the parent edit map with each role's default once the roles load,
+  // so Save (which serializes `counts`) writes the defaults the UI shows
+  // even when the scheduler never touches a stepper.
+  useEffect(() => {
+    if (!roles) return;
+    setCounts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const role of roles) {
+        const key = `${channel._id}|${role._id}`;
+        if (next[key] === undefined) {
+          next[key] = role.defaultNeeded ?? 0;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [roles, channel._id, setCounts]);
+
   const countFor = (roleId: string) => {
     const key = `${channel._id}|${roleId}`;
     return counts[key] ?? defaults[key] ?? 0;

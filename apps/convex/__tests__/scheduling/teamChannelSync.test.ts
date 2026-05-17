@@ -345,7 +345,7 @@ describe("team channel auto-sync — assignment triggers", () => {
       planId,
       channelId: world.channelId,
       roleId: world.roleId,
-      userId: world.outsiderId,
+      userId: world.groupLeaderId,
     });
 
     const names = await pendingScheduledNames(t);
@@ -355,7 +355,7 @@ describe("team channel auto-sync — assignment triggers", () => {
 
     // Run the deferred reconcile directly and confirm the effect.
     await reconcile(t, world);
-    expect((await syncedMemberIds(t, world)).has(world.outsiderId)).toBe(true);
+    expect((await syncedMemberIds(t, world)).has(world.groupLeaderId)).toBe(true);
   });
 
   it("unassign enqueues a reconcile that removes the volunteer", async () => {
@@ -370,11 +370,11 @@ describe("team channel auto-sync — assignment triggers", () => {
         planId,
         channelId: world.channelId,
         roleId: world.roleId,
-        userId: world.outsiderId,
+        userId: world.groupLeaderId,
       },
     );
     await reconcile(t, world);
-    expect((await syncedMemberIds(t, world)).has(world.outsiderId)).toBe(true);
+    expect((await syncedMemberIds(t, world)).has(world.groupLeaderId)).toBe(true);
 
     await t.mutation(api.functions.scheduling.assignments.unassign, {
       token: leaderToken,

@@ -87,6 +87,35 @@ async function requireChannelRolePair(
 }
 
 /**
+ * Validate that `userId` is an active member of `groupId`. The assignee of a
+ * role must belong to the event's group: `reconcileTeamChannel` derives
+ * serving-team channel membership from non-declined assignments, so an
+ * unchecked `userId` would let a crafted client add an arbitrary person into
+ * the team channel and expose its roster to them.
+ *
+ * @throws ConvexError if the user is not an active group member.
+ */
+async function requireActiveGroupMember(
+  ctx: QueryCtx | MutationCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<void> {
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", groupId).eq("userId", userId),
+    )
+    .first();
+  const active =
+    !!membership &&
+    !membership.leftAt &&
+    (!membership.requestStatus || membership.requestStatus === "accepted");
+  if (!active) {
+    throw new ConvexError("This person is not a member of the event's group");
+  }
+}
+
+/**
  * Assign a channel member to a role on an event. Creates an `unconfirmed`
  * assignment and denormalizes the event's `eventDate` for double-booking
  * queries.
@@ -114,6 +143,11 @@ export const assignRole = mutation({
     // this event's group — otherwise a scheduler for one group could inject
     // volunteers into an unrelated group's team channel via the later sync.
     await requireChannelRolePair(ctx, args.channelId, args.roleId, plan.groupId);
+
+    // The assignee must be an active member of the event's group — channel
+    // membership is derived from assignments, so an unchecked userId would
+    // expose the serving-team channel to an arbitrary person.
+    await requireActiveGroupMember(ctx, plan.groupId, args.userId);
 
     // Guard against assigning the same person to the same role twice.
     const roleAssignments = await ctx.db

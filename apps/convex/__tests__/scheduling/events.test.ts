@@ -280,7 +280,7 @@ describe("deleteEvent cascade", () => {
       planId,
       channelId: world.channelId,
       roleId: world.roleId,
-      userId: world.outsiderId,
+      userId: world.groupLeaderId,
     });
 
     const activeSynced = async () => {
@@ -293,7 +293,7 @@ describe("deleteEvent cascade", () => {
           .collect(),
       );
       return rows.filter(
-        (m) => m.userId === world.outsiderId && m.leftAt === undefined,
+        (m) => m.userId === world.groupLeaderId && m.leftAt === undefined,
       );
     };
 

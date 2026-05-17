@@ -294,6 +294,23 @@ describe("assignRole channel/role ownership validation", () => {
       }),
     ).rejects.toThrow(/does not belong to this event's group/);
   });
+
+  it("rejects an assignee who is not a member of the event's group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // `outsiderId` has no group/channel memberships anywhere.
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leaderToken,
+        planId,
+        channelId: world.channelId,
+        roleId: world.roleId,
+        userId: world.outsiderId,
+      }),
+    ).rejects.toThrow(/not a member of the event's group/);
+  });
 });
 
 describe("double-booking detection", () => {

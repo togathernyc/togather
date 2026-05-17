@@ -126,7 +126,8 @@ export async function buildSchedulingWorld(
       });
     }
 
-    // Group memberships.
+    // Group memberships. The serving-team channel lives inside this group,
+    // so every channel member is also a group member (assignees must be).
     await ctx.db.insert("groupMembers", {
       groupId,
       userId: groupLeaderId,
@@ -134,13 +135,19 @@ export async function buildSchedulingWorld(
       joinedAt: ts(),
       notificationsEnabled: true,
     });
-    await ctx.db.insert("groupMembers", {
-      groupId,
-      userId: channelMemberId,
-      role: "member",
-      joinedAt: ts(),
-      notificationsEnabled: true,
-    });
+    for (const userId of [
+      channelAdminId,
+      channelModeratorId,
+      channelMemberId,
+    ]) {
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId,
+        role: "member",
+        joinedAt: ts(),
+        notificationsEnabled: true,
+      });
+    }
 
     // Community admin membership.
     await ctx.db.insert("userCommunities", {
