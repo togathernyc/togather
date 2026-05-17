@@ -9,7 +9,19 @@ import { query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
 
 /**
- * List notifications for a user with pagination and filtering
+ * Notification types that represent chat messages. These are deliberately
+ * excluded from the in-app notifications feed and its Inbox row — the user
+ * already finds these in the channels themselves, so surfacing them again
+ * here would just be noise.
+ */
+const CHAT_NOTIFICATION_TYPES = new Set(["new_message", "mention"]);
+
+const isFeedNotification = (n: { notificationType: string }): boolean =>
+  !CHAT_NOTIFICATION_TYPES.has(n.notificationType);
+
+/**
+ * List notifications for a user with pagination and filtering.
+ * Chat-message notifications are excluded — see CHAT_NOTIFICATION_TYPES.
  */
 export const list = query({
   args: {
@@ -29,8 +41,10 @@ export const list = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc");
 
-    // Apply unread filter if needed
-    let notifications = await notificationsQuery.collect();
+    // Drop chat-message notifications — they belong in the channels.
+    let notifications = (await notificationsQuery.collect()).filter(
+      isFeedNotification,
+    );
 
     if (args.unreadOnly) {
       notifications = notifications.filter((n) => !n.isRead);
@@ -76,19 +90,18 @@ export const inboxSummary = query({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    // by_user is created-order; .order("desc").first() is the newest row.
-    const latest = await ctx.db
-      .query("notifications")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .order("desc")
-      .first();
+    // Newest-first; exclude chat-message notifications (see
+    // CHAT_NOTIFICATION_TYPES) so the row mirrors the feed exactly.
+    const feed = (
+      await ctx.db
+        .query("notifications")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .collect()
+    ).filter(isFeedNotification);
 
-    const unread = await ctx.db
-      .query("notifications")
-      .withIndex("by_user_read_created", (q) =>
-        q.eq("userId", userId).eq("isRead", false)
-      )
-      .collect();
+    const latest = feed[0] ?? null;
+    const unread = feed.filter((n) => !n.isRead);
 
     return {
       latest: latest
