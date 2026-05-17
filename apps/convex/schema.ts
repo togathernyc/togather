@@ -2528,5 +2528,8 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_status", ["userId", "status"])
     .index("by_plan_role", ["planId", "roleId"])
-    .index("by_role", ["roleId"]), // powers "previously filled by"
+    .index("by_role", ["roleId"]) // powers "previously filled by"
+    // powers team-channel auto-sync: desired members of a channel within a
+    // rotation window are derived from assignments matched by channel + date.
+    .index("by_channel_eventDate", ["channelId", "eventDate"]),
 });

@@ -129,6 +129,7 @@ import type * as functions_scheduling_mySchedule from "../functions/scheduling/m
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_starterRoles from "../functions/scheduling/starterRoles.js";
+import type * as functions_scheduling_teamChannelSync from "../functions/scheduling/teamChannelSync.js";
 import type * as functions_scheduling_teams from "../functions/scheduling/teams.js";
 import type * as functions_seed from "../functions/seed.js";
 import type * as functions_slackServiceBot_actions from "../functions/slackServiceBot/actions.js";
@@ -317,6 +318,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/starterRoles": typeof functions_scheduling_starterRoles;
+  "functions/scheduling/teamChannelSync": typeof functions_scheduling_teamChannelSync;
   "functions/scheduling/teams": typeof functions_scheduling_teams;
   "functions/seed": typeof functions_seed;
   "functions/slackServiceBot/actions": typeof functions_slackServiceBot_actions;

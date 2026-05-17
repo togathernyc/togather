@@ -88,6 +88,13 @@ export const assignRole = mutation({
       assignedAt: Date.now(),
     });
 
+    // Auto-sync the team channel's membership off the new assignment.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId: args.channelId },
+    );
+
     return { assignmentId, doubleBooked };
   },
 });
@@ -112,6 +119,15 @@ export const unassign = mutation({
     await requirePlanScheduler(ctx, assignment.planId, callerId);
 
     await ctx.db.delete(args.assignmentId);
+
+    // Auto-sync the team channel — the removed assignment may drop the user
+    // out of the channel's derived membership.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId: assignment.channelId },
+    );
+
     return { assignmentId: args.assignmentId };
   },
 });
@@ -146,6 +162,15 @@ export const respondToAssignment = mutation({
         args.status === "declined" ? args.declineNote : undefined,
       respondedAt: Date.now(),
     });
+
+    // A decline drops the user from the channel's derived membership; a
+    // confirm has no membership effect, but reconciling on both keeps the
+    // sync trigger uniform and cheap.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId: assignment.channelId },
+    );
 
     return { assignmentId: args.assignmentId, status: args.status };
   },
@@ -229,16 +254,27 @@ export const publishEvent = action({
   handler: async (ctx, args): Promise<{ published: boolean; requestCount: number }> => {
     const callerId = await requireAuthFromTokenAction(ctx, args.token);
 
-    const result: { requestCount: number } = await ctx.runMutation(
-      internal.functions.scheduling.assignments.markPublished,
-      { planId: args.planId, callerId: callerId as Id<"users"> },
-    );
+    const result: { requestCount: number; channelIds: Id<"chatChannels">[] } =
+      await ctx.runMutation(
+        internal.functions.scheduling.assignments.markPublished,
+        { planId: args.planId, callerId: callerId as Id<"users"> },
+      );
 
     if (result.requestCount > 0) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.assignments.sendAssignmentRequests,
         { planId: args.planId },
+      );
+    }
+
+    // Auto-sync every team channel that has assignments on this event so
+    // publishing pulls confirmed/unconfirmed volunteers into their channels.
+    for (const channelId of result.channelIds) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+        { channelId },
       );
     }
 
@@ -271,7 +307,11 @@ export const markPublished = internalMutation({
       (a) => a.status === "unconfirmed",
     ).length;
 
-    return { requestCount };
+    // Distinct team channels touched by this event's assignments — the action
+    // reconciles each one after publishing.
+    const channelIds = [...new Set(assignments.map((a) => a.channelId))];
+
+    return { requestCount, channelIds };
   },
 });
 

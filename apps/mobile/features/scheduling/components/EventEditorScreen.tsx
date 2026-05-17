@@ -421,6 +421,7 @@ export function EventEditorScreen() {
         <AssignSheet
           visible
           planId={planId}
+          groupId={event.groupId}
           channelId={assignTarget.channelId}
           roleId={assignTarget.roleId}
           roleName={assignTarget.roleName}

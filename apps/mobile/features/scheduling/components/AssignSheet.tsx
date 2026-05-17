@@ -1,13 +1,15 @@
 /**
  * AssignSheet
  *
- * A bottom sheet for assigning a team member to a role slot. Lists the
- * team channel's members; people who have previously filled this role are
- * floated to the top under a "Previously filled by" header. After an
- * assignment, a soft double-booking warning surfaces if the backend
- * reports a same-day conflict — it never hard-blocks.
+ * A bottom sheet for assigning a person to a role slot. Lists the event's
+ * group members as the assignable pool — team-channel membership is now
+ * auto-derived from assignments (see scheduling/teamChannelSync), so listing
+ * the channel's members here would be circular. People who have previously
+ * filled this role are floated to the top under a "Previously filled by"
+ * header. After an assignment, a soft double-booking warning surfaces if the
+ * backend reports a same-day conflict — it never hard-blocks.
  *
- * Backend: messaging.channels.getChannelMembers,
+ * Backend: groupMembers.list,
  * scheduling.assignments.previousFillers / assignRole.
  */
 import React, { useCallback, useMemo, useState } from "react";
@@ -32,11 +34,23 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 
-type ChannelMember = {
+/** A normalized assignable person (sourced from the event's group roster). */
+type AssignablePerson = {
   id: string;
   userId: Id<"users">;
   displayName?: string;
   profilePhoto?: string;
+};
+
+/** Raw row shape returned by `groupMembers.list`. */
+type GroupMemberRow = {
+  id: string;
+  odUserId: Id<"users">;
+  user: {
+    firstName: string;
+    lastName: string;
+    profileImage?: string;
+  } | null;
 };
 
 type PreviousFiller = {
@@ -48,6 +62,7 @@ type PreviousFiller = {
 export function AssignSheet({
   visible,
   planId,
+  groupId,
   channelId,
   roleId,
   roleName,
@@ -57,6 +72,8 @@ export function AssignSheet({
 }: {
   visible: boolean;
   planId: Id<"eventPlans">;
+  /** The event plan's owning group — its members are the assignable pool. */
+  groupId: Id<"groups">;
   channelId: Id<"chatChannels">;
   roleId: Id<"teamRoles">;
   roleName: string;
@@ -69,9 +86,22 @@ export function AssignSheet({
   const { colors } = useTheme();
 
   const memberData = useAuthenticatedQuery(
-    api.functions.messaging.channels.getChannelMembers,
-    visible ? { channelId, limit: 200 } : "skip",
-  ) as { members: ChannelMember[] } | undefined;
+    api.functions.groupMembers.list,
+    visible ? { groupId, limit: 200 } : "skip",
+  ) as { items: GroupMemberRow[] } | undefined;
+
+  // Normalize the group roster into the assignable-person shape.
+  const members = useMemo<AssignablePerson[]>(() => {
+    return (memberData?.items ?? [])
+      .filter((row): row is GroupMemberRow & { user: NonNullable<GroupMemberRow["user"]> } => row.user !== null)
+      .map((row) => ({
+        id: row.id,
+        userId: row.odUserId,
+        displayName:
+          `${row.user.firstName} ${row.user.lastName}`.trim() || "Member",
+        profilePhoto: row.user.profileImage,
+      }));
+  }, [memberData?.items]);
 
   const previous = useAuthenticatedQuery(
     api.functions.scheduling.assignments.previousFillers,
@@ -86,18 +116,17 @@ export function AssignSheet({
   // Float previously-confirmed fillers to the top, de-duplicated against
   // the rest of the roster.
   const { topMembers, restMembers } = useMemo(() => {
-    const members = memberData?.members ?? [];
     const byUser = new Map(members.map((m) => [m.userId as string, m]));
     const prevIds = new Set((previous ?? []).map((p) => p.userId as string));
     const top = (previous ?? [])
       .map((p) => byUser.get(p.userId as string))
-      .filter((m): m is ChannelMember => !!m);
+      .filter((m): m is AssignablePerson => !!m);
     const rest = members.filter((m) => !prevIds.has(m.userId as string));
     return { topMembers: top, restMembers: rest };
-  }, [memberData?.members, previous]);
+  }, [members, previous]);
 
   const handleAssign = useCallback(
-    async (member: ChannelMember) => {
+    async (member: AssignablePerson) => {
       if (assignedUserIds.has(member.userId as string)) return;
       setAssigning(member.userId as string);
       try {
@@ -124,7 +153,7 @@ export function AssignSheet({
     [assignedUserIds, assignRole, planId, channelId, roleId, timeLabel, onClose],
   );
 
-  const renderMember = (member: ChannelMember, prior: boolean) => {
+  const renderMember = (member: AssignablePerson, prior: boolean) => {
     const already = assignedUserIds.has(member.userId as string);
     const busy = assigning === (member.userId as string);
     return (
@@ -218,7 +247,7 @@ export function AssignSheet({
             <Text
               style={[styles.sectionLabel, { color: colors.textSecondary }]}
             >
-              TEAM MEMBERS
+              GROUP MEMBERS
             </Text>
             <View
               style={[
@@ -230,7 +259,9 @@ export function AssignSheet({
                 <Text
                   style={[styles.emptyText, { color: colors.textSecondary }]}
                 >
-                  Everyone on this team is already an option above.
+                  {topMembers.length > 0
+                    ? "Everyone in this group is already an option above."
+                    : "No group members to assign yet."}
                 </Text>
               ) : (
                 restMembers.map((m) => renderMember(m, false))

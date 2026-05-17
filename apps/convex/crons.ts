@@ -79,6 +79,20 @@ crons.daily(
 );
 
 // =============================================================================
+// TEAM CHANNEL AUTO-SYNC
+// =============================================================================
+// Runs daily at 5:10 UTC (just after PCO rotation) to reconcile every serving-
+// team channel's membership against its event-plan role assignments. Adds
+// volunteers ~5 days before their event and removes them ~1 day after — the
+// rotation window advances even when no assignment mutation fires.
+
+crons.daily(
+  "team-channel-auto-sync",
+  { hourUTC: 5, minuteUTC: 10 },
+  internal.functions.scheduling.teamChannelSync.reconcileAllTeamChannels,
+);
+
+// =============================================================================
 // COMMUNICATION BOT
 // =============================================================================
 // Runs hourly to check for groups with communication bot due (timezone-aware).

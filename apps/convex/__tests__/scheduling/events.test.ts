@@ -5,7 +5,7 @@
  * NOT count, so a declined slot stays open.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
@@ -14,9 +14,25 @@ import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { buildSchedulingWorld } from "./fixtures";
 
+/**
+ * Most-recently-created test handle. Scheduling mutations now enqueue a
+ * deferred team-channel reconcile via `ctx.scheduler.runAfter(0, ...)`; the
+ * `afterEach` below drains it so a pending scheduled function does not leak
+ * into the next test ("test began while previous transaction was still open").
+ */
+let activeHandle: ReturnType<typeof convexTest> | null = null;
+
+afterEach(async () => {
+  if (activeHandle) {
+    await activeHandle.finishInProgressScheduledFunctions();
+    activeHandle = null;
+  }
+});
+
 /** Spin up a convex-test handle and seed the scheduling world into it. */
 async function setupSchedulingWorld() {
   const t = convexTest(schema, modules);
+  activeHandle = t;
   const world = await buildSchedulingWorld(t);
   return { t, world };
 }
