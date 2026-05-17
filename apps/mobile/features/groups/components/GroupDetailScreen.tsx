@@ -40,6 +40,7 @@ import { HighlightsGrid } from "./HighlightsGrid";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
 import { UpcomingEventsSection } from "./UpcomingEventsSection";
+import { RosteringSection } from "./RosteringSection";
 import { GroupBotsSection } from "./GroupBotsSection";
 import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
@@ -506,6 +507,10 @@ export function GroupDetailScreen() {
             Channels per product design. Hidden when there are no upcoming
             events. */}
         {group._id && <UpcomingEventsSection groupId={group._id} />}
+
+        {/* ROSTERING — leader-only horizontal list of event plans. Hidden
+            when the group has no plans yet. */}
+        {group._id && isLeader && <RosteringSection groupId={group._id} />}
 
         {/* CHANNELS */}
         {group._id && (
