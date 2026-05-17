@@ -30,7 +30,7 @@ import { useTheme } from "@hooks/useTheme";
 import { PcoAutoChannelConfig, type AutoChannelConfig } from "@features/channels";
 import type { Id } from "@services/api/convex";
 
-type ChannelType = "custom" | "pco_services";
+type ChannelType = "custom" | "team" | "pco_services";
 
 const MAX_NAME_LENGTH = 50;
 
@@ -101,11 +101,11 @@ export default function CreateChannelScreen() {
   };
 
   const isNameValid = name.trim().length > 0;
-  // For PCO channels, also require autoConfig to be set
+  // PCO channels also require autoConfig; custom + team need only a name.
   const canCreate =
     isNameValid &&
     !isLoading &&
-    (channelType === "custom" || autoConfig !== null);
+    (channelType !== "pco_services" || autoConfig !== null);
 
   const handleCreate = async () => {
     if (!canCreate) return;
@@ -113,17 +113,7 @@ export default function CreateChannelScreen() {
     setIsLoading(true);
 
     try {
-      let slug: string;
-
-      if (channelType === "custom") {
-        const result = await createCustomChannel({
-          groupId: groupId as Id<"groups">,
-          name: name.trim(),
-          description: description.trim() || undefined,
-          joinMode,
-        });
-        slug = result.slug;
-      } else {
+      if (channelType === "pco_services") {
         // PCO auto channel
         if (!autoConfig) {
           throw new Error("Planning Center configuration is required");
@@ -135,11 +125,31 @@ export default function CreateChannelScreen() {
           integrationType: "pco_services",
           autoChannelConfig: autoConfig,
         });
-        slug = result.slug;
+        router.replace(`/inbox/${groupId}/${result.slug}`);
+        return;
       }
 
-      // Navigate to the new channel
-      router.replace(`/inbox/${groupId}/${slug}`);
+      // Custom + Team channels are both created as manual channels here;
+      // a Team channel is then flagged + has its roles configured in the
+      // team setup screen (which also drives its event-plan membership sync).
+      const result = await createCustomChannel({
+        groupId: groupId as Id<"groups">,
+        name: name.trim(),
+        description: description.trim() || undefined,
+        joinMode,
+        // Event Team channels don't auto-add the creator — they manage the
+        // channel as a group leader, and membership is auto-synced from
+        // event plans.
+        addCreatorAsMember: channelType !== "team",
+      });
+
+      if (channelType === "team") {
+        router.replace(
+          `/rostering/${groupId}/team/${result.channelId}`,
+        );
+      } else {
+        router.replace(`/inbox/${groupId}/${result.slug}`);
+      }
     } catch (error: any) {
       console.error("Failed to create channel:", error);
 
@@ -219,6 +229,7 @@ export default function CreateChannelScreen() {
                   style={styles.segmentIcon}
                 />
                 <Text
+                  numberOfLines={2}
                   style={[
                     styles.segmentText,
                     { color: colors.textSecondary },
@@ -229,6 +240,38 @@ export default function CreateChannelScreen() {
                   ]}
                 >
                   Custom
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.segmentButton,
+                  { borderColor: colors.inputBorder, backgroundColor: colors.surface },
+                  channelType === "team" && [
+                    { backgroundColor: colors.selectedBackground },
+                    { borderColor: primaryColor },
+                  ],
+                ]}
+                onPress={() => setChannelType("team")}
+                disabled={isLoading}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={18}
+                  color={channelType === "team" ? primaryColor : colors.textSecondary}
+                  style={styles.segmentIcon}
+                />
+                <Text
+                  numberOfLines={2}
+                  style={[
+                    styles.segmentText,
+                    { color: colors.textSecondary },
+                    channelType === "team" && [
+                      styles.segmentTextSelected,
+                      { color: primaryColor },
+                    ],
+                  ]}
+                >
+                  Event Team
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -257,6 +300,7 @@ export default function CreateChannelScreen() {
                   style={styles.segmentIcon}
                 />
                 <Text
+                  numberOfLines={2}
                   style={[
                     styles.segmentText,
                     { color: colors.textSecondary },
@@ -273,8 +317,10 @@ export default function CreateChannelScreen() {
             </View>
             <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
               {channelType === "custom"
-                ? "Manually manage who is in this channel"
-                : "Automatically sync members from Planning Center Services"}
+                ? "A permanent channel — you choose who is in it. Best for ongoing, not time-bound groups."
+                : channelType === "team"
+                  ? "Time-bound: membership syncs automatically from event plans — whoever is scheduled to a role is added around the event date and removed afterward."
+                  : "Automatically sync members from Planning Center Services"}
             </Text>
             {!isCommunityAdmin && (
               <Text style={[styles.adminOnlyHint, { color: colors.textTertiary }]}>
@@ -549,9 +595,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     borderRadius: 10,
     borderWidth: 2,
+    minHeight: 60,
   },
   segmentIcon: {
     marginRight: 6,
@@ -559,6 +606,8 @@ const styles = StyleSheet.create({
   segmentText: {
     fontSize: 14,
     fontWeight: "500",
+    textAlign: "center",
+    flexShrink: 1,
   },
   segmentTextSelected: {
     fontWeight: "600",

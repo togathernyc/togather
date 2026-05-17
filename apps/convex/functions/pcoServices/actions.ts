@@ -974,6 +974,37 @@ export const triggerGroupSync = action({
       }
     }
 
+    // Also reconcile native "Event Team" channels in this group. These are
+    // auto-synced from event-plan role assignments rather than PCO configs, so
+    // they have no autoChannelConfig and are skipped by the loop above. We add
+    // their results so the UI summary reflects them alongside PCO channels.
+    for (const channel of channels) {
+      if (channel.isServingTeam !== true) continue;
+      try {
+        const teamResult = await ctx.runMutation(
+          internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+          { channelId: channel._id }
+        );
+        syncedChannels++;
+        results.push({
+          channelName: channel.name,
+          status: "synced",
+          addedCount: teamResult.added,
+          removedCount: teamResult.removed,
+        });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        results.push({
+          channelName: channel.name,
+          status: "error",
+          addedCount: 0,
+          removedCount: 0,
+          reason: errorMessage,
+        });
+      }
+    }
+
     return {
       totalChannels: channels.length,
       syncedChannels,

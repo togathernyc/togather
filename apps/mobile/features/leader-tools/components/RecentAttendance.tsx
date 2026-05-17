@@ -269,6 +269,16 @@ export function RecentAttendance({
         <Text style={[styles.navTabText, { color: colors.text }]}>Shared Channels</Text>
         <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
       </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.navTab, { borderBottomColor: colors.border }]}
+        onPress={() => {
+          router.push(`/rostering/${groupId}`);
+        }}
+      >
+        <Text style={[styles.navTabText, { color: colors.text }]}>Scheduling</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+      </TouchableOpacity>
     </ScrollView>
   );
 }

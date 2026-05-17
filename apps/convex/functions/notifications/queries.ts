@@ -9,7 +9,19 @@ import { query } from "../../_generated/server";
 import { requireAuth } from "../../lib/auth";
 
 /**
- * List notifications for a user with pagination and filtering
+ * Notification types that represent chat messages. These are deliberately
+ * excluded from the in-app notifications feed and its Inbox row — the user
+ * already finds these in the channels themselves, so surfacing them again
+ * here would just be noise.
+ */
+const CHAT_NOTIFICATION_TYPES = new Set(["new_message", "mention"]);
+
+const isFeedNotification = (n: { notificationType: string }): boolean =>
+  !CHAT_NOTIFICATION_TYPES.has(n.notificationType);
+
+/**
+ * List notifications for a user with pagination and filtering.
+ * Chat-message notifications are excluded — see CHAT_NOTIFICATION_TYPES.
  */
 export const list = query({
   args: {
@@ -29,8 +41,10 @@ export const list = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .order("desc");
 
-    // Apply unread filter if needed
-    let notifications = await notificationsQuery.collect();
+    // Drop chat-message notifications — they belong in the channels.
+    let notifications = (await notificationsQuery.collect()).filter(
+      isFeedNotification,
+    );
 
     if (args.unreadOnly) {
       notifications = notifications.filter((n) => !n.isRead);
@@ -62,6 +76,50 @@ export const list = query({
 });
 
 /**
+ * Inbox summary for a user.
+ *
+ * Returns just what the Inbox "Notifications" row needs: the single most
+ * recent notification (for the preview line + a sort timestamp competing with
+ * channels' lastMessageAt) and the unread count. Returns `latest: null` when
+ * the user has no notifications so the Inbox can hide the row entirely.
+ */
+export const inboxSummary = query({
+  args: {
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Newest-first; exclude chat-message notifications (see
+    // CHAT_NOTIFICATION_TYPES) so the row mirrors the feed exactly.
+    const feed = (
+      await ctx.db
+        .query("notifications")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .collect()
+    ).filter(isFeedNotification);
+
+    const latest = feed[0] ?? null;
+    const unread = feed.filter((n) => !n.isRead);
+
+    return {
+      latest: latest
+        ? {
+            id: latest._id,
+            notificationType: latest.notificationType,
+            title: latest.title,
+            body: latest.body,
+            createdAt: latest.createdAt,
+            isRead: latest.isRead,
+          }
+        : null,
+      unreadCount: unread.length,
+    };
+  },
+});
+
+/**
  * Get unread notification count for a user
  */
 export const unreadCount = query({
@@ -77,6 +135,8 @@ export const unreadCount = query({
       )
       .collect();
 
-    return { unreadCount: notifications.length };
+    // Exclude chat-message notifications so the global badge matches the
+    // feed (and its Inbox row), which also drop them — see the feed query.
+    return { unreadCount: notifications.filter(isFeedNotification).length };
   },
 });

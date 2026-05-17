@@ -27,11 +27,10 @@ import React, {
 import { Platform, AppState, AppStateStatus, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
-import { router } from 'expo-router';
 import { useAuth } from './AuthProvider';
 import { convexVanilla, api, useQuery, useMutation } from '@services/api/convex';
-import type { Id } from '@services/api/convex';
 import { useAwaitPrefetch } from '@features/chat/hooks/usePrefetchChannel';
+import { resolveNotificationNavigation } from '@features/notifications/utils/resolveNotificationNavigation';
 
 // Try to import expo-notifications - may not be installed yet
 let Notifications: typeof import('expo-notifications') | null = null;
@@ -357,33 +356,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [registerToken]);
 
-  /**
-   * Resolve a group ID for navigation.
-   * Now that we use Convex IDs directly in routes, this simply returns the groupId.
-   */
-  const resolveGroupIdForNavigation = useCallback(async (groupId: string): Promise<string | null> => {
-    if (!groupId) return null;
-    return groupId;
-  }, []);
-
   // Handle notification tap - navigate to relevant screen
   // Exported via context for testing via DeepLinkTester
+  //
+  // The actual type->screen mapping lives in the shared
+  // `resolveNotificationNavigation` helper so push taps and in-app
+  // Notification-feed taps route identically. This callback only adds the
+  // push-specific concern of switching community before navigating.
   const handleNotificationTap = useCallback(async (data: Record<string, unknown>) => {
     // WORKAROUND: iOS push notifications sometimes have fields nested inside data.data
     // while other fields are at the top level. Extract from both for robustness (Issue #48).
     const nestedData = data.data as Record<string, unknown> | undefined;
-
-    const type = (data.type || nestedData?.type) as string;
-    // Prefer url when present - backend sends pre-computed deep link for reliable navigation
-    const url = (data.url || nestedData?.url) as string | undefined;
-    const groupId = (data.groupId || nestedData?.groupId) as string;
     const communityId = (data.communityId || nestedData?.communityId) as string | undefined;
-    const channelId = (data.channelId || nestedData?.channelId) as string | undefined;
 
-    const channelType = (data.channelType || nestedData?.channelType) as string | undefined;
-    const channelSlug = (data.channelSlug || nestedData?.channelSlug) as string | undefined;
-
-    console.log('Handle notification tap:', { type, url, groupId, communityId, channelId, channelType, channelSlug });
+    console.log('Handle notification tap:', { type: data.type ?? nestedData?.type, communityId });
 
     // Switch community if needed before navigating
     // community.id is now a Convex ID string
@@ -398,145 +384,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
       }
     }
 
-    // If url is provided, navigate directly
-    if (url) {
-      router.push(url as any);
-      return;
-    }
-
-    // Helper to navigate to a group, resolving legacy IDs to Convex IDs
-    const navigateToGroup = async (gId: string) => {
-      const resolvedId = await resolveGroupIdForNavigation(gId);
-      if (resolvedId) {
-        router.push(`/groups/${resolvedId}` as any);
-      }
-    };
-
-    // Type-specific navigation fallbacks
-    switch (type) {
-      case 'join_request_received':
-        router.push('/(tabs)/admin');
-        break;
-      case 'join_request_approved':
-        if (groupId) {
-          await navigateToGroup(groupId);
-        }
-        break;
-      case 'group_creation_approved':
-        if (groupId) {
-          await navigateToGroup(groupId);
-        }
-        break;
-      case 'new_message':
-      case 'mention': {
-        // If user is already viewing this channel, skip navigation entirely
-        // to avoid re-mounting the screen and causing a blank flash.
-        if (channelId && activeChannelIdRef.current === channelId) {
-          console.log(`[${type}] Already viewing channel ${channelId}, skipping navigation`);
-          break;
-        }
-
-        // Use the same prefetch-then-navigate flow as the inbox for a smooth experience.
-        // Notification payload includes channelId, groupId, groupName, channelSlug.
-        const resolvedSlug = channelSlug || (channelType === 'main' ? 'general' : channelType === 'leaders' ? 'leaders' : channelType);
-        const groupName = (data.groupName || nestedData?.groupName) as string | undefined;
-
-        if (channelId && groupId) {
-          // Prefetch messages before navigating (same as inbox, 3s timeout)
-          console.log(`[${type}] Prefetching channel ${channelId} before navigation`);
-          await awaitPrefetch(channelId as Id<"chatChannels">, 3000);
-
-          // Without slug/type, use legacy route which resolves slug from the channel
-          if (!resolvedSlug) {
-            const targetPath = `/inbox/${channelId}`;
-            console.log(`[${type}] Navigating to legacy route (no slug in payload):`, targetPath);
-            router.push({
-              pathname: targetPath,
-              params: {
-                groupId,
-                ...(groupName ? { groupName } : {}),
-              },
-            } as any);
-            break;
-          }
-
-          const targetPath = `/inbox/${groupId}/${resolvedSlug}`;
-          console.log(`[${type}] Navigating to:`, targetPath);
-          router.push({
-            pathname: targetPath,
-            params: {
-              channelId,
-              ...(groupName ? { groupName } : {}),
-            },
-          } as any);
-        } else if (groupId) {
-          // No channelId available — navigate without prefetch, screen will load data
-          const targetPath = `/inbox/${groupId}/${resolvedSlug || 'general'}`;
-          console.log(`[${type}] Navigating (no prefetch):`, targetPath);
-          router.push({ pathname: targetPath } as any);
-        } else if (channelId) {
-          // Only channelId, no groupId — use legacy route
-          const targetPath = `/inbox/${channelId}`;
-          console.log(`[${type}] Navigating to legacy route:`, targetPath);
-          router.push({ pathname: targetPath } as any);
-        } else {
-          console.log(`[${type}] No groupId or channelId, falling back to /(tabs)/chat`);
-          router.push('/(tabs)/chat');
-        }
-        break;
-      }
-      case 'role_changed':
-        // User was promoted to leader - navigate to group chat
-        if (groupId) {
-          await navigateToGroup(groupId);
-        }
-        break;
-      case 'event_rsvp_received':
-      case 'event_blast':
-      case 'event_invite':
-      case 'event_updated':
-      case 'meeting_reminder': {
-        // Navigate to event detail screen
-        const shortId = data.shortId as string;
-        if (shortId) {
-          router.push(`/e/${shortId}?source=app` as any);
-        }
-        break;
-      }
-      case 'attendance_confirmation': {
-        // Navigate to event detail screen with attendance confirmation modal
-        const shortId = data.shortId as string;
-        const route = data.route as string;
-        if (route) {
-          router.push(route as any);
-        } else if (shortId) {
-          router.push(`/e/${shortId}?confirmAttendance=true&source=app` as any);
-        }
-        break;
-      }
-      case 'followup_assigned': {
-        // Navigate to the member's follow-up card via top-level route
-        const groupMemberId = (data.groupMemberId || nestedData?.groupMemberId) as string;
-        if (groupId && groupMemberId) {
-          router.push(`/followup/${groupId}/${groupMemberId}` as any);
-        }
-        break;
-      }
-      case 'admin_broadcast': {
-        // Navigate to the deep link specified in the broadcast, or admin tab
-        const deepLinkUrl = data.url as string;
-        if (deepLinkUrl) {
-          router.push(deepLinkUrl as any);
-        } else {
-          router.push('/(tabs)/admin' as any);
-        }
-        break;
-      }
-      default:
-        // Default: do nothing or navigate to home
-        console.log('Unknown notification type:', type);
-    }
-  }, [community?.id, setCommunity, resolveGroupIdForNavigation, awaitPrefetch]);
+    await resolveNotificationNavigation(data, {
+      awaitPrefetch,
+      activeChannelId: activeChannelIdRef.current,
+    });
+  }, [community?.id, setCommunity, awaitPrefetch]);
 
   // Keep handleNotificationTapRef in sync
   useEffect(() => {
@@ -733,7 +585,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({
         }
 
         // Handle navigation based on notification type
-        handleNotificationTapRef.current(data);
+        handleNotificationTapRef.current?.(data);
       });
 
     return () => {

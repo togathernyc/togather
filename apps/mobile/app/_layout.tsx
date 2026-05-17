@@ -97,11 +97,13 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Group detail is a pushed page (card), not a modal: a modal would
+          obscure screens pushed after it — e.g. /inbox/[groupId]/create
+          opened from the channels list rendered behind the modal. */}
       <Stack.Screen
         name="groups/[group_id]/index"
         options={{
-          presentation: "modal",
-          animation: "slide_from_bottom",
+          animation: "slide_from_right",
           gestureEnabled: true,
         }}
       />
@@ -143,6 +145,23 @@ function ThemedStack() {
         name="inbox"
         options={{
           animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Rostering routes - leader scheduling screens, slide from right like inbox */}
+      <Stack.Screen
+        name="rostering"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
+      {/* Scheduling deep links — assignment request accept/decline screen */}
+      <Stack.Screen
+        name="scheduling"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
           gestureEnabled: true,
         }}
       />

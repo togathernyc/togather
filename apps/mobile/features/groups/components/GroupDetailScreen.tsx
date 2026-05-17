@@ -40,6 +40,7 @@ import { HighlightsGrid } from "./HighlightsGrid";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
 import { UpcomingEventsSection } from "./UpcomingEventsSection";
+import { RosteringSection } from "./RosteringSection";
 import { GroupBotsSection } from "./GroupBotsSection";
 import { sectionStyles } from "./sectionStyles";
 import { Group } from "../types";
@@ -267,6 +268,11 @@ export function GroupDetailScreen() {
   const handleToolbarSettings = () => {
     if (!group?._id) return;
     router.push(`/(user)/leader-tools/${group._id}/toolbar-settings`);
+  };
+
+  const handleScheduling = () => {
+    if (!group?._id) return;
+    router.push(`/rostering/${group._id}`);
   };
 
   if (isLoading) {
@@ -502,6 +508,10 @@ export function GroupDetailScreen() {
             events. */}
         {group._id && <UpcomingEventsSection groupId={group._id} />}
 
+        {/* ROSTERING — leader-only horizontal list of event plans. Hidden
+            when the group has no plans yet. */}
+        {group._id && isLeader && <RosteringSection groupId={group._id} />}
+
         {/* CHANNELS */}
         {group._id && (
           <ChannelsSection groupId={group._id} userRole={group.user_role} />
@@ -640,6 +650,17 @@ export function GroupDetailScreen() {
                 icon="options-outline"
                 label="Toolbar Settings"
                 onPress={handleToolbarSettings}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {isLeader && (
+              <ActionRow
+                icon="calendar-outline"
+                label="Rostering"
+                onPress={handleScheduling}
                 color={colors.text}
                 iconColor={colors.icon}
                 topBorder
