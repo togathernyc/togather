@@ -148,6 +148,14 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Rostering routes - leader scheduling screens, slide from right like inbox */}
+      <Stack.Screen
+        name="rostering"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
       {/* Scheduling deep links — assignment request accept/decline screen */}
       <Stack.Screen
         name="scheduling"

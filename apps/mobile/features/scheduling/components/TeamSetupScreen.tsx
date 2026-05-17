@@ -7,7 +7,7 @@
  * suggestion before it is written. Once roles exist, this is the roles
  * editor for the team.
  *
- * Route: /(user)/leader-tools/[group_id]/scheduling/team/[channel_id]
+ * Route: /rostering/[group_id]/team/[channel_id]
  * Params: channel_id, plus `channelName` for the header (the channel doc
  * itself is not re-fetched — `suggestStarterRoles` already returns the name).
  *

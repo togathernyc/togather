@@ -273,7 +273,7 @@ export function RecentAttendance({
       <TouchableOpacity
         style={[styles.navTab, { borderBottomColor: colors.border }]}
         onPress={() => {
-          router.push(`/(user)/leader-tools/${groupId}/scheduling`);
+          router.push(`/rostering/${groupId}`);
         }}
       >
         <Text style={[styles.navTabText, { color: colors.text }]}>Scheduling</Text>

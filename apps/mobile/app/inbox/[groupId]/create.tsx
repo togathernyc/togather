@@ -145,7 +145,7 @@ export default function CreateChannelScreen() {
 
       if (channelType === "team") {
         router.replace(
-          `/(user)/leader-tools/${groupId}/scheduling/team/${result.channelId}`,
+          `/rostering/${groupId}/team/${result.channelId}`,
         );
       } else {
         router.replace(`/inbox/${groupId}/${result.slug}`);

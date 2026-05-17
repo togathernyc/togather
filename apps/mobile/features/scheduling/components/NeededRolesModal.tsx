@@ -213,7 +213,7 @@ function TeamSection({
           onPress={() => {
             onClose();
             router.push(
-              `/(user)/leader-tools/${groupId}/scheduling/team/${channel._id}`,
+              `/rostering/${groupId}/team/${channel._id}`,
             );
           }}
         >

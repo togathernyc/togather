@@ -5,7 +5,7 @@
  * a fill-progress bar (filled vs. needed slots) and a draft/published
  * status pill. A "+ New event" action creates a draft.
  *
- * Route: /(user)/leader-tools/[group_id]/scheduling
+ * Route: /rostering/[group_id]
  *
  * Backend: scheduling.events.listEvents, scheduling.events.createEvent.
  */
@@ -82,7 +82,7 @@ export function EventListScreen() {
         times: [{ label: "9:00 AM", startsAt: date.getTime() }],
       });
       router.push(
-        `/(user)/leader-tools/${groupId}/scheduling/event/${result.planId}` as any,
+        `/rostering/${groupId}/event/${result.planId}` as any,
       );
     } finally {
       setCreating(false);
@@ -106,7 +106,7 @@ export function EventListScreen() {
           <Ionicons name="chevron-back" size={28} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Scheduling
+          Rostering
         </Text>
         <TouchableOpacity
           onPress={handleNewEvent}
@@ -158,7 +158,7 @@ export function EventListScreen() {
                 key={event._id}
                 onPress={() =>
                   router.push(
-                    `/(user)/leader-tools/${groupId}/scheduling/event/${event._id}` as any,
+                    `/rostering/${groupId}/event/${event._id}` as any,
                   )
                 }
                 style={({ pressed }) => [

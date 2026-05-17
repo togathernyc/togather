@@ -1034,7 +1034,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 <Pressable
                   onPress={() =>
                     router.push(
-                      `/(user)/leader-tools/${groupId}/scheduling/team/${channel._id}?channelName=${encodeURIComponent(channelDisplayName)}` as any,
+                      `/rostering/${groupId}/team/${channel._id}?channelName=${encodeURIComponent(channelDisplayName)}` as any,
                     )
                   }
                   style={({ pressed }) => [

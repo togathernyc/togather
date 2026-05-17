@@ -271,7 +271,7 @@ export function GroupDetailScreen() {
 
   const handleScheduling = () => {
     if (!group?._id) return;
-    router.push(`/(user)/leader-tools/${group._id}/scheduling`);
+    router.push(`/rostering/${group._id}`);
   };
 
   if (isLoading) {

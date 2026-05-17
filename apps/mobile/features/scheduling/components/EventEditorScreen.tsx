@@ -7,7 +7,7 @@
  * (✓ Confirmed / … Awaiting / ✗ Declined). A declined slot offers an
  * inline "Refill" affordance. Tapping an open slot opens the assign sheet.
  *
- * Route: /(user)/leader-tools/[group_id]/scheduling/event/[plan_id]
+ * Route: /rostering/[group_id]/event/[plan_id]
  *
  * Backend: scheduling.events.getEvent / updateEvent / deleteEvent,
  * scheduling.assignments.unassign / publishEvent, NeededRolesModal +
