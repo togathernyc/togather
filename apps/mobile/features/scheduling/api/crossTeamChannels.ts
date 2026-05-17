@@ -4,21 +4,19 @@
  * Why this file exists: the Convex backend module
  * `functions/scheduling/crossTeamChannels` is deployed, but the committed
  * `apps/convex/_generated/api.d.ts` in this repo can be stale offline and not
- * yet list it. Accessing `api.functions.scheduling.crossTeamChannels.*`
- * directly would therefore be a type error until the next `npx convex dev`
- * regenerates the api map.
+ * yet list it — so `api.functions.scheduling.crossTeamChannels.*` would be a
+ * type error until the next `npx convex dev` regenerates the api map.
  *
- * Rather than scattering `as any` casts across the UI, we isolate a single
- * typed indirection here: at runtime the app's `api` IS `anyApi` (a proxy that
- * resolves any path), so `(api as AnyApiShape)....` resolves correctly; we
- * then re-assert the precise `FunctionReference` arg/return types — matching
- * the validators in `crossTeamChannels.ts` — so every call site is fully
- * type-checked. Once the generated api map includes the module, this file can
- * be deleted and call sites can use `api.functions.scheduling.crossTeamChannels`
- * directly.
+ * Rather than depend on the generated `api` object, we build the references
+ * directly from their function paths with `makeFunctionReference`, asserting
+ * the precise arg/return types — matching the validators in
+ * `crossTeamChannels.ts`. This is fully type-checked at every call site and,
+ * unlike traversing the `api` proxy, evaluates safely under test mocks. Once
+ * the generated api map includes the module, this file can be deleted and
+ * call sites can use `api.functions.scheduling.crossTeamChannels` directly.
  */
-import type { FunctionReference } from "convex/server";
-import { api, type Id } from "@services/api/convex";
+import { makeFunctionReference } from "convex/server";
+import type { Id } from "@services/api/convex";
 
 /** One cross-team membership selector: a source team channel + optional role. */
 export type CrossTeamSelector = {
@@ -43,9 +41,8 @@ export type CrossTeamChannel = {
   selectors: EnrichedCrossTeamSelector[];
 };
 
-type CreateCrossTeamChannelRef = FunctionReference<
+export const createCrossTeamChannelRef = makeFunctionReference<
   "mutation",
-  "public",
   {
     token: string;
     groupId: Id<"groups">;
@@ -54,46 +51,20 @@ type CreateCrossTeamChannelRef = FunctionReference<
     selectors: CrossTeamSelector[];
   },
   { channelId: Id<"chatChannels">; slug: string }
->;
+>("functions/scheduling/crossTeamChannels:createCrossTeamChannel");
 
-type UpdateCrossTeamChannelRef = FunctionReference<
+export const updateCrossTeamChannelRef = makeFunctionReference<
   "mutation",
-  "public",
   {
     token: string;
     channelId: Id<"chatChannels">;
     selectors: CrossTeamSelector[];
   },
   { channelId: Id<"chatChannels">; addedCount: number; removedCount: number }
->;
+>("functions/scheduling/crossTeamChannels:updateCrossTeamChannel");
 
-type ListCrossTeamChannelsRef = FunctionReference<
+export const listCrossTeamChannelsRef = makeFunctionReference<
   "query",
-  "public",
   { token: string; groupId: Id<"groups"> },
   CrossTeamChannel[]
->;
-
-// The runtime `api` is `anyApi`, so any property path resolves to a valid
-// function reference proxy. We narrow the path's type to the precise
-// reference above. This is the single, intentional cast — see file header.
-const crossTeamChannelsApi = (
-  api as unknown as {
-    functions: {
-      scheduling: {
-        crossTeamChannels: {
-          createCrossTeamChannel: CreateCrossTeamChannelRef;
-          updateCrossTeamChannel: UpdateCrossTeamChannelRef;
-          listCrossTeamChannels: ListCrossTeamChannelsRef;
-        };
-      };
-    };
-  }
-).functions.scheduling.crossTeamChannels;
-
-export const createCrossTeamChannelRef =
-  crossTeamChannelsApi.createCrossTeamChannel;
-export const updateCrossTeamChannelRef =
-  crossTeamChannelsApi.updateCrossTeamChannel;
-export const listCrossTeamChannelsRef =
-  crossTeamChannelsApi.listCrossTeamChannels;
+>("functions/scheduling/crossTeamChannels:listCrossTeamChannels");
