@@ -179,6 +179,18 @@ export const updateEvent = mutation({
           ctx.db.patch(assignment._id, { eventDate: args.eventDate! }),
         ),
       );
+      // Rescheduling can move the event in or out of the team-channel
+      // rotation window — reconcile each affected channel so derived
+      // membership updates now, not just on the daily cron (mirrors
+      // deleteEvent / unassign).
+      const channelIds = [...new Set(assignments.map((a) => a.channelId))];
+      for (const channelId of channelIds) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+          { channelId },
+        );
+      }
     }
 
     return { planId: args.planId };

@@ -78,7 +78,13 @@ export function NotificationFeedScreen() {
         // Fire-and-forget — navigation shouldn't wait on the read write.
         markRead({ notificationId: item.id }).catch(() => {});
       }
-      await resolveNotificationNavigation(item.data ?? {});
+      // DB notification rows keep the type in the `notificationType`
+      // column; `data` often omits it. Surface it so the resolver can
+      // route types like join_request_approved / group_creation_approved.
+      await resolveNotificationNavigation({
+        ...(item.data ?? {}),
+        type: item.data?.type ?? item.notificationType,
+      });
     },
     [markRead],
   );
