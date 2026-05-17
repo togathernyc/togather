@@ -46,6 +46,13 @@ import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { CustomModal } from "@components/ui/Modal";
 import { AutoChannelSettings } from "@features/channels";
+import {
+  CrossTeamSelectorPicker,
+  listCrossTeamChannelsRef,
+  updateCrossTeamChannelRef,
+  type CrossTeamChannel,
+  type CrossTeamSelector,
+} from "@features/scheduling";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -66,7 +73,13 @@ type Props = {
   channelSlug: string;
 };
 
-type ChannelType = "main" | "leaders" | "reach_out" | "pco_services" | "custom";
+type ChannelType =
+  | "main"
+  | "leaders"
+  | "reach_out"
+  | "pco_services"
+  | "custom"
+  | "cross_team";
 
 type ChannelIconConfig = {
   icon: React.ComponentProps<typeof Ionicons>["name"];
@@ -88,6 +101,8 @@ function getChannelIconConfig(
       return { icon: "hand-left", color: "#8E44AD", bg: "#8E44AD15", defaultName: "Reach Out" };
     case "pco_services":
       return { icon: "sync", color: "#2196F3", bg: "#2196F315", defaultName: "PCO Channel" };
+    case "cross_team":
+      return { icon: "git-merge", color: "#00897B", bg: "#00897B15", defaultName: "Cross-team Channel" };
     default:
       return { icon: "chatbubble", color: "#00BCD4", bg: "#00BCD415", defaultName: "Channel" };
   }
@@ -178,6 +193,20 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       : "skip",
   );
 
+  // Cross-team channels: list the group's cross-team channels so we can find
+  // THIS channel's current selectors to prefill the edit picker. The backend
+  // has no per-channel getter, so we filter the group-scoped list.
+  const crossTeamChannels = useQuery(
+    listCrossTeamChannelsRef,
+    token && channel?._id && channel.channelType === "cross_team"
+      ? { token, groupId: groupId as Id<"groups"> }
+      : "skip",
+  ) as CrossTeamChannel[] | undefined;
+
+  const updateCrossTeamChannel = useAuthenticatedMutation(
+    updateCrossTeamChannelRef,
+  );
+
   const [renameVisible, setRenameVisible] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
@@ -187,6 +216,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [archiving, setArchiving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
+  const [crossTeamEditVisible, setCrossTeamEditVisible] = useState(false);
+  const [crossTeamDraft, setCrossTeamDraft] = useState<CrossTeamSelector[]>([]);
+  const [crossTeamSaving, setCrossTeamSaving] = useState(false);
   const [teamSyncing, setTeamSyncing] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
@@ -250,6 +282,13 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const isLeadersChannel = channelType === "leaders";
   const isReachOut = channelType === "reach_out";
   const isPco = channelType === "pco_services";
+  const isCrossTeam = channelType === "cross_team";
+
+  // This channel's current cross-team config (selectors), if any.
+  const thisCrossTeamChannel = useMemo(
+    () => crossTeamChannels?.find((c) => c._id === channel?._id),
+    [crossTeamChannels, channel?._id],
+  );
 
   const iconCfg = getChannelIconConfig(channelType, primaryColor);
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
@@ -364,6 +403,49 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setTeamSyncing(false);
     }
   }, [channel?._id, teamSyncing, triggerTeamChannelSync]);
+
+  const handleOpenCrossTeamEdit = useCallback(() => {
+    // Prefill the picker draft from the channel's current selectors. The
+    // enriched selectors carry extra display fields — strip them down to the
+    // { sourceChannelId, roleId? } shape the picker/mutation expect.
+    const current: CrossTeamSelector[] = (
+      thisCrossTeamChannel?.selectors ?? []
+    ).map((s) => ({
+      sourceChannelId: s.sourceChannelId,
+      ...(s.roleId ? { roleId: s.roleId } : {}),
+    }));
+    setCrossTeamDraft(current);
+    setCrossTeamEditVisible(true);
+  }, [thisCrossTeamChannel?.selectors]);
+
+  const handleSaveCrossTeam = useCallback(async () => {
+    if (!channel?._id || crossTeamSaving) return;
+    if (crossTeamDraft.length === 0) {
+      Alert.alert(
+        "Pick at least one role",
+        "A cross-team channel needs at least one team + role selector.",
+      );
+      return;
+    }
+    setCrossTeamSaving(true);
+    try {
+      const result = await updateCrossTeamChannel({
+        channelId: channel._id,
+        selectors: crossTeamDraft,
+      });
+      setCrossTeamEditVisible(false);
+      const { addedCount, removedCount } = result;
+      const message =
+        addedCount === 0 && removedCount === 0
+          ? "Synced roles updated. Membership is unchanged."
+          : `Synced roles updated. ${addedCount} added, ${removedCount} removed.`;
+      Alert.alert("Saved", message);
+    } catch (e: any) {
+      Alert.alert("Couldn't save", e?.message || "Please try again.");
+    } finally {
+      setCrossTeamSaving(false);
+    }
+  }, [channel?._id, crossTeamSaving, crossTeamDraft, updateCrossTeamChannel]);
 
   const handleAddUnmatchedToGroup = useCallback(
     async (person: UnsyncedPerson) => {
@@ -1049,6 +1131,38 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Pressable>
               )}
 
+              {/* Edit synced roles — cross-team channels. Reopens the
+                  selector picker prefilled from the current config and
+                  saves via updateCrossTeamChannel. */}
+              {isCrossTeam && (
+                <Pressable
+                  onPress={handleOpenCrossTeamEdit}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons
+                    name="git-merge-outline"
+                    size={20}
+                    color={colors.icon}
+                  />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Edit synced roles
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: "auto" }}
+                  />
+                </Pressable>
+              )}
+
               {/* Serving team — custom channels can opt into the native
                   scheduling engine (ADR-023). Routes to the team setup /
                   roles editor; `markChannelAsTeam` runs idempotently there. */}
@@ -1358,6 +1472,76 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           />
         )}
       </Modal>
+
+      {/* Edit synced roles — cross-team channels. Full-screen modal mounting
+          the same selector picker used in channel creation. */}
+      <Modal
+        visible={crossTeamEditVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          if (!crossTeamSaving) setCrossTeamEditVisible(false);
+        }}
+      >
+        <View
+          style={[
+            styles.container,
+            { paddingTop: insets.top, backgroundColor: colors.surface },
+          ]}
+        >
+          <View
+            style={[
+              styles.headerBar,
+              {
+                backgroundColor: colors.surface,
+                borderBottomColor: colors.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => setCrossTeamEditVisible(false)}
+              disabled={crossTeamSaving}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={26} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
+              Edit synced roles
+            </Text>
+            <TouchableOpacity
+              onPress={handleSaveCrossTeam}
+              disabled={crossTeamSaving}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              {crossTeamSaving ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <Text
+                  style={[styles.crossTeamSaveLabel, { color: primaryColor }]}
+                >
+                  Save
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={{
+              padding: 16,
+              paddingBottom: insets.bottom + 24,
+            }}
+          >
+            <CrossTeamSelectorPicker
+              groupId={groupId as Id<"groups">}
+              selectors={crossTeamDraft}
+              onChange={setCrossTeamDraft}
+              disabled={crossTeamSaving}
+            />
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1425,6 +1609,10 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 36,
+  },
+  crossTeamSaveLabel: {
+    fontSize: 16,
+    fontWeight: "600",
   },
   scroll: {
     flex: 1,
