@@ -191,26 +191,55 @@ export function EventEditorScreen() {
     [updateEvent, planId],
   );
 
-  // Edits the single (first) time entry of the plan. Multi-time add/remove
-  // is intentionally out of scope — any extra entries are left untouched.
-  const handleChangeTime = useCallback(
-    async (date: Date | null) => {
-      if (!date || !event) return;
-      const label = formatTimeLabel(date);
-      const startsAt = date.getTime();
-      const existing = event.times;
-      const times =
-        existing.length > 0
-          ? existing.map((t, i) => (i === 0 ? { label, startsAt } : t))
-          : [{ label, startsAt }];
+  // An event plan can have one or more times (e.g. a 9 AM and 11 AM service).
+  const saveTimes = useCallback(
+    async (times: Array<{ label: string; startsAt: number }>) => {
       try {
         await updateEvent({ planId, times });
       } catch (e: any) {
-        Alert.alert("Couldn't update time", e?.message ?? "Please try again.");
+        Alert.alert("Couldn't update times", e?.message ?? "Please try again.");
       }
     },
-    [updateEvent, planId, event],
+    [updateEvent, planId],
   );
+
+  const handleChangeTimeAt = useCallback(
+    (index: number, date: Date | null) => {
+      if (!date || !event) return;
+      void saveTimes(
+        event.times.map((t, i) =>
+          i === index
+            ? { label: formatTimeLabel(date), startsAt: date.getTime() }
+            : t,
+        ),
+      );
+    },
+    [event, saveTimes],
+  );
+
+  const handleRemoveTime = useCallback(
+    (index: number) => {
+      if (!event) return;
+      void saveTimes(event.times.filter((_, i) => i !== index));
+    },
+    [event, saveTimes],
+  );
+
+  const handleAddTime = useCallback(() => {
+    if (!event) return;
+    const last = event.times[event.times.length - 1];
+    let base: Date;
+    if (last) {
+      base = new Date(last.startsAt + 60 * 60 * 1000); // an hour after the last
+    } else {
+      base = new Date(event.eventDate);
+      base.setHours(9, 0, 0, 0);
+    }
+    void saveTimes([
+      ...event.times,
+      { label: formatTimeLabel(base), startsAt: base.getTime() },
+    ]);
+  }, [event, saveTimes]);
 
   const handleUnassign = useCallback(
     (assignmentId: Id<"roleAssignments">) => {
@@ -370,23 +399,38 @@ export function EventEditorScreen() {
             mode="date"
           />
         </View>
-        {/* Time — editable; edits the first/single entry. */}
-        <View style={styles.dateRow}>
-          <Text style={[styles.dateLabel, { color: colors.textSecondary }]}>
-            {event.times.length > 0
-              ? event.times.map((t) => t.label).join(" · ")
-              : "Add a time"}
+        {/* Times — one or more (e.g. a 9 AM and an 11 AM service). */}
+        {event.times.map((t, index) => (
+          <View key={`${t.startsAt}-${index}`} style={styles.dateRow}>
+            <Text style={[styles.dateLabel, { color: colors.textSecondary }]}>
+              {t.label}
+            </Text>
+            <View style={styles.timeControls}>
+              <DatePicker
+                value={new Date(t.startsAt)}
+                onChange={(d) => handleChangeTimeAt(index, d)}
+                mode="time"
+              />
+              <TouchableOpacity
+                onPress={() => handleRemoveTime(index)}
+                hitSlop={8}
+                style={styles.removeTimeBtn}
+              >
+                <Ionicons name="close" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+        <TouchableOpacity
+          onPress={handleAddTime}
+          style={styles.addTimeRow}
+          hitSlop={6}
+        >
+          <Ionicons name="add" size={18} color={primaryColor} />
+          <Text style={[styles.addTimeText, { color: primaryColor }]}>
+            Add time
           </Text>
-          <DatePicker
-            value={
-              event.times.length > 0
-                ? new Date(event.times[0].startsAt)
-                : new Date(event.eventDate)
-            }
-            onChange={handleChangeTime}
-            mode="time"
-          />
-        </View>
+        </TouchableOpacity>
 
         {/* Status pill */}
         <View
@@ -735,6 +779,28 @@ const styles = StyleSheet.create({
   dateLabel: {
     fontSize: 15,
     flex: 1,
+  },
+  timeControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  removeTimeBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addTimeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 12,
+    paddingVertical: 4,
+  },
+  addTimeText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   autoSaveHint: {
     fontSize: 12,
