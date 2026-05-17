@@ -4,10 +4,20 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { convexTest } from "convex-test";
+import schema from "../../schema";
+import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import { setupSchedulingWorld, type SchedulingWorld } from "./fixtures";
+import { buildSchedulingWorld, type SchedulingWorld } from "./fixtures";
+
+/** Spin up a convex-test handle and seed the scheduling world into it. */
+async function setupSchedulingWorld() {
+  const t = convexTest(schema, modules);
+  const world = await buildSchedulingWorld(t);
+  return { t, world };
+}
 
 const DAY = 86400000;
 

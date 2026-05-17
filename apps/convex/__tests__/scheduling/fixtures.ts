@@ -7,10 +7,16 @@
  * community admin, plain volunteer).
  */
 
-import { convexTest } from "convex-test";
-import schema from "../../schema";
-import { modules } from "../../test.setup";
 import type { Id } from "../../_generated/dataModel";
+
+/**
+ * The convex-test handle. Typed via a type-only dynamic import so this file
+ * imports no runtime code from `convex-test`/`test.setup` — keeping it safe
+ * for Convex's module analyzer, which bundles every non-`.test.ts` file.
+ * The handle is created in each `.test.ts` file and passed to
+ * `buildSchedulingWorld`.
+ */
+type ConvexTestHandle = ReturnType<typeof import("convex-test").convexTest>;
 
 export function ts(offsetDays = 0): number {
   return Date.now() + offsetDays * 24 * 60 * 60 * 1000;
@@ -53,15 +59,13 @@ async function insertUser(
 }
 
 /**
- * Create the full scheduling test world. Returns a convex-test handle plus
- * the seeded ids.
+ * Seed the full scheduling test world into the given convex-test handle.
+ * The handle (`convexTest(schema, modules)`) is created by the calling
+ * `.test.ts` file — see the `setupSchedulingWorld` wrapper in each.
  */
-export async function setupSchedulingWorld(): Promise<{
-  t: ReturnType<typeof convexTest>;
-  world: SchedulingWorld;
-}> {
-  const t = convexTest(schema, modules);
-
+export async function buildSchedulingWorld(
+  t: ConvexTestHandle,
+): Promise<SchedulingWorld> {
   const world = await t.run(async (ctx): Promise<SchedulingWorld> => {
     const communityId = await ctx.db.insert("communities", {
       name: "Test Community",
@@ -173,5 +177,5 @@ export async function setupSchedulingWorld(): Promise<{
     };
   });
 
-  return { t, world };
+  return world;
 }

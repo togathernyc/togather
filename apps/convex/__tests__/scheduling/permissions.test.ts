@@ -8,9 +8,19 @@
 
 import { describe, it, expect } from "vitest";
 import { ConvexError } from "convex/values";
+import { convexTest } from "convex-test";
+import schema from "../../schema";
+import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
 import { api } from "../../_generated/api";
-import { setupSchedulingWorld } from "./fixtures";
+import { buildSchedulingWorld } from "./fixtures";
+
+/** Spin up a convex-test handle and seed the scheduling world into it. */
+async function setupSchedulingWorld() {
+  const t = convexTest(schema, modules);
+  const world = await buildSchedulingWorld(t);
+  return { t, world };
+}
 
 describe("requireScheduler (via createRole)", () => {
   it("allows a channel admin", async () => {
