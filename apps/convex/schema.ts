@@ -1519,7 +1519,7 @@ export default defineSchema({
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements" | "cross_team"
     name: v.string(),
     description: v.optional(v.string()),
     createdById: v.id("users"),
@@ -1566,6 +1566,24 @@ export default defineSchema({
      * See ADR-023. Undefined/false = ordinary channel.
      */
     isServingTeam: v.optional(v.boolean()),
+    /**
+     * Set for `channelType === "cross_team"` channels. A cross-team channel
+     * owns no roles or events of its own; its membership is auto-synced (same
+     * rotation window + `event_plan` syncSource as a serving-team channel)
+     * from `roleAssignments` across the listed source serving-team channels.
+     * Each selector pulls in everyone assigned `roleId` on `sourceChannelId`,
+     * or — when `roleId` is omitted — everyone assigned any role there.
+     */
+    crossTeamSync: v.optional(
+      v.object({
+        selectors: v.array(
+          v.object({
+            sourceChannelId: v.id("chatChannels"),
+            roleId: v.optional(v.id("teamRoles")),
+          }),
+        ),
+      }),
+    ),
   })
     .index("by_group", ["groupId"])
     .index("by_group_type", ["groupId", "channelType"])

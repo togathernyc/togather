@@ -188,11 +188,18 @@ export const assignRole = mutation({
       assignedAt: Date.now(),
     });
 
-    // Auto-sync the team channel's membership off the new assignment.
+    // Auto-sync the team channel's membership off the new assignment, and any
+    // cross-team channel that draws from this serving team.
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
       { channelId: args.channelId },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync
+        .reconcileCrossTeamChannelsForSource,
+      { sourceChannelId: args.channelId },
     );
 
     return { assignmentId, doubleBooked };
@@ -221,11 +228,18 @@ export const unassign = mutation({
     await ctx.db.delete(args.assignmentId);
 
     // Auto-sync the team channel — the removed assignment may drop the user
-    // out of the channel's derived membership.
+    // out of the channel's derived membership — and any cross-team channel
+    // that draws from this serving team.
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
       { channelId: assignment.channelId },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync
+        .reconcileCrossTeamChannelsForSource,
+      { sourceChannelId: assignment.channelId },
     );
 
     return { assignmentId: args.assignmentId };
@@ -265,11 +279,18 @@ export const respondToAssignment = mutation({
 
     // A decline drops the user from the channel's derived membership; a
     // confirm has no membership effect, but reconciling on both keeps the
-    // sync trigger uniform and cheap.
+    // sync trigger uniform and cheap. Also reconcile any cross-team channel
+    // that draws from this serving team.
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
       { channelId: assignment.channelId },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.teamChannelSync
+        .reconcileCrossTeamChannelsForSource,
+      { sourceChannelId: assignment.channelId },
     );
 
     return { assignmentId: args.assignmentId, status: args.status };
@@ -377,12 +398,19 @@ export const publishEvent = action({
     }
 
     // Auto-sync every team channel that has assignments on this event so
-    // publishing pulls confirmed/unconfirmed volunteers into their channels.
+    // publishing pulls confirmed/unconfirmed volunteers into their channels,
+    // plus any cross-team channel that draws from those serving teams.
     for (const channelId of result.channelIds) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
         { channelId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.teamChannelSync
+          .reconcileCrossTeamChannelsForSource,
+        { sourceChannelId: channelId },
       );
     }
 
