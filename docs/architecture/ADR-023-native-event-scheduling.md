@@ -51,8 +51,8 @@ PCO integration already treats a team as a channel. We make that explicit:
 | Real-world concept            | Togather entity                          |
 | ----------------------------- | ---------------------------------------- |
 | Campus ("Brooklyn Team")      | `groups`                                 |
-| Serving team (Worship, Tech)  | `chatChannels`                           |
-| Team roster                   | `chatChannelMembers`                     |
+| Serving team (Worship, Tech)  | `chatChannels` (`isServingTeam`)         |
+| Team channel membership       | `chatChannelMembers` — auto-synced       |
 | Role on a team (Drums)        | `teamRoles` *(new)*                      |
 | A dated event plan needing volunteers | `eventPlans` *(new — see open Q1)* |
 | Roles to fill on an event plan | `neededRoles` *(new)*                   |
@@ -70,10 +70,30 @@ Rationale for reusing channels rather than a dedicated `serviceTeams` table:
 A channel opts into being a serving team via `isServingTeam` on `chatChannels`.
 Non-serving channels (`main`, `leaders`, `dm`, custom) are unaffected.
 
+### Team channel membership is auto-synced
+
+A team channel's membership is **not manually managed** — it is **derived from
+event-plan assignments**, exactly like a PCO auto-channel. This is the native
+equivalent of the `pcoServices/rotation.ts` rotation engine.
+
+- `reconcileTeamChannel` computes the channel's members as the **union** of
+  every non-declined `roleAssignment` across *all* event plans whose
+  `eventDate` falls in a rotation window (~5 days before .. ~1 day after).
+  Multiple concurrent event plans simply union together; a volunteer on two
+  plans is added once and leaves after their latest in-window event.
+- It diffs that desired set against existing `syncSource: "event_plan"`
+  members and adds/removes. Manually-added members are never touched.
+- `reconcileAllTeamChannels` runs daily via cron (handles dates rolling into
+  and out of the window); `publishEvent` / `assignRole` / `unassign` /
+  `respondToAssignment` trigger an immediate reconcile of affected channels.
+- Because membership is derived, the **assign UI picks assignees from the
+  campus group's members**, not the channel's (picking from the channel would
+  be circular).
+
 ### How roles are defined
 
 **Roles are free-form labels scoped to a team channel.** There is no global role
-taxonomy and no qualification system — anyone in the team channel can be
+taxonomy and no qualification system — anyone in the campus group can be
 assigned to any of that team's roles.
 
 - A team's roles live in `teamRoles`, keyed by `channelId`. Each role has a
@@ -118,7 +138,7 @@ infrastructure** (push via Expo, SMS via Twilio) shipped in #390/#393.
 
 Per product direction, these PCO features are **not** replicated:
 
-- **Role qualifications.** Anyone in the team channel can fill any role.
+- **Role qualifications.** Anyone in the campus group can fill any role.
   Instead of a qualification table, the assign UI surfaces a derived
   "previously filled by" quicklink — a query over `roleAssignments` history.
 - **Blockout dates / availability.** No availability system. A lightweight
