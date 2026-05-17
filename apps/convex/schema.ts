@@ -1560,6 +1560,12 @@ export default defineSchema({
     inviteShortId: v.optional(v.string()), // 9-char alphanumeric from generateShortId()
     inviteEnabled: v.optional(v.boolean()), // toggle link on/off
     joinMode: v.optional(v.string()), // "open" | "approval_required"
+    /**
+     * When true, this channel doubles as a serving team: its members are the
+     * roster, and it can own teamRoles + be scheduled on eventPlans.
+     * See ADR-023. Undefined/false = ordinary channel.
+     */
+    isServingTeam: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
     .index("by_group_type", ["groupId", "channelType"])
@@ -2442,4 +2448,85 @@ export default defineSchema({
     }),
 
   // =============================================================================
+  // EVENT SCHEDULING & ROSTERING (ADR-023)
+  // Native replacement for the Planning Center scheduling dependency.
+  // =============================================================================
+
+  /**
+   * A role within a serving-team channel, e.g. "Drums", "Greeter".
+   * Free-form labels owned by the channel; no global taxonomy, no
+   * qualification rules — anyone in the channel can be assigned any role.
+   */
+  teamRoles: defineTable({
+    channelId: v.id("chatChannels"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    color: v.optional(v.string()),
+    sortOrder: v.number(),
+    /** Slot count a new event starts with for this role; stays editable per-event. */
+    defaultNeeded: v.optional(v.number()),
+    isArchived: v.optional(v.boolean()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+  }).index("by_channel", ["channelId"]),
+
+  /**
+   * A dated event volunteers are rostered to. Belongs to a campus group.
+   * Distinct from `meetings` (Events-tab events) — joined via optional
+   * `meetingIds` when a rostered event also wants an Events-tab presence.
+   */
+  eventPlans: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    title: v.string(),
+    eventDate: v.number(), // event date (Unix ms)
+    times: v.array(
+      v.object({
+        label: v.string(), // "9:00 AM"
+        startsAt: v.number(), // Unix ms
+      }),
+    ),
+    status: v.string(), // "draft" | "published"
+    notes: v.optional(v.string()),
+    /** Optional links to Events-tab events (multi-service day, multi-campus). */
+    meetingIds: v.optional(v.array(v.id("meetings"))),
+    /** Set when imported from a Planning Center plan (migration linkage). */
+    pcoPlanId: v.optional(v.string()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_community_date", ["communityId", "eventDate"]),
+
+  /** "We need N of role X" on a given event. */
+  neededRoles: defineTable({
+    planId: v.id("eventPlans"),
+    channelId: v.id("chatChannels"), // the team
+    roleId: v.id("teamRoles"),
+    count: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_channel", ["planId", "channelId"]),
+
+  /** A person scheduled to a role on an event. */
+  roleAssignments: defineTable({
+    planId: v.id("eventPlans"),
+    channelId: v.id("chatChannels"),
+    roleId: v.id("teamRoles"),
+    userId: v.id("users"),
+    eventDate: v.number(), // denormalized for same-day double-booking queries
+    status: v.string(), // "unconfirmed" | "confirmed" | "declined"
+    timeLabel: v.optional(v.string()),
+    declineNote: v.optional(v.string()),
+    assignedById: v.id("users"),
+    assignedAt: v.number(),
+    respondedAt: v.optional(v.number()),
+    pcoAssignmentId: v.optional(v.string()),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_user", ["userId"])
+    .index("by_user_status", ["userId", "status"])
+    .index("by_plan_role", ["planId", "roleId"])
+    .index("by_role", ["roleId"]), // powers "previously filled by"
 });
