@@ -654,7 +654,7 @@ export function GroupDetailScreen() {
             {isLeader && (
               <ActionRow
                 icon="calendar-outline"
-                label="Scheduling"
+                label="Rostering"
                 onPress={handleScheduling}
                 color={colors.text}
                 iconColor={colors.icon}
