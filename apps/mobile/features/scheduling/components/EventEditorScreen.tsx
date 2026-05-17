@@ -45,6 +45,14 @@ import {
 import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
 
+/** Formats a Date as a display time label, e.g. "9:00 AM". */
+function formatTimeLabel(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 type Assignment = {
   _id: Id<"roleAssignments">;
   userId: Id<"users">;
@@ -146,6 +154,27 @@ export function EventEditorScreen() {
       }
     },
     [updateEvent, planId],
+  );
+
+  // Edits the single (first) time entry of the plan. Multi-time add/remove
+  // is intentionally out of scope — any extra entries are left untouched.
+  const handleChangeTime = useCallback(
+    async (date: Date | null) => {
+      if (!date || !event) return;
+      const label = formatTimeLabel(date);
+      const startsAt = date.getTime();
+      const existing = event.times;
+      const times =
+        existing.length > 0
+          ? existing.map((t, i) => (i === 0 ? { label, startsAt } : t))
+          : [{ label, startsAt }];
+      try {
+        await updateEvent({ planId, times });
+      } catch (e: any) {
+        Alert.alert("Couldn't update time", e?.message ?? "Please try again.");
+      }
+    },
+    [updateEvent, planId, event],
   );
 
   const handleUnassign = useCallback(
@@ -305,11 +334,23 @@ export function EventEditorScreen() {
             mode="date"
           />
         </View>
-        {event.times.length > 0 && (
-          <Text style={[styles.timesText, { color: colors.textSecondary }]}>
-            {event.times.map((t) => t.label).join(" · ")}
+        {/* Time — editable; edits the first/single entry. */}
+        <View style={styles.dateRow}>
+          <Text style={[styles.dateLabel, { color: colors.textSecondary }]}>
+            {event.times.length > 0
+              ? event.times.map((t) => t.label).join(" · ")
+              : "Add a time"}
           </Text>
-        )}
+          <DatePicker
+            value={
+              event.times.length > 0
+                ? new Date(event.times[0].startsAt)
+                : new Date(event.eventDate)
+            }
+            onChange={handleChangeTime}
+            mode="time"
+          />
+        </View>
 
         {/* Status pill */}
         <View
@@ -331,6 +372,12 @@ export function EventEditorScreen() {
             {isPublished ? "Published" : "Draft"}
           </Text>
         </View>
+
+        {/* Auto-save is invisible to users — the only button is "Publish",
+            so make clear that edits already persist on their own. */}
+        <Text style={[styles.autoSaveHint, { color: colors.textSecondary }]}>
+          Changes are saved automatically. Publishing notifies volunteers.
+        </Text>
 
         {/* Needed roles editor entry */}
         <Pressable
@@ -653,9 +700,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     flex: 1,
   },
-  timesText: {
-    fontSize: 14,
-    marginTop: 6,
+  autoSaveHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 8,
   },
   statusPill: {
     alignSelf: "flex-start",

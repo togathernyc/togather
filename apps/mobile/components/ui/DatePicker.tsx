@@ -226,7 +226,7 @@ export function DatePicker({
           {value ? formatDate(value) : placeholder}
         </Text>
         <Ionicons
-          name="calendar-outline"
+          name={mode === "time" ? "time-outline" : "calendar-outline"}
           size={20}
           color={disabled ? colors.inputPlaceholder : colors.icon}
         />

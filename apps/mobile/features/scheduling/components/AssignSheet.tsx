@@ -22,6 +22,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  TextInput,
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -112,10 +113,20 @@ export function AssignSheet({
     api.functions.scheduling.assignments.assignRole,
   );
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   // Float previously-confirmed fillers to the top, de-duplicated against
-  // the rest of the roster.
+  // the rest of the roster. While a search query is active, the
+  // "previously filled by" section is hidden and every matching member is
+  // shown under "Group members" — simpler than filtering both sections.
   const { topMembers, restMembers } = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (needle) {
+      const matches = members.filter((m) =>
+        (m.displayName ?? "").toLowerCase().includes(needle),
+      );
+      return { topMembers: [] as AssignablePerson[], restMembers: matches };
+    }
     const byUser = new Map(members.map((m) => [m.userId as string, m]));
     const prevIds = new Set((previous ?? []).map((p) => p.userId as string));
     const top = (previous ?? [])
@@ -123,7 +134,7 @@ export function AssignSheet({
       .filter((m): m is AssignablePerson => !!m);
     const rest = members.filter((m) => !prevIds.has(m.userId as string));
     return { topMembers: top, restMembers: rest };
-  }, [members, previous]);
+  }, [members, previous, search]);
 
   const handleAssign = useCallback(
     async (member: AssignablePerson) => {
@@ -226,7 +237,27 @@ export function AssignSheet({
             <ActivityIndicator size="small" color={colors.text} />
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View
+              style={[
+                styles.searchBox,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Ionicons name="search" size={16} color={colors.textSecondary} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.text }]}
+                placeholder="Search members"
+                placeholderTextColor={colors.textSecondary}
+                value={search}
+                onChangeText={setSearch}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
             {topMembers.length > 0 && (
               <>
                 <Text
@@ -259,9 +290,11 @@ export function AssignSheet({
                 <Text
                   style={[styles.emptyText, { color: colors.textSecondary }]}
                 >
-                  {topMembers.length > 0
-                    ? "Everyone in this group is already an option above."
-                    : "No group members to assign yet."}
+                  {search.trim()
+                    ? `No members match "${search.trim()}"`
+                    : topMembers.length > 0
+                      ? "Everyone in this group is already an option above."
+                      : "No group members to assign yet."}
                 </Text>
               ) : (
                 restMembers.map((m) => renderMember(m, false))
@@ -303,6 +336,20 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+  },
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 2,
   },
   sectionLabel: {
     fontSize: 11,
