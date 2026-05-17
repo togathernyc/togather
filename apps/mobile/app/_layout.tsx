@@ -146,6 +146,15 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Scheduling deep links — assignment request accept/decline screen */}
+      <Stack.Screen
+        name="scheduling"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_bottom",
+          gestureEnabled: true,
+        }}
+      />
       {/* Onboarding - browser-only flow for community proposals, setup, and billing */}
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="billing/[communityId]" />

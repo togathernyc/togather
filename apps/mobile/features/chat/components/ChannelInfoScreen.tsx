@@ -1027,6 +1027,40 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Pressable>
               )}
 
+              {/* Serving team — custom channels can opt into the native
+                  scheduling engine (ADR-023). Routes to the team setup /
+                  roles editor; `markChannelAsTeam` runs idempotently there. */}
+              {isCustom && (
+                <Pressable
+                  onPress={() =>
+                    router.push(
+                      `/(user)/leader-tools/${groupId}/scheduling/team/${channel._id}?channelName=${encodeURIComponent(channelDisplayName)}` as any,
+                    )
+                  }
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="calendar-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    {(channel as { isServingTeam?: boolean }).isServingTeam
+                      ? "Serving team roles"
+                      : "Set up as serving team"}
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: "auto" }}
+                  />
+                </Pressable>
+              )}
+
               {/* Rename — custom channels only (backend gates the rest). */}
               {isCustom && (
                 <Pressable
