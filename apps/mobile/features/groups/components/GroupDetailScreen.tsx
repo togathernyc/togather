@@ -269,6 +269,11 @@ export function GroupDetailScreen() {
     router.push(`/(user)/leader-tools/${group._id}/toolbar-settings`);
   };
 
+  const handleScheduling = () => {
+    if (!group?._id) return;
+    router.push(`/(user)/leader-tools/${group._id}/scheduling`);
+  };
+
   if (isLoading) {
     return <GroupDetailSkeleton />;
   }
@@ -640,6 +645,17 @@ export function GroupDetailScreen() {
                 icon="options-outline"
                 label="Toolbar Settings"
                 onPress={handleToolbarSettings}
+                color={colors.text}
+                iconColor={colors.icon}
+                topBorder
+                borderColor={colors.border}
+              />
+            )}
+            {isLeader && (
+              <ActionRow
+                icon="calendar-outline"
+                label="Scheduling"
+                onPress={handleScheduling}
                 color={colors.text}
                 iconColor={colors.icon}
                 topBorder
