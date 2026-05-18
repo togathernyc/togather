@@ -5,15 +5,18 @@
  * source serving-team channel with an optional role on that team — omitting
  * the role means "anyone assigned any role on this team".
  *
- * The leader expands a team to reveal its roles, then taps "Any role" or one
- * or more specific roles. Each tap toggles a selector in/out of the chosen
- * list. Chosen selectors are shown as removable chips.
+ * Two-step flow: the leader first chooses which groups to draw from, then —
+ * for each chosen group — expands a team to pick "Any role" or specific roles.
+ * Groups can sit on different campuses; only the chosen groups (those that
+ * actually contribute a team) end up sharing the channel. Chosen selectors are
+ * shown as removable chips.
  *
- * Backend: scheduling.teams.listTeamChannels (source teams) +
- * scheduling.roles.listRoles (roles per team). The resulting `selectors`
- * array is consumed by createCrossTeamChannel / updateCrossTeamChannel.
+ * Backend: scheduling.teams.listCommunityServingTeams returns every group in
+ * the community that has a serving team, each team enriched with its roles.
+ * The resulting `selectors` array is consumed by createCrossTeamChannel /
+ * updateCrossTeamChannel.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -28,20 +31,24 @@ import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
 import type { CrossTeamSelector } from "../api/crossTeamChannels";
 
-type TeamChannel = {
-  _id: Id<"chatChannels">;
-  name: string;
-  channelType: string;
-  memberCount: number;
-};
-
 type Role = {
   _id: Id<"teamRoles">;
   name: string;
   color?: string;
   sortOrder: number;
-  defaultNeeded?: number;
-  isArchived: boolean;
+};
+
+type TeamChannel = {
+  _id: Id<"chatChannels">;
+  name: string;
+  channelType: string;
+  memberCount: number;
+  roles: Role[];
+};
+
+type CommunityGroup = {
+  group: { _id: Id<"groups">; name: string };
+  teams: TeamChannel[];
 };
 
 type Props = {
@@ -66,16 +73,81 @@ export function CrossTeamSelectorPicker({
 }: Props) {
   const { colors } = useTheme();
 
-  const teams = useAuthenticatedQuery(
-    api.functions.scheduling.teams.listTeamChannels,
+  const communityGroups = useAuthenticatedQuery(
+    api.functions.scheduling.teams.listCommunityServingTeams,
     { groupId },
-  ) as TeamChannel[] | undefined;
+  ) as CommunityGroup[] | undefined;
 
-  // Which team rows are expanded to show their roles.
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Lookups derived from the loaded data.
+  const { teamToGroup, teamById } = useMemo(() => {
+    const teamToGroup = new Map<string, string>();
+    const teamById = new Map<string, TeamChannel>();
+    for (const cg of communityGroups ?? []) {
+      for (const team of cg.teams) {
+        teamToGroup.set(team._id, cg.group._id);
+        teamById.set(team._id, team);
+      }
+    }
+    return { teamToGroup, teamById };
+  }, [communityGroups]);
 
-  const toggleExpanded = useCallback((channelId: string) => {
-    setExpanded((prev) => ({ ...prev, [channelId]: !prev[channelId] }));
+  // Step 1: which groups are open for role-picking.
+  const [openGroupIds, setOpenGroupIds] = useState<Set<string>>(new Set());
+  // Step 2: which team rows are expanded to reveal their roles.
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
+
+  // Any group already referenced by an existing selector must stay open so the
+  // leader can see (and edit) what they previously chose.
+  useEffect(() => {
+    if (!communityGroups) return;
+    const implied = new Set<string>();
+    for (const selector of selectors) {
+      const g = teamToGroup.get(selector.sourceChannelId);
+      if (g) implied.add(g);
+    }
+    if (implied.size === 0) return;
+    setOpenGroupIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const g of implied) {
+        if (!next.has(g)) {
+          next.add(g);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [communityGroups, selectors, teamToGroup]);
+
+  const toggleGroup = useCallback(
+    (cg: CommunityGroup) => {
+      if (disabled) return;
+      const isOpen = openGroupIds.has(cg.group._id);
+      if (isOpen) {
+        // Closing a group drops every selector pointing at one of its teams.
+        const teamIds = new Set(cg.teams.map((t) => t._id));
+        const remaining = selectors.filter(
+          (s) => !teamIds.has(s.sourceChannelId),
+        );
+        if (remaining.length !== selectors.length) onChange(remaining);
+      }
+      setOpenGroupIds((prev) => {
+        const next = new Set(prev);
+        if (isOpen) next.delete(cg.group._id);
+        else next.add(cg.group._id);
+        return next;
+      });
+    },
+    [disabled, openGroupIds, selectors, onChange],
+  );
+
+  const toggleTeamExpanded = useCallback((teamId: string) => {
+    setExpandedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) next.delete(teamId);
+      else next.add(teamId);
+      return next;
+    });
   }, []);
 
   const toggleSelector = useCallback(
@@ -91,7 +163,7 @@ export function CrossTeamSelectorPicker({
     [disabled, selectors, onChange],
   );
 
-  if (teams === undefined) {
+  if (communityGroups === undefined) {
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="small" color={colors.text} />
@@ -99,7 +171,7 @@ export function CrossTeamSelectorPicker({
     );
   }
 
-  if (teams.length === 0) {
+  if (communityGroups.length === 0) {
     return (
       <View
         style={[styles.emptyBox, { backgroundColor: colors.surfaceSecondary }]}
@@ -110,12 +182,16 @@ export function CrossTeamSelectorPicker({
           color={colors.textSecondary}
         />
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-          This group has no serving teams yet. Set up at least one serving-team
-          channel with roles before creating a cross-team channel.
+          No group in this community has a serving team yet. Set up at least one
+          serving-team channel with roles before creating a cross-team channel.
         </Text>
       </View>
     );
   }
+
+  const openGroups = communityGroups.filter((cg) =>
+    openGroupIds.has(cg.group._id),
+  );
 
   return (
     <View>
@@ -126,8 +202,7 @@ export function CrossTeamSelectorPicker({
             <SelectorChip
               key={`${selector.sourceChannelId}:${selector.roleId ?? "any"}`}
               selector={selector}
-              teams={teams}
-              groupId={groupId}
+              teamById={teamById}
               onRemove={() => toggleSelector(selector)}
               disabled={disabled}
             />
@@ -135,24 +210,130 @@ export function CrossTeamSelectorPicker({
         </View>
       )}
 
-      {/* Team list */}
+      {/* Step 1: choose groups */}
+      <Text style={[styles.stepLabel, { color: colors.textSecondary }]}>
+        1. Choose groups to draw from
+      </Text>
       <View
         style={[styles.teamGroup, { backgroundColor: colors.surfaceSecondary }]}
       >
-        {teams.map((team, idx) => (
-          <TeamRow
-            key={team._id}
-            team={team}
-            isExpanded={!!expanded[team._id]}
+        {communityGroups.map((cg, idx) => (
+          <GroupRow
+            key={cg.group._id}
+            communityGroup={cg}
+            isOpen={openGroupIds.has(cg.group._id)}
             isFirst={idx === 0}
             selectors={selectors}
-            onToggleExpanded={() => toggleExpanded(team._id)}
-            onToggleSelector={toggleSelector}
+            onToggle={() => toggleGroup(cg)}
             disabled={disabled}
           />
         ))}
       </View>
+
+      {/* Step 2: choose roles within the chosen groups */}
+      {openGroups.length > 0 && (
+        <>
+          <Text
+            style={[
+              styles.stepLabel,
+              { color: colors.textSecondary, marginTop: 20 },
+            ]}
+          >
+            2. Choose roles
+          </Text>
+          {openGroups.map((cg) => (
+            <View key={cg.group._id} style={styles.groupSection}>
+              <Text
+                style={[styles.groupSectionTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {cg.group.name}
+              </Text>
+              <View
+                style={[
+                  styles.teamGroup,
+                  { backgroundColor: colors.surfaceSecondary },
+                ]}
+              >
+                {cg.teams.map((team, idx) => (
+                  <TeamRow
+                    key={team._id}
+                    team={team}
+                    isExpanded={expandedTeams.has(team._id)}
+                    isFirst={idx === 0}
+                    selectors={selectors}
+                    onToggleExpanded={() => toggleTeamExpanded(team._id)}
+                    onToggleSelector={toggleSelector}
+                    disabled={disabled}
+                  />
+                ))}
+              </View>
+            </View>
+          ))}
+        </>
+      )}
     </View>
+  );
+}
+
+/** A single group row in step 1 — checkbox-style toggle. */
+function GroupRow({
+  communityGroup,
+  isOpen,
+  isFirst,
+  selectors,
+  onToggle,
+  disabled,
+}: {
+  communityGroup: CommunityGroup;
+  isOpen: boolean;
+  isFirst: boolean;
+  selectors: CrossTeamSelector[];
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
+  const { colors } = useTheme();
+
+  // How many selectors target a team in this group — surfaced as a badge.
+  const teamIds = new Set(communityGroup.teams.map((t) => t._id));
+  const groupSelectorCount = selectors.filter((s) =>
+    teamIds.has(s.sourceChannelId),
+  ).length;
+
+  return (
+    <Pressable
+      onPress={onToggle}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.teamRow,
+        !isFirst && {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        pressed && { backgroundColor: colors.selectedBackground },
+        disabled && { opacity: 0.5 },
+      ]}
+    >
+      <Ionicons
+        name={isOpen ? "checkbox" : "square-outline"}
+        size={22}
+        color={isOpen ? colors.text : colors.textTertiary}
+      />
+      <Text style={[styles.teamName, { color: colors.text }]} numberOfLines={1}>
+        {communityGroup.group.name}
+      </Text>
+      {groupSelectorCount > 0 && (
+        <View style={[styles.countBadge, { backgroundColor: colors.text }]}>
+          <Text style={[styles.countBadgeText, { color: colors.surface }]}>
+            {groupSelectorCount}
+          </Text>
+        </View>
+      )}
+      <Text style={[styles.teamMeta, { color: colors.textTertiary }]}>
+        {communityGroup.teams.length} team
+        {communityGroup.teams.length === 1 ? "" : "s"}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -198,11 +379,7 @@ function TeamRow({
           pressed && { backgroundColor: colors.selectedBackground },
         ]}
       >
-        <Ionicons
-          name="people-outline"
-          size={20}
-          color={colors.textSecondary}
-        />
+        <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
         <Text
           style={[styles.teamName, { color: colors.text }]}
           numberOfLines={1}
@@ -225,7 +402,7 @@ function TeamRow({
 
       {isExpanded && (
         <TeamRoles
-          channelId={team._id}
+          team={team}
           selectors={selectors}
           onToggleSelector={onToggleSelector}
           disabled={disabled}
@@ -237,38 +414,25 @@ function TeamRow({
 
 /** Role options for an expanded team: "Any role" + each specific role. */
 function TeamRoles({
-  channelId,
+  team,
   selectors,
   onToggleSelector,
   disabled,
 }: {
-  channelId: Id<"chatChannels">;
+  team: TeamChannel;
   selectors: CrossTeamSelector[];
   onToggleSelector: (selector: CrossTeamSelector) => void;
   disabled?: boolean;
 }) {
   const { colors } = useTheme();
 
-  const roles = useAuthenticatedQuery(
-    api.functions.scheduling.roles.listRoles,
-    { channelId },
-  ) as Role[] | undefined;
-
   const isChosen = useCallback(
     (roleId?: Id<"teamRoles">) =>
       selectors.some(
-        (s) => s.sourceChannelId === channelId && s.roleId === roleId,
+        (s) => s.sourceChannelId === team._id && s.roleId === roleId,
       ),
-    [selectors, channelId],
+    [selectors, team._id],
   );
-
-  if (roles === undefined) {
-    return (
-      <View style={styles.rolesLoading}>
-        <ActivityIndicator size="small" color={colors.textSecondary} />
-      </View>
-    );
-  }
 
   return (
     <View style={styles.rolesWrap}>
@@ -276,22 +440,22 @@ function TeamRoles({
         label="Any role on this team"
         color={colors.textSecondary}
         selected={isChosen(undefined)}
-        onPress={() => onToggleSelector({ sourceChannelId: channelId })}
+        onPress={() => onToggleSelector({ sourceChannelId: team._id })}
         disabled={disabled}
       />
-      {roles.map((role) => (
+      {team.roles.map((role) => (
         <RoleOption
           key={role._id}
           label={role.name}
           color={role.color ?? DEFAULT_ROLE_COLOR}
           selected={isChosen(role._id)}
           onPress={() =>
-            onToggleSelector({ sourceChannelId: channelId, roleId: role._id })
+            onToggleSelector({ sourceChannelId: team._id, roleId: role._id })
           }
           disabled={disabled}
         />
       ))}
-      {roles.length === 0 && (
+      {team.roles.length === 0 && (
         <Text style={[styles.noRolesText, { color: colors.textTertiary }]}>
           This team has no roles yet. "Any role on this team" still works.
         </Text>
@@ -342,35 +506,22 @@ function RoleOption({
 /** A removable chip for one chosen selector. */
 function SelectorChip({
   selector,
-  teams,
-  groupId,
+  teamById,
   onRemove,
   disabled,
 }: {
   selector: CrossTeamSelector;
-  teams: TeamChannel[];
-  groupId: Id<"groups">;
+  teamById: Map<string, TeamChannel>;
   onRemove: () => void;
   disabled?: boolean;
 }) {
   const { colors } = useTheme();
 
-  const teamName =
-    teams.find((t) => t._id === selector.sourceChannelId)?.name ??
-    "Unknown team";
-
-  // Fetch the source team's roles only to resolve the chosen role's name.
-  const roles = useAuthenticatedQuery(
-    api.functions.scheduling.roles.listRoles,
-    selector.roleId ? { channelId: selector.sourceChannelId } : "skip",
-  ) as Role[] | undefined;
-
+  const team = teamById.get(selector.sourceChannelId);
+  const teamName = team?.name ?? "Unknown team";
   const roleLabel = selector.roleId
-    ? (roles?.find((r) => r._id === selector.roleId)?.name ?? "Role")
+    ? (team?.roles.find((r) => r._id === selector.roleId)?.name ?? "Role")
     : "Any role";
-
-  // groupId is accepted for API symmetry with the picker; unused here.
-  void groupId;
 
   return (
     <View style={[styles.chip, { backgroundColor: colors.selectedBackground }]}>
@@ -421,6 +572,21 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     flexShrink: 1,
   },
+  stepLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  groupSection: {
+    marginTop: 12,
+  },
+  groupSectionTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
   teamGroup: {
     borderRadius: 12,
     overflow: "hidden",
@@ -438,6 +604,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
   },
+  teamMeta: {
+    fontSize: 13,
+  },
   countBadge: {
     minWidth: 20,
     height: 20,
@@ -449,10 +618,6 @@ const styles = StyleSheet.create({
   countBadgeText: {
     fontSize: 12,
     fontWeight: "700",
-  },
-  rolesLoading: {
-    paddingVertical: 12,
-    alignItems: "center",
   },
   rolesWrap: {
     paddingBottom: 8,

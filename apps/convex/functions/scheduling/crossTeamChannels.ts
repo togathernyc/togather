@@ -17,6 +17,8 @@
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
+import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { generateChannelSlug } from "../../lib/slugs";
@@ -28,6 +30,91 @@ const selectorValidator = v.object({
   sourceChannelId: v.id("chatChannels"),
   roleId: v.optional(v.id("teamRoles")),
 });
+
+/** A single `chatChannels.sharedGroups` entry. */
+type SharedGroupEntry = {
+  groupId: Id<"groups">;
+  status: "accepted";
+  invitedById: Id<"users">;
+  invitedAt: number;
+  respondedById: Id<"users">;
+  respondedAt: number;
+};
+
+/**
+ * Resolve a cross-team channel's selectors into its channel-sharing config.
+ *
+ * A cross-team channel's source serving teams may live on OTHER campus groups
+ * (e.g. a "Broadcast" channel drawing worship leaders from the Brooklyn AND
+ * Manhattan campuses). For a synced member to see the channel nested under
+ * their own campus in the inbox — rather than as a floating channel — the
+ * channel is shared into every campus group that contributes a source team.
+ *
+ * Validates each distinct source channel: it must exist, be a serving team,
+ * and belong to the same community as the cross-team channel's home group —
+ * so a selector cannot reach into another community's teams.
+ *
+ * Returns `isShared`/`sharedGroups` to persist on the channel. When every
+ * source team is in the home group, `isShared` is false and `sharedGroups` is
+ * cleared (an entirely same-campus cross-team channel needs no sharing).
+ */
+async function resolveCrossTeamSharing(
+  ctx: MutationCtx,
+  selectors: Array<{ sourceChannelId: Id<"chatChannels">; roleId?: Id<"teamRoles"> }>,
+  homeGroupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<{ isShared: boolean; sharedGroups: SharedGroupEntry[] | undefined }> {
+  const homeGroup = await ctx.db.get(homeGroupId);
+  if (!homeGroup) {
+    throw new ConvexError("Cross-team channel's home group not found.");
+  }
+
+  const sourceGroupIds = new Set<Id<"groups">>();
+  const seenChannels = new Set<string>();
+  for (const selector of selectors) {
+    if (seenChannels.has(selector.sourceChannelId)) continue;
+    seenChannels.add(selector.sourceChannelId);
+
+    const sourceChannel = await ctx.db.get(selector.sourceChannelId);
+    if (!sourceChannel) {
+      throw new ConvexError("A selected source team no longer exists.");
+    }
+    if (sourceChannel.isServingTeam !== true) {
+      throw new ConvexError(
+        "A cross-team channel can only draw from serving teams.",
+      );
+    }
+    if (!sourceChannel.groupId) {
+      throw new ConvexError(
+        "A selected source team is not attached to a campus group.",
+      );
+    }
+    const sourceGroup = await ctx.db.get(sourceChannel.groupId);
+    if (!sourceGroup || sourceGroup.communityId !== homeGroup.communityId) {
+      throw new ConvexError(
+        "Cross-team source teams must be in the same community.",
+      );
+    }
+    sourceGroupIds.add(sourceChannel.groupId);
+  }
+
+  const now = Date.now();
+  const sharedGroups: SharedGroupEntry[] = [...sourceGroupIds]
+    .filter((groupId) => groupId !== homeGroupId)
+    .map((groupId) => ({
+      groupId,
+      status: "accepted" as const,
+      invitedById: userId,
+      invitedAt: now,
+      respondedById: userId,
+      respondedAt: now,
+    }));
+
+  return {
+    isShared: sharedGroups.length > 0,
+    sharedGroups: sharedGroups.length > 0 ? sharedGroups : undefined,
+  };
+}
 
 /**
  * Create a cross-team channel and immediately populate its auto-synced
@@ -89,6 +176,16 @@ export const createCrossTeamChannel = mutation({
       .filter((slug): slug is string => slug !== undefined);
     const slug = generateChannelSlug(trimmedName, existingSlugs);
 
+    // Share the channel into every other campus group that contributes a
+    // source team, so cross-campus synced members see it under their own
+    // group. Also validates the selectors all point at same-community teams.
+    const { isShared, sharedGroups } = await resolveCrossTeamSharing(
+      ctx,
+      args.selectors,
+      args.groupId,
+      userId,
+    );
+
     const now = Date.now();
     const channelId = await ctx.db.insert("chatChannels", {
       groupId: args.groupId,
@@ -102,6 +199,8 @@ export const createCrossTeamChannel = mutation({
       isArchived: false,
       memberCount: 0,
       crossTeamSync: { selectors: args.selectors },
+      isShared,
+      sharedGroups,
     });
 
     // Populate the channel's derived membership now rather than waiting for
@@ -139,9 +238,25 @@ export const updateCrossTeamChannel = mutation({
     if (args.selectors.length === 0) {
       throw new ConvexError("A cross-team channel needs at least one selector.");
     }
+    if (!channel.groupId) {
+      throw new ConvexError(
+        "Cross-team channel is not attached to a campus group.",
+      );
+    }
+
+    // Recompute channel sharing from the new selectors — a campus group may
+    // have just been added to (or dropped from) the channel's source teams.
+    const { isShared, sharedGroups } = await resolveCrossTeamSharing(
+      ctx,
+      args.selectors,
+      channel.groupId,
+      userId,
+    );
 
     await ctx.db.patch(args.channelId, {
       crossTeamSync: { selectors: args.selectors },
+      isShared,
+      sharedGroups,
       updatedAt: Date.now(),
     });
 

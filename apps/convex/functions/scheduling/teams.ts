@@ -8,6 +8,7 @@
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { updateChannelMemberCount } from "../messaging/helpers";
@@ -93,6 +94,96 @@ export const listTeamChannels = query({
         channelType: channel.channelType,
         memberCount: channel.memberCount,
       }));
+  },
+});
+
+/**
+ * List every serving-team channel across the caller's community, organized by
+ * the group that owns it and enriched with each team's (non-archived) roles.
+ *
+ * Powers the cross-team channel picker: a leader first narrows down which
+ * groups to draw from, then picks roles from the teams in those groups. Only
+ * groups that actually have a serving team are returned, so the picker never
+ * lists groups with nothing to offer.
+ *
+ * Auth: an active member of `groupId` (the group the picker is opened from),
+ * or a community admin — the same read gate as `listTeamChannels`.
+ */
+export const listCommunityServingTeams = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const group = await requireGroupMember(ctx, args.groupId, userId);
+
+    const communityGroups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", group.communityId))
+      .filter((q) => q.eq(q.field("isArchived"), false))
+      .collect();
+
+    const result: Array<{
+      group: { _id: Id<"groups">; name: string };
+      teams: Array<{
+        _id: Id<"chatChannels">;
+        name: string;
+        channelType: string;
+        memberCount: number;
+        roles: Array<{
+          _id: Id<"teamRoles">;
+          name: string;
+          color?: string;
+          sortOrder: number;
+        }>;
+      }>;
+    }> = [];
+
+    for (const g of communityGroups) {
+      const channels = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", g._id))
+        .filter((q) => q.eq(q.field("isArchived"), false))
+        .collect();
+      const teamChannels = channels.filter((c) => c.isServingTeam === true);
+      if (teamChannels.length === 0) continue;
+
+      const teams = await Promise.all(
+        teamChannels.map(async (team) => {
+          const roles = await ctx.db
+            .query("teamRoles")
+            .withIndex("by_channel", (q) => q.eq("channelId", team._id))
+            .collect();
+          return {
+            _id: team._id,
+            name: team.name,
+            channelType: team.channelType,
+            memberCount: team.memberCount,
+            roles: roles
+              .filter((role) => role.isArchived !== true)
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((role) => ({
+                _id: role._id,
+                name: role.name,
+                color: role.color,
+                sortOrder: role.sortOrder,
+              })),
+          };
+        }),
+      );
+
+      result.push({ group: { _id: g._id, name: g.name }, teams });
+    }
+
+    // The picker's own group first, then alphabetical by group name.
+    result.sort((a, b) => {
+      if (a.group._id === args.groupId) return -1;
+      if (b.group._id === args.groupId) return 1;
+      return a.group.name.localeCompare(b.group.name);
+    });
+
+    return result;
   },
 });
 

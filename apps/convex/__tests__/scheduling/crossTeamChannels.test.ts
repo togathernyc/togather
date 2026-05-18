@@ -15,9 +15,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
-import { internal } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
+import { generateTokens } from "../../lib/auth";
 import { buildSchedulingWorld, ts, type SchedulingWorld } from "./fixtures";
+
+process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 let activeHandle: ReturnType<typeof convexTest> | null = null;
 
@@ -386,6 +389,261 @@ describe("cross-team channel — membership across multiple source teams", () =>
     const result = await reconcileCross(t, world);
     expect(result.removed).toBe(1);
     expect((await crossMemberIds(t, world)).has(world.techUserId)).toBe(false);
+  });
+});
+
+/**
+ * A cross-GROUP test world: the base scheduling world (Brooklyn group + its
+ * "worship" serving team), plus a SECOND group in the same community with its
+ * own serving team and roster. Used to exercise cross-team channels that draw
+ * from teams across more than one group.
+ */
+interface CrossGroupWorld {
+  t: ReturnType<typeof convexTest>;
+  base: SchedulingWorld;
+  /** Second group in the same community. */
+  groupBId: Id<"groups">;
+  /** Serving-team channel on the second group. */
+  teamBId: Id<"chatChannels">;
+  /** A role on the second group's team. */
+  roleBId: Id<"teamRoles">;
+  /** Member of group B, rostered on team B. */
+  groupBRosteredId: Id<"users">;
+  /** Member of group B, NOT rostered on any team. */
+  groupBBystanderId: Id<"users">;
+  /** A non-serving channel in the base group — invalid as a selector source. */
+  plainChannelId: Id<"chatChannels">;
+}
+
+async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
+  const t = convexTest(schema, modules);
+  activeHandle = t;
+  const base = await buildSchedulingWorld(t);
+
+  const extra = await t.run(async (ctx) => {
+    const baseGroup = (await ctx.db.get(base.groupId))!;
+
+    const groupBId = await ctx.db.insert("groups", {
+      communityId: base.communityId,
+      groupTypeId: baseGroup.groupTypeId,
+      name: "Manhattan Campus",
+      isArchived: false,
+      createdAt: ts(),
+      updatedAt: ts(),
+    });
+
+    const teamBId = await ctx.db.insert("chatChannels", {
+      groupId: groupBId,
+      communityId: base.communityId,
+      name: "MH Worship Team",
+      channelType: "custom",
+      memberCount: 0,
+      isArchived: false,
+      isServingTeam: true,
+      createdById: base.channelAdminId,
+      createdAt: ts(),
+      updatedAt: ts(),
+    });
+
+    const roleBId = await ctx.db.insert("teamRoles", {
+      channelId: teamBId,
+      communityId: base.communityId,
+      name: "Worship Leader",
+      sortOrder: 0,
+      defaultNeeded: 1,
+      isArchived: false,
+      createdAt: ts(),
+      createdById: base.channelAdminId,
+    });
+
+    const plainChannelId = await ctx.db.insert("chatChannels", {
+      groupId: base.groupId,
+      communityId: base.communityId,
+      name: "Just A Channel",
+      channelType: "custom",
+      memberCount: 0,
+      isArchived: false,
+      createdById: base.channelAdminId,
+      createdAt: ts(),
+      updatedAt: ts(),
+    });
+
+    const mkGroupBUser = async (firstName: string): Promise<Id<"users">> => {
+      const userId = await ctx.db.insert("users", {
+        firstName,
+        lastName: "Test",
+        email: `${firstName.toLowerCase()}@example.com`,
+        isActive: true,
+        roles: 1,
+        createdAt: ts(),
+        updatedAt: ts(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: groupBId,
+        userId,
+        role: "member",
+        joinedAt: ts(),
+        notificationsEnabled: true,
+      });
+      return userId;
+    };
+    const groupBRosteredId = await mkGroupBUser("Rostered");
+    const groupBBystanderId = await mkGroupBUser("Bystander");
+
+    return {
+      groupBId,
+      teamBId,
+      roleBId,
+      plainChannelId,
+      groupBRosteredId,
+      groupBBystanderId,
+    };
+  });
+
+  return { t, base, ...extra };
+}
+
+describe("cross-team channel — cross-group sharing", () => {
+  it("creating a channel with a foreign source team shares it into that group", async () => {
+    const { t, base, groupBId, teamBId, roleBId } =
+      await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+      {
+        token: accessToken,
+        groupId: base.groupId,
+        name: "Broadcast",
+        selectors: [
+          { sourceChannelId: base.channelId },
+          { sourceChannelId: teamBId, roleId: roleBId },
+        ],
+      },
+    );
+
+    const channel = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channel?.isShared).toBe(true);
+    expect(channel?.sharedGroups?.map((s) => s.groupId)).toEqual([groupBId]);
+    expect(channel?.sharedGroups?.[0].status).toBe("accepted");
+  });
+
+  it("a same-group-only channel is not marked as shared", async () => {
+    const { t, base } = await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+      {
+        token: accessToken,
+        groupId: base.groupId,
+        name: "Local Only",
+        selectors: [{ sourceChannelId: base.channelId }],
+      },
+    );
+
+    const channel = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channel?.isShared).toBeFalsy();
+    expect(channel?.sharedGroups).toBeUndefined();
+  });
+
+  it("rejects a source channel that is not a serving team", async () => {
+    const { t, base, plainChannelId } = await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    await expect(
+      t.mutation(
+        api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+        {
+          token: accessToken,
+          groupId: base.groupId,
+          name: "Bad Source",
+          selectors: [{ sourceChannelId: plainChannelId }],
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("a cross-group rostered member sees the channel under their own group", async () => {
+    const { t, base, groupBId, teamBId, roleBId, groupBRosteredId } =
+      await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+      {
+        token: accessToken,
+        groupId: base.groupId,
+        name: "Broadcast",
+        selectors: [{ sourceChannelId: teamBId, roleId: roleBId }],
+      },
+    );
+
+    // Roster the group-B user onto team B inside the rotation window.
+    const eventDate = Date.now() + 3 * DAY;
+    await t.run(async (ctx) => {
+      const planId = await ctx.db.insert("eventPlans", {
+        groupId: groupBId,
+        communityId: base.communityId,
+        title: "Sunday Service",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+        status: "draft",
+        createdById: base.groupLeaderId,
+        createdAt: ts(),
+        updatedAt: ts(),
+      });
+      await ctx.db.insert("roleAssignments", {
+        planId,
+        channelId: teamBId,
+        roleId: roleBId,
+        userId: groupBRosteredId,
+        eventDate,
+        status: "unconfirmed",
+        assignedById: base.groupLeaderId,
+        assignedAt: Date.now(),
+      });
+    });
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      { channelId },
+    );
+
+    const rosteredToken = (await generateTokens(groupBRosteredId)).accessToken;
+    const inbox = await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      { token: rosteredToken },
+    );
+    const groupBSection = inbox.find((s) => s.group._id === groupBId);
+    expect(
+      groupBSection?.channels.some((c) => c._id === channelId),
+    ).toBe(true);
+  });
+
+  it("a non-rostered member of the shared group does not see the channel", async () => {
+    const { t, base, teamBId, roleBId, groupBBystanderId } =
+      await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+      {
+        token: accessToken,
+        groupId: base.groupId,
+        name: "Broadcast",
+        selectors: [{ sourceChannelId: teamBId, roleId: roleBId }],
+      },
+    );
+
+    const bystanderToken = (await generateTokens(groupBBystanderId)).accessToken;
+    const inbox = await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      { token: bystanderToken },
+    );
+    const hasChannel = inbox.some((s) =>
+      s.channels.some((c) => c._id === channelId),
+    );
+    expect(hasChannel).toBe(false);
   });
 });
 
