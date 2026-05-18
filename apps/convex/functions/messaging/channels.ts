@@ -312,8 +312,21 @@ export const getChannel = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    // Must be a group member to access any channel
+    // Cross-team channels draw their members from serving teams that may live
+    // on other groups, so a synced member is often NOT in the channel's home
+    // group. Their auto-synced membership row IS the authorization — grant
+    // access on that alone, mirroring how event channels bypass the group gate.
     if (!groupMembership) {
+      if (channel.channelType === "cross_team" && membership) {
+        return {
+          ...channel,
+          slug: getChannelSlug(channel),
+          myRequestState: undefined as string | undefined,
+          inviterDisplayName: undefined as string | undefined,
+          recipientPending: false,
+        };
+      }
+      // Must be a group member to access any other channel
       return null;
     }
 
@@ -494,8 +507,12 @@ export const getChannelBySlug = query({
     }
 
     // Custom and pco_services channels require membership (or leader/admin access)
-    // For shared channels accessed from secondary group, channel membership is required
-    if ((isCustomChannel(resolvedChannel.channelType) || resolvedChannel.channelType === "pco_services") &&
+    // For shared channels accessed from secondary group, channel membership is required.
+    // Cross-team channels are roster-synced: only an auto-synced member (or a
+    // managing leader) may open them, never an arbitrary group member.
+    if ((isCustomChannel(resolvedChannel.channelType) ||
+         resolvedChannel.channelType === "pco_services" ||
+         resolvedChannel.channelType === "cross_team") &&
         !isMember && !isLeaderOrAdmin) {
       return null;
     }

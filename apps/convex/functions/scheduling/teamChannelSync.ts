@@ -77,8 +77,17 @@ const SYNC_SOURCE = "event_plan";
  * and the cron, and the public `triggerTeamChannelSync`). A mutation cannot
  * `ctx.runMutation` another mutation, so both entrypoints call this helper
  * directly to guarantee identical behavior.
+ *
+ * Handles two kinds of auto-synced channel:
+ *   - a serving-team channel (`isServingTeam === true`): desired members come
+ *     from `roleAssignments` on the channel itself; or
+ *   - a cross-team channel (`channelType === "cross_team"`): desired members
+ *     come from `roleAssignments` across the source serving-team channels
+ *     named in `crossTeamSync.selectors` (optionally filtered by role).
+ * Any other channel early-returns untouched. Both paths feed the identical
+ * desired-set diff/add/remove logic below.
  */
-async function reconcileTeamChannelImpl(
+export async function reconcileTeamChannelImpl(
   ctx: MutationCtx,
   channelId: Id<"chatChannels">,
 ): Promise<{ added: number; removed: number; desiredCount: number }> {
@@ -86,24 +95,52 @@ async function reconcileTeamChannelImpl(
   const now = Date.now();
 
   const channel = await ctx.db.get(args.channelId);
-  if (!channel || channel.isServingTeam !== true) {
+  const isCrossTeam =
+    channel?.channelType === "cross_team" && channel.crossTeamSync !== undefined;
+  if (!channel || (channel.isServingTeam !== true && !isCrossTeam)) {
     return { added: 0, removed: 0, desiredCount: 0 };
   }
 
   const windowStart = now - REMOVE_DAYS_AFTER * MS_PER_DAY;
   const windowEnd = now + ADD_DAYS_BEFORE * MS_PER_DAY;
 
-  // Assignments for this channel whose event date falls inside the rotation
-  // window. The `by_channel_eventDate` index bounds the scan to the window.
-  const assignmentsInWindow = await ctx.db
-    .query("roleAssignments")
-    .withIndex("by_channel_eventDate", (q) =>
-      q
-        .eq("channelId", args.channelId)
-        .gte("eventDate", windowStart)
-        .lte("eventDate", windowEnd),
-    )
-    .collect();
+  // Assignments whose event date falls inside the rotation window. The
+  // `by_channel_eventDate` index bounds the scan to the window.
+  //   - Serving-team channel: the channel's own assignments.
+  //   - Cross-team channel: assignments across each selector's source
+  //     serving-team channel, optionally filtered to a single role.
+  let assignmentsInWindow;
+  if (isCrossTeam) {
+    const collected = [];
+    for (const selector of channel.crossTeamSync!.selectors) {
+      const rows = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_channel_eventDate", (q) =>
+          q
+            .eq("channelId", selector.sourceChannelId)
+            .gte("eventDate", windowStart)
+            .lte("eventDate", windowEnd),
+        )
+        .collect();
+      for (const row of rows) {
+        if (selector.roleId !== undefined && row.roleId !== selector.roleId) {
+          continue;
+        }
+        collected.push(row);
+      }
+    }
+    assignmentsInWindow = collected;
+  } else {
+    assignmentsInWindow = await ctx.db
+      .query("roleAssignments")
+      .withIndex("by_channel_eventDate", (q) =>
+        q
+          .eq("channelId", args.channelId)
+          .gte("eventDate", windowStart)
+          .lte("eventDate", windowEnd),
+      )
+      .collect();
+  }
 
   // Desired member set: distinct userId, declined assignments excluded.
   // We keep the soonest in-window assignment per user for sync metadata and
@@ -163,8 +200,17 @@ async function reconcileTeamChannelImpl(
     const displayName = user
       ? getDisplayName(user.firstName, user.lastName)
       : "Unknown";
+    // For a serving-team channel the team name is the channel itself. For a
+    // cross-team channel a member can be drawn from any source team, so the
+    // metadata names the source serving-team channel that owns the role —
+    // making the member's metadata read e.g. "Worship Team / Worship Leader".
+    let teamName = channel.name;
+    if (isCrossTeam && role) {
+      const sourceChannel = await ctx.db.get(role.channelId);
+      teamName = sourceChannel?.name ?? channel.name;
+    }
     const syncMetadata = {
-      teamName: channel.name,
+      teamName,
       position: role?.name ?? undefined,
       serviceDate: info.eventDate,
       serviceName: plan?.title ?? undefined,
@@ -393,15 +439,70 @@ export const reconcileAllTeamChannels = internalAction({
 });
 
 /**
- * Internal: ids of every channel flagged as a serving team.
+ * Internal: ids of every auto-synced channel — serving-team channels
+ * (`isServingTeam === true`) plus cross-team channels
+ * (`channelType === "cross_team"`). The daily cron reconciles all of them so
+ * the rotation window advances even when no assignment mutation fires.
  */
 export const listTeamChannelIds = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<"chatChannels">[]> => {
     const channels = await ctx.db
       .query("chatChannels")
-      .filter((q) => q.eq(q.field("isServingTeam"), true))
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("isServingTeam"), true),
+          q.eq(q.field("channelType"), "cross_team"),
+        ),
+      )
       .collect();
     return channels.map((c) => c._id);
+  },
+});
+
+// ============================================================================
+// reconcileCrossTeamChannelsForSource — cross-team fan-out trigger
+// ============================================================================
+
+/**
+ * Reconcile every cross-team channel that draws from a given serving-team
+ * source channel. Called alongside `reconcileTeamChannel` at each assignment-
+ * /event-mutation trigger site so an assignment change on a source team also
+ * updates any cross-team channel that selects from it.
+ *
+ * Scans `chatChannels` for `channelType === "cross_team"` and keeps those
+ * whose `crossTeamSync.selectors` include `sourceChannelId`. Cross-team
+ * channels are rare, so a filtered `.collect()` scan is acceptable. Calls
+ * `reconcileTeamChannelImpl` directly because a mutation cannot
+ * `ctx.runMutation` another mutation.
+ */
+export const reconcileCrossTeamChannelsForSource = internalMutation({
+  args: {
+    sourceChannelId: v.id("chatChannels"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ processed: number; totalAdded: number; totalRemoved: number }> => {
+    const crossTeamChannels = await ctx.db
+      .query("chatChannels")
+      .filter((q) => q.eq(q.field("channelType"), "cross_team"))
+      .collect();
+
+    let processed = 0;
+    let totalAdded = 0;
+    let totalRemoved = 0;
+    for (const channel of crossTeamChannels) {
+      const selectsSource = channel.crossTeamSync?.selectors.some(
+        (s) => s.sourceChannelId === args.sourceChannelId,
+      );
+      if (!selectsSource) continue;
+      const result = await reconcileTeamChannelImpl(ctx, channel._id);
+      processed += 1;
+      totalAdded += result.added;
+      totalRemoved += result.removed;
+    }
+
+    return { processed, totalAdded, totalRemoved };
   },
 });

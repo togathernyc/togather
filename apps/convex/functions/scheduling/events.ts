@@ -224,6 +224,12 @@ export const updateEvent = mutation({
           internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
           { channelId },
         );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.scheduling.teamChannelSync
+            .reconcileCrossTeamChannelsForSource,
+          { sourceChannelId: channelId },
+        );
       }
     }
 
@@ -269,12 +275,19 @@ export const deleteEvent = mutation({
 
     // Auto-sync each affected team channel so its derived membership drops
     // the now-deleted assignees immediately rather than waiting for the
-    // daily cron — mirrors `unassign`'s reconcile trigger.
+    // daily cron — mirrors `unassign`'s reconcile trigger — plus any
+    // cross-team channel that draws from those serving teams.
     for (const channelId of channelIds) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
         { channelId },
+      );
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.teamChannelSync
+          .reconcileCrossTeamChannelsForSource,
+        { sourceChannelId: channelId },
       );
     }
 

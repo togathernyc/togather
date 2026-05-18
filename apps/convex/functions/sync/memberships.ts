@@ -227,6 +227,13 @@ export async function syncUserChannelMembershipsLogic(
     if (channel.channelType === "custom") {
       continue;
     }
+    // Skip cross-team channels - their membership is auto-synced from
+    // role assignments across multiple serving teams (teamChannelSync.ts),
+    // NOT from this group's membership. Adding a group member here would
+    // give them a stray non-synced row the rotation engine never removes.
+    if (channel.channelType === "cross_team") {
+      continue;
+    }
 
     // Determine if user SHOULD be in this channel
     let shouldBeInChannel = false;
