@@ -1155,6 +1155,66 @@ describe("communityWideEvents.update with scope", () => {
       }
     });
   });
+
+  test("scope=all_in_series cascades to a future parent whose children are all overridden", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // The future occurrence 2 has every child overridden — none of its
+    // meetings will be in cascadeMeetings, but its parent record must still
+    // receive the all-series title change (the feed renders parent.title).
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        await ctx.db.patch(m._id, { isOverridden: true });
+      }
+    });
+
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: setup.adminToken,
+      communityWideEventId: createResult.communityWideEventIds[0],
+      title: "Updated",
+      scope: "all_in_series",
+    });
+
+    await t.run(async (ctx) => {
+      // Occurrence 2's parent record cascaded despite all children overridden.
+      const parent2 = await ctx.db.get(createResult.communityWideEventIds[1]);
+      expect(parent2!.title).toBe("Updated");
+
+      // Its overridden child meetings are still left untouched.
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        expect(m.title).toBe("Original");
+      }
+    });
+  });
 });
 
 // ============================================================================

@@ -305,6 +305,11 @@ export const update = mutation({
 
     // Meetings that receive non-date field edits.
     let cascadeMeetings: typeof directChildren = directChildren;
+    // Every parent communityWideEvent reachable through the series — collected
+    // independently of child override/cancel state so the parent-record
+    // cascade below isn't skipped just because an occurrence's children are
+    // all overridden.
+    const seriesParentIds = new Set<Id<"communityWideEvents">>();
     if (args.scope === "all_in_series") {
       const seriesIds = new Set(
         allDirectChildren
@@ -321,6 +326,9 @@ export const update = mutation({
             .withIndex("by_series", (q) => q.eq("seriesId", sid))
             .collect();
           for (const m of seriesMeetings) {
+            if (m.communityWideEventId) {
+              seriesParentIds.add(m.communityWideEventId);
+            }
             if (m.isOverridden === true || m.status === "cancelled") continue;
             // Skip occurrences that have already happened.
             if (m.scheduledAt < timestamp) continue;
@@ -455,20 +463,16 @@ export const update = mutation({
 
       // Only cascade if there's an actual field change beyond `updatedAt`.
       if (Object.keys(parentCascadeUpdates).length > 1) {
-        // cascadeMeetings spans this occurrence + future ones, so their
-        // parent ids are exactly the future communityWideEvents to update.
-        const otherParentIds = new Set(
-          cascadeMeetings
-            .map((m) => m.communityWideEventId)
-            .filter(
-              (id): id is Id<"communityWideEvents"> =>
-                !!id && id !== args.communityWideEventId
-            )
-        );
-        for (const parentId of otherParentIds) {
+        // seriesParentIds covers every occurrence in the series, regardless of
+        // its children's override/cancel state. Update the future ones.
+        for (const parentId of seriesParentIds) {
+          if (parentId === args.communityWideEventId) continue;
           const parent = await ctx.db.get(parentId);
+          if (!parent) continue;
           // Skip cancelled parents — consistent with not editing cancelled rows.
-          if (!parent || parent.status === "cancelled") continue;
+          if (parent.status === "cancelled") continue;
+          // Past occurrences are never rewritten.
+          if (parent.scheduledAt < timestamp) continue;
           await ctx.db.patch(parentId, parentCascadeUpdates);
         }
       }
