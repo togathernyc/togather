@@ -1224,4 +1224,59 @@ describe("communityWideEvents.repairCollapsedChildDates", () => {
     );
     expect(second.meetingsRepaired).toBe(0);
   });
+
+  test("leaves cancelled children untouched", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Dinner",
+        meetingType: 1,
+      }
+    );
+
+    // Collapse occurrence 2's children onto date1; cancel one of them.
+    let cancelledId: Id<"meetings">;
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const [i, m] of occ2.entries()) {
+        if (i === 0) {
+          cancelledId = m._id;
+          await ctx.db.patch(m._id, { scheduledAt: date1, status: "cancelled" });
+        } else {
+          await ctx.db.patch(m._id, { scheduledAt: date1 });
+        }
+      }
+    });
+
+    const result = await t.mutation(
+      internal.functions.communityWideEvents.repairCollapsedChildDates,
+      {}
+    );
+
+    // Only the 2 non-cancelled collapsed children are repaired.
+    expect(result.meetingsRepaired).toBe(2);
+
+    await t.run(async (ctx) => {
+      const cancelled = await ctx.db.get(cancelledId);
+      // Cancelled meeting is never repaired or rescheduled.
+      expect(cancelled!.status).toBe("cancelled");
+      expect(cancelled!.scheduledAt).toBe(date1);
+    });
+  });
 });

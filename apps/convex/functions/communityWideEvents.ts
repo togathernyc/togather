@@ -813,6 +813,9 @@ export const repairCollapsedChildDates = internalMutation({
       for (const meeting of children) {
         // Leave per-group overrides untouched — leaders set those on purpose.
         if (meeting.isOverridden === true) continue;
+        // Never repair or reschedule cancelled meetings — consistent with the
+        // update/cancel paths, which deliberately skip cancelled rows.
+        if (meeting.status === "cancelled") continue;
         if (meeting.scheduledAt === cwe.scheduledAt) continue;
 
         repairedForEvent++;
