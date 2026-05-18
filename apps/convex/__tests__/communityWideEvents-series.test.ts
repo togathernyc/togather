@@ -1281,6 +1281,70 @@ describe("communityWideEvents.update with scope", () => {
       expect(pastParent!.title).toBe("Original");
     });
   });
+
+  test("scope=all_in_series anchored on a past occurrence skips that anchor", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate = new Date("2026-04-10T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Anchor the all_in_series edit on the PAST occurrence.
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the future occurrence's 3 children — the past anchor is skipped.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      // Past anchor: parent and children untouched.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        expect(m.title).toBe("Original");
+      }
+
+      // Future occurrence: parent and children updated.
+      const futureParent = await ctx.db.get(createResult.communityWideEventIds[1]);
+      expect(futureParent!.title).toBe("Updated");
+      const futureChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of futureChildren) {
+        expect(m.title).toBe("Updated");
+      }
+    });
+  });
 });
 
 // ============================================================================

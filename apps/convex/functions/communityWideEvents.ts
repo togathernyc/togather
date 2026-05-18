@@ -256,6 +256,16 @@ export const update = mutation({
 
     const timestamp = now();
 
+    // An "all_in_series" edit is forward-looking: this occurrence and future
+    // ones. If the edited occurrence is itself in the past, it is treated like
+    // any other past occurrence and skipped entirely — only future occurrences
+    // change. (A default-scope edit still applies to the chosen occurrence
+    // even when it's past.) This is keyed off the parent's own scheduledAt,
+    // which stays authoritative even when child meeting dates are corrupt.
+    const includeAnchor =
+      args.scope !== "all_in_series" ||
+      communityWideEvent.scheduledAt >= timestamp;
+
     // Build update object for the parent event
     const parentUpdates: Record<string, unknown> = { updatedAt: timestamp };
     if (args.title !== undefined) parentUpdates.title = args.title;
@@ -270,8 +280,10 @@ export const update = mutation({
       parentUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
     }
 
-    // Update the parent event
-    await ctx.db.patch(args.communityWideEventId, parentUpdates);
+    // Update the parent event (skipped when this is a past all_in_series anchor).
+    if (includeAnchor) {
+      await ctx.db.patch(args.communityWideEventId, parentUpdates);
+    }
 
     // ----------------------------------------------------------------
     // Determine which meetings receive the edit.
@@ -342,10 +354,13 @@ export const update = mutation({
           if (parent) parentById.set(pid, parent);
         }
 
-        // cascadeMeetings = the edited occurrence's children, plus children of
-        // future, non-cancelled occurrences (judged by the parent's date).
+        // cascadeMeetings = the edited occurrence's children (unless it's a
+        // past anchor), plus children of future, non-cancelled occurrences
+        // (judged by the parent's date).
         const byId = new Map<Id<"meetings">, (typeof directChildren)[number]>();
-        for (const m of directChildren) byId.set(m._id, m);
+        if (includeAnchor) {
+          for (const m of directChildren) byId.set(m._id, m);
+        }
         for (const m of seriesMeetings) {
           if (m.isOverridden === true || m.status === "cancelled") continue;
           if (!m.communityWideEventId) continue;
@@ -395,7 +410,11 @@ export const update = mutation({
     }
 
     // Merge per-meeting patches so each meeting is written at most once.
-    const directIds = new Set(directChildren.map((m) => m._id));
+    // A date change applies only to the edited occurrence's children — and
+    // not at all when it's a past all_in_series anchor.
+    const directIds = new Set(
+      includeAnchor ? directChildren.map((m) => m._id) : []
+    );
     const patches = new Map<
       Id<"meetings">,
       { meeting: (typeof directChildren)[number]; patch: Record<string, unknown> }
@@ -403,7 +422,7 @@ export const update = mutation({
     for (const m of cascadeMeetings) {
       patches.set(m._id, { meeting: m, patch: { ...cascadeUpdates } });
     }
-    if (dateChanged) {
+    if (dateChanged && includeAnchor) {
       for (const m of directChildren) {
         const entry = patches.get(m._id) ?? { meeting: m, patch: {} };
         Object.assign(entry.patch, dateUpdates);
