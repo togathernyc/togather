@@ -439,6 +439,41 @@ export const update = mutation({
       meetingsUpdated++;
     }
 
+    // Cascade non-date fields to the other future occurrences' parent
+    // communityWideEvents. The Events feed and admin list render from the
+    // parent record (e.g. `parent.title`), so without this they'd show stale
+    // titles/notes even though the child meetings were updated.
+    if (args.scope === "all_in_series") {
+      const parentCascadeUpdates: Record<string, unknown> = { updatedAt: timestamp };
+      if (args.title !== undefined) parentCascadeUpdates.title = args.title;
+      if (args.meetingType !== undefined) parentCascadeUpdates.meetingType = args.meetingType;
+      if (args.meetingLink !== undefined) parentCascadeUpdates.meetingLink = args.meetingLink;
+      if (args.note !== undefined) parentCascadeUpdates.note = args.note;
+      if (args.coverImage !== undefined) {
+        parentCascadeUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
+      }
+
+      // Only cascade if there's an actual field change beyond `updatedAt`.
+      if (Object.keys(parentCascadeUpdates).length > 1) {
+        // cascadeMeetings spans this occurrence + future ones, so their
+        // parent ids are exactly the future communityWideEvents to update.
+        const otherParentIds = new Set(
+          cascadeMeetings
+            .map((m) => m.communityWideEventId)
+            .filter(
+              (id): id is Id<"communityWideEvents"> =>
+                !!id && id !== args.communityWideEventId
+            )
+        );
+        for (const parentId of otherParentIds) {
+          const parent = await ctx.db.get(parentId);
+          // Skip cancelled parents — consistent with not editing cancelled rows.
+          if (!parent || parent.status === "cancelled") continue;
+          await ctx.db.patch(parentId, parentCascadeUpdates);
+        }
+      }
+    }
+
     return { meetingsUpdated };
   },
 });

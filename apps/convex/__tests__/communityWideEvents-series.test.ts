@@ -1002,6 +1002,18 @@ describe("communityWideEvents.update with scope", () => {
           expect(m.title).toBe("Updated");
         }
       }
+
+      // Parent communityWideEvents: future ones cascade, the past one does not.
+      // The Events feed renders titles from the parent record.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+      for (const cweId of [
+        createResult.communityWideEventIds[1],
+        createResult.communityWideEventIds[2],
+      ]) {
+        const parent = await ctx.db.get(cweId);
+        expect(parent!.title).toBe("Updated");
+      }
     });
   });
 
