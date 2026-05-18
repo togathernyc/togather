@@ -1004,6 +1004,76 @@ describe("communityWideEvents.update with scope", () => {
       }
     });
   });
+
+  test("scope=all_in_series cascades even when edited occurrence is fully overridden", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Every direct child of occurrence 1 is overridden. Series discovery must
+    // still find the seriesId from these rows so the cascade reaches occ 2.
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        await ctx.db.patch(m._id, { isOverridden: true });
+      }
+    });
+
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Occurrence 1's children are all overridden — only occ 2's 3 update.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        expect(m.title).toBe("Original");
+      }
+
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        expect(m.title).toBe("Updated");
+      }
+    });
+  });
 });
 
 // ============================================================================

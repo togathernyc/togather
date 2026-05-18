@@ -285,19 +285,28 @@ export const update = mutation({
     // "all_in_series" — but only to this occurrence and *future* ones. Past
     // occurrences have already happened; editing them would rewrite history.
     // ----------------------------------------------------------------
-    const directChildren = await ctx.db
+    // All direct children of this occurrence. Overridden ones are kept here
+    // only for series discovery — a `seriesId` lives on every child, and the
+    // edited occurrence could have all of its children overridden, in which
+    // case filtering first would lose the series link entirely.
+    const allDirectChildren = await ctx.db
       .query("meetings")
       .withIndex("by_communityWideEvent", (q) =>
         q.eq("communityWideEventId", args.communityWideEventId)
       )
-      .filter((q) => q.neq(q.field("isOverridden"), true))
       .collect();
+
+    // Non-overridden children receive the edit. Overridden meetings are
+    // intentional per-group customizations and are left untouched.
+    const directChildren = allDirectChildren.filter(
+      (m) => m.isOverridden !== true
+    );
 
     // Meetings that receive non-date field edits.
     let cascadeMeetings: typeof directChildren = directChildren;
     if (args.scope === "all_in_series") {
       const seriesIds = new Set(
-        directChildren
+        allDirectChildren
           .map((m) => m.seriesId)
           .filter((id): id is Id<"eventSeries"> => !!id)
       );
