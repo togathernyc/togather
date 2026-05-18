@@ -1005,6 +1005,75 @@ describe("communityWideEvents.update with scope", () => {
     });
   });
 
+  test("scope=all_in_series skips cancelled direct children", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // One group's occurrence-1 meeting is already cancelled.
+    let cancelledId: Id<"meetings">;
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      cancelledId = occ1[0]._id;
+      await ctx.db.patch(cancelledId, { status: "cancelled" });
+    });
+
+    const newDate1 = new Date("2026-04-11T19:00:00Z").getTime();
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scheduledAt: newDate1,
+        scope: "all_in_series",
+      }
+    );
+
+    // occ1: 2 non-cancelled children; occ2: 3 — the cancelled one is skipped.
+    expect(updateResult.meetingsUpdated).toBe(5);
+
+    await t.run(async (ctx) => {
+      const cancelled = await ctx.db.get(cancelledId);
+      // Untouched by the update: still cancelled, original title and date.
+      expect(cancelled!.status).toBe("cancelled");
+      expect(cancelled!.title).toBe("Original");
+      expect(cancelled!.scheduledAt).toBe(date1);
+
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        if (m._id === cancelledId) continue;
+        expect(m.title).toBe("Updated");
+        expect(m.scheduledAt).toBe(newDate1);
+      }
+    });
+  });
+
   test("scope=all_in_series cascades even when edited occurrence is fully overridden", async () => {
     const t = convexTest(schema, modules);
     const setup = await setupCommunityWideTestData(t);

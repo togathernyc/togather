@@ -296,10 +296,11 @@ export const update = mutation({
       )
       .collect();
 
-    // Non-overridden children receive the edit. Overridden meetings are
-    // intentional per-group customizations and are left untouched.
+    // Children that receive the edit: non-overridden and not cancelled.
+    // Overridden meetings are intentional per-group customizations; cancelled
+    // meetings must not be patched or have reminder jobs rescheduled.
     const directChildren = allDirectChildren.filter(
-      (m) => m.isOverridden !== true
+      (m) => m.isOverridden !== true && m.status !== "cancelled"
     );
 
     // Meetings that receive non-date field edits.
