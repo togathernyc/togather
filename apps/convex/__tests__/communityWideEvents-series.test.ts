@@ -1215,6 +1215,72 @@ describe("communityWideEvents.update with scope", () => {
       }
     });
   });
+
+  test("scope=all_in_series skips a past occurrence even if its child dates are corrupt", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate = new Date("2026-04-10T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Simulate the collapsed-date corruption: the PAST occurrence's children
+    // carry a future scheduledAt. The parent CWE keeps its real past date.
+    const corruptDate = new Date("2026-06-01T18:00:00Z").getTime();
+    await t.run(async (ctx) => {
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        await ctx.db.patch(m._id, { scheduledAt: corruptDate });
+      }
+    });
+
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[1],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the future occurrence's 3 children — the past occurrence is excluded
+    // because its parent CWE date is in the past, not its (corrupt) child date.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        expect(m.title).toBe("Original");
+      }
+      // The past occurrence's parent record is left stale too.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+    });
+  });
 });
 
 // ============================================================================
