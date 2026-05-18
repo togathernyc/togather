@@ -40,6 +40,9 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // Pin "now" well before every date these tests use, so series occurrences
+  // are deterministically in the future regardless of the machine clock.
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 });
 
 afterEach(() => {
@@ -933,6 +936,72 @@ describe("communityWideEvents.update with scope", () => {
       // The second occurrence's parent CWE also keeps its own date.
       const cwe2 = await ctx.db.get(createResult.communityWideEventIds[1]);
       expect(cwe2!.scheduledAt).toBe(date2);
+    });
+  });
+
+  test("scope=all_in_series leaves PAST occurrences untouched", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is pinned to 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const futureDate2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate1, futureDate2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Edit the first FUTURE occurrence with scope: "all_in_series".
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[1],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the two future occurrences' meetings (3 groups x 2 dates).
+    expect(updateResult.meetingsUpdated).toBe(6);
+
+    await t.run(async (ctx) => {
+      // Past occurrence: untouched.
+      const pastMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastMeetings) {
+        expect(m.title).toBe("Original");
+      }
+
+      // Both future occurrences: updated.
+      for (const cweId of [
+        createResult.communityWideEventIds[1],
+        createResult.communityWideEventIds[2],
+      ]) {
+        const meetings = await ctx.db
+          .query("meetings")
+          .withIndex("by_communityWideEvent", (q) =>
+            q.eq("communityWideEventId", cweId)
+          )
+          .collect();
+        for (const m of meetings) {
+          expect(m.title).toBe("Updated");
+        }
+      }
     });
   });
 });

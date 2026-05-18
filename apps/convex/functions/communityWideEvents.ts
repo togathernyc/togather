@@ -279,9 +279,11 @@ export const update = mutation({
     // A scheduledAt change ONLY ever applies to this occurrence's direct
     // children. Each occurrence in a series has its own date, so cascading
     // one absolute timestamp across the series would collapse every other
-    // occurrence (including past ones) onto the same day. Non-date fields
-    // (title, note, RSVP config, …) still cascade across the whole series
-    // when scope is "all_in_series".
+    // occurrence onto the same day.
+    //
+    // Non-date fields (title, note, RSVP config, …) cascade under
+    // "all_in_series" — but only to this occurrence and *future* ones. Past
+    // occurrences have already happened; editing them would rewrite history.
     // ----------------------------------------------------------------
     const directChildren = await ctx.db
       .query("meetings")
@@ -300,21 +302,22 @@ export const update = mutation({
           .filter((id): id is Id<"eventSeries"> => !!id)
       );
       if (seriesIds.size > 0) {
-        const seen = new Set<string>();
-        const collected: typeof directChildren = [];
+        const byId = new Map<Id<"meetings">, (typeof directChildren)[number]>();
+        // The edited occurrence's own children always receive the edit.
+        for (const m of directChildren) byId.set(m._id, m);
         for (const sid of seriesIds) {
           const seriesMeetings = await ctx.db
             .query("meetings")
             .withIndex("by_series", (q) => q.eq("seriesId", sid))
             .collect();
           for (const m of seriesMeetings) {
-            if (seen.has(m._id)) continue;
-            seen.add(m._id);
             if (m.isOverridden === true || m.status === "cancelled") continue;
-            collected.push(m);
+            // Skip occurrences that have already happened.
+            if (m.scheduledAt < timestamp) continue;
+            byId.set(m._id, m);
           }
         }
-        cascadeMeetings = collected;
+        cascadeMeetings = [...byId.values()];
       }
     }
 
