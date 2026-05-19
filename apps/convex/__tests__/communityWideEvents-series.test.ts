@@ -32,7 +32,7 @@ vi.mock("jose", () => ({
 
 import { convexTest } from "convex-test";
 import schema from "../schema";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { modules } from "../test.setup";
 
@@ -40,6 +40,9 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // Pin "now" well before every date these tests use, so series occurrences
+  // are deterministically in the future regardless of the machine clock.
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 });
 
 afterEach(() => {
@@ -865,6 +868,617 @@ describe("communityWideEvents.update with scope", () => {
           expect(m.title).toBe("Updated");
         }
       }
+    });
+  });
+
+  test("scope=all_in_series does NOT collapse other occurrences' dates", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    // Create series with 2 dates, 3 groups (6 meetings)
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Dinner",
+        meetingType: 1,
+      }
+    );
+
+    // Move the FIRST occurrence to a new time, with scope: "all_in_series".
+    // The title change should cascade to every occurrence, but the date
+    // change must apply ONLY to this occurrence — the second occurrence
+    // keeps its own date2.
+    const newDate1 = new Date("2026-04-11T19:00:00Z").getTime();
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: setup.adminToken,
+      communityWideEventId: createResult.communityWideEventIds[0],
+      title: "Renamed",
+      scheduledAt: newDate1,
+      scope: "all_in_series",
+    });
+
+    await t.run(async (ctx) => {
+      // Occurrence 1: children moved to newDate1
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      expect(occ1).toHaveLength(3);
+      for (const m of occ1) {
+        expect(m.scheduledAt).toBe(newDate1);
+        expect(m.title).toBe("Renamed");
+      }
+
+      // Occurrence 2: children KEPT date2 — not collapsed onto newDate1.
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      expect(occ2).toHaveLength(3);
+      for (const m of occ2) {
+        expect(m.scheduledAt).toBe(date2);
+        // Non-date fields still cascade.
+        expect(m.title).toBe("Renamed");
+      }
+
+      // The second occurrence's parent CWE also keeps its own date.
+      const cwe2 = await ctx.db.get(createResult.communityWideEventIds[1]);
+      expect(cwe2!.scheduledAt).toBe(date2);
+    });
+  });
+
+  test("scope=all_in_series leaves PAST occurrences untouched", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is pinned to 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const futureDate2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate1, futureDate2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Edit the first FUTURE occurrence with scope: "all_in_series".
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[1],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the two future occurrences' meetings (3 groups x 2 dates).
+    expect(updateResult.meetingsUpdated).toBe(6);
+
+    await t.run(async (ctx) => {
+      // Past occurrence: untouched.
+      const pastMeetings = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastMeetings) {
+        expect(m.title).toBe("Original");
+      }
+
+      // Both future occurrences: updated.
+      for (const cweId of [
+        createResult.communityWideEventIds[1],
+        createResult.communityWideEventIds[2],
+      ]) {
+        const meetings = await ctx.db
+          .query("meetings")
+          .withIndex("by_communityWideEvent", (q) =>
+            q.eq("communityWideEventId", cweId)
+          )
+          .collect();
+        for (const m of meetings) {
+          expect(m.title).toBe("Updated");
+        }
+      }
+
+      // Parent communityWideEvents: future ones cascade, the past one does not.
+      // The Events feed renders titles from the parent record.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+      for (const cweId of [
+        createResult.communityWideEventIds[1],
+        createResult.communityWideEventIds[2],
+      ]) {
+        const parent = await ctx.db.get(cweId);
+        expect(parent!.title).toBe("Updated");
+      }
+    });
+  });
+
+  test("scope=all_in_series skips cancelled direct children", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // One group's occurrence-1 meeting is already cancelled.
+    let cancelledId: Id<"meetings">;
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      cancelledId = occ1[0]._id;
+      await ctx.db.patch(cancelledId, { status: "cancelled" });
+    });
+
+    const newDate1 = new Date("2026-04-11T19:00:00Z").getTime();
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scheduledAt: newDate1,
+        scope: "all_in_series",
+      }
+    );
+
+    // occ1: 2 non-cancelled children; occ2: 3 — the cancelled one is skipped.
+    expect(updateResult.meetingsUpdated).toBe(5);
+
+    await t.run(async (ctx) => {
+      const cancelled = await ctx.db.get(cancelledId);
+      // Untouched by the update: still cancelled, original title and date.
+      expect(cancelled!.status).toBe("cancelled");
+      expect(cancelled!.title).toBe("Original");
+      expect(cancelled!.scheduledAt).toBe(date1);
+
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        if (m._id === cancelledId) continue;
+        expect(m.title).toBe("Updated");
+        expect(m.scheduledAt).toBe(newDate1);
+      }
+    });
+  });
+
+  test("scope=all_in_series cascades even when edited occurrence is fully overridden", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Every direct child of occurrence 1 is overridden. Series discovery must
+    // still find the seriesId from these rows so the cascade reaches occ 2.
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        await ctx.db.patch(m._id, { isOverridden: true });
+      }
+    });
+
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Occurrence 1's children are all overridden — only occ 2's 3 update.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      const occ1 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of occ1) {
+        expect(m.title).toBe("Original");
+      }
+
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        expect(m.title).toBe("Updated");
+      }
+    });
+  });
+
+  test("scope=all_in_series cascades to a future parent whose children are all overridden", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // The future occurrence 2 has every child overridden — none of its
+    // meetings will be in cascadeMeetings, but its parent record must still
+    // receive the all-series title change (the feed renders parent.title).
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        await ctx.db.patch(m._id, { isOverridden: true });
+      }
+    });
+
+    await t.mutation(api.functions.communityWideEvents.update, {
+      token: setup.adminToken,
+      communityWideEventId: createResult.communityWideEventIds[0],
+      title: "Updated",
+      scope: "all_in_series",
+    });
+
+    await t.run(async (ctx) => {
+      // Occurrence 2's parent record cascaded despite all children overridden.
+      const parent2 = await ctx.db.get(createResult.communityWideEventIds[1]);
+      expect(parent2!.title).toBe("Updated");
+
+      // Its overridden child meetings are still left untouched.
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        expect(m.title).toBe("Original");
+      }
+    });
+  });
+
+  test("scope=all_in_series skips a past occurrence even if its child dates are corrupt", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate = new Date("2026-04-10T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Simulate the collapsed-date corruption: the PAST occurrence's children
+    // carry a future scheduledAt. The parent CWE keeps its real past date.
+    const corruptDate = new Date("2026-06-01T18:00:00Z").getTime();
+    await t.run(async (ctx) => {
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        await ctx.db.patch(m._id, { scheduledAt: corruptDate });
+      }
+    });
+
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[1],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the future occurrence's 3 children — the past occurrence is excluded
+    // because its parent CWE date is in the past, not its (corrupt) child date.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        expect(m.title).toBe("Original");
+      }
+      // The past occurrence's parent record is left stale too.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+    });
+  });
+
+  test("scope=all_in_series anchored on a past occurrence skips that anchor", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    // System time is 2026-01-01 (see beforeEach).
+    const pastDate = new Date("2025-12-01T18:00:00Z").getTime();
+    const futureDate = new Date("2026-04-10T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [pastDate, futureDate],
+        title: "Original",
+        meetingType: 1,
+      }
+    );
+
+    // Anchor the all_in_series edit on the PAST occurrence.
+    const updateResult = await t.mutation(
+      api.functions.communityWideEvents.update,
+      {
+        token: setup.adminToken,
+        communityWideEventId: createResult.communityWideEventIds[0],
+        title: "Updated",
+        scope: "all_in_series",
+      }
+    );
+
+    // Only the future occurrence's 3 children — the past anchor is skipped.
+    expect(updateResult.meetingsUpdated).toBe(3);
+
+    await t.run(async (ctx) => {
+      // Past anchor: parent and children untouched.
+      const pastParent = await ctx.db.get(createResult.communityWideEventIds[0]);
+      expect(pastParent!.title).toBe("Original");
+      const pastChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[0])
+        )
+        .collect();
+      for (const m of pastChildren) {
+        expect(m.title).toBe("Original");
+      }
+
+      // Future occurrence: parent and children updated.
+      const futureParent = await ctx.db.get(createResult.communityWideEventIds[1]);
+      expect(futureParent!.title).toBe("Updated");
+      const futureChildren = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of futureChildren) {
+        expect(m.title).toBe("Updated");
+      }
+    });
+  });
+});
+
+// ============================================================================
+// communityWideEvents.repairCollapsedChildDates
+// ============================================================================
+
+describe("communityWideEvents.repairCollapsedChildDates", () => {
+  test("restores collapsed child dates, skips overrides", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Dinner",
+        meetingType: 1,
+      }
+    );
+
+    // Simulate the old bug: collapse occurrence 2's children onto date1, and
+    // mark one of them as an override that the repair must NOT touch.
+    let overriddenId: Id<"meetings">;
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const [i, m] of occ2.entries()) {
+        if (i === 0) {
+          // An intentional per-group override at a custom time.
+          overriddenId = m._id;
+          await ctx.db.patch(m._id, { scheduledAt: date1, isOverridden: true });
+        } else {
+          await ctx.db.patch(m._id, { scheduledAt: date1 });
+        }
+      }
+    });
+
+    const result = await t.mutation(
+      internal.functions.communityWideEvents.repairCollapsedChildDates,
+      {}
+    );
+
+    // 2 of occurrence 2's 3 children were collapsed and non-overridden.
+    expect(result.meetingsRepaired).toBe(2);
+
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const m of occ2) {
+        if (m._id === overriddenId) {
+          // Override left exactly as the leader set it.
+          expect(m.scheduledAt).toBe(date1);
+          expect(m.isOverridden).toBe(true);
+        } else {
+          expect(m.scheduledAt).toBe(date2);
+        }
+      }
+    });
+
+    // Idempotent — a second run finds nothing to repair.
+    const second = await t.mutation(
+      internal.functions.communityWideEvents.repairCollapsedChildDates,
+      {}
+    );
+    expect(second.meetingsRepaired).toBe(0);
+  });
+
+  test("leaves cancelled children untouched", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupCommunityWideTestData(t);
+
+    const date1 = new Date("2026-04-10T18:00:00Z").getTime();
+    const date2 = new Date("2026-04-17T18:00:00Z").getTime();
+
+    const createResult = await t.mutation(
+      api.functions.communityWideEvents.createSeries,
+      {
+        token: setup.adminToken,
+        communityId: setup.communityId,
+        groupTypeId: setup.groupTypeId,
+        seriesName: "Weekly Dinner",
+        dates: [date1, date2],
+        title: "Dinner",
+        meetingType: 1,
+      }
+    );
+
+    // Collapse occurrence 2's children onto date1; cancel one of them.
+    let cancelledId: Id<"meetings">;
+    await t.run(async (ctx) => {
+      const occ2 = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", createResult.communityWideEventIds[1])
+        )
+        .collect();
+      for (const [i, m] of occ2.entries()) {
+        if (i === 0) {
+          cancelledId = m._id;
+          await ctx.db.patch(m._id, { scheduledAt: date1, status: "cancelled" });
+        } else {
+          await ctx.db.patch(m._id, { scheduledAt: date1 });
+        }
+      }
+    });
+
+    const result = await t.mutation(
+      internal.functions.communityWideEvents.repairCollapsedChildDates,
+      {}
+    );
+
+    // Only the 2 non-cancelled collapsed children are repaired.
+    expect(result.meetingsRepaired).toBe(2);
+
+    await t.run(async (ctx) => {
+      const cancelled = await ctx.db.get(cancelledId);
+      // Cancelled meeting is never repaired or rescheduled.
+      expect(cancelled!.status).toBe("cancelled");
+      expect(cancelled!.scheduledAt).toBe(date1);
     });
   });
 });

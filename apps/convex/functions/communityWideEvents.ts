@@ -14,7 +14,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { Id } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
 import { now, generateShortId } from "../lib/utils";
 import { requireAuth } from "../lib/auth";
 import { requireCommunityAdmin } from "../lib/permissions";
@@ -256,6 +256,16 @@ export const update = mutation({
 
     const timestamp = now();
 
+    // An "all_in_series" edit is forward-looking: this occurrence and future
+    // ones. If the edited occurrence is itself in the past, it is treated like
+    // any other past occurrence and skipped entirely — only future occurrences
+    // change. (A default-scope edit still applies to the chosen occurrence
+    // even when it's past.) This is keyed off the parent's own scheduledAt,
+    // which stays authoritative even when child meeting dates are corrupt.
+    const includeAnchor =
+      args.scope !== "all_in_series" ||
+      communityWideEvent.scheduledAt >= timestamp;
+
     // Build update object for the parent event
     const parentUpdates: Record<string, unknown> = { updatedAt: timestamp };
     if (args.title !== undefined) parentUpdates.title = args.title;
@@ -270,127 +280,194 @@ export const update = mutation({
       parentUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
     }
 
-    // Update the parent event
-    await ctx.db.patch(args.communityWideEventId, parentUpdates);
+    // Update the parent event (skipped when this is a past all_in_series anchor).
+    if (includeAnchor) {
+      await ctx.db.patch(args.communityWideEventId, parentUpdates);
+    }
 
-    // Determine which meetings to update based on scope
-    let childMeetings;
+    // ----------------------------------------------------------------
+    // Determine which meetings receive the edit.
+    //
+    // A scheduledAt change ONLY ever applies to this occurrence's direct
+    // children. Each occurrence in a series has its own date, so cascading
+    // one absolute timestamp across the series would collapse every other
+    // occurrence onto the same day.
+    //
+    // Non-date fields (title, note, RSVP config, …) cascade under
+    // "all_in_series" — but only to this occurrence and *future* ones. Past
+    // occurrences have already happened; editing them would rewrite history.
+    // ----------------------------------------------------------------
+    // All direct children of this occurrence. Overridden ones are kept here
+    // only for series discovery — a `seriesId` lives on every child, and the
+    // edited occurrence could have all of its children overridden, in which
+    // case filtering first would lose the series link entirely.
+    const allDirectChildren = await ctx.db
+      .query("meetings")
+      .withIndex("by_communityWideEvent", (q) =>
+        q.eq("communityWideEventId", args.communityWideEventId)
+      )
+      .collect();
+
+    // Children that receive the edit: non-overridden and not cancelled.
+    // Overridden meetings are intentional per-group customizations; cancelled
+    // meetings must not be patched or have reminder jobs rescheduled.
+    const directChildren = allDirectChildren.filter(
+      (m) => m.isOverridden !== true && m.status !== "cancelled"
+    );
+
+    // Meetings that receive non-date field edits.
+    let cascadeMeetings: typeof directChildren = directChildren;
+    // Future, non-cancelled parent occurrences in the series — the targets of
+    // the parent-record cascade below.
+    let futureSeriesParents: Doc<"communityWideEvents">[] = [];
     if (args.scope === "all_in_series") {
-      // Find all seriesIds from child meetings of this communityWideEvent,
-      // then gather all meetings across those series
-      const directChildren = await ctx.db
-        .query("meetings")
-        .withIndex("by_communityWideEvent", (q) =>
-          q.eq("communityWideEventId", args.communityWideEventId)
-        )
-        .collect();
-
       const seriesIds = new Set(
-        directChildren.map((m) => m.seriesId).filter((id): id is Id<"eventSeries"> => !!id)
+        allDirectChildren
+          .map((m) => m.seriesId)
+          .filter((id): id is Id<"eventSeries"> => !!id)
       );
-
       if (seriesIds.size > 0) {
-        // Gather all meetings from all discovered series
-        const allSeriesMeetings = [];
+        // Gather every meeting across the series, deduplicated.
+        const seriesMeetings: (typeof directChildren)[number][] = [];
+        const seenMeeting = new Set<string>();
+        const seriesParentIds = new Set<Id<"communityWideEvents">>();
         for (const sid of seriesIds) {
-          const seriesMeetings = await ctx.db
+          const ms = await ctx.db
             .query("meetings")
             .withIndex("by_series", (q) => q.eq("seriesId", sid))
             .collect();
-          allSeriesMeetings.push(...seriesMeetings);
+          for (const m of ms) {
+            if (seenMeeting.has(m._id)) continue;
+            seenMeeting.add(m._id);
+            seriesMeetings.push(m);
+            if (m.communityWideEventId) seriesParentIds.add(m.communityWideEventId);
+          }
         }
-        // Deduplicate and filter to non-overridden, non-cancelled
-        const seen = new Set<string>();
-        childMeetings = allSeriesMeetings.filter((m) => {
-          if (seen.has(m._id)) return false;
-          seen.add(m._id);
-          return m.isOverridden !== true && m.status !== "cancelled";
-        });
-      } else {
-        // No series — fall back to direct children only
-        childMeetings = directChildren.filter((m) => m.isOverridden !== true);
+
+        // Fetch the parent communityWideEvents. The occurrence date comes from
+        // the parent, which stays authoritative even when a child meeting's
+        // own `scheduledAt` is corrupt (the exact state this PR repairs) — so
+        // "skip past occurrences" must key off the parent, not the child.
+        const parentById = new Map<Id<"communityWideEvents">, Doc<"communityWideEvents">>();
+        for (const pid of seriesParentIds) {
+          const parent = await ctx.db.get(pid);
+          if (parent) parentById.set(pid, parent);
+        }
+
+        // cascadeMeetings = the edited occurrence's children (unless it's a
+        // past anchor), plus children of future, non-cancelled occurrences
+        // (judged by the parent's date).
+        const byId = new Map<Id<"meetings">, (typeof directChildren)[number]>();
+        if (includeAnchor) {
+          for (const m of directChildren) byId.set(m._id, m);
+        }
+        for (const m of seriesMeetings) {
+          if (m.isOverridden === true || m.status === "cancelled") continue;
+          if (!m.communityWideEventId) continue;
+          const parent = parentById.get(m.communityWideEventId);
+          if (!parent || parent.status === "cancelled") continue;
+          if (parent.scheduledAt < timestamp) continue;
+          byId.set(m._id, m);
+        }
+        cascadeMeetings = [...byId.values()];
+
+        futureSeriesParents = [...parentById.values()].filter(
+          (p) =>
+            p._id !== args.communityWideEventId &&
+            p.status !== "cancelled" &&
+            p.scheduledAt >= timestamp
+        );
       }
-    } else {
-      // Default: this_date_all_groups — existing behavior
-      childMeetings = await ctx.db
-        .query("meetings")
-        .withIndex("by_communityWideEvent", (q) =>
-          q.eq("communityWideEventId", args.communityWideEventId)
-        )
-        .filter((q) => q.neq(q.field("isOverridden"), true))
-        .collect();
     }
 
-    // Build update object for child meetings
-    const childUpdates: Record<string, unknown> = {};
-    if (args.title !== undefined) childUpdates.title = args.title;
-    if (args.scheduledAt !== undefined) {
-      childUpdates.scheduledAt = args.scheduledAt;
-      // Recalculate reminder and attendance confirmation times
-      childUpdates.reminderAt = args.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
-      const meetingEndTime = args.scheduledAt + DEFAULT_MEETING_DURATION_MS;
-      childUpdates.attendanceConfirmationAt = meetingEndTime + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
-      // Reset sent flags
-      childUpdates.reminderSent = false;
-      childUpdates.attendanceConfirmationSent = false;
-    }
-    if (args.meetingType !== undefined) childUpdates.meetingType = args.meetingType;
-    if (args.meetingLink !== undefined) childUpdates.meetingLink = args.meetingLink;
-    if (args.note !== undefined) childUpdates.note = args.note;
+    // Non-date field updates — cascade to the scoped set.
+    const cascadeUpdates: Record<string, unknown> = {};
+    if (args.title !== undefined) cascadeUpdates.title = args.title;
+    if (args.meetingType !== undefined) cascadeUpdates.meetingType = args.meetingType;
+    if (args.meetingLink !== undefined) cascadeUpdates.meetingLink = args.meetingLink;
+    if (args.note !== undefined) cascadeUpdates.note = args.note;
     // coverImage is intentionally NOT cascaded — it's parent-only so that
     // admin-level cover edits don't clobber per-group leader overrides. The
     // read paths already fall back from child → parent when the child has no
     // cover of its own.
-    if (args.rsvpEnabled !== undefined) childUpdates.rsvpEnabled = args.rsvpEnabled;
-    if (args.rsvpOptions !== undefined) childUpdates.rsvpOptions = args.rsvpOptions;
-    if (args.hideRsvpCount !== undefined) childUpdates.hideRsvpCount = args.hideRsvpCount;
-    if (args.visibility !== undefined) childUpdates.visibility = args.visibility;
+    if (args.rsvpEnabled !== undefined) cascadeUpdates.rsvpEnabled = args.rsvpEnabled;
+    if (args.rsvpOptions !== undefined) cascadeUpdates.rsvpOptions = args.rsvpOptions;
+    if (args.hideRsvpCount !== undefined) cascadeUpdates.hideRsvpCount = args.hideRsvpCount;
+    if (args.visibility !== undefined) cascadeUpdates.visibility = args.visibility;
 
-    // Update all non-overridden child meetings
+    // Date update — applies ONLY to this occurrence's direct children.
+    const dateChanged = args.scheduledAt !== undefined;
+    const dateUpdates: Record<string, unknown> = {};
+    if (dateChanged) {
+      const scheduledAt = args.scheduledAt as number;
+      dateUpdates.scheduledAt = scheduledAt;
+      dateUpdates.reminderAt = scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+      dateUpdates.attendanceConfirmationAt =
+        scheduledAt + DEFAULT_MEETING_DURATION_MS + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+      // Reset sent flags
+      dateUpdates.reminderSent = false;
+      dateUpdates.attendanceConfirmationSent = false;
+    }
+
+    // Merge per-meeting patches so each meeting is written at most once.
+    // A date change applies only to the edited occurrence's children — and
+    // not at all when it's a past all_in_series anchor.
+    const directIds = new Set(
+      includeAnchor ? directChildren.map((m) => m._id) : []
+    );
+    const patches = new Map<
+      Id<"meetings">,
+      { meeting: (typeof directChildren)[number]; patch: Record<string, unknown> }
+    >();
+    for (const m of cascadeMeetings) {
+      patches.set(m._id, { meeting: m, patch: { ...cascadeUpdates } });
+    }
+    if (dateChanged && includeAnchor) {
+      for (const m of directChildren) {
+        const entry = patches.get(m._id) ?? { meeting: m, patch: {} };
+        Object.assign(entry.patch, dateUpdates);
+        patches.set(m._id, entry);
+      }
+    }
+
+    // Apply patches and reschedule jobs for any occurrence whose time changed.
     let meetingsUpdated = 0;
-    for (const meeting of childMeetings) {
-      // Cancel old scheduled jobs before scheduling new ones if time changed
-      if (args.scheduledAt !== undefined) {
-        // Cancel existing reminder job if present
+    for (const { meeting, patch } of patches.values()) {
+      const timeChangedForThis = dateChanged && directIds.has(meeting._id);
+
+      // Cancel old scheduled jobs before scheduling new ones if time changed.
+      if (timeChangedForThis) {
         if (meeting.reminderJobId) {
-          try {
-            await ctx.scheduler.cancel(meeting.reminderJobId);
-          } catch {
-            // Job may have already run or been cancelled - ignore
-          }
+          try { await ctx.scheduler.cancel(meeting.reminderJobId); } catch { /* already run */ }
         }
-        // Cancel existing attendance confirmation job if present
         if (meeting.attendanceConfirmationJobId) {
-          try {
-            await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId);
-          } catch {
-            // Job may have already run or been cancelled - ignore
-          }
+          try { await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId); } catch { /* already run */ }
         }
       }
 
-      const patchPayload: Record<string, unknown> = { ...childUpdates };
       if (args.title !== undefined) {
         const group = await ctx.db.get(meeting.groupId);
-        patchPayload.searchText = buildMeetingSearchText({
+        patch.searchText = buildMeetingSearchText({
           title: args.title,
           locationOverride: meeting.locationOverride,
           groupName: group?.name,
         });
       }
 
-      await ctx.db.patch(meeting._id, patchPayload);
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(meeting._id, patch);
+      }
 
-      // Reschedule jobs if time changed and store new job IDs
-      if (args.scheduledAt !== undefined) {
-        const newReminderAt = args.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+      // Reschedule jobs if this occurrence's time changed.
+      if (timeChangedForThis) {
+        const scheduledAt = args.scheduledAt as number;
+        const newReminderAt = scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
         const newAttendanceConfirmationAt =
-          args.scheduledAt + DEFAULT_MEETING_DURATION_MS + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+          scheduledAt + DEFAULT_MEETING_DURATION_MS + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
 
         let newReminderJobId = undefined;
         let newAttendanceConfirmationJobId = undefined;
 
-        // Schedule new reminder if in future (we reset reminderSent=false in childUpdates above)
         if (newReminderAt > timestamp) {
           newReminderJobId = await ctx.scheduler.runAt(
             newReminderAt,
@@ -398,8 +475,6 @@ export const update = mutation({
             { meetingId: meeting._id }
           );
         }
-
-        // Schedule new attendance confirmation if in future
         if (newAttendanceConfirmationAt > timestamp) {
           newAttendanceConfirmationJobId = await ctx.scheduler.runAt(
             newAttendanceConfirmationAt,
@@ -408,7 +483,6 @@ export const update = mutation({
           );
         }
 
-        // Store the new job IDs
         await ctx.db.patch(meeting._id, {
           reminderJobId: newReminderJobId,
           attendanceConfirmationJobId: newAttendanceConfirmationJobId,
@@ -416,6 +490,30 @@ export const update = mutation({
       }
 
       meetingsUpdated++;
+    }
+
+    // Cascade non-date fields to the other future occurrences' parent
+    // communityWideEvents. The Events feed and admin list render from the
+    // parent record (e.g. `parent.title`), so without this they'd show stale
+    // titles/notes even though the child meetings were updated.
+    if (args.scope === "all_in_series") {
+      const parentCascadeUpdates: Record<string, unknown> = { updatedAt: timestamp };
+      if (args.title !== undefined) parentCascadeUpdates.title = args.title;
+      if (args.meetingType !== undefined) parentCascadeUpdates.meetingType = args.meetingType;
+      if (args.meetingLink !== undefined) parentCascadeUpdates.meetingLink = args.meetingLink;
+      if (args.note !== undefined) parentCascadeUpdates.note = args.note;
+      if (args.coverImage !== undefined) {
+        parentCascadeUpdates.coverImage = args.coverImage === "" ? undefined : args.coverImage;
+      }
+
+      // Only cascade if there's an actual field change beyond `updatedAt`.
+      if (Object.keys(parentCascadeUpdates).length > 1) {
+        // futureSeriesParents is already filtered to future, non-cancelled
+        // occurrences other than the edited one.
+        for (const parent of futureSeriesParents) {
+          await ctx.db.patch(parent._id, parentCascadeUpdates);
+        }
+      }
     }
 
     return { meetingsUpdated };
@@ -739,6 +837,131 @@ export const createSeries = mutation({
       communityWideEventIds,
       totalMeetingsCreated,
     };
+  },
+});
+
+// ============================================================================
+// Data repair (one-off migration)
+// ============================================================================
+
+/**
+ * Restore child meeting dates that were collapsed by the old
+ * `update(scope: "all_in_series")` bug.
+ *
+ * That bug overwrote `scheduledAt` on every meeting sharing a series with a
+ * single absolute timestamp, dragging the children of past community-wide
+ * events forward onto one future date — so the Events feed rendered one card
+ * per historical occurrence all stacked on the same day.
+ *
+ * For every non-overridden child meeting whose `scheduledAt` diverges from its
+ * parent communityWideEvent, this resets the meeting to the parent's date and
+ * re-syncs the reminder / attendance-confirmation jobs. Per-group overrides are
+ * left untouched. Safe to run repeatedly — already-correct children are skipped.
+ *
+ * Run with:
+ *   npx convex run functions/communityWideEvents:repairCollapsedChildDates '{"dryRun":true}'
+ */
+export const repairCollapsedChildDates = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun === true;
+    const timestamp = now();
+
+    const communityWideEvents = await ctx.db.query("communityWideEvents").collect();
+
+    let meetingsRepaired = 0;
+    let jobsCancelled = 0;
+    let jobsRescheduled = 0;
+    const perEvent: Array<{
+      communityWideEventId: Id<"communityWideEvents">;
+      title: string;
+      repaired: number;
+    }> = [];
+
+    for (const cwe of communityWideEvents) {
+      const children = await ctx.db
+        .query("meetings")
+        .withIndex("by_communityWideEvent", (q) =>
+          q.eq("communityWideEventId", cwe._id)
+        )
+        .collect();
+
+      let repairedForEvent = 0;
+      for (const meeting of children) {
+        // Leave per-group overrides untouched — leaders set those on purpose.
+        if (meeting.isOverridden === true) continue;
+        // Never repair or reschedule cancelled meetings — consistent with the
+        // update/cancel paths, which deliberately skip cancelled rows.
+        if (meeting.status === "cancelled") continue;
+        if (meeting.scheduledAt === cwe.scheduledAt) continue;
+
+        repairedForEvent++;
+        meetingsRepaired++;
+        if (dryRun) continue;
+
+        // Cancel stale jobs scheduled for the wrong (collapsed) date.
+        if (meeting.reminderJobId) {
+          try {
+            await ctx.scheduler.cancel(meeting.reminderJobId);
+            jobsCancelled++;
+          } catch { /* already run */ }
+        }
+        if (meeting.attendanceConfirmationJobId) {
+          try {
+            await ctx.scheduler.cancel(meeting.attendanceConfirmationJobId);
+            jobsCancelled++;
+          } catch { /* already run */ }
+        }
+
+        const reminderAt = cwe.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
+        const attendanceConfirmationAt =
+          cwe.scheduledAt + DEFAULT_MEETING_DURATION_MS + DEFAULT_ATTENDANCE_CONFIRMATION_OFFSET_MS;
+
+        await ctx.db.patch(meeting._id, {
+          scheduledAt: cwe.scheduledAt,
+          reminderAt,
+          attendanceConfirmationAt,
+          // A window already in the past is treated as handled so no sweep
+          // re-fires it; a future window is left pending for its new job.
+          reminderSent: reminderAt <= timestamp,
+          attendanceConfirmationSent: attendanceConfirmationAt <= timestamp,
+        });
+
+        // Reschedule jobs only when the restored time is still in the future.
+        let reminderJobId = undefined;
+        let attendanceConfirmationJobId = undefined;
+        if (reminderAt > timestamp) {
+          reminderJobId = await ctx.scheduler.runAt(
+            reminderAt,
+            internal.functions.scheduledJobs.sendMeetingReminder,
+            { meetingId: meeting._id }
+          );
+          jobsRescheduled++;
+        }
+        if (attendanceConfirmationAt > timestamp) {
+          attendanceConfirmationJobId = await ctx.scheduler.runAt(
+            attendanceConfirmationAt,
+            internal.functions.scheduledJobs.sendAttendanceConfirmation,
+            { meetingId: meeting._id }
+          );
+          jobsRescheduled++;
+        }
+        await ctx.db.patch(meeting._id, {
+          reminderJobId,
+          attendanceConfirmationJobId,
+        });
+      }
+
+      if (repairedForEvent > 0) {
+        perEvent.push({
+          communityWideEventId: cwe._id,
+          title: cwe.title,
+          repaired: repairedForEvent,
+        });
+      }
+    }
+
+    return { dryRun, meetingsRepaired, jobsCancelled, jobsRescheduled, perEvent };
   },
 });
 
