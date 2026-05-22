@@ -184,6 +184,12 @@ export const getTeam = query({
       description: team.description,
       channelId: team.channelId ?? null,
       hasChannel: team.channelId !== undefined,
+      // Slug is resolved here (group-membership-gated, which the team's
+      // scheduler always satisfies) so the team detail screen can deep-link
+      // into the chat without a separate `getChannel` lookup — that one is
+      // membership-gated, and `createServingTeam` deliberately does not add
+      // the creator as a member.
+      channelSlug: channel?.slug ?? null,
       isArchived: team.isArchived === true,
       memberCount: channel?.memberCount ?? 0,
       createdAt: team.createdAt,

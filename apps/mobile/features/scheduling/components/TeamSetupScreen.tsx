@@ -47,6 +47,7 @@ type Team = {
   name: string;
   description?: string;
   channelId: Id<"chatChannels"> | null;
+  channelSlug: string | null;
   hasChannel: boolean;
   isArchived: boolean;
   memberCount: number;
@@ -96,12 +97,9 @@ export function TeamSetupScreen() {
     teamId ? { teamId } : "skip",
   ) as { teamName: string; roles: StarterRole[] } | undefined;
 
-  // The team's chat channel, resolved for its slug — channel routes are
-  // slug-based (`/inbox/[groupId]/[channelSlug]`).
-  const channel = useAuthenticatedQuery(
-    api.functions.messaging.channels.getChannel,
-    team?.channelId ? { channelId: team.channelId } : "skip",
-  ) as { slug?: string } | null | undefined;
+  // The chat channel's slug arrives on the team itself (`getTeam` resolves
+  // it under the team's group-member gate) — `messaging.channels.getChannel`
+  // is membership-gated and the creator of a fresh team isn't a member yet.
 
   const createRole = useAuthenticatedMutation(
     api.functions.scheduling.roles.createRole,
@@ -118,9 +116,9 @@ export function TeamSetupScreen() {
   }, [router]);
 
   const handleOpenChat = useCallback(() => {
-    if (!team?.groupId || !channel?.slug) return;
-    router.push(`/inbox/${team.groupId}/${channel.slug}` as never);
-  }, [router, team?.groupId, channel?.slug]);
+    if (!team?.groupId || !team?.channelSlug) return;
+    router.push(`/inbox/${team.groupId}/${team.channelSlug}` as never);
+  }, [router, team?.groupId, team?.channelSlug]);
 
   const handleAcceptStarters = useCallback(async () => {
     if (!suggestion) return;
@@ -202,11 +200,11 @@ export function TeamSetupScreen() {
           {team.hasChannel && team.channelId ? (
             <Pressable
               onPress={handleOpenChat}
-              disabled={!channel?.slug}
+              disabled={!team?.channelSlug}
               style={({ pressed }) => [
                 styles.openChatRow,
                 { backgroundColor: colors.surfaceSecondary },
-                (pressed || !channel?.slug) && { opacity: 0.8 },
+                (pressed || !team?.channelSlug) && { opacity: 0.8 },
               ]}
             >
               <Ionicons

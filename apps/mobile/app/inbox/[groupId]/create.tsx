@@ -35,7 +35,7 @@ import {
 } from "@features/scheduling";
 import type { Id } from "@services/api/convex";
 
-type ChannelType = "custom" | "team" | "pco_services" | "cross_team";
+type ChannelType = "custom" | "pco_services" | "cross_team";
 
 const MAX_NAME_LENGTH = 50;
 
@@ -157,27 +157,18 @@ export default function CreateChannelScreen() {
         return;
       }
 
-      // Custom + Team channels are both created as manual channels here;
-      // a Team channel is then flagged + has its roles configured in the
-      // team setup screen (which also drives its event-plan membership sync).
+      // Custom channel. Serving teams are no longer created here — they get
+      // their own create flow in the Rostering hub (ADR-024 / ADR-025), which
+      // calls `createServingTeam` and provisions the team's chat channel as
+      // part of that flow.
       const result = await createCustomChannel({
         groupId: groupId as Id<"groups">,
         name: name.trim(),
         description: description.trim() || undefined,
         joinMode,
-        // Event Team channels don't auto-add the creator — they manage the
-        // channel as a group leader, and membership is auto-synced from
-        // event plans.
-        addCreatorAsMember: channelType !== "team",
+        addCreatorAsMember: true,
       });
-
-      if (channelType === "team") {
-        router.replace(
-          `/rostering/${groupId}/team/${result.channelId}`,
-        );
-      } else {
-        router.replace(`/inbox/${groupId}/${result.slug}`);
-      }
+      router.replace(`/inbox/${groupId}/${result.slug}`);
     } catch (error: any) {
       console.error("Failed to create channel:", error);
 
@@ -274,38 +265,6 @@ export default function CreateChannelScreen() {
                 style={[
                   styles.segmentButton,
                   { borderColor: colors.inputBorder, backgroundColor: colors.surface },
-                  channelType === "team" && [
-                    { backgroundColor: colors.selectedBackground },
-                    { borderColor: primaryColor },
-                  ],
-                ]}
-                onPress={() => setChannelType("team")}
-                disabled={isLoading}
-              >
-                <Ionicons
-                  name="calendar-outline"
-                  size={18}
-                  color={channelType === "team" ? primaryColor : colors.textSecondary}
-                  style={styles.segmentIcon}
-                />
-                <Text
-                  numberOfLines={2}
-                  style={[
-                    styles.segmentText,
-                    { color: colors.textSecondary },
-                    channelType === "team" && [
-                      styles.segmentTextSelected,
-                      { color: primaryColor },
-                    ],
-                  ]}
-                >
-                  Event Team
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.segmentButton,
-                  { borderColor: colors.inputBorder, backgroundColor: colors.surface },
                   channelType === "pco_services" && [
                     { backgroundColor: colors.selectedBackground },
                     { borderColor: primaryColor },
@@ -378,11 +337,9 @@ export default function CreateChannelScreen() {
             <Text style={[styles.channelTypeHint, { color: colors.textTertiary }]}>
               {channelType === "custom"
                 ? "A permanent channel — you choose who is in it. Best for ongoing, not time-bound groups."
-                : channelType === "team"
-                  ? "Time-bound: membership syncs automatically from event plans — whoever is scheduled to a role is added around the event date and removed afterward."
-                  : channelType === "cross_team"
-                    ? "Auto-syncs members rostered for chosen roles across multiple teams."
-                    : "Automatically sync members from Planning Center Services"}
+                : channelType === "cross_team"
+                  ? "Auto-syncs members rostered for chosen roles across multiple teams."
+                  : "Automatically sync members from Planning Center Services"}
             </Text>
             {!isCommunityAdmin && (
               <Text style={[styles.adminOnlyHint, { color: colors.textTertiary }]}>
