@@ -93,7 +93,6 @@ import type * as functions_messaging_readState from "../functions/messaging/read
 import type * as functions_messaging_sharedChannels from "../functions/messaging/sharedChannels.js";
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
-import type * as functions_migrations_migrateChannelsToTeams from "../functions/migrations/migrateChannelsToTeams.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
 import type * as functions_notifications_dailyEnabledSnapshot from "../functions/notifications/dailyEnabledSnapshot.js";
@@ -284,7 +283,6 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/sharedChannels": typeof functions_messaging_sharedChannels;
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
-  "functions/migrations/migrateChannelsToTeams": typeof functions_migrations_migrateChannelsToTeams;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
   "functions/notifications/dailyEnabledSnapshot": typeof functions_notifications_dailyEnabledSnapshot;

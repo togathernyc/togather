@@ -1,12 +1,16 @@
 /**
- * Tests for permanent members of a serving-team channel (ADR-023).
+ * Tests for permanent members of a serving team's channel (ADR-023 / ADR-025).
  *
  * A "permanent member" is a `chatChannelMembers` row with no `syncSource`:
  * a leader added them by hand and the rotation engine never removes them.
  *   - `addPermanentMember` inserts a non-synced row,
  *   - `removePermanentMember` soft-removes ONLY the non-synced row,
  *   - `reconcileTeamChannel` leaves permanent members intact,
- *   - auth: group leader passes, a plain channel member is rejected.
+ *   - auth: group leader passes, a plain channel member is rejected,
+ *   - a channel-less team rejects all three with a ConvexError.
+ *
+ * The mutations are keyed by `teamId` (ADR-025) and resolve the team's
+ * channel internally.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -16,10 +20,7 @@ import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
 import { api, internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
 import { buildSchedulingWorld, type SchedulingWorld } from "./fixtures";
-
-const DAY = 86400000;
 
 /**
  * Most-recently-created test handle — drained after each test so a pending
@@ -61,7 +62,7 @@ describe("permanent members — addPermanentMember", () => {
 
     const res = await t.mutation(
       api.functions.scheduling.teams.addPermanentMember,
-      { token: accessToken, channelId: world.channelId, userId: world.outsiderId },
+      { token: accessToken, teamId: world.teamId, userId: world.outsiderId },
     );
     expect(res.added).toBe(true);
 
@@ -80,7 +81,7 @@ describe("permanent members — addPermanentMember", () => {
 
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
 
@@ -95,12 +96,12 @@ describe("permanent members — addPermanentMember", () => {
 
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
     const res = await t.mutation(
       api.functions.scheduling.teams.addPermanentMember,
-      { token: accessToken, channelId: world.channelId, userId: world.outsiderId },
+      { token: accessToken, teamId: world.teamId, userId: world.outsiderId },
     );
     expect(res.added).toBe(false);
 
@@ -128,7 +129,7 @@ describe("permanent members — addPermanentMember", () => {
 
     const res = await t.mutation(
       api.functions.scheduling.teams.addPermanentMember,
-      { token: accessToken, channelId: world.channelId, userId: world.outsiderId },
+      { token: accessToken, teamId: world.teamId, userId: world.outsiderId },
     );
     expect(res.added).toBe(false);
 
@@ -148,12 +149,12 @@ describe("permanent members — removePermanentMember", () => {
 
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
     await t.mutation(api.functions.scheduling.teams.removePermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
 
@@ -183,7 +184,7 @@ describe("permanent members — removePermanentMember", () => {
     await expect(
       t.mutation(api.functions.scheduling.teams.removePermanentMember, {
         token: accessToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
         userId: world.outsiderId,
       }),
     ).rejects.toThrow(ConvexError);
@@ -203,7 +204,7 @@ describe("permanent members — removePermanentMember", () => {
     // Both a permanent row and (separately) a synced row for the same user.
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
     await t.run((ctx) =>
@@ -219,7 +220,7 @@ describe("permanent members — removePermanentMember", () => {
 
     await t.mutation(api.functions.scheduling.teams.removePermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
 
@@ -238,12 +239,12 @@ describe("permanent members — removePermanentMember", () => {
 
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
     await t.mutation(api.functions.scheduling.teams.removePermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
 
@@ -271,7 +272,7 @@ describe("permanent members — listPermanentMembers", () => {
 
     const list = await t.query(
       api.functions.scheduling.teams.listPermanentMembers,
-      { token: accessToken, channelId: world.channelId },
+      { token: accessToken, teamId: world.teamId },
     );
     const ids = list.map((m) => m.userId);
     // Fixture seeds 3 manual members; the synced outsider is excluded.
@@ -287,14 +288,14 @@ describe("permanent members — reconcile interaction", () => {
 
     await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       userId: world.outsiderId,
     });
 
     // Run a reconcile with no in-window assignments at all.
     const result = await t.mutation(
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: world.channelId },
+      { teamId: world.teamId },
     );
     expect(result.removed).toBe(0);
 
@@ -307,6 +308,47 @@ describe("permanent members — reconcile interaction", () => {
   });
 });
 
+describe("permanent members — channel-less team", () => {
+  it("rejects all three operations with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const { accessToken } = await generateTokens(world.groupLeaderId);
+
+    // A channel-less team — a pure roster with no chat surface.
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: accessToken,
+        groupId: world.groupId,
+        name: "Roster Only",
+        withChannel: false,
+      },
+    );
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.addPermanentMember, {
+        token: accessToken,
+        teamId,
+        userId: world.outsiderId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.removePermanentMember, {
+        token: accessToken,
+        teamId,
+        userId: world.outsiderId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    await expect(
+      t.query(api.functions.scheduling.teams.listPermanentMembers, {
+        token: accessToken,
+        teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
+
 describe("permanent members — auth", () => {
   it("a group leader who is not a channel member is allowed", async () => {
     const { t, world } = await setupSchedulingWorld();
@@ -315,7 +357,7 @@ describe("permanent members — auth", () => {
 
     const res = await t.mutation(
       api.functions.scheduling.teams.addPermanentMember,
-      { token: accessToken, channelId: world.channelId, userId: world.outsiderId },
+      { token: accessToken, teamId: world.teamId, userId: world.outsiderId },
     );
     expect(res.added).toBe(true);
   });
@@ -327,7 +369,7 @@ describe("permanent members — auth", () => {
     await expect(
       t.mutation(api.functions.scheduling.teams.addPermanentMember, {
         token: accessToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
         userId: world.outsiderId,
       }),
     ).rejects.toThrow(ConvexError);
@@ -335,7 +377,7 @@ describe("permanent members — auth", () => {
     await expect(
       t.query(api.functions.scheduling.teams.listPermanentMembers, {
         token: accessToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
       }),
     ).rejects.toThrow(ConvexError);
   });

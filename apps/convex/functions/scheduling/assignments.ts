@@ -28,7 +28,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
-import { requireChannelGroupMember, requirePlanScheduler } from "./permissions";
+import { requireTeamGroupMember, requirePlanScheduler } from "./permissions";
 
 /** Assignment statuses, for reference and validation. */
 const ASSIGNMENT_STATUSES = ["unconfirmed", "confirmed", "declined"] as const;
@@ -46,21 +46,21 @@ function utcDayBucket(eventDate: number): number {
 }
 
 /**
- * Validate that a `channelId`/`roleId` pair is internally consistent and
- * belongs to the given group. Without this, a scheduler authorized for
- * group A could pass a channel/role from an unrelated group B and have
- * volunteers later synced into B's team channel.
+ * Validate that a `teamId`/`roleId` pair is internally consistent and belongs
+ * to the given group. Without this, a scheduler authorized for group A could
+ * pass a team/role from an unrelated group B and have volunteers later synced
+ * into B's team channel.
  *
  * Asserts:
- *   - the `teamRoles` row exists and its `channelId` equals `channelId`;
- *   - the `chatChannels` row exists, is a serving team, and its `groupId`
- *     equals `groupId` (the event plan's owning group).
+ *   - the `teamRoles` row exists and its `teamId` equals `teamId`;
+ *   - the `teams` row exists and its `groupId` equals `groupId` (the event
+ *     plan's owning group).
  *
  * @throws ConvexError on any mismatch.
  */
-async function requireChannelRolePair(
+async function requireTeamRolePair(
   ctx: QueryCtx | MutationCtx,
-  channelId: Id<"chatChannels">,
+  teamId: Id<"teams">,
   roleId: Id<"teamRoles">,
   groupId: Id<"groups">,
 ): Promise<void> {
@@ -68,21 +68,16 @@ async function requireChannelRolePair(
   if (!role) {
     throw new ConvexError("Role not found");
   }
-  if (role.channelId !== channelId) {
-    throw new ConvexError("Role does not belong to the specified team channel");
+  if (role.teamId !== teamId) {
+    throw new ConvexError("Role does not belong to the specified team");
   }
 
-  const channel = await ctx.db.get(channelId);
-  if (!channel) {
-    throw new ConvexError("Channel not found");
+  const team = await ctx.db.get(teamId);
+  if (!team) {
+    throw new ConvexError("Team not found");
   }
-  if (channel.isServingTeam !== true) {
-    throw new ConvexError("Channel is not a serving team");
-  }
-  if (channel.groupId !== groupId) {
-    throw new ConvexError(
-      "Team channel does not belong to this event's group",
-    );
+  if (team.groupId !== groupId) {
+    throw new ConvexError("Team does not belong to this event's group");
   }
 }
 
@@ -130,7 +125,7 @@ export const assignRole = mutation({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
     roleId: v.id("teamRoles"),
     userId: v.id("users"),
     timeLabel: v.optional(v.string()),
@@ -139,10 +134,10 @@ export const assignRole = mutation({
     const callerId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, callerId);
 
-    // Security: the channelId/roleId pair must be consistent and belong to
-    // this event's group — otherwise a scheduler for one group could inject
+    // Security: the teamId/roleId pair must be consistent and belong to this
+    // event's group — otherwise a scheduler for one group could inject
     // volunteers into an unrelated group's team channel via the later sync.
-    await requireChannelRolePair(ctx, args.channelId, args.roleId, plan.groupId);
+    await requireTeamRolePair(ctx, args.teamId, args.roleId, plan.groupId);
 
     // The assignee must be an active member of the event's group — channel
     // membership is derived from assignments, so an unchecked userId would
@@ -178,7 +173,7 @@ export const assignRole = mutation({
 
     const assignmentId = await ctx.db.insert("roleAssignments", {
       planId: args.planId,
-      channelId: args.channelId,
+      teamId: args.teamId,
       roleId: args.roleId,
       userId: args.userId,
       eventDate: plan.eventDate,
@@ -193,13 +188,13 @@ export const assignRole = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: args.channelId },
+      { teamId: args.teamId },
     );
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync
         .reconcileCrossTeamChannelsForSource,
-      { sourceChannelId: args.channelId },
+      { sourceTeamId: args.teamId },
     );
 
     return { assignmentId, doubleBooked };
@@ -233,13 +228,13 @@ export const unassign = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: assignment.channelId },
+      { teamId: assignment.teamId },
     );
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync
         .reconcileCrossTeamChannelsForSource,
-      { sourceChannelId: assignment.channelId },
+      { sourceTeamId: assignment.teamId },
     );
 
     return { assignmentId: args.assignmentId };
@@ -284,13 +279,13 @@ export const respondToAssignment = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: assignment.channelId },
+      { teamId: assignment.teamId },
     );
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduling.teamChannelSync
         .reconcileCrossTeamChannelsForSource,
-      { sourceChannelId: assignment.channelId },
+      { sourceTeamId: assignment.teamId },
     );
 
     return { assignmentId: args.assignmentId, status: args.status };
@@ -319,7 +314,7 @@ export const previousFillers = query({
     if (!role) {
       throw new ConvexError("Role not found");
     }
-    await requireChannelGroupMember(ctx, role.channelId, userId);
+    await requireTeamGroupMember(ctx, role.teamId, userId);
 
     const assignments = await ctx.db
       .query("roleAssignments")
@@ -383,7 +378,7 @@ export const publishEvent = action({
   handler: async (ctx, args): Promise<{ published: boolean; requestCount: number }> => {
     const callerId = await requireAuthFromTokenAction(ctx, args.token);
 
-    const result: { requestCount: number; channelIds: Id<"chatChannels">[] } =
+    const result: { requestCount: number; teamIds: Id<"teams">[] } =
       await ctx.runMutation(
         internal.functions.scheduling.assignments.markPublished,
         { planId: args.planId, callerId: callerId as Id<"users"> },
@@ -400,17 +395,17 @@ export const publishEvent = action({
     // Auto-sync every team channel that has assignments on this event so
     // publishing pulls confirmed/unconfirmed volunteers into their channels,
     // plus any cross-team channel that draws from those serving teams.
-    for (const channelId of result.channelIds) {
+    for (const teamId of result.teamIds) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-        { channelId },
+        { teamId },
       );
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync
           .reconcileCrossTeamChannelsForSource,
-        { sourceChannelId: channelId },
+        { sourceTeamId: teamId },
       );
     }
 
@@ -443,11 +438,11 @@ export const markPublished = internalMutation({
       (a) => a.status === "unconfirmed",
     ).length;
 
-    // Distinct team channels touched by this event's assignments — the action
+    // Distinct serving teams touched by this event's assignments — the action
     // reconciles each one after publishing.
-    const channelIds = [...new Set(assignments.map((a) => a.channelId))];
+    const teamIds = [...new Set(assignments.map((a) => a.teamId))];
 
-    return { requestCount, channelIds };
+    return { requestCount, teamIds };
   },
 });
 

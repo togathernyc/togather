@@ -4,15 +4,15 @@
  * A "cross-team channel" is a `chatChannels` row with
  * `channelType === "cross_team"`. It owns no roles or events of its own; its
  * membership is auto-synced — same rotation window and `event_plan` syncSource
- * as a serving-team channel — from `roleAssignments` across MULTIPLE source
- * serving-team channels. Each `crossTeamSync.selectors` entry pulls in everyone
- * assigned `roleId` on `sourceChannelId`, or — when `roleId` is omitted —
- * everyone assigned any role on that source team.
+ * as a serving team's channel — from `roleAssignments` across MULTIPLE source
+ * serving teams (ADR-025 — a team is a first-class `teams` row). Each
+ * `crossTeamSync.selectors` entry pulls in everyone assigned `roleId` on
+ * `sourceTeamId`, or — when `roleId` is omitted — everyone assigned any role
+ * on that source team.
  *
  * The actual membership reconcile lives in `teamChannelSync.ts`
- * (`reconcileTeamChannelImpl`, which handles both serving-team and cross-team
- * channels). These functions only manage the channel's config and trigger a
- * reconcile after a change.
+ * (`reconcileCrossTeamChannelImpl`). These functions only manage the
+ * channel's config and trigger a reconcile after a change.
  */
 
 import { ConvexError, v } from "convex/values";
@@ -22,12 +22,12 @@ import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { generateChannelSlug } from "../../lib/slugs";
-import { requireGroupMember, requireScheduler } from "./permissions";
-import { reconcileTeamChannelImpl } from "./teamChannelSync";
+import { requireGroupMember, requireGroupScheduler } from "./permissions";
+import { reconcileCrossTeamChannelImpl } from "./teamChannelSync";
 
 /** Validator for a single cross-team membership selector. */
 const selectorValidator = v.object({
-  sourceChannelId: v.id("chatChannels"),
+  sourceTeamId: v.id("teams"),
   roleId: v.optional(v.id("teamRoles")),
 });
 
@@ -50,9 +50,9 @@ type SharedGroupEntry = {
  * their own campus in the inbox — rather than as a floating channel — the
  * channel is shared into every campus group that contributes a source team.
  *
- * Validates each distinct source channel: it must exist, be a serving team,
- * and belong to the same community as the cross-team channel's home group —
- * so a selector cannot reach into another community's teams.
+ * Validates each distinct source team: it must exist and belong to the same
+ * community as the cross-team channel's home group — so a selector cannot
+ * reach into another community's teams.
  *
  * Returns `isShared`/`sharedGroups` to persist on the channel. When every
  * source team is in the home group, `isShared` is false and `sharedGroups` is
@@ -60,7 +60,7 @@ type SharedGroupEntry = {
  */
 async function resolveCrossTeamSharing(
   ctx: MutationCtx,
-  selectors: Array<{ sourceChannelId: Id<"chatChannels">; roleId?: Id<"teamRoles"> }>,
+  selectors: Array<{ sourceTeamId: Id<"teams">; roleId?: Id<"teamRoles"> }>,
   homeGroupId: Id<"groups">,
   userId: Id<"users">,
 ): Promise<{ isShared: boolean; sharedGroups: SharedGroupEntry[] | undefined }> {
@@ -70,32 +70,21 @@ async function resolveCrossTeamSharing(
   }
 
   const sourceGroupIds = new Set<Id<"groups">>();
-  const seenChannels = new Set<string>();
+  const seenTeams = new Set<string>();
   for (const selector of selectors) {
-    if (seenChannels.has(selector.sourceChannelId)) continue;
-    seenChannels.add(selector.sourceChannelId);
+    if (seenTeams.has(selector.sourceTeamId)) continue;
+    seenTeams.add(selector.sourceTeamId);
 
-    const sourceChannel = await ctx.db.get(selector.sourceChannelId);
-    if (!sourceChannel) {
+    const sourceTeam = await ctx.db.get(selector.sourceTeamId);
+    if (!sourceTeam) {
       throw new ConvexError("A selected source team no longer exists.");
     }
-    if (sourceChannel.isServingTeam !== true) {
-      throw new ConvexError(
-        "A cross-team channel can only draw from serving teams.",
-      );
-    }
-    if (!sourceChannel.groupId) {
-      throw new ConvexError(
-        "A selected source team is not attached to a campus group.",
-      );
-    }
-    const sourceGroup = await ctx.db.get(sourceChannel.groupId);
-    if (!sourceGroup || sourceGroup.communityId !== homeGroup.communityId) {
+    if (sourceTeam.communityId !== homeGroup.communityId) {
       throw new ConvexError(
         "Cross-team source teams must be in the same community.",
       );
     }
-    sourceGroupIds.add(sourceChannel.groupId);
+    sourceGroupIds.add(sourceTeam.groupId);
   }
 
   const now = Date.now();
@@ -198,14 +187,19 @@ export const createCrossTeamChannel = mutation({
       updatedAt: now,
       isArchived: false,
       memberCount: 0,
-      crossTeamSync: { selectors: args.selectors },
+      crossTeamSync: {
+        selectors: args.selectors.map((s) => ({
+          sourceTeamId: s.sourceTeamId,
+          roleId: s.roleId,
+        })),
+      },
       isShared,
       sharedGroups,
     });
 
     // Populate the channel's derived membership now rather than waiting for
     // the daily cron.
-    await reconcileTeamChannelImpl(ctx, channelId);
+    await reconcileCrossTeamChannelImpl(ctx, channelId);
 
     return { channelId, slug };
   },
@@ -214,8 +208,8 @@ export const createCrossTeamChannel = mutation({
 /**
  * Update a cross-team channel's selectors and re-reconcile its membership.
  *
- * Auth: `requireScheduler` — channel admin/moderator, campus group leader, or
- * community admin.
+ * Auth: `requireGroupScheduler` — campus group leader or community admin for
+ * the channel's home group.
  */
 export const updateCrossTeamChannel = mutation({
   args: {
@@ -230,18 +224,23 @@ export const updateCrossTeamChannel = mutation({
   }),
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const channel = await requireScheduler(ctx, args.channelId, userId);
 
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
     if (channel.channelType !== "cross_team") {
       throw new ConvexError("Channel is not a cross-team channel");
-    }
-    if (args.selectors.length === 0) {
-      throw new ConvexError("A cross-team channel needs at least one selector.");
     }
     if (!channel.groupId) {
       throw new ConvexError(
         "Cross-team channel is not attached to a campus group.",
       );
+    }
+    await requireGroupScheduler(ctx, channel.groupId, userId);
+
+    if (args.selectors.length === 0) {
+      throw new ConvexError("A cross-team channel needs at least one selector.");
     }
 
     // Recompute channel sharing from the new selectors — a campus group may
@@ -254,13 +253,18 @@ export const updateCrossTeamChannel = mutation({
     );
 
     await ctx.db.patch(args.channelId, {
-      crossTeamSync: { selectors: args.selectors },
+      crossTeamSync: {
+        selectors: args.selectors.map((s) => ({
+          sourceTeamId: s.sourceTeamId,
+          roleId: s.roleId,
+        })),
+      },
       isShared,
       sharedGroups,
       updatedAt: Date.now(),
     });
 
-    const result = await reconcileTeamChannelImpl(ctx, args.channelId);
+    const result = await reconcileCrossTeamChannelImpl(ctx, args.channelId);
     return {
       channelId: args.channelId,
       addedCount: result.added,
@@ -271,10 +275,9 @@ export const updateCrossTeamChannel = mutation({
 
 /**
  * List a campus group's cross-team channels, each with its selectors enriched
- * with the source team channel name and role name for UI display.
+ * with the source team name and role name for UI display.
  *
- * Auth: an active member of the group, or a community admin — same read gate
- * as `listTeamChannels`.
+ * Auth: an active member of the group, or a community admin.
  */
 export const listCrossTeamChannels = query({
   args: {
@@ -299,13 +302,13 @@ export const listCrossTeamChannels = query({
       crossTeam.map(async (channel) => {
         const selectors = await Promise.all(
           (channel.crossTeamSync?.selectors ?? []).map(async (selector) => {
-            const sourceChannel = await ctx.db.get(selector.sourceChannelId);
+            const sourceTeam = await ctx.db.get(selector.sourceTeamId);
             const role = selector.roleId
               ? await ctx.db.get(selector.roleId)
               : null;
             return {
-              sourceChannelId: selector.sourceChannelId,
-              sourceChannelName: sourceChannel?.name ?? "Unknown team",
+              sourceTeamId: selector.sourceTeamId,
+              sourceTeamName: sourceTeam?.name ?? "Unknown team",
               roleId: selector.roleId,
               roleName: role?.name ?? null,
             };

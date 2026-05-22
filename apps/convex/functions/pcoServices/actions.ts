@@ -974,20 +974,24 @@ export const triggerGroupSync = action({
       }
     }
 
-    // Also reconcile native "Event Team" channels in this group. These are
-    // auto-synced from event-plan role assignments rather than PCO configs, so
-    // they have no autoChannelConfig and are skipped by the loop above. We add
-    // their results so the UI summary reflects them alongside PCO channels.
-    for (const channel of channels) {
-      if (channel.isServingTeam !== true) continue;
+    // Also reconcile native serving teams in this group (ADR-025 — a team is
+    // a first-class `teams` row, no longer a channel). These are auto-synced
+    // from event-plan role assignments rather than PCO configs, so they have
+    // no autoChannelConfig and are skipped by the loop above. We add their
+    // results so the UI summary reflects them alongside PCO channels.
+    const servingTeams = await ctx.runQuery(
+      internal.functions.pcoServices.actions.getServingTeamsForGroup,
+      { groupId: args.groupId }
+    );
+    for (const team of servingTeams) {
       try {
         const teamResult = await ctx.runMutation(
           internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-          { channelId: channel._id }
+          { teamId: team._id }
         );
         syncedChannels++;
         results.push({
-          channelName: channel.name,
+          channelName: team.name,
           status: "synced",
           addedCount: teamResult.added,
           removedCount: teamResult.removed,
@@ -996,7 +1000,7 @@ export const triggerGroupSync = action({
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
         results.push({
-          channelName: channel.name,
+          channelName: team.name,
           status: "error",
           addedCount: 0,
           removedCount: 0,
@@ -1058,6 +1062,26 @@ export const getChannelsForGroup = internalQuery({
     }
 
     return ownedChannels;
+  },
+});
+
+/**
+ * Internal: the group's non-archived native serving teams that have a chat
+ * channel (ADR-025). Used by `syncAllChannels` to reconcile native Event Team
+ * channels alongside PCO channels — they are keyed by `teamId`, not channel.
+ */
+export const getServingTeamsForGroup = internalQuery({
+  args: {
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const teams = await ctx.db
+      .query("teams")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+    return teams
+      .filter((team) => team.isArchived !== true && team.channelId !== undefined)
+      .map((team) => ({ _id: team._id, name: team.name }));
   },
 });
 

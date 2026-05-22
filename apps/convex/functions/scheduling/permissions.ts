@@ -2,12 +2,16 @@
  * Scheduling permissions
  *
  * Shared authorization helpers for the native event-scheduling module
- * (ADR-023). There is no new role field — scheduler permission is derived
- * from existing systems:
+ * (ADR-023 / ADR-025). There is no new role field — scheduler permission is
+ * derived from existing systems:
  *
- *   - channel `admin` / `moderator` (chatChannelMembers.role)
+ *   - the team channel's `admin` / `moderator` (chatChannelMembers.role)
  *   - campus group `leader` (groupMembers.role)
  *   - community admin (userCommunities.roles >= 3)
+ *
+ * ADR-025 made a team a first-class entity that *optionally* has a chat
+ * channel. When a team has no channel, scheduler permission rests on group
+ * leadership / community admin alone.
  *
  * All failures throw `ConvexError` (not a plain `Error`) so the mobile
  * client's `AuthErrorBoundary` can recognize and recover from them rather
@@ -25,109 +29,91 @@ import { isCommunityAdmin } from "../../lib/permissions";
 const SCHEDULER_CHANNEL_ROLES = new Set(["admin", "moderator"]);
 
 /**
- * Resolve a channel and assert it can act as a serving team.
- * Throws `ConvexError` if the channel is missing or not a serving team.
+ * Resolve a team, throwing `ConvexError` if it is missing.
  */
-export async function requireServingChannel(
+export async function requireTeam(
   ctx: QueryCtx | MutationCtx,
-  channelId: Id<"chatChannels">,
-): Promise<Doc<"chatChannels">> {
-  const channel = await ctx.db.get(channelId);
-  if (!channel) {
-    throw new ConvexError("Channel not found");
+  teamId: Id<"teams">,
+): Promise<Doc<"teams">> {
+  const team = await ctx.db.get(teamId);
+  if (!team) {
+    throw new ConvexError("Team not found");
   }
-  if (channel.isServingTeam !== true) {
-    throw new ConvexError("Channel is not a serving team");
-  }
-  return channel;
+  return team;
 }
 
 /**
- * Whether `userId` may manage the schedule for `channel` — channel
- * admin/moderator, OR campus group leader, OR community admin.
- *
- * `markChannelAsTeam` runs before a channel is a serving team, so this
- * accepts any channel doc and does not require `isServingTeam`.
+ * Whether `userId` may manage `team`'s schedule — the team channel's
+ * admin/moderator (when the team has a channel), OR the campus group leader,
+ * OR a community admin.
  */
-export async function isScheduler(
+export async function isTeamScheduler(
   ctx: QueryCtx | MutationCtx,
-  channel: Doc<"chatChannels">,
+  team: Doc<"teams">,
   userId: Id<"users">,
 ): Promise<boolean> {
-  // 1. Channel admin / moderator.
-  const channelMembership = await ctx.db
-    .query("chatChannelMembers")
-    .withIndex("by_channel_user", (q) =>
-      q.eq("channelId", channel._id).eq("userId", userId),
-    )
-    .filter((q) => q.eq(q.field("leftAt"), undefined))
-    .first();
-  if (channelMembership && SCHEDULER_CHANNEL_ROLES.has(channelMembership.role)) {
-    return true;
-  }
-
-  // 2. Campus group leader.
-  if (channel.groupId) {
-    const groupMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", channel.groupId!).eq("userId", userId),
+  // 1. Team channel admin / moderator (only if the team has a channel).
+  if (team.channelId) {
+    const channelId = team.channelId;
+    const channelMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channelId).eq("userId", userId),
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
-    if (groupMembership && isLeaderRole(groupMembership.role)) {
+    if (
+      channelMembership &&
+      SCHEDULER_CHANNEL_ROLES.has(channelMembership.role)
+    ) {
       return true;
     }
   }
 
+  // 2. Campus group leader.
+  const groupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", team.groupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  if (groupMembership && isLeaderRole(groupMembership.role)) {
+    return true;
+  }
+
   // 3. Community admin.
-  const communityId = channel.communityId ?? (await groupCommunityId(ctx, channel));
-  if (communityId && (await isCommunityAdmin(ctx, communityId, userId))) {
+  if (await isCommunityAdmin(ctx, team.communityId, userId)) {
     return true;
   }
 
   return false;
 }
 
-/** Resolve a channel's communityId, falling back to its group when needed. */
-async function groupCommunityId(
-  ctx: QueryCtx | MutationCtx,
-  channel: Doc<"chatChannels">,
-): Promise<Id<"communities"> | null> {
-  if (channel.communityId) return channel.communityId;
-  if (!channel.groupId) return null;
-  const group = await ctx.db.get(channel.groupId);
-  return group?.communityId ?? null;
-}
-
 /**
- * Require that `userId` may manage the given channel's schedule.
- * Resolves the channel, then asserts scheduler permission.
+ * Require that `userId` may manage the given team's schedule.
+ * Resolves the team, then asserts scheduler permission.
  *
- * @throws ConvexError if the channel is missing or the user lacks permission.
+ * @throws ConvexError if the team is missing or the user lacks permission.
  */
-export async function requireScheduler(
+export async function requireTeamScheduler(
   ctx: QueryCtx | MutationCtx,
-  channelId: Id<"chatChannels">,
+  teamId: Id<"teams">,
   userId: Id<"users">,
-): Promise<Doc<"chatChannels">> {
-  const channel = await ctx.db.get(channelId);
-  if (!channel) {
-    throw new ConvexError("Channel not found");
-  }
-  if (!(await isScheduler(ctx, channel, userId))) {
+): Promise<Doc<"teams">> {
+  const team = await requireTeam(ctx, teamId);
+  if (!(await isTeamScheduler(ctx, team, userId))) {
     throw new ConvexError(
       "You must be a team admin, group leader, or community admin to manage this team's schedule",
     );
   }
-  return channel;
+  return team;
 }
 
 /**
  * Require scheduler permission for the campus group that owns an event plan.
  * Used by event/assignment mutations that are scoped to a `groupId` rather
- * than a single team channel — we resolve via the group's main channel-less
- * leadership rules: group leader or community admin.
+ * than a single team — group leader or community admin.
  *
  * @throws ConvexError if the group is missing or the user lacks permission.
  */
@@ -162,11 +148,11 @@ export async function requireGroupScheduler(
 }
 
 /**
- * Require that `userId` may *view* a campus group's serving-team roster —
- * an active member of the group OR a community admin. This is a read-level
- * gate (weaker than `requireGroupScheduler`, which demands leadership) used
- * by listing queries so an authenticated outsider cannot enumerate a private
- * group's team channels.
+ * Require that `userId` may *view* a campus group's serving-team data — an
+ * active member of the group OR a community admin. This is a read-level gate
+ * (weaker than `requireGroupScheduler`, which demands leadership) used by
+ * listing queries so an authenticated outsider cannot enumerate a private
+ * group's teams.
  *
  * @throws ConvexError if the group is missing or the caller lacks access.
  */
@@ -205,31 +191,24 @@ export async function requireGroupMember(
 }
 
 /**
- * Require that `userId` may *view* a serving-team channel's data — resolves
- * the channel to its owning campus group, then delegates to
- * `requireGroupMember` (active group member or community admin).
+ * Require that `userId` may *view* a team's data — resolves the team to its
+ * owning campus group, then delegates to `requireGroupMember` (active group
+ * member or community admin).
  *
- * Used by read queries keyed by a `channelId` (channel roles, starter-role
- * suggestions) so an authenticated outsider cannot enumerate another group's
- * team data via a guessed channel id.
+ * Used by read queries keyed by a `teamId` (team roles, starter-role
+ * suggestions, team detail) so an authenticated outsider cannot enumerate
+ * another group's team data via a guessed team id.
  *
- * @throws ConvexError if the channel/group is missing or the caller lacks
- *   access.
+ * @throws ConvexError if the team/group is missing or the caller lacks access.
  */
-export async function requireChannelGroupMember(
+export async function requireTeamGroupMember(
   ctx: QueryCtx | MutationCtx,
-  channelId: Id<"chatChannels">,
+  teamId: Id<"teams">,
   userId: Id<"users">,
-): Promise<Doc<"chatChannels">> {
-  const channel = await ctx.db.get(channelId);
-  if (!channel) {
-    throw new ConvexError("Channel not found");
-  }
-  if (!channel.groupId) {
-    throw new ConvexError("Channel is not attached to a campus group");
-  }
-  await requireGroupMember(ctx, channel.groupId, userId);
-  return channel;
+): Promise<Doc<"teams">> {
+  const team = await requireTeam(ctx, teamId);
+  await requireGroupMember(ctx, team.groupId, userId);
+  return team;
 }
 
 /**

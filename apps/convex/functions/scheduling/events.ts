@@ -5,9 +5,11 @@
  * (ADR-023). It is deliberately separate from `meetings` (Events-tab events);
  * an optional `meetingIds` array links the two when desired.
  *
- * `neededRoles` declare "we need N of role X" on an event. Fill summary
- * counts `confirmed` + `unconfirmed` assignments as filled — a `declined`
- * assignment does NOT count, so the slot stays open for the scheduler.
+ * `neededRoles` declare "we need N of role X" on an event, keyed by the
+ * serving team that owns the role (ADR-025 — a team is a first-class `teams`
+ * row). Fill summary counts `confirmed` + `unconfirmed` assignments as
+ * filled — a `declined` assignment does NOT count, so the slot stays open for
+ * the scheduler.
  */
 
 import { ConvexError, v } from "convex/values";
@@ -26,35 +28,29 @@ import {
 const FILLED_STATUSES = new Set(["confirmed", "unconfirmed"]);
 
 /**
- * Resolve a serving-team channel and assert it belongs to `groupId`.
+ * Resolve a serving team and assert it belongs to `groupId`.
  *
  * Shared by every mutation that seeds `neededRoles` from a caller-supplied
- * `channelId` (`setNeededRoles`, `seedNeededRolesFromDefaults`). Without this
+ * `teamId` (`setNeededRoles`, `seedNeededRolesFromDefaults`). Without this
  * check a caller authorized for one group could declare a foreign team's
  * roles as needed and pull that team's volunteers into another group's
  * channel on publish.
  *
- * @throws ConvexError if the channel is missing, not a serving team, or
- *   belongs to a different group.
+ * @throws ConvexError if the team is missing or belongs to a different group.
  */
-async function requireGroupServingChannel(
+async function requireGroupTeam(
   ctx: MutationCtx,
-  channelId: Id<"chatChannels">,
+  teamId: Id<"teams">,
   groupId: Id<"groups">,
-): Promise<Doc<"chatChannels">> {
-  const channel = await ctx.db.get(channelId);
-  if (!channel) {
-    throw new ConvexError("Channel not found");
+): Promise<Doc<"teams">> {
+  const team = await ctx.db.get(teamId);
+  if (!team) {
+    throw new ConvexError("Team not found");
   }
-  if (channel.isServingTeam !== true) {
-    throw new ConvexError("Channel is not a serving team");
+  if (team.groupId !== groupId) {
+    throw new ConvexError("Team does not belong to this event's group");
   }
-  if (channel.groupId !== groupId) {
-    throw new ConvexError(
-      "Team channel does not belong to this event's group",
-    );
-  }
-  return channel;
+  return team;
 }
 
 const timeValidator = v.object({
@@ -156,7 +152,7 @@ export const duplicateEvent = mutation({
       neededRoles.map((role) =>
         ctx.db.insert("neededRoles", {
           planId: newPlanId,
-          channelId: role.channelId,
+          teamId: role.teamId,
           roleId: role.roleId,
           count: role.count,
         }),
@@ -214,21 +210,21 @@ export const updateEvent = mutation({
         ),
       );
       // Rescheduling can move the event in or out of the team-channel
-      // rotation window — reconcile each affected channel so derived
+      // rotation window — reconcile each affected team so derived
       // membership updates now, not just on the daily cron (mirrors
       // deleteEvent / unassign).
-      const channelIds = [...new Set(assignments.map((a) => a.channelId))];
-      for (const channelId of channelIds) {
+      const teamIds = [...new Set(assignments.map((a) => a.teamId))];
+      for (const teamId of teamIds) {
         await ctx.scheduler.runAfter(
           0,
           internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-          { channelId },
+          { teamId },
         );
         await ctx.scheduler.runAfter(
           0,
           internal.functions.scheduling.teamChannelSync
             .reconcileCrossTeamChannelsForSource,
-          { sourceChannelId: channelId },
+          { sourceTeamId: teamId },
         );
       }
     }
@@ -263,9 +259,9 @@ export const deleteEvent = mutation({
         .collect(),
     ]);
 
-    // Distinct team channels touched by this event's assignments — captured
+    // Distinct serving teams touched by this event's assignments — captured
     // before the deletes so we can reconcile them afterwards.
-    const channelIds = [...new Set(assignments.map((a) => a.channelId))];
+    const teamIds = [...new Set(assignments.map((a) => a.teamId))];
 
     await Promise.all([
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
@@ -277,17 +273,17 @@ export const deleteEvent = mutation({
     // the now-deleted assignees immediately rather than waiting for the
     // daily cron — mirrors `unassign`'s reconcile trigger — plus any
     // cross-team channel that draws from those serving teams.
-    for (const channelId of channelIds) {
+    for (const teamId of teamIds) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-        { channelId },
+        { teamId },
       );
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.teamChannelSync
           .reconcileCrossTeamChannelsForSource,
-        { sourceChannelId: channelId },
+        { sourceTeamId: teamId },
       );
     }
 
@@ -311,7 +307,7 @@ export const setNeededRoles = mutation({
     planId: v.id("eventPlans"),
     roles: v.array(
       v.object({
-        channelId: v.id("chatChannels"),
+        teamId: v.id("teams"),
         roleId: v.id("teamRoles"),
         count: v.number(),
       }),
@@ -321,21 +317,19 @@ export const setNeededRoles = mutation({
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
-    // Security: each channelId/roleId pair must be consistent and belong to
-    // this event's group — otherwise a foreign team's role could be declared
-    // as needed and pull volunteers into another group's channel on publish.
+    // Security: each teamId/roleId pair must be consistent and belong to this
+    // event's group — otherwise a foreign team's role could be declared as
+    // needed and pull volunteers into another group's channel on publish.
     for (const role of args.roles) {
       if (role.count <= 0) continue;
       const teamRole = await ctx.db.get(role.roleId);
       if (!teamRole) {
         throw new ConvexError("Role not found");
       }
-      if (teamRole.channelId !== role.channelId) {
-        throw new ConvexError(
-          "Role does not belong to the specified team channel",
-        );
+      if (teamRole.teamId !== role.teamId) {
+        throw new ConvexError("Role does not belong to the specified team");
       }
-      await requireGroupServingChannel(ctx, role.channelId, plan.groupId);
+      await requireGroupTeam(ctx, role.teamId, plan.groupId);
     }
 
     const existing = await ctx.db
@@ -349,7 +343,7 @@ export const setNeededRoles = mutation({
       if (role.count <= 0) continue;
       await ctx.db.insert("neededRoles", {
         planId: args.planId,
-        channelId: role.channelId,
+        teamId: role.teamId,
         roleId: role.roleId,
         count: role.count,
       });
@@ -362,7 +356,7 @@ export const setNeededRoles = mutation({
 
 /**
  * Seed an event's `neededRoles` from the `defaultNeeded` of every
- * non-archived role on the given team channels. Convenience for event setup;
+ * non-archived role on the given serving teams. Convenience for event setup;
  * roles with no `defaultNeeded` (or 0) are skipped.
  *
  * Auth: group leader or community admin for the event's group.
@@ -371,21 +365,21 @@ export const seedNeededRolesFromDefaults = mutation({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
-    channelIds: v.array(v.id("chatChannels")),
+    teamIds: v.array(v.id("teams")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
     let written = 0;
-    for (const channelId of args.channelIds) {
-      // Security: only seed from serving-team channels that belong to this
-      // event's group — same check `setNeededRoles` / `assignRole` enforce.
-      await requireGroupServingChannel(ctx, channelId, plan.groupId);
+    for (const teamId of args.teamIds) {
+      // Security: only seed from serving teams that belong to this event's
+      // group — same check `setNeededRoles` / `assignRole` enforce.
+      await requireGroupTeam(ctx, teamId, plan.groupId);
 
       const roles = await ctx.db
         .query("teamRoles")
-        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .withIndex("by_team", (q) => q.eq("teamId", teamId))
         .collect();
       for (const role of roles) {
         if (role.isArchived === true) continue;
@@ -393,7 +387,7 @@ export const seedNeededRolesFromDefaults = mutation({
         if (count <= 0) continue;
         await ctx.db.insert("neededRoles", {
           planId: args.planId,
-          channelId,
+          teamId,
           roleId: role._id,
           count,
         });
@@ -437,7 +431,7 @@ function buildFillSummary(
     totalConfirmed += Math.min(confirmed, needed.count);
     return {
       roleId: needed.roleId,
-      channelId: needed.channelId,
+      teamId: needed.teamId,
       needed: needed.count,
       filled,
       confirmed,
@@ -572,7 +566,7 @@ export const getEvent = query({
         const summary = fillByRole.get(needed.roleId);
         return {
           roleId: needed.roleId,
-          channelId: needed.channelId,
+          teamId: needed.teamId,
           roleName: role?.name ?? "Role",
           roleColor: role?.color,
           needed: needed.count,

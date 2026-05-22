@@ -1,11 +1,11 @@
 /**
  * Tests for team-role read access control (roles.ts).
  *
- * `listRoles` and `suggestStarterRoles` are keyed by a `channelId`; both leak
- * channel-scoped data (role names, the channel name) and so are gated to
- * active members of the channel's campus group and community admins — an
- * authenticated outsider must not be able to enumerate a private team's
- * roles by guessing a channel id.
+ * `listRoles` and `suggestStarterRoles` are keyed by a `teamId`; both leak
+ * team-scoped data (role names, the team name) and so are gated to active
+ * members of the team's campus group and community admins — an authenticated
+ * outsider must not be able to enumerate a private team's roles by guessing a
+ * team id.
  */
 
 import { describe, it, expect } from "vitest";
@@ -25,14 +25,14 @@ async function setupSchedulingWorld() {
 }
 
 describe("listRoles access control", () => {
-  it("returns the channel's roles for a group member", async () => {
+  it("returns the team's roles for a group member", async () => {
     const { t, world } = await setupSchedulingWorld();
     const memberToken = (await generateTokens(world.channelMemberId))
       .accessToken;
 
     const roles = await t.query(api.functions.scheduling.roles.listRoles, {
       token: memberToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
     });
     expect(roles).toHaveLength(1);
     expect(roles[0]._id).toBe(world.roleId);
@@ -45,7 +45,7 @@ describe("listRoles access control", () => {
 
     const roles = await t.query(api.functions.scheduling.roles.listRoles, {
       token: adminToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
     });
     expect(roles).toHaveLength(1);
   });
@@ -57,7 +57,7 @@ describe("listRoles access control", () => {
     await expect(
       t.query(api.functions.scheduling.roles.listRoles, {
         token: outsiderToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
       }),
     ).rejects.toThrow(ConvexError);
   });
@@ -71,7 +71,7 @@ describe("suggestStarterRoles access control", () => {
     await expect(
       t.query(api.functions.scheduling.roles.suggestStarterRoles, {
         token: outsiderToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
       }),
     ).rejects.toThrow(ConvexError);
   });
@@ -83,8 +83,8 @@ describe("suggestStarterRoles access control", () => {
 
     const result = await t.query(
       api.functions.scheduling.roles.suggestStarterRoles,
-      { token: memberToken, channelId: world.channelId },
+      { token: memberToken, teamId: world.teamId },
     );
-    expect(result.channelName).toBe("Worship Team");
+    expect(result.teamName).toBe("Worship Team");
   });
 });

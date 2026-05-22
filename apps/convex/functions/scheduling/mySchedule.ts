@@ -2,7 +2,7 @@
  * Scheduling — My Schedule
  *
  * The volunteer-facing view: a user's own upcoming assignments joined with
- * event, role, and team-channel display info.
+ * event, role, and serving-team display info.
  */
 
 import { v } from "convex/values";
@@ -35,10 +35,10 @@ export const myAssignments = query({
 
     return Promise.all(
       visible.map(async (assignment) => {
-        const [plan, role, channel] = await Promise.all([
+        const [plan, role, team] = await Promise.all([
           ctx.db.get(assignment.planId),
           ctx.db.get(assignment.roleId),
-          ctx.db.get(assignment.channelId),
+          ctx.db.get(assignment.teamId),
         ]);
         return {
           _id: assignment._id,
@@ -48,7 +48,7 @@ export const myAssignments = query({
           eventStatus: plan?.status ?? "draft",
           roleName: role?.name ?? "Role",
           roleColor: role?.color,
-          teamName: channel?.name ?? "Team",
+          teamName: team?.name ?? "Team",
           status: assignment.status,
           timeLabel: assignment.timeLabel,
           declineNote: assignment.declineNote,

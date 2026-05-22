@@ -1578,10 +1578,9 @@ export default defineSchema({
       v.object({
         selectors: v.array(
           v.object({
-            /** ADR-025: source team. Optional only during the M1→M3 migration. */
-            sourceTeamId: v.optional(v.id("teams")),
-            /** ADR-025 legacy — removed at migration phase M3. */
-            sourceChannelId: v.id("chatChannels"),
+            sourceTeamId: v.id("teams"),
+            /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+            sourceChannelId: v.optional(v.id("chatChannels")),
             roleId: v.optional(v.id("teamRoles")),
           }),
         ),
@@ -2471,10 +2470,11 @@ export default defineSchema({
   // =============================================================================
   // EVENT SCHEDULING & ROSTERING (ADR-023, ADR-025)
   // Native replacement for the Planning Center scheduling dependency.
-  // ADR-025 makes `teams` a first-class table; teamRoles / neededRoles /
-  // roleAssignments are migrating from `channelId` to `teamId` over three
-  // phases — M1 additive optional field → M2 backfill → M3 drop legacy
-  // `channelId`. During M1→M3 both fields exist; `teamId` is optional.
+  // ADR-025: `teams` is a first-class table; teamRoles / neededRoles /
+  // roleAssignments are keyed by `teamId`. The legacy `channelId` fields are
+  // unused dead columns, kept optional until a follow-up strips them.
+  // Run `migrateChannelsToTeams` BEFORE deploying this schema — it makes
+  // `teamId` required, so every row must be backfilled first. See ADR-025.
   // =============================================================================
 
   /**
@@ -2504,10 +2504,9 @@ export default defineSchema({
    * the campus group can be assigned any role.
    */
   teamRoles: defineTable({
-    /** ADR-025: the owning team. Optional only during the M1→M3 migration. */
-    teamId: v.optional(v.id("teams")),
-    /** ADR-025 legacy — removed at migration phase M3. */
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     communityId: v.id("communities"),
     name: v.string(),
     color: v.optional(v.string()),
@@ -2517,9 +2516,7 @@ export default defineSchema({
     isArchived: v.optional(v.boolean()),
     createdAt: v.number(),
     createdById: v.id("users"),
-  })
-    .index("by_channel", ["channelId"])
-    .index("by_team", ["teamId"]),
+  }).index("by_team", ["teamId"]),
 
   /**
    * A dated event volunteers are rostered to. Belongs to a campus group.
@@ -2553,24 +2550,21 @@ export default defineSchema({
   /** "We need N of role X" on a given event. */
   neededRoles: defineTable({
     planId: v.id("eventPlans"),
-    /** ADR-025: the owning team. Optional only during the M1→M3 migration. */
-    teamId: v.optional(v.id("teams")),
-    /** ADR-025 legacy — removed at migration phase M3. */
-    channelId: v.id("chatChannels"), // the team
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     roleId: v.id("teamRoles"),
     count: v.number(),
   })
     .index("by_plan", ["planId"])
-    .index("by_plan_channel", ["planId", "channelId"])
     .index("by_plan_team", ["planId", "teamId"]),
 
   /** A person scheduled to a role on an event. */
   roleAssignments: defineTable({
     planId: v.id("eventPlans"),
-    /** ADR-025: the owning team. Optional only during the M1→M3 migration. */
-    teamId: v.optional(v.id("teams")),
-    /** ADR-025 legacy — removed at migration phase M3. */
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     roleId: v.id("teamRoles"),
     userId: v.id("users"),
     eventDate: v.number(), // denormalized for same-day double-booking queries
@@ -2589,6 +2583,5 @@ export default defineSchema({
     .index("by_role", ["roleId"]) // powers "previously filled by"
     // powers team auto-sync: desired members of a team within a rotation
     // window are derived from assignments matched by team + date.
-    .index("by_channel_eventDate", ["channelId", "eventDate"])
     .index("by_team_eventDate", ["teamId", "eventDate"]),
 });

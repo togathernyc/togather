@@ -71,7 +71,7 @@ describe("assignment state machine", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -94,7 +94,7 @@ describe("assignment state machine", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -123,7 +123,7 @@ describe("assignment state machine", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -151,7 +151,7 @@ describe("assignment state machine", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -169,7 +169,7 @@ describe("assignment state machine", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelModeratorId,
       },
@@ -180,29 +180,26 @@ describe("assignment state machine", () => {
   });
 });
 
-describe("assignRole channel/role ownership validation", () => {
-  it("rejects a roleId that does not belong to the supplied channel", async () => {
+describe("assignRole team/role ownership validation", () => {
+  it("rejects a roleId that does not belong to the supplied team", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
 
-    // A second serving channel in the SAME group, with its own role. The
-    // role belongs to `otherChannelId`, not `world.channelId`.
-    const { otherChannelId, otherRoleId } = await t.run(async (ctx) => {
-      const otherChannelId = await ctx.db.insert("chatChannels", {
+    // A second serving team in the SAME group, with its own role. The role
+    // belongs to `otherTeamId`, not `world.teamId`.
+    const { otherTeamId, otherRoleId } = await t.run(async (ctx) => {
+      const otherTeamId = await ctx.db.insert("teams", {
         groupId: world.groupId,
         communityId: world.communityId,
         name: "Tech Team",
-        channelType: "custom",
-        memberCount: 0,
         isArchived: false,
-        isServingTeam: true,
-        createdById: world.channelAdminId,
         createdAt: Date.now(),
+        createdById: world.channelAdminId,
         updatedAt: Date.now(),
       });
       const otherRoleId = await ctx.db.insert("teamRoles", {
-        channelId: otherChannelId,
+        teamId: otherTeamId,
         communityId: world.communityId,
         name: "Sound",
         sortOrder: 0,
@@ -210,19 +207,19 @@ describe("assignRole channel/role ownership validation", () => {
         createdAt: Date.now(),
         createdById: world.channelAdminId,
       });
-      return { otherChannelId, otherRoleId };
+      return { otherTeamId, otherRoleId };
     });
 
-    // channelId from one team, roleId from another → mismatch.
+    // teamId from one team, roleId from another → mismatch.
     await expect(
       t.mutation(api.functions.scheduling.assignments.assignRole, {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: otherRoleId,
         userId: world.channelMemberId,
       }),
-    ).rejects.toThrow(/does not belong to the specified team channel/);
+    ).rejects.toThrow(/does not belong to the specified team/);
 
     // Using a fully consistent foreign pair is fine (same group).
     const ok = await t.mutation(
@@ -230,7 +227,7 @@ describe("assignRole channel/role ownership validation", () => {
       {
         token: leaderToken,
         planId,
-        channelId: otherChannelId,
+        teamId: otherTeamId,
         roleId: otherRoleId,
         userId: world.channelMemberId,
       },
@@ -238,13 +235,13 @@ describe("assignRole channel/role ownership validation", () => {
     expect(ok.assignmentId).toBeTruthy();
   });
 
-  it("rejects a channel/role pair belonging to a different group", async () => {
+  it("rejects a team/role pair belonging to a different group", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
 
-    // A consistent channel+role pair, but owned by an unrelated group B.
-    const { foreignChannelId, foreignRoleId } = await t.run(async (ctx) => {
+    // A consistent team+role pair, but owned by an unrelated group B.
+    const { foreignTeamId, foreignRoleId } = await t.run(async (ctx) => {
       const groupTypeId = await ctx.db.insert("groupTypes", {
         communityId: world.communityId,
         name: "Campus",
@@ -261,20 +258,17 @@ describe("assignRole channel/role ownership validation", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      const foreignChannelId = await ctx.db.insert("chatChannels", {
+      const foreignTeamId = await ctx.db.insert("teams", {
         groupId: foreignGroupId,
         communityId: world.communityId,
         name: "Other Worship Team",
-        channelType: "custom",
-        memberCount: 0,
         isArchived: false,
-        isServingTeam: true,
-        createdById: world.channelAdminId,
         createdAt: Date.now(),
+        createdById: world.channelAdminId,
         updatedAt: Date.now(),
       });
       const foreignRoleId = await ctx.db.insert("teamRoles", {
-        channelId: foreignChannelId,
+        teamId: foreignTeamId,
         communityId: world.communityId,
         name: "Bass",
         sortOrder: 0,
@@ -282,14 +276,14 @@ describe("assignRole channel/role ownership validation", () => {
         createdAt: Date.now(),
         createdById: world.channelAdminId,
       });
-      return { foreignChannelId, foreignRoleId };
+      return { foreignTeamId, foreignRoleId };
     });
 
     await expect(
       t.mutation(api.functions.scheduling.assignments.assignRole, {
         token: leaderToken,
         planId,
-        channelId: foreignChannelId,
+        teamId: foreignTeamId,
         roleId: foreignRoleId,
         userId: world.channelMemberId,
       }),
@@ -306,7 +300,7 @@ describe("assignRole channel/role ownership validation", () => {
       t.mutation(api.functions.scheduling.assignments.assignRole, {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.outsiderId,
       }),
@@ -345,7 +339,7 @@ describe("double-booking detection", () => {
       {
         token: leaderToken,
         planId: planA,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -357,7 +351,7 @@ describe("double-booking detection", () => {
       {
         token: leaderToken,
         planId: planB,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -400,7 +394,7 @@ describe("double-booking detection", () => {
       {
         token: leaderToken,
         planId: planA,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -412,7 +406,7 @@ describe("double-booking detection", () => {
       {
         token: leaderToken,
         planId: planB,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -430,7 +424,7 @@ describe("double-booking detection", () => {
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId: planA,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.channelMemberId,
     });
@@ -439,7 +433,7 @@ describe("double-booking detection", () => {
       {
         token: leaderToken,
         planId: planB,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -470,7 +464,7 @@ describe("previousFillers", () => {
         {
           token: leaderToken,
           planId,
-          channelId: world.channelId,
+          teamId: world.teamId,
           roleId: world.roleId,
           userId,
         },
@@ -532,7 +526,7 @@ describe("previousFillers", () => {
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.channelMemberId,
     });

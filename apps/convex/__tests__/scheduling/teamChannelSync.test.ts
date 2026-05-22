@@ -83,7 +83,7 @@ async function insertAssignment(
   return t.run((ctx) =>
     ctx.db.insert("roleAssignments", {
       planId: opts.planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: opts.userId,
       eventDate: opts.eventDate,
@@ -118,7 +118,7 @@ async function reconcile(
 ) {
   return t.mutation(
     internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-    { channelId: world.channelId },
+    { teamId: world.teamId },
   );
 }
 
@@ -342,7 +342,7 @@ describe("team channel auto-sync — triggerTeamChannelSync (public)", () => {
 
     const result = await t.mutation(
       api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
-      { token: leaderToken, channelId: world.channelId },
+      { token: leaderToken, teamId: world.teamId },
     );
     expect(result.addedCount).toBe(1);
     expect(result.removedCount).toBe(0);
@@ -359,7 +359,7 @@ describe("team channel auto-sync — triggerTeamChannelSync (public)", () => {
     await expect(
       t.mutation(
         api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
-        { token: outsiderToken, channelId: world.channelId },
+        { token: outsiderToken, teamId: world.teamId },
       ),
     ).rejects.toThrow(ConvexError);
   });
@@ -388,7 +388,7 @@ describe("team channel auto-sync — assignment triggers", () => {
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.groupLeaderId,
     });
@@ -413,7 +413,7 @@ describe("team channel auto-sync — assignment triggers", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.groupLeaderId,
       },
