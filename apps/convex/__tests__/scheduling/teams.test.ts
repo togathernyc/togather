@@ -385,3 +385,207 @@ describe("listCommunityTeams", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("linkChannel", () => {
+  it("creates a chat channel for a previously channel-less team", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Spin up a channel-less team and confirm `getTeam` reflects that.
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Hospitality",
+        withChannel: false,
+      },
+    );
+
+    const before = await t.query(api.functions.scheduling.teams.getTeam, {
+      token: leaderToken,
+      teamId,
+    });
+    expect(before.hasChannel).toBe(false);
+    expect(before.channelId).toBeNull();
+
+    const result = await t.mutation(
+      api.functions.scheduling.teams.linkChannel,
+      { token: leaderToken, teamId },
+    );
+    expect(result.channelId).toBeDefined();
+    expect(result.addedMembers).toBe(0);
+
+    const after = await t.query(api.functions.scheduling.teams.getTeam, {
+      token: leaderToken,
+      teamId,
+    });
+    expect(after.hasChannel).toBe(true);
+    expect(after.channelId).toBe(result.channelId);
+
+    await t.run(async (ctx) => {
+      const channel = await ctx.db.get(result.channelId);
+      expect(channel?.isServingTeam).toBe(true);
+      expect(channel?.channelType).toBe("custom");
+      expect(channel?.name).toBe("Hospitality");
+    });
+  });
+
+  it("rejects a team that already has a channel", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.linkChannel, {
+        token: leaderToken,
+        teamId: world.teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("rejects an archived team", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Hospitality",
+        withChannel: false,
+      },
+    );
+    await t.mutation(api.functions.scheduling.teams.archiveTeam, {
+      token: leaderToken,
+      teamId,
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.linkChannel, {
+        token: leaderToken,
+        teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("rejects a non-scheduler with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Hospitality",
+        withChannel: false,
+      },
+    );
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.linkChannel, {
+        token: memberToken,
+        teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
+
+describe("unlinkChannel", () => {
+  it("detaches the channel, clears isServingTeam, purges auto-synced members, preserves permanent members", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Seed one auto-synced member (rotation engine's row) and one permanent
+    // member (manual row, no syncSource). Only the synced one should go.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: world.channelId,
+        userId: world.channelMemberId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+        syncSource: "event_plan",
+      });
+    });
+    await t.mutation(api.functions.scheduling.teams.addPermanentMember, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.channelAdminId,
+    });
+
+    const result = await t.mutation(
+      api.functions.scheduling.teams.unlinkChannel,
+      { token: leaderToken, teamId: world.teamId },
+    );
+    expect(result.formerChannelId).toBe(world.channelId);
+    expect(result.removedSyncedMembers).toBe(1);
+
+    // Team is detached and the channel is no longer flagged as a team channel.
+    await t.run(async (ctx) => {
+      const team = await ctx.db.get(world.teamId);
+      expect(team?.channelId).toBeUndefined();
+      const channel = await ctx.db.get(world.channelId);
+      expect(channel).not.toBeNull();
+      expect(channel?.isServingTeam).toBeUndefined();
+      // Permanent member untouched.
+      const permanent = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q
+            .eq("channelId", world.channelId)
+            .eq("userId", world.channelAdminId),
+        )
+        .first();
+      expect(permanent?.leftAt).toBeUndefined();
+      expect(permanent?.syncSource).toBeUndefined();
+    });
+
+    // getTeam now reflects the channel-less state.
+    const after = await t.query(api.functions.scheduling.teams.getTeam, {
+      token: leaderToken,
+      teamId: world.teamId,
+    });
+    expect(after.hasChannel).toBe(false);
+    expect(after.channelId).toBeNull();
+    expect(after.channelSlug).toBeNull();
+  });
+
+  it("rejects a team that has no channel", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Hospitality",
+        withChannel: false,
+      },
+    );
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.unlinkChannel, {
+        token: leaderToken,
+        teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("rejects a non-scheduler with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const memberToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.unlinkChannel, {
+        token: memberToken,
+        teamId: world.teamId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
