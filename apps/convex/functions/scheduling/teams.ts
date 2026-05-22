@@ -71,10 +71,13 @@ export const createServingTeam = mutation({
       // The team's chat channel: a custom channel flagged as a serving team.
       // Membership is auto-synced from assignments (ADR-023), so the creator
       // is not added as a member — they manage it as a group leader.
+      // Slug uniqueness must span archived channels too: the `by_group_slug`
+      // index does not exclude them, so reusing an archived channel's slug
+      // would create a duplicate `(groupId, slug)` pair that an
+      // `includeArchived` lookup could resolve to the wrong row.
       const existingChannels = await ctx.db
         .query("chatChannels")
         .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("isArchived"), false))
         .collect();
       const existingSlugs = existingChannels
         .map((ch) => ch.slug)
