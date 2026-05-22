@@ -2,17 +2,28 @@
  * Scheduling Module — native event scheduling & rostering
  *
  * Togather's PCO-independent volunteer-rostering engine. A serving team is a
- * chat channel with roles; events declare needed roles; volunteers are
- * assigned and accept/decline.
+ * first-class `teams` row that owns roles (ADR-025); events declare needed
+ * roles; volunteers are assigned and accept/decline.
  *
  * @see /docs/architecture/ADR-023-native-event-scheduling.md
+ * @see /docs/architecture/ADR-025-teams-first-class-entity.md
  * @see /docs/architecture/event-scheduling-phase-1-plan.md
  */
 
 // ============================================================================
 // Teams
 // ============================================================================
-export { markChannelAsTeam, listTeamChannels } from "./teams";
+export {
+  createServingTeam,
+  listTeams,
+  getTeam,
+  updateTeam,
+  archiveTeam,
+  listCommunityTeams,
+  addPermanentMember,
+  removePermanentMember,
+  listPermanentMembers,
+} from "./teams";
 
 // ============================================================================
 // Roles

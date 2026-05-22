@@ -1578,7 +1578,9 @@ export default defineSchema({
       v.object({
         selectors: v.array(
           v.object({
-            sourceChannelId: v.id("chatChannels"),
+            sourceTeamId: v.id("teams"),
+            /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+            sourceChannelId: v.optional(v.id("chatChannels")),
             roleId: v.optional(v.id("teamRoles")),
           }),
         ),
@@ -2466,17 +2468,45 @@ export default defineSchema({
     }),
 
   // =============================================================================
-  // EVENT SCHEDULING & ROSTERING (ADR-023)
+  // EVENT SCHEDULING & ROSTERING (ADR-023, ADR-025)
   // Native replacement for the Planning Center scheduling dependency.
+  // ADR-025: `teams` is a first-class table; teamRoles / neededRoles /
+  // roleAssignments are keyed by `teamId`. The legacy `channelId` fields are
+  // unused dead columns, kept optional until a follow-up strips them.
+  // Run `migrateChannelsToTeams` BEFORE deploying this schema — it makes
+  // `teamId` required, so every row must be backfilled first. See ADR-025.
   // =============================================================================
 
   /**
-   * A role within a serving-team channel, e.g. "Drums", "Greeter".
-   * Free-form labels owned by the channel; no global taxonomy, no
-   * qualification rules — anyone in the channel can be assigned any role.
+   * A serving team — a roster of volunteers that owns roles and is scheduled
+   * onto event plans. Belongs to a campus group. A team OPTIONALLY has a chat
+   * channel (`channelId`); a channel-less team is a pure roster. See ADR-025.
+   */
+  teams: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    /** The team's chat channel, if it has one. A team may have none. */
+    channelId: v.optional(v.id("chatChannels")),
+    isArchived: v.optional(v.boolean()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_community", ["communityId"])
+    .index("by_channel", ["channelId"]),
+
+  /**
+   * A role within a serving team, e.g. "Drums", "Greeter". Free-form labels
+   * owned by the team; no global taxonomy, no qualification rules — anyone in
+   * the campus group can be assigned any role.
    */
   teamRoles: defineTable({
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     communityId: v.id("communities"),
     name: v.string(),
     color: v.optional(v.string()),
@@ -2486,7 +2516,7 @@ export default defineSchema({
     isArchived: v.optional(v.boolean()),
     createdAt: v.number(),
     createdById: v.id("users"),
-  }).index("by_channel", ["channelId"]),
+  }).index("by_team", ["teamId"]),
 
   /**
    * A dated event volunteers are rostered to. Belongs to a campus group.
@@ -2520,17 +2550,21 @@ export default defineSchema({
   /** "We need N of role X" on a given event. */
   neededRoles: defineTable({
     planId: v.id("eventPlans"),
-    channelId: v.id("chatChannels"), // the team
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     roleId: v.id("teamRoles"),
     count: v.number(),
   })
     .index("by_plan", ["planId"])
-    .index("by_plan_channel", ["planId", "channelId"]),
+    .index("by_plan_team", ["planId", "teamId"]),
 
   /** A person scheduled to a role on an event. */
   roleAssignments: defineTable({
     planId: v.id("eventPlans"),
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
+    /** ADR-025 legacy — unused dead column, stripped in a follow-up. */
+    channelId: v.optional(v.id("chatChannels")),
     roleId: v.id("teamRoles"),
     userId: v.id("users"),
     eventDate: v.number(), // denormalized for same-day double-booking queries
@@ -2547,7 +2581,7 @@ export default defineSchema({
     .index("by_user_status", ["userId", "status"])
     .index("by_plan_role", ["planId", "roleId"])
     .index("by_role", ["roleId"]) // powers "previously filled by"
-    // powers team-channel auto-sync: desired members of a channel within a
-    // rotation window are derived from assignments matched by channel + date.
-    .index("by_channel_eventDate", ["channelId", "eventDate"]),
+    // powers team auto-sync: desired members of a team within a rotation
+    // window are derived from assignments matched by team + date.
+    .index("by_team_eventDate", ["teamId", "eventDate"]),
 });

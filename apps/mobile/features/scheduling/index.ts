@@ -4,6 +4,7 @@
  * @see /docs/architecture/ADR-023-native-event-scheduling.md
  */
 export { TeamSetupScreen } from "./components/TeamSetupScreen";
+export { TeamCreateScreen } from "./components/TeamCreateScreen";
 export { RolesEditor } from "./components/RolesEditor";
 export { CrossTeamSelectorPicker } from "./components/CrossTeamSelectorPicker";
 export type {
@@ -20,3 +21,8 @@ export { EventListScreen } from "./components/EventListScreen";
 export { EventEditorScreen } from "./components/EventEditorScreen";
 export { MyScheduleScreen } from "./components/MyScheduleScreen";
 export { AssignmentDetailScreen } from "./components/AssignmentDetailScreen";
+
+/** Rostering hub — see ADR-024. */
+export { RosteringTopTabBar } from "./components/RosteringTopTabBar";
+export { RosteringTeamsScreen } from "./components/RosteringTeamsScreen";
+export { RosteringCrossTeamScreen } from "./components/RosteringCrossTeamScreen";

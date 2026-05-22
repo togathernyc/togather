@@ -3,12 +3,13 @@
  * of teamChannelSync.ts).
  *
  * A cross-team channel's membership is derived from `roleAssignments` across
- * MULTIPLE source serving-team channels, optionally filtered per-selector to a
- * single role. It uses the SAME rotation window (added ~5 days before the
- * event, removed ~1 day after) and `event_plan` syncSource as a serving-team
- * channel. These tests drive `reconcileTeamChannel` directly so the window is
- * exercised deterministically, plus the `reconcileCrossTeamChannelsForSource`
- * fan-out trigger.
+ * MULTIPLE source serving teams (ADR-025 — a team is a first-class `teams`
+ * row), optionally filtered per-selector to a single role. It uses the SAME
+ * rotation window (added ~5 days before the event, removed ~1 day after) and
+ * `event_plan` syncSource as a serving-team channel. These tests drive
+ * `reconcileCrossTeamChannel` directly so the window is exercised
+ * deterministically, plus the `reconcileCrossTeamChannelsForSource` fan-out
+ * trigger.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -35,11 +36,13 @@ const DAY = 86400000;
 
 /**
  * A cross-team test world: the base scheduling world (one serving team — the
- * "worship" team), plus a second serving-team channel (the "tech" team) with
- * its own role, plus a cross-team channel selecting from both.
+ * "worship" team), plus a second serving team (the "tech" team) with its own
+ * channel and role, plus a cross-team channel selecting from both.
  */
 interface CrossTeamWorld extends SchedulingWorld {
-  /** Second serving-team channel — the "tech" team. */
+  /** Second serving team — the "tech" team. */
+  techTeamId: Id<"teams">;
+  /** The tech team's chat channel. */
   techChannelId: Id<"chatChannels">;
   /** A role on the tech team. */
   techRoleId: Id<"teamRoles">;
@@ -62,6 +65,7 @@ async function setupCrossTeamWorld(opts?: {
   const base = await buildSchedulingWorld(t);
 
   const extra = await t.run(async (ctx): Promise<{
+    techTeamId: Id<"teams">;
     techChannelId: Id<"chatChannels">;
     techRoleId: Id<"teamRoles">;
     worshipRoleId: Id<"teamRoles">;
@@ -82,8 +86,19 @@ async function setupCrossTeamWorld(opts?: {
       updatedAt: ts(),
     });
 
-    const techRoleId = await ctx.db.insert("teamRoles", {
+    const techTeamId = await ctx.db.insert("teams", {
+      groupId: base.groupId,
+      communityId: base.communityId,
+      name: "Tech Team",
       channelId: techChannelId,
+      isArchived: false,
+      createdAt: ts(),
+      createdById: base.channelAdminId,
+      updatedAt: ts(),
+    });
+
+    const techRoleId = await ctx.db.insert("teamRoles", {
+      teamId: techTeamId,
       communityId: base.communityId,
       name: "Technical Director",
       sortOrder: 0,
@@ -95,7 +110,7 @@ async function setupCrossTeamWorld(opts?: {
 
     // A second role on the worship team for the roleId-filter test.
     const worshipRoleId = await ctx.db.insert("teamRoles", {
-      channelId: base.channelId,
+      teamId: base.teamId,
       communityId: base.communityId,
       name: "Worship Leader",
       sortOrder: 1,
@@ -120,6 +135,7 @@ async function setupCrossTeamWorld(opts?: {
     const techUserBId = await mkUser("Techbee");
 
     return {
+      techTeamId,
       techChannelId,
       techRoleId,
       worshipRoleId,
@@ -152,12 +168,12 @@ async function setupCrossTeamWorld(opts?: {
       crossTeamSync: {
         selectors: [
           {
-            sourceChannelId: base.channelId,
+            sourceTeamId: base.teamId,
             ...(worshipSelectorRoleId
               ? { roleId: worshipSelectorRoleId }
               : {}),
           },
-          { sourceChannelId: extra.techChannelId },
+          { sourceTeamId: extra.techTeamId },
         ],
       },
     }),
@@ -188,13 +204,13 @@ async function insertPlan(
   );
 }
 
-/** Insert a roleAssignments row on a given source channel/role. */
+/** Insert a roleAssignments row on a given source team/role. */
 async function insertAssignment(
   t: ReturnType<typeof convexTest>,
   world: CrossTeamWorld,
   opts: {
     planId: Id<"eventPlans">;
-    channelId: Id<"chatChannels">;
+    teamId: Id<"teams">;
     roleId: Id<"teamRoles">;
     userId: Id<"users">;
     eventDate: number;
@@ -204,7 +220,7 @@ async function insertAssignment(
   return t.run((ctx) =>
     ctx.db.insert("roleAssignments", {
       planId: opts.planId,
-      channelId: opts.channelId,
+      teamId: opts.teamId,
       roleId: opts.roleId,
       userId: opts.userId,
       eventDate: opts.eventDate,
@@ -239,7 +255,7 @@ async function reconcileCross(
   world: CrossTeamWorld,
 ) {
   return t.mutation(
-    internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+    internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
     { channelId: world.crossChannelId },
   );
 }
@@ -251,14 +267,14 @@ describe("cross-team channel — membership across multiple source teams", () =>
 
     await insertAssignment(t, world, {
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.worshipUserId,
       eventDate: Date.now() + 3 * DAY,
     });
     await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserId,
       eventDate: Date.now() + 3 * DAY,
@@ -282,7 +298,7 @@ describe("cross-team channel — membership across multiple source teams", () =>
     // Matching role — included.
     await insertAssignment(t, world, {
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.worshipUserId,
       eventDate: Date.now() + 3 * DAY,
@@ -290,7 +306,7 @@ describe("cross-team channel — membership across multiple source teams", () =>
     // Non-matching role on the same source team — excluded.
     await insertAssignment(t, world, {
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.worshipRoleId,
       userId: world.outsiderId,
       eventDate: Date.now() + 3 * DAY,
@@ -311,14 +327,14 @@ describe("cross-team channel — membership across multiple source teams", () =>
     // (here both happen to be the same role) should be included.
     await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserId,
       eventDate: Date.now() + 3 * DAY,
     });
     await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserBId,
       eventDate: Date.now() + 3 * DAY,
@@ -337,7 +353,7 @@ describe("cross-team channel — membership across multiple source teams", () =>
 
     await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserId,
       eventDate: Date.now() + 3 * DAY,
@@ -355,7 +371,7 @@ describe("cross-team channel — membership across multiple source teams", () =>
 
     await insertAssignment(t, world, {
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.worshipUserId,
       eventDate: Date.now() + 30 * DAY,
@@ -372,7 +388,7 @@ describe("cross-team channel — membership across multiple source teams", () =>
     const planId = await insertPlan(t, world, 3);
     const assignmentId = await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserId,
       eventDate: Date.now() + 3 * DAY,
@@ -403,16 +419,14 @@ interface CrossGroupWorld {
   base: SchedulingWorld;
   /** Second group in the same community. */
   groupBId: Id<"groups">;
-  /** Serving-team channel on the second group. */
-  teamBId: Id<"chatChannels">;
+  /** Serving team on the second group. */
+  teamBId: Id<"teams">;
   /** A role on the second group's team. */
   roleBId: Id<"teamRoles">;
   /** Member of group B, rostered on team B. */
   groupBRosteredId: Id<"users">;
   /** Member of group B, NOT rostered on any team. */
   groupBBystanderId: Id<"users">;
-  /** A non-serving channel in the base group — invalid as a selector source. */
-  plainChannelId: Id<"chatChannels">;
 }
 
 async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
@@ -432,7 +446,7 @@ async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
       updatedAt: ts(),
     });
 
-    const teamBId = await ctx.db.insert("chatChannels", {
+    const teamBChannelId = await ctx.db.insert("chatChannels", {
       groupId: groupBId,
       communityId: base.communityId,
       name: "MH Worship Team",
@@ -445,8 +459,19 @@ async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
       updatedAt: ts(),
     });
 
+    const teamBId = await ctx.db.insert("teams", {
+      groupId: groupBId,
+      communityId: base.communityId,
+      name: "MH Worship Team",
+      channelId: teamBChannelId,
+      isArchived: false,
+      createdAt: ts(),
+      createdById: base.channelAdminId,
+      updatedAt: ts(),
+    });
+
     const roleBId = await ctx.db.insert("teamRoles", {
-      channelId: teamBId,
+      teamId: teamBId,
       communityId: base.communityId,
       name: "Worship Leader",
       sortOrder: 0,
@@ -454,18 +479,6 @@ async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
       isArchived: false,
       createdAt: ts(),
       createdById: base.channelAdminId,
-    });
-
-    const plainChannelId = await ctx.db.insert("chatChannels", {
-      groupId: base.groupId,
-      communityId: base.communityId,
-      name: "Just A Channel",
-      channelType: "custom",
-      memberCount: 0,
-      isArchived: false,
-      createdById: base.channelAdminId,
-      createdAt: ts(),
-      updatedAt: ts(),
     });
 
     const mkGroupBUser = async (firstName: string): Promise<Id<"users">> => {
@@ -494,7 +507,6 @@ async function setupCrossGroupWorld(): Promise<CrossGroupWorld> {
       groupBId,
       teamBId,
       roleBId,
-      plainChannelId,
       groupBRosteredId,
       groupBBystanderId,
     };
@@ -516,8 +528,8 @@ describe("cross-team channel — cross-group sharing", () => {
         groupId: base.groupId,
         name: "Broadcast",
         selectors: [
-          { sourceChannelId: base.channelId },
-          { sourceChannelId: teamBId, roleId: roleBId },
+          { sourceTeamId: base.teamId },
+          { sourceTeamId: teamBId, roleId: roleBId },
         ],
       },
     );
@@ -538,7 +550,7 @@ describe("cross-team channel — cross-group sharing", () => {
         token: accessToken,
         groupId: base.groupId,
         name: "Local Only",
-        selectors: [{ sourceChannelId: base.channelId }],
+        selectors: [{ sourceTeamId: base.teamId }],
       },
     );
 
@@ -547,9 +559,24 @@ describe("cross-team channel — cross-group sharing", () => {
     expect(channel?.sharedGroups).toBeUndefined();
   });
 
-  it("rejects a source channel that is not a serving team", async () => {
-    const { t, base, plainChannelId } = await setupCrossGroupWorld();
+  it("rejects a source team that no longer exists", async () => {
+    const { t, base } = await setupCrossGroupWorld();
     const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    // A team id that points at a since-deleted team.
+    const deletedTeamId = await t.run(async (ctx) => {
+      const teamId = await ctx.db.insert("teams", {
+        groupId: base.groupId,
+        communityId: base.communityId,
+        name: "Doomed Team",
+        isArchived: false,
+        createdAt: ts(),
+        createdById: base.channelAdminId,
+        updatedAt: ts(),
+      });
+      await ctx.db.delete(teamId);
+      return teamId;
+    });
 
     await expect(
       t.mutation(
@@ -558,7 +585,7 @@ describe("cross-team channel — cross-group sharing", () => {
           token: accessToken,
           groupId: base.groupId,
           name: "Bad Source",
-          selectors: [{ sourceChannelId: plainChannelId }],
+          selectors: [{ sourceTeamId: deletedTeamId }],
         },
       ),
     ).rejects.toThrow();
@@ -575,7 +602,7 @@ describe("cross-team channel — cross-group sharing", () => {
         token: accessToken,
         groupId: base.groupId,
         name: "Broadcast",
-        selectors: [{ sourceChannelId: teamBId, roleId: roleBId }],
+        selectors: [{ sourceTeamId: teamBId, roleId: roleBId }],
       },
     );
 
@@ -595,7 +622,7 @@ describe("cross-team channel — cross-group sharing", () => {
       });
       await ctx.db.insert("roleAssignments", {
         planId,
-        channelId: teamBId,
+        teamId: teamBId,
         roleId: roleBId,
         userId: groupBRosteredId,
         eventDate,
@@ -605,7 +632,7 @@ describe("cross-team channel — cross-group sharing", () => {
       });
     });
     await t.mutation(
-      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
       { channelId },
     );
 
@@ -631,7 +658,7 @@ describe("cross-team channel — cross-group sharing", () => {
         token: accessToken,
         groupId: base.groupId,
         name: "Broadcast",
-        selectors: [{ sourceChannelId: teamBId, roleId: roleBId }],
+        selectors: [{ sourceTeamId: teamBId, roleId: roleBId }],
       },
     );
 
@@ -654,18 +681,18 @@ describe("cross-team channel — reconcileCrossTeamChannelsForSource", () => {
 
     await insertAssignment(t, world, {
       planId,
-      channelId: world.techChannelId,
+      teamId: world.techTeamId,
       roleId: world.techRoleId,
       userId: world.techUserId,
       eventDate: Date.now() + 3 * DAY,
     });
 
-    // The fan-out trigger keyed by the SOURCE serving-team channel id should
-    // pick up the cross-team channel that selects from it.
+    // The fan-out trigger keyed by the SOURCE serving team id should pick up
+    // the cross-team channel that selects from it.
     const result = await t.mutation(
       internal.functions.scheduling.teamChannelSync
         .reconcileCrossTeamChannelsForSource,
-      { sourceChannelId: world.techChannelId },
+      { sourceTeamId: world.techTeamId },
     );
     expect(result.processed).toBe(1);
     expect(result.totalAdded).toBe(1);
@@ -676,18 +703,15 @@ describe("cross-team channel — reconcileCrossTeamChannelsForSource", () => {
   it("ignores cross-team channels that do not select the given source", async () => {
     const { t, world } = await setupCrossTeamWorld();
 
-    // A serving-team channel id that no cross-team channel selects from.
-    const unrelatedChannelId = await t.run((ctx) =>
-      ctx.db.insert("chatChannels", {
+    // A serving team that no cross-team channel selects from.
+    const unrelatedTeamId = await t.run((ctx) =>
+      ctx.db.insert("teams", {
         groupId: world.groupId,
         communityId: world.communityId,
         name: "Hospitality Team",
-        channelType: "custom",
-        memberCount: 0,
         isArchived: false,
-        isServingTeam: true,
-        createdById: world.channelAdminId,
         createdAt: ts(),
+        createdById: world.channelAdminId,
         updatedAt: ts(),
       }),
     );
@@ -695,7 +719,7 @@ describe("cross-team channel — reconcileCrossTeamChannelsForSource", () => {
     const result = await t.mutation(
       internal.functions.scheduling.teamChannelSync
         .reconcileCrossTeamChannelsForSource,
-      { sourceChannelId: unrelatedChannelId },
+      { sourceTeamId: unrelatedTeamId },
     );
     expect(result.processed).toBe(0);
   });

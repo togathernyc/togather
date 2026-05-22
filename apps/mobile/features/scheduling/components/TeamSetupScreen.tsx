@@ -1,20 +1,18 @@
 /**
- * TeamSetupScreen
+ * TeamSetupScreen — the Team detail screen (ADR-024 §3, ADR-025).
  *
- * Reached from a channel's "Set up as serving team" affordance. On first
- * setup it marks the channel as a team and offers a starter role set
- * inferred from the channel name — the leader accepts/edits/dismisses each
- * suggestion before it is written. Once roles exist, this is the roles
- * editor for the team.
+ * Reached from the Rostering hub's Teams view. Shows a first-class serving
+ * team: header (name, member count / channel state), the roles editor, an
+ * "Open chat" affordance when the team has a chat channel, and permanent
+ * members management. On first visit, if the team has no roles yet, it
+ * offers a starter role set inferred from the team name.
  *
- * Route: /rostering/[group_id]/team/[channel_id]
- * Params: channel_id, plus `channelName` for the header (the channel doc
- * itself is not re-fetched — `suggestStarterRoles` already returns the name).
+ * Route: /rostering/[group_id]/team/[team_id]
  *
- * Backend: scheduling.teams.markChannelAsTeam,
+ * Backend: scheduling.teams.getTeam,
  * scheduling.roles.suggestStarterRoles / listRoles / createRole.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -43,6 +41,19 @@ import { ROLE_COLORS } from "../utils/format";
 type StarterRole = { name: string; defaultNeeded: number };
 type Role = { _id: Id<"teamRoles">; name: string };
 
+type Team = {
+  _id: Id<"teams">;
+  groupId: Id<"groups">;
+  name: string;
+  description?: string;
+  channelId: Id<"chatChannels"> | null;
+  channelSlug: string | null;
+  hasChannel: boolean;
+  isArchived: boolean;
+  memberCount: number;
+  createdAt: number;
+};
+
 type PermanentMember = {
   userId: Id<"users">;
   displayName: string;
@@ -64,71 +75,50 @@ export function TeamSetupScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const {
-    channel_id,
-    group_id,
-    channelName: channelNameParam,
-  } = useLocalSearchParams<{
-    channel_id: string;
+  const { team_id, group_id } = useLocalSearchParams<{
+    team_id: string;
     group_id: string;
-    channelName?: string;
   }>();
-  const channelId = channel_id as Id<"chatChannels">;
+  const teamId = team_id as Id<"teams">;
   const groupId = group_id as Id<"groups"> | undefined;
+
+  const team = useAuthenticatedQuery(
+    api.functions.scheduling.teams.getTeam,
+    teamId ? { teamId } : "skip",
+  ) as Team | undefined;
 
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
-    channelId ? { channelId } : "skip",
+    teamId ? { teamId } : "skip",
   ) as Role[] | undefined;
 
   const suggestion = useAuthenticatedQuery(
     api.functions.scheduling.roles.suggestStarterRoles,
-    channelId ? { channelId } : "skip",
-  ) as { channelName: string | null; roles: StarterRole[] } | undefined;
+    teamId ? { teamId } : "skip",
+  ) as { teamName: string; roles: StarterRole[] } | undefined;
 
-  const markChannelAsTeam = useAuthenticatedMutation(
-    api.functions.scheduling.teams.markChannelAsTeam,
-  );
+  // The chat channel's slug arrives on the team itself (`getTeam` resolves
+  // it under the team's group-member gate) — `messaging.channels.getChannel`
+  // is membership-gated and the creator of a fresh team isn't a member yet.
+
   const createRole = useAuthenticatedMutation(
     api.functions.scheduling.roles.createRole,
   );
 
-  const [setupState, setSetupState] = useState<"pending" | "ready" | "error">(
-    "pending",
-  );
   const [seeding, setSeeding] = useState(false);
   // Starter suggestions the leader has dismissed (by index in the list).
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
 
-  const channelName = suggestion?.channelName ?? channelNameParam ?? "this team";
   const hasRoles = (roles?.length ?? 0) > 0;
-
-  // Mark the channel as a serving team on first visit. `markChannelAsTeam`
-  // is idempotent — re-marking an existing team is a no-op patch.
-  useEffect(() => {
-    let cancelled = false;
-    markChannelAsTeam({ channelId })
-      .then(() => {
-        if (!cancelled) setSetupState("ready");
-      })
-      .catch((e: any) => {
-        if (!cancelled) {
-          setSetupState("error");
-          Alert.alert(
-            "Couldn't set up team",
-            e?.message ?? "Please try again.",
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelId]);
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back();
   }, [router]);
+
+  const handleOpenChat = useCallback(() => {
+    if (!team?.groupId || !team?.channelSlug) return;
+    router.push(`/inbox/${team.groupId}/${team.channelSlug}` as never);
+  }, [router, team?.groupId, team?.channelSlug]);
 
   const handleAcceptStarters = useCallback(async () => {
     if (!suggestion) return;
@@ -138,7 +128,7 @@ export function TeamSetupScreen() {
     try {
       for (let i = 0; i < accepted.length; i++) {
         await createRole({
-          channelId,
+          teamId,
           name: accepted[i].name,
           color: ROLE_COLORS[i % ROLE_COLORS.length],
           defaultNeeded: accepted[i].defaultNeeded,
@@ -149,12 +139,9 @@ export function TeamSetupScreen() {
     } finally {
       setSeeding(false);
     }
-  }, [suggestion, dismissed, createRole, channelId]);
+  }, [suggestion, dismissed, createRole, teamId]);
 
-  const showStarters =
-    setupState === "ready" &&
-    !hasRoles &&
-    (suggestion?.roles.length ?? 0) > 0;
+  const showStarters = !hasRoles && (suggestion?.roles.length ?? 0) > 0;
 
   return (
     <View
@@ -172,21 +159,18 @@ export function TeamSetupScreen() {
         <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.back}>
           <Ionicons name="chevron-back" size={28} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Serving team
+        <Text
+          style={[styles.headerTitle, { color: colors.text }]}
+          numberOfLines={1}
+        >
+          {team?.name ?? "Team"}
         </Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      {setupState === "pending" ? (
+      {team === undefined || roles === undefined ? (
         <View style={styles.centered}>
           <ActivityIndicator size="small" color={colors.text} />
-        </View>
-      ) : setupState === "error" ? (
-        <View style={styles.centered}>
-          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
-            Couldn't set up this serving team.
-          </Text>
         </View>
       ) : (
         <ScrollView
@@ -195,11 +179,49 @@ export function TeamSetupScreen() {
             { paddingBottom: insets.bottom + 32 },
           ]}
         >
-          <Text style={[styles.intro, { color: colors.textSecondary }]}>
-            {`#${channelName} is set up as a serving team. Define the roles `}
-            this team fills — each event plan can need a different number of
-            each.
+          {/* Team summary */}
+          <Text style={[styles.teamName, { color: colors.text }]}>
+            {team.name}
           </Text>
+          {team.description ? (
+            <Text style={[styles.teamDescription, { color: colors.textSecondary }]}>
+              {team.description}
+            </Text>
+          ) : null}
+          <Text style={[styles.teamMeta, { color: colors.textSecondary }]}>
+            {team.hasChannel
+              ? `${team.memberCount} ${
+                  team.memberCount === 1 ? "member" : "members"
+                }`
+              : "Roster only — no chat channel"}
+          </Text>
+
+          {/* Open chat — only when the team has a channel. */}
+          {team.hasChannel && team.channelId ? (
+            <Pressable
+              onPress={handleOpenChat}
+              disabled={!team?.channelSlug}
+              style={({ pressed }) => [
+                styles.openChatRow,
+                { backgroundColor: colors.surfaceSecondary },
+                (pressed || !team?.channelSlug) && { opacity: 0.8 },
+              ]}
+            >
+              <Ionicons
+                name="chatbubbles-outline"
+                size={20}
+                color={colors.text}
+              />
+              <Text style={[styles.openChatLabel, { color: colors.text }]}>
+                Open chat
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.textTertiary}
+              />
+            </Pressable>
+          ) : null}
 
           {showStarters && (
             <View style={styles.section}>
@@ -207,7 +229,7 @@ export function TeamSetupScreen() {
                 SUGGESTED ROLES
               </Text>
               <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
-                Based on the channel name. Tap to remove any you don't need.
+                Based on the team name. Tap to remove any you don't need.
               </Text>
               <View
                 style={[
@@ -306,19 +328,21 @@ export function TeamSetupScreen() {
             <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
               ROLES
             </Text>
-            <RolesEditor channelId={channelId} />
+            <RolesEditor teamId={teamId} />
           </View>
 
-          <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-              PERMANENT MEMBERS
-            </Text>
-            <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
-              These people are always in the channel, on top of whoever is
-              auto-added from event plans.
-            </Text>
-            <PermanentMembersSection channelId={channelId} groupId={groupId} />
-          </View>
+          {team.hasChannel && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                PERMANENT MEMBERS
+              </Text>
+              <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
+                These people are always in the channel, on top of whoever is
+                auto-added from event plans.
+              </Text>
+              <PermanentMembersSection teamId={teamId} groupId={groupId} />
+            </View>
+          )}
         </ScrollView>
       )}
     </View>
@@ -331,17 +355,17 @@ export function TeamSetupScreen() {
  * "Add member" affordance that picks from the campus group's roster.
  */
 function PermanentMembersSection({
-  channelId,
+  teamId,
   groupId,
 }: {
-  channelId: Id<"chatChannels">;
+  teamId: Id<"teams">;
   groupId?: Id<"groups">;
 }) {
   const { colors } = useTheme();
 
   const members = useAuthenticatedQuery(
     api.functions.scheduling.teams.listPermanentMembers,
-    { channelId },
+    { teamId },
   ) as PermanentMember[] | undefined;
 
   const removeMember = useAuthenticatedMutation(
@@ -364,7 +388,7 @@ function PermanentMembersSection({
             onPress: async () => {
               setRemoving(member.userId as string);
               try {
-                await removeMember({ channelId, userId: member.userId });
+                await removeMember({ teamId, userId: member.userId });
               } catch (e: any) {
                 Alert.alert(
                   "Couldn't remove",
@@ -378,7 +402,7 @@ function PermanentMembersSection({
         ],
       );
     },
-    [removeMember, channelId],
+    [removeMember, teamId],
   );
 
   if (members === undefined) {
@@ -457,7 +481,7 @@ function PermanentMembersSection({
       {groupId && (
         <AddMemberModal
           visible={pickerVisible}
-          channelId={channelId}
+          teamId={teamId}
           groupId={groupId}
           existingUserIds={
             new Set((members ?? []).map((m) => m.userId as string))
@@ -472,13 +496,13 @@ function PermanentMembersSection({
 /** Picker modal: the campus group's members, minus current permanent members. */
 function AddMemberModal({
   visible,
-  channelId,
+  teamId,
   groupId,
   existingUserIds,
   onClose,
 }: {
   visible: boolean;
-  channelId: Id<"chatChannels">;
+  teamId: Id<"teams">;
   groupId: Id<"groups">;
   existingUserIds: Set<string>;
   onClose: () => void;
@@ -514,7 +538,7 @@ function AddMemberModal({
     async (member: PermanentMember) => {
       setAdding(member.userId as string);
       try {
-        await addMember({ channelId, userId: member.userId });
+        await addMember({ teamId, userId: member.userId });
         onClose();
       } catch (e: any) {
         Alert.alert("Couldn't add", e?.message ?? "Please try again.");
@@ -522,7 +546,7 @@ function AddMemberModal({
         setAdding(null);
       }
     },
-    [addMember, channelId, onClose],
+    [addMember, teamId, onClose],
   );
 
   return (
@@ -635,15 +659,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  errorText: {
-    fontSize: 14,
-  },
   scrollContent: {
     padding: 16,
   },
-  intro: {
+  teamName: {
+    fontSize: 24,
+    fontWeight: "700",
+  },
+  teamDescription: {
     fontSize: 14,
     lineHeight: 20,
+    marginTop: 4,
+  },
+  teamMeta: {
+    fontSize: 13,
+    marginTop: 6,
+  },
+  openChatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  openChatLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "500",
   },
   section: {
     marginTop: 24,

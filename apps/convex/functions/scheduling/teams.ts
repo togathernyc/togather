@@ -1,9 +1,13 @@
 /**
- * Scheduling — teams
+ * Scheduling — teams (ADR-025)
  *
- * A "serving team" is just a chat channel with `isServingTeam = true`
- * (ADR-023, channel-as-team model). These functions opt a channel in/out of
- * being a team and list a campus group's team channels.
+ * A serving team is a first-class `teams` row: a roster of volunteers that
+ * owns roles and is scheduled onto event plans. A team *optionally* has a
+ * chat channel (`teams.channelId`) — a channel-less team is a pure roster.
+ *
+ * These functions create, read, update, and archive teams, and manage a
+ * team channel's manually-added ("permanent") members. Roles, events, and
+ * assignments live in `roles.ts` / `events.ts` / `assignments.ts`.
  */
 
 import { ConvexError, v } from "convex/values";
@@ -11,67 +15,122 @@ import { mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { generateChannelSlug } from "../../lib/slugs";
 import { updateChannelMemberCount } from "../messaging/helpers";
-import { isScheduler, requireGroupMember, requireScheduler } from "./permissions";
+import {
+  requireGroupMember,
+  requireGroupScheduler,
+  requireTeam,
+  requireTeamScheduler,
+} from "./permissions";
 import { purgeSyncedMembers } from "./teamChannelSync";
 
+/** Validate a team (or channel) name; returns the trimmed value. */
+function validateName(raw: string): string {
+  const name = raw.trim();
+  if (name.length < 1 || name.length > 50) {
+    throw new ConvexError("Team name must be 1-50 characters.");
+  }
+  if (!/[a-zA-Z0-9]/.test(name)) {
+    throw new ConvexError(
+      "Team name must contain at least one letter or number.",
+    );
+  }
+  return name;
+}
+
 /**
- * Mark (or unmark) a channel as a serving team.
+ * Create a serving team (ADR-025).
  *
- * Auth: channel admin/moderator, campus group leader, or community admin.
- * Returns the channel id and its new `isServingTeam` value.
+ * By default the team also gets a chat channel — a `custom` channel flagged
+ * `isServingTeam`. Pass `withChannel: false` for a channel-less team (a pure
+ * roster with no chat surface). The channel's membership is auto-synced from
+ * event-plan assignments, so the creator is not added as a member.
+ *
+ * Auth: campus group leader or community admin.
  */
-export const markChannelAsTeam = mutation({
+export const createServingTeam = mutation({
   args: {
     token: v.string(),
-    channelId: v.id("chatChannels"),
-    /** Defaults to `true` (mark as team). Pass `false` to unmark. */
-    isTeam: v.optional(v.boolean()),
+    groupId: v.id("groups"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    /** Whether to also create the team's chat channel. Defaults to `true`. */
+    withChannel: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    const group = await requireGroupScheduler(ctx, args.groupId, userId);
 
-    const channel = await ctx.db.get(args.channelId);
-    if (!channel) {
-      throw new ConvexError("Channel not found");
-    }
-    if (!(await isScheduler(ctx, channel, userId))) {
-      throw new ConvexError(
-        "You must be a team admin, group leader, or community admin to set up a serving team",
-      );
+    const name = validateName(args.name);
+    const now = Date.now();
+    const withChannel = args.withChannel ?? true;
+
+    let channelId: Id<"chatChannels"> | undefined;
+    if (withChannel) {
+      // The team's chat channel: a custom channel flagged as a serving team.
+      // Membership is auto-synced from assignments (ADR-023), so the creator
+      // is not added as a member — they manage it as a group leader.
+      // Slug uniqueness must span archived channels too: the `by_group_slug`
+      // index does not exclude them, so reusing an archived channel's slug
+      // would create a duplicate `(groupId, slug)` pair that an
+      // `includeArchived` lookup could resolve to the wrong row.
+      const existingChannels = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect();
+      // Match `createCustomChannel`'s 20-channel-per-group cap — counted over
+      // non-archived rows only, the same way the original limit works.
+      const activeChannelCount = existingChannels.filter(
+        (ch) => ch.isArchived === false,
+      ).length;
+      if (activeChannelCount >= 20) {
+        throw new ConvexError(
+          "This group has reached the maximum of 20 channels. Archive some channels to create new ones.",
+        );
+      }
+      const existingSlugs = existingChannels
+        .map((ch) => ch.slug)
+        .filter((slug): slug is string => slug !== undefined);
+      channelId = await ctx.db.insert("chatChannels", {
+        groupId: args.groupId,
+        slug: generateChannelSlug(name, existingSlugs),
+        channelType: "custom",
+        name,
+        description: args.description,
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        isServingTeam: true,
+        memberCount: 0,
+        joinMode: "open",
+      });
     }
 
-    const isTeam = args.isTeam ?? true;
-    await ctx.db.patch(args.channelId, {
-      isServingTeam: isTeam,
-      updatedAt: Date.now(),
+    const teamId = await ctx.db.insert("teams", {
+      groupId: args.groupId,
+      communityId: group.communityId,
+      name,
+      description: args.description,
+      channelId,
+      createdAt: now,
+      createdById: userId,
+      updatedAt: now,
     });
 
-    // Disabling the team flag: the rotation engine (`reconcileTeamChannel`)
-    // early-returns for non-serving channels and the daily cron skips them,
-    // so any currently auto-synced members would be stranded as active
-    // members forever. Soft-remove them now and fix `memberCount`.
-    let removedSyncedMembers = 0;
-    if (!isTeam) {
-      removedSyncedMembers = await purgeSyncedMembers(ctx, args.channelId);
-    }
-
-    return {
-      channelId: args.channelId,
-      isServingTeam: isTeam,
-      removedSyncedMembers,
-    };
+    return { teamId, channelId: channelId ?? null };
   },
 });
 
 /**
- * List the serving-team channels for a campus group.
+ * List the serving teams for a campus group (ADR-025). Archived teams are
+ * excluded.
  *
- * Auth: an active member of the group, or a community admin. Gating this
- * prevents an authenticated outsider from enumerating a private group's
- * team channel names and member counts.
+ * Auth: an active member of the group, or a community admin — so a private
+ * group's teams are not enumerable by arbitrary authenticated users.
  */
-export const listTeamChannels = query({
+export const listTeams = query({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
@@ -80,36 +139,167 @@ export const listTeamChannels = query({
     const userId = await requireAuth(ctx, args.token);
     await requireGroupMember(ctx, args.groupId, userId);
 
-    const channels = await ctx.db
-      .query("chatChannels")
+    const teams = await ctx.db
+      .query("teams")
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
       .collect();
 
-    return channels
-      .filter((channel) => channel.isServingTeam === true)
-      .map((channel) => ({
-        _id: channel._id,
-        name: channel.name,
-        channelType: channel.channelType,
-        memberCount: channel.memberCount,
-      }));
+    return Promise.all(
+      teams
+        .filter((team) => team.isArchived !== true)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(async (team) => {
+          const channel = team.channelId
+            ? await ctx.db.get(team.channelId)
+            : null;
+          return {
+            _id: team._id,
+            name: team.name,
+            description: team.description,
+            channelId: team.channelId ?? null,
+            hasChannel: team.channelId !== undefined,
+            memberCount: channel?.memberCount ?? 0,
+          };
+        }),
+    );
   },
 });
 
 /**
- * List every serving-team channel across the caller's community, organized by
- * the group that owns it and enriched with each team's (non-archived) roles.
+ * Fetch a single serving team by id (ADR-025).
  *
- * Powers the cross-team channel picker: a leader first narrows down which
- * groups to draw from, then picks roles from the teams in those groups. Only
- * groups that actually have a serving team are returned, so the picker never
- * lists groups with nothing to offer.
+ * Auth: an active member of the team's campus group, or a community admin.
+ *
+ * @throws ConvexError if the team is missing or the caller lacks access.
+ */
+export const getTeam = query({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const team = await ctx.db.get(args.teamId);
+    if (!team) {
+      throw new ConvexError("Team not found");
+    }
+    await requireGroupMember(ctx, team.groupId, userId);
+
+    const channel = team.channelId ? await ctx.db.get(team.channelId) : null;
+    return {
+      _id: team._id,
+      groupId: team.groupId,
+      name: team.name,
+      description: team.description,
+      channelId: team.channelId ?? null,
+      hasChannel: team.channelId !== undefined,
+      // Slug is resolved here (group-membership-gated, which the team's
+      // scheduler always satisfies) so the team detail screen can deep-link
+      // into the chat without a separate `getChannel` lookup — that one is
+      // membership-gated, and `createServingTeam` deliberately does not add
+      // the creator as a member.
+      channelSlug: channel?.slug ?? null,
+      isArchived: team.isArchived === true,
+      memberCount: channel?.memberCount ?? 0,
+      createdAt: team.createdAt,
+    };
+  },
+});
+
+/**
+ * Update a team's name and/or description (ADR-025). When the team has a
+ * chat channel, a rename is mirrored onto the channel so the conversation
+ * and the roster stay labelled consistently.
+ *
+ * Auth: team admin/moderator, campus group leader, or community admin.
+ */
+export const updateTeam = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const team = await requireTeamScheduler(ctx, args.teamId, userId);
+
+    const now = Date.now();
+    const patch: { name?: string; description?: string; updatedAt: number } = {
+      updatedAt: now,
+    };
+    if (args.name !== undefined) patch.name = validateName(args.name);
+    if (args.description !== undefined) patch.description = args.description;
+
+    await ctx.db.patch(args.teamId, patch);
+
+    if (team.channelId && (patch.name || args.description !== undefined)) {
+      await ctx.db.patch(team.channelId, {
+        ...(patch.name ? { name: patch.name } : {}),
+        ...(args.description !== undefined
+          ? { description: args.description }
+          : {}),
+        updatedAt: now,
+      });
+    }
+
+    return { teamId: args.teamId };
+  },
+});
+
+/**
+ * Archive (or unarchive) a team (ADR-025). Archiving also archives the
+ * team's chat channel and purges its auto-synced members — the rotation
+ * engine skips archived teams, so synced members would otherwise be
+ * stranded as permanent members.
+ *
+ * Auth: team admin/moderator, campus group leader, or community admin.
+ */
+export const archiveTeam = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+    /** Defaults to `true` (archive). Pass `false` to unarchive. */
+    archived: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const team = await requireTeamScheduler(ctx, args.teamId, userId);
+
+    const archived = args.archived ?? true;
+    const now = Date.now();
+
+    await ctx.db.patch(args.teamId, { isArchived: archived, updatedAt: now });
+
+    let removedSyncedMembers = 0;
+    if (team.channelId) {
+      await ctx.db.patch(team.channelId, {
+        isArchived: archived,
+        archivedAt: archived ? now : undefined,
+        updatedAt: now,
+      });
+      if (archived) {
+        removedSyncedMembers = await purgeSyncedMembers(ctx, team.channelId);
+      }
+    }
+
+    return { teamId: args.teamId, isArchived: archived, removedSyncedMembers };
+  },
+});
+
+/**
+ * List every serving team across the caller's community, organized by the
+ * group that owns it and enriched with each team's (non-archived) roles.
+ *
+ * Powers the cross-team channel picker: a leader narrows down which groups
+ * to draw from, then picks roles from the teams in those groups. Only groups
+ * that actually have a team are returned.
  *
  * Auth: an active member of `groupId` (the group the picker is opened from),
- * or a community admin — the same read gate as `listTeamChannels`.
+ * or a community admin — the same read gate as `listTeams`.
  */
-export const listCommunityServingTeams = query({
+export const listCommunityTeams = query({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
@@ -127,9 +317,9 @@ export const listCommunityServingTeams = query({
     const result: Array<{
       group: { _id: Id<"groups">; name: string };
       teams: Array<{
-        _id: Id<"chatChannels">;
+        _id: Id<"teams">;
         name: string;
-        channelType: string;
+        hasChannel: boolean;
         memberCount: number;
         roles: Array<{
           _id: Id<"teamRoles">;
@@ -141,25 +331,27 @@ export const listCommunityServingTeams = query({
     }> = [];
 
     for (const g of communityGroups) {
-      const channels = await ctx.db
-        .query("chatChannels")
+      const groupTeams = await ctx.db
+        .query("teams")
         .withIndex("by_group", (q) => q.eq("groupId", g._id))
-        .filter((q) => q.eq(q.field("isArchived"), false))
         .collect();
-      const teamChannels = channels.filter((c) => c.isServingTeam === true);
-      if (teamChannels.length === 0) continue;
+      const activeTeams = groupTeams.filter((t) => t.isArchived !== true);
+      if (activeTeams.length === 0) continue;
 
       const teams = await Promise.all(
-        teamChannels.map(async (team) => {
+        activeTeams.map(async (team) => {
           const roles = await ctx.db
             .query("teamRoles")
-            .withIndex("by_channel", (q) => q.eq("channelId", team._id))
+            .withIndex("by_team", (q) => q.eq("teamId", team._id))
             .collect();
+          const channel = team.channelId
+            ? await ctx.db.get(team.channelId)
+            : null;
           return {
             _id: team._id,
             name: team.name,
-            channelType: team.channelType,
-            memberCount: team.memberCount,
+            hasChannel: team.channelId !== undefined,
+            memberCount: channel?.memberCount ?? 0,
             roles: roles
               .filter((role) => role.isArchived !== true)
               .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -191,43 +383,58 @@ export const listCommunityServingTeams = query({
 // Permanent members
 // ============================================================================
 //
-// An Event Team channel's day-to-day membership is auto-synced from event-plan
+// A team channel's day-to-day membership is auto-synced from event-plan
 // assignments by `reconcileTeamChannel` — but that engine only ever touches
 // `chatChannelMembers` rows tagged `syncSource === "event_plan"`. A "permanent
 // member" is a `chatChannelMembers` row with NO `syncSource`: a leader added
 // them by hand, and the rotation engine leaves them alone. They stay in the
 // channel regardless of event plans, on top of whoever is auto-added.
+//
+// These functions require the team to have a chat channel — a channel-less
+// team has no `chatChannelMembers` to manage.
+
+/** Resolve a team's channel id for a scheduler, erroring if it has none. */
+async function requireTeamChannel(
+  ctx: Parameters<typeof requireTeam>[0],
+  teamId: Id<"teams">,
+  userId: Id<"users">,
+): Promise<Id<"chatChannels">> {
+  const team = await requireTeamScheduler(ctx, teamId, userId);
+  if (!team.channelId) {
+    throw new ConvexError("This team has no chat channel.");
+  }
+  return team.channelId;
+}
 
 /**
- * Add a permanent member to a (team) channel.
+ * Add a permanent member to a team's channel.
  *
  * Inserts a `chatChannelMembers` row with role `member` and no `syncSource`
  * so the auto-sync engine never removes it. Idempotent: if the user already
- * has an active membership row (synced or manual) this is a no-op — the goal
- * is simply "ensure the user is present in the channel".
+ * has an active membership row (synced or manual) this is a no-op.
  *
- * Auth: channel admin/moderator, campus group leader, or community admin.
+ * Auth: team admin/moderator, campus group leader, or community admin.
  */
 export const addPermanentMember = mutation({
   args: {
     token: v.string(),
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireScheduler(ctx, args.channelId, callerId);
+    const channelId = await requireTeamChannel(ctx, args.teamId, callerId);
 
     const existing = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", args.channelId).eq("userId", args.userId),
+        q.eq("channelId", channelId).eq("userId", args.userId),
       )
       .first();
 
     // Already present (active row, synced or manual) — nothing to do.
     if (existing && existing.leftAt === undefined) {
-      return { channelId: args.channelId, userId: args.userId, added: false };
+      return { teamId: args.teamId, userId: args.userId, added: false };
     }
 
     const user = await ctx.db.get(args.userId);
@@ -252,7 +459,7 @@ export const addPermanentMember = mutation({
       });
     } else {
       await ctx.db.insert("chatChannelMembers", {
-        channelId: args.channelId,
+        channelId,
         userId: args.userId,
         role: "member",
         joinedAt: Date.now(),
@@ -262,34 +469,34 @@ export const addPermanentMember = mutation({
       });
     }
 
-    await updateChannelMemberCount(ctx, args.channelId);
-    return { channelId: args.channelId, userId: args.userId, added: true };
+    await updateChannelMemberCount(ctx, channelId);
+    return { teamId: args.teamId, userId: args.userId, added: true };
   },
 });
 
 /**
- * Remove a permanent member from a (team) channel.
+ * Remove a permanent member from a team's channel.
  *
  * Soft-removes (`leftAt`) the user's NON-synced membership row only. A synced
  * (`syncSource === "event_plan"`) row is never touched — it is owned by the
  * rotation engine and reflects a live event-plan assignment.
  *
- * Auth: channel admin/moderator, campus group leader, or community admin.
+ * Auth: team admin/moderator, campus group leader, or community admin.
  */
 export const removePermanentMember = mutation({
   args: {
     token: v.string(),
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireScheduler(ctx, args.channelId, callerId);
+    const channelId = await requireTeamChannel(ctx, args.teamId, callerId);
 
     const rows = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", args.channelId).eq("userId", args.userId),
+        q.eq("channelId", channelId).eq("userId", args.userId),
       )
       .collect();
 
@@ -301,29 +508,29 @@ export const removePermanentMember = mutation({
     }
 
     await ctx.db.patch(manualRow._id, { leftAt: Date.now() });
-    await updateChannelMemberCount(ctx, args.channelId);
-    return { channelId: args.channelId, userId: args.userId, removed: true };
+    await updateChannelMemberCount(ctx, channelId);
+    return { teamId: args.teamId, userId: args.userId, removed: true };
   },
 });
 
 /**
- * List a (team) channel's permanent members — active rows with no
- * `syncSource`. Excludes auto-synced event-plan members.
+ * List a team's permanent members — active channel rows with no `syncSource`.
+ * Excludes auto-synced event-plan members.
  *
- * Auth: channel admin/moderator, campus group leader, or community admin.
+ * Auth: team admin/moderator, campus group leader, or community admin.
  */
 export const listPermanentMembers = query({
   args: {
     token: v.string(),
-    channelId: v.id("chatChannels"),
+    teamId: v.id("teams"),
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireScheduler(ctx, args.channelId, callerId);
+    const channelId = await requireTeamChannel(ctx, args.teamId, callerId);
 
     const rows = await ctx.db
       .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .withIndex("by_channel", (q) => q.eq("channelId", channelId))
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
 

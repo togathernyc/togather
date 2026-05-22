@@ -123,6 +123,7 @@ import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
+import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
@@ -312,6 +313,7 @@ declare const fullApi: ApiFromModules<{
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
+  "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;

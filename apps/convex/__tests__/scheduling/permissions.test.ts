@@ -1,8 +1,8 @@
 /**
- * Tests for `requireScheduler` auth (ADR-023).
+ * Tests for `requireTeamScheduler` auth (ADR-023 / ADR-025).
  *
- * Scheduler permission = channel admin/moderator OR campus group leader OR
- * community admin. A plain channel member is rejected. All rejections must
+ * Scheduler permission = team channel admin/moderator OR campus group leader
+ * OR community admin. A plain channel member is rejected. All rejections must
  * be `ConvexError` so the client `AuthErrorBoundary` can recover.
  */
 
@@ -22,24 +22,24 @@ async function setupSchedulingWorld() {
   return { t, world };
 }
 
-describe("requireScheduler (via createRole)", () => {
-  it("allows a channel admin", async () => {
+describe("requireTeamScheduler (via createRole)", () => {
+  it("allows a team channel admin", async () => {
     const { t, world } = await setupSchedulingWorld();
     const { accessToken } = await generateTokens(world.channelAdminId);
     const res = await t.mutation(api.functions.scheduling.roles.createRole, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       name: "Keys",
     });
     expect(res.roleId).toBeDefined();
   });
 
-  it("allows a channel moderator", async () => {
+  it("allows a team channel moderator", async () => {
     const { t, world } = await setupSchedulingWorld();
     const { accessToken } = await generateTokens(world.channelModeratorId);
     const res = await t.mutation(api.functions.scheduling.roles.createRole, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       name: "Guitar",
     });
     expect(res.roleId).toBeDefined();
@@ -50,7 +50,7 @@ describe("requireScheduler (via createRole)", () => {
     const { accessToken } = await generateTokens(world.groupLeaderId);
     const res = await t.mutation(api.functions.scheduling.roles.createRole, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       name: "Bass",
     });
     expect(res.roleId).toBeDefined();
@@ -61,7 +61,7 @@ describe("requireScheduler (via createRole)", () => {
     const { accessToken } = await generateTokens(world.communityAdminId);
     const res = await t.mutation(api.functions.scheduling.roles.createRole, {
       token: accessToken,
-      channelId: world.channelId,
+      teamId: world.teamId,
       name: "Vocals",
     });
     expect(res.roleId).toBeDefined();
@@ -73,7 +73,7 @@ describe("requireScheduler (via createRole)", () => {
     await expect(
       t.mutation(api.functions.scheduling.roles.createRole, {
         token: accessToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
         name: "Sneaky Role",
       }),
     ).rejects.toThrow(ConvexError);
@@ -85,7 +85,7 @@ describe("requireScheduler (via createRole)", () => {
     await expect(
       t.mutation(api.functions.scheduling.roles.createRole, {
         token: accessToken,
-        channelId: world.channelId,
+        teamId: world.teamId,
         name: "Outsider Role",
       }),
     ).rejects.toThrow(ConvexError);
@@ -113,7 +113,7 @@ describe("respondToAssignment ownership check", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },
@@ -149,7 +149,7 @@ describe("respondToAssignment ownership check", () => {
       {
         token: leaderToken,
         planId,
-        channelId: world.channelId,
+        teamId: world.teamId,
         roleId: world.roleId,
         userId: world.channelMemberId,
       },

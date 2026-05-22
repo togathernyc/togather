@@ -1,11 +1,12 @@
 /**
- * EventListScreen
+ * EventListScreen — the Schedule tab of the Rostering hub.
  *
- * The scheduler's plan list for a campus group — upcoming events, each with
- * a fill-progress bar (filled vs. needed slots) and a draft/published
- * status pill. A "+ New event" action creates a draft.
+ * The scheduler's plan list for a campus group — upcoming event plans, each
+ * with a fill-progress bar (filled vs. needed slots) and a draft/published
+ * status pill. A "+ New event plan" row creates a draft.
  *
- * Route: /rostering/[group_id]
+ * Rendered headerless: the Rostering hub layout supplies the screen header
+ * and top tab bar. Route: /rostering/[group_id]. See ADR-024.
  *
  * Backend: scheduling.events.listEvents, scheduling.events.createEvent.
  */
@@ -73,16 +74,12 @@ export function EventListScreen() {
   );
   const [creating, setCreating] = useState(false);
 
-  const handleBack = useCallback(() => {
-    if (router.canGoBack()) router.back();
-  }, [router]);
-
   const handleNewEvent = useCallback(async () => {
     if (creating) return;
     setCreating(true);
     try {
       // Default a new draft to next Sunday at 9 AM — the scheduler tunes it
-      // in the editor. Keeps "+ New event" a single tap to a usable draft.
+      // in the editor. Keeps "+ New event plan" a single tap to a usable draft.
       const date = nextSundayAtNine();
       const result = await createEvent({
         groupId,
@@ -90,9 +87,7 @@ export function EventListScreen() {
         eventDate: date.getTime(),
         times: [{ label: "9:00 AM", startsAt: date.getTime() }],
       });
-      router.push(
-        `/rostering/${groupId}/event/${result.planId}` as any,
-      );
+      router.push(`/rostering/${groupId}/event/${result.planId}` as never);
     } finally {
       setCreating(false);
     }
@@ -101,9 +96,7 @@ export function EventListScreen() {
   const handleDuplicate = useCallback(
     async (event: EventRow) => {
       const result = await duplicateEvent({ planId: event._id });
-      router.push(
-        `/rostering/${groupId}/event/${result.planId}` as any,
-      );
+      router.push(`/rostering/${groupId}/event/${result.planId}` as never);
     },
     [duplicateEvent, groupId, router],
   );
@@ -164,165 +157,140 @@ export function EventListScreen() {
     [handleDuplicate, handleDelete],
   );
 
+  if (events === undefined) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+        <ActivityIndicator size="small" color={colors.text} />
+      </View>
+    );
+  }
+
+  if (events.length === 0) {
+    return (
+      <View style={[styles.emptyWrap, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="calendar-outline"
+          title="No upcoming event plans"
+          message="Create an event plan to start scheduling volunteers."
+          actionLabel="New event plan"
+          onAction={handleNewEvent}
+        />
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.surface },
+    <ScrollView
+      style={{ backgroundColor: colors.surface }}
+      contentContainerStyle={[
+        styles.scrollContent,
+        { paddingBottom: insets.bottom + 24 },
       ]}
     >
-      <View
-        style={[
-          styles.header,
-          { backgroundColor: colors.surface, borderBottomColor: colors.border },
-        ]}
+      <Pressable
+        onPress={handleNewEvent}
+        disabled={creating}
+        style={[styles.newRow, { borderColor: primaryColor }]}
+        accessibilityRole="button"
       >
-        <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.back}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Rostering
+        {creating ? (
+          <ActivityIndicator size="small" color={primaryColor} />
+        ) : (
+          <Ionicons name="add" size={20} color={primaryColor} />
+        )}
+        <Text style={[styles.newLabel, { color: primaryColor }]}>
+          New event plan
         </Text>
-        <TouchableOpacity
-          onPress={handleNewEvent}
-          hitSlop={12}
-          style={styles.back}
-          disabled={creating}
-        >
-          {creating ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <Ionicons name="add" size={28} color={primaryColor} />
-          )}
-        </TouchableOpacity>
-      </View>
+      </Pressable>
 
-      {events === undefined ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="small" color={colors.text} />
-        </View>
-      ) : events.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <EmptyState
-            icon="calendar-outline"
-            title="No upcoming event plans"
-            message="Create an event plan to start scheduling volunteers."
-            actionLabel="New event plan"
-            onAction={handleNewEvent}
-          />
-        </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: insets.bottom + 24 },
-          ]}
-        >
-          {events.map((event) => {
-            const { totalNeeded, totalFilled, totalConfirmed } =
-              event.fillSummary;
-            const confirmedPct =
-              totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
-            const filledPct =
-              totalNeeded > 0 ? (totalFilled / totalNeeded) * 100 : 0;
-            // Filled-but-not-yet-confirmed portion of the bar.
-            const pendingPct = Math.max(0, filledPct - confirmedPct);
-            const isPublished = event.status === "published";
-            return (
-              <Pressable
-                key={event._id}
-                onPress={() =>
-                  router.push(
-                    `/rostering/${groupId}/event/${event._id}` as any,
-                  )
-                }
-                style={({ pressed }) => [
-                  styles.card,
-                  { backgroundColor: colors.surfaceSecondary },
-                  pressed && { opacity: 0.8 },
-                ]}
+      {events.map((event) => {
+        const { totalNeeded, totalFilled, totalConfirmed } = event.fillSummary;
+        const confirmedPct =
+          totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
+        const filledPct =
+          totalNeeded > 0 ? (totalFilled / totalNeeded) * 100 : 0;
+        // Filled-but-not-yet-confirmed portion of the bar.
+        const pendingPct = Math.max(0, filledPct - confirmedPct);
+        const isPublished = event.status === "published";
+        return (
+          <Pressable
+            key={event._id}
+            onPress={() =>
+              router.push(`/rostering/${groupId}/event/${event._id}` as never)
+            }
+            style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+          >
+            <View style={styles.cardTop}>
+              <View style={styles.cardTitleWrap}>
+                <Text
+                  style={[styles.cardTitle, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  {event.title}
+                </Text>
+                <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
+                  {formatEventDate(event.eventDate)}
+                  {event.times.length > 0
+                    ? ` · ${event.times.map((t) => t.label).join(", ")}`
+                    : ""}
+                </Text>
+              </View>
+              <StatusPill
+                label={isPublished ? "Published" : "Draft"}
+                color={isPublished ? colors.success : colors.textSecondary}
+                bg={isPublished ? colors.success + "22" : colors.border}
+              />
+              <TouchableOpacity
+                onPress={(e) => {
+                  // Keep the ⋯ tap distinct from the card's open-editor press.
+                  e.stopPropagation();
+                  handleEventMenu(event);
+                }}
+                hitSlop={12}
+                style={styles.menuButton}
+                accessibilityLabel="Event plan options"
               >
-                <View style={styles.cardTop}>
-                  <View style={styles.cardTitleWrap}>
-                    <Text
-                      style={[styles.cardTitle, { color: colors.text }]}
-                      numberOfLines={1}
-                    >
-                      {event.title}
-                    </Text>
-                    <Text
-                      style={[styles.cardDate, { color: colors.textSecondary }]}
-                    >
-                      {formatEventDate(event.eventDate)}
-                      {event.times.length > 0
-                        ? ` · ${event.times.map((t) => t.label).join(", ")}`
-                        : ""}
-                    </Text>
-                  </View>
-                  <StatusPill
-                    label={isPublished ? "Published" : "Draft"}
-                    color={isPublished ? colors.success : colors.textSecondary}
-                    bg={
-                      isPublished
-                        ? colors.success + "22"
-                        : colors.border
-                    }
-                  />
-                  <TouchableOpacity
-                    onPress={(e) => {
-                      // Keep the ⋯ tap distinct from the card's open-editor press.
-                      e.stopPropagation();
-                      handleEventMenu(event);
-                    }}
-                    hitSlop={12}
-                    style={styles.menuButton}
-                    accessibilityLabel="Event plan options"
-                  >
-                    <Ionicons
-                      name="ellipsis-horizontal"
-                      size={20}
-                      color={colors.textSecondary}
-                    />
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.fillRow}>
-                  <View
-                    style={[styles.fillTrack, { backgroundColor: colors.border }]}
-                  >
-                    {/* Confirmed (accepted) — solid. */}
-                    <View
-                      style={{
-                        width: `${confirmedPct}%`,
-                        backgroundColor: colors.success,
-                      }}
-                    />
-                    {/* Filled but awaiting a response — faded. */}
-                    <View
-                      style={{
-                        width: `${pendingPct}%`,
-                        backgroundColor: colors.success + "59",
-                      }}
-                    />
-                  </View>
-                  <View style={styles.fillTextWrap}>
-                    <Text
-                      style={[styles.fillText, { color: colors.textSecondary }]}
-                    >
-                      {totalFilled}/{totalNeeded} filled
-                    </Text>
-                    <Text
-                      style={[styles.fillSubText, { color: colors.textSecondary }]}
-                    >
-                      {totalConfirmed} confirmed
-                    </Text>
-                  </View>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      )}
-    </View>
+                <Ionicons
+                  name="ellipsis-horizontal"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.fillRow}>
+              <View
+                style={[styles.fillTrack, { backgroundColor: colors.border }]}
+              >
+                {/* Confirmed (accepted) — solid. */}
+                <View
+                  style={{
+                    width: `${confirmedPct}%`,
+                    backgroundColor: colors.success,
+                  }}
+                />
+                {/* Filled but awaiting a response — faded. */}
+                <View
+                  style={{
+                    width: `${pendingPct}%`,
+                    backgroundColor: colors.success + "59",
+                  }}
+                />
+              </View>
+              <View style={styles.fillTextWrap}>
+                <Text style={[styles.fillText, { color: colors.textSecondary }]}>
+                  {totalFilled}/{totalNeeded} filled
+                </Text>
+                <Text
+                  style={[styles.fillSubText, { color: colors.textSecondary }]}
+                >
+                  {totalConfirmed} confirmed
+                </Text>
+              </View>
+            </View>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
   );
 }
 
@@ -352,25 +320,6 @@ function nextSundayAtNine(): Date {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  back: {
-    padding: 4,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: "600",
-    textAlign: "center",
-  },
   centered: {
     flex: 1,
     alignItems: "center",
@@ -385,6 +334,20 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     gap: 12,
+  },
+  newRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  newLabel: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   card: {
     borderRadius: 12,

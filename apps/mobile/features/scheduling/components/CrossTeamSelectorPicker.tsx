@@ -2,8 +2,8 @@
  * CrossTeamSelectorPicker
  *
  * Builds the `selectors` array for a cross-team channel. Each selector pairs a
- * source serving-team channel with an optional role on that team — omitting
- * the role means "anyone assigned any role on this team".
+ * source serving team with an optional role on that team — omitting the role
+ * means "anyone assigned any role on this team".
  *
  * Two-step flow: the leader first chooses which groups to draw from, then —
  * for each chosen group — expands a team to pick "Any role" or specific roles.
@@ -11,9 +11,9 @@
  * actually contribute a team) end up sharing the channel. Chosen selectors are
  * shown as removable chips.
  *
- * Backend: scheduling.teams.listCommunityServingTeams returns every group in
- * the community that has a serving team, each team enriched with its roles.
- * The resulting `selectors` array is consumed by createCrossTeamChannel /
+ * Backend: scheduling.teams.listCommunityTeams returns every group in the
+ * community that has a serving team, each team enriched with its roles. The
+ * resulting `selectors` array is consumed by createCrossTeamChannel /
  * updateCrossTeamChannel.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -38,17 +38,17 @@ type Role = {
   sortOrder: number;
 };
 
-type TeamChannel = {
-  _id: Id<"chatChannels">;
+type Team = {
+  _id: Id<"teams">;
   name: string;
-  channelType: string;
+  hasChannel: boolean;
   memberCount: number;
   roles: Role[];
 };
 
 type CommunityGroup = {
   group: { _id: Id<"groups">; name: string };
-  teams: TeamChannel[];
+  teams: Team[];
 };
 
 type Props = {
@@ -62,7 +62,7 @@ type Props = {
 
 /** Two selectors are equal iff they point at the same team + same role. */
 function sameSelector(a: CrossTeamSelector, b: CrossTeamSelector): boolean {
-  return a.sourceChannelId === b.sourceChannelId && a.roleId === b.roleId;
+  return a.sourceTeamId === b.sourceTeamId && a.roleId === b.roleId;
 }
 
 export function CrossTeamSelectorPicker({
@@ -74,14 +74,14 @@ export function CrossTeamSelectorPicker({
   const { colors } = useTheme();
 
   const communityGroups = useAuthenticatedQuery(
-    api.functions.scheduling.teams.listCommunityServingTeams,
+    api.functions.scheduling.teams.listCommunityTeams,
     { groupId },
   ) as CommunityGroup[] | undefined;
 
   // Lookups derived from the loaded data.
   const { teamToGroup, teamById } = useMemo(() => {
     const teamToGroup = new Map<string, string>();
-    const teamById = new Map<string, TeamChannel>();
+    const teamById = new Map<string, Team>();
     for (const cg of communityGroups ?? []) {
       for (const team of cg.teams) {
         teamToGroup.set(team._id, cg.group._id);
@@ -102,7 +102,7 @@ export function CrossTeamSelectorPicker({
     if (!communityGroups) return;
     const implied = new Set<string>();
     for (const selector of selectors) {
-      const g = teamToGroup.get(selector.sourceChannelId);
+      const g = teamToGroup.get(selector.sourceTeamId);
       if (g) implied.add(g);
     }
     if (implied.size === 0) return;
@@ -127,7 +127,7 @@ export function CrossTeamSelectorPicker({
         // Closing a group drops every selector pointing at one of its teams.
         const teamIds = new Set(cg.teams.map((t) => t._id));
         const remaining = selectors.filter(
-          (s) => !teamIds.has(s.sourceChannelId),
+          (s) => !teamIds.has(s.sourceTeamId),
         );
         if (remaining.length !== selectors.length) onChange(remaining);
       }
@@ -182,8 +182,8 @@ export function CrossTeamSelectorPicker({
           color={colors.textSecondary}
         />
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-          No group in this community has a serving team yet. Set up at least one
-          serving-team channel with roles before creating a cross-team channel.
+          No group in this community has a serving team yet. Create at least one
+          serving team with roles before creating a cross-team channel.
         </Text>
       </View>
     );
@@ -200,7 +200,7 @@ export function CrossTeamSelectorPicker({
         <View style={styles.chipWrap}>
           {selectors.map((selector) => (
             <SelectorChip
-              key={`${selector.sourceChannelId}:${selector.roleId ?? "any"}`}
+              key={`${selector.sourceTeamId}:${selector.roleId ?? "any"}`}
               selector={selector}
               teamById={teamById}
               onRemove={() => toggleSelector(selector)}
@@ -297,7 +297,7 @@ function GroupRow({
   // How many selectors target a team in this group — surfaced as a badge.
   const teamIds = new Set(communityGroup.teams.map((t) => t._id));
   const groupSelectorCount = selectors.filter((s) =>
-    teamIds.has(s.sourceChannelId),
+    teamIds.has(s.sourceTeamId),
   ).length;
 
   return (
@@ -347,7 +347,7 @@ function TeamRow({
   onToggleSelector,
   disabled,
 }: {
-  team: TeamChannel;
+  team: Team;
   isExpanded: boolean;
   isFirst: boolean;
   selectors: CrossTeamSelector[];
@@ -359,7 +359,7 @@ function TeamRow({
 
   // Count how many selectors target this team — surfaced as a badge.
   const teamSelectorCount = selectors.filter(
-    (s) => s.sourceChannelId === team._id,
+    (s) => s.sourceTeamId === team._id,
   ).length;
 
   return (
@@ -419,7 +419,7 @@ function TeamRoles({
   onToggleSelector,
   disabled,
 }: {
-  team: TeamChannel;
+  team: Team;
   selectors: CrossTeamSelector[];
   onToggleSelector: (selector: CrossTeamSelector) => void;
   disabled?: boolean;
@@ -429,7 +429,7 @@ function TeamRoles({
   const isChosen = useCallback(
     (roleId?: Id<"teamRoles">) =>
       selectors.some(
-        (s) => s.sourceChannelId === team._id && s.roleId === roleId,
+        (s) => s.sourceTeamId === team._id && s.roleId === roleId,
       ),
     [selectors, team._id],
   );
@@ -440,7 +440,7 @@ function TeamRoles({
         label="Any role on this team"
         color={colors.textSecondary}
         selected={isChosen(undefined)}
-        onPress={() => onToggleSelector({ sourceChannelId: team._id })}
+        onPress={() => onToggleSelector({ sourceTeamId: team._id })}
         disabled={disabled}
       />
       {team.roles.map((role) => (
@@ -450,7 +450,7 @@ function TeamRoles({
           color={role.color ?? DEFAULT_ROLE_COLOR}
           selected={isChosen(role._id)}
           onPress={() =>
-            onToggleSelector({ sourceChannelId: team._id, roleId: role._id })
+            onToggleSelector({ sourceTeamId: team._id, roleId: role._id })
           }
           disabled={disabled}
         />
@@ -511,13 +511,13 @@ function SelectorChip({
   disabled,
 }: {
   selector: CrossTeamSelector;
-  teamById: Map<string, TeamChannel>;
+  teamById: Map<string, Team>;
   onRemove: () => void;
   disabled?: boolean;
 }) {
   const { colors } = useTheme();
 
-  const team = teamById.get(selector.sourceChannelId);
+  const team = teamById.get(selector.sourceTeamId);
   const teamName = team?.name ?? "Unknown team";
   const roleLabel = selector.roleId
     ? (team?.roles.find((r) => r._id === selector.roleId)?.name ?? "Role")

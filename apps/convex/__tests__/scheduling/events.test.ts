@@ -61,7 +61,7 @@ describe("fill summary", () => {
     await t.mutation(api.functions.scheduling.events.setNeededRoles, {
       token: leaderToken,
       planId,
-      roles: [{ channelId: world.channelId, roleId: world.roleId, count: 3 }],
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 3 }],
     });
 
     // Assign 3 people: one confirms, one declines, one stays unconfirmed.
@@ -70,7 +70,7 @@ describe("fill summary", () => {
         await t.mutation(api.functions.scheduling.assignments.assignRole, {
           token: leaderToken,
           planId,
-          channelId: world.channelId,
+          teamId: world.teamId,
           roleId: world.roleId,
           userId,
         })
@@ -122,12 +122,12 @@ describe("fill summary", () => {
     await t.mutation(api.functions.scheduling.events.setNeededRoles, {
       token: leaderToken,
       planId,
-      roles: [{ channelId: world.channelId, roleId: world.roleId, count: 2 }],
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 2 }],
     });
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.channelMemberId,
     });
@@ -162,13 +162,13 @@ describe("duplicateEvent", () => {
     await t.mutation(api.functions.scheduling.events.setNeededRoles, {
       token: leaderToken,
       planId,
-      roles: [{ channelId: world.channelId, roleId: world.roleId, count: 3 }],
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 3 }],
     });
     // Source has an assignment that must NOT be copied.
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.channelMemberId,
     });
@@ -208,7 +208,7 @@ describe("duplicateEvent", () => {
 });
 
 describe("seedNeededRolesFromDefaults", () => {
-  it("seeds neededRoles from a team channel's role defaults", async () => {
+  it("seeds neededRoles from a team's role defaults", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
 
@@ -227,12 +227,12 @@ describe("seedNeededRolesFromDefaults", () => {
     // The fixture's Drums role has defaultNeeded: 1.
     const res = await t.mutation(
       api.functions.scheduling.events.seedNeededRolesFromDefaults,
-      { token: leaderToken, planId, channelIds: [world.channelId] },
+      { token: leaderToken, planId, teamIds: [world.teamId] },
     );
     expect(res.neededRoleCount).toBe(1);
   });
 
-  it("rejects a channel from another group with a ConvexError", async () => {
+  it("rejects a team from another group with a ConvexError", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
 
@@ -248,8 +248,8 @@ describe("seedNeededRolesFromDefaults", () => {
       },
     );
 
-    // A serving-team channel belonging to a DIFFERENT group/community.
-    const foreignChannelId = await t.run(async (ctx) => {
+    // A serving team belonging to a DIFFERENT group/community.
+    const foreignTeamId = await t.run(async (ctx) => {
       const foreignCommunityId = await ctx.db.insert("communities", {
         name: "Other Community",
         slug: "other",
@@ -271,20 +271,17 @@ describe("seedNeededRolesFromDefaults", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
-      const channelId = await ctx.db.insert("chatChannels", {
+      const teamId = await ctx.db.insert("teams", {
         groupId: foreignGroupId,
         communityId: foreignCommunityId,
         name: "Foreign Team",
-        channelType: "custom",
-        memberCount: 0,
         isArchived: false,
-        isServingTeam: true,
-        createdById: world.groupLeaderId,
         createdAt: Date.now(),
+        createdById: world.groupLeaderId,
         updatedAt: Date.now(),
       });
       await ctx.db.insert("teamRoles", {
-        channelId,
+        teamId,
         communityId: foreignCommunityId,
         name: "Foreign Drums",
         sortOrder: 0,
@@ -293,13 +290,13 @@ describe("seedNeededRolesFromDefaults", () => {
         createdAt: Date.now(),
         createdById: world.groupLeaderId,
       });
-      return channelId;
+      return teamId;
     });
 
     await expect(
       t.mutation(
         api.functions.scheduling.events.seedNeededRolesFromDefaults,
-        { token: leaderToken, planId, channelIds: [foreignChannelId] },
+        { token: leaderToken, planId, teamIds: [foreignTeamId] },
       ),
     ).rejects.toThrow(ConvexError);
 
@@ -410,12 +407,12 @@ describe("deleteEvent cascade", () => {
     await t.mutation(api.functions.scheduling.events.setNeededRoles, {
       token: leaderToken,
       planId,
-      roles: [{ channelId: world.channelId, roleId: world.roleId, count: 2 }],
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 2 }],
     });
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.channelMemberId,
     });
@@ -463,7 +460,7 @@ describe("deleteEvent cascade", () => {
     await t.mutation(api.functions.scheduling.assignments.assignRole, {
       token: leaderToken,
       planId,
-      channelId: world.channelId,
+      teamId: world.teamId,
       roleId: world.roleId,
       userId: world.groupLeaderId,
     });
@@ -485,7 +482,7 @@ describe("deleteEvent cascade", () => {
     // Run the assignRole-triggered reconcile so the synced member exists.
     await t.mutation(
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: world.channelId },
+      { teamId: world.teamId },
     );
     expect(await activeSynced()).toHaveLength(1);
 
@@ -508,7 +505,7 @@ describe("deleteEvent cascade", () => {
     // Running that reconcile soft-removes the now-orphaned synced member.
     await t.mutation(
       internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { channelId: world.channelId },
+      { teamId: world.teamId },
     );
     expect(await activeSynced()).toHaveLength(0);
   });

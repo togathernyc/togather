@@ -1,10 +1,10 @@
 /**
- * Test fixtures for the native event-scheduling module (ADR-023).
+ * Test fixtures for the native event-scheduling module (ADR-023 / ADR-025).
  *
  * Builds a minimal but complete world: a community, a campus group, a
- * serving-team channel, a role, and a set of users with different
- * permission levels (channel admin, channel member, group leader,
- * community admin, plain volunteer).
+ * first-class serving `teams` row with its chat channel, a role, and a set of
+ * users with different permission levels (channel admin, channel member,
+ * group leader, community admin, plain volunteer).
  */
 
 import type { Id } from "../../_generated/dataModel";
@@ -25,6 +25,9 @@ export function ts(offsetDays = 0): number {
 export interface SchedulingWorld {
   communityId: Id<"communities">;
   groupId: Id<"groups">;
+  /** The first-class serving team (ADR-025). */
+  teamId: Id<"teams">;
+  /** The serving team's chat channel. */
   channelId: Id<"chatChannels">;
   roleId: Id<"teamRoles">;
   /** chatChannelMembers.role === "admin" */
@@ -159,8 +162,21 @@ export async function buildSchedulingWorld(
       updatedAt: ts(),
     });
 
-    const roleId = await ctx.db.insert("teamRoles", {
+    // The first-class serving team (ADR-025). It owns the chat channel above
+    // and the roles below; assignments and needed-roles key off `teamId`.
+    const teamId = await ctx.db.insert("teams", {
+      groupId,
+      communityId,
+      name: "Worship Team",
       channelId,
+      isArchived: false,
+      createdAt: ts(),
+      createdById: channelAdminId,
+      updatedAt: ts(),
+    });
+
+    const roleId = await ctx.db.insert("teamRoles", {
+      teamId,
       communityId,
       name: "Drums",
       sortOrder: 0,
@@ -173,6 +189,7 @@ export async function buildSchedulingWorld(
     return {
       communityId,
       groupId,
+      teamId,
       channelId,
       roleId,
       channelAdminId,
