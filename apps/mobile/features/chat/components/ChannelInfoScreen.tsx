@@ -179,9 +179,6 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const addByPcoPersonId = useAuthenticatedMutation(
     api.functions.groupMembers.addByPcoPersonId,
   );
-  const triggerTeamChannelSync = useAuthenticatedMutation(
-    api.functions.scheduling.teamChannelSync.triggerTeamChannelSync,
-  );
 
   // Auto channel config — drives the "Not in channel" section for PCO synced
   // channels. Backend gates by leader role + community-admin, so a non-leader
@@ -219,7 +216,6 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [crossTeamEditVisible, setCrossTeamEditVisible] = useState(false);
   const [crossTeamDraft, setCrossTeamDraft] = useState<CrossTeamSelector[]>([]);
   const [crossTeamSaving, setCrossTeamSaving] = useState(false);
-  const [teamSyncing, setTeamSyncing] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
     string | null
@@ -386,32 +382,14 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     }
   }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
 
-  const handleTeamChannelSync = useCallback(async () => {
-    if (!channel?._id || teamSyncing) return;
-    setTeamSyncing(true);
-    try {
-      const result = await triggerTeamChannelSync({ channelId: channel._id });
-      const { addedCount, removedCount } = result;
-      const message =
-        addedCount === 0 && removedCount === 0
-          ? "Members are up to date."
-          : `${addedCount} added, ${removedCount} removed.`;
-      Alert.alert("Members synced", message);
-    } catch (e: any) {
-      Alert.alert("Couldn't sync", e?.message || "Please try again.");
-    } finally {
-      setTeamSyncing(false);
-    }
-  }, [channel?._id, teamSyncing, triggerTeamChannelSync]);
-
   const handleOpenCrossTeamEdit = useCallback(() => {
     // Prefill the picker draft from the channel's current selectors. The
     // enriched selectors carry extra display fields — strip them down to the
-    // { sourceChannelId, roleId? } shape the picker/mutation expect.
+    // { sourceTeamId, roleId? } shape the picker/mutation expect.
     const current: CrossTeamSelector[] = (
       thisCrossTeamChannel?.selectors ?? []
     ).map((s) => ({
-      sourceChannelId: s.sourceChannelId,
+      sourceTeamId: s.sourceTeamId,
       ...(s.roleId ? { roleId: s.roleId } : {}),
     }));
     setCrossTeamDraft(current);
@@ -1163,86 +1141,10 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                 </Pressable>
               )}
 
-              {/* Serving team — custom channels can opt into the native
-                  scheduling engine (ADR-023). Routes to the team setup /
-                  roles editor; `markChannelAsTeam` runs idempotently there. */}
-              {isCustom && (
-                <Pressable
-                  onPress={() =>
-                    router.push(
-                      `/rostering/${groupId}/team/${channel._id}?channelName=${encodeURIComponent(channelDisplayName)}` as any,
-                    )
-                  }
-                  style={({ pressed }) => [
-                    styles.actionRowFlat,
-                    {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.border,
-                    },
-                    pressed && { backgroundColor: colors.selectedBackground },
-                  ]}
-                >
-                  <Ionicons name="calendar-outline" size={20} color={colors.icon} />
-                  <Text style={[styles.actionLabel, { color: colors.text }]}>
-                    {(channel as { isServingTeam?: boolean }).isServingTeam
-                      ? "Serving team roles"
-                      : "Set up as serving team"}
-                  </Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={18}
-                    color={colors.textTertiary}
-                    style={{ marginLeft: "auto" }}
-                  />
-                </Pressable>
-              )}
-
-              {/* Sync members — for serving-team channels, force an
-                  immediate reconcile of auto-synced membership against the
-                  current event-plan assignments (ADR-023). */}
-              {isCustom &&
-                (channel as { isServingTeam?: boolean }).isServingTeam && (
-                  <Pressable
-                    onPress={handleTeamChannelSync}
-                    disabled={teamSyncing}
-                    style={({ pressed }) => [
-                      styles.actionRowFlat,
-                      {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: colors.border,
-                      },
-                      pressed && {
-                        backgroundColor: colors.selectedBackground,
-                      },
-                      teamSyncing && { opacity: 0.5 },
-                    ]}
-                  >
-                    <Ionicons
-                      name="sync-outline"
-                      size={20}
-                      color={colors.icon}
-                    />
-                    <Text
-                      style={[styles.actionLabel, { color: colors.text }]}
-                    >
-                      Sync members
-                    </Text>
-                    {teamSyncing ? (
-                      <ActivityIndicator
-                        size="small"
-                        color={colors.textTertiary}
-                        style={{ marginLeft: "auto" }}
-                      />
-                    ) : (
-                      <Ionicons
-                        name="chevron-forward"
-                        size={18}
-                        color={colors.textTertiary}
-                        style={{ marginLeft: "auto" }}
-                      />
-                    )}
-                  </Pressable>
-                )}
+              {/* No "set up as serving team" here — ADR-024/ADR-025 removed
+                  the channel→team conversion path. Teams are created only in
+                  the Rostering hub via `createServingTeam`, and a team's
+                  roster is managed there, not from its chat channel. */}
 
               {/* Rename — custom channels only (backend gates the rest). */}
               {isCustom && (

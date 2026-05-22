@@ -4,6 +4,7 @@
  * @see /docs/architecture/ADR-023-native-event-scheduling.md
  */
 export { TeamSetupScreen } from "./components/TeamSetupScreen";
+export { TeamCreateScreen } from "./components/TeamCreateScreen";
 export { RolesEditor } from "./components/RolesEditor";
 export { CrossTeamSelectorPicker } from "./components/CrossTeamSelectorPicker";
 export type {

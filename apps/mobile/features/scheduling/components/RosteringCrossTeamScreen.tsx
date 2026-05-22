@@ -114,7 +114,7 @@ export function RosteringCrossTeamScreen() {
                 ? ` · ${channel.selectors
                     .map(
                       (s) =>
-                        `${s.sourceChannelName} (${s.roleName ?? "Any role"})`,
+                        `${s.sourceTeamName} (${s.roleName ?? "Any role"})`,
                     )
                     .join(", ")}`
                 : ""}

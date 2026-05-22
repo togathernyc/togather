@@ -18,16 +18,16 @@
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "@services/api/convex";
 
-/** One cross-team membership selector: a source team channel + optional role. */
+/** One cross-team membership selector: a source team + optional role. */
 export type CrossTeamSelector = {
-  sourceChannelId: Id<"chatChannels">;
+  sourceTeamId: Id<"teams">;
   roleId?: Id<"teamRoles">;
 };
 
 /** A selector enriched with display names, as returned by `listCrossTeamChannels`. */
 export type EnrichedCrossTeamSelector = {
-  sourceChannelId: Id<"chatChannels">;
-  sourceChannelName: string;
+  sourceTeamId: Id<"teams">;
+  sourceTeamName: string;
   roleId: Id<"teamRoles"> | null;
   roleName: string | null;
 };

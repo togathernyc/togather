@@ -2,11 +2,11 @@
  * NeededRolesModal
  *
  * Declares how many of each role an event needs ("2 Drums, 4 Vocals"),
- * grouped per serving-team channel. Counts pre-fill from each role's
+ * grouped per serving team. Counts pre-fill from each role's
  * `defaultNeeded`; the scheduler tweaks them per event. Saving replaces
  * the event's full needed-roles set.
  *
- * Backend: scheduling.teams.listTeamChannels, scheduling.roles.listRoles,
+ * Backend: scheduling.teams.listTeams, scheduling.roles.listRoles,
  * scheduling.events.setNeededRoles.
  */
 import React, { useEffect, useMemo, useState } from "react";
@@ -32,7 +32,7 @@ import {
 import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
 
-type TeamChannel = { _id: Id<"chatChannels">; name: string };
+type Team = { _id: Id<"teams">; name: string };
 type Role = {
   _id: Id<"teamRoles">;
   name: string;
@@ -59,10 +59,10 @@ export function NeededRolesModal({
 }) {
   const { colors } = useTheme();
 
-  const teamChannels = useAuthenticatedQuery(
-    api.functions.scheduling.teams.listTeamChannels,
+  const teams = useAuthenticatedQuery(
+    api.functions.scheduling.teams.listTeams,
     visible ? { groupId } : "skip",
-  ) as TeamChannel[] | undefined;
+  ) as Team[] | undefined;
 
   const setNeededRoles = useAuthenticatedMutation(
     api.functions.scheduling.events.setNeededRoles,
@@ -103,9 +103,9 @@ export function NeededRolesModal({
                 const roles = Object.entries(counts)
                   .filter(([, count]) => count > 0)
                   .map(([key, count]) => {
-                    const [channelId, roleId] = key.split("|");
+                    const [teamId, roleId] = key.split("|");
                     return {
-                      channelId: channelId as Id<"chatChannels">,
+                      teamId: teamId as Id<"teams">,
                       roleId: roleId as Id<"teamRoles">,
                       count,
                     };
@@ -132,23 +132,22 @@ export function NeededRolesModal({
           </TouchableOpacity>
         </View>
 
-        {teamChannels === undefined ? (
+        {teams === undefined ? (
           <View style={styles.centered}>
             <ActivityIndicator size="small" color={colors.text} />
           </View>
-        ) : teamChannels.length === 0 ? (
+        ) : teams.length === 0 ? (
           <View style={styles.centered}>
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No serving teams in this group yet. Set up a team channel as a
-              serving team first.
+              No serving teams in this group yet. Create a serving team first.
             </Text>
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent}>
-            {teamChannels.map((channel) => (
+            {teams.map((team) => (
               <TeamSection
-                key={channel._id}
-                channel={channel}
+                key={team._id}
+                team={team}
                 counts={counts}
                 setCounts={setCounts}
                 groupId={groupId}
@@ -162,15 +161,15 @@ export function NeededRolesModal({
   );
 }
 
-/** Per-team-channel section listing its roles with steppers. */
+/** Per-team section listing its roles with steppers. */
 function TeamSection({
-  channel,
+  team,
   counts,
   setCounts,
   groupId,
   onClose,
 }: {
-  channel: TeamChannel;
+  team: Team;
   counts: CountMap;
   setCounts: React.Dispatch<React.SetStateAction<CountMap>>;
   groupId: Id<"groups">;
@@ -180,17 +179,17 @@ function TeamSection({
   const router = useRouter();
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
-    { channelId: channel._id },
+    { teamId: team._id },
   ) as Role[] | undefined;
 
   // First time a role is touched, fall back to its defaultNeeded.
   const defaults = useMemo(() => {
     const map: CountMap = {};
     for (const role of roles ?? []) {
-      map[`${channel._id}|${role._id}`] = role.defaultNeeded ?? 0;
+      map[`${team._id}|${role._id}`] = role.defaultNeeded ?? 0;
     }
     return map;
-  }, [roles, channel._id]);
+  }, [roles, team._id]);
 
   // Seed the parent edit map with each role's default once the roles load,
   // so Save (which serializes `counts`) writes the defaults the UI shows
@@ -201,7 +200,7 @@ function TeamSection({
       let changed = false;
       const next = { ...prev };
       for (const role of roles) {
-        const key = `${channel._id}|${role._id}`;
+        const key = `${team._id}|${role._id}`;
         if (next[key] === undefined) {
           next[key] = role.defaultNeeded ?? 0;
           changed = true;
@@ -209,15 +208,15 @@ function TeamSection({
       }
       return changed ? next : prev;
     });
-  }, [roles, channel._id, setCounts]);
+  }, [roles, team._id, setCounts]);
 
   const countFor = (roleId: string) => {
-    const key = `${channel._id}|${roleId}`;
+    const key = `${team._id}|${roleId}`;
     return counts[key] ?? defaults[key] ?? 0;
   };
 
   const setCount = (roleId: string, value: number) => {
-    const key = `${channel._id}|${roleId}`;
+    const key = `${team._id}|${roleId}`;
     setCounts((prev) => ({ ...prev, [key]: Math.max(0, value) }));
   };
 
@@ -225,14 +224,14 @@ function TeamSection({
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
         <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-          {channel.name.toUpperCase()}
+          {team.name.toUpperCase()}
         </Text>
         <TouchableOpacity
           hitSlop={8}
           onPress={() => {
             onClose();
             router.push(
-              `/rostering/${groupId}/team/${channel._id}`,
+              `/rostering/${groupId}/team/${team._id}`,
             );
           }}
         >

@@ -53,7 +53,7 @@ type MyAssignment = {
 type EventDoc = {
   roles: Array<{
     roleId: Id<"teamRoles">;
-    channelId: Id<"chatChannels">;
+    teamId: Id<"teams">;
     roleName: string;
     assignments: Array<{
       _id: Id<"roleAssignments">;
@@ -93,13 +93,13 @@ export function AssignmentDetailScreen() {
     else router.replace("/(user)/my-schedule" as any);
   }, [router]);
 
-  // Teammates: every other assignment on the same team channel as this one.
+  // Teammates: every other assignment on the same event plan.
   const teammates = useMemo(() => {
     if (!event || !assignment) return [];
-    const channelRoles = event.roles;
+    const planRoles = event.roles;
     const seen = new Set<string>();
     const out: Array<{ name: string; role: string; status: string }> = [];
-    for (const role of channelRoles) {
+    for (const role of planRoles) {
       for (const a of role.assignments) {
         if (a._id === assignmentId) continue;
         const key = a._id as string;

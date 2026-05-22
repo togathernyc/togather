@@ -64,7 +64,7 @@ export function AssignSheet({
   visible,
   planId,
   groupId,
-  channelId,
+  teamId,
   roleId,
   roleName,
   timeLabel,
@@ -75,7 +75,7 @@ export function AssignSheet({
   planId: Id<"eventPlans">;
   /** The event plan's owning group — its members are the assignable pool. */
   groupId: Id<"groups">;
-  channelId: Id<"chatChannels">;
+  teamId: Id<"teams">;
   roleId: Id<"teamRoles">;
   roleName: string;
   /** A single event-time label, when the event has exactly one time. */
@@ -143,7 +143,7 @@ export function AssignSheet({
       try {
         const result = await assignRole({
           planId,
-          channelId,
+          teamId,
           roleId,
           userId: member.userId,
           timeLabel,
@@ -161,7 +161,7 @@ export function AssignSheet({
         setAssigning(null);
       }
     },
-    [assignedUserIds, assignRole, planId, channelId, roleId, timeLabel, onClose],
+    [assignedUserIds, assignRole, planId, teamId, roleId, timeLabel, onClose],
   );
 
   const renderMember = (member: AssignablePerson, prior: boolean) => {

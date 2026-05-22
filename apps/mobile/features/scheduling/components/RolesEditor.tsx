@@ -1,9 +1,9 @@
 /**
  * RolesEditor
  *
- * Add / rename / reorder / archive the roles on a serving-team channel.
- * Each role carries a name, a color swatch, and a "usually need" default
- * count that seeds `neededRoles` on new events.
+ * Add / rename / reorder / archive the roles on a serving team. Each role
+ * carries a name, a color swatch, and a "usually need" default count that
+ * seeds `neededRoles` on new events.
  *
  * Backend: scheduling.roles.listRoles / createRole / updateRole /
  * archiveRole / reorderRoles.
@@ -38,11 +38,11 @@ type Role = {
   isArchived: boolean;
 };
 
-export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
+export function RolesEditor({ teamId }: { teamId: Id<"teams"> }) {
   const { colors } = useTheme();
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
-    { channelId },
+    { teamId },
   ) as Role[] | undefined;
 
   const createRole = useAuthenticatedMutation(
@@ -84,7 +84,7 @@ export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
             defaultNeeded,
           });
         } else {
-          await createRole({ channelId, name, color, defaultNeeded });
+          await createRole({ teamId, name, color, defaultNeeded });
         }
         setEditorVisible(false);
         setEditing(null);
@@ -94,7 +94,7 @@ export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
         setBusy(false);
       }
     },
-    [editing, updateRole, createRole, channelId],
+    [editing, updateRole, createRole, teamId],
   );
 
   const handleArchive = useCallback(
@@ -132,12 +132,12 @@ export function RolesEditor({ channelId }: { channelId: Id<"chatChannels"> }) {
       const ordered = roles.map((r) => r._id);
       [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
       try {
-        await reorderRoles({ channelId, orderedRoleIds: ordered });
+        await reorderRoles({ teamId, orderedRoleIds: ordered });
       } catch (e: any) {
         Alert.alert("Couldn't reorder", e?.message ?? "Please try again.");
       }
     },
-    [roles, reorderRoles, channelId],
+    [roles, reorderRoles, teamId],
   );
 
   if (roles === undefined) {

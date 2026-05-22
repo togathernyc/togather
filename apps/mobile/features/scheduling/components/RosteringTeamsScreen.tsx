@@ -1,11 +1,12 @@
 /**
  * RosteringTeamsScreen — the Teams tab of the Rostering hub.
  *
- * Lists the campus group's serving teams, each badged by schedule source
- * (Native rostering vs. Planning Center). Tapping a team opens its detail
- * screen; "+ New team" starts team creation. See ADR-024.
+ * Lists the campus group's first-class serving teams (ADR-025). Each team
+ * shows its member count, or — for a channel-less team — a subtle "no chat
+ * channel" hint. Tapping a team opens its detail screen; "+ New team" starts
+ * the create-team flow. See ADR-024.
  *
- * Backend: scheduling.teams.listTeamChannels.
+ * Backend: scheduling.teams.listTeams.
  */
 import React, { useCallback } from "react";
 import {
@@ -26,9 +27,11 @@ import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 
 type TeamRow = {
-  _id: Id<"chatChannels">;
+  _id: Id<"teams">;
   name: string;
-  channelType: string;
+  description?: string;
+  channelId: Id<"chatChannels"> | null;
+  hasChannel: boolean;
   memberCount: number;
 };
 
@@ -41,14 +44,12 @@ export function RosteringTeamsScreen() {
   const groupId = group_id as Id<"groups">;
 
   const teams = useAuthenticatedQuery(
-    api.functions.scheduling.teams.listTeamChannels,
+    api.functions.scheduling.teams.listTeams,
     groupId ? { groupId } : "skip",
   ) as TeamRow[] | undefined;
 
-  // Interim: route to the existing channel-create screen. A dedicated
-  // create-team flow replaces this in a follow-up (ADR-024 Phase A).
   const handleNewTeam = useCallback(() => {
-    router.push(`/inbox/${groupId}/create` as never);
+    router.push(`/rostering/${groupId}/team/new` as never);
   }, [router, groupId]);
 
   if (teams === undefined) {
@@ -100,15 +101,26 @@ export function RosteringTeamsScreen() {
               >
                 {team.name}
               </Text>
-              <Text style={[styles.cardMeta, { color: colors.textSecondary }]}>
-                {team.memberCount}{" "}
-                {team.memberCount === 1 ? "member" : "members"}
-              </Text>
+              {team.hasChannel ? (
+                <Text style={[styles.cardMeta, { color: colors.textSecondary }]}>
+                  {team.memberCount}{" "}
+                  {team.memberCount === 1 ? "member" : "members"}
+                </Text>
+              ) : (
+                <View style={styles.noChannelRow}>
+                  <Ionicons
+                    name="chatbubble-ellipses-outline"
+                    size={12}
+                    color={colors.textTertiary}
+                  />
+                  <Text
+                    style={[styles.cardMeta, { color: colors.textTertiary }]}
+                  >
+                    No chat channel
+                  </Text>
+                </View>
+              )}
             </View>
-            <SourceBadge
-              isPco={team.channelType === "pco_services"}
-              colors={colors}
-            />
             <Ionicons
               name="chevron-forward"
               size={18}
@@ -118,33 +130,6 @@ export function RosteringTeamsScreen() {
         ))
       )}
     </ScrollView>
-  );
-}
-
-/** A pill marking a team's schedule source — Native rostering or Planning Center. */
-function SourceBadge({
-  isPco,
-  colors,
-}: {
-  isPco: boolean;
-  colors: ReturnType<typeof useTheme>["colors"];
-}) {
-  return (
-    <View
-      style={[
-        styles.badge,
-        { backgroundColor: isPco ? colors.border : colors.success + "22" },
-      ]}
-    >
-      <Text
-        style={[
-          styles.badgeText,
-          { color: isPco ? colors.textSecondary : colors.success },
-        ]}
-      >
-        {isPco ? "Planning Center" : "Native"}
-      </Text>
-    </View>
   );
 }
 
@@ -196,13 +181,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: "700",
+  noChannelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
   },
 });

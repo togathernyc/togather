@@ -61,7 +61,7 @@ type Assignment = {
 
 type EventRole = {
   roleId: Id<"teamRoles">;
-  channelId: Id<"chatChannels">;
+  teamId: Id<"teams">;
   roleName: string;
   roleColor?: string;
   needed: number;
@@ -112,16 +112,16 @@ export function EventEditorScreen() {
   const [neededVisible, setNeededVisible] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [assignTarget, setAssignTarget] = useState<{
-    channelId: Id<"chatChannels">;
+    teamId: Id<"teams">;
     roleId: Id<"teamRoles">;
     roleName: string;
   } | null>(null);
 
-  // roleId -> needed count, fed into the needed-roles modal.
+  // teamId|roleId -> needed count, fed into the needed-roles modal.
   const currentCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const role of event?.roles ?? []) {
-      map[`${role.channelId}|${role.roleId}`] = role.needed;
+      map[`${role.teamId}|${role.roleId}`] = role.needed;
     }
     return map;
   }, [event?.roles]);
@@ -458,7 +458,7 @@ export function EventEditorScreen() {
               role={role}
               onAssign={() =>
                 setAssignTarget({
-                  channelId: role.channelId,
+                  teamId: role.teamId,
                   roleId: role.roleId,
                   roleName: role.roleName,
                 })
@@ -512,7 +512,7 @@ export function EventEditorScreen() {
           visible
           planId={planId}
           groupId={event.groupId}
-          channelId={assignTarget.channelId}
+          teamId={assignTarget.teamId}
           roleId={assignTarget.roleId}
           roleName={assignTarget.roleName}
           timeLabel={singleTimeLabel}

@@ -1,5 +1,6 @@
 import { TeamSetupScreen } from "@features/scheduling";
 
-export default function SchedulingTeamSetupPage() {
+/** Team detail screen — route `/rostering/[group_id]/team/[team_id]`. See ADR-024. */
+export default function SchedulingTeamDetailPage() {
   return <TeamSetupScreen />;
 }
