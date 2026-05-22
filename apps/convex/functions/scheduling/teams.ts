@@ -79,6 +79,16 @@ export const createServingTeam = mutation({
         .query("chatChannels")
         .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
         .collect();
+      // Match `createCustomChannel`'s 20-channel-per-group cap — counted over
+      // non-archived rows only, the same way the original limit works.
+      const activeChannelCount = existingChannels.filter(
+        (ch) => ch.isArchived === false,
+      ).length;
+      if (activeChannelCount >= 20) {
+        throw new ConvexError(
+          "This group has reached the maximum of 20 channels. Archive some channels to create new ones.",
+        );
+      }
       const existingSlugs = existingChannels
         .map((ch) => ch.slug)
         .filter((slug): slug is string => slug !== undefined);

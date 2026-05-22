@@ -312,6 +312,12 @@ export async function reconcileTeamChannelImpl(
   if (!team.channelId) {
     return { added: 0, removed: 0, desiredCount: 0, skipped: true };
   }
+  // Archived teams are out of rotation — `archiveTeam` purges their synced
+  // members, and a subsequent assign/respond mutation would otherwise call
+  // back here and silently re-populate the channel, undoing the archive.
+  if (team.isArchived === true) {
+    return { added: 0, removed: 0, desiredCount: 0, skipped: true };
+  }
 
   const { start, end } = rotationWindow(Date.now());
 
