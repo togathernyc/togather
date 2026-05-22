@@ -236,25 +236,37 @@ batched and idempotent (safe to re-run):
 - For each cross-team channel, map every selector's `sourceChannelId` to
   `sourceTeamId`.
 
-**Phase M3 — cutover & cleanup.** Switch every scheduling function to
-read/write `teamId`. Make `teamId` **required** and **remove** `channelId` from
-`teamRoles` / `neededRoles` / `roleAssignments`; remove `sourceChannelId` from
-selectors. Per the repo's "Remove, Don't Deprecate" rule, no compatibility
-shim is kept.
+**Phase M3 — cutover.** Switch every scheduling function to read/write
+`teamId`, and make `teamId` / `sourceTeamId` **required**. The legacy
+`channelId` / `sourceChannelId` columns are made `optional` and left in place
+as unused dead fields — Convex cannot drop a field while rows still carry a
+value for it, and stripping the values needs its own deploy. No code reads the
+legacy fields after M3. The `migrateChannelsToTeams` mutation is removed from
+the tree at M3 (it is a pre-M3 tool; it lives on in git history at the M1
+commit for environments still being migrated).
 
-If native scheduling has not yet reached a given environment with real data,
-M2 there is a trivial no-op — but the three-phase path is followed regardless
-so staging and production are handled identically.
+**Phase M4 — strip (follow-up).** A trivial cleanup once M3 is everywhere:
+clear the legacy `channelId` / `sourceChannelId` values and drop the columns.
+Pure hygiene, no behaviour change — deliberately deferred so M3 is a single
+safe deploy.
+
+**Deploy order.** M3 makes `teamId` required, so it only validates against
+backfilled data. Each environment must: deploy M1 (additive — safe any time),
+run `migrateChannelsToTeams` until `done: true`, *then* deploy M3. If native
+scheduling never reached an environment with data, its M2 is a no-op — but the
+sequence is followed regardless so staging and production are identical.
 
 ## Phasing (implementation)
 
-- **Backend Phase 1.** Schema M1 (additive). New `functions/scheduling/teams.ts`
-  — `createServingTeam`, `listTeams`, `getTeam`, `updateTeam`, `archiveTeam`,
-  `linkChannel` / `unlinkChannel`, and the migrated permanent-member functions.
-  The `migrateChannelsToTeams` backfill mutation (M2). Tests first (TDD).
-- **Backend Phase 2.** Cut `roles.ts`, `events.ts`, `assignments.ts`,
-  `teamChannelSync.ts`, `crossTeamChannels.ts` over to `teamId`; re-key indexes
-  (M3). Delete `markChannelAsTeam`.
+- **Backend Phase 1.** Schema M1 (additive). The `teams` table with `listTeams`
+  / `getTeam` readers, and the `migrateChannelsToTeams` backfill mutation (M2).
+  Tests first (TDD).
+- **Backend Phase 2.** Schema M3. `createServingTeam` / `updateTeam` /
+  `archiveTeam` / `listCommunityTeams` and team-keyed permanent-member
+  functions; `permissions.ts` cut to team-keyed helpers; `roles.ts`,
+  `events.ts`, `assignments.ts`, `teamChannelSync.ts`, `crossTeamChannels.ts`
+  re-keyed to `teamId`; re-keyed indexes. `markChannelAsTeam` /
+  `listTeamChannels` deleted.
 - **Frontend.** Follows ADR-024's Phase A/B/C — the hub's `RosteringTeamsScreen`
   and team-detail screen move from `listTeamChannels` to `listTeams`; the
   create-team flow calls `createServingTeam` with a "give this team a chat
@@ -283,8 +295,10 @@ so staging and production are handled identically.
    channel, and may link/unlink over its lifetime (§2).
 3. **`isServingTeam` is kept**, redefined as a denormalized "this channel
    belongs to a team" hint, not the team-defining flag (§2).
-4. **No compatibility shim.** M3 removes the legacy `channelId` columns
-   outright rather than carrying both (§Migration).
+4. **No runtime compatibility shim.** After M3 no code reads the legacy
+   `channelId` / `sourceChannelId` columns. They linger only as unused
+   `optional` schema fields — Convex cannot drop a populated field in one
+   deploy — and a follow-up `M4` strips them (§Migration).
 
 ## Open questions
 
