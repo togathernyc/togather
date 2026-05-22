@@ -1,9 +1,13 @@
 /**
  * Scheduling — teams
  *
- * A "serving team" is just a chat channel with `isServingTeam = true`
- * (ADR-023, channel-as-team model). These functions opt a channel in/out of
- * being a team and list a campus group's team channels.
+ * ADR-023 modelled a serving team as a chat channel (`isServingTeam = true`).
+ * ADR-025 promotes it to a first-class `teams` table with an *optional*
+ * `channelId`. During the migration window both readers coexist:
+ *   - `markChannelAsTeam` / `listTeamChannels` / `listCommunityServingTeams`
+ *     — legacy, channel-keyed (ADR-023).
+ *   - `listTeams` / `getTeam` — the first-class `teams` table (ADR-025).
+ * The Phase 2 cutover removes the legacy path. See ADR-025.
  */
 
 import { ConvexError, v } from "convex/values";
@@ -184,6 +188,94 @@ export const listCommunityServingTeams = query({
     });
 
     return result;
+  },
+});
+
+// ============================================================================
+// First-class teams (ADR-025)
+// ============================================================================
+//
+// `listTeams` / `getTeam` read the `teams` table directly. Until the ADR-025
+// migration (`migrateChannelsToTeams`) has run they return nothing — the
+// legacy `listTeamChannels` reader above stays authoritative until the
+// Phase 2 cutover switches the frontend over.
+
+/**
+ * List the serving teams for a campus group from the first-class `teams`
+ * table (ADR-025). Archived teams are excluded.
+ *
+ * Auth: an active member of the group, or a community admin — the same read
+ * gate as `listTeamChannels`, so a private group's teams are not enumerable
+ * by arbitrary authenticated users.
+ */
+export const listTeams = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupMember(ctx, args.groupId, userId);
+
+    const teams = await ctx.db
+      .query("teams")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+
+    return Promise.all(
+      teams
+        .filter((team) => team.isArchived !== true)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(async (team) => {
+          const channel = team.channelId
+            ? await ctx.db.get(team.channelId)
+            : null;
+          return {
+            _id: team._id,
+            name: team.name,
+            description: team.description,
+            channelId: team.channelId ?? null,
+            hasChannel: team.channelId !== undefined,
+            memberCount: channel?.memberCount ?? 0,
+          };
+        }),
+    );
+  },
+});
+
+/**
+ * Fetch a single serving team by id (ADR-025).
+ *
+ * Auth: an active member of the team's campus group, or a community admin.
+ *
+ * @throws ConvexError if the team is missing or the caller lacks access.
+ */
+export const getTeam = query({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const team = await ctx.db.get(args.teamId);
+    if (!team) {
+      throw new ConvexError("Team not found");
+    }
+    await requireGroupMember(ctx, team.groupId, userId);
+
+    const channel = team.channelId ? await ctx.db.get(team.channelId) : null;
+    return {
+      _id: team._id,
+      groupId: team.groupId,
+      name: team.name,
+      description: team.description,
+      channelId: team.channelId ?? null,
+      hasChannel: team.channelId !== undefined,
+      isArchived: team.isArchived === true,
+      memberCount: channel?.memberCount ?? 0,
+      createdAt: team.createdAt,
+    };
   },
 });
 

@@ -93,6 +93,7 @@ import type * as functions_messaging_readState from "../functions/messaging/read
 import type * as functions_messaging_sharedChannels from "../functions/messaging/sharedChannels.js";
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
+import type * as functions_migrations_migrateChannelsToTeams from "../functions/migrations/migrateChannelsToTeams.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
 import type * as functions_notifications_dailyEnabledSnapshot from "../functions/notifications/dailyEnabledSnapshot.js";
@@ -123,6 +124,7 @@ import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
+import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
@@ -282,6 +284,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/sharedChannels": typeof functions_messaging_sharedChannels;
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
+  "functions/migrations/migrateChannelsToTeams": typeof functions_migrations_migrateChannelsToTeams;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
   "functions/notifications/actions": typeof functions_notifications_actions;
   "functions/notifications/dailyEnabledSnapshot": typeof functions_notifications_dailyEnabledSnapshot;
@@ -312,6 +315,7 @@ declare const fullApi: ApiFromModules<{
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
+  "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
