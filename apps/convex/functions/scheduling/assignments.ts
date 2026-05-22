@@ -79,6 +79,12 @@ async function requireTeamRolePair(
   if (team.groupId !== groupId) {
     throw new ConvexError("Team does not belong to this event's group");
   }
+  // Archived teams are out of rotation — `archiveTeam` purges their synced
+  // members and `reconcileTeamChannelImpl` short-circuits for them, so a new
+  // assignment here would silently fail to mirror into the channel.
+  if (team.isArchived === true) {
+    throw new ConvexError("Cannot assign roles on an archived team");
+  }
 }
 
 /**

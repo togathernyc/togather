@@ -376,6 +376,11 @@ export async function reconcileCrossTeamChannelImpl(
   // filtered to a single role.
   const assignmentsInWindow: WindowAssignment[] = [];
   for (const selector of channel.crossTeamSync.selectors) {
+    // Archived source teams are out of rotation — skip them so an archived
+    // team can't keep feeding members into the cross-team channel, matching
+    // the early-return in `reconcileTeamChannelImpl`.
+    const sourceTeam = await ctx.db.get(selector.sourceTeamId);
+    if (!sourceTeam || sourceTeam.isArchived === true) continue;
     const rows = await ctx.db
       .query("roleAssignments")
       .withIndex("by_team_eventDate", (q) =>
