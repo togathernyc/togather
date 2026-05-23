@@ -1,18 +1,38 @@
 /**
  * AssignSheet
  *
- * A bottom sheet for assigning a person to a role slot. Lists the event's
- * group members as the assignable pool — team-channel membership is now
- * auto-derived from assignments (see scheduling/teamChannelSync), so listing
- * the channel's members here would be circular. People who have previously
- * filled this role are floated to the top under a "Previously filled by"
- * header. After an assignment, a soft double-booking warning surfaces if the
- * backend reports a same-day conflict — it never hard-blocks.
+ * A modal sheet for assigning a person to a role slot. Backed by three
+ * sections:
  *
- * Backend: groupMembers.list,
- * scheduling.assignments.previousFillers / assignRole.
+ *   1. PREVIOUSLY FILLED BY — recent confirmed fillers of *this role*, kept
+ *      at the top as a convenience. Hidden while the scheduler is searching.
+ *   2. GROUP — community people who are already in the event's group. Tapping
+ *      a row runs `assignRole` (no group write needed).
+ *   3. COMMUNITY — community people who are NOT yet in the event's group.
+ *      Tapping "+ Add & assign" runs `assignFromCommunity`, which adds them
+ *      to the group and assigns in a single transaction. Placeholder users
+ *      (already invited, not yet claimed) appear here as disabled rows with
+ *      an "Invited" badge.
+ *
+ * The candidate pool comes from `searchCommunityPeople`, which already
+ * annotates `inGroup` / `isPlaceholder` so the two sections are a simple
+ * partition. Search input is debounced 300ms to keep the query under
+ * control while typing.
+ *
+ * The "Invite someone new" form at the bottom calls `inviteAndAssign` (an
+ * action: it creates a placeholder user, assigns them, then SMS-invites
+ * them in one shot). The form is collapsed behind a button by default so
+ * the candidate list is the primary affordance.
+ *
+ * Backend:
+ *   - scheduling.people.searchCommunityPeople
+ *   - scheduling.assignments.previousFillers
+ *   - scheduling.assignments.assignRole
+ *   - scheduling.assignments.assignFromCommunity
+ *   - scheduling.assignments.inviteAndAssign
+ *   - scheduling.teams.getTeam (for the "Vocals · Worship Team" subtitle)
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -30,30 +50,25 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { Avatar } from "@components/ui/Avatar";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
+  useAuthenticatedAction,
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 
-/** A normalized assignable person (sourced from the event's group roster). */
-type AssignablePerson = {
-  id: string;
+/** Row shape returned by `searchCommunityPeople`. */
+type CommunityPerson = {
   userId: Id<"users">;
-  displayName?: string;
+  firstName: string;
+  lastName?: string;
+  displayName: string;
   profilePhoto?: string;
-};
-
-/** Raw row shape returned by `groupMembers.list`. */
-type GroupMemberRow = {
-  id: string;
-  user: {
-    id: Id<"users">;
-    firstName: string;
-    lastName: string;
-    profileImage?: string;
-  } | null;
+  phone?: string;
+  isPlaceholder: boolean;
+  inGroup: boolean;
 };
 
 type PreviousFiller = {
@@ -61,6 +76,20 @@ type PreviousFiller = {
   userName: string;
   lastServedDate: number;
 };
+
+/**
+ * Debounce a value by `delay` ms. Defined locally to avoid a shared-hook
+ * round-trip — other scheduling screens roll the same pattern (see
+ * FollowupDesktopTable).
+ */
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 export function AssignSheet({
   visible,
@@ -87,124 +116,361 @@ export function AssignSheet({
   onClose: () => void;
 }) {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
 
-  const memberData = useAuthenticatedQuery(
-    api.functions.groupMembers.list,
-    visible ? { groupId, limit: 200 } : "skip",
-  ) as { items: GroupMemberRow[] } | undefined;
+  // ---------------------------------------------------------------------------
+  // Local UI state
+  // ---------------------------------------------------------------------------
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteFirstName, setInviteFirstName] = useState("");
+  const [invitePhone, setInvitePhone] = useState("");
+  const [invitingSubmit, setInvitingSubmit] = useState(false);
 
-  // Normalize the group roster into the assignable-person shape.
-  const members = useMemo<AssignablePerson[]>(() => {
-    return (memberData?.items ?? [])
-      .filter((row): row is GroupMemberRow & { user: NonNullable<GroupMemberRow["user"]> } => row.user !== null)
-      .map((row) => ({
-        id: row.id,
-        userId: row.user.id,
-        displayName:
-          `${row.user.firstName} ${row.user.lastName}`.trim() || "Member",
-        profilePhoto: row.user.profileImage,
-      }));
-  }, [memberData?.items]);
+  // Reset transient state whenever the sheet closes so a re-open starts
+  // clean (the parent unmounts us when assignTarget clears, but be defensive).
+  useEffect(() => {
+    if (!visible) {
+      setSearch("");
+      setBusyUserId(null);
+      setInviteOpen(false);
+      setInviteFirstName("");
+      setInvitePhone("");
+      setInvitingSubmit(false);
+    }
+  }, [visible]);
+
+  // ---------------------------------------------------------------------------
+  // Data
+  // ---------------------------------------------------------------------------
+  const candidates = useAuthenticatedQuery(
+    api.functions.scheduling.people.searchCommunityPeople,
+    visible ? { groupId, search: debouncedSearch, limit: 30 } : "skip",
+  ) as CommunityPerson[] | undefined;
 
   const previous = useAuthenticatedQuery(
     api.functions.scheduling.assignments.previousFillers,
     visible ? { roleId, limit: 8 } : "skip",
   ) as PreviousFiller[] | undefined;
 
+  const team = useAuthenticatedQuery(
+    api.functions.scheduling.teams.getTeam,
+    visible ? { teamId } : "skip",
+  ) as { _id: Id<"teams">; name: string } | undefined;
+
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
   );
-  const [assigning, setAssigning] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const assignFromCommunity = useAuthenticatedMutation(
+    api.functions.scheduling.assignments.assignFromCommunity,
+  );
+  const inviteAndAssign = useAuthenticatedAction(
+    api.functions.scheduling.assignments.inviteAndAssign,
+  );
 
-  // Float previously-confirmed fillers to the top, de-duplicated against
-  // the rest of the roster. While a search query is active, the
-  // "previously filled by" section is hidden and every matching member is
-  // shown under "Group members" — simpler than filtering both sections.
-  const { topMembers, restMembers } = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (needle) {
-      const matches = members.filter((m) =>
-        (m.displayName ?? "").toLowerCase().includes(needle),
-      );
-      return { topMembers: [] as AssignablePerson[], restMembers: matches };
+  // ---------------------------------------------------------------------------
+  // Section partition
+  //
+  // `previousFillers` returns users-by-id with their display name, but it
+  // does not tell us whether they are still in the group or whether they're
+  // placeholders. We hydrate against the community-search results so the
+  // "previous" rows render with the same avatar/display-name pipeline as
+  // every other row. While the user is searching, the "previous" section
+  // is hidden — the candidate list IS the result of their query.
+  // ---------------------------------------------------------------------------
+  const { previousRows, groupRows, communityRows } = useMemo(() => {
+    const list = candidates ?? [];
+    const byUser = new Map<string, CommunityPerson>(
+      list.map((c) => [c.userId as string, c]),
+    );
+    const isSearching = debouncedSearch.trim().length > 0;
+
+    const previousRows: CommunityPerson[] = isSearching
+      ? []
+      : (previous ?? [])
+          .map((p) => byUser.get(p.userId as string))
+          .filter((c): c is CommunityPerson => !!c);
+    const previousIds = new Set(previousRows.map((p) => p.userId as string));
+
+    const groupRows: CommunityPerson[] = [];
+    const communityRows: CommunityPerson[] = [];
+    for (const c of list) {
+      if (previousIds.has(c.userId as string)) continue;
+      // Placeholders are always shown under COMMUNITY — they're not real
+      // group members yet even if `inGroup` happens to be true.
+      if (c.inGroup && !c.isPlaceholder) {
+        groupRows.push(c);
+      } else {
+        communityRows.push(c);
+      }
     }
-    const byUser = new Map(members.map((m) => [m.userId as string, m]));
-    const prevIds = new Set((previous ?? []).map((p) => p.userId as string));
-    const top = (previous ?? [])
-      .map((p) => byUser.get(p.userId as string))
-      .filter((m): m is AssignablePerson => !!m);
-    const rest = members.filter((m) => !prevIds.has(m.userId as string));
-    return { topMembers: top, restMembers: rest };
-  }, [members, previous, search]);
+    return { previousRows, groupRows, communityRows };
+  }, [candidates, previous, debouncedSearch]);
 
-  const handleAssign = useCallback(
-    async (member: AssignablePerson) => {
-      if (assignedUserIds.has(member.userId as string)) return;
-      setAssigning(member.userId as string);
+  // ---------------------------------------------------------------------------
+  // Mutation handlers
+  // ---------------------------------------------------------------------------
+  const surfaceError = useCallback(
+    (title: string, e: unknown) => {
+      const err = e as { data?: { message?: string }; message?: string };
+      const msg =
+        err?.data?.message ?? err?.message ?? "Something went wrong";
+      Alert.alert(title, msg);
+    },
+    [],
+  );
+
+  const handleAssignFromGroup = useCallback(
+    async (person: CommunityPerson) => {
+      if (assignedUserIds.has(person.userId as string)) return;
+      setBusyUserId(person.userId as string);
       try {
         const result = await assignRole({
           planId,
           teamId,
           roleId,
-          userId: member.userId,
+          userId: person.userId,
           timeLabel,
         });
-        if (result.doubleBooked) {
+        if (result?.doubleBooked) {
           Alert.alert(
             "Heads up — double-booked",
-            `${member.displayName ?? "This person"} is already scheduled somewhere else this day. They've still been assigned — they can sort it out when they respond.`,
+            `${person.displayName} is already scheduled somewhere else this day. They've still been assigned — they can sort it out when they respond.`,
           );
         }
         onClose();
-      } catch (e: any) {
-        Alert.alert("Couldn't assign", e?.message ?? "Please try again.");
+      } catch (e) {
+        surfaceError("Couldn't assign", e);
       } finally {
-        setAssigning(null);
+        setBusyUserId(null);
       }
     },
-    [assignedUserIds, assignRole, planId, teamId, roleId, timeLabel, onClose],
+    [
+      assignedUserIds,
+      assignRole,
+      planId,
+      teamId,
+      roleId,
+      timeLabel,
+      onClose,
+      surfaceError,
+    ],
   );
 
-  const renderMember = (member: AssignablePerson, prior: boolean) => {
-    const already = assignedUserIds.has(member.userId as string);
-    const busy = assigning === (member.userId as string);
+  const handleAddAndAssign = useCallback(
+    async (person: CommunityPerson) => {
+      if (assignedUserIds.has(person.userId as string)) return;
+      setBusyUserId(person.userId as string);
+      try {
+        const result = await assignFromCommunity({
+          planId,
+          teamId,
+          roleId,
+          userId: person.userId,
+          timeLabel,
+        });
+        const firstName = person.firstName?.trim() || person.displayName;
+        Alert.alert(
+          "Assigned",
+          result?.addedToGroup
+            ? `Added ${firstName} to the group and assigned to ${roleName}.`
+            : `Assigned ${firstName} to ${roleName}.`,
+        );
+        onClose();
+      } catch (e) {
+        surfaceError("Couldn't add & assign", e);
+      } finally {
+        setBusyUserId(null);
+      }
+    },
+    [
+      assignedUserIds,
+      assignFromCommunity,
+      planId,
+      teamId,
+      roleId,
+      timeLabel,
+      onClose,
+      roleName,
+      surfaceError,
+    ],
+  );
+
+  const handleInviteSubmit = useCallback(async () => {
+    const firstName = inviteFirstName.trim();
+    const phone = invitePhone.trim();
+    if (!firstName) {
+      Alert.alert("First name required", "Enter the person's first name.");
+      return;
+    }
+    if (!phone) {
+      Alert.alert("Phone required", "Enter a phone number for the SMS invite.");
+      return;
+    }
+    setInvitingSubmit(true);
+    try {
+      const result = await inviteAndAssign({
+        planId,
+        teamId,
+        roleId,
+        firstName,
+        phone,
+        timeLabel,
+      });
+      Alert.alert(
+        "Invite sent",
+        result?.sentInvite
+          ? `An SMS invite was sent to ${firstName} and they're assigned to ${roleName}.`
+          : `Couldn't send the SMS, but ${firstName} is created and assigned. You can resend later.`,
+      );
+      onClose();
+    } catch (e) {
+      surfaceError("Couldn't invite", e);
+    } finally {
+      setInvitingSubmit(false);
+    }
+  }, [
+    inviteFirstName,
+    invitePhone,
+    inviteAndAssign,
+    planId,
+    teamId,
+    roleId,
+    timeLabel,
+    roleName,
+    onClose,
+    surfaceError,
+  ]);
+
+  // ---------------------------------------------------------------------------
+  // Row renderers
+  //
+  // RN-Web gotcha: a function-style `style` prop on Pressable silently drops
+  // layout (gap / flexDirection / padding) on web. We keep layout on a
+  // static-styled inner <View> and only use Pressable for the tap target.
+  // ---------------------------------------------------------------------------
+  const renderGroupRow = (person: CommunityPerson, prior: boolean) => {
+    const already = assignedUserIds.has(person.userId as string);
+    const busy = busyUserId === (person.userId as string);
+    const disabled = already || !!busyUserId || invitingSubmit;
     return (
       <Pressable
-        key={member.id}
-        onPress={() => handleAssign(member)}
-        disabled={already || !!assigning}
-        style={({ pressed }) => [
-          styles.memberRow,
-          pressed && !already && { backgroundColor: colors.selectedBackground },
-          already && { opacity: 0.5 },
-        ]}
+        key={person.userId as string}
+        onPress={() => handleAssignFromGroup(person)}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`Assign ${person.displayName}`}
       >
-        <Avatar
-          name={member.displayName ?? "Member"}
-          imageUrl={member.profilePhoto}
-          size={40}
-        />
-        <Text
-          style={[styles.memberName, { color: colors.text }]}
-          numberOfLines={1}
+        <View
+          style={[
+            styles.memberRow,
+            already && { opacity: 0.5 },
+          ]}
         >
-          {member.displayName ?? "Member"}
-        </Text>
-        {busy ? (
-          <ActivityIndicator size="small" color={colors.text} />
-        ) : already ? (
-          <Text style={[styles.alreadyText, { color: colors.textSecondary }]}>
-            Assigned
+          <Avatar
+            name={person.displayName}
+            imageUrl={person.profilePhoto}
+            size={40}
+          />
+          <Text
+            style={[styles.memberName, { color: colors.text }]}
+            numberOfLines={1}
+          >
+            {person.displayName}
           </Text>
-        ) : prior ? (
-          <Ionicons name="star" size={16} color={colors.warning} />
-        ) : (
-          <Ionicons name="add" size={20} color={colors.textSecondary} />
-        )}
+          {busy ? (
+            <ActivityIndicator size="small" color={colors.text} />
+          ) : already ? (
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+              Assigned
+            </Text>
+          ) : prior ? (
+            <Ionicons name="star" size={16} color={colors.warning} />
+          ) : (
+            <Ionicons name="add" size={20} color={colors.textSecondary} />
+          )}
+        </View>
       </Pressable>
     );
   };
+
+  const renderCommunityRow = (person: CommunityPerson) => {
+    const already = assignedUserIds.has(person.userId as string);
+    const busy = busyUserId === (person.userId as string);
+    const isPlaceholder = person.isPlaceholder;
+    // Placeholders are informational — they can't be re-invited from here.
+    const disabled =
+      isPlaceholder || already || !!busyUserId || invitingSubmit;
+    return (
+      <Pressable
+        key={person.userId as string}
+        onPress={() => handleAddAndAssign(person)}
+        disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={`Add ${person.displayName} to the group and assign`}
+      >
+        <View
+          style={[
+            styles.memberRow,
+            (isPlaceholder || already) && { opacity: 0.55 },
+          ]}
+        >
+          <Avatar
+            name={person.displayName}
+            imageUrl={person.profilePhoto}
+            size={40}
+          />
+          <Text
+            style={[styles.memberName, { color: colors.text }]}
+            numberOfLines={1}
+          >
+            {person.displayName}
+          </Text>
+          {busy ? (
+            <ActivityIndicator size="small" color={colors.text} />
+          ) : isPlaceholder ? (
+            <View
+              style={[
+                styles.badge,
+                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
+                Invited
+              </Text>
+            </View>
+          ) : already ? (
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+              Assigned
+            </Text>
+          ) : (
+            <View style={styles.addAssignWrap}>
+              <Ionicons name="add" size={16} color={primaryColor} />
+              <Text
+                style={[styles.addAssignText, { color: primaryColor }]}
+              >
+                Add & assign
+              </Text>
+            </View>
+          )}
+        </View>
+      </Pressable>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+  const loading = candidates === undefined;
+  const teamName = team?.name;
+  const subtitle = [roleName, teamName].filter(Boolean).join(" · ");
+  const showEmpty =
+    !loading &&
+    previousRows.length === 0 &&
+    groupRows.length === 0 &&
+    communityRows.length === 0;
 
   return (
     <Modal
@@ -214,35 +480,28 @@ export function AssignSheet({
       onRequestClose={onClose}
     >
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
-        <View
-          style={[styles.header, { borderBottomColor: colors.border }]}
-        >
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </TouchableOpacity>
           <View style={styles.headerTextWrap}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>
-              Assign {roleName}
+              Assign someone
             </Text>
-            {timeLabel ? (
-              <Text
-                style={[styles.headerSub, { color: colors.textSecondary }]}
-              >
-                {timeLabel}
-              </Text>
-            ) : null}
+            <Text
+              style={[styles.headerSub, { color: colors.textSecondary }]}
+              numberOfLines={1}
+            >
+              {subtitle}
+              {timeLabel ? ` · ${timeLabel}` : ""}
+            </Text>
           </View>
-          <TouchableOpacity onPress={onClose} hitSlop={12}>
-            <Ionicons name="close" size={26} color={colors.text} />
-          </TouchableOpacity>
         </View>
 
-        {memberData === undefined ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="small" color={colors.text} />
-          </View>
-        ) : (
-          <KeyboardAvoidingView
-            style={styles.flex}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
@@ -257,7 +516,7 @@ export function AssignSheet({
               <Ionicons name="search" size={16} color={colors.textSecondary} />
               <TextInput
                 style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search members"
+                placeholder="Search by name…"
                 placeholderTextColor={colors.textSecondary}
                 value={search}
                 onChangeText={setSearch}
@@ -265,51 +524,196 @@ export function AssignSheet({
                 autoCapitalize="none"
               />
             </View>
-            {topMembers.length > 0 && (
+
+            {loading ? (
+              <View style={styles.centered}>
+                <ActivityIndicator size="small" color={colors.text} />
+              </View>
+            ) : (
               <>
-                <Text
-                  style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                >
-                  PREVIOUSLY FILLED BY
-                </Text>
-                <View
-                  style={[
-                    styles.group,
-                    { backgroundColor: colors.surfaceSecondary },
-                  ]}
-                >
-                  {topMembers.map((m) => renderMember(m, true))}
-                </View>
+                {previousRows.length > 0 && (
+                  <>
+                    <Text
+                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
+                    >
+                      PREVIOUSLY FILLED BY
+                    </Text>
+                    <View
+                      style={[
+                        styles.group,
+                        { backgroundColor: colors.surfaceSecondary },
+                      ]}
+                    >
+                      {previousRows.map((m) => renderGroupRow(m, true))}
+                    </View>
+                  </>
+                )}
+
+                {groupRows.length > 0 && (
+                  <>
+                    <Text
+                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
+                    >
+                      GROUP
+                    </Text>
+                    <View
+                      style={[
+                        styles.group,
+                        { backgroundColor: colors.surfaceSecondary },
+                      ]}
+                    >
+                      {groupRows.map((m) => renderGroupRow(m, false))}
+                    </View>
+                  </>
+                )}
+
+                {communityRows.length > 0 && (
+                  <>
+                    <Text
+                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
+                    >
+                      COMMUNITY
+                    </Text>
+                    <View
+                      style={[
+                        styles.group,
+                        { backgroundColor: colors.surfaceSecondary },
+                      ]}
+                    >
+                      {communityRows.map(renderCommunityRow)}
+                    </View>
+                  </>
+                )}
+
+                {showEmpty && (
+                  <Text
+                    style={[styles.emptyText, { color: colors.textSecondary }]}
+                  >
+                    {debouncedSearch.trim()
+                      ? `No one in this community matches "${debouncedSearch.trim()}".`
+                      : "No assignable people yet — invite someone new below."}
+                  </Text>
+                )}
               </>
             )}
+
+            {/* Invite someone new — collapsed by default. */}
             <Text
               style={[styles.sectionLabel, { color: colors.textSecondary }]}
             >
-              GROUP MEMBERS
+              INVITE SOMEONE NEW
             </Text>
-            <View
-              style={[
-                styles.group,
-                { backgroundColor: colors.surfaceSecondary },
-              ]}
-            >
-              {restMembers.length === 0 ? (
-                <Text
-                  style={[styles.emptyText, { color: colors.textSecondary }]}
+            {inviteOpen ? (
+              <View
+                style={[
+                  styles.inviteCard,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                ]}
+              >
+                <TextInput
+                  style={[
+                    styles.inviteInput,
+                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                  ]}
+                  placeholder="First name"
+                  placeholderTextColor={colors.textSecondary}
+                  value={inviteFirstName}
+                  onChangeText={setInviteFirstName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  editable={!invitingSubmit}
+                />
+                <TextInput
+                  style={[
+                    styles.inviteInput,
+                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                  ]}
+                  placeholder="Phone (e.g. (555) 123-4567)"
+                  placeholderTextColor={colors.textSecondary}
+                  value={invitePhone}
+                  onChangeText={setInvitePhone}
+                  keyboardType="phone-pad"
+                  autoCorrect={false}
+                  editable={!invitingSubmit}
+                />
+                <View style={styles.inviteActions}>
+                  <Pressable
+                    onPress={() => {
+                      if (invitingSubmit) return;
+                      setInviteOpen(false);
+                      setInviteFirstName("");
+                      setInvitePhone("");
+                    }}
+                    disabled={invitingSubmit}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel invite"
+                  >
+                    <View style={styles.inviteCancelInner}>
+                      <Text
+                        style={[styles.inviteCancelText, { color: colors.textSecondary }]}
+                      >
+                        Cancel
+                      </Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleInviteSubmit}
+                    disabled={invitingSubmit}
+                    accessibilityRole="button"
+                    accessibilityLabel="Send invite and assign"
+                  >
+                    <View
+                      style={[
+                        styles.inviteSubmitInner,
+                        {
+                          backgroundColor: primaryColor,
+                          opacity: invitingSubmit ? 0.6 : 1,
+                        },
+                      ]}
+                    >
+                      {invitingSubmit ? (
+                        <ActivityIndicator size="small" color={colors.surface} />
+                      ) : (
+                        <Text
+                          style={[styles.inviteSubmitText, { color: colors.surface }]}
+                        >
+                          Send invite & assign
+                        </Text>
+                      )}
+                    </View>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => setInviteOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Invite someone new"
+              >
+                <View
+                  style={[
+                    styles.inviteToggle,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                  ]}
                 >
-                  {search.trim()
-                    ? `No members match "${search.trim()}"`
-                    : topMembers.length > 0
-                      ? "Everyone in this group is already an option above."
-                      : "No group members to assign yet."}
-                </Text>
-              ) : (
-                restMembers.map((m) => renderMember(m, false))
-              )}
-            </View>
+                  <Ionicons
+                    name="add-circle-outline"
+                    size={18}
+                    color={primaryColor}
+                  />
+                  <Text
+                    style={[
+                      styles.inviteToggleText,
+                      { color: primaryColor },
+                    ]}
+                  >
+                    Invite someone new
+                  </Text>
+                </View>
+              </Pressable>
+            )}
           </ScrollView>
-          </KeyboardAvoidingView>
-        )}
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -325,9 +729,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 8,
+  },
+  headerClose: {
+    paddingHorizontal: 4,
   },
   headerTextWrap: {
     flex: 1,
@@ -341,12 +749,13 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   centered: {
-    flex: 1,
+    paddingVertical: 32,
     alignItems: "center",
     justifyContent: "center",
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 32,
   },
   searchBox: {
     flexDirection: "row",
@@ -386,12 +795,85 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "500",
   },
-  alreadyText: {
+  metaText: {
     fontSize: 13,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.4,
+  },
+  addAssignWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  addAssignText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   emptyText: {
     fontSize: 14,
-    padding: 16,
+    paddingVertical: 16,
     lineHeight: 20,
+  },
+  inviteToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  inviteToggleText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  inviteCard: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
+  inviteInput: {
+    fontSize: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  inviteActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 4,
+  },
+  inviteCancelInner: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  inviteCancelText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  inviteSubmitInner: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    minWidth: 180,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteSubmitText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
