@@ -27,6 +27,8 @@ import {
   TextInput,
   Switch,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
@@ -195,9 +197,14 @@ export function NeededRolesModal({
             <ActivityIndicator size="small" color={colors.text} />
           </View>
         ) : (
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           >
             {teams.length === 0 ? (
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
@@ -330,6 +337,7 @@ export function NeededRolesModal({
               </Pressable>
             )}
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </View>
     </Modal>
@@ -607,6 +615,9 @@ function Stepper({
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  flex: {
     flex: 1,
   },
   header: {

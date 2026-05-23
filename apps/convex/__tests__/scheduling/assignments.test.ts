@@ -3,7 +3,7 @@
  * `previousFillers` quicklink query (ADR-023).
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
@@ -536,5 +536,358 @@ describe("previousFillers", () => {
       { token: leaderToken, roleId: world.roleId },
     );
     expect(fillers).toHaveLength(0);
+  });
+});
+
+describe("assignFromCommunity", () => {
+  it("auto-adds a community member to the group and creates the assignment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Sanity: communityOnlyA is not yet in the group.
+    const before = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.communityOnlyAId),
+        )
+        .first(),
+    );
+    expect(before).toBeNull();
+
+    const { assignmentId, addedToGroup } = await t.mutation(
+      api.functions.scheduling.assignments.assignFromCommunity,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      },
+    );
+    expect(addedToGroup).toBe(true);
+
+    // Group membership now exists, role:"member", and is active.
+    const after = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.communityOnlyAId),
+        )
+        .first(),
+    );
+    expect(after).not.toBeNull();
+    expect(after?.role).toBe("member");
+    expect(after?.leftAt).toBeUndefined();
+    expect(after?.requestStatus === undefined || after?.requestStatus === "accepted").toBe(
+      true,
+    );
+
+    // The assignment row exists and points at the right user.
+    const assignment = await t.run((ctx) => ctx.db.get(assignmentId));
+    expect(assignment?.userId).toBe(world.communityOnlyAId);
+    expect(assignment?.status).toBe("unconfirmed");
+  });
+
+  it("reactivates a leftAt / pending group-member row instead of inserting a duplicate", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Seed a stale "left" group membership for communityOnlyA.
+    const existingMemberId = await t.run(async (ctx) =>
+      ctx.db.insert("groupMembers", {
+        groupId: world.groupId,
+        userId: world.communityOnlyAId,
+        role: "member",
+        joinedAt: Date.now() - 30 * 86400000,
+        leftAt: Date.now() - 86400000,
+        notificationsEnabled: true,
+      }),
+    );
+
+    const { addedToGroup } = await t.mutation(
+      api.functions.scheduling.assignments.assignFromCommunity,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      },
+    );
+    expect(addedToGroup).toBe(true);
+
+    // Same row, now reactivated.
+    const memberships = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.communityOnlyAId),
+        )
+        .collect(),
+    );
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]._id).toBe(existingMemberId);
+    expect(memberships[0].leftAt).toBeUndefined();
+    expect(memberships[0].requestStatus).toBe("accepted");
+  });
+
+  it("rejects a user from a different community", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Insert a user belonging to an unrelated community — the same id will
+    // be passed to assignFromCommunity. The scheduler is authorized for
+    // their own community/plan, so this validates the cross-community guard.
+    const foreignUserId = await t.run(async (ctx) => {
+      const otherCommunityId = await ctx.db.insert("communities", {
+        name: "Other Community",
+        slug: "other",
+        isPublic: true,
+      });
+      const userId = await ctx.db.insert("users", {
+        firstName: "Foreign",
+        lastName: "User",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId: otherCommunityId,
+        roles: 1,
+        status: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return userId;
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: foreignUserId,
+      }),
+    ).rejects.toThrow(/not a member of the event's community/);
+  });
+
+  it("rejects a non-scheduler caller (requirePlanScheduler guard)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // channelMember is in the group but not a leader / community admin —
+    // they cannot schedule.
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+        token: memberToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("rejects assigning to a role on an archived team", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Archive the team directly.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(world.teamId, { isArchived: true });
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      }),
+    ).rejects.toThrow(/archived team/);
+  });
+
+  it("rejects assigning the same user twice (already-assigned guard)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    await t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+      token: leaderToken,
+      planId,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.communityOnlyAId,
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      }),
+    ).rejects.toThrow(/already assigned/);
+  });
+});
+
+describe("inviteAndAssign", () => {
+  /**
+   * `sendSMS` is wired through `ctx.runAction(internal...sendSMS, ...)`.
+   * Without Twilio creds (default test env), `sendSMS` returns
+   * `{ success: false }` → `sentInvite: false`. To exercise the happy
+   * `sentInvite: true` path we set `OTP_TEST_PHONE_NUMBERS` so the invitee
+   * phone is treated as a test phone and `sendSMS` short-circuits to
+   * `{ success: true }` without hitting Twilio.
+   */
+
+  it("creates a placeholder user, memberships, and assignment; sentInvite reflects SMS outcome", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    const inviteePhone = "2025550100";
+    vi.stubEnv("OTP_TEST_PHONE_NUMBERS", inviteePhone);
+
+    let result: {
+      assignmentId: Id<"roleAssignments">;
+      invitedUserId: Id<"users">;
+      sentInvite: boolean;
+    };
+    try {
+      result = await t.action(
+        api.functions.scheduling.assignments.inviteAndAssign,
+        {
+          token: leaderToken,
+          planId,
+          teamId: world.teamId,
+          roleId: world.roleId,
+          firstName: "Nora",
+          phone: inviteePhone,
+        },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(result.sentInvite).toBe(true);
+
+    // The placeholder user row was created with isPlaceholder/isActive
+    // flags and the normalized phone.
+    const newUser = await t.run((ctx) => ctx.db.get(result.invitedUserId));
+    expect(newUser?.firstName).toBe("Nora");
+    expect(newUser?.isPlaceholder).toBe(true);
+    expect(newUser?.isActive).toBe(false);
+    expect(newUser?.phone).toBe("+12025550100");
+
+    // userCommunities (active) for the invitee.
+    const comMembership = await t.run((ctx) =>
+      ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q
+            .eq("userId", result.invitedUserId)
+            .eq("communityId", world.communityId),
+        )
+        .first(),
+    );
+    expect(comMembership?.status).toBe(1);
+
+    // groupMembers (active) for the invitee.
+    const groupMembership = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", result.invitedUserId),
+        )
+        .first(),
+    );
+    expect(groupMembership?.role).toBe("member");
+    expect(groupMembership?.leftAt).toBeUndefined();
+
+    // roleAssignments points at the new user.
+    const assignment = await t.run((ctx) => ctx.db.get(result.assignmentId));
+    expect(assignment?.userId).toBe(result.invitedUserId);
+    expect(assignment?.status).toBe("unconfirmed");
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  it("returns sentInvite: false when SMS isn't configured but still lands the DB writes", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // No OTP_TEST_PHONE_NUMBERS, no Twilio creds → sendSMS returns
+    // { success: false } and inviteAndAssign reports it accordingly.
+    const result = await t.action(
+      api.functions.scheduling.assignments.inviteAndAssign,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        firstName: "Mara",
+        phone: "2025550101",
+      },
+    );
+
+    expect(result.sentInvite).toBe(false);
+
+    // The DB writes still happened — the leader still gets the role filled.
+    const user = await t.run((ctx) => ctx.db.get(result.invitedUserId));
+    expect(user?.isPlaceholder).toBe(true);
+    const assignment = await t.run((ctx) => ctx.db.get(result.assignmentId));
+    expect(assignment?.userId).toBe(result.invitedUserId);
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  it("rejects when a non-placeholder user already owns the phone", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // The fixture channelAdmin has phone +12025550001 — a real user already
+    // owns it, so inviteAndAssign should refuse to create a duplicate.
+    await expect(
+      t.action(api.functions.scheduling.assignments.inviteAndAssign, {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        firstName: "Dup",
+        phone: "+12025550001",
+      }),
+    ).rejects.toThrow(/already in Togather/);
+  });
+
+  it("rejects an unauthorized caller with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    await expect(
+      t.action(api.functions.scheduling.assignments.inviteAndAssign, {
+        token: memberToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        firstName: "Nope",
+        phone: "2025550199",
+      }),
+    ).rejects.toThrow(ConvexError);
   });
 });

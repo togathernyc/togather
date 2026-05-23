@@ -127,6 +127,7 @@ import type * as functions_scheduling_crossTeamChannels from "../functions/sched
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
+import type * as functions_scheduling_people from "../functions/scheduling/people.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_starterRoles from "../functions/scheduling/starterRoles.js";
@@ -317,6 +318,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
+  "functions/scheduling/people": typeof functions_scheduling_people;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/starterRoles": typeof functions_scheduling_starterRoles;

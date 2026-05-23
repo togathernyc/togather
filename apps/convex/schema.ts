@@ -133,6 +133,15 @@ export default defineSchema({
     lastName: v.optional(v.string()),
     isStaff: v.optional(v.boolean()),
     isActive: v.optional(v.boolean()),
+    // True when a leader created a *provisional* user via the
+    // assign-from-community "invite new person" flow — the row carries a
+    // name + phone but no real account behind it. Cleared (and `isActive`
+    // flipped to true) when that phone completes phone-OTP signup; until
+    // then `users` rows with this flag must not be treated as real accounts.
+    // See `assignFromCommunity` / `inviteAndAssign` in
+    // `functions/scheduling/assignments.ts` and the claim path in
+    // `verifyPhoneOTP` / `registerNewUser`.
+    isPlaceholder: v.optional(v.boolean()),
     dateJoined: v.optional(v.number()), // Unix timestamp ms
     roles: v.optional(v.number()), // Was: SmallInt bitmask
     profilePhoto: v.optional(v.string()),

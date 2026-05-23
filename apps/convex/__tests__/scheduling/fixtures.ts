@@ -42,6 +42,19 @@ export interface SchedulingWorld {
   communityAdminId: Id<"users">;
   /** No memberships anywhere */
   outsiderId: Id<"users">;
+  /**
+   * Active community member ("Comonly") who is NOT in the group. Used by the
+   * AssignSheet community-search / `assignFromCommunity` tests.
+   */
+  communityOnlyAId: Id<"users">;
+  /** A second community-only member ("Casey") to test name sort/filter. */
+  communityOnlyBId: Id<"users">;
+  /**
+   * Placeholder user inserted by a previous `inviteAndAssign` call. Has an
+   * active community + group membership but `isPlaceholder: true` and
+   * `isActive: false`. Used by people-search / claim tests.
+   */
+  placeholderUserId: Id<"users">;
 }
 
 async function insertUser(
@@ -94,12 +107,32 @@ export async function buildSchedulingWorld(
       updatedAt: ts(),
     });
 
-    const channelAdminId = await insertUser(ctx, "Adminda", "2025550001");
-    const channelModeratorId = await insertUser(ctx, "Modesto", "2025550002");
-    const channelMemberId = await insertUser(ctx, "Memberly", "2025550003");
-    const groupLeaderId = await insertUser(ctx, "Leandra", "2025550004");
-    const communityAdminId = await insertUser(ctx, "Comadmin", "2025550005");
-    const outsiderId = await insertUser(ctx, "Outsider", "2025550006");
+    // Phones are stored normalized (E.164) to mirror production — the auth
+    // pipeline normalizes before insert. Tests that look up by phone via
+    // `by_phone` rely on this.
+    const channelAdminId = await insertUser(ctx, "Adminda", "+12025550001");
+    const channelModeratorId = await insertUser(ctx, "Modesto", "+12025550002");
+    const channelMemberId = await insertUser(ctx, "Memberly", "+12025550003");
+    const groupLeaderId = await insertUser(ctx, "Leandra", "+12025550004");
+    const communityAdminId = await insertUser(ctx, "Comadmin", "+12025550005");
+    const outsiderId = await insertUser(ctx, "Outsider", "+12025550006");
+    // Community-only members (not in the group). Names chosen for alphabetic
+    // sort: "Casey" < "Comonly", so the search ordering is predictable.
+    const communityOnlyAId = await insertUser(ctx, "Casey", "+12025550007");
+    const communityOnlyBId = await insertUser(ctx, "Comonly", "+12025550008");
+    // Placeholder user — inserted as if `inviteAndAssign` had created them.
+    // Active in community + group, but flagged so the UI / claim path can
+    // recognise them.
+    const placeholderUserId = await ctx.db.insert("users", {
+      firstName: "Phoebe",
+      lastName: "Placeholder",
+      phone: "+12025550009",
+      isActive: false,
+      isPlaceholder: true,
+      phoneVerified: false,
+      createdAt: ts(),
+      updatedAt: ts(),
+    });
 
     const channelId = await ctx.db.insert("chatChannels", {
       groupId,
@@ -162,6 +195,47 @@ export async function buildSchedulingWorld(
       updatedAt: ts(),
     });
 
+    // Active community memberships for the in-group users (so the people
+    // search has a complete view). Channel/group users above don't otherwise
+    // exist in `userCommunities`.
+    for (const userId of [
+      channelAdminId,
+      channelModeratorId,
+      channelMemberId,
+      groupLeaderId,
+    ]) {
+      await ctx.db.insert("userCommunities", {
+        communityId,
+        userId,
+        roles: 1,
+        status: 1,
+        createdAt: ts(),
+        updatedAt: ts(),
+      });
+    }
+
+    // Community-only members and the placeholder all live in the community.
+    for (const userId of [communityOnlyAId, communityOnlyBId, placeholderUserId]) {
+      await ctx.db.insert("userCommunities", {
+        communityId,
+        userId,
+        roles: 1,
+        status: 1,
+        createdAt: ts(),
+        updatedAt: ts(),
+      });
+    }
+
+    // The placeholder is "already in the group" (the leader added them when
+    // they were invited), but the community-only members are NOT.
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId: placeholderUserId,
+      role: "member",
+      joinedAt: ts(),
+      notificationsEnabled: true,
+    });
+
     // The first-class serving team (ADR-025). It owns the chat channel above
     // and the roles below; assignments and needed-roles key off `teamId`.
     const teamId = await ctx.db.insert("teams", {
@@ -198,6 +272,9 @@ export async function buildSchedulingWorld(
       groupLeaderId,
       communityAdminId,
       outsiderId,
+      communityOnlyAId,
+      communityOnlyBId,
+      placeholderUserId,
     };
   });
 

@@ -55,11 +55,18 @@ export {
 // ============================================================================
 export {
   assignRole,
+  assignFromCommunity,
+  inviteAndAssign,
   unassign,
   respondToAssignment,
   previousFillers,
   publishEvent,
 } from "./assignments";
+
+// ============================================================================
+// Community-people search (assign-from-community flow)
+// ============================================================================
+export { searchCommunityPeople } from "./people";
 
 // ============================================================================
 // My Schedule (volunteer view)
