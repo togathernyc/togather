@@ -280,6 +280,29 @@ export const verifyPhoneOTP = action({
       { phone: normalizedPhone }
     );
 
+    // Placeholder branch: a leader pre-created this row via inviteAndAssign
+    // (see scheduling/assignments.ts). We do NOT log them in as the
+    // placeholder — they need to finish registration (first/last/DOB) so the
+    // account is real. Route them through the new-user registration flow;
+    // the row gets claimed in `registerNewUser` via
+    // `claimPlaceholderByPhoneInternal`.
+    if (result?.user?.isPlaceholder === true) {
+      const phoneVerificationToken = crypto.randomUUID();
+      await ctx.runMutation(
+        internal.functions.authInternal.storePhoneVerificationToken,
+        {
+          phone: normalizedPhone,
+          token: phoneVerificationToken,
+        }
+      );
+      return {
+        verified: true,
+        requiresCommunitySelection: false,
+        phoneVerificationToken,
+        communities: [],
+      };
+    }
+
     // If confirmIdentity is false, unlink phone and generate token for new registration
     if (!confirmIdentity && result?.user) {
       await ctx.runMutation(

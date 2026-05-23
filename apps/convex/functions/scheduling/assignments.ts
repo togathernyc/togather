@@ -25,8 +25,14 @@ import {
 } from "../../_generated/server";
 import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../../lib/auth";
+import {
+  buildSearchText,
+  isValidPhone,
+  normalizePhone,
+} from "../../lib/utils";
+import { COMMUNITY_ROLES } from "../../lib/permissions";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { requireTeamGroupMember, requirePlanScheduler } from "./permissions";
 
@@ -117,6 +123,145 @@ async function requireActiveGroupMember(
 }
 
 /**
+ * Shared assignment-write helper. Used by `assignRole`, `assignFromCommunity`,
+ * and `inviteAndAssign` — they all converge on the same writes once auth and
+ * any prerequisite group-membership work is done.
+ *
+ * Performs the role-pair guard, the active-group-member check, the
+ * already-assigned guard, double-booking detection, the `roleAssignments`
+ * insert, and the team-channel reconciliation schedules. Returns the new
+ * assignment id and the advisory `doubleBooked` flag.
+ *
+ * Auth: the caller MUST already have been authorized by
+ * `requirePlanScheduler` (or stricter) before this is invoked.
+ */
+async function performAssignment(
+  ctx: MutationCtx,
+  args: {
+    plan: Doc<"eventPlans">;
+    teamId: Id<"teams">;
+    roleId: Id<"teamRoles">;
+    userId: Id<"users">;
+    timeLabel?: string;
+    callerId: Id<"users">;
+  },
+): Promise<{ assignmentId: Id<"roleAssignments">; doubleBooked: boolean }> {
+  const { plan, teamId, roleId, userId, timeLabel, callerId } = args;
+
+  // Security: the teamId/roleId pair must be consistent and belong to this
+  // event's group — otherwise a scheduler for one group could inject
+  // volunteers into an unrelated group's team channel via the later sync.
+  await requireTeamRolePair(ctx, teamId, roleId, plan.groupId);
+
+  // The assignee must be an active member of the event's group — channel
+  // membership is derived from assignments, so an unchecked userId would
+  // expose the serving-team channel to an arbitrary person.
+  await requireActiveGroupMember(ctx, plan.groupId, userId);
+
+  // Guard against assigning the same person to the same role twice.
+  const roleAssignments = await ctx.db
+    .query("roleAssignments")
+    .withIndex("by_plan_role", (q) =>
+      q.eq("planId", plan._id).eq("roleId", roleId),
+    )
+    .collect();
+  if (roleAssignments.some((a) => a.userId === userId)) {
+    throw new ConvexError("This person is already assigned to this role");
+  }
+
+  // Double-booking detection: any other assignment for this user that
+  // falls on the same calendar day (across all teams/events). We compare
+  // by UTC day bucket — two events on the same day at 9 AM and 11 AM have
+  // different `eventDate` values but still collide. Assignments on the
+  // current plan are excluded so re-assigning within an event never warns.
+  const targetDay = utcDayBucket(plan.eventDate);
+  const userAssignments = await ctx.db
+    .query("roleAssignments")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  const doubleBooked = userAssignments.some(
+    (a) =>
+      a.planId !== plan._id && utcDayBucket(a.eventDate) === targetDay,
+  );
+
+  const assignmentId = await ctx.db.insert("roleAssignments", {
+    planId: plan._id,
+    teamId,
+    roleId,
+    userId,
+    eventDate: plan.eventDate,
+    status: "unconfirmed",
+    timeLabel,
+    assignedById: callerId,
+    assignedAt: Date.now(),
+  });
+
+  // Auto-sync the team channel's membership off the new assignment, and any
+  // cross-team channel that draws from this serving team.
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
+    { teamId },
+  );
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.scheduling.teamChannelSync
+      .reconcileCrossTeamChannelsForSource,
+    { sourceTeamId: teamId },
+  );
+
+  return { assignmentId, doubleBooked };
+}
+
+/**
+ * Ensure `userId` has an active `groupMembers` row in `groupId`. Returns
+ * whether a new row was created (existing-but-archived rows are reactivated
+ * by clearing `leftAt`; new rows are inserted as role:"member").
+ *
+ * Used by the assign-from-community / invite-new-person flows. Callers MUST
+ * have passed `requirePlanScheduler` for the plan's group before invoking.
+ */
+async function ensureActiveGroupMembership(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<{ addedToGroup: boolean }> {
+  const existing = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", groupId).eq("userId", userId),
+    )
+    .first();
+
+  const timestamp = Date.now();
+  if (existing) {
+    const active =
+      !existing.leftAt &&
+      (!existing.requestStatus || existing.requestStatus === "accepted");
+    if (active) {
+      return { addedToGroup: false };
+    }
+    // Reactivate an archived membership (leftAt set, or a stale "pending"
+    // request) — the scheduler is implicitly approving them.
+    await ctx.db.patch(existing._id, {
+      leftAt: undefined,
+      requestStatus: "accepted",
+      requestReviewedAt: timestamp,
+    });
+    return { addedToGroup: true };
+  }
+
+  await ctx.db.insert("groupMembers", {
+    groupId,
+    userId,
+    role: "member",
+    joinedAt: timestamp,
+    notificationsEnabled: true,
+  });
+  return { addedToGroup: true };
+}
+
+/**
  * Assign a channel member to a role on an event. Creates an `unconfirmed`
  * assignment and denormalizes the event's `eventDate` for double-booking
  * queries.
@@ -140,70 +285,333 @@ export const assignRole = mutation({
     const callerId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, callerId);
 
-    // Security: the teamId/roleId pair must be consistent and belong to this
-    // event's group — otherwise a scheduler for one group could inject
-    // volunteers into an unrelated group's team channel via the later sync.
-    await requireTeamRolePair(ctx, args.teamId, args.roleId, plan.groupId);
-
-    // The assignee must be an active member of the event's group — channel
-    // membership is derived from assignments, so an unchecked userId would
-    // expose the serving-team channel to an arbitrary person.
-    await requireActiveGroupMember(ctx, plan.groupId, args.userId);
-
-    // Guard against assigning the same person to the same role twice.
-    const roleAssignments = await ctx.db
-      .query("roleAssignments")
-      .withIndex("by_plan_role", (q) =>
-        q.eq("planId", args.planId).eq("roleId", args.roleId),
-      )
-      .collect();
-    if (roleAssignments.some((a) => a.userId === args.userId)) {
-      throw new ConvexError("This person is already assigned to this role");
-    }
-
-    // Double-booking detection: any other assignment for this user that
-    // falls on the same calendar day (across all teams/events). We compare
-    // by UTC day bucket — two events on the same day at 9 AM and 11 AM have
-    // different `eventDate` values but still collide. Assignments on the
-    // current plan are excluded so re-assigning within an event never warns.
-    const targetDay = utcDayBucket(plan.eventDate);
-    const userAssignments = await ctx.db
-      .query("roleAssignments")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .collect();
-    const doubleBooked = userAssignments.some(
-      (a) =>
-        a.planId !== args.planId &&
-        utcDayBucket(a.eventDate) === targetDay,
-    );
-
-    const assignmentId = await ctx.db.insert("roleAssignments", {
-      planId: args.planId,
+    return performAssignment(ctx, {
+      plan,
       teamId: args.teamId,
       roleId: args.roleId,
       userId: args.userId,
-      eventDate: plan.eventDate,
-      status: "unconfirmed",
       timeLabel: args.timeLabel,
-      assignedById: callerId,
-      assignedAt: Date.now(),
+      callerId,
+    });
+  },
+});
+
+/**
+ * Assign a community member who is *not yet in the plan's group* to a role:
+ * adds them to the group as a "member" if needed, then performs the same
+ * assignment writes as `assignRole` (including the same-day double-booking
+ * advisory and the team/role-pair / archived-team guards).
+ *
+ * Powers the second leg of the AssignSheet community search — a one-tap
+ * "add to group + assign" for an existing community member.
+ *
+ * Auth: group leader or community admin for the event's group
+ * (`requirePlanScheduler`). The new group membership is implicitly
+ * "scheduler-approved" — we do NOT require the assignee to pre-accept.
+ */
+export const assignFromCommunity = mutation({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+    teamId: v.id("teams"),
+    roleId: v.id("teamRoles"),
+    userId: v.id("users"),
+    timeLabel: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    const { plan } = await requirePlanScheduler(ctx, args.planId, callerId);
+
+    // Verify the target is at least an active *community* member — a
+    // scheduler must not be able to add an arbitrary cross-community user
+    // into their group by id-guessing.
+    const target = await ctx.db.get(args.userId);
+    if (!target) {
+      throw new ConvexError("Person not found");
+    }
+    const communityMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", plan.communityId),
+      )
+      .first();
+    if (!communityMembership || communityMembership.status !== 1) {
+      throw new ConvexError(
+        "This person is not a member of the event's community",
+      );
+    }
+
+    const { addedToGroup } = await ensureActiveGroupMembership(
+      ctx,
+      plan.groupId,
+      args.userId,
+    );
+
+    const { assignmentId } = await performAssignment(ctx, {
+      plan,
+      teamId: args.teamId,
+      roleId: args.roleId,
+      userId: args.userId,
+      timeLabel: args.timeLabel,
+      callerId,
     });
 
-    // Auto-sync the team channel's membership off the new assignment, and any
-    // cross-team channel that draws from this serving team.
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.scheduling.teamChannelSync.reconcileTeamChannel,
-      { teamId: args.teamId },
+    return { assignmentId, addedToGroup };
+  },
+});
+
+// ============================================================================
+// inviteAndAssign — placeholder user + SMS invite + immediate assignment
+// ============================================================================
+
+/**
+ * Max name length we accept for the invitee's `firstName`. Anything beyond
+ * this is almost certainly a paste accident; truncating silently would hide
+ * it from the scheduler.
+ */
+const INVITE_FIRST_NAME_MAX = 50;
+
+/**
+ * Validate the invitee's first name. Must be 1–50 chars and contain at
+ * least one alphanumeric character (so we reject pure-punctuation names
+ * that would render as blanks in the UI).
+ */
+function validateInviteFirstName(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new ConvexError("First name is required");
+  }
+  if (trimmed.length > INVITE_FIRST_NAME_MAX) {
+    throw new ConvexError(
+      `First name must be ${INVITE_FIRST_NAME_MAX} characters or fewer`,
     );
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.scheduling.teamChannelSync
-        .reconcileCrossTeamChannelsForSource,
-      { sourceTeamId: args.teamId },
+  }
+  if (!/[\p{L}\p{N}]/u.test(trimmed)) {
+    throw new ConvexError("First name must contain at least one letter or digit");
+  }
+  return trimmed;
+}
+
+/**
+ * Internal: create a placeholder `users` row + community/group memberships,
+ * then run the same assignment writes as `assignRole`. Used by the
+ * `inviteAndAssign` action so the writes happen in a single transaction —
+ * an SMS send failure later does NOT leave half-formed rows.
+ *
+ * Auth: `requirePlanScheduler` on `planId`. Inputs are expected to be
+ * pre-validated by the caller (normalized phone, validated first name).
+ */
+export const inviteAndAssignInternal = internalMutation({
+  args: {
+    planId: v.id("eventPlans"),
+    teamId: v.id("teams"),
+    roleId: v.id("teamRoles"),
+    firstName: v.string(),
+    normalizedPhone: v.string(),
+    timeLabel: v.optional(v.string()),
+    callerId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const { plan } = await requirePlanScheduler(
+      ctx,
+      args.planId,
+      args.callerId,
     );
 
-    return { assignmentId, doubleBooked };
+    // Idempotency: if a user already owns this phone — placeholder or
+    // real — we refuse to create a duplicate. The leader should search
+    // by name and assign the existing record instead. We deliberately
+    // surface this loudly rather than silently merging: a silent merge
+    // would assign someone else's account to a role without their consent.
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", args.normalizedPhone))
+      .first();
+    if (existing) {
+      throw new ConvexError(
+        "A person with this phone is already in Togather — search by name instead.",
+      );
+    }
+
+    const timestamp = Date.now();
+
+    // 1. Placeholder user. `isActive: false` until claim — keeps them out
+    //    of any "active users" filters and matches how a non-signed-up
+    //    account *should* look. `isPlaceholder: true` is the signal that
+    //    the phone-OTP signup flow uses to claim instead of insert.
+    const newUserId = await ctx.db.insert("users", {
+      firstName: args.firstName,
+      phone: args.normalizedPhone,
+      phoneVerified: false,
+      isActive: false,
+      isPlaceholder: true,
+      isStaff: false,
+      isSuperuser: false,
+      dateJoined: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      searchText: buildSearchText({
+        firstName: args.firstName,
+        phone: args.normalizedPhone,
+      }),
+    });
+
+    // 2. Community membership — they need to exist in the community for
+    //    the assignment to be coherent with reconciliation. Status=1
+    //    (active), role=MEMBER, matching `communityLandingPage` insert.
+    await ctx.db.insert("userCommunities", {
+      userId: newUserId,
+      communityId: plan.communityId,
+      roles: COMMUNITY_ROLES.MEMBER,
+      status: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    // 3. Group membership — `requireActiveGroupMember` (inside
+    //    `performAssignment`) will then succeed.
+    await ctx.db.insert("groupMembers", {
+      groupId: plan.groupId,
+      userId: newUserId,
+      role: "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+
+    // 4. Pull the community and team for the SMS body — the action needs
+    //    these to construct the message.
+    const community = await ctx.db.get(plan.communityId);
+    const team = await ctx.db.get(args.teamId);
+    const caller = await ctx.db.get(args.callerId);
+
+    // 5. The actual assignment writes (same path as `assignRole`).
+    const { assignmentId } = await performAssignment(ctx, {
+      plan,
+      teamId: args.teamId,
+      roleId: args.roleId,
+      userId: newUserId,
+      timeLabel: args.timeLabel,
+      callerId: args.callerId,
+    });
+
+    return {
+      assignmentId,
+      invitedUserId: newUserId,
+      // Context the action needs to build the SMS body without re-querying.
+      communityName: community?.name ?? "Togather",
+      teamName: team?.name ?? "your team",
+      leaderFirstName: caller?.firstName?.trim() || "Someone",
+    };
+  },
+});
+
+/**
+ * Create a placeholder user for a person who is NOT yet in Togather, add
+ * them to the plan's community + group, assign them to a role on the event,
+ * and SMS-invite them to sign up. Their `_id` is stable across the eventual
+ * phone-OTP signup claim, so the assignment is preserved.
+ *
+ * This is exposed as an `action` (not a plain mutation) because the SMS
+ * send goes through Twilio inside a Node action — running it inline lets
+ * us report actual delivery status via `sentInvite` rather than reporting
+ * a scheduling success. The DB writes are batched into
+ * `inviteAndAssignInternal` so we never leave half-formed rows.
+ *
+ * If the SMS send fails, the placeholder + memberships + assignment are
+ * kept (we still have a record of the invite) and `sentInvite: false` is
+ * returned with a `console.error` for the operator.
+ *
+ * Auth: group leader or community admin for the event's group
+ * (re-asserted inside `inviteAndAssignInternal`).
+ */
+export const inviteAndAssign = action({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+    teamId: v.id("teams"),
+    roleId: v.id("teamRoles"),
+    firstName: v.string(),
+    phone: v.string(),
+    timeLabel: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    assignmentId: Id<"roleAssignments">;
+    invitedUserId: Id<"users">;
+    sentInvite: boolean;
+  }> => {
+    const callerId = await requireAuthFromTokenAction(ctx, args.token);
+
+    // Validate inputs before any DB work — failing here is cheap and
+    // produces clear errors for the client.
+    const firstName = validateInviteFirstName(args.firstName);
+    if (!isValidPhone(args.phone)) {
+      throw new ConvexError("Enter a valid phone number");
+    }
+    const normalizedPhone = normalizePhone(args.phone);
+
+    // Run all DB writes in a single internal mutation transaction.
+    const result: {
+      assignmentId: Id<"roleAssignments">;
+      invitedUserId: Id<"users">;
+      communityName: string;
+      teamName: string;
+      leaderFirstName: string;
+    } = await ctx.runMutation(
+      internal.functions.scheduling.assignments.inviteAndAssignInternal,
+      {
+        planId: args.planId,
+        teamId: args.teamId,
+        roleId: args.roleId,
+        firstName,
+        normalizedPhone,
+        timeLabel: args.timeLabel,
+        callerId: callerId as Id<"users">,
+      },
+    );
+
+    // SMS the invite. Twilio config issues / network failures are captured
+    // and reported via `sentInvite: false` — we do NOT roll back the DB
+    // writes, because the leader still wants the role filled.
+    //
+    // The deeplink target is the app's normal phone-signup URL with the
+    // phone prefilled. The phone-OTP flow's claim logic (see
+    // `verifyPhoneOTP` / `registerNewUser`) takes over from there.
+    const signupUrl = `${DOMAIN_CONFIG.appUrl}/signup?phone=${encodeURIComponent(
+      normalizedPhone,
+    )}`;
+    const smsBody =
+      `${result.leaderFirstName} added you to ${result.teamName} at ` +
+      `${result.communityName}. Tap to join: ${signupUrl}`;
+
+    let sentInvite = false;
+    try {
+      const smsResult = await ctx.runAction(
+        internal.functions.auth.phoneOtp.sendSMS,
+        { phone: normalizedPhone, message: smsBody },
+      );
+      sentInvite = smsResult?.success === true;
+      if (!sentInvite) {
+        console.error(
+          "[inviteAndAssign] sendSMS returned success: false — Twilio likely not configured",
+          { invitedUserId: result.invitedUserId },
+        );
+      }
+    } catch (err) {
+      console.error("[inviteAndAssign] SMS send threw", {
+        invitedUserId: result.invitedUserId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      sentInvite = false;
+    }
+
+    return {
+      assignmentId: result.assignmentId,
+      invitedUserId: result.invitedUserId,
+      sentInvite,
+    };
   },
 });
 

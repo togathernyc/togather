@@ -102,6 +102,43 @@ export const registerNewUser = action({
       { phone: normalizedPhone }
     );
 
+    // Placeholder branch: a leader pre-created this row via inviteAndAssign
+    // (see scheduling/assignments.ts). Claim it — the row's `_id` is stable,
+    // so existing roleAssignments / groupMembers / userCommunities rows that
+    // pointed at the placeholder transparently belong to the new account.
+    if (existingUser && existingUser.isPlaceholder === true) {
+      const claimedId: string | null = await ctx.runMutation(
+        internal.functions.authInternal.claimPlaceholderByPhoneInternal,
+        {
+          phone: normalizedPhone,
+          firstName: args.firstName,
+          lastName: args.lastName,
+          email: args.email,
+          dateOfBirth,
+        }
+      );
+
+      if (claimedId) {
+        const tokens = await generateTokens(claimedId);
+        return {
+          access_token: tokens.accessToken,
+          refresh_token: tokens.refreshToken,
+          expires_in: tokens.expiresIn,
+          user: {
+            id: claimedId,
+            firstName: args.firstName,
+            lastName: args.lastName,
+            email: args.email || "",
+            phone: normalizedPhone,
+            phoneVerified: true,
+          },
+        };
+      }
+      // claimPlaceholderByPhoneInternal returned null — the row was no
+      // longer a placeholder by the time we got there (concurrent claim).
+      // Fall through to the existing-user branch below.
+    }
+
     if (existingUser) {
       // User already exists - this is a retry or race condition
       // Return their info instead of erroring (idempotent behavior)
