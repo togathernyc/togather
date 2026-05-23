@@ -10,9 +10,13 @@
  *      a row runs `assignRole` (no group write needed).
  *   3. COMMUNITY — community people who are NOT yet in the event's group.
  *      Tapping "+ Add & assign" runs `assignFromCommunity`, which adds them
- *      to the group and assigns in a single transaction. Placeholder users
- *      (already invited, not yet claimed) appear here as disabled rows with
- *      an "Invited" badge.
+ *      to the group and assigns in a single transaction.
+ *
+ * Placeholder users (already invited via SMS, not yet claimed an account) are
+ * real `groupMembers` rows — they belong in whichever section their `inGroup`
+ * flag puts them. They show an inline "Invited" tag next to their name so the
+ * leader knows the person hasn't signed up yet, but the row is still tappable
+ * and can be assigned (including to a second role on the same plan).
  *
  * The candidate pool comes from `searchCommunityPeople`, which already
  * annotates `inGroup` / `isPlaceholder` so the two sections are a simple
@@ -76,6 +80,26 @@ type PreviousFiller = {
   userName: string;
   lastServedDate: number;
 };
+
+/**
+ * Format an E.164-ish phone string for display. US numbers (`+1XXXXXXXXXX`)
+ * render as `(XXX) XXX-XXXX`. Anything else falls back to the raw input so
+ * we don't lie about non-US formats. Returns `null` for empty/missing input
+ * so callers can short-circuit rendering the second line.
+ *
+ * Intentionally a tiny inline helper — no library, no native dep.
+ */
+function formatPhoneForDisplay(phone: string | undefined): string | null {
+  if (!phone) return null;
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+  // US: +1 followed by 10 digits.
+  const usMatch = trimmed.match(/^\+1(\d{3})(\d{3})(\d{4})$/);
+  if (usMatch) {
+    return `(${usMatch[1]}) ${usMatch[2]}-${usMatch[3]}`;
+  }
+  return trimmed;
+}
 
 /**
  * Debounce a value by `delay` ms. Defined locally to avoid a shared-hook
@@ -205,9 +229,10 @@ export function AssignSheet({
     const communityRows: CommunityPerson[] = [];
     for (const c of list) {
       if (previousIds.has(c.userId as string)) continue;
-      // Placeholders are always shown under COMMUNITY — they're not real
-      // group members yet even if `inGroup` happens to be true.
-      if (c.inGroup && !c.isPlaceholder) {
+      // Placeholders are real `groupMembers` rows — partition purely on
+      // `inGroup`. The "Invited" tag (rendered inline next to the name)
+      // is what flags them as awaiting signup.
+      if (c.inGroup) {
         groupRows.push(c);
       } else {
         communityRows.push(c);
@@ -375,6 +400,59 @@ export function AssignSheet({
   // layout (gap / flexDirection / padding) on web. We keep layout on a
   // static-styled inner <View> and only use Pressable for the tap target.
   // ---------------------------------------------------------------------------
+  /**
+   * Person identity block (avatar + name + optional "Invited" tag + phone).
+   * Shared between both row variants so GROUP and COMMUNITY rows show
+   * disambiguating phone numbers identically.
+   */
+  const renderPersonIdentity = (person: CommunityPerson) => {
+    const phoneLine = formatPhoneForDisplay(person.phone);
+    return (
+      <>
+        <Avatar
+          name={person.displayName}
+          imageUrl={person.profilePhoto}
+          size={40}
+        />
+        <View style={styles.identityTextWrap}>
+          <View style={styles.identityNameRow}>
+            <Text
+              style={[styles.memberName, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {person.displayName}
+            </Text>
+            {person.isPlaceholder && (
+              <View
+                style={[
+                  styles.badge,
+                  {
+                    backgroundColor: colors.surfaceSecondary,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[styles.badgeText, { color: colors.textSecondary }]}
+                >
+                  Invited
+                </Text>
+              </View>
+            )}
+          </View>
+          {phoneLine && (
+            <Text
+              style={[styles.phoneText, { color: colors.textTertiary }]}
+              numberOfLines={1}
+            >
+              {phoneLine}
+            </Text>
+          )}
+        </View>
+      </>
+    );
+  };
+
   const renderGroupRow = (person: CommunityPerson, prior: boolean) => {
     const already = assignedUserIds.has(person.userId as string);
     const busy = busyUserId === (person.userId as string);
@@ -393,17 +471,7 @@ export function AssignSheet({
             already && { opacity: 0.5 },
           ]}
         >
-          <Avatar
-            name={person.displayName}
-            imageUrl={person.profilePhoto}
-            size={40}
-          />
-          <Text
-            style={[styles.memberName, { color: colors.text }]}
-            numberOfLines={1}
-          >
-            {person.displayName}
-          </Text>
+          {renderPersonIdentity(person)}
           {busy ? (
             <ActivityIndicator size="small" color={colors.text} />
           ) : already ? (
@@ -423,10 +491,7 @@ export function AssignSheet({
   const renderCommunityRow = (person: CommunityPerson) => {
     const already = assignedUserIds.has(person.userId as string);
     const busy = busyUserId === (person.userId as string);
-    const isPlaceholder = person.isPlaceholder;
-    // Placeholders are informational — they can't be re-invited from here.
-    const disabled =
-      isPlaceholder || already || !!busyUserId || invitingSubmit;
+    const disabled = already || !!busyUserId || invitingSubmit;
     return (
       <Pressable
         key={person.userId as string}
@@ -438,33 +503,12 @@ export function AssignSheet({
         <View
           style={[
             styles.memberRow,
-            (isPlaceholder || already) && { opacity: 0.55 },
+            already && { opacity: 0.55 },
           ]}
         >
-          <Avatar
-            name={person.displayName}
-            imageUrl={person.profilePhoto}
-            size={40}
-          />
-          <Text
-            style={[styles.memberName, { color: colors.text }]}
-            numberOfLines={1}
-          >
-            {person.displayName}
-          </Text>
+          {renderPersonIdentity(person)}
           {busy ? (
             <ActivityIndicator size="small" color={colors.text} />
-          ) : isPlaceholder ? (
-            <View
-              style={[
-                styles.badge,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-              ]}
-            >
-              <Text style={[styles.badgeText, { color: colors.textSecondary }]}>
-                Invited
-              </Text>
-            </View>
           ) : already ? (
             <Text style={[styles.metaText, { color: colors.textSecondary }]}>
               Assigned
@@ -472,9 +516,7 @@ export function AssignSheet({
           ) : (
             <View style={styles.addAssignWrap}>
               <Ionicons name="add" size={16} color={primaryColor} />
-              <Text
-                style={[styles.addAssignText, { color: primaryColor }]}
-              >
+              <Text style={[styles.addAssignText, { color: primaryColor }]}>
                 Add & assign
               </Text>
             </View>
@@ -830,10 +872,24 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     minHeight: 56,
   },
-  memberName: {
+  identityTextWrap: {
     flex: 1,
+    minWidth: 0,
+    flexDirection: "column",
+    gap: 2,
+  },
+  identityNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  memberName: {
+    flexShrink: 1,
     fontSize: 16,
     fontWeight: "500",
+  },
+  phoneText: {
+    fontSize: 12,
   },
   metaText: {
     fontSize: 13,

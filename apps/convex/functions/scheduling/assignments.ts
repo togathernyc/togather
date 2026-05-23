@@ -333,11 +333,12 @@ export const assignFromCommunity = mutation({
     if (!target) {
       throw new ConvexError("Person not found");
     }
-    // Deactivated accounts must not be re-introduced into scheduling — this
-    // also blocks placeholder users (`isPlaceholder: true` / `isActive:
-    // false`) from being assigned via this path; placeholders are only
-    // assigned through `inviteAndAssign`, which creates them.
-    if (target.isActive === false) {
+    // Truly deactivated accounts must not be re-introduced into scheduling.
+    // Placeholder users (`isPlaceholder: true`) are intentionally
+    // `isActive: false` until they sign up and claim their account; they're
+    // valid scheduling targets and can be assigned to multiple roles like
+    // any other community member.
+    if (target.isActive === false && target.isPlaceholder !== true) {
       throw new ConvexError(
         "This person's account is deactivated and cannot be scheduled",
       );

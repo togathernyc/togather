@@ -755,6 +755,53 @@ describe("assignFromCommunity", () => {
       }),
     ).rejects.toThrow(/already assigned/);
   });
+
+  it("permits a placeholder user (isActive: false + isPlaceholder: true)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // The fixture's `placeholderUserId` is `isActive: false, isPlaceholder: true`
+    // with active community + group memberships — exactly what a placeholder
+    // looks like after `inviteAndAssign` creates it. They must remain
+    // schedulable so a leader can put them on multiple roles, just like a
+    // real volunteer.
+    const result = await t.mutation(
+      api.functions.scheduling.assignments.assignFromCommunity,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.placeholderUserId,
+      },
+    );
+    expect(result.addedToGroup).toBe(false); // already an active group member
+    const assignment = await t.run((ctx) => ctx.db.get(result.assignmentId));
+    expect(assignment?.userId).toBe(world.placeholderUserId);
+    expect(assignment?.status).toBe("unconfirmed");
+  });
+
+  it("still rejects a deactivated non-placeholder user", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Deactivate a real community member.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(world.communityOnlyAId, { isActive: false });
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignFromCommunity, {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.communityOnlyAId,
+      }),
+    ).rejects.toThrow(/deactivated/);
+  });
 });
 
 describe("inviteAndAssign", () => {
