@@ -41,6 +41,13 @@ export interface MemberSearchResult {
    * when `annotateGroupId` is not provided.
    */
   inGroup?: boolean;
+  /**
+   * True when the user is a leader-created placeholder (`users.isPlaceholder
+   * === true`) awaiting their first OTP sign-in. Lets pickers render them as
+   * "Invited" rather than as a normal candidate. Always false / absent for
+   * real signed-in users.
+   */
+  isPlaceholder?: boolean;
 }
 
 /**
@@ -433,6 +440,7 @@ export async function searchCommunityMembersInternal(
         profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
         isAdmin,
         notificationsDisabled: notifsDisabled.has(user._id),
+        isPlaceholder: user.isPlaceholder === true,
         ...(annotateGroupUserIds
           ? { inGroup: annotateGroupUserIds.has(user._id) }
           : {}),

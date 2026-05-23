@@ -8,6 +8,14 @@
  *   • "Assign" (in-group)
  *   • "Add to group + assign" (community-only).
  *
+ * Implementation: delegates to the shared `searchCommunityMembersInternal`
+ * helper so this stays in lock-step with the admin People search and the
+ * group "Add people" picker — same `users.search_users` full-text index,
+ * same isActive/isPlaceholder treatment, same phone-normalization
+ * behaviour. A naïve `.collect()` of the whole community per keystroke
+ * (the pre-refactor version) was O(community-size) and unusable at scale
+ * — see PR #404 codex review.
+ *
  * Read gate matches `listTeams` — any active group member may search. The
  * write side (`assignFromCommunity` / `inviteAndAssign`) re-asserts the
  * stricter `requirePlanScheduler` check.
@@ -15,9 +23,8 @@
 
 import { v } from "convex/values";
 import { query } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { getMediaUrl } from "../../lib/utils";
+import { searchCommunityMembersInternal } from "../../lib/memberSearch";
 import { requireGroupMember } from "./permissions";
 
 /** Default cap on returned candidates. */
@@ -37,26 +44,6 @@ function buildDisplayName(
   const last = (lastName ?? "").trim();
   if (first && last) return `${first} ${last}`;
   return first || last || "Someone";
-}
-
-/**
- * Case-insensitive substring match across firstName, lastName, and the
- * combined "first last" display name. Empty search returns everything (the
- * cap still applies).
- */
-function matchesName(
-  search: string,
-  firstName: string | undefined,
-  lastName: string | undefined,
-): boolean {
-  const needle = search.trim().toLowerCase();
-  if (!needle) return true;
-  const haystacks = [
-    (firstName ?? "").toLowerCase(),
-    (lastName ?? "").toLowerCase(),
-    buildDisplayName(firstName, lastName).toLowerCase(),
-  ];
-  return haystacks.some((h) => h.includes(needle));
 }
 
 /**
@@ -82,74 +69,40 @@ export const searchCommunityPeople = query({
 
     const limit = Math.min(args.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
 
-    // Active community members (status === 1). The community-people list is
-    // the candidate pool; we'll annotate each with their in-group status.
-    const memberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community", (q) => q.eq("communityId", group.communityId))
-      .filter((q) => q.eq(q.field("status"), 1))
-      .collect();
+    // Delegate to the shared helper — same search index + isActive /
+    // isPlaceholder rules as the admin People and group Add People searches.
+    // `annotateGroupId` makes each row carry `inGroup`; `fallbackToRecentWhenEmpty`
+    // surfaces a sensible default list before the leader has typed anything.
+    const rows = await searchCommunityMembersInternal(ctx, {
+      communityId: group.communityId,
+      search: args.search,
+      excludeUserIds: [callerId],
+      annotateGroupId: args.groupId,
+      limit,
+      fallbackToRecentWhenEmpty: true,
+    });
 
-    // Pre-fetch active group memberships once so we can flag candidates
-    // without N round-trips.
-    const groupMemberships = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
-    const activeGroupUserIds = new Set<string>(
-      groupMemberships
-        .filter(
-          (m) =>
-            !m.leftAt &&
-            (!m.requestStatus || m.requestStatus === "accepted"),
-        )
-        .map((m) => m.userId),
-    );
+    const candidates = rows.map((row) => ({
+      userId: row.id,
+      firstName: row.firstName,
+      lastName: row.lastName || undefined,
+      displayName: buildDisplayName(row.firstName, row.lastName),
+      profilePhoto: row.profilePhoto ?? undefined,
+      phone: row.phone ?? undefined,
+      isPlaceholder: row.isPlaceholder === true,
+      inGroup: row.inGroup === true,
+    }));
 
-    type Candidate = {
-      userId: Id<"users">;
-      firstName: string;
-      lastName?: string;
-      displayName: string;
-      profilePhoto?: string;
-      phone?: string;
-      isPlaceholder: boolean;
-      inGroup: boolean;
-    };
-
-    const candidates: Candidate[] = [];
-    for (const membership of memberships) {
-      if (membership.userId === callerId) continue;
-      const user = await ctx.db.get(membership.userId);
-      if (!user) continue;
-      // isActive can be undefined for legacy rows — treat undefined as active
-      // to match the rest of the app, but exclude rows explicitly flagged false
-      // (e.g. unclaimed placeholders are surfaced via `isPlaceholder`, not by
-      // becoming searchable as real users — but we still want them in the
-      // pool so leaders see "already invited" rather than re-inviting).
-      // We deliberately keep placeholders in results; the `isPlaceholder` flag
-      // lets the UI render them distinctly.
-      if (!matchesName(args.search, user.firstName, user.lastName)) continue;
-
-      const firstName = (user.firstName ?? "").trim();
-      candidates.push({
-        userId: user._id,
-        firstName,
-        lastName: user.lastName?.trim() || undefined,
-        displayName: buildDisplayName(user.firstName, user.lastName),
-        profilePhoto: getMediaUrl(user.profilePhoto),
-        phone: user.phone || undefined,
-        isPlaceholder: user.isPlaceholder === true,
-        inGroup: activeGroupUserIds.has(user._id),
-      });
-    }
-
-    // In-group first, then community-only; alpha within each bucket.
+    // In-group first, then community-only; alpha within each bucket. The
+    // helper does not guarantee this ordering — it sorts by the search
+    // index's relevance + last-login, which is the right call for the
+    // admin People page but not for the AssignSheet where leaders need to
+    // see who's already on the team first.
     candidates.sort((a, b) => {
       if (a.inGroup !== b.inGroup) return a.inGroup ? -1 : 1;
       return a.displayName.localeCompare(b.displayName);
     });
 
-    return candidates.slice(0, limit);
+    return candidates;
   },
 });

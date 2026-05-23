@@ -8,6 +8,7 @@
  */
 
 import type { Id } from "../../_generated/dataModel";
+import { buildSearchText } from "../../lib/utils";
 
 /**
  * The convex-test handle. Typed via a type-only dynamic import so this file
@@ -62,15 +63,21 @@ async function insertUser(
   firstName: string,
   phone?: string,
 ): Promise<Id<"users">> {
+  const lastName = "Test";
+  const email = `${firstName.toLowerCase()}@example.com`;
   return ctx.db.insert("users", {
     firstName,
-    lastName: "Test",
-    email: `${firstName.toLowerCase()}@example.com`,
+    lastName,
+    email,
     phone,
     isActive: true,
     roles: 1,
     createdAt: ts(),
     updatedAt: ts(),
+    // Production users have this populated by `createUserInternal` so the
+    // `search_users` index returns them — mirror that here so `searchCommunityPeople`
+    // / `searchCommunityMembers` work in tests.
+    searchText: buildSearchText({ firstName, lastName, email, phone }),
   });
 }
 
@@ -132,6 +139,13 @@ export async function buildSchedulingWorld(
       phoneVerified: false,
       createdAt: ts(),
       updatedAt: ts(),
+      // Same searchText treatment as real users so the placeholder appears
+      // in the search index (so it shows up as "Invited" in the picker).
+      searchText: buildSearchText({
+        firstName: "Phoebe",
+        lastName: "Placeholder",
+        phone: "+12025550009",
+      }),
     });
 
     const channelId = await ctx.db.insert("chatChannels", {
