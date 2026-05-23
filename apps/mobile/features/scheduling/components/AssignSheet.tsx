@@ -334,7 +334,7 @@ export function AssignSheet({
     const firstName = inviteFirstName.trim();
     const phone = invitePhone.trim();
     if (!firstName) {
-      Alert.alert("First name required", "Enter the person's first name.");
+      Alert.alert("Name required", "Enter the person's name.");
       return;
     }
     if (!phone) {
@@ -356,9 +356,17 @@ export function AssignSheet({
             invitedUserId: Id<"users">;
             sentInvite: boolean;
             deferred?: boolean;
+            existedAlready?: boolean;
+            existingDisplayName?: string | null;
           }
         | undefined;
-      if (result?.deferred) {
+      if (result?.existedAlready) {
+        const matched = result.existingDisplayName || firstName;
+        Alert.alert(
+          "Already in Togather",
+          `That phone matched ${matched} in your community. We assigned them to ${roleName} instead of creating a new invite.`,
+        );
+      } else if (result?.deferred) {
         Alert.alert(
           "Added to the plan",
           `${firstName} is on the roster as ${roleName}. They'll get an SMS invite when you publish.`,
@@ -681,7 +689,7 @@ export function AssignSheet({
                     styles.inviteInput,
                     { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
                   ]}
-                  placeholder="First name"
+                  placeholder="Name"
                   placeholderTextColor={colors.textSecondary}
                   value={inviteFirstName}
                   onChangeText={setInviteFirstName}

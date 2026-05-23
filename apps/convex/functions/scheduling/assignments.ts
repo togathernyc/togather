@@ -426,27 +426,88 @@ export const inviteAndAssignInternal = internalMutation({
     callerId: v.id("users"),
   },
   handler: async (ctx, args) => {
+    // Authorize first — `requirePlanScheduler` must run *before* the
+    // by-phone lookup so an unauthorized caller cannot probe whether
+    // arbitrary phone numbers exist in `users` (codex review on PR #412).
     const { plan } = await requirePlanScheduler(
       ctx,
       args.planId,
       args.callerId,
     );
 
-    // Idempotency: if a user already owns this phone — placeholder or
-    // real — we refuse to create a duplicate. The leader should search
-    // by name and assign the existing record instead. We deliberately
-    // surface this loudly rather than silently merging: a silent merge
-    // would assign someone else's account to a role without their consent.
+    // Pull display-context once — used by both the existing-user and the
+    // new-placeholder branches below.
+    const community = await ctx.db.get(plan.communityId);
+    const team = await ctx.db.get(args.teamId);
+    const caller = await ctx.db.get(args.callerId);
+
+    // ------------------------------------------------------------------
+    // Existing-user branch — phone matches a row in `users`.
+    // ------------------------------------------------------------------
+    // We do NOT refuse: instead we re-route through the same flow as
+    // `assignFromCommunity` (add to the group if not already, then
+    // assign). The action returns `existedAlready: true` so the
+    // AssignSheet can pop a "matched this phone to {name}" alert
+    // instead of treating the result like a fresh invite.
+    //
+    // A silent merge is safe because the existing account *owns* this
+    // phone — assigning them to a role is the same thing the leader
+    // would do if they had searched by name.
     const existing = await ctx.db
       .query("users")
       .withIndex("by_phone", (q) => q.eq("phone", args.normalizedPhone))
       .first();
     if (existing) {
-      throw new ConvexError(
-        "A person with this phone is already in Togather — search by name instead.",
-      );
+      // The matched user must already be an active member of this
+      // community. Adding them to a different community by phone
+      // alone would be a privacy / consent violation — the leader can
+      // invite a fresh placeholder under a different phone if needed.
+      const comm = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", existing._id).eq("communityId", plan.communityId),
+        )
+        .first();
+      if (!comm || comm.status !== 1) {
+        throw new ConvexError(
+          "That phone belongs to a Togather account in a different community.",
+        );
+      }
+      // Truly deactivated accounts are not schedulable; placeholders are
+      // (they're `isActive: false` by design until claim).
+      if (existing.isActive === false && existing.isPlaceholder !== true) {
+        throw new ConvexError(
+          "That phone belongs to a deactivated account and can't be scheduled.",
+        );
+      }
+      await ensureActiveGroupMembership(ctx, plan.groupId, existing._id);
+      const { assignmentId } = await performAssignment(ctx, {
+        plan,
+        teamId: args.teamId,
+        roleId: args.roleId,
+        userId: existing._id,
+        timeLabel: args.timeLabel,
+        callerId: args.callerId,
+      });
+      return {
+        assignmentId,
+        invitedUserId: existing._id,
+        communityName: community?.name ?? "Togather",
+        teamName: team?.name ?? "your team",
+        leaderFirstName: caller?.firstName?.trim() || "Someone",
+        planStatus: plan.status,
+        existedAlready: true,
+        existingDisplayName:
+          [existing.firstName, existing.lastName]
+            .filter((v): v is string => Boolean(v?.trim()))
+            .join(" ")
+            .trim() || null,
+      };
     }
 
+    // ------------------------------------------------------------------
+    // New placeholder branch — phone does NOT match any existing user.
+    // ------------------------------------------------------------------
     const timestamp = Date.now();
 
     // 1. Placeholder user. `isActive: false` until claim — keeps them out
@@ -492,13 +553,7 @@ export const inviteAndAssignInternal = internalMutation({
       notificationsEnabled: true,
     });
 
-    // 4. Pull the community and team for the SMS body — the action needs
-    //    these to construct the message.
-    const community = await ctx.db.get(plan.communityId);
-    const team = await ctx.db.get(args.teamId);
-    const caller = await ctx.db.get(args.callerId);
-
-    // 5. The actual assignment writes (same path as `assignRole`).
+    // 4. The actual assignment writes (same path as `assignRole`).
     const { assignmentId } = await performAssignment(ctx, {
       plan,
       teamId: args.teamId,
@@ -518,6 +573,8 @@ export const inviteAndAssignInternal = internalMutation({
       // The action gates SMS send on whether the plan is already public —
       // a draft plan should not text the invitee until the leader publishes.
       planStatus: plan.status,
+      existedAlready: false,
+      existingDisplayName: null,
     };
   },
 });
@@ -560,6 +617,10 @@ export const inviteAndAssign = action({
     sentInvite: boolean;
     /** True when SMS was intentionally not sent because the plan is still a draft. */
     deferred: boolean;
+    /** True when the phone matched an existing community user and we assigned them instead of creating a new placeholder. */
+    existedAlready: boolean;
+    /** Display name of the existing user when `existedAlready` is true, else null. */
+    existingDisplayName: string | null;
   }> => {
     const callerId = await requireAuthFromTokenAction(ctx, args.token);
 
@@ -571,7 +632,15 @@ export const inviteAndAssign = action({
     }
     const normalizedPhone = normalizePhone(args.phone);
 
-    // Run all DB writes in a single internal mutation transaction.
+    // Run all DB writes in a single internal mutation transaction. The
+    // mutation gates on `requirePlanScheduler` *before* the by-phone lookup
+    // so an unauthorized caller cannot probe whether arbitrary phone
+    // numbers exist in `users`. When the phone *does* match an existing
+    // community member, the mutation re-routes through the same
+    // assign-from-community path used for known volunteers and surfaces
+    // `existedAlready: true` so the AssignSheet can render "we matched
+    // this phone to an existing person" instead of treating the result as
+    // a fresh invite.
     const result: {
       assignmentId: Id<"roleAssignments">;
       invitedUserId: Id<"users">;
@@ -579,6 +648,8 @@ export const inviteAndAssign = action({
       teamName: string;
       leaderFirstName: string;
       planStatus: string;
+      existedAlready: boolean;
+      existingDisplayName: string | null;
     } = await ctx.runMutation(
       internal.functions.scheduling.assignments.inviteAndAssignInternal,
       {
@@ -592,6 +663,21 @@ export const inviteAndAssign = action({
       },
     );
 
+    // If the phone matched an existing community user, we re-used that
+    // account — no invite SMS to send (they already have the app and will
+    // get the standard "you're scheduled" SMS at publish time, just like
+    // any other assignment).
+    if (result.existedAlready) {
+      return {
+        assignmentId: result.assignmentId,
+        invitedUserId: result.invitedUserId,
+        sentInvite: false,
+        deferred: false,
+        existedAlready: true,
+        existingDisplayName: result.existingDisplayName,
+      };
+    }
+
     // Defer the SMS until the leader hits publish when the plan is still a
     // draft — `publishEvent`'s fan-out (`sendAssignmentRequests`) re-sends
     // the placeholder-specific invite then. For a plan that is already
@@ -603,6 +689,8 @@ export const inviteAndAssign = action({
         invitedUserId: result.invitedUserId,
         sentInvite: false,
         deferred: true,
+        existedAlready: false,
+        existingDisplayName: null,
       };
     }
 
@@ -646,6 +734,8 @@ export const inviteAndAssign = action({
       invitedUserId: result.invitedUserId,
       sentInvite,
       deferred: false,
+      existedAlready: false,
+      existingDisplayName: null,
     };
   },
 });
