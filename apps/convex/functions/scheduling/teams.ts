@@ -11,7 +11,7 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "../../_generated/server";
+import { mutation, query, type MutationCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
@@ -23,7 +23,10 @@ import {
   requireTeam,
   requireTeamScheduler,
 } from "./permissions";
-import { purgeSyncedMembers } from "./teamChannelSync";
+import {
+  purgeSyncedMembers,
+  reconcileTeamChannelImpl,
+} from "./teamChannelSync";
 
 /** Validate a team (or channel) name; returns the trimmed value. */
 function validateName(raw: string): string {
@@ -37,6 +40,54 @@ function validateName(raw: string): string {
     );
   }
   return name;
+}
+
+/**
+ * Insert the chat channel that backs a serving team — shared by
+ * `createServingTeam` (initial creation) and `linkChannel` (a team gaining a
+ * channel after the fact). Enforces the same 20-channel-per-group cap as
+ * `createCustomChannel` and computes a slug unique across archived channels
+ * too (see PR #400 thread: the `by_group_slug` index spans archived rows).
+ */
+async function createTeamChannel(
+  ctx: MutationCtx,
+  args: {
+    groupId: Id<"groups">;
+    name: string;
+    description: string | undefined;
+    createdById: Id<"users">;
+    now: number;
+  },
+): Promise<Id<"chatChannels">> {
+  const existingChannels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+    .collect();
+  const activeChannelCount = existingChannels.filter(
+    (ch) => ch.isArchived === false,
+  ).length;
+  if (activeChannelCount >= 20) {
+    throw new ConvexError(
+      "This group has reached the maximum of 20 channels. Archive some channels to create new ones.",
+    );
+  }
+  const existingSlugs = existingChannels
+    .map((ch) => ch.slug)
+    .filter((slug): slug is string => slug !== undefined);
+  return ctx.db.insert("chatChannels", {
+    groupId: args.groupId,
+    slug: generateChannelSlug(args.name, existingSlugs),
+    channelType: "custom",
+    name: args.name,
+    description: args.description,
+    createdById: args.createdById,
+    createdAt: args.now,
+    updatedAt: args.now,
+    isArchived: false,
+    isServingTeam: true,
+    memberCount: 0,
+    joinMode: "open",
+  });
 }
 
 /**
@@ -66,47 +117,18 @@ export const createServingTeam = mutation({
     const now = Date.now();
     const withChannel = args.withChannel ?? true;
 
-    let channelId: Id<"chatChannels"> | undefined;
-    if (withChannel) {
-      // The team's chat channel: a custom channel flagged as a serving team.
-      // Membership is auto-synced from assignments (ADR-023), so the creator
-      // is not added as a member — they manage it as a group leader.
-      // Slug uniqueness must span archived channels too: the `by_group_slug`
-      // index does not exclude them, so reusing an archived channel's slug
-      // would create a duplicate `(groupId, slug)` pair that an
-      // `includeArchived` lookup could resolve to the wrong row.
-      const existingChannels = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .collect();
-      // Match `createCustomChannel`'s 20-channel-per-group cap — counted over
-      // non-archived rows only, the same way the original limit works.
-      const activeChannelCount = existingChannels.filter(
-        (ch) => ch.isArchived === false,
-      ).length;
-      if (activeChannelCount >= 20) {
-        throw new ConvexError(
-          "This group has reached the maximum of 20 channels. Archive some channels to create new ones.",
-        );
-      }
-      const existingSlugs = existingChannels
-        .map((ch) => ch.slug)
-        .filter((slug): slug is string => slug !== undefined);
-      channelId = await ctx.db.insert("chatChannels", {
-        groupId: args.groupId,
-        slug: generateChannelSlug(name, existingSlugs),
-        channelType: "custom",
-        name,
-        description: args.description,
-        createdById: userId,
-        createdAt: now,
-        updatedAt: now,
-        isArchived: false,
-        isServingTeam: true,
-        memberCount: 0,
-        joinMode: "open",
-      });
-    }
+    // The team's chat channel: a custom channel flagged as a serving team.
+    // Membership is auto-synced from assignments (ADR-023), so the creator
+    // is not added as a member — they manage it as a group leader.
+    const channelId = withChannel
+      ? await createTeamChannel(ctx, {
+          groupId: args.groupId,
+          name,
+          description: args.description,
+          createdById: userId,
+          now,
+        })
+      : undefined;
 
     const teamId = await ctx.db.insert("teams", {
       groupId: args.groupId,
@@ -285,6 +307,101 @@ export const archiveTeam = mutation({
     }
 
     return { teamId: args.teamId, isArchived: archived, removedSyncedMembers };
+  },
+});
+
+// ============================================================================
+// Channel linking — turning a team's chat channel on / off
+// ============================================================================
+
+/**
+ * Turn a team's chat channel on. Creates a fresh `custom` chat channel
+ * flagged `isServingTeam`, links it to the team, and reconciles it against
+ * the team's in-window assignments so existing volunteers are populated
+ * immediately. Errors if the team already has a channel.
+ *
+ * Auth: team admin/moderator, campus group leader, or community admin.
+ */
+export const linkChannel = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const team = await requireTeamScheduler(ctx, args.teamId, userId);
+    if (team.channelId) {
+      throw new ConvexError("This team already has a chat channel.");
+    }
+    if (team.isArchived === true) {
+      throw new ConvexError("Cannot add a channel to an archived team.");
+    }
+
+    const now = Date.now();
+    const channelId = await createTeamChannel(ctx, {
+      groupId: team.groupId,
+      name: team.name,
+      description: team.description,
+      createdById: userId,
+      now,
+    });
+
+    await ctx.db.patch(args.teamId, { channelId, updatedAt: now });
+
+    // Populate the new channel with anyone already assigned in-window.
+    const reconcile = await reconcileTeamChannelImpl(ctx, args.teamId);
+
+    return {
+      teamId: args.teamId,
+      channelId,
+      addedMembers: reconcile.added,
+    };
+  },
+});
+
+/**
+ * Turn a team's chat channel off. The channel itself stays in the inbox as
+ * a regular custom channel (its `isServingTeam` flag is cleared and the team
+ * detaches its `channelId`); auto-synced members owned by the rotation
+ * engine are purged. Permanent members are untouched.
+ *
+ * This is team-wide — it affects every event plan the team is on. Errors if
+ * the team has no channel to unlink.
+ *
+ * Auth: team admin/moderator, campus group leader, or community admin.
+ */
+export const unlinkChannel = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const team = await requireTeamScheduler(ctx, args.teamId, userId);
+    if (!team.channelId) {
+      throw new ConvexError("This team has no chat channel.");
+    }
+    const formerChannelId = team.channelId;
+    const now = Date.now();
+
+    await ctx.db.patch(args.teamId, {
+      channelId: undefined,
+      updatedAt: now,
+    });
+    await ctx.db.patch(formerChannelId, {
+      isServingTeam: undefined,
+      updatedAt: now,
+    });
+    const removedSyncedMembers = await purgeSyncedMembers(
+      ctx,
+      formerChannelId,
+    );
+
+    return {
+      teamId: args.teamId,
+      formerChannelId,
+      removedSyncedMembers,
+    };
   },
 });
 
