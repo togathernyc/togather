@@ -971,23 +971,108 @@ describe("inviteAndAssign", () => {
     await t.finishInProgressScheduledFunctions();
   });
 
-  it("rejects when a non-placeholder user already owns the phone", async () => {
+  it("re-uses an existing community user when the phone matches (instead of creating a duplicate)", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
 
-    // The fixture channelAdmin has phone +12025550001 — a real user already
-    // owns it, so inviteAndAssign should refuse to create a duplicate.
+    // The fixture's communityOnlyA has phone +12025550007 and is an active
+    // member of this community but NOT yet in the group. Re-using the
+    // phone via the invite form should match them, add them to the group,
+    // assign them, and surface `existedAlready: true` so the AssignSheet
+    // can render a "matched this phone to X" popup instead of a fresh
+    // "invite sent" alert.
+    const result = await t.action(
+      api.functions.scheduling.assignments.inviteAndAssign,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        firstName: "Casey",
+        phone: "+12025550007",
+      },
+    );
+
+    expect(result.existedAlready).toBe(true);
+    expect(result.existingDisplayName).toContain("Casey");
+    expect(result.invitedUserId).toBe(world.communityOnlyAId);
+    expect(result.sentInvite).toBe(false); // existing user, not a placeholder
+
+    // The assignment is real, and points at the existing user.
+    const assignment = await t.run((ctx) =>
+      ctx.db.get(result.assignmentId),
+    );
+    expect(assignment?.userId).toBe(world.communityOnlyAId);
+    expect(assignment?.status).toBe("unconfirmed");
+
+    // They've been added to the group.
+    const grp = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.communityOnlyAId),
+        )
+        .first(),
+    );
+    expect(grp?.leftAt).toBeUndefined();
+    expect(grp?.role).toBe("member");
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  it("rejects when the matching phone belongs to a user in a different community", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Stand up a separate community and a user in it with a known phone.
+    const otherCommUserId = await t.run(async (ctx) => {
+      const otherCommunityId = await ctx.db.insert("communities", {
+        name: "Other Community",
+        slug: "other",
+        isPublic: false,
+      });
+      const userId = await ctx.db.insert("users", {
+        firstName: "Outsider",
+        lastName: "OtherComm",
+        phone: "+12025559999",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId: otherCommunityId,
+        roles: 1,
+        status: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return userId;
+    });
+
     await expect(
       t.action(api.functions.scheduling.assignments.inviteAndAssign, {
         token: leaderToken,
         planId,
         teamId: world.teamId,
         roleId: world.roleId,
-        firstName: "Dup",
-        phone: "+12025550001",
+        firstName: "Outsider",
+        phone: "+12025559999",
       }),
-    ).rejects.toThrow(/already in Togather/);
+    ).rejects.toThrow(/different community/);
+
+    // Confirm we did NOT silently add them to this community.
+    const stillNotInThisCommunity = await t.run((ctx) =>
+      ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", otherCommUserId).eq("communityId", world.communityId),
+        )
+        .first(),
+    );
+    expect(stillNotInThisCommunity).toBeNull();
   });
 
   it("rejects an unauthorized caller with a ConvexError", async () => {
