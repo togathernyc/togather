@@ -515,6 +515,7 @@ export function EventEditorScreen() {
         <AssignSheet
           visible
           planId={planId}
+          planStatus={event.status as "draft" | "published"}
           groupId={event.groupId}
           teamId={assignTarget.teamId}
           roleId={assignTarget.roleId}

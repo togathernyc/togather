@@ -514,6 +514,9 @@ export const inviteAndAssignInternal = internalMutation({
       communityName: community?.name ?? "Togather",
       teamName: team?.name ?? "your team",
       leaderFirstName: caller?.firstName?.trim() || "Someone",
+      // The action gates SMS send on whether the plan is already public —
+      // a draft plan should not text the invitee until the leader publishes.
+      planStatus: plan.status,
     };
   },
 });
@@ -554,6 +557,8 @@ export const inviteAndAssign = action({
     assignmentId: Id<"roleAssignments">;
     invitedUserId: Id<"users">;
     sentInvite: boolean;
+    /** True when SMS was intentionally not sent because the plan is still a draft. */
+    deferred: boolean;
   }> => {
     const callerId = await requireAuthFromTokenAction(ctx, args.token);
 
@@ -572,6 +577,7 @@ export const inviteAndAssign = action({
       communityName: string;
       teamName: string;
       leaderFirstName: string;
+      planStatus: string;
     } = await ctx.runMutation(
       internal.functions.scheduling.assignments.inviteAndAssignInternal,
       {
@@ -584,6 +590,20 @@ export const inviteAndAssign = action({
         callerId: callerId as Id<"users">,
       },
     );
+
+    // Defer the SMS until the leader hits publish when the plan is still a
+    // draft — `publishEvent`'s fan-out (`sendAssignmentRequests`) re-sends
+    // the placeholder-specific invite then. For a plan that is already
+    // published, send immediately (the leader is making post-publish
+    // additions and wants the invitee notified right away).
+    if (result.planStatus !== "published") {
+      return {
+        assignmentId: result.assignmentId,
+        invitedUserId: result.invitedUserId,
+        sentInvite: false,
+        deferred: true,
+      };
+    }
 
     // SMS the invite. Twilio config issues / network failures are captured
     // and reported via `sentInvite: false` — we do NOT roll back the DB
@@ -624,6 +644,7 @@ export const inviteAndAssign = action({
       assignmentId: result.assignmentId,
       invitedUserId: result.invitedUserId,
       sentInvite,
+      deferred: false,
     };
   },
 });
@@ -815,7 +836,7 @@ export const publishEvent = action({
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.assignments.sendAssignmentRequests,
-        { planId: args.planId },
+        { planId: args.planId, publisherId: callerId as Id<"users"> },
       );
     }
 
@@ -878,7 +899,10 @@ export const markPublished = internalMutation({
  * info plus, per unconfirmed-assignment volunteer, their phone number.
  */
 export const getAssignmentRequestTargets = internalQuery({
-  args: { planId: v.id("eventPlans") },
+  args: {
+    planId: v.id("eventPlans"),
+    publisherId: v.id("users"),
+  },
   handler: async (ctx, args) => {
     const plan = await ctx.db.get(args.planId);
     if (!plan) return null;
@@ -889,17 +913,29 @@ export const getAssignmentRequestTargets = internalQuery({
       .collect();
     const unconfirmed = assignments.filter((a) => a.status === "unconfirmed");
 
+    const [community, publisher] = await Promise.all([
+      ctx.db.get(plan.communityId),
+      ctx.db.get(args.publisherId),
+    ]);
+
     const recipients = await Promise.all(
       unconfirmed.map(async (assignment) => {
-        const [user, role] = await Promise.all([
+        const [user, role, team] = await Promise.all([
           ctx.db.get(assignment.userId),
           ctx.db.get(assignment.roleId),
+          ctx.db.get(assignment.teamId),
         ]);
         return {
           assignmentId: assignment._id,
           userId: assignment.userId,
           phone: user?.phone ?? null,
           roleName: role?.name ?? "a role",
+          // Placeholder context — these recipients get the join-the-app SMS
+          // instead of the accept/decline SMS, since they don't have the
+          // app yet (`inviteAndAssign` created them on a draft plan).
+          isPlaceholder: user?.isPlaceholder === true,
+          firstName: user?.firstName?.trim() || "you",
+          teamName: team?.name ?? "the team",
         };
       }),
     );
@@ -909,6 +945,8 @@ export const getAssignmentRequestTargets = internalQuery({
       eventDate: plan.eventDate,
       groupId: plan.groupId,
       communityId: plan.communityId,
+      communityName: community?.name ?? "Togather",
+      publisherFirstName: publisher?.firstName?.trim() || "Someone",
       recipients,
     };
   },
@@ -961,11 +999,14 @@ export const recordAssignmentNotifications = internalMutation({
  * Each request links to the assignment's accept/decline deep link.
  */
 export const sendAssignmentRequests = internalAction({
-  args: { planId: v.id("eventPlans") },
+  args: {
+    planId: v.id("eventPlans"),
+    publisherId: v.id("users"),
+  },
   handler: async (ctx, args) => {
     const targets = await ctx.runQuery(
       internal.functions.scheduling.assignments.getAssignmentRequestTargets,
-      { planId: args.planId },
+      { planId: args.planId, publisherId: args.publisherId },
     );
     if (!targets || targets.recipients.length === 0) {
       return { pushSent: 0, smsSent: 0 };
@@ -981,9 +1022,22 @@ export const sendAssignmentRequests = internalAction({
     // the volunteer's accept/decline screen.
     const linkFor = (assignmentId: string) =>
       `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
+    // Placeholder users don't have the app yet — point them at the signup
+    // deeplink with phone prefilled. The phone-OTP claim logic takes over
+    // and the assignment is inherited via the placeholder's stable `_id`.
+    const signupLinkFor = (phone: string) =>
+      `${DOMAIN_CONFIG.appUrl}/signup?phone=${encodeURIComponent(phone)}`;
+
+    // Real users get push + the accept/decline SMS. Placeholder recipients
+    // can't receive in-app push (no tokens), so we only SMS them — and we
+    // SMS them differently (signup + context, not accept/decline).
+    const realRecipients = targets.recipients.filter((r) => !r.isPlaceholder);
+    const placeholderRecipients = targets.recipients.filter(
+      (r) => r.isPlaceholder,
+    );
 
     // --- Push -------------------------------------------------------------
-    const userIds = targets.recipients.map((r) => r.userId);
+    const userIds = realRecipients.map((r) => r.userId);
     const tokenResults: Array<{ userId: string; tokens: string[] }> =
       await ctx.runQuery(
         internal.functions.notifications.tokens.getActiveTokensForUsers,
@@ -993,7 +1047,7 @@ export const sendAssignmentRequests = internalAction({
       tokenResults.map((r) => [r.userId, r.tokens]),
     );
 
-    const pushNotifications = targets.recipients.flatMap((recipient) => {
+    const pushNotifications = realRecipients.flatMap((recipient) => {
       const tokens = tokensByUser.get(recipient.userId) ?? [];
       const title = `You're scheduled: ${targets.title}`;
       const body = `${recipient.roleName} on ${eventDate}. Tap to accept or decline.`;
@@ -1020,9 +1074,9 @@ export const sendAssignmentRequests = internalAction({
       pushSent = pushResult.success ? pushNotifications.length : 0;
     }
 
-    // --- SMS --------------------------------------------------------------
+    // --- SMS — real users: accept/decline -------------------------------
     let smsSent = 0;
-    for (const recipient of targets.recipients) {
+    for (const recipient of realRecipients) {
       if (!recipient.phone) continue;
       const smsBody =
         `You're scheduled for ${recipient.roleName} at ${targets.title} ` +
@@ -1038,11 +1092,38 @@ export const sendAssignmentRequests = internalAction({
       }
     }
 
+    // --- SMS — placeholder users: join-the-app invite -------------------
+    // Different copy + a signup deeplink instead of the accept/decline link
+    // (they don't have the app yet). Phone-OTP claim path links the
+    // placeholder to the new account on signup so the assignment is preserved.
+    let invitesSent = 0;
+    for (const recipient of placeholderRecipients) {
+      if (!recipient.phone) continue;
+      const smsBody =
+        `${targets.publisherFirstName} added you to ${recipient.teamName} ` +
+        `at ${targets.communityName} as ${recipient.roleName} for ` +
+        `${targets.title} on ${eventDate}.\n\n` +
+        `Join Togather to confirm: ${signupLinkFor(recipient.phone)}`;
+      try {
+        await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
+          phone: recipient.phone,
+          message: smsBody,
+        });
+        invitesSent += 1;
+      } catch {
+        // Best-effort.
+      }
+    }
+    smsSent += invitesSent;
+
     // --- In-app inbox records --------------------------------------------
+    // Only for real users — placeholder users have no app to read the
+    // inbox in yet. Their notification arrives via SMS only; once they
+    // sign up and the placeholder is claimed, future updates flow normally.
     await ctx.runMutation(
       internal.functions.scheduling.assignments.recordAssignmentNotifications,
       {
-        notifications: targets.recipients.map((recipient) => ({
+        notifications: realRecipients.map((recipient) => ({
           userId: recipient.userId,
           communityId: targets.communityId,
           groupId: targets.groupId,

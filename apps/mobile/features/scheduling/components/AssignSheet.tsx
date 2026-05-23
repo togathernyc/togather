@@ -94,6 +94,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 export function AssignSheet({
   visible,
   planId,
+  planStatus,
   groupId,
   teamId,
   roleId,
@@ -104,6 +105,12 @@ export function AssignSheet({
 }: {
   visible: boolean;
   planId: Id<"eventPlans">;
+  /**
+   * Whether the plan is still a draft or already published. Controls whether
+   * the "Invite someone new" form sends the SMS immediately or defers it
+   * until the plan is published — see `inviteAndAssign`'s `deferred` return.
+   */
+  planStatus: "draft" | "published";
   /** The event plan's owning group — its members are the assignable pool. */
   groupId: Id<"groups">;
   teamId: Id<"teams">;
@@ -311,20 +318,37 @@ export function AssignSheet({
     }
     setInvitingSubmit(true);
     try {
-      const result = await inviteAndAssign({
+      const result = (await inviteAndAssign({
         planId,
         teamId,
         roleId,
         firstName,
         phone,
         timeLabel,
-      });
-      Alert.alert(
-        "Invite sent",
-        result?.sentInvite
-          ? `An SMS invite was sent to ${firstName} and they're assigned to ${roleName}.`
-          : `Couldn't send the SMS, but ${firstName} is created and assigned. You can resend later.`,
-      );
+      })) as
+        | {
+            assignmentId: Id<"roleAssignments">;
+            invitedUserId: Id<"users">;
+            sentInvite: boolean;
+            deferred?: boolean;
+          }
+        | undefined;
+      if (result?.deferred) {
+        Alert.alert(
+          "Added to the plan",
+          `${firstName} is on the roster as ${roleName}. They'll get an SMS invite when you publish.`,
+        );
+      } else if (result?.sentInvite) {
+        Alert.alert(
+          "Invite sent",
+          `An SMS invite was sent to ${firstName} and they're assigned to ${roleName}.`,
+        );
+      } else {
+        Alert.alert(
+          "Invite sent",
+          `Couldn't send the SMS, but ${firstName} is created and assigned. You can resend later.`,
+        );
+      }
       onClose();
     } catch (e) {
       surfaceError("Couldn't invite", e);
@@ -660,7 +684,11 @@ export function AssignSheet({
                     onPress={handleInviteSubmit}
                     disabled={invitingSubmit}
                     accessibilityRole="button"
-                    accessibilityLabel="Send invite and assign"
+                    accessibilityLabel={
+                      planStatus === "draft"
+                        ? "Invite and assign"
+                        : "Send invite and assign"
+                    }
                   >
                     <View
                       style={[
@@ -677,12 +705,24 @@ export function AssignSheet({
                         <Text
                           style={[styles.inviteSubmitText, { color: colors.surface }]}
                         >
-                          Send invite & assign
+                          {planStatus === "draft"
+                            ? "Invite & assign"
+                            : "Send invite & assign"}
                         </Text>
                       )}
                     </View>
                   </Pressable>
                 </View>
+                <Text
+                  style={[
+                    styles.inviteHelperText,
+                    { color: colors.textSecondary },
+                  ]}
+                >
+                  {planStatus === "draft"
+                    ? `We'll text ${inviteFirstName.trim() || "them"} the invite when you publish this event plan.`
+                    : "An SMS invite will be sent now."}
+                </Text>
               </View>
             ) : (
               <Pressable
@@ -875,5 +915,10 @@ const styles = StyleSheet.create({
   inviteSubmitText: {
     fontSize: 14,
     fontWeight: "600",
+  },
+  inviteHelperText: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
   },
 });

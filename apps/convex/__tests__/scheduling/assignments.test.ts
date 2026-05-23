@@ -60,6 +60,21 @@ async function makeEvent(
   return planId;
 }
 
+/**
+ * Flip a plan to `status: "published"` directly via the DB — bypasses the
+ * `publishEvent` action's fan-out side effects so tests of other paths
+ * (e.g. immediate-SMS in `inviteAndAssign`) aren't entangled with the
+ * publish notification machinery.
+ */
+async function markPlanPublished(
+  t: ReturnType<typeof import("convex-test").convexTest>,
+  planId: Id<"eventPlans">,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    await ctx.db.patch(planId, { status: "published", updatedAt: Date.now() });
+  });
+}
+
 describe("assignment state machine", () => {
   it("new assignments start as unconfirmed", async () => {
     const { t, world } = await setupSchedulingWorld();
@@ -756,6 +771,9 @@ describe("inviteAndAssign", () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
+    // Immediate-SMS path only fires when the plan is already published —
+    // draft plans defer the invite until `publishEvent`'s fan-out runs.
+    await markPlanPublished(t, planId);
 
     const inviteePhone = "2025550100";
     vi.stubEnv("OTP_TEST_PHONE_NUMBERS", inviteePhone);
@@ -764,6 +782,7 @@ describe("inviteAndAssign", () => {
       assignmentId: Id<"roleAssignments">;
       invitedUserId: Id<"users">;
       sentInvite: boolean;
+      deferred: boolean;
     };
     try {
       result = await t.action(
@@ -782,6 +801,7 @@ describe("inviteAndAssign", () => {
     }
 
     expect(result.sentInvite).toBe(true);
+    expect(result.deferred).toBe(false);
 
     // The placeholder user row was created with isPlaceholder/isActive
     // flags and the normalized phone.
@@ -828,6 +848,7 @@ describe("inviteAndAssign", () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await makeEvent(t, world, leaderToken, 7);
+    await markPlanPublished(t, planId);
 
     // No OTP_TEST_PHONE_NUMBERS, no Twilio creds → sendSMS returns
     // { success: false } and inviteAndAssign reports it accordingly.
@@ -844,12 +865,61 @@ describe("inviteAndAssign", () => {
     );
 
     expect(result.sentInvite).toBe(false);
+    expect(result.deferred).toBe(false);
 
     // The DB writes still happened — the leader still gets the role filled.
     const user = await t.run((ctx) => ctx.db.get(result.invitedUserId));
     expect(user?.isPlaceholder).toBe(true);
     const assignment = await t.run((ctx) => ctx.db.get(result.assignmentId));
     expect(assignment?.userId).toBe(result.invitedUserId);
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  it("defers the SMS when the plan is still a draft, but still lands the DB writes", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    // Default plan status is "draft" — no `markPlanPublished` here.
+    const planId = await makeEvent(t, world, leaderToken, 7);
+
+    // Even with a test phone configured, the SMS path is skipped because
+    // the plan isn't published yet — `publishEvent`'s fan-out will send
+    // the placeholder-specific invite at publish time instead.
+    const inviteePhone = "2025550102";
+    vi.stubEnv("OTP_TEST_PHONE_NUMBERS", inviteePhone);
+
+    let result: {
+      assignmentId: Id<"roleAssignments">;
+      invitedUserId: Id<"users">;
+      sentInvite: boolean;
+      deferred: boolean;
+    };
+    try {
+      result = await t.action(
+        api.functions.scheduling.assignments.inviteAndAssign,
+        {
+          token: leaderToken,
+          planId,
+          teamId: world.teamId,
+          roleId: world.roleId,
+          firstName: "Della",
+          phone: inviteePhone,
+        },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(result.deferred).toBe(true);
+    expect(result.sentInvite).toBe(false);
+
+    // The placeholder, memberships, and assignment all landed.
+    const user = await t.run((ctx) => ctx.db.get(result.invitedUserId));
+    expect(user?.isPlaceholder).toBe(true);
+    expect(user?.firstName).toBe("Della");
+    const assignment = await t.run((ctx) => ctx.db.get(result.assignmentId));
+    expect(assignment?.userId).toBe(result.invitedUserId);
+    expect(assignment?.status).toBe("unconfirmed");
 
     await t.finishInProgressScheduledFunctions();
   });
