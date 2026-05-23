@@ -22,6 +22,8 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -105,12 +107,17 @@ export function TeamCreateScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: insets.bottom + 32 },
         ]}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
       >
         <Text style={[styles.label, { color: colors.textSecondary }]}>
           Team name
@@ -197,12 +204,16 @@ export function TeamCreateScreen() {
           You'll add roles to the team next.
         </Text>
       </ScrollView>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  flex: {
     flex: 1,
   },
   header: {

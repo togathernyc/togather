@@ -24,6 +24,8 @@ import {
   ScrollView,
   TextInput,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Avatar } from "@components/ui/Avatar";
@@ -237,9 +239,14 @@ export function AssignSheet({
             <ActivityIndicator size="small" color={colors.text} />
           </View>
         ) : (
+          <KeyboardAvoidingView
+            style={styles.flex}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           >
             <View
               style={[
@@ -301,6 +308,7 @@ export function AssignSheet({
               )}
             </View>
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </View>
     </Modal>
@@ -309,6 +317,9 @@ export function AssignSheet({
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  flex: {
     flex: 1,
   },
   header: {
