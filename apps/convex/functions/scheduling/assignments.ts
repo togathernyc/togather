@@ -571,6 +571,25 @@ export const inviteAndAssign = action({
     }
     const normalizedPhone = normalizePhone(args.phone);
 
+    // Pre-check for an existing user with this phone *here in the action* so
+    // the ConvexError reaches the client cleanly. Convex strips the
+    // ConvexError type when an internalMutation re-throws into an awaiting
+    // action — the client then sees "Server Error / Called by client"
+    // instead of a user-facing message. By doing the duplicate-phone check
+    // before `ctx.runMutation`, the throw happens in the action context and
+    // its message reaches the AssignSheet's `Alert.alert`. The same guard
+    // remains inside `inviteAndAssignInternal` as defense-in-depth against
+    // races. See repo memory: `feedback_convex_require_auth`.
+    const existingByPhone = await ctx.runQuery(
+      internal.functions.authInternal.getUserByPhoneInternal,
+      { phone: normalizedPhone },
+    );
+    if (existingByPhone) {
+      throw new ConvexError(
+        "A person with this phone is already in Togather — search by name instead.",
+      );
+    }
+
     // Run all DB writes in a single internal mutation transaction.
     const result: {
       assignmentId: Id<"roleAssignments">;
