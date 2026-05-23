@@ -27,6 +27,7 @@
  * @see apps/api-trpc/src/lib/jwt.ts for the original tRPC implementation
  */
 
+import { ConvexError } from "convex/values";
 import * as jose from "jose";
 import type { Id } from "../_generated/dataModel";
 import type { QueryCtx, MutationCtx, ActionCtx } from "../_generated/server";
@@ -78,8 +79,15 @@ function getJwtSecret(): Uint8Array {
 
 /**
  * Authentication error thrown when token verification fails.
+ *
+ * Extends `ConvexError` (not plain `Error`) so the message reaches the
+ * mobile client cleanly — a plain `Error` would surface as a generic
+ * "Server Error" in the Convex client, dead-ending the user. By carrying
+ * the message via `ConvexError`'s `data`, the mobile `AuthErrorBoundary`
+ * can recognize the failure and prompt for re-authentication instead.
+ * See repo memory: `feedback_convex_require_auth`.
  */
-export class AuthenticationError extends Error {
+export class AuthenticationError extends ConvexError<string> {
   constructor(message: string = "Not authenticated") {
     super(message);
     this.name = "AuthenticationError";
@@ -522,23 +530,23 @@ export async function requireAuth(
   token: string,
 ): Promise<Id<"users">> {
   if (!token) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const payload = await verifyAccessToken(token);
   if (!payload) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   // Resolve user ID (handles both Convex and legacy IDs)
   const userId = await resolveUserId(ctx, payload.userId);
   if (!userId) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   // Check if the token was revoked (issued before the user's last signout)
   if (await isTokenRevoked(ctx, userId, payload.issuedAt)) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   return userId;
@@ -555,17 +563,17 @@ export async function requireAuthIgnoringRevocation(
   token: string,
 ): Promise<Id<"users">> {
   if (!token) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const payload = await verifyAccessTokenIgnoringExpiration(token);
   if (!payload) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   const userId = await resolveUserId(ctx, payload.userId);
   if (!userId) {
-    throw new Error("Not authenticated");
+    throw new ConvexError("Not authenticated");
   }
 
   return userId;
@@ -639,7 +647,7 @@ export async function requireAuthUser(
   const userId = await requireAuth(ctx, token);
   const user = await ctx.db.get(userId);
   if (!user) {
-    throw new Error("User not found");
+    throw new ConvexError("User not found");
   }
   return user;
 }
