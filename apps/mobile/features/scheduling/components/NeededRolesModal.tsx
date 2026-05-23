@@ -6,10 +6,15 @@
  * `defaultNeeded`; the scheduler tweaks them per event. Saving replaces
  * the event's full needed-roles set.
  *
- * Backend: scheduling.teams.listTeams, scheduling.roles.listRoles,
+ * The modal is self-contained: leaders can add a new role to a team or
+ * create a brand-new team inline, without leaving the sheet (per the
+ * approved ASCII sketch).
+ *
+ * Backend: scheduling.teams.listTeams / createServingTeam,
+ * scheduling.roles.listRoles / createRole,
  * scheduling.events.setNeededRoles.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -19,10 +24,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  TextInput,
+  Switch,
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { useTheme } from "@hooks/useTheme";
 import {
   useAuthenticatedQuery,
@@ -31,8 +37,14 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
+import { TeamChannelToggle } from "./TeamChannelToggle";
 
-type Team = { _id: Id<"teams">; name: string };
+type Team = {
+  _id: Id<"teams">;
+  name: string;
+  hasChannel: boolean;
+  memberCount: number;
+};
 type Role = {
   _id: Id<"teamRoles">;
   name: string;
@@ -67,15 +79,61 @@ export function NeededRolesModal({
   const setNeededRoles = useAuthenticatedMutation(
     api.functions.scheduling.events.setNeededRoles,
   );
+  const createServingTeam = useAuthenticatedMutation(
+    api.functions.scheduling.teams.createServingTeam,
+  );
 
   const [counts, setCounts] = useState<CountMap>({});
   const [saving, setSaving] = useState(false);
 
+  // The id of the team that should auto-expand and focus its "+ Add a role"
+  // input — used right after creating a team inline.
+  const [focusedTeamId, setFocusedTeamId] = useState<Id<"teams"> | null>(null);
+
+  // Inline "create a new team" form state.
+  const [creatingTeamFormOpen, setCreatingTeamFormOpen] = useState(false);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamWithChannel, setNewTeamWithChannel] = useState(true);
+  const [creatingTeam, setCreatingTeam] = useState(false);
+
   // Seed the edit map from the event's existing needed roles whenever the
   // modal opens.
   useEffect(() => {
-    if (visible) setCounts({ ...currentCounts });
+    if (visible) {
+      setCounts({ ...currentCounts });
+      // Reset inline forms each time the modal opens.
+      setCreatingTeamFormOpen(false);
+      setNewTeamName("");
+      setNewTeamWithChannel(true);
+      setFocusedTeamId(null);
+    }
   }, [visible, currentCounts]);
+
+  const handleCreateTeam = async () => {
+    const name = newTeamName.trim();
+    if (!name || creatingTeam) return;
+    setCreatingTeam(true);
+    try {
+      const result = await createServingTeam({
+        groupId,
+        name,
+        withChannel: newTeamWithChannel,
+      });
+      // listTeams will refetch reactively. Focus the new team so its role
+      // input auto-opens once it appears in the list.
+      setFocusedTeamId(result.teamId as Id<"teams">);
+      setCreatingTeamFormOpen(false);
+      setNewTeamName("");
+      setNewTeamWithChannel(true);
+    } catch (e: any) {
+      Alert.alert(
+        "Couldn't create team",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      );
+    } finally {
+      setCreatingTeam(false);
+    }
+  };
 
   return (
     <Modal
@@ -136,24 +194,141 @@ export function NeededRolesModal({
           <View style={styles.centered}>
             <ActivityIndicator size="small" color={colors.text} />
           </View>
-        ) : teams.length === 0 ? (
-          <View style={styles.centered}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No serving teams in this group yet. Create a serving team first.
-            </Text>
-          </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.scrollContent}>
-            {teams.map((team) => (
-              <TeamSection
-                key={team._id}
-                team={team}
-                counts={counts}
-                setCounts={setCounts}
-                groupId={groupId}
-                onClose={onClose}
-              />
-            ))}
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {teams.length === 0 ? (
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                No serving teams in this group yet. Create one below.
+              </Text>
+            ) : (
+              teams.map((team) => (
+                <TeamSection
+                  key={team._id}
+                  team={team}
+                  counts={counts}
+                  setCounts={setCounts}
+                  autoFocusAddRole={team._id === focusedTeamId}
+                />
+              ))
+            )}
+
+            {/* Inline "Create a new team" affordance */}
+            {creatingTeamFormOpen ? (
+              <View
+                style={[
+                  styles.newTeamCard,
+                  { backgroundColor: colors.surfaceSecondary },
+                ]}
+              >
+                <Text style={[styles.label, { color: colors.text }]}>
+                  New team name
+                </Text>
+                <TextInput
+                  value={newTeamName}
+                  onChangeText={setNewTeamName}
+                  placeholder="e.g. Hospitality"
+                  placeholderTextColor={colors.inputPlaceholder}
+                  maxLength={50}
+                  autoFocus
+                  style={[
+                    styles.input,
+                    {
+                      color: colors.text,
+                      borderColor: colors.inputBorder,
+                      backgroundColor: colors.inputBackground,
+                    },
+                  ]}
+                />
+                <View style={styles.switchRow}>
+                  <Ionicons
+                    name="chatbubbles-outline"
+                    size={18}
+                    color={colors.text}
+                  />
+                  <Text style={[styles.switchLabel, { color: colors.text }]}>
+                    Give this team a chat channel
+                  </Text>
+                  <Switch
+                    value={newTeamWithChannel}
+                    onValueChange={setNewTeamWithChannel}
+                  />
+                </View>
+                <View style={styles.newTeamActions}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setCreatingTeamFormOpen(false);
+                      setNewTeamName("");
+                      setNewTeamWithChannel(true);
+                    }}
+                    disabled={creatingTeam}
+                    hitSlop={8}
+                    style={[
+                      styles.newTeamCancelBtn,
+                      { borderColor: colors.border },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.newTeamCancelText,
+                        { color: colors.textSecondary },
+                      ]}
+                    >
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleCreateTeam}
+                    disabled={creatingTeam || newTeamName.trim().length === 0}
+                    hitSlop={8}
+                    style={[
+                      styles.newTeamCreateBtn,
+                      {
+                        backgroundColor:
+                          creatingTeam || newTeamName.trim().length === 0
+                            ? colors.border
+                            : colors.buttonPrimary,
+                      },
+                    ]}
+                  >
+                    {creatingTeam ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.newTeamCreateText}>Create team</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => setCreatingTeamFormOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Create a new team"
+              >
+                <View
+                  style={[
+                    styles.createTeamRow,
+                    { borderColor: colors.border },
+                  ]}
+                >
+                  <Ionicons
+                    name="add"
+                    size={18}
+                    color={colors.buttonPrimary}
+                  />
+                  <Text
+                    style={[
+                      styles.createTeamText,
+                      { color: colors.buttonPrimary },
+                    ]}
+                  >
+                    Create a new team
+                  </Text>
+                </View>
+              </Pressable>
+            )}
           </ScrollView>
         )}
       </View>
@@ -161,26 +336,43 @@ export function NeededRolesModal({
   );
 }
 
-/** Per-team section listing its roles with steppers. */
+/** Per-team section listing its roles with steppers + inline "add role". */
 function TeamSection({
   team,
   counts,
   setCounts,
-  groupId,
-  onClose,
+  autoFocusAddRole,
 }: {
   team: Team;
   counts: CountMap;
   setCounts: React.Dispatch<React.SetStateAction<CountMap>>;
-  groupId: Id<"groups">;
-  onClose: () => void;
+  autoFocusAddRole: boolean;
 }) {
   const { colors } = useTheme();
-  const router = useRouter();
   const roles = useAuthenticatedQuery(
     api.functions.scheduling.roles.listRoles,
     { teamId: team._id },
   ) as Role[] | undefined;
+
+  const createRole = useAuthenticatedMutation(
+    api.functions.scheduling.roles.createRole,
+  );
+
+  const [newRoleName, setNewRoleName] = useState("");
+  const [addingRole, setAddingRole] = useState(false);
+  const newRoleInputRef = useRef<TextInput | null>(null);
+  const focusedOnceRef = useRef(false);
+
+  // Focus the add-role input the first time the team should be "focused"
+  // (e.g. right after the leader created the team inline).
+  useEffect(() => {
+    if (autoFocusAddRole && !focusedOnceRef.current && roles !== undefined) {
+      focusedOnceRef.current = true;
+      // Defer to next tick so layout has settled.
+      const t = setTimeout(() => newRoleInputRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [autoFocusAddRole, roles]);
 
   // First time a role is touched, fall back to its defaultNeeded.
   const defaults = useMemo(() => {
@@ -220,25 +412,59 @@ function TeamSection({
     setCounts((prev) => ({ ...prev, [key]: Math.max(0, value) }));
   };
 
+  const totalNeeded = useMemo(() => {
+    if (!roles) return 0;
+    let sum = 0;
+    for (const role of roles) sum += countFor(role._id as string);
+    return sum;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roles, counts]);
+
+  const handleAddRole = async () => {
+    const name = newRoleName.trim();
+    if (!name || addingRole) return;
+    setAddingRole(true);
+    try {
+      const result = await createRole({ teamId: team._id, name });
+      // Immediately mark the new role as needed on this event (count = 1).
+      setCounts((prev) => ({
+        ...prev,
+        [`${team._id}|${result.roleId}`]: 1,
+      }));
+      setNewRoleName("");
+      // Keep focus in the input so the leader can add more roles quickly.
+      newRoleInputRef.current?.focus();
+    } catch (e: any) {
+      Alert.alert(
+        "Couldn't add role",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      );
+    } finally {
+      setAddingRole(false);
+    }
+  };
+
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeaderRow}>
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-          {team.name.toUpperCase()}
+        <Text style={[styles.sectionLabel, { color: colors.text }]} numberOfLines={1}>
+          {team.name}
         </Text>
-        <TouchableOpacity
-          hitSlop={8}
-          onPress={() => {
-            onClose();
-            router.push(
-              `/rostering/${groupId}/team/${team._id}`,
-            );
-          }}
-        >
-          <Text style={[styles.editRolesLink, { color: colors.buttonPrimary }]}>
-            Edit roles
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.sectionHeaderRight}>
+          <TeamChannelToggle
+            teamId={team._id}
+            teamName={team.name}
+            hasChannel={team.hasChannel}
+            channelMemberCount={team.memberCount}
+          />
+          {totalNeeded > 0 ? (
+            <Text
+              style={[styles.neededCount, { color: colors.textSecondary }]}
+            >
+              {totalNeeded} needed
+            </Text>
+          ) : null}
+        </View>
       </View>
       <View
         style={[styles.group, { backgroundColor: colors.surfaceSecondary }]}
@@ -249,43 +475,94 @@ function TeamSection({
             color={colors.text}
             style={{ padding: 16 }}
           />
-        ) : roles.length === 0 ? (
-          <Text style={[styles.emptyRow, { color: colors.textSecondary }]}>
-            No roles defined for this team.
-          </Text>
         ) : (
-          roles.map((role, idx) => {
-            const count = countFor(role._id as string);
-            return (
-              <View
-                key={role._id}
+          <>
+            {roles.length === 0 ? (
+              <Text style={[styles.emptyRow, { color: colors.textSecondary }]}>
+                No roles defined yet — add one below.
+              </Text>
+            ) : (
+              roles.map((role, idx) => {
+                const count = countFor(role._id as string);
+                return (
+                  <View
+                    key={role._id}
+                    style={[
+                      styles.roleRow,
+                      idx > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.swatch,
+                        { backgroundColor: role.color ?? DEFAULT_ROLE_COLOR },
+                      ]}
+                    />
+                    <Text
+                      style={[styles.roleName, { color: colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {role.name}
+                    </Text>
+                    <Stepper
+                      value={count}
+                      onChange={(v) => setCount(role._id as string, v)}
+                    />
+                  </View>
+                );
+              })
+            )}
+
+            {/* Inline "+ Add a role to {team}" */}
+            <View
+              style={[
+                styles.addRoleRow,
+                roles.length > 0 && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                },
+              ]}
+            >
+              <Ionicons name="add" size={18} color={colors.buttonPrimary} />
+              <TextInput
+                ref={(r) => {
+                  newRoleInputRef.current = r;
+                }}
+                value={newRoleName}
+                onChangeText={setNewRoleName}
+                placeholder={`Add a role to ${team.name}`}
+                placeholderTextColor={colors.inputPlaceholder}
+                onSubmitEditing={handleAddRole}
+                returnKeyType="done"
+                maxLength={50}
+                editable={!addingRole}
+                style={[styles.addRoleInput, { color: colors.text }]}
+              />
+              <TouchableOpacity
+                onPress={handleAddRole}
+                disabled={addingRole || newRoleName.trim().length === 0}
+                hitSlop={8}
                 style={[
-                  styles.roleRow,
-                  idx > 0 && {
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: colors.border,
+                  styles.addRoleBtn,
+                  {
+                    backgroundColor:
+                      addingRole || newRoleName.trim().length === 0
+                        ? colors.border
+                        : colors.buttonPrimary,
                   },
                 ]}
               >
-                <View
-                  style={[
-                    styles.swatch,
-                    { backgroundColor: role.color ?? DEFAULT_ROLE_COLOR },
-                  ]}
-                />
-                <Text
-                  style={[styles.roleName, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  {role.name}
-                </Text>
-                <Stepper
-                  value={count}
-                  onChange={(v) => setCount(role._id as string, v)}
-                />
-              </View>
-            );
-          })
+                {addingRole ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.addRoleBtnText}>Add</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
         )}
       </View>
     </View>
@@ -307,21 +584,22 @@ function Stepper({
         onPress={() => onChange(value - 1)}
         disabled={value <= 0}
         hitSlop={6}
-        style={[
-          styles.stepBtn,
-          { borderColor: colors.border },
-          value <= 0 && { opacity: 0.4 },
-        ]}
       >
-        <Ionicons name="remove" size={18} color={colors.text} />
+        <View
+          style={[
+            styles.stepBtn,
+            { borderColor: colors.border },
+            value <= 0 && { opacity: 0.4 },
+          ]}
+        >
+          <Ionicons name="remove" size={18} color={colors.text} />
+        </View>
       </Pressable>
       <Text style={[styles.stepValue, { color: colors.text }]}>{value}</Text>
-      <Pressable
-        onPress={() => onChange(value + 1)}
-        hitSlop={6}
-        style={[styles.stepBtn, { borderColor: colors.border }]}
-      >
-        <Ionicons name="add" size={18} color={colors.text} />
+      <Pressable onPress={() => onChange(value + 1)} hitSlop={6}>
+        <View style={[styles.stepBtn, { borderColor: colors.border }]}>
+          <Ionicons name="add" size={18} color={colors.text} />
+        </View>
       </Pressable>
     </View>
   );
@@ -360,27 +638,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     lineHeight: 20,
+    paddingVertical: 12,
   },
   scrollContent: {
     padding: 16,
+    paddingBottom: 48,
   },
   section: {
-    marginBottom: 8,
+    marginBottom: 16,
   },
   sectionHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 12,
+    marginTop: 8,
     marginBottom: 8,
+    gap: 8,
+  },
+  sectionHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   sectionLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.6,
+    flexShrink: 1,
+    fontSize: 15,
+    fontWeight: "700",
   },
-  editRolesLink: {
-    fontSize: 13,
+  neededCount: {
+    fontSize: 12,
     fontWeight: "600",
   },
   group: {
@@ -389,7 +675,8 @@ const styles = StyleSheet.create({
   },
   emptyRow: {
     fontSize: 14,
-    padding: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   roleRow: {
     flexDirection: "row",
@@ -426,5 +713,101 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     minWidth: 20,
     textAlign: "center",
+  },
+  addRoleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  addRoleInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 4,
+  },
+  addRoleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    minWidth: 56,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addRoleBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  createTeamRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
+    marginTop: 4,
+  },
+  createTeamText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  newTeamCard: {
+    borderRadius: 12,
+    padding: 14,
+    marginTop: 4,
+    gap: 10,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  input: {
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+  },
+  switchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  switchLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  newTeamActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 4,
+  },
+  newTeamCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  newTeamCancelText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  newTeamCreateBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    minWidth: 110,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  newTeamCreateText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

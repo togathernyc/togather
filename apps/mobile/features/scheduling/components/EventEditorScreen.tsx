@@ -41,6 +41,7 @@ import { DEFAULT_ROLE_COLOR } from "../utils/format";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
 import { TimesEditor } from "./TimesEditor";
+import { TeamChannelToggle } from "./TeamChannelToggle";
 
 /** Formats a Date as a display time label, e.g. "9:00 AM". */
 function formatTimeLabel(date: Date): string {
@@ -445,18 +446,21 @@ export function EventEditorScreen() {
           />
         </Pressable>
 
-        {/* Per-role assignment view */}
+        {/* Per-role assignment view — grouped by team so each team gets a
+            header with its chat-channel toggle + "Open chat" shortcut. */}
         {event.roles.length === 0 ? (
           <Text style={[styles.noRolesText, { color: colors.textSecondary }]}>
             No roles needed yet. Tap "Set needed roles" to declare how many of
             each role this event plan needs.
           </Text>
         ) : (
-          event.roles.map((role) => (
-            <RoleAssignmentCard
-              key={role.roleId}
-              role={role}
-              onAssign={() =>
+          groupRolesByTeam(event.roles).map((teamGroup) => (
+            <TeamRoleGroup
+              key={teamGroup.teamId}
+              groupId={event.groupId}
+              teamId={teamGroup.teamId}
+              roles={teamGroup.roles}
+              onAssign={(role) =>
                 setAssignTarget({
                   teamId: role.teamId,
                   roleId: role.roleId,
@@ -526,6 +530,130 @@ export function EventEditorScreen() {
           onClose={() => setAssignTarget(null)}
         />
       )}
+    </View>
+  );
+}
+
+/**
+ * Groups the event's flat role list by team, preserving role order within
+ * each team. Used to render a team-section header (chat toggle + "Open chat"
+ * shortcut) above each team's role cards.
+ */
+function groupRolesByTeam(roles: EventRole[]): Array<{
+  teamId: Id<"teams">;
+  roles: EventRole[];
+}> {
+  const order: Id<"teams">[] = [];
+  const byTeam = new Map<Id<"teams">, EventRole[]>();
+  for (const role of roles) {
+    const existing = byTeam.get(role.teamId);
+    if (existing) {
+      existing.push(role);
+    } else {
+      byTeam.set(role.teamId, [role]);
+      order.push(role.teamId);
+    }
+  }
+  return order.map((teamId) => ({ teamId, roles: byTeam.get(teamId)! }));
+}
+
+/**
+ * A team's section: header (name + chat toggle + "Open chat" shortcut) and
+ * its role assignment cards. Fetches the team via `getTeam` so it has the
+ * `hasChannel` / `channelSlug` / `memberCount` fields the toggle and
+ * shortcut both need.
+ */
+function TeamRoleGroup({
+  groupId,
+  teamId,
+  roles,
+  onAssign,
+  onUnassign,
+}: {
+  groupId: Id<"groups">;
+  teamId: Id<"teams">;
+  roles: EventRole[];
+  onAssign: (role: EventRole) => void;
+  onUnassign: (id: Id<"roleAssignments">) => void;
+}) {
+  const { colors } = useTheme();
+  const router = useRouter();
+  const team = useAuthenticatedQuery(
+    api.functions.scheduling.teams.getTeam,
+    { teamId },
+  ) as
+    | {
+        _id: Id<"teams">;
+        name: string;
+        hasChannel: boolean;
+        channelSlug: string | null;
+        memberCount: number;
+      }
+    | undefined;
+
+  // Fall back to the role's embedded team-less name while `getTeam` resolves.
+  const fallbackName = roles[0]?.roleName ?? "Team";
+  const teamName = team?.name ?? fallbackName;
+
+  return (
+    <View style={styles.teamGroup}>
+      <View style={styles.teamGroupHeader}>
+        <Text
+          style={[styles.teamGroupName, { color: colors.text }]}
+          numberOfLines={1}
+        >
+          {teamName}
+        </Text>
+        {team ? (
+          <View style={styles.teamGroupActions}>
+            <TeamChannelToggle
+              teamId={team._id}
+              teamName={team.name}
+              hasChannel={team.hasChannel}
+              channelMemberCount={team.memberCount}
+            />
+            {team.hasChannel && team.channelSlug ? (
+              <Pressable
+                onPress={() =>
+                  router.push(
+                    `/inbox/${groupId}/${team.channelSlug}` as never,
+                  )
+                }
+                hitSlop={6}
+                accessibilityRole="link"
+                accessibilityLabel={`Open ${team.name} chat`}
+              >
+                <View style={styles.openChatRow}>
+                  <Text
+                    style={[
+                      styles.openChatText,
+                      { color: colors.buttonPrimary },
+                    ]}
+                  >
+                    Open chat
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color={colors.buttonPrimary}
+                  />
+                </View>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : (
+          <ActivityIndicator size="small" color={colors.textTertiary} />
+        )}
+      </View>
+
+      {roles.map((role) => (
+        <RoleAssignmentCard
+          key={role.roleId}
+          role={role}
+          onAssign={() => onAssign(role)}
+          onUnassign={onUnassign}
+        />
+      ))}
     </View>
   );
 }
@@ -771,6 +899,35 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginTop: 20,
+  },
+  teamGroup: {
+    marginTop: 20,
+  },
+  teamGroupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    gap: 8,
+  },
+  teamGroupName: {
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  teamGroupActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  openChatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  openChatText: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   roleCard: {
     borderRadius: 12,
