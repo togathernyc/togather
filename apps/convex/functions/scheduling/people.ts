@@ -73,12 +73,19 @@ export const searchCommunityPeople = query({
     // isPlaceholder rules as the admin People and group Add People searches.
     // `annotateGroupId` makes each row carry `inGroup`; `fallbackToRecentWhenEmpty`
     // surfaces a sensible default list before the leader has typed anything.
+    //
+    // Pass `MAX_LIMIT` (the helper's own hard cap) instead of the caller's
+    // `limit` so we don't truncate in-group members away before the
+    // AssignSheet-specific in-group-first re-sort below — the helper
+    // returns rows in relevance / last-login order, which would drop
+    // in-group people ranked below the cutoff and leave them invisible
+    // after the re-sort. Slicing happens after the re-sort.
     const rows = await searchCommunityMembersInternal(ctx, {
       communityId: group.communityId,
       search: args.search,
       excludeUserIds: [callerId],
       annotateGroupId: args.groupId,
-      limit,
+      limit: MAX_LIMIT,
       fallbackToRecentWhenEmpty: true,
     });
 
@@ -103,6 +110,6 @@ export const searchCommunityPeople = query({
       return a.displayName.localeCompare(b.displayName);
     });
 
-    return candidates;
+    return candidates.slice(0, limit);
   },
 });
