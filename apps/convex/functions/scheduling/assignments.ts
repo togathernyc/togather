@@ -242,8 +242,12 @@ async function ensureActiveGroupMembership(
       return { addedToGroup: false };
     }
     // Reactivate an archived membership (leftAt set, or a stale "pending"
-    // request) — the scheduler is implicitly approving them.
+    // request) — the scheduler is implicitly approving them. The role is
+    // reset to "member" so we don't silently restore historical leadership
+    // (or other elevated roles) just because someone left and got assigned
+    // back via the assign-from-community flow.
     await ctx.db.patch(existing._id, {
+      role: "member",
       leftAt: undefined,
       requestStatus: "accepted",
       requestReviewedAt: timestamp,
@@ -328,6 +332,15 @@ export const assignFromCommunity = mutation({
     const target = await ctx.db.get(args.userId);
     if (!target) {
       throw new ConvexError("Person not found");
+    }
+    // Deactivated accounts must not be re-introduced into scheduling — this
+    // also blocks placeholder users (`isPlaceholder: true` / `isActive:
+    // false`) from being assigned via this path; placeholders are only
+    // assigned through `inviteAndAssign`, which creates them.
+    if (target.isActive === false) {
+      throw new ConvexError(
+        "This person's account is deactivated and cannot be scheduled",
+      );
     }
     const communityMembership = await ctx.db
       .query("userCommunities")
