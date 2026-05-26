@@ -24,7 +24,7 @@ import {
   isCustomChannel,
   isLeaderRole,
 } from "../../lib/helpers";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { getDisplayName, getMediaUrl, safeSliceForJson } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
 import { generateMessagePreview } from "./messages";
 import { checkRateLimit } from "../../lib/rateLimit";
@@ -305,7 +305,7 @@ export const createPoll = mutation({
     const previewBase = `📊 ${trimmedQuestion}`;
     const preview =
       previewBase.length > 100
-        ? previewBase.slice(0, 97) + "…"
+        ? safeSliceForJson(previewBase, 97) + "…"
         : previewBase;
     await ctx.db.patch(args.channelId, {
       lastMessageAt: now,
@@ -625,7 +625,7 @@ export const editPoll = mutation({
       ) {
         const previewBase = `📊 ${newQuestion.trim()}`;
         const preview =
-          previewBase.length > 100 ? previewBase.slice(0, 97) + "…" : previewBase;
+          previewBase.length > 100 ? safeSliceForJson(previewBase, 97) + "…" : previewBase;
         await ctx.db.patch(poll.channelId, {
           lastMessagePreview: preview,
           updatedAt: now,

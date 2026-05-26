@@ -11,7 +11,7 @@ import { query, mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { getDisplayName, getMediaUrl, safeSliceForJson } from "../../lib/utils";
 import { isLeaderRole, isActiveMembership } from "../../lib/helpers";
 
 type ReachOutMemberStatus = "pending" | "assigned" | "resolved" | "revoked";
@@ -138,7 +138,7 @@ export const submitTaskRequest = mutation({
       },
     );
 
-    const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
+    const preview = content.length > 100 ? safeSliceForJson(content, 97) + "..." : content;
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: leadersChannel._id,
       senderId: userId,
@@ -168,7 +168,7 @@ export const submitTaskRequest = mutation({
       groupMemberId: membership._id,
       createdById: userId,
       type: "reach_out",
-      content: `Reach out: ${content.substring(0, 100)}`,
+      content: `Reach out: ${safeSliceForJson(content, 100)}`,
       createdAt: now,
     });
 
@@ -511,7 +511,7 @@ export const submitRequest = mutation({
     );
 
     // Post a card message to the leaders channel
-    const preview = content.length > 100 ? content.substring(0, 97) + "..." : content;
+    const preview = content.length > 100 ? safeSliceForJson(content, 97) + "..." : content;
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: leadersChannel._id,
       senderId: userId,
@@ -547,7 +547,7 @@ export const submitRequest = mutation({
       groupMemberId: membership._id,
       createdById: userId,
       type: "reach_out",
-      content: `Reach out: ${content.substring(0, 100)}`,
+      content: `Reach out: ${safeSliceForJson(content, 100)}`,
       reachOutRequestId: requestId,
       createdAt: now,
     });
