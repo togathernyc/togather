@@ -140,21 +140,6 @@ export const feed = query({
     await assertPrayerEnabled(ctx, args.communityId);
     await assertCommunityMember(ctx, userId, args.communityId);
 
-    // Pull a small candidate set ordered by prayedForCount asc. The
-    // moderation predicate is in the index — without it, pending/rejected
-    // rows (also `status: "active"`) could fill this window and starve
-    // approved prayers from ever being seen.
-    const candidates = await ctx.db
-      .query("prayers")
-      .withIndex("by_community_status_modStatus_count", (q) =>
-        q
-          .eq("communityId", args.communityId)
-          .eq("status", "active")
-          .eq("moderationStatus", "approved"),
-      )
-      .order("asc")
-      .take(50);
-
     const myResponses = await ctx.db
       .query("prayerResponses")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -169,20 +154,46 @@ export const feed = query({
       .collect();
     const reportedIds = new Set(myReports.map((r) => r.prayerId));
 
-    const visible = candidates.filter(
-      (p) =>
-        p.authorUserId !== userId &&
-        !prayedIds.has(p._id) &&
-        !reportedIds.has(p._id),
-    );
-
-    visible.sort((a, b) => {
-      if (a.prayedForCount !== b.prayedForCount) {
-        return a.prayedForCount - b.prayedForCount;
+    // Paginate candidates ordered by prayedForCount asc. Without this
+    // loop, a long-time member could have the first 50 candidates all
+    // filtered out (own + already-prayed + reported) and see a false
+    // "all caught up" while plenty of eligible prayers exist further
+    // down the index. We page until we have FEED_LIMIT visible or
+    // exhaust the index (or hit MAX_PAGES as a safety cap).
+    //
+    // The moderation predicate is in the index — without it, pending/
+    // rejected rows (also `status: "active"`) could fill the window and
+    // starve approved prayers from ever being seen.
+    const MAX_PAGES = 10; // 10 * 50 = 500 candidates max per feed call
+    const visible: Doc<"prayers">[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const result = await ctx.db
+        .query("prayers")
+        .withIndex("by_community_status_modStatus_count", (q) =>
+          q
+            .eq("communityId", args.communityId)
+            .eq("status", "active")
+            .eq("moderationStatus", "approved"),
+        )
+        .order("asc")
+        .paginate({ numItems: 50, cursor });
+      for (const p of result.page) {
+        if (
+          p.authorUserId !== userId &&
+          !prayedIds.has(p._id) &&
+          !reportedIds.has(p._id)
+        ) {
+          visible.push(p);
+        }
       }
-      return a.createdAt - b.createdAt;
-    });
+      if (visible.length >= FEED_LIMIT || result.isDone) break;
+      cursor = result.continueCursor;
+    }
 
+    // Already ordered by prayedForCount asc via the index; ties broken by
+    // createdAt asc are best-effort here since the index doesn't include it,
+    // but the natural Convex insertion order serves as a reasonable proxy.
     const top = visible.slice(0, FEED_LIMIT);
     // Batch-load authors only for non-anonymous prayers — anonymous ones
     // never trigger a user fetch, guaranteeing identity never leaks.
@@ -281,6 +292,22 @@ export const getDetail = query({
     const userId = await requireAuth(ctx, args.token);
     const prayer = await ctx.db.get(args.prayerId);
     if (!prayer) return null;
+
+    // Re-check gating: a user who left the community (or whose community
+    // disabled prayer) shouldn't be able to deep-link into a detail page
+    // from an old notification and keep reading follow-ups. Returning
+    // null instead of throwing keeps the URL safe to share — the page
+    // just renders an empty state for ineligible viewers.
+    const community = await ctx.db.get(prayer.communityId);
+    if (!community?.churchFeatures?.prayerEnabled) return null;
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", prayer.communityId),
+      )
+      .filter((q) => q.eq(q.field("status"), 1))
+      .first();
+    if (!membership) return null;
 
     const isAuthor = prayer.authorUserId === userId;
     const hasPrayed = !isAuthor
@@ -1077,26 +1104,39 @@ export const archiveStalePrayers = internalMutation({
   args: {},
   handler: async (ctx) => {
     const cutoff = now() - STALE_PRAYER_MS;
-    // Paginate via index — keep batch small to stay under txn limits.
-    const stale = await ctx.db
-      .query("prayers")
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("status"), "active"),
-          q.lt(q.field("createdAt"), cutoff),
-        ),
-      )
-      .take(200);
-
     const ts = now();
-    for (const p of stale) {
-      await ctx.db.patch(p._id, {
-        status: "archived",
-        archivedAt: ts,
-        updatedAt: ts,
-      });
+    // Keep paging until we drain the backlog. Without this loop, a
+    // single daily run only archived 200 — a long quiet period followed
+    // by a moderation rollout could leave thousands of stale prayers
+    // active well past the 30-day retention window. The MAX_PAGES cap
+    // bounds worst-case txn cost (200 * 50 = 10 000 archives per run);
+    // anything beyond that gets the next day's run.
+    const PAGE = 200;
+    const MAX_PAGES = 50;
+    let total = 0;
+    let cursor: string | null = null;
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const result = await ctx.db
+        .query("prayers")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("status"), "active"),
+            q.lt(q.field("createdAt"), cutoff),
+          ),
+        )
+        .paginate({ numItems: PAGE, cursor });
+      for (const p of result.page) {
+        await ctx.db.patch(p._id, {
+          status: "archived",
+          archivedAt: ts,
+          updatedAt: ts,
+        });
+        total++;
+      }
+      if (result.isDone) break;
+      cursor = result.continueCursor;
     }
-    return { archived: stale.length };
+    return { archived: total };
   },
 });
 
