@@ -792,6 +792,10 @@ export const prayerPraiseReport: NotificationDefinition<PrayerFollowUpData> = {
         prayerId: ctx.data.prayerId,
         followUpId: ctx.data.followUpId,
         communityId: ctx.data.communityId,
+        // Routes the recipient (someone who prayed for this request) to
+        // the detail screen where they can read the follow-up.
+        // getDetail re-gates on community membership before returning.
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
       },
     }),
   },
@@ -810,6 +814,7 @@ export const prayerUpdate: NotificationDefinition<PrayerFollowUpData> = {
         prayerId: ctx.data.prayerId,
         followUpId: ctx.data.followUpId,
         communityId: ctx.data.communityId,
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
       },
     }),
   },
