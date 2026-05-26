@@ -67,7 +67,18 @@ export function MyPrayersScreen() {
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
       <Stack.Screen options={{ title: 'My Prayers', headerShown: true }} />
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingTop: 16, paddingBottom: 24 + insets.bottom }]}>
-        {prayers === undefined ? (
+        {!community?.id ? (
+          // No active community: query is skipped, so we'd otherwise sit on
+          // the spinner forever. Show the same empty card with "select a
+          // community" copy instead.
+          <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Ionicons name="heart-outline" size={36} color={colors.iconSecondary} />
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No community selected</Text>
+            <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+              Select a community to see your prayers there.
+            </Text>
+          </View>
+        ) : prayers === undefined ? (
           <View style={styles.center}>
             <ActivityIndicator color={primaryColor} />
           </View>
