@@ -140,12 +140,17 @@ export const feed = query({
     await assertPrayerEnabled(ctx, args.communityId);
     await assertCommunityMember(ctx, userId, args.communityId);
 
-    // Pull a small candidate set ordered by prayedForCount asc (the index
-    // is on [communityId, status, prayedForCount]).
+    // Pull a small candidate set ordered by prayedForCount asc. The
+    // moderation predicate is in the index — without it, pending/rejected
+    // rows (also `status: "active"`) could fill this window and starve
+    // approved prayers from ever being seen.
     const candidates = await ctx.db
       .query("prayers")
-      .withIndex("by_community_status_count", (q) =>
-        q.eq("communityId", args.communityId).eq("status", "active"),
+      .withIndex("by_community_status_modStatus_count", (q) =>
+        q
+          .eq("communityId", args.communityId)
+          .eq("status", "active")
+          .eq("moderationStatus", "approved"),
       )
       .order("asc")
       .take(50);
@@ -166,7 +171,6 @@ export const feed = query({
 
     const visible = candidates.filter(
       (p) =>
-        p.moderationStatus === "approved" &&
         p.authorUserId !== userId &&
         !prayedIds.has(p._id) &&
         !reportedIds.has(p._id),
@@ -757,7 +761,11 @@ export const listPendingForReview = query({
 
     return Promise.all(
       pending.map(async (p) => {
-        const author = await ctx.db.get(p.authorUserId);
+        // Anonymity contract: anonymous = hidden from admins too. Skip the
+        // author lookup entirely so identity never reaches an admin client
+        // or log pipeline. The UI renders "Anonymous" when display name
+        // is null.
+        const author = p.isAnonymous ? null : await ctx.db.get(p.authorUserId);
         return {
           id: p._id,
           bodyText: p.bodyText,
@@ -765,8 +773,9 @@ export const listPendingForReview = query({
           createdAt: p.createdAt,
           moderationDetail: p.moderationDetail ?? null,
           crisisFlag: p.crisisFlag === true,
-          authorDisplayName:
-            firstNameLastInitial(author?.firstName, author?.lastName) ?? "Unknown",
+          authorDisplayName: p.isAnonymous
+            ? null
+            : firstNameLastInitial(author?.firstName, author?.lastName) ?? "Unknown",
         };
       }),
     );

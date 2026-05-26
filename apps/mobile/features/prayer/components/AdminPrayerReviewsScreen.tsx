@@ -11,9 +11,10 @@
  * users see it (author-side too) so the language is consistent with the
  * compassionate framing. "Reject" reads as punitive in a prayer context.
  *
- * Anonymous prayers still show the author's identity HERE — admins can't
- * moderate effectively without it. Members never see anything beyond
- * what the regular feed already shows.
+ * Anonymous prayers stay anonymous to admins too — the backend never
+ * sends author identity for `isAnonymous` prayers. Admins moderate on
+ * the body content. Members never see anything beyond what the regular
+ * feed already shows.
  */
 
 import React, { useState } from 'react';
@@ -236,7 +237,7 @@ export function AdminPrayerReviewsScreen() {
 
                       <View style={styles.metaRow}>
                         <Text style={[styles.meta, { color: colors.textTertiary }]}>
-                          {p.isAnonymous ? 'Anonymous (admin view)' : p.authorDisplayName}
+                          {p.isAnonymous ? 'Anonymous' : p.authorDisplayName}
                         </Text>
                         <Text style={[styles.meta, { color: colors.textTertiary }]}>
                           {new Date(p.createdAt).toLocaleString()}

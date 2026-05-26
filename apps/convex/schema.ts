@@ -2661,9 +2661,17 @@ export default defineSchema({
   })
     .index("by_community", ["communityId"])
     .index("by_author", ["authorUserId"])
-    // Powers the feed: active+approved prayers sorted by count asc (fewest
-    // prayers first), ties broken by createdAt asc via _creationTime.
-    .index("by_community_status_count", ["communityId", "status", "prayedForCount"])
+    // Powers the feed: active+APPROVED prayers sorted by count asc (fewest
+    // prayers first). The moderation predicate is in the index, not a
+    // post-filter — without it, pending/rejected rows (which are also
+    // `status: "active"`) can fill the candidate window and starve
+    // approved prayers from ever being seen.
+    .index("by_community_status_modStatus_count", [
+      "communityId",
+      "status",
+      "moderationStatus",
+      "prayedForCount",
+    ])
     // Powers the admin review queue: pending_review prayers per community.
     .index("by_community_moderationStatus", ["communityId", "moderationStatus"]),
 
