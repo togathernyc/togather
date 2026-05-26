@@ -125,6 +125,25 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="prayer"
+        options={{
+          title: 'Prayer',
+          // Visible only when the active community has opted into the church
+          // prayer feature. Gated on community.churchFeatures.prayerEnabled.
+          href:
+            hasCommunity && community?.churchFeatures?.prayerEnabled
+              ? '/(tabs)/prayer'
+              : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'heart' : 'heart-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="admin"
         options={{
           title: 'Admin',

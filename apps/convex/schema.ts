@@ -67,6 +67,14 @@ export default defineSchema({
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online
+    // Church-specific feature toggles. Absent / undefined = all off.
+    // Forward-compat object so we can add more religious-tradition features
+    // (e.g. confessionEnabled) without further schema changes.
+    churchFeatures: v.optional(
+      v.object({
+        prayerEnabled: v.boolean(),
+      }),
+    ),
     // Community-level custom field definitions for People tab
     peopleCustomFields: v.optional(
       v.array(
@@ -2593,4 +2601,134 @@ export default defineSchema({
     // powers team auto-sync: desired members of a team within a rotation
     // window are derived from assignments matched by team + date.
     .index("by_team_eventDate", ["teamId", "eventDate"]),
+
+  // =============================================================================
+  // PRAYERS (Church feature, gated by communities.churchFeatures.prayerEnabled)
+  // =============================================================================
+
+  /**
+   * A single prayer request posted by a community member.
+   *
+   * Anonymity contract: `authorUserId` is ALWAYS stored so the author can
+   * receive notifications when others pray for them, but `feed`/`getDetail`
+   * NEVER expose it when `isAnonymous` is true — not even to community admins.
+   * The single chokepoint is `stripAuthor()` in functions/prayers.ts.
+   */
+  prayers: defineTable({
+    communityId: v.id("communities"),
+    authorUserId: v.id("users"),
+    isAnonymous: v.boolean(),
+    bodyText: v.string(),
+    status: v.union(
+      v.literal("active"),
+      v.literal("answered"),
+      v.literal("archived"),
+    ),
+    // Denormalized count, source of truth is `prayerResponses`. Indexed so
+    // the feed query can sort cheaply by "needs prayer most" (fewest first).
+    prayedForCount: v.number(),
+    // Tiered moderation outcome:
+    //   pending          — newly inserted; LLM hasn't responded yet.
+    //                      Hidden from feed so borderline content never leaks
+    //                      in the 1-5s before the LLM resolves.
+    //   approved         — green: safe to publish.
+    //   pending_review   — yellow: held for community admin to approve/reject.
+    //                      Hidden from feed; visible in admin queue.
+    //   rejected         — red: never publishes, author sees a reason.
+    moderationStatus: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("pending_review"),
+      v.literal("rejected"),
+    ),
+    // Crisis flag is independent of severity — a prayer can be APPROVED + flagged
+    // (the "show resources, don't suppress" pattern from 7 Cups / Crisis Text
+    // Line). When true, viewers see a 988 / Find-a-Helpline resource card
+    // attached above the body.
+    crisisFlag: v.optional(v.boolean()),
+    // Detail surfaced to author (transparency) and to admins (review queue).
+    // Never sent to other viewers.
+    moderationDetail: v.optional(
+      v.object({
+        severity: v.union(v.literal("green"), v.literal("yellow"), v.literal("red")),
+        category: v.optional(v.string()),
+        note: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    archivedAt: v.optional(v.number()),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_author", ["authorUserId"])
+    // Powers the feed: active+approved prayers sorted by count asc (fewest
+    // prayers first), ties broken by createdAt asc via _creationTime.
+    .index("by_community_status_count", ["communityId", "status", "prayedForCount"])
+    // Powers the admin review queue: pending_review prayers per community.
+    .index("by_community_moderationStatus", ["communityId", "moderationStatus"]),
+
+  /**
+   * A single 3-minute prayer session a user completed for a prayer.
+   * Uniqueness on (prayerId, userId) is enforced in the mutation by
+   * checking `by_prayer_user` before inserting.
+   */
+  prayerResponses: defineTable({
+    prayerId: v.id("prayers"),
+    userId: v.id("users"),
+    prayedAt: v.number(),
+  })
+    .index("by_prayer", ["prayerId"])
+    .index("by_user", ["userId"])
+    .index("by_prayer_user", ["prayerId", "userId"]),
+
+  /**
+   * Author-posted follow-ups on a prayer: updates and "praise reports"
+   * (celebrating answered prayer). Visible to everyone who prayed.
+   */
+  prayerFollowUps: defineTable({
+    prayerId: v.id("prayers"),
+    authorUserId: v.id("users"),
+    kind: v.union(v.literal("update"), v.literal("praise_report")),
+    bodyText: v.string(),
+    createdAt: v.number(),
+  }).index("by_prayer", ["prayerId"]),
+
+  /**
+   * Member-filed reports against a published prayer — the last-line
+   * defense after our LLM and any author-side nudges. Each report is one
+   * (prayer, reporter) pair; we enforce uniqueness in the mutation via
+   * `by_prayer_reporter`. `communityId` is denormalized so admins can
+   * query their queue without joining through prayers.
+   *
+   * Status:
+   *   open      — visible in admin queue.
+   *   actioned  — admin took action (typically rejected the prayer).
+   *   dismissed — admin reviewed and chose to leave the prayer up.
+   */
+  prayerReports: defineTable({
+    prayerId: v.id("prayers"),
+    communityId: v.id("communities"),
+    reporterUserId: v.id("users"),
+    reason: v.union(
+      v.literal("names_person"),
+      v.literal("intimate_explicit"),
+      v.literal("spam_solicitation"),
+      v.literal("hateful"),
+      v.literal("crisis_needs_resources"),
+      v.literal("other"),
+    ),
+    customNote: v.optional(v.string()),
+    status: v.union(
+      v.literal("open"),
+      v.literal("actioned"),
+      v.literal("dismissed"),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_prayer", ["prayerId"])
+    .index("by_reporter", ["reporterUserId"])
+    // Admin queue: open reports in this community, oldest first.
+    .index("by_community_status", ["communityId", "status"])
+    // Uniqueness check inside reportPrayer.
+    .index("by_prayer_reporter", ["prayerId", "reporterUserId"]),
 });

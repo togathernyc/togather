@@ -644,6 +644,7 @@ export const me = query({
     let activeCommunityName: string | null = null;
     let activeCommunityPrimaryColor: string | null = null;
     let activeCommunitySecondaryColor: string | null = null;
+    let activeCommunityChurchFeatures: { prayerEnabled: boolean } | null = null;
 
     if (user.activeCommunityId) {
       const activeCommunity = await ctx.db.get(user.activeCommunityId);
@@ -651,6 +652,7 @@ export const me = query({
         activeCommunityName = activeCommunity.name || null;
         activeCommunityPrimaryColor = activeCommunity.primaryColor || null;
         activeCommunitySecondaryColor = activeCommunity.secondaryColor || null;
+        activeCommunityChurchFeatures = activeCommunity.churchFeatures ?? null;
       }
     }
 
@@ -685,6 +687,7 @@ export const me = query({
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
+      activeCommunityChurchFeatures,
       communityMemberships: communityMemberships.filter(Boolean),
     };
   },

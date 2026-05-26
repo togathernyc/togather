@@ -49,6 +49,7 @@ export const getCommunitySettings = query({
       secondaryColor: community.secondaryColor,
       exploreDefaultGroupTypes: community.exploreDefaultGroupTypes,
       exploreDefaultMeetingType: community.exploreDefaultMeetingType || null,
+      churchFeatures: community.churchFeatures ?? { prayerEnabled: false },
     };
   },
 });
@@ -73,6 +74,11 @@ export const updateCommunitySettings = mutation({
     logo: v.optional(v.string()),
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()),
+    churchFeatures: v.optional(
+      v.object({
+        prayerEnabled: v.boolean(),
+      }),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);

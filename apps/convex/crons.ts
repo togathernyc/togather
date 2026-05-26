@@ -222,4 +222,17 @@ crons.daily(
   internal.functions.notifications.dailyEnabledSnapshot.runDaily
 );
 
+// =============================================================================
+// PRAYER ARCHIVAL
+// =============================================================================
+// Runs daily at 6:00 UTC to archive active prayers older than 30 days.
+// Authors can still see archived prayers under My Prayers.
+
+crons.daily(
+  "prayer-archive-stale",
+  { hourUTC: 6, minuteUTC: 0 },
+  internal.functions.prayers.archiveStalePrayers,
+  {}
+);
+
 export default crons;

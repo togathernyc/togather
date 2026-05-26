@@ -21,6 +21,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -107,6 +108,9 @@ export function SettingsContent() {
   const [exploreGroupTypes, setExploreGroupTypes] = useState<string[]>([]);
   const [exploreDefaultMeetingType, setExploreDefaultMeetingType] = useState<number | null>(null);
   const [isSavingExplore, setIsSavingExplore] = useState(false);
+
+  // Church Features state (opt-in religious features)
+  const [isSavingChurchFeatures, setIsSavingChurchFeatures] = useState(false);
 
   // Populate form with current settings
   useEffect(() => {
@@ -247,6 +251,23 @@ export function SettingsContent() {
     }
   };
 
+  const handleToggleChurchFeature = async (
+    feature: "prayerEnabled",
+    value: boolean,
+  ) => {
+    setIsSavingChurchFeatures(true);
+    try {
+      const current = settings?.churchFeatures ?? { prayerEnabled: false };
+      await updateSettings({
+        churchFeatures: { ...current, [feature]: value },
+      });
+    } catch (error: any) {
+      Alert.alert("Error", formatError(error, "Failed to update church features"));
+    } finally {
+      setIsSavingChurchFeatures(false);
+    }
+  };
+
   const toggleExploreGroupType = (groupTypeId: string) => {
     setExploreGroupTypes((prev) =>
       prev.includes(groupTypeId)
@@ -352,6 +373,23 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          {settings?.churchFeatures?.prayerEnabled ? (
+            <TouchableOpacity
+              style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={() => router.push("/(user)/admin/prayer-reviews")}
+            >
+              <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+                <Ionicons name="shield-checkmark-outline" size={20} color={themePrimaryColor} />
+              </View>
+              <View style={styles.quickLinkInfo}>
+                <Text style={[styles.quickLinkName, { color: colors.text }]}>Prayer Reviews</Text>
+                <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                  Approve or reject prayers our moderator held for human review
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {/* Basic Info Section */}
@@ -623,6 +661,28 @@ export function SettingsContent() {
               <Text style={styles.exploreSaveButtonText}>Save Explore Defaults</Text>
             )}
           </TouchableOpacity>
+        </View>
+
+        {/* Church Features Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Church Features</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+            Opt-in features for religious communities. Off by default.
+          </Text>
+
+          <View style={styles.churchFeatureRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.churchFeatureName, { color: colors.text }]}>Prayer Requests</Text>
+              <Text style={[styles.churchFeatureHint, { color: colors.textTertiary }]}>
+                Members can post prayer requests and pray for each other. Adds a Prayer tab.
+              </Text>
+            </View>
+            <Switch
+              value={settings?.churchFeatures?.prayerEnabled ?? false}
+              onValueChange={(v) => handleToggleChurchFeature("prayerEnabled", v)}
+              disabled={isSavingChurchFeatures}
+            />
+          </View>
         </View>
 
         {/* Group Types Section */}
@@ -1065,5 +1125,19 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 15,
     fontWeight: "600",
+  },
+  churchFeatureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  churchFeatureName: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  churchFeatureHint: {
+    fontSize: 13,
+    marginTop: 4,
+    lineHeight: 18,
   },
 });
