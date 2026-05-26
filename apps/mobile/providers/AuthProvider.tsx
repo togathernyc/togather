@@ -409,6 +409,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? {
             id: convexUser.activeCommunityId,
             name: convexUser.activeCommunityName ?? undefined,
+            churchFeatures: convexUser.activeCommunityChurchFeatures ?? undefined,
           }
         : null;
 

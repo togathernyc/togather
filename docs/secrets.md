@@ -112,6 +112,13 @@ pnpm dev
 |--------|-------------|-------------|
 | `EXPO_PUBLIC_KLIPY_API_KEY` | KLIPY API key (from partner.klipy.com) | GIF picker hidden |
 
+### Prayer-request moderation (Church Prayer feature)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `OPENAI_SECRET_KEY` | OpenAI API key (already used by poster keywording). The prayer moderator calls `gpt-4o-mini` in JSON mode. | Moderator fails open — every prayer is accepted without LLM screening. |
+| `OLLAMA_API_KEY` | **Escape hatch only.** Used if you flip `PROVIDER` to `"ollama"` in `apps/convex/lib/moderation/prayer.ts` (e.g. if OpenAI spend gets too high). See https://ollama.com/pricing. | Same fail-open behavior when unset. |
+
 ### Development Settings
 
 | Secret | Description |

@@ -81,5 +81,13 @@ export interface Community {
   name?: string;
   subdomain?: string;
   logo?: string; // Community logo URL (S3 URL or relative path)
+  /**
+   * Church-specific feature toggles (opt-in per community, off by default).
+   * Surfaced so conditional UI (e.g. the Prayer tab) can render without
+   * a second query.
+   */
+  churchFeatures?: {
+    prayerEnabled: boolean;
+  };
   [key: string]: any; // Allow additional community properties
 }

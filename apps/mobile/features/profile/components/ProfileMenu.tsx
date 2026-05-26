@@ -118,6 +118,20 @@ export function ProfileMenu() {
           <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
         </TouchableOpacity>
 
+        {community?.churchFeatures?.prayerEnabled ? (
+          <TouchableOpacity
+            style={[styles.menuItem, { borderBottomColor: colors.border }]}
+            onPress={() => router.push('/(user)/my-prayers')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="heart-outline" size={20} color={colors.text} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.text }]}>My Prayers</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity
           style={[styles.menuItem, styles.menuItemLast, { borderBottomColor: colors.border }]}
           onPress={() => router.push('/(user)/settings')}

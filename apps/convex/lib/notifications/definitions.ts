@@ -744,6 +744,138 @@ export const followupAssigned: NotificationDefinition<FollowupAssignedData> = {
 };
 
 // ============================================================================
+// Prayer Definitions
+// ============================================================================
+
+interface PrayerPrayedForData {
+  prayerId: string;
+  communityId?: string;
+  communityName?: string;
+}
+
+interface PrayerFollowUpData {
+  prayerId: string;
+  followUpId: string;
+  bodySnippet: string;
+  communityId?: string;
+}
+
+export const prayerPrayedFor: NotificationDefinition<PrayerPrayedForData> = {
+  type: 'prayer.prayed_for',
+  description: 'Sent to a prayer author when another member completes praying for them',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Someone prayed for you',
+      body: ctx.data.communityName
+        ? `Your prayer was just prayed for in ${ctx.data.communityName}.`
+        : 'Your prayer was just prayed for.',
+      data: {
+        type: 'prayer.prayed_for',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        url: '/(user)/my-prayers',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+export const prayerPraiseReport: NotificationDefinition<PrayerFollowUpData> = {
+  type: 'prayer.praise_report',
+  description: 'Sent to everyone who prayed for a request when the author posts a praise report',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Praise report',
+      body: ctx.data.bodySnippet,
+      data: {
+        type: 'prayer.praise_report',
+        prayerId: ctx.data.prayerId,
+        followUpId: ctx.data.followUpId,
+        communityId: ctx.data.communityId,
+        // Routes the recipient (someone who prayed for this request) to
+        // the detail screen where they can read the follow-up.
+        // getDetail re-gates on community membership before returning.
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+export const prayerUpdate: NotificationDefinition<PrayerFollowUpData> = {
+  type: 'prayer.update',
+  description: 'Sent to everyone who prayed for a request when the author posts an update',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer update',
+      body: ctx.data.bodySnippet,
+      data: {
+        type: 'prayer.update',
+        prayerId: ctx.data.prayerId,
+        followUpId: ctx.data.followUpId,
+        communityId: ctx.data.communityId,
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerAdminReviewData {
+  prayerId: string;
+  communityId?: string;
+  snippet: string;
+  category: string;
+}
+
+export const prayerAdminReviewNeeded: NotificationDefinition<PrayerAdminReviewData> = {
+  type: 'prayer.admin_review_needed',
+  description:
+    'Sent to community admins when a prayer is flagged YELLOW and held for human review',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer needs review',
+      body: ctx.data.snippet,
+      data: {
+        type: 'prayer.admin_review_needed',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        category: ctx.data.category,
+        url: '/(user)/admin/prayer-reviews',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerMemberReportedData {
+  prayerId: string;
+  communityId?: string;
+  snippet: string;
+  reason: string;
+}
+
+export const prayerMemberReported: NotificationDefinition<PrayerMemberReportedData> = {
+  type: 'prayer.member_reported',
+  description:
+    'Sent to community admins when a member files a report against a published prayer',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Prayer was reported',
+      body: ctx.data.snippet,
+      data: {
+        type: 'prayer.member_reported',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        reason: ctx.data.reason,
+        url: '/(user)/admin/prayer-reviews',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+// ============================================================================
 // Test Definitions
 // ============================================================================
 

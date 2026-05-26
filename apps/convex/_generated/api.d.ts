@@ -119,6 +119,7 @@ import type * as functions_pcoServices_runSheet from "../functions/pcoServices/r
 import type * as functions_pcoServices_servingHistory from "../functions/pcoServices/servingHistory.js";
 import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
 import type * as functions_posters from "../functions/posters.js";
+import type * as functions_prayers from "../functions/prayers.js";
 import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
@@ -169,6 +170,7 @@ import type * as lib_meetingPermissions from "../lib/meetingPermissions.js";
 import type * as lib_meetingSearchText from "../lib/meetingSearchText.js";
 import type * as lib_memberSearch from "../lib/memberSearch.js";
 import type * as lib_membership from "../lib/membership.js";
+import type * as lib_moderation_prayer from "../lib/moderation/prayer.js";
 import type * as lib_notifications_definitions from "../lib/notifications/definitions.js";
 import type * as lib_notifications_emailTemplates from "../lib/notifications/emailTemplates.js";
 import type * as lib_notifications_enabledCounter from "../lib/notifications/enabledCounter.js";
@@ -310,6 +312,7 @@ declare const fullApi: ApiFromModules<{
   "functions/pcoServices/servingHistory": typeof functions_pcoServices_servingHistory;
   "functions/peopleSavedViews": typeof functions_peopleSavedViews;
   "functions/posters": typeof functions_posters;
+  "functions/prayers": typeof functions_prayers;
   "functions/proposals": typeof functions_proposals;
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
@@ -360,6 +363,7 @@ declare const fullApi: ApiFromModules<{
   "lib/meetingSearchText": typeof lib_meetingSearchText;
   "lib/memberSearch": typeof lib_memberSearch;
   "lib/membership": typeof lib_membership;
+  "lib/moderation/prayer": typeof lib_moderation_prayer;
   "lib/notifications/definitions": typeof lib_notifications_definitions;
   "lib/notifications/emailTemplates": typeof lib_notifications_emailTemplates;
   "lib/notifications/enabledCounter": typeof lib_notifications_enabledCounter;
