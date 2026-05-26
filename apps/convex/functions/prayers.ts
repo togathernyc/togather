@@ -203,7 +203,7 @@ export const feed = query({
  * later if it matters for engagement metrics.
  */
 export const myPrayedThisWeekCount = query({
-  args: { token: v.string() },
+  args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args): Promise<{ today: number; week: number }> => {
     const userId = await requireAuth(ctx, args.token);
 
@@ -216,9 +216,14 @@ export const myPrayedThisWeekCount = query({
     startOfWeek.setUTCDate(startOfWeek.getUTCDate() - startOfWeek.getUTCDay());
     const weekThreshold = startOfWeek.getTime();
 
+    // Scoped by community so a multi-community account doesn't leak
+    // counts across communities (would prematurely fire "You prayed for 3"
+    // in a community where they haven't actually prayed for anyone yet).
     const weekResponses = await ctx.db
       .query("prayerResponses")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", args.communityId),
+      )
       .filter((q) => q.gte(q.field("prayedAt"), weekThreshold))
       .collect();
 
@@ -423,6 +428,7 @@ export const recordPrayerSession = mutation({
     await ctx.db.insert("prayerResponses", {
       prayerId: prayer._id,
       userId,
+      communityId: prayer.communityId,
       prayedAt: ts,
     });
     await ctx.db.patch(prayer._id, {
@@ -449,6 +455,11 @@ export const addFollowUp = mutation({
     const userId = await requireAuth(ctx, args.token);
     const prayer = await ctx.db.get(args.prayerId);
     if (!prayer) throw new ConvexError("prayer_not_found");
+    // Re-enforce feature gating + membership: if the community disabled
+    // prayer or this user is no longer a member, no further follow-ups
+    // (and no more notifyPrayedUsers fan-outs).
+    await assertPrayerEnabled(ctx, prayer.communityId);
+    await assertCommunityMember(ctx, userId, prayer.communityId);
     if (prayer.authorUserId !== userId) {
       throw new ConvexError("not_prayer_author");
     }
@@ -488,6 +499,8 @@ export const markAnswered = mutation({
     const userId = await requireAuth(ctx, args.token);
     const prayer = await ctx.db.get(args.prayerId);
     if (!prayer) throw new ConvexError("prayer_not_found");
+    await assertPrayerEnabled(ctx, prayer.communityId);
+    await assertCommunityMember(ctx, userId, prayer.communityId);
     if (prayer.authorUserId !== userId) {
       throw new ConvexError("not_prayer_author");
     }
@@ -524,6 +537,8 @@ export const archivePrayer = mutation({
     const userId = await requireAuth(ctx, args.token);
     const prayer = await ctx.db.get(args.prayerId);
     if (!prayer) throw new ConvexError("prayer_not_found");
+    await assertPrayerEnabled(ctx, prayer.communityId);
+    await assertCommunityMember(ctx, userId, prayer.communityId);
     if (prayer.authorUserId !== userId) {
       throw new ConvexError("not_prayer_author");
     }

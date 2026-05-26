@@ -2683,11 +2683,17 @@ export default defineSchema({
   prayerResponses: defineTable({
     prayerId: v.id("prayers"),
     userId: v.id("users"),
+    // Denormalized so per-community counts (today/week pill) don't have
+    // to load every prayer doc to check membership. Optional only to
+    // accommodate any pre-migration rows; new inserts always set it.
+    communityId: v.optional(v.id("communities")),
     prayedAt: v.number(),
   })
     .index("by_prayer", ["prayerId"])
     .index("by_user", ["userId"])
-    .index("by_prayer_user", ["prayerId", "userId"]),
+    .index("by_prayer_user", ["prayerId", "userId"])
+    // Powers `myPrayedThisWeekCount` scoped per community.
+    .index("by_user_community", ["userId", "communityId"]),
 
   /**
    * Author-posted follow-ups on a prayer: updates and "praise reports"

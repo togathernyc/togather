@@ -109,7 +109,9 @@ export function PrayerScreen() {
   );
   const counts = useAuthenticatedQuery(
     api.functions.prayers.myPrayedThisWeekCount,
-    community?.id ? {} : 'skip',
+    community?.id
+      ? { communityId: community.id as Id<'communities'> }
+      : 'skip',
   );
   const todayCount = counts?.today ?? 0;
   const weekCount = counts?.week ?? 0;
