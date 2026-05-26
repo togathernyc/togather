@@ -38,6 +38,7 @@ import { PraySession } from './PraySession';
 import { AddPrayerSheet } from './AddPrayerSheet';
 import { CrisisResourceCard } from './CrisisResourceCard';
 import { ReportPrayerSheet } from './ReportPrayerSheet';
+import { PrayedPrayerRail } from './PrayedPrayerRail';
 import type { PrayerCardData } from './PrayerCard';
 
 const SESSION_TARGET = 3;
@@ -340,6 +341,10 @@ export function PrayerScreen() {
       ) : null}
 
       <View style={styles.heroFill}>{hero}</View>
+
+      {community?.id ? (
+        <PrayedPrayerRail communityId={community.id as Id<'communities'>} />
+      ) : null}
 
       <PraySession
         prayer={current ?? null}

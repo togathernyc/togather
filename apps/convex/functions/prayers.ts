@@ -247,6 +247,96 @@ export const myPrayedThisWeekCount = query({
 });
 
 /**
+ * Prayers the caller has prayed for, newest-first. Powers the "Prayers
+ * you've prayed" rail under the prayer feed and the full-history screen.
+ *
+ * Anonymity contract holds — anonymous prayers return `authorDisplayName: null`
+ * and never trigger an author fetch.
+ *
+ * `hasNewUpdate` is true when at least one follow-up was posted AFTER the
+ * caller's most recent pray-session — gives a visual cue that the author
+ * has shared something since they prayed.
+ *
+ * Rejected prayers (admin upheld a report after the caller already prayed)
+ * are filtered out so retroactively-removed content doesn't linger in the
+ * user's history.
+ */
+export const myPrayedFor = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await assertPrayerEnabled(ctx, args.communityId);
+    await assertCommunityMember(ctx, userId, args.communityId);
+
+    const limit = Math.min(args.limit ?? 50, 200);
+
+    // We deliberately scan the by_user index (not by_user_community) and
+    // gate by `prayer.communityId` further down. Two reasons:
+    //   1. `prayerResponses.communityId` is optional for pre-migration rows
+    //      (see schema comment). Indexing on communityId would silently
+    //      drop legacy responses for long-time users.
+    //   2. Paginating the by_user index lets us bound the read cost — a
+    //      single `.collect()` on a heavy user could blow Convex limits.
+    //
+    // Pages come ordered by _creationTime desc, which is ≈ prayedAt desc.
+    // We collect candidates community-by-community until we have `limit`
+    // visible items, then sort by prayedAt for the final ordering.
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 10; // safety cap: 1000 candidates max per call
+    const visible: Array<{ response: Doc<"prayerResponses">; prayer: Doc<"prayers"> }> = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const result = await ctx.db
+        .query("prayerResponses")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .paginate({ numItems: PAGE_SIZE, cursor });
+      for (const r of result.page) {
+        const prayer = await ctx.db.get(r.prayerId);
+        if (!prayer) continue;
+        if (prayer.communityId !== args.communityId) continue;
+        if (prayer.moderationStatus === "rejected") continue;
+        visible.push({ response: r, prayer });
+        if (visible.length >= limit) break;
+      }
+      if (visible.length >= limit || result.isDone) break;
+      cursor = result.continueCursor;
+    }
+    visible.sort((a, b) => b.response.prayedAt - a.response.prayedAt);
+
+    return Promise.all(
+      visible.map(async ({ response: r, prayer }) => {
+        const followUps = await ctx.db
+          .query("prayerFollowUps")
+          .withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id))
+          .collect();
+        const hasNewUpdate = followUps.some((f) => f.createdAt > r.prayedAt);
+
+        const author = prayer.isAnonymous
+          ? null
+          : await ctx.db.get(prayer.authorUserId);
+
+        return {
+          id: prayer._id,
+          bodyText: prayer.bodyText,
+          status: prayer.status,
+          authorDisplayName: prayer.isAnonymous
+            ? null
+            : firstNameLastInitial(author?.firstName, author?.lastName),
+          prayedAt: r.prayedAt,
+          hasNewUpdate,
+          crisisFlag: prayer.crisisFlag === true,
+        };
+      }),
+    );
+  },
+});
+
+/**
  * Caller's own prayers — active, answered, and archived. Includes counts.
  * Returns author-visible fields (author IS the caller here).
  */
