@@ -17,7 +17,9 @@ import { useRouter, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useAuth } from '@providers/AuthProvider';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
+import type { Id } from '@services/api/convex';
 
 function statusBadge(status: string): { label: string; color: string } {
   switch (status) {
@@ -53,7 +55,13 @@ export function MyPrayersScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
-  const prayers = useAuthenticatedQuery(api.functions.prayers.myPrayers, {});
+  const { community } = useAuth();
+  const prayers = useAuthenticatedQuery(
+    api.functions.prayers.myPrayers,
+    community?.id
+      ? { communityId: community.id as Id<'communities'> }
+      : 'skip',
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>

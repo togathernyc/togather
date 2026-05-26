@@ -26,8 +26,13 @@ export function DesktopSideNav() {
   const { colors } = useTheme();
 
   const isAdmin = user?.is_admin === true;
+  const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
   const hasCommunity = !!community?.id;
+  const prayerEnabled = !!community?.churchFeatures?.prayerEnabled;
 
+  // Visibility rules mirror `(tabs)/_layout.tsx` so the desktop rail
+  // matches the bottom tab bar (e.g. Prayer on church communities, Admin
+  // for internal Togather staff even outside a community).
   const items: NavItem[] = [
     {
       key: "groups",
@@ -52,20 +57,32 @@ export function DesktopSideNav() {
             label: "Inbox",
             icon: "chatbubbles-outline" as keyof typeof Ionicons.glyphMap,
             iconFocused: "chatbubbles" as keyof typeof Ionicons.glyphMap,
-            href: "/inbox/",
+            href: "/inbox/" as Href,
             match: (p: string) =>
               p.startsWith("/inbox") || p.startsWith("/chat"),
           },
         ]
       : []),
-    ...(isAdmin && hasCommunity
+    ...(hasCommunity && prayerEnabled
+      ? [
+          {
+            key: "prayer",
+            label: "Prayer",
+            icon: "heart-outline" as keyof typeof Ionicons.glyphMap,
+            iconFocused: "heart" as keyof typeof Ionicons.glyphMap,
+            href: "/(tabs)/prayer" as Href,
+            match: (p: string) => p.startsWith("/prayer"),
+          },
+        ]
+      : []),
+    ...((isAdmin && hasCommunity) || isInternalUser
       ? [
           {
             key: "admin",
             label: "Admin",
             icon: "shield-checkmark-outline" as keyof typeof Ionicons.glyphMap,
             iconFocused: "shield-checkmark" as keyof typeof Ionicons.glyphMap,
-            href: "/(tabs)/admin",
+            href: "/(tabs)/admin" as Href,
             match: (p: string) => p.startsWith("/admin"),
           },
         ]

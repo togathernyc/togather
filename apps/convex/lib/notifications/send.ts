@@ -337,6 +337,17 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
     notifications,
   });
 
+  // Expo returns 200 OK with per-ticket errors when individual tokens are
+  // bad/expired. `result.success` is the HTTP-level flag, so we also have
+  // to inspect per-ticket outcomes — otherwise rows get marked "sent"
+  // for pushes Expo actually rejected, making post-hoc debugging
+  // ("did the push even reach Expo?") impossible.
+  const anyTicketOk = result.tickets?.some((t) => t.ok) ?? result.success;
+  const ticketErrors = (result.tickets ?? [])
+    .filter((t) => !t.ok)
+    .map((t) => t.error || "ticket error");
+  const sendOk = result.success && anyTicketOk;
+
   // Create notification record
   await ctx.runMutation(internal.functions.notifications.mutations.createNotification, {
     userId,
@@ -350,15 +361,16 @@ async function sendPushChannel<TData extends Record<string, unknown>>(
       ...(senderAvatarFromPayload ? { senderAvatarUrl: senderAvatarFromPayload } : {}),
       ...(groupNotificationImageUrl ? { groupAvatarUrl: groupNotificationImageUrl } : {}),
     },
-    status: result.success ? "sent" : "failed",
+    status: sendOk ? "sent" : "failed",
     trackingId,
   });
 
-  if (result.success) {
+  if (sendOk) {
     return { success: true };
   }
 
-  const errorMessage = result.errors?.join("; ") || "Push send failed";
+  const errorMessage =
+    [...(result.errors ?? []), ...ticketErrors].join("; ") || "Push send failed";
   return { success: false, error: errorMessage };
 }
 

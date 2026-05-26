@@ -129,6 +129,12 @@ function publicPrayerFrom(
  * Up to `FEED_LIMIT` active+approved prayers, sorted by fewest pray-count
  * first then oldest. Excludes prayers the caller has already prayed for or
  * authored. Author identity is never returned.
+ *
+ * Returns an empty array (instead of throwing) when the community has
+ * the prayer feature disabled or the caller isn't a member. The Prayer
+ * tab is independently gated by the same flag in `(tabs)/_layout.tsx`;
+ * throwing here was hitting Sentry on the race between community switch
+ * and the reactive query — UI gating is enough for reads.
  */
 export const feed = query({
   args: {
@@ -137,8 +143,16 @@ export const feed = query({
   },
   handler: async (ctx, args): Promise<PublicPrayer[]> => {
     const userId = await requireAuth(ctx, args.token);
-    await assertPrayerEnabled(ctx, args.communityId);
-    await assertCommunityMember(ctx, userId, args.communityId);
+    const community = await ctx.db.get(args.communityId);
+    if (!community?.churchFeatures?.prayerEnabled) return [];
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", args.communityId),
+      )
+      .filter((q) => q.eq(q.field("status"), 1))
+      .first();
+    if (!membership) return [];
 
     const myResponses = await ctx.db
       .query("prayerResponses")
@@ -247,17 +261,21 @@ export const myPrayedThisWeekCount = query({
 });
 
 /**
- * Caller's own prayers — active, answered, and archived. Includes counts.
- * Returns author-visible fields (author IS the caller here).
+ * Caller's own prayers in a given community — active, answered, and
+ * archived. Includes counts. Returns author-visible fields (author IS
+ * the caller here). Scoped to one community so a multi-community
+ * account doesn't see prayers from a community they've since left or
+ * switched away from.
  */
 export const myPrayers = query({
-  args: { token: v.string() },
+  args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
     const prayers = await ctx.db
       .query("prayers")
       .withIndex("by_author", (q) => q.eq("authorUserId", userId))
+      .filter((q) => q.eq(q.field("communityId"), args.communityId))
       .collect();
 
     prayers.sort((a, b) => b.createdAt - a.createdAt);
