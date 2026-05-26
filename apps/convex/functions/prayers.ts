@@ -281,17 +281,26 @@ export const myPrayedFor = query({
     responses.sort((a, b) => b.prayedAt - a.prayedAt);
 
     const limit = Math.min(args.limit ?? 50, 200);
-    const sliced = responses.slice(0, limit);
 
-    const rows = await Promise.all(
-      sliced.map(async (r) => {
-        const prayer = await ctx.db.get(r.prayerId);
-        if (!prayer) return null;
-        if (prayer.moderationStatus === "rejected") return null;
+    // Filter visible prayers FIRST, then take `limit`. Slicing before
+    // filtering would under-fill the result whenever a user's most-recent
+    // responses point at missing or admin-rejected prayers — older eligible
+    // entries should backfill into the window. Walk responses in order so we
+    // can stop once we have enough visible items.
+    const visible: Array<{ response: Doc<"prayerResponses">; prayer: Doc<"prayers"> }> = [];
+    for (const r of responses) {
+      if (visible.length >= limit) break;
+      const prayer = await ctx.db.get(r.prayerId);
+      if (!prayer) continue;
+      if (prayer.moderationStatus === "rejected") continue;
+      visible.push({ response: r, prayer });
+    }
 
+    return Promise.all(
+      visible.map(async ({ response: r, prayer }) => {
         const followUps = await ctx.db
           .query("prayerFollowUps")
-          .withIndex("by_prayer", (q) => q.eq("prayerId", r.prayerId))
+          .withIndex("by_prayer", (q) => q.eq("prayerId", prayer._id))
           .collect();
         const hasNewUpdate = followUps.some((f) => f.createdAt > r.prayedAt);
 
@@ -311,9 +320,6 @@ export const myPrayedFor = query({
           crisisFlag: prayer.crisisFlag === true,
         };
       }),
-    );
-    return rows.filter(
-      (x): x is NonNullable<typeof x> => x !== null,
     );
   },
 });
