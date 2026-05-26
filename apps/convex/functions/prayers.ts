@@ -272,29 +272,41 @@ export const myPrayedFor = query({
     await assertPrayerEnabled(ctx, args.communityId);
     await assertCommunityMember(ctx, userId, args.communityId);
 
-    const responses = await ctx.db
-      .query("prayerResponses")
-      .withIndex("by_user_community", (q) =>
-        q.eq("userId", userId).eq("communityId", args.communityId),
-      )
-      .collect();
-    responses.sort((a, b) => b.prayedAt - a.prayedAt);
-
     const limit = Math.min(args.limit ?? 50, 200);
 
-    // Filter visible prayers FIRST, then take `limit`. Slicing before
-    // filtering would under-fill the result whenever a user's most-recent
-    // responses point at missing or admin-rejected prayers — older eligible
-    // entries should backfill into the window. Walk responses in order so we
-    // can stop once we have enough visible items.
+    // We deliberately scan the by_user index (not by_user_community) and
+    // gate by `prayer.communityId` further down. Two reasons:
+    //   1. `prayerResponses.communityId` is optional for pre-migration rows
+    //      (see schema comment). Indexing on communityId would silently
+    //      drop legacy responses for long-time users.
+    //   2. Paginating the by_user index lets us bound the read cost — a
+    //      single `.collect()` on a heavy user could blow Convex limits.
+    //
+    // Pages come ordered by _creationTime desc, which is ≈ prayedAt desc.
+    // We collect candidates community-by-community until we have `limit`
+    // visible items, then sort by prayedAt for the final ordering.
+    const PAGE_SIZE = 100;
+    const MAX_PAGES = 10; // safety cap: 1000 candidates max per call
     const visible: Array<{ response: Doc<"prayerResponses">; prayer: Doc<"prayers"> }> = [];
-    for (const r of responses) {
-      if (visible.length >= limit) break;
-      const prayer = await ctx.db.get(r.prayerId);
-      if (!prayer) continue;
-      if (prayer.moderationStatus === "rejected") continue;
-      visible.push({ response: r, prayer });
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const result = await ctx.db
+        .query("prayerResponses")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .paginate({ numItems: PAGE_SIZE, cursor });
+      for (const r of result.page) {
+        const prayer = await ctx.db.get(r.prayerId);
+        if (!prayer) continue;
+        if (prayer.communityId !== args.communityId) continue;
+        if (prayer.moderationStatus === "rejected") continue;
+        visible.push({ response: r, prayer });
+        if (visible.length >= limit) break;
+      }
+      if (visible.length >= limit || result.isDone) break;
+      cursor = result.continueCursor;
     }
+    visible.sort((a, b) => b.response.prayedAt - a.response.prayedAt);
 
     return Promise.all(
       visible.map(async ({ response: r, prayer }) => {
