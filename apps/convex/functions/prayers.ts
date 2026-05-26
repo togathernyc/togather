@@ -247,6 +247,78 @@ export const myPrayedThisWeekCount = query({
 });
 
 /**
+ * Prayers the caller has prayed for, newest-first. Powers the "Prayers
+ * you've prayed" rail under the prayer feed and the full-history screen.
+ *
+ * Anonymity contract holds — anonymous prayers return `authorDisplayName: null`
+ * and never trigger an author fetch.
+ *
+ * `hasNewUpdate` is true when at least one follow-up was posted AFTER the
+ * caller's most recent pray-session — gives a visual cue that the author
+ * has shared something since they prayed.
+ *
+ * Rejected prayers (admin upheld a report after the caller already prayed)
+ * are filtered out so retroactively-removed content doesn't linger in the
+ * user's history.
+ */
+export const myPrayedFor = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await assertPrayerEnabled(ctx, args.communityId);
+    await assertCommunityMember(ctx, userId, args.communityId);
+
+    const responses = await ctx.db
+      .query("prayerResponses")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", args.communityId),
+      )
+      .collect();
+    responses.sort((a, b) => b.prayedAt - a.prayedAt);
+
+    const limit = Math.min(args.limit ?? 50, 200);
+    const sliced = responses.slice(0, limit);
+
+    const rows = await Promise.all(
+      sliced.map(async (r) => {
+        const prayer = await ctx.db.get(r.prayerId);
+        if (!prayer) return null;
+        if (prayer.moderationStatus === "rejected") return null;
+
+        const followUps = await ctx.db
+          .query("prayerFollowUps")
+          .withIndex("by_prayer", (q) => q.eq("prayerId", r.prayerId))
+          .collect();
+        const hasNewUpdate = followUps.some((f) => f.createdAt > r.prayedAt);
+
+        const author = prayer.isAnonymous
+          ? null
+          : await ctx.db.get(prayer.authorUserId);
+
+        return {
+          id: prayer._id,
+          bodyText: prayer.bodyText,
+          status: prayer.status,
+          authorDisplayName: prayer.isAnonymous
+            ? null
+            : firstNameLastInitial(author?.firstName, author?.lastName),
+          prayedAt: r.prayedAt,
+          hasNewUpdate,
+          crisisFlag: prayer.crisisFlag === true,
+        };
+      }),
+    );
+    return rows.filter(
+      (x): x is NonNullable<typeof x> => x !== null,
+    );
+  },
+});
+
+/**
  * Caller's own prayers — active, answered, and archived. Includes counts.
  * Returns author-visible fields (author IS the caller here).
  */
