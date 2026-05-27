@@ -18,21 +18,26 @@
  * for. See `apps/convex/functions/prayers.ts:feed`.
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
-import { useAuthenticatedQuery, api } from '@services/api/convex';
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { PraySession } from './PraySession';
 import { AddPrayerSheet } from './AddPrayerSheet';
@@ -93,9 +98,22 @@ export function PrayerScreen() {
   const { community } = useAuth();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // `openAdd=1` is set by the `prayer.monday_nudge` deep link — one-tap from
+  // the notification straight into the AddPrayerSheet. We guard with a ref-
+  // style flag to ensure we only auto-open on first mount of this query
+  // param, not every time the user dismisses and the param lingers.
+  const params = useLocalSearchParams<{ openAdd?: string }>();
   const [praySessionOpen, setPraySessionOpen] = useState(false);
-  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isAddOpen, setIsAddOpen] = useState(params.openAdd === '1');
   const [reportOpen, setReportOpen] = useState(false);
+  const [autoOpenedAdd, setAutoOpenedAdd] = useState(false);
+
+  useEffect(() => {
+    if (params.openAdd === '1' && !autoOpenedAdd) {
+      setIsAddOpen(true);
+      setAutoOpenedAdd(true);
+    }
+  }, [params.openAdd, autoOpenedAdd]);
   // Whether the user has dismissed today's "you prayed for 3" celebration.
   // Local + session-scoped: a fresh app open *does* re-show the celebration
   // if they cross 3 again, but tapping "Pray for more" hides it for the rest
@@ -114,6 +132,47 @@ export function PrayerScreen() {
       ? { communityId: community.id as Id<'communities'> }
       : 'skip',
   );
+  const prayerNotifPrefs = useAuthenticatedQuery(
+    api.functions.prayers.notifications.getPrayerNotificationPreferences,
+    community?.id
+      ? { communityId: community.id as Id<'communities'> }
+      : 'skip',
+  );
+  const setMasterPrayerNotifications = useAuthenticatedMutation(
+    api.functions.prayers.notifications.setMasterPrayerNotifications,
+  );
+  const notifsMasterEnabled = prayerNotifPrefs?.masterEnabled ?? true;
+
+  const handleToggleNotifications = useCallback(() => {
+    if (!community?.id) return;
+    if (notifsMasterEnabled) {
+      // Turning OFF — confirm because this silences everything (the user
+      // won't be reminded to pray or notified when someone prays for them).
+      Alert.alert(
+        'Turn off prayer notifications?',
+        "You won't be reminded to pray or notified when someone prays for you. You can turn this back on anytime.",
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Turn off',
+            style: 'destructive',
+            onPress: () => {
+              void setMasterPrayerNotifications({
+                communityId: community.id as Id<'communities'>,
+                enabled: false,
+              });
+            },
+          },
+        ],
+      );
+    } else {
+      // Turning ON — no confirmation needed, it's the safe direction.
+      void setMasterPrayerNotifications({
+        communityId: community.id as Id<'communities'>,
+        enabled: true,
+      });
+    }
+  }, [community?.id, notifsMasterEnabled, setMasterPrayerNotifications]);
   const todayCount = counts?.today ?? 0;
   const weekCount = counts?.week ?? 0;
 
@@ -299,6 +358,23 @@ export function PrayerScreen() {
       <View style={styles.topBar}>
         <Text style={[styles.heading, { color: colors.text }]}>Pray for your community</Text>
         <View style={styles.topRightRow}>
+          <TouchableOpacity
+            style={styles.topAction}
+            onPress={handleToggleNotifications}
+            hitSlop={8}
+            accessibilityLabel={
+              notifsMasterEnabled
+                ? 'Turn off prayer notifications'
+                : 'Turn on prayer notifications'
+            }
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name={notifsMasterEnabled ? 'notifications-outline' : 'notifications-off-outline'}
+              size={22}
+              color={notifsMasterEnabled ? primaryColor : colors.iconSecondary}
+            />
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.topAction}
             onPress={() => setIsAddOpen(true)}

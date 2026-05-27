@@ -848,6 +848,92 @@ export const prayerAdminReviewNeeded: NotificationDefinition<PrayerAdminReviewDa
   defaultChannels: ['push'],
 };
 
+interface PrayerDailyDigestData {
+  communityId: string;
+  communityName?: string;
+  count: number;
+}
+
+export const prayerDailyDigest: NotificationDefinition<PrayerDailyDigestData> = {
+  type: 'prayer.daily_digest',
+  description:
+    'Sent once per day summarizing how many new prayer requests landed in the community',
+  formatters: {
+    push: (ctx) => {
+      const { count, communityName } = ctx.data;
+      const where = communityName ? ` in ${communityName}` : '';
+      const title =
+        count === 1
+          ? `1 new prayer request${where}`
+          : `${count} new prayer requests${where}`;
+      return {
+        title,
+        body:
+          count === 1
+            ? 'Take a few minutes to pray for someone in your community.'
+            : 'Take a few minutes to lift them up.',
+        data: {
+          type: 'prayer.daily_digest',
+          communityId: ctx.data.communityId,
+          url: '/(tabs)/prayer',
+        },
+      };
+    },
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerMondayNudgeData {
+  communityId: string;
+  communityName?: string;
+}
+
+export const prayerMondayNudge: NotificationDefinition<PrayerMondayNudgeData> = {
+  type: 'prayer.monday_nudge',
+  description:
+    "Monday-morning nudge inviting users who don't have an active prayer request to share one",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Is there something on your heart?',
+      body: ctx.data.communityName
+        ? `Your community in ${ctx.data.communityName} would love to pray for you this week.`
+        : 'Your community would love to pray for you this week.',
+      data: {
+        type: 'prayer.monday_nudge',
+        communityId: ctx.data.communityId,
+        // The PrayerScreen reads this query param on mount and auto-opens
+        // the AddPrayerSheet — one-tap from notification to the compose UI.
+        url: '/(tabs)/prayer?openAdd=1',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+interface PrayerUpdateNudgeData {
+  prayerId: string;
+  communityId: string;
+}
+
+export const prayerUpdateNudge: NotificationDefinition<PrayerUpdateNudgeData> = {
+  type: 'prayer.update_nudge',
+  description:
+    "Sent to the author of an active prayer ~14 days after posting, encouraging an update or praise report",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Any update on your prayer?',
+      body: "If God's been working, share a praise report — it encourages everyone who prayed.",
+      data: {
+        type: 'prayer.update_nudge',
+        prayerId: ctx.data.prayerId,
+        communityId: ctx.data.communityId,
+        url: `/(user)/my-prayers/${ctx.data.prayerId}`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
 interface PrayerMemberReportedData {
   prayerId: string;
   communityId?: string;

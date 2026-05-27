@@ -2745,4 +2745,62 @@ export default defineSchema({
     .index("by_community_status", ["communityId", "status"])
     // Uniqueness check inside reportPrayer.
     .index("by_prayer_reporter", ["prayerId", "reporterUserId"]),
+
+  // =============================================================================
+  // PRAYER NOTIFICATION PREFERENCES + CRON STATE
+  // =============================================================================
+
+  /**
+   * Per-(user, community) prayer notification preferences.
+   *
+   * `masterEnabled: false` short-circuits every prayer notification path for
+   * this user — it's the bell-off toggle surfaced on the prayer page.
+   *
+   * Per-type fields are optional; `undefined` means "use the type's default"
+   * (every prayer type defaults to ON in v1). Reading code applies the
+   * default — we never write defaults eagerly so flipping the global
+   * default later doesn't require a backfill.
+   */
+  userPrayerNotificationPreferences: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    masterEnabled: v.boolean(),
+    prayedFor: v.optional(v.boolean()),
+    update: v.optional(v.boolean()),
+    praiseReport: v.optional(v.boolean()),
+    dailyDigest: v.optional(v.boolean()),
+    mondayNudge: v.optional(v.boolean()),
+    updateNudge: v.optional(v.boolean()),
+    updatedAt: v.number(),
+  }).index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * Per-(user, community) cron scheduling state for prayer notifications.
+   * Separated from the prefs table because it's high-write — keeping it on
+   * the prefs row would churn its `_creationTime` and invalidate any cache
+   * on every cron send.
+   *
+   * Dedup keys:
+   *   - dailyDigestLastSentDateKey: UTC YYYY-MM-DD of last digest sent
+   *   - mondayNudgeLastSentWeekKey: ISO year+week of last Monday nudge sent
+   */
+  userPrayerNotificationState: defineTable({
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    dailyDigestLastSentDateKey: v.optional(v.string()),
+    dailyDigestLastSentAt: v.optional(v.number()),
+    mondayNudgeLastSentWeekKey: v.optional(v.string()),
+    mondayNudgeLastSentAt: v.optional(v.number()),
+  }).index("by_user_community", ["userId", "communityId"]),
+
+  /**
+   * Per-prayer one-shot tracking for notification events that fire at most
+   * once per prayer (e.g. T+14d update nudge). Insertion is the "lock" —
+   * the cron looks up `by_prayer_type` before sending and inserts on send.
+   */
+  prayerNotificationEvents: defineTable({
+    prayerId: v.id("prayers"),
+    type: v.string(),
+    sentAt: v.number(),
+  }).index("by_prayer_type", ["prayerId", "type"]),
 });
