@@ -735,6 +735,7 @@ export const _applyModerationResult = internalMutation({
         : args.severity === "yellow"
           ? "pending_review"
           : "rejected";
+    const ts = now();
     await ctx.db.patch(args.prayerId, {
       moderationStatus: status,
       crisisFlag: args.crisis,
@@ -743,7 +744,10 @@ export const _applyModerationResult = internalMutation({
         category: args.category,
         note: args.note,
       },
-      updatedAt: now(),
+      // Stamped on first transition to approved so the digest cron can
+      // count "new since last digest" by publish time.
+      ...(status === "approved" ? { approvedAt: ts } : {}),
+      updatedAt: ts,
     });
 
     if (status === "pending_review") {
@@ -790,6 +794,15 @@ export const notifyAuthor = internalAction({
       { prayerId: args.prayerId },
     );
     if (!data) return;
+    const allowed = await ctx.runQuery(
+      internal.functions.prayers.notifications._shouldSendPrayerNotification,
+      {
+        userId: data.prayer.authorUserId,
+        communityId: data.prayer.communityId,
+        notificationType: "prayer.prayed_for",
+      },
+    );
+    if (!allowed) return;
     await notify(ctx, {
       type: "prayer.prayed_for",
       userId: data.prayer.authorUserId,
@@ -831,9 +844,27 @@ export const notifyPrayedUsers = internalAction({
     const notificationType =
       followUp.kind === "praise_report" ? "prayer.praise_report" : "prayer.update";
 
+    // Filter through the per-user prefs gate before fanning out. A user who
+    // muted prayer notifications (master toggle off) or turned off this
+    // specific type should never see the push, even though they once prayed
+    // for this prayer.
+    const allowedRecipients: Id<"users">[] = [];
+    for (const userId of responderIds) {
+      const allowed = await ctx.runQuery(
+        internal.functions.prayers.notifications._shouldSendPrayerNotification,
+        {
+          userId,
+          communityId: data.prayer.communityId,
+          notificationType,
+        },
+      );
+      if (allowed) allowedRecipients.push(userId);
+    }
+    if (allowedRecipients.length === 0) return;
+
     await notifyBatch(ctx, {
       type: notificationType,
-      userIds: responderIds,
+      userIds: allowedRecipients,
       communityId: data.prayer.communityId,
       data: {
         prayerId: String(args.prayerId),
@@ -924,9 +955,11 @@ export const approvePending = mutation({
     if (prayer.moderationStatus !== "pending_review") {
       throw new ConvexError("prayer_not_pending");
     }
+    const ts = now();
     await ctx.db.patch(args.prayerId, {
       moderationStatus: "approved",
-      updatedAt: now(),
+      approvedAt: ts,
+      updatedAt: ts,
     });
     return { ok: true };
   },

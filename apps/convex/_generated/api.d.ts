@@ -120,6 +120,7 @@ import type * as functions_pcoServices_servingHistory from "../functions/pcoServ
 import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
 import type * as functions_posters from "../functions/posters.js";
 import type * as functions_prayers from "../functions/prayers.js";
+import type * as functions_prayers_notifications from "../functions/prayers/notifications.js";
 import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
@@ -313,6 +314,7 @@ declare const fullApi: ApiFromModules<{
   "functions/peopleSavedViews": typeof functions_peopleSavedViews;
   "functions/posters": typeof functions_posters;
   "functions/prayers": typeof functions_prayers;
+  "functions/prayers/notifications": typeof functions_prayers_notifications;
   "functions/proposals": typeof functions_proposals;
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;

@@ -235,4 +235,46 @@ crons.daily(
   {}
 );
 
+// =============================================================================
+// PRAYER DAILY DIGEST
+// =============================================================================
+// Runs daily at 14:00 UTC (9am ET / 6am PT). For each prayer-enabled
+// community, sends one push to eligible members summarizing how many new
+// approved prayers landed in the last 24 hours.
+
+crons.daily(
+  "prayer-daily-digest",
+  { hourUTC: 14, minuteUTC: 0 },
+  internal.functions.prayers.notifications.cronDailyDigest,
+  {}
+);
+
+// =============================================================================
+// PRAYER MONDAY NUDGE
+// =============================================================================
+// Runs daily at 14:15 UTC; the handler bails when the UTC weekday isn't
+// Monday. Sent to community members who don't currently have an active
+// prayer, nudging them to share a request to start the week.
+
+crons.daily(
+  "prayer-monday-nudge",
+  { hourUTC: 14, minuteUTC: 15 },
+  internal.functions.prayers.notifications.cronMondayNudge,
+  {}
+);
+
+// =============================================================================
+// PRAYER UPDATE NUDGE
+// =============================================================================
+// Runs daily at 14:30 UTC. Sends a single push to authors of prayers that
+// are still `status: "active"` ~14 days after creation, asking for an
+// update or praise report. One-shot per prayer.
+
+crons.daily(
+  "prayer-update-nudge",
+  { hourUTC: 14, minuteUTC: 30 },
+  internal.functions.prayers.notifications.cronUpdateNudge,
+  {}
+);
+
 export default crons;
