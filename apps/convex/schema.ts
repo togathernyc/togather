@@ -2658,6 +2658,13 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     archivedAt: v.optional(v.number()),
+    // When the prayer's moderationStatus most recently flipped to "approved".
+    // Used by the daily-digest cron to count "new since last digest" by
+    // publish time rather than creation time — a prayer held in
+    // pending_review across a digest boundary still surfaces to members
+    // once an admin approves it. Falls back to createdAt for any pre-
+    // migration row that has no approvedAt yet.
+    approvedAt: v.optional(v.number()),
   })
     .index("by_community", ["communityId"])
     .index("by_author", ["authorUserId"])

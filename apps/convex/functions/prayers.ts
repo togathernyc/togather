@@ -735,6 +735,7 @@ export const _applyModerationResult = internalMutation({
         : args.severity === "yellow"
           ? "pending_review"
           : "rejected";
+    const ts = now();
     await ctx.db.patch(args.prayerId, {
       moderationStatus: status,
       crisisFlag: args.crisis,
@@ -743,7 +744,10 @@ export const _applyModerationResult = internalMutation({
         category: args.category,
         note: args.note,
       },
-      updatedAt: now(),
+      // Stamped on first transition to approved so the digest cron can
+      // count "new since last digest" by publish time.
+      ...(status === "approved" ? { approvedAt: ts } : {}),
+      updatedAt: ts,
     });
 
     if (status === "pending_review") {
@@ -951,9 +955,11 @@ export const approvePending = mutation({
     if (prayer.moderationStatus !== "pending_review") {
       throw new ConvexError("prayer_not_pending");
     }
+    const ts = now();
     await ctx.db.patch(args.prayerId, {
       moderationStatus: "approved",
-      updatedAt: now(),
+      approvedAt: ts,
+      updatedAt: ts,
     });
     return { ok: true };
   },

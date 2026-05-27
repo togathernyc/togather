@@ -274,18 +274,22 @@ export const _getCommunityMemberIds = internalQuery({
 });
 
 /**
- * Returns the createdAt timestamps of all currently active+approved prayers
- * in a community. Loaded once per community, then filtered per user in the
- * cron based on each user's `dailyDigestLastSentAt`.
+ * Returns the active+approved prayers in a community, with the effective
+ * "published-at" timestamp (`approvedAt`, falling back to `createdAt` for
+ * pre-migration rows). Per-user filtering happens in the cron.
  *
- * Including the full set (not capped to "last 24h") lets first-time
- * recipients get a digest that reflects ALL prayers in their community,
- * not just yesterday's. After the first send, each user's per-user cutoff
- * naturally narrows the window to "since I was last digested".
+ * Returning author id + prayer id lets the cron exclude per-recipient:
+ *   - prayers the recipient authored (they can't pray for themselves)
+ *   - prayers the recipient has already prayed for
+ * — so the digest count matches what the recipient would actually see in
+ * their feed when they tap the push.
  */
-export const _getApprovedPrayerTimestamps = internalQuery({
+export const _getApprovedPrayers = internalQuery({
   args: { communityId: v.id("communities") },
-  handler: async (ctx, args): Promise<number[]> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Array<{ id: Id<"prayers">; authorUserId: Id<"users">; effectiveTime: number }>> => {
     const rows = await ctx.db
       .query("prayers")
       .withIndex("by_community_status_modStatus_count", (q) =>
@@ -295,7 +299,32 @@ export const _getApprovedPrayerTimestamps = internalQuery({
           .eq("moderationStatus", "approved"),
       )
       .collect();
-    return rows.map((p) => p.createdAt);
+    return rows.map((p) => ({
+      id: p._id,
+      authorUserId: p.authorUserId,
+      effectiveTime: p.approvedAt ?? p.createdAt,
+    }));
+  },
+});
+
+/**
+ * IDs of the prayers this user has already prayed for in a given community,
+ * used by the daily-digest cron to subtract them from the new-prayer count.
+ */
+export const _getUserPrayedForIds = internalQuery({
+  args: { userId: v.id("users"), communityId: v.id("communities") },
+  handler: async (ctx, args): Promise<Id<"prayers">[]> => {
+    // Use the per-user index; filter by community in memory. The
+    // `by_user_community` index exists but communityId is optional on
+    // pre-migration responses, so scanning by_user is the safer bet
+    // (matches the same approach used by `myPrayedFor`).
+    const responses = await ctx.db
+      .query("prayerResponses")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    return responses
+      .filter((r) => r.communityId === args.communityId)
+      .map((r) => r.prayerId);
   },
 });
 
@@ -306,8 +335,15 @@ export const _userHasActivePrayer = internalQuery({
       .query("prayers")
       .withIndex("by_author", (q) => q.eq("authorUserId", args.userId))
       .collect();
+    // Rejected prayers keep `status: "active"` (only moderationStatus
+    // changes), so without the moderation filter a user whose only
+    // submission was rejected would never get the Monday nudge until the
+    // 30-day archive cron rotated the prayer out.
     return mine.some(
-      (p) => p.communityId === args.communityId && p.status === "active",
+      (p) =>
+        p.communityId === args.communityId &&
+        p.status === "active" &&
+        p.moderationStatus !== "rejected",
     );
   },
 });
@@ -389,15 +425,18 @@ export const _markMondayNudgeSent = internalMutation({
  * pushes one notification per eligible member summarizing how many new
  * approved prayers have landed since the user's last digest.
  *
- * The cutoff is per-user: `state.dailyDigestLastSentAt`. First-time
- * recipients (no state row yet) get a digest covering every approved prayer
- * in the community — the count reflects everything they could pray for
- * right now, not just the last 24h. After that, the cutoff naturally
- * narrows to ~24h since the cron runs daily.
+ * Per-user filtering keeps the count honest: we subtract prayers the
+ * recipient authored (they can't pray for themselves) and ones they've
+ * already prayed for, so tapping the push lands on a feed that actually
+ * has that many prayers in it.
  *
- * Eligibility: master enabled, dailyDigest toggle on (default ON), and
- * today's digest hasn't already been sent (defensive — guards against the
- * cron being invoked twice).
+ * "New since" uses each prayer's `approvedAt` timestamp, not `createdAt` —
+ * a prayer held in `pending_review` across a digest boundary surfaces to
+ * members on the digest immediately after the admin approves it.
+ *
+ * First-time recipients (no state row yet) have `since = 0`, so their
+ * digest reflects every approved prayer in the community right now, not
+ * just the last 24h. After that the cutoff naturally narrows.
  */
 export const cronDailyDigest = internalAction({
   args: {},
@@ -411,11 +450,11 @@ export const cronDailyDigest = internalAction({
     );
 
     for (const community of communities) {
-      const timestamps = await ctx.runQuery(
-        internal.functions.prayers.notifications._getApprovedPrayerTimestamps,
+      const prayers = await ctx.runQuery(
+        internal.functions.prayers.notifications._getApprovedPrayers,
         { communityId: community.id },
       );
-      if (timestamps.length === 0) continue;
+      if (prayers.length === 0) continue;
 
       const memberIds = await ctx.runQuery(
         internal.functions.prayers.notifications._getCommunityMemberIds,
@@ -439,11 +478,19 @@ export const cronDailyDigest = internalAction({
         );
         if (state?.dailyDigestLastSentDateKey === dateKey) continue;
 
-        // First-ever digest for this user → since = 0 means "include
-        // every approved prayer in the community". Subsequent digests
-        // count only what's been posted since their last send.
         const since = state?.dailyDigestLastSentAt ?? 0;
-        const count = timestamps.filter((t) => t >= since).length;
+        const prayedForIds = await ctx.runQuery(
+          internal.functions.prayers.notifications._getUserPrayedForIds,
+          { userId, communityId: community.id },
+        );
+        const prayedForSet = new Set(prayedForIds.map((id) => String(id)));
+
+        const count = prayers.filter(
+          (p) =>
+            p.effectiveTime >= since &&
+            p.authorUserId !== userId &&
+            !prayedForSet.has(String(p.id)),
+        ).length;
         if (count === 0) continue;
 
         await notify(ctx, {
