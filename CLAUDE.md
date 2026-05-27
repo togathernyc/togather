@@ -127,6 +127,7 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - **Always create a PR** - Even for small changes
 - PRs require passing CI and **all conversations resolved** before merge
 - The workflow is: `feature branch` -> PR -> `main`
+- **Code review is by @codex** — after opening a PR, post a `@codex please review` comment to trigger the review. The review doesn't run automatically.
 
 ## Code Philosophy
 
