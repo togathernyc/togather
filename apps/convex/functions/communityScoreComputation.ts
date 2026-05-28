@@ -204,7 +204,9 @@ export const computeCommunityScoresBatch = internalQuery({
 
     const results = await Promise.all(
       args.members.map(async (member) => {
-        // Fetch followups for this member in the announcement group
+        // Fetch followups for this member in the announcement group.
+        // The top-20 window is used only for snooze/note state, both of which
+        // are always written at `now` — so back-dating doesn't affect them.
         const followups = await ctx.db
           .query("memberFollowups")
           .withIndex("by_groupMember_createdAt", (q) =>
@@ -213,16 +215,33 @@ export const computeCommunityScoresBatch = internalQuery({
           .order("desc")
           .take(20);
 
-        // Compute days since each followup type
-        const lastFollowup = followups.find(
-          (f) =>
-            f.type === "followed_up" ||
-            f.type === "call" ||
-            f.type === "text"
+        // Contact-type recency must query per-type so a back-dated Log Past
+        // contact (createdAt set to its occurrence time) is still picked up
+        // even if there are 20+ newer rows of other types in between.
+        const latestByType = (type: string) =>
+          ctx.db
+            .query("memberFollowups")
+            .withIndex("by_groupMember_createdAt", (q) =>
+              q.eq("groupMemberId", member.groupMemberId)
+            )
+            .order("desc")
+            .filter((q) => q.eq(q.field("type"), type))
+            .first();
+
+        const [lastInPerson, lastCall, lastText] = await Promise.all([
+          latestByType("followed_up"),
+          latestByType("call"),
+          latestByType("text"),
+        ]);
+        const contactCandidates = [lastInPerson, lastCall, lastText].filter(
+          (f): f is NonNullable<typeof f> => f != null,
         );
-        const lastInPerson = followups.find((f) => f.type === "followed_up");
-        const lastCall = followups.find((f) => f.type === "call");
-        const lastText = followups.find((f) => f.type === "text");
+        const lastFollowup =
+          contactCandidates.length > 0
+            ? contactCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              )
+            : undefined;
 
         const daysSince = (entry: { createdAt: number } | undefined): number =>
           entry
