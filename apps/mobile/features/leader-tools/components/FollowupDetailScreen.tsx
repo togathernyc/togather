@@ -862,33 +862,40 @@ export function FollowupDetailContent({
               onPress={handleMarkFollowedUp}
               disabled={addFollowupMutation.isPending}
             >
-              <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-              <Text style={[styles.quickActionText, { color: colors.text }]}>Done</Text>
+              <Ionicons name="hand-left" size={24} color={colors.success} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>In-person</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.quickAction}
-              onPress={() => setShowSnoozeModal(true)}
+              onPress={() => {
+                setLogPastType("followed_up");
+                setLogPastDate(new Date());
+                setLogPastNote("");
+                setShowLogPastModal(true);
+              }}
+              disabled={addFollowupMutation.isPending}
             >
-              <Ionicons name="time" size={24} color={colors.warning} />
-              <Text style={[styles.quickActionText, { color: colors.text }]}>Snooze</Text>
+              <Ionicons name="time-outline" size={24} color={colors.warning} />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>Log past</Text>
             </TouchableOpacity>
-          </View>
 
-          <TouchableOpacity
-            style={styles.logPastButton}
-            onPress={() => {
-              setLogPastType("followed_up");
-              setLogPastDate(new Date());
-              setLogPastNote("");
-              setShowLogPastModal(true);
-            }}
-          >
-            <Ionicons name="time-outline" size={18} color={primaryColor} />
-            <Text style={[styles.logPastButtonText, { color: primaryColor }]}>
-              Log past contact
-            </Text>
-          </TouchableOpacity>
+            {/*
+              SNOOZE — temporarily hidden from the UI per UX feedback 2026-05-28.
+              All wiring is preserved (`handleSnooze`, `snoozeMutation`,
+              `showSnoozeModal` state, snooze Modal further down in this file,
+              and the `snooze` mutation in apps/convex/functions/communityPeople.ts).
+              To re-enable: paste the TouchableOpacity below back into this row.
+
+              <TouchableOpacity
+                style={styles.quickAction}
+                onPress={() => setShowSnoozeModal(true)}
+              >
+                <Ionicons name="time" size={24} color={colors.warning} />
+                <Text style={[styles.quickActionText, { color: colors.text }]}>Skip for…</Text>
+              </TouchableOpacity>
+            */}
+          </View>
         </View>
 
         {/* Contact Info */}
@@ -1362,6 +1369,7 @@ export function FollowupDetailContent({
             <Text style={[styles.modalTitle, { color: colors.text }]}>Log Past Contact</Text>
             <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
               Record a call, text, or in-person contact that already happened.
+              Add a note so you remember what came of it.
             </Text>
 
             <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Type</Text>
@@ -1437,12 +1445,14 @@ export function FollowupDetailContent({
 
             <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
             <TextInput
-              style={[styles.snoozeNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
-              placeholder="What happened?"
+              style={[styles.logPastNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholder="e.g. Texted a while back, didn't get back to me — will try again later"
               placeholderTextColor={colors.inputPlaceholder}
               value={logPastNote}
               onChangeText={setLogPastNote}
               multiline
+              numberOfLines={3}
+              textAlignVertical="top"
             />
 
             <TouchableOpacity
@@ -1922,18 +1932,6 @@ const styles = StyleSheet.create({
   quickActionTextDisabled: {
     opacity: 0.5,
   },
-  logPastButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 8,
-    paddingVertical: 8,
-  },
-  logPastButtonText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
   logPastFieldLabel: {
     fontSize: 12,
     fontWeight: "600",
@@ -1972,6 +1970,15 @@ const styles = StyleSheet.create({
   },
   logPastDateText: {
     fontSize: 14,
+  },
+  logPastNoteInput: {
+    minHeight: 72,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    fontSize: 14,
+    lineHeight: 20,
   },
   logPastSubmitButton: {
     marginTop: 16,
