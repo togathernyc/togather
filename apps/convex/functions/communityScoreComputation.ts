@@ -217,15 +217,17 @@ export const computeCommunityScoresBatch = internalQuery({
 
         // Contact-type recency must query per-type so a back-dated Log Past
         // contact (createdAt set to its occurrence time) is still picked up
-        // even if there are 20+ newer rows of other types in between.
+        // even if there are 20+ newer rows of other types in between. Use
+        // the (groupMember, type, createdAt) compound index so the lookup is
+        // bounded to rows of that type — a filtered scan would walk the
+        // whole history for members with no matching row.
         const latestByType = (type: string) =>
           ctx.db
             .query("memberFollowups")
-            .withIndex("by_groupMember_createdAt", (q) =>
-              q.eq("groupMemberId", member.groupMemberId)
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member.groupMemberId).eq("type", type),
             )
             .order("desc")
-            .filter((q) => q.eq(q.field("type"), type))
             .first();
 
         const [lastInPersonRaw, lastCallRaw, lastTextRaw] = await Promise.all([

@@ -1071,6 +1071,10 @@ export default defineSchema({
     .index("by_legacyId", ["legacyId"])
     .index("by_groupMember", ["groupMemberId"])
     .index("by_groupMember_createdAt", ["groupMemberId", "createdAt"])
+    // For "most recent of type X for member" lookups in score recomputes —
+    // back-dated rows can sit far behind newer entries, so we need to
+    // resolve them via an index rather than a filtered scan.
+    .index("by_groupMember_type_createdAt", ["groupMemberId", "type", "createdAt"])
     .index("by_createdBy", ["createdById"])
     .index("by_snoozeUntil", ["snoozeUntil"]),
 

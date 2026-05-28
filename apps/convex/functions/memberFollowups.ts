@@ -474,11 +474,10 @@ export const internalScoreBatch = internalQuery({
         ) =>
           ctx.db
             .query("memberFollowups")
-            .withIndex("by_groupMember_createdAt", (q) =>
-              q.eq("groupMemberId", member._id),
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member._id).eq("type", type),
             )
             .order("desc")
-            .filter((q) => q.eq(q.field("type"), type))
             .first();
 
         const [lastInPerson, lastCall, lastText] = await Promise.all([

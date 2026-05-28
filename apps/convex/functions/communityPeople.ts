@@ -2211,25 +2211,36 @@ export const addFollowup = mutation({
           createdAt: timestamp,
         });
 
-        // Recompute scores so the new (or back-dated) follow-up reflects
+        // Recompute scores so the new (or back-dated) contact reflects
         // immediately on the People view. Without this, score3 (Connection)
         // stays stale until the next batch run.
-        await ctx.scheduler.runAfter(
-          0,
-          internal.functions.followupScoreComputation.computeSingleMemberScore,
-          {
-            groupId: announcementGroup._id,
-            groupMemberId: groupMember._id,
-          },
-        );
-        await ctx.scheduler.runAfter(
-          0,
-          internal.functions.communityScoreComputation.recomputeForGroupMember,
-          {
-            groupId: announcementGroup._id,
-            userId: cpRecord.userId,
-          },
-        );
+        //
+        // Skip recompute for `note` because:
+        //  1. The Connection-score formula doesn't read `daysSinceLastNote` —
+        //     only call/text/followed_up factor in — so notes can't change
+        //     the score.
+        //  2. We just patched `lastFollowupAt` to the note timestamp above;
+        //     `computeCommunityScoresBatch` re-derives that field from only
+        //     contact-type rows, which would clobber the just-set note time
+        //     and visually erase the note from the People table.
+        if (args.type !== "note") {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.followupScoreComputation.computeSingleMemberScore,
+            {
+              groupId: announcementGroup._id,
+              groupMemberId: groupMember._id,
+            },
+          );
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.communityScoreComputation.recomputeForGroupMember,
+            {
+              groupId: announcementGroup._id,
+              userId: cpRecord.userId,
+            },
+          );
+        }
       }
     }
 
