@@ -19,11 +19,6 @@ export interface ToolDefinition {
  */
 export const TOOLBAR_TOOLS = {
   attendance: { id: "attendance", icon: "checkmark", label: "Attendance" },
-  followup: {
-    id: "followup",
-    icon: "chatbubble-ellipses-outline",
-    label: "People",
-  },
   tasks: {
     id: "tasks",
     icon: "checkmark-done-outline",
@@ -65,7 +60,7 @@ export const ALL_TOOL_IDS = Object.keys(TOOLBAR_TOOLS) as ToolId[];
  * - "tasks" is NOT included by default - group leaders must explicitly enable it.
  * - "sync" is NOT included by default - must be explicitly enabled.
  */
-export const DEFAULT_TOOLS = ["attendance", "followup"];
+export const DEFAULT_TOOLS = ["attendance"];
 
 /**
  * Resource tool ID helpers.

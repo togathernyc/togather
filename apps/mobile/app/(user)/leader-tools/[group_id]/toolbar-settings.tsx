@@ -40,7 +40,7 @@ const ALL_TOOLS: readonly ToolDefinition[] = ALL_TOOL_IDS.map(
 );
 
 // Tools that have dedicated settings pages
-const TOOLS_WITH_SETTINGS = ["runsheet", "followup"];
+const TOOLS_WITH_SETTINGS = ["runsheet"];
 
 // Unified item type for both tools and resources
 type UnifiedToolbarItem = {
