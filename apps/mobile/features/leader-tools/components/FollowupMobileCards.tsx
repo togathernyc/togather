@@ -688,7 +688,15 @@ function ReachOutSheet({
             ? `sms:${member.phone}`
             : `tel:${member.phone}`;
         const canOpen = await Linking.canOpenURL(url);
-        if (canOpen) Linking.openURL(url);
+        if (!canOpen) {
+          Alert.alert(
+            channel === "text" ? "Can't send texts here" : "Can't make calls here",
+            "This device doesn't have a handler for this action. Nothing was logged.",
+          );
+          setSubmitting(false);
+          return;
+        }
+        await Linking.openURL(url);
       }
 
       await addFollowup({
