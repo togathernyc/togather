@@ -456,14 +456,46 @@ export const internalScoreBatch = internalQuery({
           };
         });
 
-        // Fetch followups for this member
-        const followups = await ctx.db
+        // Fetch followups for this member. We take(20) for the active-snooze
+        // probe, then prepend any back-dated contact rows (call/text/in-person
+        // inserted with an older createdAt) so calculateFollowupPriority's
+        // `followups[0]` and history sweep still reflect them. Without this a
+        // logged-past contact would sit behind the top 20 and be ignored.
+        const recentFollowups = await ctx.db
           .query("memberFollowups")
           .withIndex("by_groupMember_createdAt", (q) =>
             q.eq("groupMemberId", member._id)
           )
           .order("desc")
           .take(20);
+
+        const findMostRecentOfType = async (
+          type: "followed_up" | "call" | "text",
+        ) =>
+          ctx.db
+            .query("memberFollowups")
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member._id).eq("type", type),
+            )
+            .order("desc")
+            .first();
+
+        const [lastInPerson, lastCall, lastText] = await Promise.all([
+          findMostRecentOfType("followed_up"),
+          findMostRecentOfType("call"),
+          findMostRecentOfType("text"),
+        ]);
+
+        // Merge: keep recent batch, union with type-specific most-recents,
+        // de-dupe by _id, re-sort desc by createdAt.
+        const merged = new Map<string, typeof recentFollowups[number]>();
+        for (const f of recentFollowups) merged.set(f._id.toString(), f);
+        for (const f of [lastInPerson, lastCall, lastText]) {
+          if (f) merged.set(f._id.toString(), f);
+        }
+        const followups = [...merged.values()].sort(
+          (a, b) => b.createdAt - a.createdAt,
+        );
 
         const followupData: FollowupAction[] = followups.map((f) => ({
           type: f.type,

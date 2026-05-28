@@ -204,7 +204,9 @@ export const computeCommunityScoresBatch = internalQuery({
 
     const results = await Promise.all(
       args.members.map(async (member) => {
-        // Fetch followups for this member in the announcement group
+        // Fetch followups for this member in the announcement group.
+        // The top-20 window is used only for snooze/note state, both of which
+        // are always written at `now` — so back-dating doesn't affect them.
         const followups = await ctx.db
           .query("memberFollowups")
           .withIndex("by_groupMember_createdAt", (q) =>
@@ -213,16 +215,60 @@ export const computeCommunityScoresBatch = internalQuery({
           .order("desc")
           .take(20);
 
-        // Compute days since each followup type
-        const lastFollowup = followups.find(
-          (f) =>
-            f.type === "followed_up" ||
-            f.type === "call" ||
-            f.type === "text"
+        // Contact-type recency must query per-type so a back-dated Log Past
+        // contact (createdAt set to its occurrence time) is still picked up
+        // even if there are 20+ newer rows of other types in between. Use
+        // the (groupMember, type, createdAt) compound index so the lookup is
+        // bounded to rows of that type — a filtered scan would walk the
+        // whole history for members with no matching row.
+        const latestByType = (type: string) =>
+          ctx.db
+            .query("memberFollowups")
+            .withIndex("by_groupMember_type_createdAt", (q) =>
+              q.eq("groupMemberId", member.groupMemberId).eq("type", type),
+            )
+            .order("desc")
+            .first();
+
+        const [lastInPersonRaw, lastCallRaw, lastTextRaw, lastNoteRaw] = await Promise.all([
+          latestByType("followed_up"),
+          latestByType("call"),
+          latestByType("text"),
+          latestByType("note"),
+        ]);
+        // .first() returns T | null; `daysSince` consumes T | undefined.
+        const lastInPerson = lastInPersonRaw ?? undefined;
+        const lastCall = lastCallRaw ?? undefined;
+        const lastText = lastTextRaw ?? undefined;
+        const lastNote = lastNoteRaw ?? undefined;
+        // "Last contact" for the days-since-contact score signal: only the
+        // three contact types (call / text / followed_up) — notes don't count.
+        const contactCandidates = [lastInPerson, lastCall, lastText].filter(
+          (f): f is NonNullable<typeof f> => f != null,
         );
-        const lastInPerson = followups.find((f) => f.type === "followed_up");
-        const lastCall = followups.find((f) => f.type === "call");
-        const lastText = followups.find((f) => f.type === "text");
+        const lastFollowup =
+          contactCandidates.length > 0
+            ? contactCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              )
+            : undefined;
+        // `lastFollowupAt` (the displayed "Last Contact" column) tracks the
+        // most recent touch of ANY kind, including notes — matches the
+        // addFollowup mutation's monotonic patch. Without including notes,
+        // a recompute right after a back-dated contact insert would roll
+        // back lastFollowupAt and erase a newer note's timestamp.
+        const lastTouchCandidates = [
+          lastInPerson,
+          lastCall,
+          lastText,
+          lastNote,
+        ].filter((f): f is NonNullable<typeof f> => f != null);
+        const lastTouchAt =
+          lastTouchCandidates.length > 0
+            ? lastTouchCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              ).createdAt
+            : undefined;
 
         const daysSince = (entry: { createdAt: number } | undefined): number =>
           entry
@@ -245,14 +291,12 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // Latest note for display in notes cell
-        const latestNoteEntry = followups.find(
-          (f) => f.type === "note" && f.content,
-        );
-        const latestNote = latestNoteEntry?.content
-          ? safeSliceForJson(latestNoteEntry.content, 200)
+        // Latest note for display in notes cell — use the per-type indexed
+        // lookup (same back-dated-row reasoning as contacts).
+        const latestNote = lastNote?.content
+          ? safeSliceForJson(lastNote.content, 200)
           : undefined;
-        const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
+        const latestNoteAt = lastNote?.createdAt ?? undefined;
 
         // Cross-group attendance data
         const crossGroupData = args.crossGroupAttendanceMap?.[
@@ -283,14 +327,33 @@ export const computeCommunityScoresBatch = internalQuery({
             1,
             Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
           );
-          // Filter attended weeks to only those within the member's window
-          attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
-            (ws) => ws >= firstWeek,
-          ).length;
-          // Weeks that actually had meetings (within member's window)
-          meetingWeeksInWindow = crossGroupData.meetingWeekStarts
-            ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
-            : totalWeeksInWindow; // fallback: assume all weeks had meetings
+          // Derive attended/meeting weeks from meetingEntries filtered by full
+          // `scheduledAt >= member.joinedAt` — a week-start cutoff alone would
+          // keep a meeting that ran earlier in the same ISO week the member
+          // joined, even though they couldn't have attended it.
+          if (crossGroupData.meetingEntries) {
+            const eligible = crossGroupData.meetingEntries.filter(
+              (e: any) => e.scheduledAt >= member.joinedAt,
+            );
+            const meetingWeeks = new Set<number>();
+            const attendedWeeks = new Set<number>();
+            for (const e of eligible) {
+              const ws = getWeekStart(e.scheduledAt);
+              meetingWeeks.add(ws);
+              if (e.attended) attendedWeeks.add(ws);
+            }
+            meetingWeeksInWindow = meetingWeeks.size;
+            attendedWeeksInWindow = attendedWeeks.size;
+          } else {
+            // Pre-meetingEntries fallback (kept for safety; current
+            // internalCrossGroupAttendance always returns entries).
+            attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
+              (ws) => ws >= firstWeek,
+            ).length;
+            meetingWeeksInWindow = crossGroupData.meetingWeekStarts
+              ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
+              : totalWeeksInWindow;
+          }
         } else {
           // Legacy fallback: plain number percentage
           crossGroupPct = (crossGroupData as number) ?? 0;
@@ -304,19 +367,42 @@ export const computeCommunityScoresBatch = internalQuery({
           meetingWeeksInWindow = totalWeeksInWindow;
         }
 
-        // Consecutive missed meetings — from cross-group meeting entries, filtered by join date
+        // Consecutive missed weeks — walk back week-by-week through weeks that had
+        // meetings (post-join) until we find one the member attended. Counting weeks
+        // (not raw meeting entries) keeps the unit consistent with the displayed
+        // "Weeks with meetings" so a member in multiple groups isn't penalized
+        // multiple times for the same week.
+        //
+        // We derive both meeting-week and attended-week sets from `meetingEntries`
+        // filtered by `scheduledAt >= member.joinedAt`. A week-start cutoff alone
+        // would count a meeting that happened earlier in the same ISO week the
+        // member joined — they had no chance to attend it.
         let consecutiveMissed = 0;
-        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.meetingEntries) {
-          // Filter to meetings after member joined, already sorted desc by scheduledAt
-          const memberMeetings = crossGroupData.meetingEntries.filter(
+        if (
+          crossGroupData &&
+          typeof crossGroupData === "object" &&
+          crossGroupData.meetingEntries
+        ) {
+          const eligibleEntries = crossGroupData.meetingEntries.filter(
             (e: any) => e.scheduledAt >= member.joinedAt,
           );
-          for (const entry of memberMeetings) {
-            if (entry.attended) break;
+          const eligibleMeetingWeeks = new Set<number>();
+          const eligibleAttendedWeeks = new Set<number>();
+          for (const e of eligibleEntries) {
+            const ws = getWeekStart(e.scheduledAt);
+            eligibleMeetingWeeks.add(ws);
+            if (e.attended) eligibleAttendedWeeks.add(ws);
+          }
+          const meetingWeeksDesc = [...eligibleMeetingWeeks].sort(
+            (a, b) => b - a,
+          );
+          for (const ws of meetingWeeksDesc) {
+            if (eligibleAttendedWeeks.has(ws)) break;
             consecutiveMissed++;
           }
-          // Last attended date — actual meeting timestamp (not week start)
-          const lastAttendedEntry = memberMeetings.find((e: any) => e.attended);
+          // Last attended date — actual meeting timestamp (not week start).
+          // `meetingEntries` is sorted desc, so .find returns the most recent.
+          const lastAttendedEntry = eligibleEntries.find((e: any) => e.attended);
           if (lastAttendedEntry) {
             lastAttendedAt = lastAttendedEntry.scheduledAt;
           }
@@ -370,7 +456,7 @@ export const computeCommunityScoresBatch = internalQuery({
           isSnoozed: !!snoozedUntil,
           snoozedUntil,
           rawValues,
-          lastFollowupAt: lastFollowup?.createdAt,
+          lastFollowupAt: lastTouchAt,
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
           addedAt: member.joinedAt,
