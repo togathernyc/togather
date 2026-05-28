@@ -12,6 +12,7 @@ import {
   Modal,
   Pressable,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -1471,13 +1472,17 @@ export function FollowupDetailContent({
         animationType="fade"
         onRequestClose={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
       >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={{ flex: 1 }}
+        >
         <Pressable
           style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
           onPress={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
         >
           <Pressable
             style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
-            onPress={(e) => e.stopPropagation()}
+            onPress={Keyboard.dismiss}
           >
             <Text style={[styles.modalTitle, { color: colors.text }]}>Log Past Contact</Text>
             <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
@@ -1615,6 +1620,7 @@ export function FollowupDetailContent({
             </TouchableOpacity>
           </Pressable>
         </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Snooze Modal */}

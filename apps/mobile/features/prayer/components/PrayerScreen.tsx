@@ -41,7 +41,6 @@ import {
 import type { Id } from '@services/api/convex';
 import { PraySession } from './PraySession';
 import { AddPrayerSheet } from './AddPrayerSheet';
-import { CrisisResourceCard } from './CrisisResourceCard';
 import { ReportPrayerSheet } from './ReportPrayerSheet';
 import { PrayedPrayerRail } from './PrayedPrayerRail';
 import type { PrayerCardData } from './PrayerCard';
@@ -281,7 +280,6 @@ export function PrayerScreen() {
             },
           ]}
         >
-          {current.crisisFlag ? <CrisisResourceCard /> : null}
           <View style={styles.cardHeader}>
             {/*
              * Initials-only on purpose — NEVER swap in a profile photo here.
