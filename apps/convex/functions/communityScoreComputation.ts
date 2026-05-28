@@ -309,25 +309,39 @@ export const computeCommunityScoresBatch = internalQuery({
         // (not raw meeting entries) keeps the unit consistent with the displayed
         // "Weeks with meetings" so a member in multiple groups isn't penalized
         // multiple times for the same week.
+        //
+        // We derive both meeting-week and attended-week sets from `meetingEntries`
+        // filtered by `scheduledAt >= member.joinedAt`. A week-start cutoff alone
+        // would count a meeting that happened earlier in the same ISO week the
+        // member joined — they had no chance to attend it.
         let consecutiveMissed = 0;
-        if (crossGroupData && typeof crossGroupData === "object") {
-          const memberJoinWeek = getWeekStart(member.joinedAt);
-          const attendedSet = new Set(crossGroupData.attendedWeekStarts ?? []);
-          const meetingWeeksDesc = [...(crossGroupData.meetingWeekStarts ?? [])]
-            .filter((ws) => ws >= memberJoinWeek)
-            .sort((a, b) => b - a);
+        if (
+          crossGroupData &&
+          typeof crossGroupData === "object" &&
+          crossGroupData.meetingEntries
+        ) {
+          const eligibleEntries = crossGroupData.meetingEntries.filter(
+            (e: any) => e.scheduledAt >= member.joinedAt,
+          );
+          const eligibleMeetingWeeks = new Set<number>();
+          const eligibleAttendedWeeks = new Set<number>();
+          for (const e of eligibleEntries) {
+            const ws = getWeekStart(e.scheduledAt);
+            eligibleMeetingWeeks.add(ws);
+            if (e.attended) eligibleAttendedWeeks.add(ws);
+          }
+          const meetingWeeksDesc = [...eligibleMeetingWeeks].sort(
+            (a, b) => b - a,
+          );
           for (const ws of meetingWeeksDesc) {
-            if (attendedSet.has(ws)) break;
+            if (eligibleAttendedWeeks.has(ws)) break;
             consecutiveMissed++;
           }
-          // Last attended date — actual meeting timestamp (not week start)
-          if (crossGroupData.meetingEntries) {
-            const lastAttendedEntry = crossGroupData.meetingEntries.find(
-              (e: any) => e.scheduledAt >= member.joinedAt && e.attended,
-            );
-            if (lastAttendedEntry) {
-              lastAttendedAt = lastAttendedEntry.scheduledAt;
-            }
+          // Last attended date — actual meeting timestamp (not week start).
+          // `meetingEntries` is sorted desc, so .find returns the most recent.
+          const lastAttendedEntry = eligibleEntries.find((e: any) => e.attended);
+          if (lastAttendedEntry) {
+            lastAttendedAt = lastAttendedEntry.scheduledAt;
           }
         }
 
