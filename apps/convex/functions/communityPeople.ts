@@ -1896,6 +1896,10 @@ export const history = query({
           } else if (v.variableId === "attended_weeks_in_window" || v.variableId === "total_weeks_in_window" || v.variableId === "meeting_weeks_in_window") {
             // For week counts, normalize relative to max window (approx 9 weeks in 60 days)
             normalizedValue = Math.min(100, Math.round((raw / 9) * 100));
+          } else if (v.variableId === "consecutive_missed") {
+            // Mirror the attendance-portion formula: 0 misses → 100%, 7+ → 0%.
+            // Bar fills from the "good" end, so more misses = shorter bar.
+            normalizedValue = Math.max(0, Math.round(100 - raw * (100 / 7)));
           }
           return {
             id: v.variableId,
@@ -2132,10 +2136,24 @@ export const addFollowup = mutation({
       v.literal("followed_up"),
     ),
     content: v.optional(v.string()),
+    // Optional back-dated timestamp for logging past contact. Must be in the past
+    // and not earlier than 1 year ago.
+    occurredAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const timestamp = Date.now();
+    const now = Date.now();
+    let timestamp = now;
+    if (args.occurredAt !== undefined) {
+      const oneYearAgo = now - 365 * 24 * 60 * 60 * 1000;
+      if (args.occurredAt > now) {
+        throw new ConvexError("Past contact date cannot be in the future");
+      }
+      if (args.occurredAt < oneYearAgo) {
+        throw new ConvexError("Past contact date cannot be more than a year ago");
+      }
+      timestamp = args.occurredAt;
+    }
 
     const cpRecord = await ctx.db.get(args.communityPeopleId);
     if (!cpRecord) {
@@ -2144,14 +2162,22 @@ export const addFollowup = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
-    // Update lastFollowupAt and latestNote on communityPeople when adding a note
+    // Update lastFollowupAt and latestNote on communityPeople when adding a note.
+    // For back-dated entries, only advance lastFollowupAt if it's actually newer
+    // than the existing one — a logged-past call shouldn't overwrite a fresh note.
     const patchFields: Record<string, any> = {
-      lastFollowupAt: timestamp,
-      updatedAt: timestamp,
+      updatedAt: now,
     };
+    const existingLastFollowupAt = (cpRecord as any).lastFollowupAt ?? 0;
+    if (timestamp > existingLastFollowupAt) {
+      patchFields.lastFollowupAt = timestamp;
+    }
     if (args.type === "note" && args.content) {
-      patchFields.latestNote = safeSliceForJson(args.content, 200);
-      patchFields.latestNoteAt = timestamp;
+      const existingLatestNoteAt = (cpRecord as any).latestNoteAt ?? 0;
+      if (timestamp >= existingLatestNoteAt) {
+        patchFields.latestNote = safeSliceForJson(args.content, 200);
+        patchFields.latestNoteAt = timestamp;
+      }
     }
     await ctx.db.patch(args.communityPeopleId, patchFields);
 

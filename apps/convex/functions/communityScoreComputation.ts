@@ -304,21 +304,30 @@ export const computeCommunityScoresBatch = internalQuery({
           meetingWeeksInWindow = totalWeeksInWindow;
         }
 
-        // Consecutive missed meetings — from cross-group meeting entries, filtered by join date
+        // Consecutive missed weeks — walk back week-by-week through weeks that had
+        // meetings (post-join) until we find one the member attended. Counting weeks
+        // (not raw meeting entries) keeps the unit consistent with the displayed
+        // "Weeks with meetings" so a member in multiple groups isn't penalized
+        // multiple times for the same week.
         let consecutiveMissed = 0;
-        if (crossGroupData && typeof crossGroupData === "object" && crossGroupData.meetingEntries) {
-          // Filter to meetings after member joined, already sorted desc by scheduledAt
-          const memberMeetings = crossGroupData.meetingEntries.filter(
-            (e: any) => e.scheduledAt >= member.joinedAt,
-          );
-          for (const entry of memberMeetings) {
-            if (entry.attended) break;
+        if (crossGroupData && typeof crossGroupData === "object") {
+          const memberJoinWeek = getWeekStart(member.joinedAt);
+          const attendedSet = new Set(crossGroupData.attendedWeekStarts ?? []);
+          const meetingWeeksDesc = [...(crossGroupData.meetingWeekStarts ?? [])]
+            .filter((ws) => ws >= memberJoinWeek)
+            .sort((a, b) => b - a);
+          for (const ws of meetingWeeksDesc) {
+            if (attendedSet.has(ws)) break;
             consecutiveMissed++;
           }
           // Last attended date — actual meeting timestamp (not week start)
-          const lastAttendedEntry = memberMeetings.find((e: any) => e.attended);
-          if (lastAttendedEntry) {
-            lastAttendedAt = lastAttendedEntry.scheduledAt;
+          if (crossGroupData.meetingEntries) {
+            const lastAttendedEntry = crossGroupData.meetingEntries.find(
+              (e: any) => e.scheduledAt >= member.joinedAt && e.attended,
+            );
+            if (lastAttendedEntry) {
+              lastAttendedAt = lastAttendedEntry.scheduledAt;
+            }
           }
         }
 

@@ -128,6 +128,12 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
         weight: 1,
       },
       {
+        variableId: "consecutive_missed",
+        label: "Consecutive missed weeks",
+        normHint: "Weeks in a row with no attendance since the last attended meeting. Caps the attendance portion: −15 pts per miss, 0 at 7+",
+        weight: 1,
+      },
+      {
         variableId: "days_since_last_in_person",
         label: "Days since in-person",
         normHint: "In-person follow-up: fills 100% of remaining, decays over ~100 days (~50 if no attendance)",

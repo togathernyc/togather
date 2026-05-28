@@ -12,7 +12,10 @@ import {
   Modal,
   Pressable,
   Image,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -94,6 +97,13 @@ export function FollowupDetailContent({
   } | null>(null);
   const [isConvertingFollowup, setIsConvertingFollowup] = useState(false);
 
+  // Log Past Contact modal
+  const [showLogPastModal, setShowLogPastModal] = useState(false);
+  const [logPastType, setLogPastType] = useState<"call" | "text" | "followed_up">("followed_up");
+  const [logPastDate, setLogPastDate] = useState<Date>(() => new Date());
+  const [logPastNote, setLogPastNote] = useState("");
+  const [showLogPastDatePicker, setShowLogPastDatePicker] = useState(false);
+
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
     setNoteText("");
@@ -116,6 +126,11 @@ export function FollowupDetailContent({
     setTagInput("");
     setConvertEntry(null);
     setIsConvertingFollowup(false);
+    setShowLogPastModal(false);
+    setLogPastType("followed_up");
+    setLogPastDate(new Date());
+    setLogPastNote("");
+    setShowLogPastDatePicker(false);
   }, [memberId]);
 
   const group_id = groupId;
@@ -266,13 +281,14 @@ export function FollowupDetailContent({
 
   // Mutation wrapper objects for backward compatibility
   const addFollowupMutation = {
-    mutate: async (args: { communityPeopleId: string; type: string; content?: string }) => {
+    mutate: async (args: { communityPeopleId: string; type: string; content?: string; occurredAt?: number }) => {
       setIsAddingFollowup(true);
       try {
         await addFollowup({
           communityPeopleId: args.communityPeopleId as Id<"communityPeople">,
           type: args.type as "note" | "call" | "text" | "followed_up",
           content: args.content,
+          occurredAt: args.occurredAt,
         });
         setNoteText("");
         // Convex auto-updates reactive queries
@@ -370,6 +386,25 @@ export function FollowupDetailContent({
       type: "note",
       content: noteText.trim(),
     });
+  };
+
+  const handleSubmitLogPast = async () => {
+    if (!communityPeopleId) return;
+    const occurredAt = logPastDate.getTime();
+    if (occurredAt > Date.now()) {
+      Alert.alert("Invalid date", "Past contact date cannot be in the future.");
+      return;
+    }
+    await addFollowupMutation.mutate({
+      communityPeopleId,
+      type: logPastType,
+      content: logPastNote.trim() || undefined,
+      occurredAt,
+    });
+    setShowLogPastModal(false);
+    setLogPastNote("");
+    setLogPastDate(new Date());
+    setLogPastType("followed_up");
   };
 
   const handleSnooze = (duration: SnoozeDuration) => {
@@ -476,7 +511,7 @@ export function FollowupDetailContent({
       case "attendance_all_groups_pct":
         return `${rawValue}%`;
       case "consecutive_missed":
-        return `${rawValue} missed`;
+        return rawValue === 1 ? "1 week" : `${rawValue} weeks`;
       case "days_since_last_followup":
       case "days_since_last_text":
       case "days_since_last_call":
@@ -643,7 +678,17 @@ export function FollowupDetailContent({
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView ref={scrollViewRef} style={styles.content}>
+      <KeyboardAvoidingView
+        style={styles.flex1}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? (onClose ? 56 : insets.top + 56) : 0}
+      >
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+      >
         {/* Profile Section */}
         <View style={[styles.profileSection, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
           <TouchableOpacity
@@ -829,6 +874,21 @@ export function FollowupDetailContent({
               <Text style={[styles.quickActionText, { color: colors.text }]}>Snooze</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={styles.logPastButton}
+            onPress={() => {
+              setLogPastType("followed_up");
+              setLogPastDate(new Date());
+              setLogPastNote("");
+              setShowLogPastModal(true);
+            }}
+          >
+            <Ionicons name="time-outline" size={18} color={primaryColor} />
+            <Text style={[styles.logPastButtonText, { color: primaryColor }]}>
+              Log past contact
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Contact Info */}
@@ -1200,6 +1260,7 @@ export function FollowupDetailContent({
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Convert history entry (e.g. note → text/call/in-person) */}
       <Modal
@@ -1276,6 +1337,135 @@ export function FollowupDetailContent({
             <TouchableOpacity
               style={styles.modalCancelButton}
               onPress={() => !isConvertingFollowup && setConvertEntry(null)}
+            >
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Log Past Contact Modal */}
+      <Modal
+        visible={showLogPastModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
+        >
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Log Past Contact</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Record a call, text, or in-person contact that already happened.
+            </Text>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Type</Text>
+            <View style={styles.logPastTypeRow}>
+              {[
+                { value: "followed_up" as const, label: "In-person", icon: "checkmark-circle-outline" },
+                { value: "call" as const, label: "Call", icon: "call-outline" },
+                { value: "text" as const, label: "Text", icon: "chatbubble-outline" },
+              ].map((option) => {
+                const selected = logPastType === option.value;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.logPastTypeOption,
+                      {
+                        backgroundColor: selected ? primaryColor : colors.surfaceSecondary,
+                        borderColor: selected ? primaryColor : colors.border,
+                      },
+                    ]}
+                    onPress={() => setLogPastType(option.value)}
+                    disabled={addFollowupMutation.isPending}
+                  >
+                    <Ionicons
+                      name={option.icon as any}
+                      size={18}
+                      color={selected ? colors.textInverse : colors.text}
+                    />
+                    <Text
+                      style={[
+                        styles.logPastTypeText,
+                        { color: selected ? colors.textInverse : colors.text },
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>When</Text>
+            <TouchableOpacity
+              style={[styles.logPastDateButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}
+              onPress={() => setShowLogPastDatePicker(true)}
+              disabled={addFollowupMutation.isPending}
+            >
+              <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+              <Text style={[styles.logPastDateText, { color: colors.text }]}>
+                {logPastDate.toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </Text>
+            </TouchableOpacity>
+
+            {showLogPastDatePicker && (
+              <DateTimePicker
+                value={logPastDate}
+                mode="date"
+                display={Platform.OS === "ios" ? "inline" : "default"}
+                maximumDate={new Date()}
+                minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
+                onChange={(event, selected) => {
+                  if (Platform.OS !== "ios") setShowLogPastDatePicker(false);
+                  if (event.type === "dismissed") return;
+                  if (selected) setLogPastDate(selected);
+                }}
+              />
+            )}
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
+            <TextInput
+              style={[styles.snoozeNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholder="What happened?"
+              placeholderTextColor={colors.inputPlaceholder}
+              value={logPastNote}
+              onChangeText={setLogPastNote}
+              multiline
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.logPastSubmitButton,
+                { backgroundColor: primaryColor },
+                addFollowupMutation.isPending && { opacity: 0.6 },
+              ]}
+              onPress={handleSubmitLogPast}
+              disabled={addFollowupMutation.isPending}
+            >
+              {addFollowupMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.textInverse} />
+              ) : (
+                <Text style={[styles.logPastSubmitText, { color: colors.textInverse }]}>
+                  Log Contact
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => !addFollowupMutation.isPending && setShowLogPastModal(false)}
             >
               <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
@@ -1595,6 +1785,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  flex1: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
@@ -1728,6 +1921,67 @@ const styles = StyleSheet.create({
   },
   quickActionTextDisabled: {
     opacity: 0.5,
+  },
+  logPastButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+    paddingVertical: 8,
+  },
+  logPastButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  logPastFieldLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  logPastTypeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 4,
+  },
+  logPastTypeOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  logPastTypeText: {
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  logPastDateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  logPastDateText: {
+    fontSize: 14,
+  },
+  logPastSubmitButton: {
+    marginTop: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  logPastSubmitText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
   contactText: {
     fontSize: 14,
