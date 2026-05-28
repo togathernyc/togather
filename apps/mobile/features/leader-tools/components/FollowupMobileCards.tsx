@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -121,6 +121,15 @@ export function FollowupMobileCards({
   const currentUserId = user?.id as Id<"users"> | undefined;
 
   const [searchQuery, setSearchQuery] = useState("");
+  // Debounce search input so we hit the server-side `communityPeople.search`
+  // query at a sane cadence instead of on every keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+  const hasSearch = debouncedSearch.length > 0;
+
   const [sectionsExpanded, setSectionsExpanded] = useState<{
     needs: boolean;
     watch: boolean;
@@ -180,13 +189,13 @@ export function FollowupMobileCards({
   }, [communityLeaders]);
 
   const {
-    results: rawMembers,
+    results: paginatedRawMembers,
     status: paginationStatus,
     loadMore,
-    isLoading,
+    isLoading: isPaginatedLoading,
   } = useAuthenticatedPaginatedQuery(
     api.functions.communityPeople.list,
-    groupId
+    groupId && !hasSearch
       ? {
           groupId: groupId as Id<"groups">,
           sortBy: "score3",
@@ -202,19 +211,35 @@ export function FollowupMobileCards({
     { initialNumItems: 100 },
   );
 
-  const members: CardMember[] = useMemo(
-    () => (rawMembers ?? []).map(adaptCommunityPerson) as CardMember[],
-    [rawMembers],
+  // When the user types, switch to the server-side search query so we hit
+  // the whole community, not just the first paginated page.
+  const searchRawMembers = useAuthenticatedQuery(
+    api.functions.communityPeople.search,
+    groupId && hasSearch
+      ? {
+          groupId: groupId as Id<"groups">,
+          searchTerm: debouncedSearch,
+          ...(enforcedAssigneeUserId
+            ? {
+                assigneeFilter: enforcedAssigneeUserId as Id<"users">,
+                requireSelfAssignee: true as const,
+              }
+            : {}),
+        }
+      : "skip",
   );
 
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) => {
-      const name = `${m.firstName} ${m.lastName}`.toLowerCase();
-      return name.includes(q);
-    });
-  }, [members, searchQuery]);
+  const isLoading = hasSearch
+    ? searchRawMembers === undefined
+    : isPaginatedLoading;
+
+  const members: CardMember[] = useMemo(() => {
+    const raw = hasSearch ? searchRawMembers : paginatedRawMembers;
+    return ((raw ?? []) as any[]).map(adaptCommunityPerson) as CardMember[];
+  }, [hasSearch, searchRawMembers, paginatedRawMembers]);
+
+  // Server-side search already filters by name/etc. — no need to re-filter.
+  const filtered = members;
 
   const sections = useMemo(() => {
     const needs: CardMember[] = [];
@@ -370,7 +395,9 @@ export function FollowupMobileCards({
           keyExtractor={(k) => k}
           onEndReachedThreshold={0.5}
           onEndReached={() => {
-            if (paginationStatus === "CanLoadMore") loadMore(50);
+            // Pagination only applies to the list query; the search query
+            // already returns the full result set in one shot.
+            if (!hasSearch && paginationStatus === "CanLoadMore") loadMore(50);
           }}
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
           renderItem={({ item }) => {
