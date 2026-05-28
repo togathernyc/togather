@@ -582,14 +582,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     }
   }, [router, getGroupIdForNavigation]);
 
-  const handleGoToFollowup = useCallback(() => {
-    setMenuVisible(false);
-    const id = getGroupIdForNavigation();
-    if (id) {
-      router.push(`/(user)/leader-tools/${id}/followup`);
-    }
-  }, [router, getGroupIdForNavigation]);
-
   const handleGoToBots = useCallback(() => {
     setMenuVisible(false);
     const id = getGroupIdForNavigation();
@@ -651,9 +643,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       case 'attendance':
         handleGoToAttendance();
         break;
-      case 'followup':
-        handleGoToFollowup();
-        break;
       case 'events':
         handleGoToEvents();
         break;
@@ -670,7 +659,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         handleSyncPress();
         break;
     }
-  }, [handleGoToAttendance, handleGoToFollowup, handleGoToEvents, handleGoToBots, handleGoToTasks, handleGoToRunSheet, handleSyncPress]);
+  }, [handleGoToAttendance, handleGoToEvents, handleGoToBots, handleGoToTasks, handleGoToRunSheet, handleSyncPress]);
 
   // Handle long-press on channel tab to show members modal
   const handleTabLongPress = useCallback((channel: ChannelTab) => {
@@ -1080,7 +1069,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           onMembersPress={handleGoToMembers}
           onEventsPress={handleGoToEvents}
           onAttendancePress={handleGoToAttendance}
-          onFollowupPress={handleGoToFollowup}
           onBotsPress={handleGoToBots}
           onGroupPagePress={handleGoToGroupPage}
           onShareGroupPress={handleShareGroup}

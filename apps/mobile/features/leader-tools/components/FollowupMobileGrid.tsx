@@ -218,10 +218,12 @@ export function FollowupMobileGrid({
   groupId,
   enforcedAssigneeUserId,
   returnTo,
+  onSwitchToCards,
 }: {
   groupId: string;
   enforcedAssigneeUserId?: string;
   returnTo?: string | null;
+  onSwitchToCards?: () => void;
 }) {
   const { colors } = useTheme();
   const router = useRouter();
@@ -1912,6 +1914,15 @@ export function FollowupMobileGrid({
               {groupData?.name || "Group"}
             </Text>
           </View>
+          {onSwitchToCards && (
+            <TouchableOpacity
+              style={styles.headerAddButton}
+              onPress={onSwitchToCards}
+              accessibilityLabel="Switch to card view"
+            >
+              <Ionicons name="list-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.headerAddButton}
             onPress={() => setShowQuickAddModal(true)}

@@ -126,10 +126,7 @@ export async function resolveNotificationNavigation(
       break;
     }
     case "followup_assigned": {
-      const groupMemberId = pick("groupMemberId") as string | undefined;
-      if (groupId && groupMemberId) {
-        router.push(`/followup/${groupId}/${groupMemberId}` as never);
-      }
+      router.push("/people" as never);
       break;
     }
     case "admin_broadcast": {

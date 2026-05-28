@@ -1540,6 +1540,13 @@ export const setAssignees = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
+    const previousAssigneeIds = new Set(
+      (cpRecord.assigneeIds ?? []).map((id) => id.toString()),
+    );
+    const newlyAddedAssigneeIds = args.assigneeIds.filter(
+      (id) => !previousAssigneeIds.has(id.toString()),
+    );
+
     const normalizedIds =
       args.assigneeIds.length > 0 ? args.assigneeIds : undefined;
     const assigneeSortKey = await buildAssigneeSortKey(ctx, normalizedIds as string[] | undefined);
@@ -1581,6 +1588,32 @@ export const setAssignees = mutation({
         sibling.communityId,
         normalizedIds,
       );
+    }
+
+    // Notify newly-added assignees once per community. Uses the cpRecord's
+    // group as the context so the push deep-links to the group the
+    // assignment was made from.
+    if (newlyAddedAssigneeIds.length > 0) {
+      const groupMember = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", cpRecord.groupId).eq("userId", cpRecord.userId),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      if (groupMember) {
+        for (const newAssigneeId of newlyAddedAssigneeIds) {
+          await ctx.scheduler.runAfter(
+            0,
+            internal.functions.notifications.senders.notifyFollowupAssigned,
+            {
+              assigneeId: newAssigneeId,
+              groupId: cpRecord.groupId,
+              groupMemberId: groupMember._id,
+            },
+          );
+        }
+      }
     }
 
     return { success: true };

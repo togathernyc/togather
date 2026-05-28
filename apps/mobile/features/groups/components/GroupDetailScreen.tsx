@@ -475,6 +475,42 @@ export function GroupDetailScreen() {
           </View>
         )}
 
+        {/* Check-in — leader/admin entry point into the people health +
+            follow-up tool. Shown for both regular groups and the announcement
+            (community-wide) group. */}
+        {(isLeader || isAdmin) && group._id && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() =>
+                router.push(`/(user)/leader-tools/${group._id}/followup` as any)
+              }
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.success + "1A" },
+                ]}
+              >
+                <Ionicons name="pulse" size={18} color={colors.success} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.actionLabel, { color: colors.text }]}>
+                  Check-in
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  Member health & follow-up
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Add people — leader/admin only. Mirrors the DM chat-info pattern:
             a standalone tile sitting just under the members card.
             Hidden on announcement groups (membership is implicit/community-wide). */}
