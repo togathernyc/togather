@@ -28,7 +28,7 @@ import * as Updates from 'expo-updates';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const STORAGE_KEY = '@togather/last_seen_update_id';
-export const AUTO_DISMISS_MS = 60_000;
+export const AUTO_DISMISS_MS = 5_000;
 
 export function PostUpdateRecoveryBanner() {
   const [isVisible, setIsVisible] = useState(false);
@@ -123,6 +123,15 @@ export function PostUpdateRecoveryBanner() {
 
 const styles = StyleSheet.create({
   container: {
+    // Absolutely positioned so the banner overlays the screen's empty top
+    // safe-area instead of pushing every screen's content down by ~85pt
+    // for the entire time it's visible.
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    elevation: 1000,
     flexDirection: 'row',
     alignItems: 'center',
     // paddingTop is applied inline together with the top safe-area inset.

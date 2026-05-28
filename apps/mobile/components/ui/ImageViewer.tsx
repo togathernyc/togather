@@ -32,17 +32,24 @@ import { useTheme } from '@hooks/useTheme';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// Reserved vertical space (added to safe-area insets) so the contained
+// image stays clear of the close button and the Done/Save footer buttons.
+const HEADER_HEIGHT = 60;
+const FOOTER_HEIGHT = 80;
+
 // Separate component for rendering individual images
 interface ImageSlideProps {
   imageUrl: string;
   onZoomStateChange?: (zoomed: boolean) => void;
+  topReserve: number;
+  bottomReserve: number;
 }
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 5;
 const DOUBLE_TAP_SCALE = 2.5;
 
-function ImageSlide({ imageUrl, onZoomStateChange }: ImageSlideProps) {
+function ImageSlide({ imageUrl, onZoomStateChange, topReserve, bottomReserve }: ImageSlideProps) {
   const { colors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -130,7 +137,7 @@ function ImageSlide({ imageUrl, onZoomStateChange }: ImageSlideProps) {
   }));
 
   return (
-    <View style={styles.imageSlide}>
+    <View style={[styles.imageSlide, { paddingTop: topReserve, paddingBottom: bottomReserve }]}>
       {loading && (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#fff" />
@@ -275,8 +282,22 @@ export function ImageViewer({
     }
   };
 
+  // Reserve space so the contained image doesn't render behind the
+  // close button (header) or Done/Save buttons (footer). Without this,
+  // portrait images extend edge-to-edge and the close-X visually blends
+  // into the image content / iOS dynamic island area.
+  const topReserve = insets.top + HEADER_HEIGHT;
+  const bottomReserve = insets.bottom + FOOTER_HEIGHT;
+
   const renderImage = ({ item }: { item: string }) => {
-    return <ImageSlide imageUrl={item} onZoomStateChange={setIsZoomed} />;
+    return (
+      <ImageSlide
+        imageUrl={item}
+        onZoomStateChange={setIsZoomed}
+        topReserve={topReserve}
+        bottomReserve={bottomReserve}
+      />
+    );
   };
 
   const renderDotIndicators = () => {
