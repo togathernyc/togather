@@ -230,15 +230,19 @@ export const computeCommunityScoresBatch = internalQuery({
             .order("desc")
             .first();
 
-        const [lastInPersonRaw, lastCallRaw, lastTextRaw] = await Promise.all([
+        const [lastInPersonRaw, lastCallRaw, lastTextRaw, lastNoteRaw] = await Promise.all([
           latestByType("followed_up"),
           latestByType("call"),
           latestByType("text"),
+          latestByType("note"),
         ]);
         // .first() returns T | null; `daysSince` consumes T | undefined.
         const lastInPerson = lastInPersonRaw ?? undefined;
         const lastCall = lastCallRaw ?? undefined;
         const lastText = lastTextRaw ?? undefined;
+        const lastNote = lastNoteRaw ?? undefined;
+        // "Last contact" for the days-since-contact score signal: only the
+        // three contact types (call / text / followed_up) — notes don't count.
         const contactCandidates = [lastInPerson, lastCall, lastText].filter(
           (f): f is NonNullable<typeof f> => f != null,
         );
@@ -247,6 +251,23 @@ export const computeCommunityScoresBatch = internalQuery({
             ? contactCandidates.reduce((a, b) =>
                 a.createdAt >= b.createdAt ? a : b,
               )
+            : undefined;
+        // `lastFollowupAt` (the displayed "Last Contact" column) tracks the
+        // most recent touch of ANY kind, including notes — matches the
+        // addFollowup mutation's monotonic patch. Without including notes,
+        // a recompute right after a back-dated contact insert would roll
+        // back lastFollowupAt and erase a newer note's timestamp.
+        const lastTouchCandidates = [
+          lastInPerson,
+          lastCall,
+          lastText,
+          lastNote,
+        ].filter((f): f is NonNullable<typeof f> => f != null);
+        const lastTouchAt =
+          lastTouchCandidates.length > 0
+            ? lastTouchCandidates.reduce((a, b) =>
+                a.createdAt >= b.createdAt ? a : b,
+              ).createdAt
             : undefined;
 
         const daysSince = (entry: { createdAt: number } | undefined): number =>
@@ -270,14 +291,12 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // Latest note for display in notes cell
-        const latestNoteEntry = followups.find(
-          (f) => f.type === "note" && f.content,
-        );
-        const latestNote = latestNoteEntry?.content
-          ? safeSliceForJson(latestNoteEntry.content, 200)
+        // Latest note for display in notes cell — use the per-type indexed
+        // lookup (same back-dated-row reasoning as contacts).
+        const latestNote = lastNote?.content
+          ? safeSliceForJson(lastNote.content, 200)
           : undefined;
-        const latestNoteAt = latestNoteEntry?.createdAt ?? undefined;
+        const latestNoteAt = lastNote?.createdAt ?? undefined;
 
         // Cross-group attendance data
         const crossGroupData = args.crossGroupAttendanceMap?.[
@@ -437,7 +456,7 @@ export const computeCommunityScoresBatch = internalQuery({
           isSnoozed: !!snoozedUntil,
           snoozedUntil,
           rawValues,
-          lastFollowupAt: lastFollowup?.createdAt,
+          lastFollowupAt: lastTouchAt,
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
           addedAt: member.joinedAt,

@@ -140,6 +140,8 @@ export function FollowupDetailContent({
     setLogPastDate(new Date());
     setLogPastNote("");
     setShowLogPastDatePicker(false);
+    setQuickActionType(null);
+    setQuickActionNote("");
   }, [memberId]);
 
   const group_id = groupId;
