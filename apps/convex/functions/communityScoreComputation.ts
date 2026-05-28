@@ -228,11 +228,15 @@ export const computeCommunityScoresBatch = internalQuery({
             .filter((q) => q.eq(q.field("type"), type))
             .first();
 
-        const [lastInPerson, lastCall, lastText] = await Promise.all([
+        const [lastInPersonRaw, lastCallRaw, lastTextRaw] = await Promise.all([
           latestByType("followed_up"),
           latestByType("call"),
           latestByType("text"),
         ]);
+        // .first() returns T | null; `daysSince` consumes T | undefined.
+        const lastInPerson = lastInPersonRaw ?? undefined;
+        const lastCall = lastCallRaw ?? undefined;
+        const lastText = lastTextRaw ?? undefined;
         const contactCandidates = [lastInPerson, lastCall, lastText].filter(
           (f): f is NonNullable<typeof f> => f != null,
         );
