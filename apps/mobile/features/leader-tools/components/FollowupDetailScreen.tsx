@@ -16,6 +16,7 @@ import {
   Platform,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -103,6 +104,14 @@ export function FollowupDetailContent({
   const [logPastDate, setLogPastDate] = useState<Date>(() => new Date());
   const [logPastNote, setLogPastNote] = useState("");
   const [showLogPastDatePicker, setShowLogPastDatePicker] = useState(false);
+
+  // Quick-action note modal — captures an optional note before logging an
+  // in-person / call / text follow-up. `quickActionType` doubles as the
+  // visibility flag (null = closed).
+  const [quickActionType, setQuickActionType] = useState<
+    "followed_up" | "call" | "text" | null
+  >(null);
+  const [quickActionNote, setQuickActionNote] = useState("");
 
   // Reset local state when switching between members (desktop side-sheet reuses component)
   useEffect(() => {
@@ -270,12 +279,11 @@ export function FollowupDetailContent({
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
     onConfirm: (type) => {
-      if (!communityPeopleId) return;
-      addFollowupMutation.mutate({
-        communityPeopleId,
-        type,
-        content: type === "call" ? "Made a phone call" : "Sent a text message",
-      });
+      // Instead of logging immediately on "Yes", open the note modal so the
+      // leader can capture what came of the call / text.
+      if (type === "email") return;
+      setQuickActionNote("");
+      setQuickActionType(type);
     },
   });
 
@@ -372,11 +380,19 @@ export function FollowupDetailContent({
 
   const handleMarkFollowedUp = () => {
     if (!communityPeopleId) return;
+    setQuickActionNote("");
+    setQuickActionType("followed_up");
+  };
+
+  const handleSubmitQuickAction = () => {
+    if (!communityPeopleId || !quickActionType) return;
     addFollowupMutation.mutate({
       communityPeopleId,
-      type: "followed_up",
-      content: "Marked as followed up",
+      type: quickActionType,
+      content: quickActionNote.trim() || undefined,
     });
+    setQuickActionType(null);
+    setQuickActionNote("");
   };
 
   const handleAddNote = () => {
@@ -903,10 +919,26 @@ export function FollowupDetailContent({
           <View style={[styles.section, { backgroundColor: colors.surface }]}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Contact</Text>
             {member.phone && (
-              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.phone}</Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await Clipboard.setStringAsync(member.phone!);
+                  Alert.alert("Copied", `${member.phone} copied to clipboard.`);
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.phone}</Text>
+              </TouchableOpacity>
             )}
             {member.email && (
-              <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.email}</Text>
+              <TouchableOpacity
+                onPress={async () => {
+                  await Clipboard.setStringAsync(member.email!);
+                  Alert.alert("Copied", `${member.email} copied to clipboard.`);
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={[styles.contactText, { color: colors.textSecondary }]}>{member.email}</Text>
+              </TouchableOpacity>
             )}
           </View>
         )}
@@ -1351,6 +1383,79 @@ export function FollowupDetailContent({
         </Pressable>
       </Modal>
 
+      {/* Quick-Action Note Modal — captures an optional note before logging
+          an in-person / call / text follow-up triggered from Quick Actions
+          (or the post-call/text "Did you ___?" confirmation flow). */}
+      <Modal
+        visible={quickActionType !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !addFollowupMutation.isPending && setQuickActionType(null)}
+      >
+        <Pressable
+          style={[styles.modalOverlay, { backgroundColor: colors.overlay }]}
+          onPress={() => !addFollowupMutation.isPending && setQuickActionType(null)}
+        >
+          <Pressable
+            style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {quickActionType === "followed_up"
+                ? "Log in-person follow-up"
+                : quickActionType === "call"
+                  ? "Log call"
+                  : "Log text"}
+            </Text>
+            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
+              Add a quick note if you want — what came of it, what they shared, anything to remember.
+            </Text>
+
+            <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
+            <TextInput
+              style={[styles.logPastNoteInput, { borderColor: colors.inputBorder, color: colors.text, backgroundColor: colors.inputBackground }]}
+              placeholder={
+                quickActionType === "followed_up"
+                  ? "e.g. Caught up after service, talked through their week"
+                  : quickActionType === "call"
+                    ? "e.g. Chatted for 15 min, they're settling in fine"
+                    : "e.g. Sent a check-in, waiting to hear back"
+              }
+              placeholderTextColor={colors.inputPlaceholder}
+              value={quickActionNote}
+              onChangeText={setQuickActionNote}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+              autoFocus
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.logPastSubmitButton,
+                { backgroundColor: primaryColor },
+                addFollowupMutation.isPending && { opacity: 0.6 },
+              ]}
+              onPress={handleSubmitQuickAction}
+              disabled={addFollowupMutation.isPending}
+            >
+              {addFollowupMutation.isPending ? (
+                <ActivityIndicator size="small" color={colors.textInverse} />
+              ) : (
+                <Text style={[styles.logPastSubmitText, { color: colors.textInverse }]}>Log follow-up</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setQuickActionType(null)}
+              disabled={addFollowupMutation.isPending}
+            >
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Log Past Contact Modal */}
       <Modal
         visible={showLogPastModal}
@@ -1412,35 +1517,56 @@ export function FollowupDetailContent({
             </View>
 
             <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>When</Text>
-            <TouchableOpacity
-              style={[styles.logPastDateButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}
-              onPress={() => setShowLogPastDatePicker(true)}
-              disabled={addFollowupMutation.isPending}
-            >
-              <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
-              <Text style={[styles.logPastDateText, { color: colors.text }]}>
-                {logPastDate.toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </Text>
-            </TouchableOpacity>
-
-            {showLogPastDatePicker && (
-              <DateTimePicker
-                value={logPastDate}
-                mode="date"
-                display={Platform.OS === "ios" ? "inline" : "default"}
-                maximumDate={new Date()}
-                minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
-                onChange={(event, selected) => {
-                  if (Platform.OS !== "ios") setShowLogPastDatePicker(false);
-                  if (event.type === "dismissed") return;
-                  if (selected) setLogPastDate(selected);
-                }}
-              />
+            {Platform.OS === "ios" ? (
+              // Compact picker is itself the tappable date — pops a native
+              // calendar overlay so we don't have to embed (and theme) one
+              // inside this modal.
+              <View style={styles.logPastDateRow}>
+                <DateTimePicker
+                  value={logPastDate}
+                  mode="date"
+                  display="compact"
+                  themeVariant="light"
+                  maximumDate={new Date()}
+                  minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
+                  onChange={(event, selected) => {
+                    if (event.type === "dismissed") return;
+                    if (selected) setLogPastDate(selected);
+                  }}
+                />
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={[styles.logPastDateButton, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}
+                  onPress={() => setShowLogPastDatePicker(true)}
+                  disabled={addFollowupMutation.isPending}
+                >
+                  <Ionicons name="calendar-outline" size={18} color={colors.textSecondary} />
+                  <Text style={[styles.logPastDateText, { color: colors.text }]}>
+                    {logPastDate.toLocaleDateString("en-US", {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </Text>
+                </TouchableOpacity>
+                {showLogPastDatePicker && (
+                  <DateTimePicker
+                    value={logPastDate}
+                    mode="date"
+                    display="default"
+                    maximumDate={new Date()}
+                    minimumDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)}
+                    onChange={(event, selected) => {
+                      setShowLogPastDatePicker(false);
+                      if (event.type === "dismissed") return;
+                      if (selected) setLogPastDate(selected);
+                    }}
+                  />
+                )}
+              </>
             )}
 
             <Text style={[styles.logPastFieldLabel, { color: colors.textSecondary }]}>Note (optional)</Text>
@@ -1970,6 +2096,11 @@ const styles = StyleSheet.create({
   },
   logPastDateText: {
     fontSize: 14,
+  },
+  logPastDateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
   },
   logPastNoteInput: {
     minHeight: 72,
