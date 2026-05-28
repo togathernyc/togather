@@ -360,7 +360,13 @@ export function FollowupMobileCards({
         </View>
       ) : (
         <FlatList
-          data={["needs", "watch", "healthy"] as const}
+          data={
+            sections.needs.length === 0 &&
+            sections.watch.length === 0 &&
+            sections.healthy.length === 0
+              ? []
+              : (["needs", "watch", "healthy"] as const)
+          }
           keyExtractor={(k) => k}
           onEndReachedThreshold={0.5}
           onEndReached={() => {
@@ -687,7 +693,9 @@ function ReachOutSheet({
 
       await addFollowup({
         groupId: groupId as Id<"groups">,
-        memberId: member.groupMemberId as Id<"groupMembers">,
+        // `member.groupMemberId` from communityPeople is the communityPeople _id,
+        // not a real groupMembers _id — send userId and resolve server-side.
+        memberUserId: member.userId as Id<"users">,
         type: channel,
         content: note.trim() || undefined,
       });

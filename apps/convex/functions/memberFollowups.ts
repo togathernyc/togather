@@ -3054,7 +3054,11 @@ export const add = mutation({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
-    memberId: v.id("groupMembers"),
+    // Either memberId (legacy callers with a groupMembers id in hand) or
+    // memberUserId (callers reading from communityPeople, which only has
+    // userId — we resolve to groupMembers server-side).
+    memberId: v.optional(v.id("groupMembers")),
+    memberUserId: v.optional(v.id("users")),
     type: followupTypeValidator,
     content: v.optional(v.string()),
   },
@@ -3062,15 +3066,30 @@ export const add = mutation({
     const userId = await requireAuth(ctx, args.token);
     const timestamp = now();
 
-    // Verify member belongs to this group
-    const member = await ctx.db.get(args.memberId);
-    if (!member || member.groupId !== args.groupId) {
+    // Resolve the groupMembers row by id or by (groupId, userId).
+    let member: any = null;
+    let resolvedMemberId: Id<"groupMembers"> | undefined = args.memberId;
+    if (args.memberId) {
+      member = await ctx.db.get(args.memberId);
+    } else if (args.memberUserId) {
+      member = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", args.memberUserId!),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      resolvedMemberId = member?._id;
+    } else {
+      throw new Error("Either memberId or memberUserId is required");
+    }
+    if (!member || member.groupId !== args.groupId || !resolvedMemberId) {
       throw new Error("Member not found in this group");
     }
 
     // Create follow-up entry
     const followupId = await ctx.db.insert("memberFollowups", {
-      groupMemberId: args.memberId,
+      groupMemberId: resolvedMemberId,
       createdById: userId,
       type: args.type,
       content: args.content,
@@ -3083,7 +3102,7 @@ export const add = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.followupScoreComputation.computeSingleMemberScore,
-      { groupId: args.groupId, groupMemberId: args.memberId }
+      { groupId: args.groupId, groupMemberId: resolvedMemberId }
     );
     await ctx.scheduler.runAfter(
       0,
