@@ -2210,6 +2210,26 @@ export const addFollowup = mutation({
           content: args.content,
           createdAt: timestamp,
         });
+
+        // Recompute scores so the new (or back-dated) follow-up reflects
+        // immediately on the People view. Without this, score3 (Connection)
+        // stays stale until the next batch run.
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.followupScoreComputation.computeSingleMemberScore,
+          {
+            groupId: announcementGroup._id,
+            groupMemberId: groupMember._id,
+          },
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.communityScoreComputation.recomputeForGroupMember,
+          {
+            groupId: announcementGroup._id,
+            userId: cpRecord.userId,
+          },
+        );
       }
     }
 

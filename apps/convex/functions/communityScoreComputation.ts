@@ -283,14 +283,33 @@ export const computeCommunityScoresBatch = internalQuery({
             1,
             Math.round((lastWeek - firstWeek) / WEEK_MS) + 1,
           );
-          // Filter attended weeks to only those within the member's window
-          attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
-            (ws) => ws >= firstWeek,
-          ).length;
-          // Weeks that actually had meetings (within member's window)
-          meetingWeeksInWindow = crossGroupData.meetingWeekStarts
-            ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
-            : totalWeeksInWindow; // fallback: assume all weeks had meetings
+          // Derive attended/meeting weeks from meetingEntries filtered by full
+          // `scheduledAt >= member.joinedAt` — a week-start cutoff alone would
+          // keep a meeting that ran earlier in the same ISO week the member
+          // joined, even though they couldn't have attended it.
+          if (crossGroupData.meetingEntries) {
+            const eligible = crossGroupData.meetingEntries.filter(
+              (e: any) => e.scheduledAt >= member.joinedAt,
+            );
+            const meetingWeeks = new Set<number>();
+            const attendedWeeks = new Set<number>();
+            for (const e of eligible) {
+              const ws = getWeekStart(e.scheduledAt);
+              meetingWeeks.add(ws);
+              if (e.attended) attendedWeeks.add(ws);
+            }
+            meetingWeeksInWindow = meetingWeeks.size;
+            attendedWeeksInWindow = attendedWeeks.size;
+          } else {
+            // Pre-meetingEntries fallback (kept for safety; current
+            // internalCrossGroupAttendance always returns entries).
+            attendedWeeksInWindow = crossGroupData.attendedWeekStarts.filter(
+              (ws) => ws >= firstWeek,
+            ).length;
+            meetingWeeksInWindow = crossGroupData.meetingWeekStarts
+              ? crossGroupData.meetingWeekStarts.filter((ws) => ws >= firstWeek).length
+              : totalWeeksInWindow;
+          }
         } else {
           // Legacy fallback: plain number percentage
           crossGroupPct = (crossGroupData as number) ?? 0;

@@ -287,9 +287,11 @@ export function FollowupDetailContent({
     },
   });
 
-  // Mutation wrapper objects for backward compatibility
+  // Mutation wrapper objects for backward compatibility.
+  // Returns true on success / false on failure so callers can decide whether
+  // to close a modal or preserve the user's typed input.
   const addFollowupMutation = {
-    mutate: async (args: { communityPeopleId: string; type: string; content?: string; occurredAt?: number }) => {
+    mutate: async (args: { communityPeopleId: string; type: string; content?: string; occurredAt?: number }): Promise<boolean> => {
       setIsAddingFollowup(true);
       try {
         await addFollowup({
@@ -300,8 +302,10 @@ export function FollowupDetailContent({
         });
         setNoteText("");
         // Convex auto-updates reactive queries
+        return true;
       } catch (err: any) {
         Alert.alert("Error", err.message || "Failed to add note");
+        return false;
       } finally {
         setIsAddingFollowup(false);
       }
@@ -384,13 +388,14 @@ export function FollowupDetailContent({
     setQuickActionType("followed_up");
   };
 
-  const handleSubmitQuickAction = () => {
+  const handleSubmitQuickAction = async () => {
     if (!communityPeopleId || !quickActionType) return;
-    addFollowupMutation.mutate({
+    const ok = await addFollowupMutation.mutate({
       communityPeopleId,
       type: quickActionType,
       content: quickActionNote.trim() || undefined,
     });
+    if (!ok) return; // keep the modal + typed note so the user can retry
     setQuickActionType(null);
     setQuickActionNote("");
   };
@@ -411,12 +416,13 @@ export function FollowupDetailContent({
       Alert.alert("Invalid date", "Past contact date cannot be in the future.");
       return;
     }
-    await addFollowupMutation.mutate({
+    const ok = await addFollowupMutation.mutate({
       communityPeopleId,
       type: logPastType,
       content: logPastNote.trim() || undefined,
       occurredAt,
     });
+    if (!ok) return; // keep the modal + typed note so the user can retry
     setShowLogPastModal(false);
     setLogPastNote("");
     setLogPastDate(new Date());
