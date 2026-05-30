@@ -110,6 +110,75 @@ function sortChannelsByPinOrder<T extends {
   });
 }
 
+/**
+ * Resolve a group's best "default landing / post" channel.
+ *
+ * With General (the `main` channel) now optional, several backend sites that
+ * used to assume a main channel exists need a deterministic fallback. This
+ * picks the highest-priority ACTIVE channel for the group, where "active" means
+ * `isArchived !== true && isEnabled !== false`.
+ *
+ * Strict priority (only ACTIVE channels considered):
+ *   1. `main` (preserves today's default landing/post target)
+ *   2. `announcements`
+ *   3. first active member-facing channel: `reach_out`, then
+ *      `custom`/`pco_services`/`cross_team` sorted by `lastMessageAt` desc
+ *      (most recent first), tie-break by name
+ *   4. `leaders`
+ *   5. `null` if none active
+ *
+ * `dm` / `group_dm` / `event` channel types are excluded entirely.
+ */
+export async function resolveGroupDefaultChannel(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+): Promise<Doc<"chatChannels"> | null> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  const isActive = (c: Doc<"chatChannels">) =>
+    c.isArchived !== true && c.isEnabled !== false;
+
+  const active = channels.filter(isActive);
+
+  // 1. main
+  const main = active.find((c) => c.channelType === "main");
+  if (main) return main;
+
+  // 2. announcements
+  const announcements = active.find((c) => c.channelType === "announcements");
+  if (announcements) return announcements;
+
+  // 3a. reach_out
+  const reachOut = active.find((c) => c.channelType === "reach_out");
+  if (reachOut) return reachOut;
+
+  // 3b. custom / pco_services / cross_team, most recently active first
+  const memberFacing = active
+    .filter(
+      (c) =>
+        c.channelType === "custom" ||
+        c.channelType === "pco_services" ||
+        c.channelType === "cross_team",
+    )
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ?? 0;
+      const bTime = b.lastMessageAt ?? 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return a.name.localeCompare(b.name);
+    });
+  if (memberFacing.length > 0) return memberFacing[0];
+
+  // 4. leaders
+  const leaders = active.find((c) => c.channelType === "leaders");
+  if (leaders) return leaders;
+
+  // 5. nothing active
+  return null;
+}
+
 type LinkedGroupToggleResult =
   | { handled: false }
   | { handled: true; result: { channelId: Id<"chatChannels">; status: "already_disabled" | "already_enabled" | "disabled" | "enabled" | "linked_unhidden_but_globally_disabled" } };
@@ -619,6 +688,48 @@ export const getChannelsByGroup = query({
       ...channel,
       slug: getChannelSlug(channel),
     }));
+  },
+});
+
+/**
+ * Get the group's best "default landing / post" channel for the caller.
+ *
+ * Mobile calls this to know where to land when General (the main channel) is
+ * disabled. Mirrors the membership gate used by `getChannelsByGroup`: the
+ * caller must be an active group member. Returns `null` when the group has no
+ * active member-facing channel.
+ */
+export const getGroupDefaultChannel = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Check group membership (same gate as getChannelsByGroup)
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!groupMembership) {
+      return null;
+    }
+
+    const channel = await resolveGroupDefaultChannel(ctx, args.groupId);
+    if (!channel) {
+      return null;
+    }
+
+    return {
+      channelId: channel._id,
+      slug: getChannelSlug(channel),
+      channelType: channel.channelType,
+    };
   },
 });
 
