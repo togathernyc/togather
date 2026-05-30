@@ -184,6 +184,44 @@ export async function resolveGroupDefaultChannel(
   return pickDefaultChannelByPriority(channels);
 }
 
+/**
+ * Like `resolveGroupDefaultChannel`, but only considers channels the given user
+ * can actually post to / see — those with an active `chatChannelMembers` row.
+ *
+ * Use this anywhere the result is scoped to a specific user (mobile landing
+ * fallback; the event-share posting fallback in `meetings.postToChat`). The
+ * group-wide resolver can otherwise return a `leaders`/custom/PCO/cross-team
+ * channel the user isn't in — landing them on an invisible channel, or making
+ * `postToChat`'s membership gate throw instead of falling through to a channel
+ * the sender can post to. Members are auto-added to main/announcements;
+ * leaders/custom only have rows for their actual participants.
+ */
+export async function resolveGroupDefaultChannelForUser(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannels"> | null> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  const accessible: Doc<"chatChannels">[] = [];
+  for (const c of channels) {
+    const membership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", c._id).eq("userId", userId)
+      )
+      .first();
+    if (membership && membership.leftAt === undefined) {
+      accessible.push(c);
+    }
+  }
+
+  return pickDefaultChannelByPriority(accessible);
+}
+
 type LinkedGroupToggleResult =
   | { handled: false }
   | { handled: true; result: { channelId: Id<"chatChannels">; status: "already_disabled" | "already_enabled" | "disabled" | "enabled" | "linked_unhidden_but_globally_disabled" } };
@@ -726,32 +764,12 @@ export const getGroupDefaultChannel = query({
     }
 
     // Resolve among channels the CALLER can actually access, not the
-    // group-wide set. The global resolver could otherwise return a `leaders`
-    // or custom/PCO/cross-team channel a regular member isn't in — those are
-    // hidden by `listGroupChannels` and return empty pages, so routing
-    // /general there would land the user on an invisible channel. Restrict
-    // to channels with an active membership row for this user (members are
-    // auto-added to main/announcements; leaders/custom only have rows for
-    // their actual participants).
-    const groupChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .collect();
-
-    const accessible: Doc<"chatChannels">[] = [];
-    for (const c of groupChannels) {
-      const membership = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel_user", (q) =>
-          q.eq("channelId", c._id).eq("userId", userId)
-        )
-        .first();
-      if (membership && membership.leftAt === undefined) {
-        accessible.push(c);
-      }
-    }
-
-    const channel = pickDefaultChannelByPriority(accessible);
+    // group-wide set — see resolveGroupDefaultChannelForUser.
+    const channel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      args.groupId,
+      userId
+    );
     if (!channel) {
       return null;
     }

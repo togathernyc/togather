@@ -3,8 +3,10 @@
  *
  * postToChat used to require the group's `main` channel and throw if it was
  * missing. With General optional, it now resolves the group's best active
- * channel via resolveGroupDefaultChannel — posting to announcements when
- * General is disabled, and throwing only when nothing active remains.
+ * channel the SENDER can post to (resolveGroupDefaultChannelForUser) — posting
+ * to announcements when General is disabled, falling through past channels the
+ * sender isn't in (so the membership gate doesn't reject them) to e.g. Leaders,
+ * and throwing only when nothing active+accessible remains.
  *
  * postToChat enqueues `ctx.scheduler.runAfter(0, onMessageSent)`, so the
  * scheduled-function drain pattern is required.
@@ -189,6 +191,38 @@ describe("meetings.postToChat fallback", () => {
 
     const message = await t.run((ctx) => ctx.db.get(messageId));
     expect(message?.channelId).toBe(annId);
+  });
+
+  test("falls through to a postable channel (Leaders), skipping a custom channel the sender isn't in", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { groupId, meetingId, leaderId, leaderToken } = await seed(t);
+
+    // General disabled; an active custom channel the leader is NOT a member of;
+    // a Leaders channel the leader IS in. The resolver must skip the custom
+    // channel (membership gate would reject it) and post to Leaders.
+    await addChannel(t, groupId, leaderId, "main", {
+      slug: "general",
+      name: "General",
+      isArchived: true,
+    });
+    await addChannel(t, groupId, leaderId, "custom", {
+      slug: "secret",
+      name: "Secret",
+    });
+    const leadersId = await addChannel(t, groupId, leaderId, "leaders", {
+      name: "Leaders",
+    });
+    await addChannelMember(t, leadersId, leaderId);
+
+    const messageId = await t.mutation(api.functions.meetings.index.postToChat, {
+      token: leaderToken,
+      meetingId,
+      message: "Join us!",
+    });
+
+    const message = await t.run((ctx) => ctx.db.get(messageId));
+    expect(message?.channelId).toBe(leadersId);
   });
 
   test("throws when the group has no active channel to share to", async () => {

@@ -26,7 +26,7 @@ import {
 } from "../../lib/meetingConfig";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 import { findSeriesByGroupAndName } from "../eventSeries";
-import { resolveGroupDefaultChannel } from "../messaging/channels";
+import { resolveGroupDefaultChannelForUser } from "../messaging/channels";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -961,9 +961,15 @@ export const postToChat = mutation({
     }
 
     // Find the group's default channel to post to. General (main) is now
-    // optional, so fall back to the next-best active channel (announcements,
-    // reach out, etc.) when it's disabled.
-    const targetChannel = await resolveGroupDefaultChannel(ctx, meeting.groupId);
+    // optional, so fall back to the next-best active channel when it's
+    // disabled. Resolve among channels THIS sender can post to, so the
+    // membership gate below doesn't reject a fallback they aren't in (e.g. a
+    // custom channel) instead of falling through to Leaders.
+    const targetChannel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      meeting.groupId,
+      userId
+    );
 
     if (!targetChannel) {
       throw new Error("This group has no active channel to share to");
