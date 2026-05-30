@@ -434,6 +434,46 @@ export const completeSetup = mutation({
       updatedAt: now,
     });
 
+    // Sync announcement group + channel names so they reflect any rename
+    // during setup. The group is created at proposal.accept using
+    // proposal.communityName, which may differ from the final name chosen
+    // here.
+    const announcementGroup = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) =>
+        q.eq("communityId", proposal.communityId!)
+      )
+      .filter((q) => q.eq(q.field("isAnnouncementGroup"), true))
+      .first();
+
+    if (announcementGroup && announcementGroup.name !== args.name) {
+      await ctx.db.patch(announcementGroup._id, {
+        name: args.name,
+        updatedAt: now,
+      });
+
+      const channels = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", announcementGroup._id))
+        .collect();
+
+      for (const channel of channels) {
+        if (channel.channelType === "main") {
+          await ctx.db.patch(channel._id, {
+            name: `${args.name} - General`,
+            description: `General chat for ${args.name}`,
+            updatedAt: now,
+          });
+        } else if (channel.channelType === "leaders") {
+          await ctx.db.patch(channel._id, {
+            name: `${args.name} - Leaders Hub`,
+            description: `Leaders-only chat for ${args.name}`,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
     // Mark setup as completed and persist the description on the proposal
     await ctx.db.patch(proposal._id, {
       setupCompletedAt: now,
