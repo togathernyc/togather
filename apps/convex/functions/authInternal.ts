@@ -1064,7 +1064,8 @@ export const selectCommunityForUser = mutation({
         updatedAt: timestamp,
       });
 
-      // If rejoining, trigger Planning Center sync and announcement group join
+      // If rejoining, trigger Planning Center + marketing syncs.
+      // (Announcement group sync runs unconditionally below.)
       if (isRejoining) {
         console.log("[selectCommunityForUser] User rejoining community, triggering sync", {
           userId,
@@ -1088,14 +1089,16 @@ export const selectCommunityForUser = mutation({
           internal.functions.marketing.flodesk.syncUser,
           { userId, communityId: args.communityId },
         );
-
-        // Add to announcement group
-        await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
-          userId,
-          syncAnnouncementGroup: true,
-          communityId: args.communityId,
-        });
       }
+
+      // Always reconcile announcement group membership on community-select.
+      // Cheap, idempotent, and ensures users get added to groups created
+      // after they joined (e.g. backfilled announcement groups).
+      await ctx.runMutation(internal.functions.sync.memberships.syncMemberships, {
+        userId,
+        syncAnnouncementGroup: true,
+        communityId: args.communityId,
+      });
     } else {
       // Create new membership with lastLogin
       await ctx.db.insert("userCommunities", {
