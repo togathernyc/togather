@@ -10,6 +10,9 @@ import { internalQuery, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { v } from "convex/values";
+import { addUserToAnnouncementGroup } from "./communities";
+import { PRIMARY_ADMIN_ROLE } from "../lib/permissions";
+import { now } from "../lib/utils";
 
 const NYC_METRO_ZIP_CODES = [
   "10001", "10002", "10003", "10009", "10010", "10011", "10012", "10013",
@@ -458,5 +461,68 @@ export const updateMeetingCoverImage = internalMutation({
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.meetingId, { coverImage: args.newPath });
+  },
+});
+
+/**
+ * One-off backfill: ensure a community's proposer has a primary-admin
+ * userCommunities row and an announcement group with them as leader.
+ *
+ * Needed for communities created via `proposals.accept` before that mutation
+ * was patched to create the announcement group inline. The Stripe checkout
+ * webhook was the only path that did so, leaving accepted-but-unpaid
+ * communities (e.g. Union church in prod) without one.
+ *
+ * Idempotent: announcement-group creation already has defensive checks; this
+ * skips the membership insert if the row already exists. Safe to re-run.
+ */
+export const backfillProposerAnnouncementGroup = internalMutation({
+  args: { proposalId: v.id("communityProposals") },
+  handler: async (ctx, args) => {
+    const proposal = await ctx.db.get(args.proposalId);
+    if (!proposal) {
+      throw new Error(`Proposal not found: ${args.proposalId}`);
+    }
+    if (!proposal.communityId) {
+      throw new Error(
+        `Proposal ${args.proposalId} has no associated community`
+      );
+    }
+    if (proposal.status !== "accepted") {
+      throw new Error(
+        `Proposal ${args.proposalId} is not accepted (status: ${proposal.status})`
+      );
+    }
+
+    const communityId = proposal.communityId;
+    const proposerId = proposal.proposerId;
+    const timestamp = now();
+
+    const existing = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", proposerId).eq("communityId", communityId)
+      )
+      .first();
+
+    if (!existing) {
+      await ctx.db.insert("userCommunities", {
+        userId: proposerId,
+        communityId,
+        roles: PRIMARY_ADMIN_ROLE,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    }
+
+    await addUserToAnnouncementGroup(
+      ctx,
+      communityId,
+      proposerId,
+      PRIMARY_ADMIN_ROLE,
+    );
+
+    return { communityId, proposerId, insertedMembership: !existing };
   },
 });
