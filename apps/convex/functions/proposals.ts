@@ -10,6 +10,8 @@ import { v } from "convex/values";
 import { mutation, query } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { requireAuth } from "../lib/auth";
+import { PRIMARY_ADMIN_ROLE } from "../lib/permissions";
+import { addUserToAnnouncementGroup } from "./communities";
 
 // ============================================================================
 // Submit a Proposal
@@ -202,11 +204,21 @@ export const accept = mutation({
     await ctx.db.insert("userCommunities", {
       userId: proposal.proposerId,
       communityId,
-      roles: 4, // PRIMARY_ADMIN
+      roles: PRIMARY_ADMIN_ROLE,
       status: 1, // Active
       createdAt: now,
       updatedAt: now,
     });
+
+    // Create the announcement group and add the proposer as leader.
+    // Previously this only happened in the Stripe checkout webhook, leaving
+    // accepted-but-unpaid communities without an announcement group.
+    await addUserToAnnouncementGroup(
+      ctx,
+      communityId,
+      proposal.proposerId,
+      PRIMARY_ADMIN_ROLE,
+    );
 
     // Update the proposal with acceptance details
     await ctx.db.patch(args.proposalId, {
