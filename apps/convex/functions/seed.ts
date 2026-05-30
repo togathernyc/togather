@@ -509,6 +509,9 @@ export const createChatChannels = internalMutation({
     groupId: v.id("groups"),
     groupName: v.string(),
     createdById: v.id("users"),
+    // Announcement groups also get a leaders-only "announcements" channel so
+    // dev parity matches production (general = everyone, announcements = leaders).
+    includeAnnouncements: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<{ mainChannelId: Id<"chatChannels">; leadersChannelId: Id<"chatChannels"> }> => {
     const timestamp = now();
@@ -565,6 +568,32 @@ export const createChatChannels = internalMutation({
         memberCount: 0,
       });
       console.log(`[seed] Created leaders channel for ${args.groupName}`);
+    }
+
+    if (args.includeAnnouncements) {
+      const existingAnnouncements = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_slug", (q) =>
+          q.eq("groupId", args.groupId).eq("slug", "announcements")
+        )
+        .first();
+      if (!existingAnnouncements) {
+        await ctx.db.insert("chatChannels", {
+          groupId: args.groupId,
+          slug: "announcements",
+          channelType: "announcements",
+          name: "Announcements",
+          description:
+            "Leader announcements — visible to all members; only leaders can post.",
+          createdById: args.createdById,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          isArchived: false,
+          isEnabled: true,
+          memberCount: 0,
+        });
+        console.log(`[seed] Created announcements channel for ${args.groupName}`);
+      }
     }
 
     return { mainChannelId, leadersChannelId };
@@ -749,6 +778,7 @@ export const seedDemoData = internalAction({
           groupId: announcementGroupId,
           groupName: DEMO_COMMUNITY_NAME,
           createdById: testUserId,
+          includeAnnouncements: true,
         }
       );
     }

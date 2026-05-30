@@ -390,9 +390,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     return activeTab?.channelType === "announcements";
   }, [channelTabs, activeSlug]);
 
-  const canSendMessages =
-    (!isAnnouncementGroup || isUserLeader) &&
-    (!isAnnouncementsChannel || isUserLeader);
+  // Leaders-only posting is now carried solely by the "announcements" channel
+  // (server-enforced in sendMessage), for every group including the
+  // community-wide announcement group. The announcement group's general
+  // channel is open to everyone, just like any other group's general channel.
+  const canSendMessages = !isAnnouncementsChannel || isUserLeader;
 
   // UI state
   const [menuVisible, setMenuVisible] = useState(false);
