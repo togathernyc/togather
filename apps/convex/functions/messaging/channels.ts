@@ -3415,6 +3415,51 @@ export async function ensureChannelsForGroupLogic(
 }
 
 /**
+ * Ensure an enabled "announcements" channel exists for a group.
+ *
+ * Mirrors the create path in `toggleAnnouncementsChannel` but is callable
+ * directly within any mutation for atomic creation (e.g. when provisioning an
+ * announcement group). Members are NOT added here — channel-membership sync
+ * (`syncUserChannelMembershipsLogic`) adds every active group member to
+ * `announcements` channels. Posting stays leader-only, enforced in
+ * `sendMessage`.
+ *
+ * No-op (returns the existing channel id) if a channel already uses the
+ * "announcements" slug for this group.
+ */
+export async function ensureAnnouncementsChannelLogic(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  createdById: Id<"users">
+): Promise<Id<"chatChannels">> {
+  const existing = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group_slug", (q) =>
+      q.eq("groupId", groupId).eq("slug", "announcements")
+    )
+    .first();
+  if (existing) {
+    return existing._id;
+  }
+
+  const now = Date.now();
+  return ctx.db.insert("chatChannels", {
+    groupId,
+    slug: "announcements",
+    channelType: "announcements",
+    name: "Announcements",
+    description:
+      "Leader announcements — visible to all members; only leaders can post.",
+    createdById,
+    createdAt: now,
+    updatedAt: now,
+    isArchived: false,
+    isEnabled: true,
+    memberCount: 0,
+  });
+}
+
+/**
  * Internal mutation to ensure channels exist for a group.
  * Creates main and leaders channels if they don't exist.
  *

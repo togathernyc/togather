@@ -14,7 +14,7 @@ import { requireAuth } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic, syncAnnouncementGroupMembership } from "./sync/memberships";
-import { ensureChannelsForGroupLogic } from "./messaging/channels";
+import { ensureChannelsForGroupLogic, ensureAnnouncementsChannelLogic } from "./messaging/channels";
 
 // ============================================================================
 // Helper Functions
@@ -107,8 +107,13 @@ export async function addUserToAnnouncementGroup(
       updatedAt: timestamp,
     });
 
-    // Create general + leaders channels for the announcement group
+    // Create general + leaders channels for the announcement group, plus the
+    // leaders-only Announcements broadcast channel. This is the same
+    // two-channel model every group uses: general = everyone posts,
+    // announcements = leaders post (enforced in sendMessage). Members are
+    // added to both via syncUserChannelMembershipsLogic below.
     await ensureChannelsForGroupLogic(ctx, announcementGroupId, userId, communityName);
+    await ensureAnnouncementsChannelLogic(ctx, announcementGroupId, userId);
 
     console.log("[addUserToAnnouncementGroup] Created announcement group with channels", {
       communityId,
