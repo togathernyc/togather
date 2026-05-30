@@ -18,7 +18,10 @@ import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { api } from "../../_generated/api";
 import { generateTokens } from "../../lib/auth";
-import { resolveGroupDefaultChannel } from "../../functions/messaging/channels";
+import {
+  resolveGroupDefaultChannel,
+  ensureChannelsForGroupLogic,
+} from "../../functions/messaging/channels";
 import type { Id } from "../../_generated/dataModel";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -307,5 +310,57 @@ describe("getGroupDefaultChannel query", () => {
       groupId,
     });
     expect(result).toBeNull();
+  });
+});
+
+describe("ensureChannelsForGroupLogic — disabled General", () => {
+  test("does NOT recreate an archived (intentionally disabled) main channel", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, userId } = await seed(t);
+    // General was disabled (archived); leaders remains active.
+    const archivedMainId = await addChannel(t, groupId, "main", {
+      slug: "general",
+      name: "General",
+      isArchived: true,
+    });
+    await addChannel(t, groupId, "leaders", { name: "Leaders" });
+
+    const result = await t.run((ctx) =>
+      ensureChannelsForGroupLogic(ctx, groupId, userId, "Test Group"),
+    );
+
+    // Nothing should be created — the archived main is intentional, not missing.
+    expect(result.created).toBe(false);
+
+    const mains = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .filter((q) => q.eq(q.field("channelType"), "main"))
+        .collect(),
+    );
+    // Still exactly one main channel, still archived (no duplicate, not resurrected).
+    expect(mains).toHaveLength(1);
+    expect(mains[0]._id).toBe(archivedMainId);
+    expect(mains[0].isArchived).toBe(true);
+  });
+
+  test("still provisions main + leaders for a brand-new group", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, userId } = await seed(t);
+
+    const result = await t.run((ctx) =>
+      ensureChannelsForGroupLogic(ctx, groupId, userId, "Test Group"),
+    );
+
+    expect(result.created).toBe(true);
+    const channels = await t.run((ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .collect(),
+    );
+    expect(channels.some((c) => c.channelType === "main")).toBe(true);
+    expect(channels.some((c) => c.channelType === "leaders")).toBe(true);
   });
 });

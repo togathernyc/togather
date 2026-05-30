@@ -3504,11 +3504,16 @@ export async function ensureChannelsForGroupLogic(
   createdById: Id<"users">,
   groupName: string
 ): Promise<{ created: boolean; createdChannelIds: Id<"chatChannels">[] }> {
-  // Check if channels already exist
+  // Check if channels already exist — including ARCHIVED ones. With General
+  // now optional, a leader can disable (archive) the main channel; an archived
+  // main/leaders means it existed and was intentionally turned off, NOT that it
+  // needs provisioning. Filtering to unarchived here would let this self-heal
+  // path (called from useConvexChannelFromGroup when a member's visible channel
+  // list is empty) resurrect a disabled General and create a duplicate
+  // (groupId, "general") row. Re-enabling is the toggle's job, not this one.
   const existingChannels = await ctx.db
     .query("chatChannels")
     .withIndex("by_group", (q) => q.eq("groupId", groupId))
-    .filter((q) => q.eq(q.field("isArchived"), false))
     .collect();
 
   const hasMain = existingChannels.some((ch) => ch.channelType === "main");
