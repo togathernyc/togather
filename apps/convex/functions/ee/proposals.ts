@@ -14,6 +14,8 @@ import { v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
+import { PRIMARY_ADMIN_ROLE } from "../../lib/permissions";
+import { addUserToAnnouncementGroup } from "../communities";
 // Reserved slugs inlined to avoid importing @togather/shared (which pulls in react-native via storage.ts)
 const RESERVED_COMMUNITY_SLUGS = new Set([
   "api", "www", "app", "staging", "dev",
@@ -215,14 +217,36 @@ export const accept = mutation({
     const now = Date.now();
     const setupToken = crypto.randomUUID();
 
-    // Create the community (proposer is NOT added as member yet — that
-    // happens in handleCheckoutCompleted after payment is confirmed)
+    // Create the community. Stripe checkout still gates `isPublic` and the
+    // subscription fields — see handleCheckoutCompleted — but the proposer
+    // gets primary-admin access and an announcement group at acceptance so
+    // they can configure the community before/while paying.
     const communityId = await ctx.db.insert("communities", {
       name: proposal.communityName,
       isPublic: false,
       createdAt: now,
       updatedAt: now,
     });
+
+    // Make proposer the primary admin
+    await ctx.db.insert("userCommunities", {
+      userId: proposal.proposerId,
+      communityId,
+      roles: PRIMARY_ADMIN_ROLE,
+      status: 1,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Create the announcement group and add proposer as leader.
+    // handleCheckoutCompleted keeps its defensive call as a safety net
+    // (idempotent — reuses existing group/membership).
+    await addUserToAnnouncementGroup(
+      ctx,
+      communityId,
+      proposal.proposerId,
+      PRIMARY_ADMIN_ROLE,
+    );
 
     // Update the proposal with acceptance details
     await ctx.db.patch(args.proposalId, {
