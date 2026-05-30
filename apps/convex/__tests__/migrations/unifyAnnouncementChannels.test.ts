@@ -8,7 +8,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe } from "vitest";
+import { expect, test, describe, afterEach } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { api, internal } from "../../_generated/api";
@@ -17,6 +17,20 @@ import type { Id } from "../../_generated/dataModel";
 
 // sendMessage end-to-end coverage needs a JWT secret for token generation.
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
+
+// `sendMessage` enqueues a deferred `ctx.scheduler.runAfter(0, onMessageSent)`
+// (which itself schedules notification jobs). The `afterEach` below drains
+// them so a pending scheduled function does not fire after the test's
+// transaction closes — otherwise convex-test writes to `_scheduled_functions`
+// outside any transaction and Vitest fails the run as an unhandled rejection.
+let activeHandle: ReturnType<typeof convexTest> | null = null;
+
+afterEach(async () => {
+  if (activeHandle) {
+    await activeHandle.finishInProgressScheduledFunctions();
+    activeHandle = null;
+  }
+});
 
 interface Seeded {
   communityId: Id<"communities">;
@@ -151,6 +165,7 @@ async function channelsForGroup(
 describe("migrateAnnouncementGroupChannels", () => {
   test("converts general -> announcements in place and creates a fresh general", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const seeded = await seedAnnouncementGroup(t);
 
     const result = await t.mutation(
@@ -218,6 +233,7 @@ describe("migrateAnnouncementGroupChannels", () => {
 
   test("is idempotent — a second run is a no-op", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const seeded = await seedAnnouncementGroup(t);
 
     await t.mutation(
@@ -242,6 +258,7 @@ describe("migrateAnnouncementGroupChannels", () => {
 
   test("after migration: leaders-only posts in announcements, everyone in general", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const seeded = await seedAnnouncementGroup(t);
 
     await t.mutation(
@@ -289,6 +306,7 @@ describe("migrateAnnouncementGroupChannels", () => {
 
   test("dryRun reports changes without writing", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const seeded = await seedAnnouncementGroup(t);
 
     const result = await t.mutation(
