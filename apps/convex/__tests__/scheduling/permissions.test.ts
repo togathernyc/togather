@@ -6,7 +6,7 @@
  * be `ConvexError` so the client `AuthErrorBoundary` can recover.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
@@ -15,9 +15,22 @@ import { generateTokens } from "../../lib/auth";
 import { api } from "../../_generated/api";
 import { buildSchedulingWorld } from "./fixtures";
 
+// `respondToAssignment` enqueues a deferred team-channel reconcile via
+// `ctx.scheduler.runAfter(0, ...)`; the `afterEach` below drains it so a
+// pending scheduled function does not leak into the next test.
+let activeHandle: ReturnType<typeof convexTest> | null = null;
+
+afterEach(async () => {
+  if (activeHandle) {
+    await activeHandle.finishInProgressScheduledFunctions();
+    activeHandle = null;
+  }
+});
+
 /** Spin up a convex-test handle and seed the scheduling world into it. */
 async function setupSchedulingWorld() {
   const t = convexTest(schema, modules);
+  activeHandle = t;
   const world = await buildSchedulingWorld(t);
   return { t, world };
 }
