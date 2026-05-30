@@ -124,6 +124,22 @@ async function addChannel(
   );
 }
 
+async function addMembership(
+  t: ReturnType<typeof convexTest>,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<void> {
+  await t.run((ctx) =>
+    ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId,
+      role: "member",
+      joinedAt: Date.now(),
+      isMuted: false,
+    }),
+  );
+}
+
 describe("resolveGroupDefaultChannel", () => {
   test("main active -> main", async () => {
     const t = convexTest(schema, modules);
@@ -206,9 +222,10 @@ describe("resolveGroupDefaultChannel", () => {
 describe("getGroupDefaultChannel query", () => {
   test("returns the resolved channel for an active member", async () => {
     const t = convexTest(schema, modules);
-    const { groupId, accessToken } = await seed(t);
+    const { groupId, userId, accessToken } = await seed(t);
     await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
     const annId = await addChannel(t, groupId, "announcements", { name: "Announcements" });
+    await addMembership(t, annId, userId);
 
     const result = await t.query(api.functions.messaging.channels.getGroupDefaultChannel, {
       token: accessToken,
@@ -219,6 +236,40 @@ describe("getGroupDefaultChannel query", () => {
       slug: "announcements",
       channelType: "announcements",
     });
+  });
+
+  test("skips channels the caller isn't a member of (leaders/custom)", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, userId, accessToken } = await seed(t);
+    // General disabled. A leaders channel and a custom channel exist but the
+    // member belongs to neither; they ARE in announcements.
+    await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
+    await addChannel(t, groupId, "leaders", { name: "Leaders" });
+    await addChannel(t, groupId, "custom", { slug: "secret", name: "Secret" });
+    const annId = await addChannel(t, groupId, "announcements", { name: "Announcements" });
+    await addMembership(t, annId, userId);
+
+    const result = await t.query(api.functions.messaging.channels.getGroupDefaultChannel, {
+      token: accessToken,
+      groupId,
+    });
+    // Must NOT route the member to leaders/custom they can't see.
+    expect(result?.channelType).toBe("announcements");
+    expect(result?.channelId).toBe(annId);
+  });
+
+  test("returns null when the only active channels are ones the caller isn't in", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, accessToken } = await seed(t);
+    // General disabled; only a leaders channel remains and the member isn't in it.
+    await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
+    await addChannel(t, groupId, "leaders", { name: "Leaders" });
+
+    const result = await t.query(api.functions.messaging.channels.getGroupDefaultChannel, {
+      token: accessToken,
+      groupId,
+    });
+    expect(result).toBeNull();
   });
 
   test("returns null when caller is not a group member", async () => {

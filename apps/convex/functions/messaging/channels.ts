@@ -129,15 +129,9 @@ function sortChannelsByPinOrder<T extends {
  *
  * `dm` / `group_dm` / `event` channel types are excluded entirely.
  */
-export async function resolveGroupDefaultChannel(
-  ctx: QueryCtx,
-  groupId: Id<"groups">,
-): Promise<Doc<"chatChannels"> | null> {
-  const channels = await ctx.db
-    .query("chatChannels")
-    .withIndex("by_group", (q) => q.eq("groupId", groupId))
-    .collect();
-
+function pickDefaultChannelByPriority(
+  channels: Doc<"chatChannels">[],
+): Doc<"chatChannels"> | null {
   const isActive = (c: Doc<"chatChannels">) =>
     c.isArchived !== true && c.isEnabled !== false;
 
@@ -177,6 +171,18 @@ export async function resolveGroupDefaultChannel(
 
   // 5. nothing active
   return null;
+}
+
+export async function resolveGroupDefaultChannel(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+): Promise<Doc<"chatChannels"> | null> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  return pickDefaultChannelByPriority(channels);
 }
 
 type LinkedGroupToggleResult =
@@ -720,7 +726,33 @@ export const getGroupDefaultChannel = query({
       return null;
     }
 
-    const channel = await resolveGroupDefaultChannel(ctx, args.groupId);
+    // Resolve among channels the CALLER can actually access, not the
+    // group-wide set. The global resolver could otherwise return a `leaders`
+    // or custom/PCO/cross-team channel a regular member isn't in — those are
+    // hidden by `listGroupChannels` and return empty pages, so routing
+    // /general there would land the user on an invisible channel. Restrict
+    // to channels with an active membership row for this user (members are
+    // auto-added to main/announcements; leaders/custom only have rows for
+    // their actual participants).
+    const groupChannels = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+
+    const accessible: Doc<"chatChannels">[] = [];
+    for (const c of groupChannels) {
+      const membership = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", c._id).eq("userId", userId)
+        )
+        .first();
+      if (membership && membership.leftAt === undefined) {
+        accessible.push(c);
+      }
+    }
+
+    const channel = pickDefaultChannelByPriority(accessible);
     if (!channel) {
       return null;
     }
