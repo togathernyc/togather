@@ -121,13 +121,15 @@ function sortChannelsByPinOrder<T extends {
  * Strict priority (only ACTIVE channels considered):
  *   1. `main` (preserves today's default landing/post target)
  *   2. `announcements`
- *   3. first active member-facing channel: `reach_out`, then
- *      `custom`/`pco_services`/`cross_team` sorted by `lastMessageAt` desc
- *      (most recent first), tie-break by name
+ *   3. first active `custom`/`pco_services`/`cross_team` channel, sorted by
+ *      `lastMessageAt` desc (most recent first), tie-break by name
  *   4. `leaders`
  *   5. `null` if none active
  *
- * `dm` / `group_dm` / `event` channel types are excluded entirely.
+ * `dm` / `group_dm` / `event` are excluded entirely. `reach_out` is also
+ * excluded: it renders with `ReachOutScreen` (leader 1:1 outreach), not the
+ * normal message list, so a posted message/event-share would be invisible
+ * there and it's not a sensible chat-landing target.
  */
 function pickDefaultChannelByPriority(
   channels: Doc<"chatChannels">[],
@@ -145,11 +147,8 @@ function pickDefaultChannelByPriority(
   const announcements = active.find((c) => c.channelType === "announcements");
   if (announcements) return announcements;
 
-  // 3a. reach_out
-  const reachOut = active.find((c) => c.channelType === "reach_out");
-  if (reachOut) return reachOut;
-
-  // 3b. custom / pco_services / cross_team, most recently active first
+  // 3. custom / pco_services / cross_team, most recently active first.
+  //    (reach_out is intentionally NOT here — see doc comment above.)
   const memberFacing = active
     .filter(
       (c) =>
