@@ -264,6 +264,56 @@ describe("getGroupDefaultChannel query", () => {
     expect(result?.channelId).toBe(annId);
   });
 
+  test("includes a shared channel the caller is in (linked group, General disabled)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seed(t);
+    // This (linked) group's General is disabled and it owns no other channel.
+    await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
+
+    // A channel OWNED by another group, shared into this group (accepted),
+    // with the caller as an active member.
+    const sharedChannelId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const ownerGroupId = await ctx.db.insert("groups", {
+        name: "Owner Group",
+        communityId,
+        groupTypeId: (await ctx.db.query("groupTypes").first())!._id,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const channelId = await ctx.db.insert("chatChannels", {
+        groupId: ownerGroupId,
+        slug: "shared-room",
+        channelType: "custom",
+        name: "Shared Room",
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        isShared: true,
+        sharedGroups: [
+          { groupId, status: "accepted", invitedById: userId, invitedAt: now },
+        ],
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      return channelId;
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getGroupDefaultChannel, {
+      token: accessToken,
+      groupId,
+    });
+    expect(result?.channelId).toBe(sharedChannelId);
+  });
+
   test("returns null when the only active channels are ones the caller isn't in", async () => {
     const t = convexTest(schema, modules);
     const { groupId, accessToken } = await seed(t);

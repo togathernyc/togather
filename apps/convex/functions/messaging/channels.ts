@@ -201,20 +201,29 @@ export async function resolveGroupDefaultChannelForUser(
   groupId: Id<"groups">,
   userId: Id<"users">,
 ): Promise<Doc<"chatChannels"> | null> {
-  const channels = await ctx.db
-    .query("chatChannels")
-    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+  // Start from the user's active channel memberships rather than the group's
+  // owned channels: this naturally includes SHARED channels (owned by another
+  // group but shared into `groupId`), which `listGroupChannels` also surfaces.
+  // Keep channels that are either owned by this group or shared into it with an
+  // accepted entry — i.e. the set this user can actually see/post to here.
+  const memberships = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
     .collect();
 
   const accessible: Doc<"chatChannels">[] = [];
-  for (const c of channels) {
-    const membership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", c._id).eq("userId", userId)
-      )
-      .first();
-    if (membership && membership.leftAt === undefined) {
+  for (const membership of memberships) {
+    const c = await ctx.db.get(membership.channelId);
+    if (!c) continue;
+    const ownedByGroup = c.groupId === groupId;
+    const sharedIntoGroup =
+      c.isShared === true &&
+      (c.sharedGroups?.some(
+        (sg) => sg.groupId === groupId && sg.status === "accepted",
+      ) ??
+        false);
+    if (ownedByGroup || sharedIntoGroup) {
       accessible.push(c);
     }
   }
