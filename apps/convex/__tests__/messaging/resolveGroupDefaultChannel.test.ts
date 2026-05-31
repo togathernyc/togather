@@ -314,6 +314,59 @@ describe("getGroupDefaultChannel query", () => {
     expect(result?.channelId).toBe(sharedChannelId);
   });
 
+  test("excludes a shared channel hidden from this group (hiddenFromNavigation)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seed(t);
+    await addChannel(t, groupId, "main", { slug: "general", name: "General", isArchived: true });
+
+    // Shared channel the caller is a member of, but the linked group hid it.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const ownerGroupId = await ctx.db.insert("groups", {
+        name: "Owner Group",
+        communityId,
+        groupTypeId: (await ctx.db.query("groupTypes").first())!._id,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const channelId = await ctx.db.insert("chatChannels", {
+        groupId: ownerGroupId,
+        slug: "hidden-room",
+        channelType: "custom",
+        name: "Hidden Room",
+        createdById: userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        isShared: true,
+        sharedGroups: [
+          {
+            groupId,
+            status: "accepted",
+            invitedById: userId,
+            invitedAt: now,
+            hiddenFromNavigation: true,
+          },
+        ],
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getGroupDefaultChannel, {
+      token: accessToken,
+      groupId,
+    });
+    expect(result).toBeNull();
+  });
+
   test("returns null when the only active channels are ones the caller isn't in", async () => {
     const t = convexTest(schema, modules);
     const { groupId, accessToken } = await seed(t);

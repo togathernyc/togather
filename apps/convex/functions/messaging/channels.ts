@@ -216,14 +216,21 @@ export async function resolveGroupDefaultChannelForUser(
   for (const membership of memberships) {
     const c = await ctx.db.get(membership.channelId);
     if (!c) continue;
-    const ownedByGroup = c.groupId === groupId;
+    if (c.groupId === groupId) {
+      accessible.push(c);
+      continue;
+    }
+    // Shared channel: include only if shared into this group AND not hidden
+    // from this group's navigation (a linked-group leader can hide it). This
+    // mirrors listGroupChannels' channelEffectiveEnabledForGroup gate so we
+    // don't land members on a channel that's hidden for their group.
     const sharedIntoGroup =
       c.isShared === true &&
       (c.sharedGroups?.some(
         (sg) => sg.groupId === groupId && sg.status === "accepted",
       ) ??
         false);
-    if (ownedByGroup || sharedIntoGroup) {
+    if (sharedIntoGroup && channelEffectiveEnabledForGroup(c, groupId)) {
       accessible.push(c);
     }
   }
