@@ -2,14 +2,14 @@
  * ChannelInfoScreen
  *
  * Mirror of `ChatInfoScreen` (the DM info surface) but for group channels
- * — Leaders, Reach Out, PCO synced, and custom channels. Reached via the
- * (i) icon in the chat header on non-General channels and via the
- * CHANNELS card on the group page.
+ * — General, Leaders, Reach Out, PCO synced, and custom channels. Reached
+ * via the (i) icon in the chat header and via the CHANNELS card on the
+ * group page.
  *
- * General (channelType === "main") does NOT mount this screen — the
- * group page IS the channel info for General. The route shim
- * `/inbox/[groupId]/[channelSlug]/info/index.tsx` redirects in that
- * case.
+ * General (channelType === "main") mounts this screen like every other
+ * channel, but only renders the hero, Open chat, Members, and the
+ * leader-only Active state control — General can't be renamed, archived,
+ * shared, left, or have people added (its membership is the group itself).
  *
  * Layout (DM-sleek):
  *   - "Channel info" centered title + back chevron
@@ -547,26 +547,6 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     );
   }
 
-  // Main channel never reaches the rendered body — the route shim
-  // redirects to the group page. This is a defensive fallback.
-  if (isMain) {
-    return (
-      <View
-        style={[
-          styles.container,
-          { paddingTop: insets.top, backgroundColor: colors.surface },
-        ]}
-      >
-        <Header onBack={handleBack} colors={colors} />
-        <View style={styles.centered}>
-          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
-            The General channel uses the group page for info.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
   const memberRows = channelMembers?.members ?? [];
   const totalMemberCount = channelMembers?.totalCount ?? channel.memberCount ?? 0;
   const ownerId = (channel as { createdById?: Id<"users"> }).createdById;
@@ -963,8 +943,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         {/* Add people — for now this routes to the existing manage-members
             sub-route. TODO: fold the in-screen picker (mirror of DM
             ChatInfoScreen.AddPeopleModal) inline once we have a
-            channel-scoped search query. */}
-        {isLeader && (
+            channel-scoped search query. General's membership is the group
+            itself, so there's nothing to add here. */}
+        {isLeader && !isMain && (
           <Pressable
             onPress={handleManageMembers}
             style={({ pressed }) => [
@@ -983,40 +964,45 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           </Pressable>
         )}
 
-        {/* CHANNEL ACTIONS */}
-        <SectionHeader colors={colors} label="Channel actions" />
-        <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
-          {isLeader && isCustom && (
-            <Pressable
-              onPress={handleShareInvite}
-              style={({ pressed }) => [
-                styles.actionRowFlat,
-                pressed && { backgroundColor: colors.selectedBackground },
-              ]}
-            >
-              <Ionicons name="share-outline" size={20} color={colors.icon} />
-              <Text style={[styles.actionLabel, { color: colors.text }]}>
-                Share invite link
-              </Text>
-            </Pressable>
-          )}
-          <Pressable
-            onPress={() => setLeaveVisible(true)}
-            style={({ pressed }) => [
-              styles.actionRowFlat,
-              isLeader && isCustom && {
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.border,
-              },
-              pressed && { backgroundColor: colors.selectedBackground },
-            ]}
-          >
-            <Ionicons name="exit-outline" size={20} color={colors.destructive} />
-            <Text style={[styles.actionLabel, { color: colors.destructive }]}>
-              Leave channel
-            </Text>
-          </Pressable>
-        </View>
+        {/* CHANNEL ACTIONS — General has no invite link and can't be left
+            (its membership is the group itself), so hide the whole section. */}
+        {!isMain && (
+          <>
+            <SectionHeader colors={colors} label="Channel actions" />
+            <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
+              {isLeader && isCustom && (
+                <Pressable
+                  onPress={handleShareInvite}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="share-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Share invite link
+                  </Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => setLeaveVisible(true)}
+                style={({ pressed }) => [
+                  styles.actionRowFlat,
+                  isLeader && isCustom && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: colors.border,
+                  },
+                  pressed && { backgroundColor: colors.selectedBackground },
+                ]}
+              >
+                <Ionicons name="exit-outline" size={20} color={colors.destructive} />
+                <Text style={[styles.actionLabel, { color: colors.destructive }]}>
+                  Leave channel
+                </Text>
+              </Pressable>
+            </View>
+          </>
+        )}
 
         {/* LEADER CONTROLS */}
         {isLeader && (
@@ -1025,7 +1011,9 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
             <View
               style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}
             >
-              {/* Active state — common to leaders/reach_out/custom/pco */}
+              {/* Active state — common to main/leaders/reach_out/custom/pco.
+                  For General this is the only leader control: it's how a
+                  leader disables and (from the disabled row) re-enables it. */}
               <Pressable
                 onPress={handleActiveState}
                 style={({ pressed }) => [

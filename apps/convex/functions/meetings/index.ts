@@ -26,6 +26,7 @@ import {
 } from "../../lib/meetingConfig";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 import { findSeriesByGroupAndName } from "../eventSeries";
+import { resolveGroupDefaultChannelForUser } from "../messaging/channels";
 
 // Re-export meeting config for consumers that import from this module
 export {
@@ -959,23 +960,26 @@ export const postToChat = mutation({
       throw new Error("Only group leaders can share events to chat");
     }
 
-    // Find the group's main channel
-    const mainChannel = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group_type", (q) =>
-        q.eq("groupId", meeting.groupId).eq("channelType", "main")
-      )
-      .first();
+    // Find the group's default channel to post to. General (main) is now
+    // optional, so fall back to the next-best active channel when it's
+    // disabled. Resolve among channels THIS sender can post to, so the
+    // membership gate below doesn't reject a fallback they aren't in (e.g. a
+    // custom channel) instead of falling through to Leaders.
+    const targetChannel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      meeting.groupId,
+      userId
+    );
 
-    if (!mainChannel) {
-      throw new Error("Group chat channel not found");
+    if (!targetChannel) {
+      throw new Error("This group has no active channel to share to");
     }
 
     // Check user is a member of the channel
     const channelMembership = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel_user", (q) =>
-        q.eq("channelId", mainChannel._id).eq("userId", userId)
+        q.eq("channelId", targetChannel._id).eq("userId", userId)
       )
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
@@ -1004,7 +1008,7 @@ export const postToChat = mutation({
 
     // Insert the chat message
     const messageId = await ctx.db.insert("chatMessages", {
-      channelId: mainChannel._id,
+      channelId: targetChannel._id,
       senderId: userId,
       content,
       contentType: "text",
@@ -1017,7 +1021,7 @@ export const postToChat = mutation({
 
     // Update channel with last message info
     const preview = content.slice(0, 100);
-    await ctx.db.patch(mainChannel._id, {
+    await ctx.db.patch(targetChannel._id, {
       lastMessageAt: timestamp,
       lastMessagePreview: preview,
       lastMessageSenderId: userId,
@@ -1028,7 +1032,7 @@ export const postToChat = mutation({
     // Trigger notification logic
     await ctx.scheduler.runAfter(0, internal.functions.messaging.events.onMessageSent, {
       messageId,
-      channelId: mainChannel._id,
+      channelId: targetChannel._id,
       senderId: userId,
     });
 

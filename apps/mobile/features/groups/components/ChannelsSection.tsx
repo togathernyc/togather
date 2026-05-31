@@ -13,8 +13,8 @@
  *   3. SHARED CHANNEL INVITATIONS card (leaders only, when present)
  *
  * Navigation:
- *   - General (channelType === "main"): → /inbox/{groupId}/{slug} (chat)
- *   - Everything else: → /inbox/{groupId}/{slug}/info
+ *   - Every channel (including General / channelType === "main"):
+ *     → /inbox/{groupId}/{slug}/info
  *
  * The Pin Channels / Toolbar Settings buttons that used to float at the
  * bottom of this section now live in GROUP ACTIONS on
@@ -134,11 +134,6 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     }
   }, [enablingAnnouncements, groupId, toggleAnnouncementsChannelMutation]);
 
-  const navigateToChannelChat = useCallback(
-    (slug: string) => router.push(`/inbox/${groupId}/${slug}` as any),
-    [router, groupId]
-  );
-
   const navigateToChannelInfo = useCallback(
     (slug: string) => router.push(`/inbox/${groupId}/${slug}/info` as any),
     [router, groupId]
@@ -195,8 +190,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       name: "General",
       subtitle: mainEnabled ? "All members" : "Disabled",
       enabled: mainEnabled,
-      // General opens the chat directly. The group page IS its info screen.
-      onPress: () => navigateToChannelChat(mainChannel.slug),
+      // General opens its info page like every other channel — that's where
+      // a leader reaches Active state to disable/re-enable it.
+      onPress: () => navigateToChannelInfo(mainChannel.slug),
       unreadCount: mainChannel.unreadCount,
       pinned: mainChannel.isPinned,
     });

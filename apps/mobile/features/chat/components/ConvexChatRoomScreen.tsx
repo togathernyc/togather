@@ -165,7 +165,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   // Derive active slug from route parameter (URL-based routing)
   // Priority: resolvedChannelSlug > parsedChannel type > default "general"
-  const activeSlug: string = useMemo(() => {
+  // This is the slug the URL asked for. The slug actually displayed
+  // (`activeSlug`, derived further below) may differ when General is disabled
+  // and we fall back to the group's default channel.
+  const routeActiveSlug: string = useMemo(() => {
     // If we have a channel slug from the URL, use it directly
     if (resolvedChannelSlug) return resolvedChannelSlug;
     // Fallback to parsed channel type if available (legacy Stream URLs)
@@ -265,6 +268,24 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       : "skip"
   );
 
+  // General (main) channel can be disabled (archived) by a leader. When it is,
+  // `useConvexChannelFromGroup(groupId, "main")` resolves to null (the backend
+  // filters archived channels), which would leave the user on an empty chat.
+  // Detect that case and fall back to the group's best default channel.
+  //
+  // Gated to ONLY run when General is the target AND no active main channel
+  // exists — passing "skip" otherwise avoids an extra round-trip in the common
+  // (General available) path. `mainChannelId === null` (not `undefined`) means
+  // the lookup completed and found no active main channel.
+  const isGeneralUnavailable =
+    routeActiveSlug === "general" && mainChannelId === null && !!resolvedGroupId;
+  const defaultChannelFallback = useQuery(
+    api.functions.messaging.channels.getGroupDefaultChannel,
+    isGeneralUnavailable && resolvedGroupId && token
+      ? { token, groupId: resolvedGroupId }
+      : "skip"
+  );
+
   // Active channel: derive from URL-based routing
   // With URL-based routing, the slug is the source of truth
   // If user doesn't have access to leaders channel, fallback to general
@@ -280,17 +301,35 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       return channelBySlug._id;
     }
 
-    // Use slug-based selection for standard channels - activeSlug is derived from URL
-    let channelId = activeSlug === "general" ? mainChannelId : leadersChannelId;
+    // Use slug-based selection for standard channels - routeActiveSlug is derived from URL
+    let channelId = routeActiveSlug === "general" ? mainChannelId : leadersChannelId;
 
     // Fallback: if leaders slug is requested but user doesn't have access,
     // use main channel instead to prevent infinite loading
-    if (activeSlug === "leaders" && leadersChannelId === null && mainChannelId) {
+    if (routeActiveSlug === "leaders" && leadersChannelId === null && mainChannelId) {
       channelId = mainChannelId;
     }
 
+    // Fallback: General was requested but the main channel is disabled
+    // (archived). Land on the group's default channel instead of an empty
+    // chat. `getGroupDefaultChannel` returns null when the group has no active
+    // member-facing channel — leave `channelId` null so the no-channel handling
+    // below applies as before.
+    if (isGeneralUnavailable && defaultChannelFallback) {
+      channelId = defaultChannelFallback.channelId;
+    }
+
     return channelId;
-  }, [activeSlug, resolvedChannelSlug, isCustomChannel, mainChannelId, leadersChannelId, channelBySlug, isConvexChannelId, directChannelId]);
+  }, [routeActiveSlug, resolvedChannelSlug, isCustomChannel, mainChannelId, leadersChannelId, channelBySlug, isConvexChannelId, directChannelId, isGeneralUnavailable, defaultChannelFallback]);
+
+  // Slug actually displayed. When General is disabled and we've fallen back to
+  // the group's default channel, reflect the fallback's slug so the tab bar
+  // highlights the correct tab and the header / channel-type checks line up
+  // with the channel the user is really viewing.
+  const activeSlug =
+    isGeneralUnavailable && defaultChannelFallback
+      ? defaultChannelFallback.slug
+      : routeActiveSlug;
 
   // Fetch group details for display (with token to get user's role)
   const groupDetailsRaw = useQuery(
@@ -455,15 +494,15 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // 3. Main channel exists (we have somewhere to redirect to)
   // Reset guard when the group or slug changes (component instance may be reused)
   const hasRedirectedFromLeaders = useRef(false);
-  const prevLeadersKey = useRef(`${resolvedGroupId}:${activeSlug}`);
-  if (prevLeadersKey.current !== `${resolvedGroupId}:${activeSlug}`) {
-    prevLeadersKey.current = `${resolvedGroupId}:${activeSlug}`;
+  const prevLeadersKey = useRef(`${resolvedGroupId}:${routeActiveSlug}`);
+  if (prevLeadersKey.current !== `${resolvedGroupId}:${routeActiveSlug}`) {
+    prevLeadersKey.current = `${resolvedGroupId}:${routeActiveSlug}`;
     hasRedirectedFromLeaders.current = false;
   }
   useEffect(() => {
     if (hasRedirectedFromLeaders.current) return;
     if (
-      activeSlug === "leaders" &&
+      routeActiveSlug === "leaders" &&
       leadersChannelId === null && // null = query completed, channel not found (not undefined = still loading)
       mainChannelId &&
       resolvedGroupId
@@ -483,7 +522,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
         },
       });
     }
-  }, [activeSlug, leadersChannelId, mainChannelId, resolvedGroupId, router, displayName, displayType, groupTypeIdSource, displayImage, isUserLeader, isAnnouncementGroup, externalChatLink]);
+  }, [routeActiveSlug, leadersChannelId, mainChannelId, resolvedGroupId, router, displayName, displayType, groupTypeIdSource, displayImage, isUserLeader, isAnnouncementGroup, externalChatLink]);
 
   // Track active channel for notification suppression
   // When viewing a channel, suppress push notification banners for that channel
@@ -977,6 +1016,31 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   const isEssentialDataReady =
     (resolvedGroupId || isAdHocChannel) && activeChannelId != null;
+
+  // General was disabled and there's no fallback channel this user can open
+  // (getGroupDefaultChannel resolved to null — distinct from `undefined`, which
+  // means still loading). Show an unavailable message instead of spinning
+  // forever, since activeChannelId will never become non-null here.
+  const hasNoAvailableChannel =
+    isGeneralUnavailable && defaultChannelFallback === null;
+
+  if (hasNoAvailableChannel) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <ChatHeaderPlaceholder
+          displayName={displayName}
+          onBack={handleBack}
+          topInset={insets.top}
+        />
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            This channel isn't available. The General channel has been turned
+            off for this group.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   // Loading state: show placeholder while essential data resolves
   if (!isEssentialDataReady) {

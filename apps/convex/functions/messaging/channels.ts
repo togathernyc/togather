@@ -110,6 +110,134 @@ function sortChannelsByPinOrder<T extends {
   });
 }
 
+/**
+ * Resolve a group's best "default landing / post" channel.
+ *
+ * With General (the `main` channel) now optional, several backend sites that
+ * used to assume a main channel exists need a deterministic fallback. This
+ * picks the highest-priority ACTIVE channel for the group, where "active" means
+ * `isArchived !== true && isEnabled !== false`.
+ *
+ * Strict priority (only ACTIVE channels considered):
+ *   1. `main` (preserves today's default landing/post target)
+ *   2. `announcements`
+ *   3. first active `custom`/`pco_services`/`cross_team` channel, sorted by
+ *      `lastMessageAt` desc (most recent first), tie-break by name
+ *   4. `leaders`
+ *   5. `null` if none active
+ *
+ * `dm` / `group_dm` / `event` are excluded entirely. `reach_out` is also
+ * excluded: it renders with `ReachOutScreen` (leader 1:1 outreach), not the
+ * normal message list, so a posted message/event-share would be invisible
+ * there and it's not a sensible chat-landing target.
+ */
+function pickDefaultChannelByPriority(
+  channels: Doc<"chatChannels">[],
+): Doc<"chatChannels"> | null {
+  const isActive = (c: Doc<"chatChannels">) =>
+    c.isArchived !== true && c.isEnabled !== false;
+
+  const active = channels.filter(isActive);
+
+  // 1. main
+  const main = active.find((c) => c.channelType === "main");
+  if (main) return main;
+
+  // 2. announcements
+  const announcements = active.find((c) => c.channelType === "announcements");
+  if (announcements) return announcements;
+
+  // 3. custom / pco_services / cross_team, most recently active first.
+  //    (reach_out is intentionally NOT here — see doc comment above.)
+  const memberFacing = active
+    .filter(
+      (c) =>
+        c.channelType === "custom" ||
+        c.channelType === "pco_services" ||
+        c.channelType === "cross_team",
+    )
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ?? 0;
+      const bTime = b.lastMessageAt ?? 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return a.name.localeCompare(b.name);
+    });
+  if (memberFacing.length > 0) return memberFacing[0];
+
+  // 4. leaders
+  const leaders = active.find((c) => c.channelType === "leaders");
+  if (leaders) return leaders;
+
+  // 5. nothing active
+  return null;
+}
+
+export async function resolveGroupDefaultChannel(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+): Promise<Doc<"chatChannels"> | null> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  return pickDefaultChannelByPriority(channels);
+}
+
+/**
+ * Like `resolveGroupDefaultChannel`, but only considers channels the given user
+ * can actually post to / see — those with an active `chatChannelMembers` row.
+ *
+ * Use this anywhere the result is scoped to a specific user (mobile landing
+ * fallback; the event-share posting fallback in `meetings.postToChat`). The
+ * group-wide resolver can otherwise return a `leaders`/custom/PCO/cross-team
+ * channel the user isn't in — landing them on an invisible channel, or making
+ * `postToChat`'s membership gate throw instead of falling through to a channel
+ * the sender can post to. Members are auto-added to main/announcements;
+ * leaders/custom only have rows for their actual participants.
+ */
+export async function resolveGroupDefaultChannelForUser(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannels"> | null> {
+  // Start from the user's active channel memberships rather than the group's
+  // owned channels: this naturally includes SHARED channels (owned by another
+  // group but shared into `groupId`), which `listGroupChannels` also surfaces.
+  // Keep channels that are either owned by this group or shared into it with an
+  // accepted entry — i.e. the set this user can actually see/post to here.
+  const memberships = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+
+  const accessible: Doc<"chatChannels">[] = [];
+  for (const membership of memberships) {
+    const c = await ctx.db.get(membership.channelId);
+    if (!c) continue;
+    if (c.groupId === groupId) {
+      accessible.push(c);
+      continue;
+    }
+    // Shared channel: include only if shared into this group AND not hidden
+    // from this group's navigation (a linked-group leader can hide it). This
+    // mirrors listGroupChannels' channelEffectiveEnabledForGroup gate so we
+    // don't land members on a channel that's hidden for their group.
+    const sharedIntoGroup =
+      c.isShared === true &&
+      (c.sharedGroups?.some(
+        (sg) => sg.groupId === groupId && sg.status === "accepted",
+      ) ??
+        false);
+    if (sharedIntoGroup && channelEffectiveEnabledForGroup(c, groupId)) {
+      accessible.push(c);
+    }
+  }
+
+  return pickDefaultChannelByPriority(accessible);
+}
+
 type LinkedGroupToggleResult =
   | { handled: false }
   | { handled: true; result: { channelId: Id<"chatChannels">; status: "already_disabled" | "already_enabled" | "disabled" | "enabled" | "linked_unhidden_but_globally_disabled" } };
@@ -619,6 +747,54 @@ export const getChannelsByGroup = query({
       ...channel,
       slug: getChannelSlug(channel),
     }));
+  },
+});
+
+/**
+ * Get the group's best "default landing / post" channel for the caller.
+ *
+ * Mobile calls this to know where to land when General (the main channel) is
+ * disabled. Mirrors the membership gate used by `getChannelsByGroup`: the
+ * caller must be an active group member. Returns `null` when the group has no
+ * active member-facing channel.
+ */
+export const getGroupDefaultChannel = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Check group membership (same gate as getChannelsByGroup)
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!groupMembership) {
+      return null;
+    }
+
+    // Resolve among channels the CALLER can actually access, not the
+    // group-wide set — see resolveGroupDefaultChannelForUser.
+    const channel = await resolveGroupDefaultChannelForUser(
+      ctx,
+      args.groupId,
+      userId
+    );
+    if (!channel) {
+      return null;
+    }
+
+    return {
+      channelId: channel._id,
+      slug: getChannelSlug(channel),
+      channelType: channel.channelType,
+    };
   },
 });
 
@@ -3361,11 +3537,16 @@ export async function ensureChannelsForGroupLogic(
   createdById: Id<"users">,
   groupName: string
 ): Promise<{ created: boolean; createdChannelIds: Id<"chatChannels">[] }> {
-  // Check if channels already exist
+  // Check if channels already exist — including ARCHIVED ones. With General
+  // now optional, a leader can disable (archive) the main channel; an archived
+  // main/leaders means it existed and was intentionally turned off, NOT that it
+  // needs provisioning. Filtering to unarchived here would let this self-heal
+  // path (called from useConvexChannelFromGroup when a member's visible channel
+  // list is empty) resurrect a disabled General and create a duplicate
+  // (groupId, "general") row. Re-enabling is the toggle's job, not this one.
   const existingChannels = await ctx.db
     .query("chatChannels")
     .withIndex("by_group", (q) => q.eq("groupId", groupId))
-    .filter((q) => q.eq(q.field("isArchived"), false))
     .collect();
 
   const hasMain = existingChannels.some((ch) => ch.channelType === "main");
