@@ -1017,6 +1017,31 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const isEssentialDataReady =
     (resolvedGroupId || isAdHocChannel) && activeChannelId != null;
 
+  // General was disabled and there's no fallback channel this user can open
+  // (getGroupDefaultChannel resolved to null — distinct from `undefined`, which
+  // means still loading). Show an unavailable message instead of spinning
+  // forever, since activeChannelId will never become non-null here.
+  const hasNoAvailableChannel =
+    isGeneralUnavailable && defaultChannelFallback === null;
+
+  if (hasNoAvailableChannel) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <ChatHeaderPlaceholder
+          displayName={displayName}
+          onBack={handleBack}
+          topInset={insets.top}
+        />
+        <View style={[styles.centered, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            This channel isn't available. The General channel has been turned
+            off for this group.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   // Loading state: show placeholder while essential data resolves
   if (!isEssentialDataReady) {
     return (
