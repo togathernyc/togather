@@ -23,10 +23,15 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 vi.useFakeTimers();
 
+// The happy path enqueues `ctx.scheduler.runAfter(0, onMessageSent)`.
+// `finishInProgressScheduledFunctions()` only awaits jobs already running, so
+// it leaves that pending runAfter(0) chain to fire after the test's transaction
+// closes ("Write outside of transaction") once the fork is reused — drain it
+// fully with `finishAllScheduledFunctions(vi.runAllTimers)` instead.
 let activeHandle: ReturnType<typeof convexTest> | null = null;
 afterEach(async () => {
   if (activeHandle) {
-    await activeHandle.finishInProgressScheduledFunctions();
+    await activeHandle.finishAllScheduledFunctions(vi.runAllTimers);
     activeHandle = null;
   }
   vi.clearAllTimers();

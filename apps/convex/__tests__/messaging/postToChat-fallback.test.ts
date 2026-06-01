@@ -41,14 +41,22 @@ import { api } from "../../_generated/api";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
+// postToChat enqueues `ctx.scheduler.runAfter(0, onMessageSent)`. Fake timers
+// keep those jobs from auto-firing on the real event loop so we can drain them
+// deterministically — `finishInProgressScheduledFunctions()` only awaits jobs
+// already running, leaving the pending runAfter(0) notification chain to fire
+// after the test's transaction closes ("Write outside of transaction") once the
+// fork is reused by a later test file.
+vi.useFakeTimers();
+
 // Drain scheduled functions enqueued by postToChat (onMessageSent).
 let activeHandle: ReturnType<typeof convexTest> | null = null;
 afterEach(async () => {
   if (activeHandle) {
-    await activeHandle.finishInProgressScheduledFunctions();
+    await activeHandle.finishAllScheduledFunctions(vi.runAllTimers);
     activeHandle = null;
   }
-  vi.useRealTimers();
+  vi.clearAllTimers();
 });
 
 interface Seed {

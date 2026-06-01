@@ -8,7 +8,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, afterEach } from "vitest";
+import { expect, test, describe, afterEach, vi } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { api, internal } from "../../_generated/api";
@@ -18,18 +18,19 @@ import type { Id } from "../../_generated/dataModel";
 // sendMessage end-to-end coverage needs a JWT secret for token generation.
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
-// `sendMessage` enqueues a deferred `ctx.scheduler.runAfter(0, onMessageSent)`
-// (which itself schedules notification jobs). The `afterEach` below drains
-// them so a pending scheduled function does not fire after the test's
-// transaction closes — otherwise convex-test writes to `_scheduled_functions`
-// outside any transaction and Vitest fails the run as an unhandled rejection.
+// The migration and toggles populate channel members via `ctx.scheduler`
+// batches, and `sendMessage` enqueues deferred jobs. Fake timers let us drain
+// those chains deterministically with `finishAllScheduledFunctions`.
+vi.useFakeTimers();
+
 let activeHandle: ReturnType<typeof convexTest> | null = null;
 
 afterEach(async () => {
   if (activeHandle) {
-    await activeHandle.finishInProgressScheduledFunctions();
+    await activeHandle.finishAllScheduledFunctions(vi.runAllTimers);
     activeHandle = null;
   }
+  vi.clearAllTimers();
 });
 
 interface Seeded {
@@ -220,6 +221,10 @@ describe("migrateAnnouncementGroupChannels", () => {
     );
     expect(newGeneralMessages).toHaveLength(0);
 
+    // Membership population for the new general channel runs in scheduled
+    // batches (whole-community groups can't be populated inline) — drain them.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
     // Both active members were added to the new general channel.
     const newGeneralMembers = await t.run(async (ctx) =>
       ctx.db
@@ -228,7 +233,9 @@ describe("migrateAnnouncementGroupChannels", () => {
         .collect()
     );
     expect(newGeneralMembers).toHaveLength(2);
-    expect(mains[0].memberCount).toBe(2);
+
+    const refreshedGeneral = await t.run((ctx) => ctx.db.get(mains[0]._id));
+    expect(refreshedGeneral?.memberCount).toBe(2);
   });
 
   test("is idempotent — a second run is a no-op", async () => {
@@ -266,6 +273,10 @@ describe("migrateAnnouncementGroupChannels", () => {
         .migrateAnnouncementGroupChannels,
       { communityId: seeded.communityId }
     );
+
+    // Drain the scheduled batch that adds members to the new general channel,
+    // so the member is a channel member before posting there.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const channels = await channelsForGroup(t, seeded.groupId);
     const announcementsId = channels.find(
@@ -317,8 +328,7 @@ describe("migrateAnnouncementGroupChannels", () => {
 
     expect(result.dryRun).toBe(true);
     expect(result.results[0].status).toBe("would_migrate");
-    expect(result.results[0].messageCount).toBe(3);
-    expect(result.results[0].memberCount).toBe(2);
+    expect(result.results[0].convertChannelId).toBe(seeded.oldGeneralId);
 
     // Nothing changed: still a single main channel, no announcements channel.
     const channels = await channelsForGroup(t, seeded.groupId);

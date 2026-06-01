@@ -686,6 +686,17 @@ export const sendMessage = mutation({
         throw new Error("Not a member of this channel");
       }
 
+      // Auto group channels (General / Reach Out) are archived the instant a
+      // leader disables them, but their member rows are soft-deleted
+      // asynchronously by `clearChannelMembersBatch`. Without this guard a
+      // client holding the channelId could keep posting to an archived channel
+      // during that clear window (its membership row is still active). Reject
+      // sends to any archived channel immediately. (Announcements re-checks
+      // isArchived below alongside its leader-only gate.)
+      if (channel.isArchived) {
+        throw new Error("This channel is disabled");
+      }
+
       if (args.viewingGroupId) {
         if (
           (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") &&
