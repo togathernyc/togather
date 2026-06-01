@@ -4160,6 +4160,17 @@ export const clearChannelMembersBatch = internalMutation({
     cursor: v.union(v.string(), v.null()),
   },
   handler: async (ctx, args) => {
+    // Bail if the channel was re-enabled (unarchived) since this clear chain
+    // was scheduled — e.g. a quick disable → re-enable. Without this guard a
+    // stale clear job could run after the re-enable's populate batch and
+    // soft-delete members of an active channel, leaving sendMessage to reject
+    // them as "Not a member of this channel". Disable always archives the
+    // channel (main/reach_out), so an un-archived channel means re-enabled.
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel || channel.isArchived !== true) {
+      return;
+    }
+
     const now = Date.now();
     const page = await ctx.db
       .query("chatChannelMembers")

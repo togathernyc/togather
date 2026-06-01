@@ -2883,6 +2883,55 @@ describe("toggleAnnouncementsChannel", () => {
   });
 });
 
+describe("clearChannelMembersBatch", () => {
+  test("is a no-op on a re-enabled (unarchived) channel — stale clear can't strip active members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, groupId } = await seedTestData(t);
+
+    // An active (unarchived) main channel with a member — i.e. the state after
+    // a quick disable → re-enable, where a stale clear job is still pending.
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "main",
+        slug: "general",
+        name: "General",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      })
+    );
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // The stale clear job fires against the now-active channel.
+    await t.mutation(
+      internal.functions.messaging.channels.clearChannelMembersBatch,
+      { channelId, cursor: null }
+    );
+
+    // The member must NOT be soft-deleted.
+    const member = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first()
+    );
+    expect(member?.leftAt).toBeUndefined();
+  });
+});
+
 describe("togglePcoChannel", () => {
   test("leader can disable an active PCO channel", async () => {
     const t = convexTest(schema, modules);
