@@ -2817,6 +2817,9 @@ describe("toggleMainChannel", () => {
       enabled: true,
     });
 
+    // Re-adding members runs in scheduled batches — drain before asserting count.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
     const mainAfterOn = await t.run(async (ctx) => {
       return await ctx.db
         .query("chatChannels")
@@ -2827,6 +2830,56 @@ describe("toggleMainChannel", () => {
     });
     expect(mainAfterOn?.isArchived).toBe(false);
     expect(mainAfterOn?.memberCount).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("toggleAnnouncementsChannel", () => {
+  test("leader enabling populates all members via scheduled batches (no read-limit blowup)", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      userId: memberId,
+      communityId,
+      groupId,
+    } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    expect(res.status).toBe("enabled");
+    const channelId = res.channelId!;
+
+    // Members are added asynchronously in scheduled batches — drain them.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channel?.channelType).toBe("announcements");
+    expect(channel?.memberCount).toBeGreaterThanOrEqual(2);
+
+    // Regular member is added (so unread counts work) ...
+    const memberRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", memberId)
+        )
+        .first()
+    );
+    expect(memberRow?.leftAt).toBeUndefined();
+    expect(memberRow?.role).toBe("member");
+
+    // ... and the leader's channel role mirrors their group role.
+    const leaderRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", leaderId)
+        )
+        .first()
+    );
+    expect(leaderRow?.role).toBe("admin");
   });
 });
 

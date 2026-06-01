@@ -3998,49 +3998,19 @@ export const toggleReachOutChannel = mutation({
         });
       }
 
-      // Add ALL active group members to the channel
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", channelId).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Add all active group members in scheduled batches — whole-community
+      // groups exceed the per-call read limit if iterated inline.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId,
+          mirrorGroupRole: false,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, channelId);
+      );
 
       // Update group config
       await ctx.db.patch(args.groupId, {
@@ -4061,18 +4031,14 @@ export const toggleReachOutChannel = mutation({
         updatedAt: now,
       });
 
-      // Soft-delete all members
-      const activeMembers = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel", (q) => q.eq("channelId", existingChannel._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of activeMembers) {
-        await ctx.db.patch(member._id, { leftAt: now });
-      }
-
+      // Soft-delete all members in scheduled batches (whole-community groups
+      // exceed the per-call read limit if cleared inline).
       await ctx.db.patch(existingChannel._id, { memberCount: 0 });
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.clearChannelMembersBatch,
+        { channelId: existingChannel._id, cursor: null }
+      );
 
       // Update group config
       await ctx.db.patch(args.groupId, {
@@ -4080,6 +4046,137 @@ export const toggleReachOutChannel = mutation({
       });
 
       return { channelId: existingChannel._id, status: "disabled" };
+    }
+  },
+});
+
+/**
+ * Batch size for whole-community channel membership fan-out. Each scheduled
+ * call gets its own 4096-document read budget; at ~2 reads per member plus the
+ * page itself, 500 stays comfortably under the limit.
+ */
+const CHANNEL_MEMBER_SYNC_BATCH = 500;
+
+/**
+ * Adds every active group member to a channel, in scheduled batches.
+ *
+ * The channel toggles can't iterate a whole-community group (e.g. the
+ * announcement group, ~9k members) inline — a single mutation exceeds Convex's
+ * per-execution read limit. This paginates `groupMembers` and reschedules
+ * itself until done, setting the final `memberCount` on the last page.
+ *
+ * `mirrorGroupRole`: when true (announcements), leaders map to channel role
+ * "admin"; otherwise everyone is "member". Posting permission is always
+ * enforced server-side in `sendMessage`, independent of channel role.
+ */
+export const populateChannelMembersBatch = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    channelId: v.id("chatChannels"),
+    mirrorGroupRole: v.boolean(),
+    cursor: v.union(v.string(), v.null()),
+    processed: v.number(),
+  },
+  handler: async (ctx, args) => {
+    // Bail if the channel was archived/disabled since this chain started
+    // (e.g. a quick enable → disable), so we don't repopulate a closed channel.
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel || channel.isArchived || channel.isEnabled === false) {
+      return;
+    }
+
+    const now = Date.now();
+    const page = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .paginate({ cursor: args.cursor, numItems: CHANNEL_MEMBER_SYNC_BATCH });
+
+    for (const member of page.page) {
+      const user = await ctx.db.get(member.userId);
+      const displayName = user
+        ? getDisplayName(user.firstName, user.lastName)
+        : undefined;
+      const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+      const role =
+        args.mirrorGroupRole && isLeaderRole(member.role) ? "admin" : "member";
+
+      const existing = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", args.channelId).eq("userId", member.userId)
+        )
+        .first();
+
+      if (existing) {
+        if (existing.leftAt !== undefined) {
+          await ctx.db.patch(existing._id, {
+            leftAt: undefined,
+            joinedAt: now,
+            role,
+            displayName,
+            profilePhoto,
+          });
+        } else if (existing.role !== role) {
+          await ctx.db.patch(existing._id, { role, displayName, profilePhoto });
+        }
+      } else {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: args.channelId,
+          userId: member.userId,
+          role,
+          joinedAt: now,
+          isMuted: false,
+          displayName,
+          profilePhoto,
+        });
+      }
+    }
+
+    const processed = args.processed + page.page.length;
+
+    if (page.isDone) {
+      // Every active group member is now an active channel member, so the
+      // running count equals the channel's member count.
+      await ctx.db.patch(args.channelId, { memberCount: processed });
+    } else {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        { ...args, cursor: page.continueCursor, processed }
+      );
+    }
+  },
+});
+
+/**
+ * Soft-deletes every active member of a channel, in scheduled batches.
+ * Counterpart to populateChannelMembersBatch for disabling a channel on a
+ * whole-community group.
+ */
+export const clearChannelMembersBatch = internalMutation({
+  args: {
+    channelId: v.id("chatChannels"),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const page = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .paginate({ cursor: args.cursor, numItems: CHANNEL_MEMBER_SYNC_BATCH });
+
+    for (const member of page.page) {
+      await ctx.db.patch(member._id, { leftAt: now });
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.clearChannelMembersBatch,
+        { channelId: args.channelId, cursor: page.continueCursor }
+      );
     }
   },
 });
@@ -4196,62 +4293,23 @@ export const toggleAnnouncementsChannel = mutation({
         });
       }
 
-      // Add ALL active group members so unread counts work for everyone.
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user
-          ? getDisplayName(user.firstName, user.lastName)
-          : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", channelId).eq("userId", member.userId)
-          )
-          .first();
-
-        // Channel role mirrors group role so the member list shows leaders
-        // distinctly. Posting permission is enforced server-side in
-        // sendMessage by re-reading the group membership.
-        const channelRole = isLeaderRole(member.role) ? "admin" : "member";
-
-        if (existingMembership) {
-          if (existingMembership.leftAt !== undefined) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: channelRole,
-              displayName,
-              profilePhoto,
-            });
-          } else if (existingMembership.role !== channelRole) {
-            await ctx.db.patch(existingMembership._id, {
-              role: channelRole,
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId,
-            userId: member.userId,
-            role: channelRole,
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Add all active group members in scheduled batches so unread counts
+      // work for everyone. The announcement group spans the whole community
+      // (~thousands of members), which exceeds the per-call read limit if
+      // iterated inline. Channel role mirrors group role (leaders → "admin")
+      // so the member list shows leaders distinctly; posting permission is
+      // still enforced server-side in sendMessage.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId,
+          mirrorGroupRole: true,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, channelId);
+      );
 
       return { channelId, status: "enabled" as const };
     }
@@ -4334,48 +4392,19 @@ export const toggleMainChannel = mutation({
         updatedAt: now,
       });
 
-      const allMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      for (const member of allMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user ? getDisplayName(user.firstName, user.lastName) : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-
-        const existingMembership = await ctx.db
-          .query("chatChannelMembers")
-          .withIndex("by_channel_user", (q) =>
-            q.eq("channelId", mainChannel._id).eq("userId", member.userId)
-          )
-          .first();
-
-        if (existingMembership) {
-          if (existingMembership.leftAt) {
-            await ctx.db.patch(existingMembership._id, {
-              leftAt: undefined,
-              joinedAt: now,
-              role: "member",
-              displayName,
-              profilePhoto,
-            });
-          }
-        } else {
-          await ctx.db.insert("chatChannelMembers", {
-            channelId: mainChannel._id,
-            userId: member.userId,
-            role: "member",
-            joinedAt: now,
-            isMuted: false,
-            displayName,
-            profilePhoto,
-          });
+      // Re-add all active group members in scheduled batches — whole-community
+      // groups exceed the per-call read limit if iterated inline.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: args.groupId,
+          channelId: mainChannel._id,
+          mirrorGroupRole: false,
+          cursor: null,
+          processed: 0,
         }
-      }
-
-      await updateChannelMemberCount(ctx, mainChannel._id);
+      );
       return { channelId: mainChannel._id, status: "enabled" as const };
     }
 
@@ -4385,17 +4414,15 @@ export const toggleMainChannel = mutation({
       updatedAt: now,
     });
 
-    const activeMembers = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", mainChannel._id))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    for (const member of activeMembers) {
-      await ctx.db.patch(member._id, { leftAt: now });
-    }
-
+    // Soft-delete members in scheduled batches (whole-community groups exceed
+    // the per-call read limit if cleared inline). The channel is already
+    // archived above, so it's hidden immediately regardless.
     await ctx.db.patch(mainChannel._id, { memberCount: 0, updatedAt: now });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.messaging.channels.clearChannelMembersBatch,
+      { channelId: mainChannel._id, cursor: null }
+    );
 
     return { channelId: mainChannel._id, status: "disabled" as const };
   },

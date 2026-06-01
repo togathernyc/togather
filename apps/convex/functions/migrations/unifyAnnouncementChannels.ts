@@ -28,8 +28,7 @@
 
 import { v } from "convex/values";
 import { internalMutation } from "../../_generated/server";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
-import { isLeaderRole } from "../../lib/permissions";
+import { internal } from "../../_generated/api";
 
 export const migrateAnnouncementGroupChannels = internalMutation({
   args: {
@@ -91,31 +90,20 @@ export const migrateAnnouncementGroupChannels = internalMutation({
         continue;
       }
 
-      const activeMembers = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", group._id))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .collect();
-
-      const messages = await ctx.db
-        .query("chatMessages")
-        .withIndex("by_channel", (q) => q.eq("channelId", mainChannel._id))
-        .collect();
-
       if (dryRun) {
         results.push({
           groupId: group._id,
           name: group.name,
           status: "would_migrate",
           convertChannelId: mainChannel._id,
-          messageCount: messages.length,
-          memberCount: activeMembers.length,
         });
         continue;
       }
 
       // 1) Convert the existing general channel -> announcements, in place.
-      //    Messages and channel members stay attached (channel id unchanged).
+      //    Messages and channel members stay attached (channel id unchanged),
+      //    so the announcements channel inherits the full community membership
+      //    that the old general channel already had.
       await ctx.db.patch(mainChannel._id, {
         channelType: "announcements",
         slug: "announcements",
@@ -142,26 +130,21 @@ export const migrateAnnouncementGroupChannels = internalMutation({
         memberCount: 0,
       });
 
-      // 3) Add every active group member to the new general channel.
-      let added = 0;
-      for (const member of activeMembers) {
-        const user = await ctx.db.get(member.userId);
-        const displayName = user
-          ? getDisplayName(user.firstName, user.lastName)
-          : undefined;
-        const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
-        await ctx.db.insert("chatChannelMembers", {
+      // 3) Populate the new general channel with all active group members in
+      //    scheduled batches. The announcement group spans the whole community
+      //    (~thousands of members), so iterating them inline would exceed the
+      //    per-call read limit. Batched populate sets memberCount when done.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.messaging.channels.populateChannelMembersBatch,
+        {
+          groupId: group._id,
           channelId: newGeneralId,
-          userId: member.userId,
-          role: isLeaderRole(member.role) ? "admin" : "member",
-          joinedAt: now,
-          isMuted: false,
-          displayName,
-          profilePhoto,
-        });
-        added++;
-      }
-      await ctx.db.patch(newGeneralId, { memberCount: added });
+          mirrorGroupRole: false,
+          cursor: null,
+          processed: 0,
+        }
+      );
 
       results.push({
         groupId: group._id,
@@ -169,8 +152,6 @@ export const migrateAnnouncementGroupChannels = internalMutation({
         status: "migrated",
         announcementsChannelId: mainChannel._id,
         newGeneralChannelId: newGeneralId,
-        messageCount: messages.length,
-        memberCount: added,
       });
     }
 
