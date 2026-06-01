@@ -2831,6 +2831,66 @@ describe("toggleMainChannel", () => {
     expect(mainAfterOn?.isArchived).toBe(false);
     expect(mainAfterOn?.memberCount).toBeGreaterThanOrEqual(2);
   });
+
+  test("rejects sends to General the instant it is disabled (before async member-clear runs)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: accessToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    const mainChannel = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "main")
+        )
+        .first()
+    );
+    const channelId = mainChannel!._id;
+
+    // Leader is an active member of General.
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: leaderId,
+        role: "admin",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // Disable General: archives the channel and schedules
+    // clearChannelMembersBatch. Deliberately do NOT drain — this is the
+    // async-clear window where the leader's membership row is still active.
+    await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
+      token: leaderToken,
+      groupId,
+      enabled: false,
+    });
+
+    // Membership is still active, but the channel is archived — sendMessage
+    // must reject immediately rather than accept a post to a disabled channel.
+    await expect(
+      t.mutation(api.functions.messaging.messages.sendMessage, {
+        token: leaderToken,
+        channelId,
+        content: "Should not go through",
+      })
+    ).rejects.toThrow("This channel is disabled");
+
+    // Drain the scheduled clear so no jobs leak past the test.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
 });
 
 describe("toggleAnnouncementsChannel", () => {
