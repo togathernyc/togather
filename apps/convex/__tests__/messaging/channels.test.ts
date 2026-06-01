@@ -2941,6 +2941,34 @@ describe("toggleAnnouncementsChannel", () => {
     );
     expect(leaderRow?.role).toBe("admin");
   });
+
+  test("enabling leader can post immediately, before the populate batch runs", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    const channelId = res.channelId!;
+
+    // Deliberately do NOT drain the populate batch — this is the window the P2
+    // covers. The enabling leader was added synchronously, so their immediate
+    // post must succeed rather than fail with "Not a member of this channel".
+    const messageId = await t.mutation(
+      api.functions.messaging.messages.sendMessage,
+      { token: leaderToken, channelId, content: "First announcement" }
+    );
+    const message = await t.run((ctx) => ctx.db.get(messageId));
+    expect(message?.channelId).toBe(channelId);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
 });
 
 describe("clearChannelMembersBatch", () => {

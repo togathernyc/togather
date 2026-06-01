@@ -3998,6 +3998,11 @@ export const toggleReachOutChannel = mutation({
         });
       }
 
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch backfills everyone else (see
+      // ensureChannelMembership).
+      await ensureChannelMembership(ctx, channelId, userId, "member", now);
+
       // Add all active group members in scheduled batches — whole-community
       // groups exceed the per-call read limit if iterated inline.
       await ctx.scheduler.runAfter(
@@ -4056,6 +4061,63 @@ export const toggleReachOutChannel = mutation({
  * page itself, 500 stays comfortably under the limit.
  */
 const CHANNEL_MEMBER_SYNC_BATCH = 500;
+
+/**
+ * Synchronously add/reactivate a single user's membership in a channel.
+ *
+ * The enable paths fan the full member list out to `populateChannelMembersBatch`
+ * and return immediately, so there's a window where the channel is active but no
+ * `chatChannelMembers` row exists yet — including for the leader who just enabled
+ * it. `sendMessage` checks active membership before the Announcements leader gate,
+ * so an immediate post in that window would fail with "Not a member of this
+ * channel". Inserting the caller up front closes that race; the later batch
+ * reactivates the same row idempotently and the final memberCount is unaffected.
+ */
+async function ensureChannelMembership(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+  role: "admin" | "member",
+  now: number
+): Promise<void> {
+  const user = await ctx.db.get(userId);
+  const displayName = user
+    ? getDisplayName(user.firstName, user.lastName)
+    : undefined;
+  const profilePhoto = user ? getMediaUrl(user.profilePhoto) : undefined;
+
+  const existing = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_user", (q) =>
+      q.eq("channelId", channelId).eq("userId", userId)
+    )
+    .first();
+
+  if (existing) {
+    if (existing.leftAt !== undefined) {
+      await ctx.db.patch(existing._id, {
+        leftAt: undefined,
+        joinedAt: now,
+        role,
+        displayName,
+        profilePhoto,
+      });
+    } else if (existing.role !== role) {
+      await ctx.db.patch(existing._id, { role, displayName, profilePhoto });
+    }
+    return;
+  }
+
+  await ctx.db.insert("chatChannelMembers", {
+    channelId,
+    userId,
+    role,
+    joinedAt: now,
+    isMuted: false,
+    displayName,
+    profilePhoto,
+  });
+}
 
 /**
  * Adds every active group member to a channel, in scheduled batches.
@@ -4304,6 +4366,11 @@ export const toggleAnnouncementsChannel = mutation({
         });
       }
 
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch backfills everyone else (see
+      // ensureChannelMembership). Leaders mirror to channel role "admin".
+      await ensureChannelMembership(ctx, channelId, userId, "admin", now);
+
       // Add all active group members in scheduled batches so unread counts
       // work for everyone. The announcement group spans the whole community
       // (~thousands of members), which exceeds the per-call read limit if
@@ -4402,6 +4469,11 @@ export const toggleMainChannel = mutation({
         archivedAt: undefined,
         updatedAt: now,
       });
+
+      // Add the enabling leader synchronously so they can post immediately,
+      // before the async batch reactivates everyone else (see
+      // ensureChannelMembership).
+      await ensureChannelMembership(ctx, mainChannel._id, userId, "member", now);
 
       // Re-add all active group members in scheduled batches — whole-community
       // groups exceed the per-call read limit if iterated inline.
