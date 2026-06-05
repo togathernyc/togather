@@ -737,6 +737,11 @@ export const testTaskReminder = action({
         messageId: result.messageId as string,
       };
     }
+    // A suppressed (skipped) send — e.g. the target channel was disabled —
+    // surfaces as a graceful failure with a reason for this user-triggered path.
+    if ("skipped" in result) {
+      return { success: false, error: result.reason };
+    }
     return result;
   },
 });
@@ -814,6 +819,11 @@ export const sendCommunicationNow = action({
         channelId: result.channelId as string,
         messageId: result.messageId as string,
       };
+    }
+    // A suppressed (skipped) send — e.g. the target channel was disabled —
+    // surfaces as a graceful failure with a reason for this user-triggered path.
+    if ("skipped" in result) {
+      return { success: false, error: result.reason };
     }
     return result;
   },

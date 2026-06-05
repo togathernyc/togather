@@ -255,7 +255,7 @@ describe("ChannelsSection (redesigned)", () => {
   });
 
   describe("Navigation", () => {
-    it("navigates to General chat (not info) on tap", () => {
+    it("navigates to General /info on tap (where Active state lives)", () => {
       const { getByText } = render(
         <ChannelsSection groupId="test-group" userRole="member" />
       );
@@ -264,7 +264,7 @@ describe("ChannelsSection (redesigned)", () => {
         fireEvent.press(getByText("General").parent!.parent!.parent!);
       });
 
-      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general");
+      expect(mockPush).toHaveBeenCalledWith("/inbox/test-group/general/info");
     });
 
     it("navigates to Leaders /info on tap", () => {

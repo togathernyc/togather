@@ -1234,6 +1234,10 @@ export const runTaskReminderBot = internalAction({
 
           if (result.success) {
             messagesSent++;
+          } else if ("skipped" in result) {
+            console.info(
+              `[TaskReminder] Skipped task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.reason}`,
+            );
           } else {
             console.error(
               `[TaskReminder] Failed task-card post for task ${assignment.taskId} to ${targetChannelSlug}: ${result.error}`,
@@ -1507,6 +1511,7 @@ export const sendBotMessage = internalAction({
         channelId: Id<"chatChannels">;
         messageId: Id<"chatMessages">;
       }
+    | { success: false; skipped: true; reason: string }
     | { success: false; error: string }
   > => {
     // Determine target slug with backwards compatibility
@@ -1541,16 +1546,14 @@ export const sendBotMessage = internalAction({
       );
     }
 
-    if (!channel) {
-      console.error(`[sendBotMessage] No channel found for group ${groupId}`);
-      return { success: false, error: "Channel not found" };
-    }
-
-    // Check if channel is archived
-    if (channel.isArchived) {
-      const errorMsg = `Bot cannot post to archived channel "${channel.name}". Please update bot settings to target an active channel.`;
-      console.error(`[sendBotMessage] ${errorMsg}`);
-      return { success: false, error: errorMsg };
+    // When the target channel is missing or inactive (e.g. a leader disabled
+    // the General channel), suppress the bot message silently. This is a no-op
+    // skip — NOT an error — so callers don't retry, log a failure, or throw.
+    if (!channel || channel.isArchived || channel.isEnabled === false) {
+      console.info(
+        `[sendBotMessage] Skipping bot message for group ${groupId}: target channel "${targetSlug}" is inactive.`,
+      );
+      return { success: false, skipped: true, reason: "target channel inactive" };
     }
 
     // Insert the bot message
@@ -2206,6 +2209,16 @@ export const processCommunicationBotBucket = internalAction({
                 );
 
                 if (sendResult.success) {
+                  results.push({
+                    groupId: config.groupId,
+                    messageId: msg.id,
+                    success: true,
+                  });
+                } else if ("skipped" in sendResult) {
+                  // Target channel inactive (e.g. General disabled) — silent no-op.
+                  console.info(
+                    `[CommunicationBot] Skipped message ${msg.id}: ${sendResult.reason}`,
+                  );
                   results.push({
                     groupId: config.groupId,
                     messageId: msg.id,

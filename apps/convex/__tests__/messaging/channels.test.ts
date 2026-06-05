@@ -2817,6 +2817,9 @@ describe("toggleMainChannel", () => {
       enabled: true,
     });
 
+    // Re-adding members runs in scheduled batches — drain before asserting count.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
     const mainAfterOn = await t.run(async (ctx) => {
       return await ctx.db
         .query("chatChannels")
@@ -2827,6 +2830,193 @@ describe("toggleMainChannel", () => {
     });
     expect(mainAfterOn?.isArchived).toBe(false);
     expect(mainAfterOn?.memberCount).toBeGreaterThanOrEqual(2);
+  });
+
+  test("rejects sends to General the instant it is disabled (before async member-clear runs)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: accessToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    const mainChannel = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "main")
+        )
+        .first()
+    );
+    const channelId = mainChannel!._id;
+
+    // Leader is an active member of General.
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: leaderId,
+        role: "admin",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // Disable General: archives the channel and schedules
+    // clearChannelMembersBatch. Deliberately do NOT drain — this is the
+    // async-clear window where the leader's membership row is still active.
+    await t.mutation(api.functions.messaging.channels.toggleMainChannel, {
+      token: leaderToken,
+      groupId,
+      enabled: false,
+    });
+
+    // Membership is still active, but the channel is archived — sendMessage
+    // must reject immediately rather than accept a post to a disabled channel.
+    await expect(
+      t.mutation(api.functions.messaging.messages.sendMessage, {
+        token: leaderToken,
+        channelId,
+        content: "Should not go through",
+      })
+    ).rejects.toThrow("This channel is disabled");
+
+    // Drain the scheduled clear so no jobs leak past the test.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+describe("toggleAnnouncementsChannel", () => {
+  test("leader enabling populates all members via scheduled batches (no read-limit blowup)", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      userId: memberId,
+      communityId,
+      groupId,
+    } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    expect(res.status).toBe("enabled");
+    const channelId = res.channelId!;
+
+    // Members are added asynchronously in scheduled batches — drain them.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const channel = await t.run((ctx) => ctx.db.get(channelId));
+    expect(channel?.channelType).toBe("announcements");
+    expect(channel?.memberCount).toBeGreaterThanOrEqual(2);
+
+    // Regular member is added (so unread counts work) ...
+    const memberRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", memberId)
+        )
+        .first()
+    );
+    expect(memberRow?.leftAt).toBeUndefined();
+    expect(memberRow?.role).toBe("member");
+
+    // ... and the leader's channel role mirrors their group role.
+    const leaderRow = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", leaderId)
+        )
+        .first()
+    );
+    expect(leaderRow?.role).toBe("admin");
+  });
+
+  test("enabling leader can post immediately, before the populate batch runs", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    const res = await t.mutation(
+      api.functions.messaging.channels.toggleAnnouncementsChannel,
+      { token: leaderToken, groupId, enabled: true }
+    );
+    const channelId = res.channelId!;
+
+    // Deliberately do NOT drain the populate batch — this is the window the P2
+    // covers. The enabling leader was added synchronously, so their immediate
+    // post must succeed rather than fail with "Not a member of this channel".
+    const messageId = await t.mutation(
+      api.functions.messaging.messages.sendMessage,
+      { token: leaderToken, channelId, content: "First announcement" }
+    );
+    const message = await t.run((ctx) => ctx.db.get(messageId));
+    expect(message?.channelId).toBe(channelId);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+describe("clearChannelMembersBatch", () => {
+  test("is a no-op on a re-enabled (unarchived) channel — stale clear can't strip active members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, groupId } = await seedTestData(t);
+
+    // An active (unarchived) main channel with a member — i.e. the state after
+    // a quick disable → re-enable, where a stale clear job is still pending.
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "main",
+        slug: "general",
+        name: "General",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      })
+    );
+    await t.run(async (ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      })
+    );
+
+    // The stale clear job fires against the now-active channel.
+    await t.mutation(
+      internal.functions.messaging.channels.clearChannelMembersBatch,
+      { channelId, cursor: null }
+    );
+
+    // The member must NOT be soft-deleted.
+    const member = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", channelId).eq("userId", userId)
+        )
+        .first()
+    );
+    expect(member?.leftAt).toBeUndefined();
   });
 });
 

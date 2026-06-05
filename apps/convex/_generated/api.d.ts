@@ -94,6 +94,7 @@ import type * as functions_messaging_sharedChannels from "../functions/messaging
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
+import type * as functions_migrations_unifyAnnouncementChannels from "../functions/migrations/unifyAnnouncementChannels.js";
 import type * as functions_notifications_actions from "../functions/notifications/actions.js";
 import type * as functions_notifications_dailyEnabledSnapshot from "../functions/notifications/dailyEnabledSnapshot.js";
 import type * as functions_notifications_debug from "../functions/notifications/debug.js";
@@ -288,6 +289,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
+  "functions/migrations/unifyAnnouncementChannels": typeof functions_migrations_unifyAnnouncementChannels;
   "functions/notifications/actions": typeof functions_notifications_actions;
   "functions/notifications/dailyEnabledSnapshot": typeof functions_notifications_dailyEnabledSnapshot;
   "functions/notifications/debug": typeof functions_notifications_debug;
