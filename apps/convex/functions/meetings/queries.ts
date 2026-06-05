@@ -182,6 +182,8 @@ export const getByShortId = query({
       communityId: community?._id || null,
       communityName: community?.name || null,
       communityLogo: getMediaUrl(community?.logo),
+      // Timezone for rendering scheduledAt in local time (e.g. link previews).
+      timezone: community?.timezone || null,
       // Host info. `hosts` is the canonical attribution; share page UI
       // shows "Hosted by {primary}" when non-empty, group fallback otherwise.
       hosts,

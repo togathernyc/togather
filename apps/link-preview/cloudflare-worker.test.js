@@ -671,3 +671,44 @@ test("bot /ch/:shortId without description uses generated description", async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+test("bot /e/:shortId falls back to New York when timezone is invalid", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/event")) {
+      return new Response(
+        JSON.stringify({
+          id: "meeting_123",
+          shortId: "abc123",
+          title: "My Event Name",
+          scheduledAt: "2026-06-03T19:00:00.000Z",
+          status: "scheduled",
+          groupName: "My Group",
+          // Legacy non-IANA value that makes toLocaleDateString throw.
+          timezone: "Eastern Time (US & Canada)",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    // The date must still render (in NY time) rather than vanishing entirely.
+    assert.match(html, /June 3, 2026/);
+    assert.match(html, /EDT/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

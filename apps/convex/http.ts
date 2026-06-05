@@ -189,6 +189,7 @@ http.route({
         groupImageFallback: result.groupImage, // Same as groupImage
         communityName: result.communityName,
         communityLogo: result.communityLogo,
+        timezone: result.timezone,
         locationOverride: result.locationOverride,
         note: result.note,
       });
