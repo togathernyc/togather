@@ -469,21 +469,28 @@ function escapeHtml(str) {
  */
 function formatDate(isoDate, timeZone) {
   if (!isoDate) return "";
-  try {
-    const date = new Date(isoDate);
-    return date.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: timeZone || "America/New_York",
-      timeZoneName: "short",
-    });
-  } catch {
-    return "";
+  const date = new Date(isoDate);
+  const options = {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  };
+  // A legacy or malformed timezone (e.g. "Eastern Time (US & Canada)") makes
+  // toLocaleDateString throw a RangeError. Fall back to New York rather than
+  // dropping the date entirely, which is worse than showing the wrong zone.
+  for (const zone of [timeZone, "America/New_York"]) {
+    if (!zone) continue;
+    try {
+      return date.toLocaleDateString("en-US", { ...options, timeZone: zone });
+    } catch {
+      // Try the next zone.
+    }
   }
+  return "";
 }
 
 /**
