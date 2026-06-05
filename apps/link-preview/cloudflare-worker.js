@@ -459,9 +459,15 @@ function escapeHtml(str) {
 }
 
 /**
- * Format ISO date to human-readable string
+ * Format ISO date to human-readable string in the event's timezone.
+ *
+ * Cloudflare Workers default to UTC, so without an explicit `timeZone` the
+ * preview rendered times 4-5 hours ahead of the event's actual local time
+ * (e.g. "8:45 PM EDT" showed as "12:45 AM" the next day). We anchor to the
+ * event's IANA timezone, falling back to America/New_York to match the app's
+ * default (see apps/mobile/app/e/[shortId]/EventPageClient.tsx).
  */
-function formatDate(isoDate) {
+function formatDate(isoDate, timeZone) {
   if (!isoDate) return "";
   try {
     const date = new Date(isoDate);
@@ -472,6 +478,8 @@ function formatDate(isoDate) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: timeZone || "America/New_York",
+      timeZoneName: "short",
     });
   } catch {
     return "";
@@ -550,7 +558,7 @@ function generateEventOgHtml(event, shortId, config) {
   const title = `RSVP to ${eventTitle}`;
   const groupName = escapeHtml(event.groupName || "");
   const communityName = escapeHtml(event.communityName || BRAND_NAME);
-  const dateStr = formatDate(event.scheduledAt);
+  const dateStr = formatDate(event.scheduledAt, event.timezone);
   const location = escapeHtml(event.locationOverride || "");
 
   // Build a rich description
