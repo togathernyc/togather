@@ -78,6 +78,16 @@ export function NotificationFeedScreen() {
         // Fire-and-forget — navigation shouldn't wait on the read write.
         markRead({ notificationId: item.id }).catch(() => {});
       }
+      // This feed lives inside the `(user)` route group, which is presented
+      // as a modal (`presentation: "modal"` in app/_layout.tsx). Many
+      // notifications resolve to a screen *outside* that modal — e.g. a
+      // "new prayer requests" notification opens `/(tabs)/prayer`. Pushing
+      // without dismissing first lands the destination *behind* the still-
+      // open notifications modal. Dismiss the modal stack first, then let the
+      // resolver navigate (same pattern as useStartDirectMessage).
+      if (router.canDismiss?.()) {
+        router.dismissAll();
+      }
       // DB notification rows keep the type in the `notificationType`
       // column; `data` often omits it. Surface it so the resolver can
       // route types like join_request_approved / group_creation_approved.
@@ -86,7 +96,7 @@ export function NotificationFeedScreen() {
         type: item.data?.type ?? item.notificationType,
       });
     },
-    [markRead],
+    [markRead, router],
   );
 
   const handleMarkAllRead = useCallback(() => {
