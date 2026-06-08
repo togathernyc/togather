@@ -9,7 +9,6 @@ import { AndroidDownload } from './pages/AndroidDownload.tsx'
 import { Contribute } from './pages/Contribute.tsx'
 import { ReportIssue } from './pages/ReportIssue.tsx'
 import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
-import { AvailabilityLink } from './pages/AvailabilityLink.tsx'
 import { ScrollToTop } from './components/ScrollToTop.tsx'
 // Onboarding, billing, admin, and sign-in pages have been moved to the Expo web app.
 
@@ -25,8 +24,6 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/issue" element={<ReportIssue />} />
         <Route path="/legal/privacy" element={<PrivacyPolicy />} />
         <Route path="/legal/terms" element={<TermsOfService />} />
-        {/* Public app-optional availability link */}
-        <Route path="/a/:token" element={<AvailabilityLink />} />
         {/* Catch-all: redirect /:slug to community landing page */}
         <Route path="/:slug" element={<CommunityRedirect />} />
       </Routes>
