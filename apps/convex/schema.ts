@@ -422,12 +422,13 @@ export default defineSchema({
     runSheetConfig: v.optional(
       v.object({
         // Which run sheet the leader-tools "Run Sheet" tool shows for this
-        // group. "pco" reads live from Planning Center (default, legacy);
-        // "native" shows the group's upcoming event plan's native run sheet
-        // (ADR-026). Absent = "pco" for backward compatibility.
-        source: v.optional(
-          v.union(v.literal("pco"), v.literal("native")),
-        ),
+        // group: "pco" (default/legacy — live from Planning Center) or
+        // "native" (the group's upcoming event-plan run sheet, ADR-026). Typed
+        // as a permissive string here so the schema also tolerates pre-existing
+        // legacy `source` drift on some prod docs; writes are constrained to
+        // "pco"|"native" by `updateRunSheetConfig`, and readers default any
+        // other/absent value to "pco".
+        source: v.optional(v.string()),
         defaultServiceTypeIds: v.optional(v.array(v.string())),
         defaultView: v.optional(v.string()), // "compact" | "detailed"
         // Chip configuration for filtering/ordering plan item categories
@@ -437,11 +438,6 @@ export default defineSchema({
             order: v.array(v.string()), // ordered visible category names
           }),
         ),
-        // Legacy drift: some existing `groups` docs carry `source: "native"`
-        // here. Nothing in the codebase reads or writes it anymore, but the
-        // deploy-time schema validation rejects the extra field. Accept it so
-        // deploys pass. TODO: backfill-strip this field, then remove.
-        source: v.optional(v.string()),
       }),
     ),
 
