@@ -14,7 +14,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
-import { PAST_EVENT_BUFFER_MS } from "../lib/meetingConfig";
+import { PAST_EVENT_BUFFER_MS, isNotifiedRsvpOptionId } from "../lib/meetingConfig";
 import {
   getMaxGuestsForMeeting,
   isGoingOption,
@@ -516,13 +516,15 @@ export const submit = mutation({
       }
 
       // Sync event chat channel membership based on whether the final
-      // option is enabled. Runs inline (same transaction) so the RSVP
-      // write and the chat-member row stay consistent — fire-and-forget
-      // via the scheduler could leave the two rows out of sync if the
-      // scheduled mutation failed, with no reconciliation path. Channels
-      // are lazy-created, so these calls are no-ops if no channel exists
-      // yet.
-      if (selectedOption.enabled) {
+      // option counts as attending (Going/Maybe — see
+      // NOTIFIED_RSVP_OPTION_IDS). Going/Maybe RSVPers are seated so they
+      // receive event updates; "Can't Go" responders are removed. Runs
+      // inline (same transaction) so the RSVP write and the chat-member row
+      // stay consistent — fire-and-forget via the scheduler could leave the
+      // two rows out of sync if the scheduled mutation failed, with no
+      // reconciliation path. Channels are lazy-created, so these calls are
+      // no-ops if no channel exists yet (backfilled on channel creation).
+      if (isNotifiedRsvpOptionId(args.optionId)) {
         await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
           meetingId: args.meetingId,
           userId,
@@ -558,14 +560,17 @@ export const submit = mutation({
       rsvpOptionLabel: selectedOption.label,
     });
 
-    // Sync event chat channel membership. Submit only allows enabled
-    // options (validated above), so new inserts always add. The channel
-    // is lazy-created, so this is a no-op if no channel exists yet.
-    // Runs inline so RSVP + chat membership stay consistent.
-    await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
-      meetingId: args.meetingId,
-      userId,
-    });
+    // Sync event chat channel membership. Only Going/Maybe responders are
+    // seated (so they receive event updates); a brand-new "Can't Go" RSVP
+    // doesn't join the chat. The channel is lazy-created, so this is a no-op
+    // if no channel exists yet (backfilled on channel creation). Runs inline
+    // so RSVP + chat membership stay consistent.
+    if (isNotifiedRsvpOptionId(args.optionId)) {
+      await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+        meetingId: args.meetingId,
+        userId,
+      });
+    }
 
     return {
       success: true,
@@ -672,14 +677,22 @@ export const batchUpdate = mutation({
         });
       }
 
-      // Sync event chat channel membership. batchUpdate only allows
-      // enabled options (filtered via validOptionIds above), so we
-      // always add here. No-op if no channel exists yet. Runs inline so
-      // the RSVP writes and chat membership stay consistent.
-      await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
-        meetingId: args.meetingId,
-        userId: rsvpUpdate.userId,
-      });
+      // Sync event chat channel membership. Going/Maybe responders are
+      // seated so they get event updates; others (e.g. "Can't Go") are
+      // removed. No-op if no channel exists yet (backfilled on channel
+      // creation). Runs inline so the RSVP writes and chat membership stay
+      // consistent.
+      if (isNotifiedRsvpOptionId(rsvpUpdate.optionId)) {
+        await ctx.runMutation(internal.functions.messaging.eventChat.addEventChannelMember, {
+          meetingId: args.meetingId,
+          userId: rsvpUpdate.userId,
+        });
+      } else {
+        await ctx.runMutation(internal.functions.messaging.eventChat.removeEventChannelMember, {
+          meetingId: args.meetingId,
+          userId: rsvpUpdate.userId,
+        });
+      }
     }
 
     return { success: true };

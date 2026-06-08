@@ -214,7 +214,7 @@ export const create = mutation({
     // Generate a short ID for URLs (e.g., "abc123xyz")
     const shortId = generateShortId();
 
-    // Calculate reminder time (1 hour before)
+    // Calculate reminder time (2 hours before)
     const reminderAt = args.scheduledAt - DEFAULT_REMINDER_OFFSET_MS;
 
     // Calculate attendance confirmation time (30 min after end)

@@ -13,10 +13,10 @@
 // ============================================================================
 
 /**
- * Default reminder time offset: 1 hour before meeting.
+ * Default reminder time offset: 2 hours before meeting.
  * Used to schedule reminder push notifications.
  */
-export const DEFAULT_REMINDER_OFFSET_MS = 60 * 60 * 1000; // 1 hour
+export const DEFAULT_REMINDER_OFFSET_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
  * Default meeting duration for calculating attendance confirmation time.
@@ -60,3 +60,42 @@ export const DEFAULT_RSVP_OPTIONS: RsvpOption[] = [
   { id: 2, label: "Maybe", enabled: true },
   { id: 3, label: "Can't Go", enabled: true },
 ];
+
+/**
+ * RSVP option IDs whose responders are considered "attending enough" to:
+ *   - be seated in the event chat channel (and thus get update notifications)
+ *   - receive host text blasts
+ *
+ * 1 = "Going", 2 = "Maybe" (see DEFAULT_RSVP_OPTIONS). "Can't Go" (3) is
+ * excluded. These are matched by id, so events using custom option labels are
+ * still keyed off the conventional Going/Maybe slots.
+ */
+export const NOTIFIED_RSVP_OPTION_IDS: number[] = [1, 2];
+
+/** Whether an RSVP option id grants chat membership + blast/update delivery. */
+export function isNotifiedRsvpOptionId(optionId: number): boolean {
+  return NOTIFIED_RSVP_OPTION_IDS.includes(optionId);
+}
+
+/**
+ * Whether an RSVP counts as "attending" for seating an event-chat member or
+ * picking a blast recipient: its option id is notified (Going/Maybe) AND that
+ * option is still present and enabled on the meeting.
+ *
+ * The enabled check matters for historical rows: a host can hide an option
+ * (e.g. Maybe) after people have RSVP'd — the editor drops the disabled option
+ * from `meeting.rsvpOptions`, but old `meetingRsvps` rows keep the id. Those
+ * stale responders must not keep receiving chat updates or blasts, mirroring
+ * `canAccessEventChannel`, which also keys off the currently-enabled options.
+ *
+ * (RSVP submit/batchUpdate don't need this — they can only set an option that
+ * is currently enabled, so the id check alone suffices there.)
+ */
+export function isAttendingRsvpOption(
+  optionId: number,
+  rsvpOptions: ReadonlyArray<{ id: number; enabled: boolean }> | undefined,
+): boolean {
+  if (!isNotifiedRsvpOptionId(optionId)) return false;
+  const option = (rsvpOptions ?? []).find((o) => o.id === optionId);
+  return Boolean(option && option.enabled);
+}

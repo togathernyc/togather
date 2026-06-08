@@ -2,7 +2,7 @@
  * Event Blast functions
  *
  * Allows leaders to send message blasts (SMS/push) to attendees who
- * RSVPed "Going" to an event. Blasts are recorded for history.
+ * RSVPed "Going" or "Maybe" to an event. Blasts are recorded for history.
  */
 
 import { v } from "convex/values";
@@ -11,6 +11,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { canEditMeeting } from "../lib/meetingPermissions";
+import { NOTIFIED_RSVP_OPTION_IDS, isAttendingRsvpOption } from "../lib/meetingConfig";
 import { now, getMediaUrl } from "../lib/utils";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
@@ -119,7 +120,8 @@ export const initiate = mutation({
 // ============================================================================
 
 /**
- * Send a message blast to all attendees who RSVPed "Going" (optionId 1)
+ * Send a message blast to all attendees who RSVPed "Going" or "Maybe"
+ * (NOTIFIED_RSVP_OPTION_IDS).
  */
 export const send = internalAction({
   args: {
@@ -149,10 +151,11 @@ export const send = internalAction({
       { userId: args.userId }
     );
 
-    // Get all RSVPs for this meeting (optionId 1 = "Going")
+    // Get all RSVPs for this meeting whose option counts as attending
+    // (Going + Maybe — see NOTIFIED_RSVP_OPTION_IDS).
     const rsvpUserIds: Id<"users">[] = await ctx.runQuery(
       internal.functions.eventBlasts.getRsvpUserIds,
-      { meetingId: args.meetingId, optionId: 1 }
+      { meetingId: args.meetingId, optionIds: NOTIFIED_RSVP_OPTION_IDS }
     );
 
     const communityId = groupInfo?.communityId as Id<"communities">;
@@ -285,21 +288,32 @@ export const send = internalAction({
 // ============================================================================
 
 /**
- * Get user IDs who RSVPed with a specific option
+ * Get user IDs who RSVPed with any of the given options AND whose option is
+ * still enabled on the meeting. The enabled check excludes stale rows for an
+ * option the host has since hidden (e.g. Maybe), mirroring chat access so a
+ * hidden option's responders don't keep receiving blasts.
  */
 export const getRsvpUserIds = internalQuery({
   args: {
     meetingId: v.id("meetings"),
-    optionId: v.number(),
+    optionIds: v.array(v.number()),
   },
   handler: async (ctx, args) => {
+    const meeting = await ctx.db.get(args.meetingId);
+    const rsvpOptions = meeting?.rsvpOptions;
+    const allowed = new Set(args.optionIds);
     const rsvps = await ctx.db
       .query("meetingRsvps")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .filter((q) => q.eq(q.field("rsvpOptionId"), args.optionId))
       .collect();
 
-    return rsvps.map((r) => r.userId);
+    return rsvps
+      .filter(
+        (r) =>
+          allowed.has(r.rsvpOptionId) &&
+          isAttendingRsvpOption(r.rsvpOptionId, rsvpOptions),
+      )
+      .map((r) => r.userId);
   },
 });
 

@@ -31,6 +31,7 @@ vi.mock("jose", () => ({
 import { convexTest } from "convex-test";
 import schema from "../schema";
 import type { Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import { modules } from "../test.setup";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -45,6 +46,8 @@ interface TestData {
   leaderId: Id<"users">;
   memberId: Id<"users">;
   attendeeId: Id<"users">;
+  maybeId: Id<"users">;
+  cantGoId: Id<"users">;
   meetingId: Id<"meetings">;
   leaderToken: string;
   memberToken: string;
@@ -76,9 +79,15 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
     const attendeeId = await ctx.db.insert("users", {
       firstName: "Going", lastName: "Attendee", phone: "+15559876543", createdAt: ts, updatedAt: ts,
     });
+    const maybeId = await ctx.db.insert("users", {
+      firstName: "Maybe", lastName: "Attendee", phone: "+15559876544", createdAt: ts, updatedAt: ts,
+    });
+    const cantGoId = await ctx.db.insert("users", {
+      firstName: "Cant", lastName: "Go", phone: "+15559876545", createdAt: ts, updatedAt: ts,
+    });
 
     // Community memberships
-    for (const uid of [leaderId, memberId, attendeeId]) {
+    for (const uid of [leaderId, memberId, attendeeId, maybeId, cantGoId]) {
       await ctx.db.insert("userCommunities", {
         userId: uid, communityId, roles: 1, status: 1, createdAt: ts, updatedAt: ts,
       });
@@ -88,12 +97,11 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
     await ctx.db.insert("groupMembers", {
       groupId, userId: leaderId, role: "leader", joinedAt: ts, notificationsEnabled: true,
     });
-    await ctx.db.insert("groupMembers", {
-      groupId, userId: memberId, role: "member", joinedAt: ts, notificationsEnabled: true,
-    });
-    await ctx.db.insert("groupMembers", {
-      groupId, userId: attendeeId, role: "member", joinedAt: ts, notificationsEnabled: true,
-    });
+    for (const uid of [memberId, attendeeId, maybeId, cantGoId]) {
+      await ctx.db.insert("groupMembers", {
+        groupId, userId: uid, role: "member", joinedAt: ts, notificationsEnabled: true,
+      });
+    }
 
     const meetingId = await ctx.db.insert("meetings", {
       groupId,
@@ -105,23 +113,26 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestData
       rsvpEnabled: true,
       rsvpOptions: [
         { id: 1, label: "Going", enabled: true },
-        { id: 2, label: "Not Going", enabled: true },
+        { id: 2, label: "Maybe", enabled: true },
+        { id: 3, label: "Can't Go", enabled: true },
       ],
       visibility: "group",
       shortId: "blast123",
     });
 
-    // Create RSVPs — attendee is "Going"
+    // Create RSVPs — attendee is "Going", maybe is "Maybe", cantGo is "Can't Go".
     await ctx.db.insert("meetingRsvps", {
       meetingId, userId: attendeeId, rsvpOptionId: 1, createdAt: ts, updatedAt: ts,
     });
-    // Member is "Not Going"
     await ctx.db.insert("meetingRsvps", {
-      meetingId, userId: memberId, rsvpOptionId: 2, createdAt: ts, updatedAt: ts,
+      meetingId, userId: maybeId, rsvpOptionId: 2, createdAt: ts, updatedAt: ts,
+    });
+    await ctx.db.insert("meetingRsvps", {
+      meetingId, userId: cantGoId, rsvpOptionId: 3, createdAt: ts, updatedAt: ts,
     });
 
     return {
-      communityId, groupId, leaderId, memberId, attendeeId, meetingId,
+      communityId, groupId, leaderId, memberId, attendeeId, maybeId, cantGoId, meetingId,
       leaderToken: `test-token-${leaderId}`,
       memberToken: `test-token-${memberId}`,
     };
@@ -236,20 +247,44 @@ describe("Event Blasts", () => {
   });
 
   describe("getRsvpUserIds helper", () => {
-    test("returns only users with matching RSVP option", async () => {
+    test("returns Going + Maybe RSVPers and excludes Can't Go", async () => {
       const t = convexTest(schema, modules);
       const data = await setupTestData(t);
 
-      const goingUsers = await t.run(async (ctx) => {
-        const rsvps = await ctx.db
-          .query("meetingRsvps")
-          .withIndex("by_meeting", (q) => q.eq("meetingId", data.meetingId))
-          .collect();
-        return rsvps.filter((r) => r.rsvpOptionId === 1).map((r) => r.userId);
+      // Blasts target the notified options (Going=1, Maybe=2).
+      const recipients: Id<"users">[] = await t.query(
+        (internal as any).functions.eventBlasts.getRsvpUserIds,
+        { meetingId: data.meetingId, optionIds: [1, 2] }
+      );
+
+      expect(recipients).toHaveLength(2);
+      expect(recipients).toContain(data.attendeeId); // Going
+      expect(recipients).toContain(data.maybeId); // Maybe
+      expect(recipients).not.toContain(data.cantGoId); // Can't Go excluded
+    });
+
+    test("excludes stale responders whose option the host has hidden", async () => {
+      const t = convexTest(schema, modules);
+      const data = await setupTestData(t);
+
+      // Host hides Maybe (id 2) after maybeId already RSVP'd to it.
+      await t.run(async (ctx) => {
+        const meeting = await ctx.db.get(data.meetingId);
+        await ctx.db.patch(data.meetingId, {
+          rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+            o.id === 2 ? { ...o, enabled: false } : o,
+          ),
+        });
       });
 
-      expect(goingUsers).toHaveLength(1);
-      expect(goingUsers[0]).toBe(data.attendeeId);
+      const recipients: Id<"users">[] = await t.query(
+        (internal as any).functions.eventBlasts.getRsvpUserIds,
+        { meetingId: data.meetingId, optionIds: [1, 2] }
+      );
+
+      // Only the Going responder remains; the hidden-Maybe responder is
+      // excluded, matching their loss of chat access.
+      expect(recipients).toEqual([data.attendeeId]);
     });
   });
 
