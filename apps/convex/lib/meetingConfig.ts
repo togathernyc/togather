@@ -13,10 +13,10 @@
 // ============================================================================
 
 /**
- * Default reminder time offset: 1 hour before meeting.
+ * Default reminder time offset: 2 hours before meeting.
  * Used to schedule reminder push notifications.
  */
-export const DEFAULT_REMINDER_OFFSET_MS = 60 * 60 * 1000; // 1 hour
+export const DEFAULT_REMINDER_OFFSET_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
  * Default meeting duration for calculating attendance confirmation time.
