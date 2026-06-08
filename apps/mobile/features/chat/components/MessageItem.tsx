@@ -42,6 +42,7 @@ import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { PollCardFromMessage } from './PollCardFromMessage';
+import { AvailabilityRequestCardFromMessage } from './AvailabilityRequestCardFromMessage';
 import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { parseMessageContent } from '@features/shared/utils/linkify';
@@ -81,6 +82,7 @@ interface MessageItemProps {
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
     pollId?: Id<"polls">;
+    availabilityRequestId?: Id<"availabilityRequests">;
     /** Present only on messages that mirror an event text blast (SMS + push). */
     blastId?: Id<"eventBlasts">;
   };
@@ -867,6 +869,17 @@ function MessageItemInner({
     );
   };
 
+  const renderAvailabilityRequestCard = () => {
+    if (message.contentType !== "availability_request" || !message.availabilityRequestId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <AvailabilityRequestCardFromMessage requestId={message.availabilityRequestId} />
+      </View>
+    );
+  };
+
   // Render optimistic message status indicator
   const renderOptimisticStatus = () => {
     if (!isOptimistic || !optimisticStatus) return null;
@@ -1072,6 +1085,9 @@ function MessageItemInner({
 
           {/* Poll card */}
           {renderPollCard()}
+
+          {/* Availability request card */}
+          {renderAvailabilityRequestCard()}
 
           {/* Event cards for meeting links */}
           {renderEventCards()}

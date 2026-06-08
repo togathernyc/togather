@@ -69,6 +69,8 @@ interface Message {
   taskId?: Id<"tasks">;
   // Poll reference for contentType === "poll"
   pollId?: Id<"polls">;
+  // Availability-request reference for contentType === "availability_request"
+  availabilityRequestId?: Id<"availabilityRequests">;
   // Present only on messages mirrored from an event text blast (SMS + push).
   blastId?: Id<"eventBlasts">;
 }
@@ -351,6 +353,7 @@ export function MessageList({
             reachOutRequestId: message.reachOutRequestId,
             taskId: message.taskId,
             pollId: message.pollId,
+            availabilityRequestId: message.availabilityRequestId,
             blastId: message.blastId,
           }}
           currentUserId={currentUserId}

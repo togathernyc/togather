@@ -89,6 +89,8 @@ const DOMAIN_CONFIG = {
   // Regex helpers for detecting channel invite links in text
   channelInviteLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/ch\\/([a-zA-Z0-9]+)`, 'g'),
   channelInviteLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/ch\\/([a-zA-Z0-9]+)`),
+  // Public availability link URL (works without the app; opens in-app if installed)
+  availabilityLinkUrl: (token) => `https://${BASE_DOMAIN}/a/${token}`,
   // Community landing page URL
   communityLandingUrl: (slug) => `https://${BASE_DOMAIN}/c/${slug}`,
   // Domain suffix for subdomain parsing (with leading dot)

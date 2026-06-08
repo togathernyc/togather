@@ -73,7 +73,7 @@ function validatePollContent(question: string, optionTexts: string[]): void {
  * channel-posting rules (e.g. announcements = leaders only) without a fragile
  * refactor of `sendMessage` itself.
  */
-async function assertCanPostInChannel(
+export async function assertCanPostInChannel(
   ctx: MutationCtx,
   userId: Id<"users">,
   channel: Doc<"chatChannels">,
