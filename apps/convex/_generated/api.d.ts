@@ -86,6 +86,7 @@ import type * as functions_messaging_flagging from "../functions/messaging/flagg
 import type * as functions_messaging_helpers from "../functions/messaging/helpers.js";
 import type * as functions_messaging_index from "../functions/messaging/index.js";
 import type * as functions_messaging_messages from "../functions/messaging/messages.js";
+import type * as functions_messaging_availabilityRequests from "../functions/messaging/availabilityRequests.js";
 import type * as functions_messaging_polls from "../functions/messaging/polls.js";
 import type * as functions_messaging_reachOut from "../functions/messaging/reachOut.js";
 import type * as functions_messaging_reactions from "../functions/messaging/reactions.js";
@@ -126,6 +127,7 @@ import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
+import type * as functions_scheduling_availability from "../functions/scheduling/availability.js";
 import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
@@ -281,6 +283,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/helpers": typeof functions_messaging_helpers;
   "functions/messaging/index": typeof functions_messaging_index;
   "functions/messaging/messages": typeof functions_messaging_messages;
+  "functions/messaging/availabilityRequests": typeof functions_messaging_availabilityRequests;
   "functions/messaging/polls": typeof functions_messaging_polls;
   "functions/messaging/reachOut": typeof functions_messaging_reachOut;
   "functions/messaging/reactions": typeof functions_messaging_reactions;
@@ -321,6 +324,7 @@ declare const fullApi: ApiFromModules<{
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
+  "functions/scheduling/availability": typeof functions_scheduling_availability;
   "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;

@@ -1696,7 +1696,7 @@ export default defineSchema({
     channelId: v.id("chatChannels"),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "poll"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "poll" | "availability_request"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1738,6 +1738,8 @@ export default defineSchema({
     taskId: v.optional(v.id("tasks")),
     // Poll reference for contentType === "poll"
     pollId: v.optional(v.id("polls")),
+    // Availability-request reference for contentType === "availability_request"
+    availabilityRequestId: v.optional(v.id("availabilityRequests")),
     // Optional idempotency key for generated bot/task posts
     sourceKey: v.optional(v.string()),
     // For mirrored text blasts — backlink to the eventBlasts row so the UI
@@ -2605,6 +2607,61 @@ export default defineSchema({
     // powers team auto-sync: desired members of a team within a rotation
     // window are derived from assignments matched by team + date.
     .index("by_team_eventDate", ["teamId", "eventDate"]),
+
+  /**
+   * A member's self-reported availability for a single event plan (ADR-023
+   * follow-up). This is *intentional availability* — "I am available to serve
+   * this date" — not a block-out calendar. Being available does NOT assign the
+   * member; leaders still decide who serves via `roleAssignments`. The absence
+   * of a row means "no response", which the leader grid renders distinctly from
+   * an explicit "unavailable".
+   *
+   * Keyed per (plan, user): availability is collected at the event-plan level,
+   * not per time-slot. `groupId`/`communityId` are denormalized from the plan
+   * so the dedicated "My Availability" page can scope by group without a join.
+   */
+  eventAvailability: defineTable({
+    planId: v.id("eventPlans"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    status: v.string(), // "available" | "unavailable"
+    note: v.optional(v.string()),
+    respondedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_user", ["planId", "userId"])
+    .index("by_user", ["userId"])
+    .index("by_group_user", ["groupId", "userId"]),
+
+  /**
+   * An availability request posted into a chat channel. Backed by a
+   * `chatMessages` row with `contentType: "availability_request"` and
+   * `availabilityRequestId` pointing here — mirrors the `polls` pattern so it
+   * flows through the existing chat list, push, and notification pipelines.
+   *
+   * The card lists the group's upcoming event plans (those dated on/after
+   * `createdAt`, capped) and lets each member toggle available/unavailable
+   * inline; responses are stored in `eventAvailability`. We snapshot the
+   * `planIds` at send time so the card's event set is stable even as new plans
+   * are added later.
+   */
+  availabilityRequests: defineTable({
+    channelId: v.id("chatChannels"),
+    /** Back-pointer to the host message. Set after the message is inserted. */
+    messageId: v.optional(v.id("chatMessages")),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    authorId: v.id("users"),
+    /** Optional leader note shown above the event list on the card. */
+    message: v.optional(v.string()),
+    /** Snapshot of the event plans this request asks about, in date order. */
+    planIds: v.array(v.id("eventPlans")),
+    createdAt: v.number(),
+  })
+    .index("by_channel", ["channelId"])
+    .index("by_message", ["messageId"]),
 
   // =============================================================================
   // PRAYERS (Church feature, gated by communities.churchFeatures.prayerEnabled)
