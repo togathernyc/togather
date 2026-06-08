@@ -458,7 +458,9 @@ export const reconcileEventChannelAdmins = internalMutation({
  * no way to render a composer for a channel that doesn't exist yet.
  *
  * Access mirrors `canAccessEventChannel`: host OR any RSVPer whose option is
- * still enabled on the meeting.
+ * still enabled on the meeting. Note that access (can read) is broader than
+ * membership (gets update notifications): a "Can't Go" responder may open the
+ * chat but is not seated as a member.
  */
 export const openEventChat = mutation({
   args: {
@@ -497,6 +499,7 @@ export const openEventChat = mutation({
     }
 
     let hasAccess = isAdmin;
+    let callerOptionId: number | undefined;
     if (!hasAccess) {
       const rsvp = await ctx.db
         .query("meetingRsvps")
@@ -509,6 +512,7 @@ export const openEventChat = mutation({
           (opt) => opt.id === rsvp.rsvpOptionId,
         );
         hasAccess = Boolean(matched && matched.enabled);
+        callerOptionId = rsvp.rsvpOptionId;
       }
     }
     if (!hasAccess) {
@@ -520,12 +524,19 @@ export const openEventChat = mutation({
       { meetingId: args.meetingId },
     );
 
-    // Lazily seat the caller as a channel member if they aren't already.
-    // Admins (hosts / delegated-mode leaders) were seated by
-    // ensureEventChannel; RSVPers are seated only on their first
-    // openEventChat so they don't start receiving push notifications for
-    // events they haven't looked at.
-    if (!isAdmin) {
+    // Lazily seat the caller as a channel member only if their RSVP counts as
+    // attending (Going/Maybe — see NOTIFIED_RSVP_OPTION_IDS). A "Can't Go"
+    // responder can still open and read the chat (access is granted for any
+    // enabled option), but is not seated — so they don't receive event-chat
+    // update notifications, staying consistent with removeEventChannelMember
+    // dropping them when they switch to Can't Go. Admins (hosts /
+    // delegated-mode leaders) and attending RSVPers were already seated by
+    // ensureEventChannel; this covers any not-yet-seated attending caller.
+    if (
+      !isAdmin &&
+      callerOptionId !== undefined &&
+      isNotifiedRsvpOptionId(callerOptionId)
+    ) {
       const existingMembership = await ctx.db
         .query("chatChannelMembers")
         .withIndex("by_channel_user", (q) =>

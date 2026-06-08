@@ -983,6 +983,49 @@ describe("openEventChat", () => {
     });
     expect(channels).toHaveLength(1);
   });
+
+  test("Can't Go RSVPer can open the chat but is NOT seated as a member", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Enable the Can't Go option (id 3) and switch goingId's RSVP to it, so
+    // they retain chat access but no longer count as attending.
+    await t.run(async (ctx) => {
+      const meeting = await ctx.db.get(data.meetingId);
+      await ctx.db.patch(data.meetingId, {
+        rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+          o.id === 3 ? { ...o, enabled: true } : o,
+        ),
+      });
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", data.meetingId).eq("userId", data.goingId),
+        )
+        .first();
+      await ctx.db.patch(rsvp!._id, { rsvpOptionId: 3 });
+    });
+
+    // Opening succeeds (access is granted for any enabled option)...
+    const result = await t.mutation(
+      "functions/messaging/eventChat:openEventChat" as any,
+      { token: data.goingToken, meetingId: data.meetingId },
+    );
+    expect(result.channelId).toBeTruthy();
+
+    // ...but the Can't Go responder is not seated, so they receive no
+    // event-chat update notifications. This guards against re-adding a user
+    // who was just removed for switching to Can't Go.
+    const membership = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel_user", (q) =>
+          q.eq("channelId", result.channelId).eq("userId", data.goingId),
+        )
+        .unique();
+    });
+    expect(membership).toBeNull();
+  });
 });
 
 // ============================================================================
