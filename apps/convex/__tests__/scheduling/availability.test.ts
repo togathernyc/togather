@@ -355,6 +355,14 @@ describe("availabilityMatrix (leader grid)", () => {
       { token: leaderToken, groupId: world.groupId },
     );
     expect(matrix.events).toHaveLength(10);
+
+    // A bogus negative limit must not bypass the cap (slice-from-end footgun).
+    const clamped = await t.query(
+      api.functions.scheduling.availability.availabilityMatrix,
+      { token: leaderToken, groupId: world.groupId, limit: -5 },
+    );
+    expect(clamped.events.length).toBeGreaterThanOrEqual(1);
+    expect(clamped.events.length).toBeLessThanOrEqual(10);
   });
 
   it("rejects a non-scheduler", async () => {

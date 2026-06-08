@@ -310,7 +310,12 @@ export const availabilityMatrix = query({
     const userId = await requireAuth(ctx, args.token);
     await requireGroupScheduler(ctx, args.groupId, userId);
 
-    const cap = Math.min(args.limit ?? MATRIX_MAX_EVENTS, MATRIX_MAX_EVENTS);
+    // Clamp to a positive integer within the hard cap: a negative `limit`
+    // would otherwise make `slice(0, cap)` count from the end and blow past it.
+    const cap = Math.max(
+      1,
+      Math.min(Math.floor(args.limit ?? MATRIX_MAX_EVENTS), MATRIX_MAX_EVENTS),
+    );
     const cutoff = startOfTodayMs();
     const plans = (
       await ctx.db
