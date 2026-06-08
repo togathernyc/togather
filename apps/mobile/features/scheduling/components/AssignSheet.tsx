@@ -28,12 +28,18 @@
  * them in one shot). The form is collapsed behind a button by default so
  * the candidate list is the primary affordance.
  *
+ * Each candidate row also shows the person's availability for *this event*
+ * (sourced from `scheduling.availability.availabilityForPlan`) as a small
+ * inline pill next to their name — "Available" / "Can't". People who haven't
+ * responded show no tag, to keep the list uncluttered.
+ *
  * Backend:
  *   - scheduling.people.searchCommunityPeople
  *   - scheduling.assignments.previousFillers
  *   - scheduling.assignments.assignRole
  *   - scheduling.assignments.assignFromCommunity
  *   - scheduling.assignments.inviteAndAssign
+ *   - scheduling.availability.availabilityForPlan (per-candidate availability)
  *   - scheduling.teams.getTeam (for the "Vocals · Worship Team" subtitle)
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -80,6 +86,38 @@ type PreviousFiller = {
   userName: string;
   lastServedDate: number;
 };
+
+/** Per-event availability status for a community member. */
+type AvailabilityStatus = "available" | "unavailable" | "no_response";
+
+/** Shape returned by `scheduling.availability.availabilityForPlan`. */
+type AvailabilityForPlan = {
+  planId: Id<"eventPlans">;
+  counts: {
+    available: number;
+    unavailable: number;
+    noResponse: number;
+    total: number;
+  };
+  members: Array<{
+    userId: Id<"users">;
+    userName: string;
+    isLeader: boolean;
+    status: AvailabilityStatus;
+    note?: string;
+    respondedAt?: number;
+  }>;
+};
+
+/**
+ * Short label for the availability pill. Only the two non-default statuses
+ * get a tag — `no_response` returns null so the row stays uncluttered.
+ */
+function availabilityLabel(status: AvailabilityStatus): string | null {
+  if (status === "available") return "Available";
+  if (status === "unavailable") return "Can't";
+  return null;
+}
 
 /**
  * Format an E.164-ish phone string for display. US numbers (`+1XXXXXXXXXX`)
@@ -190,6 +228,24 @@ export function AssignSheet({
     api.functions.scheduling.teams.getTeam,
     visible ? { teamId } : "skip",
   ) as { _id: Id<"teams">; name: string } | undefined;
+
+  // Per-candidate availability for this event, keyed by userId for cheap
+  // lookups in the row renderers. Display-only — does not affect ordering.
+  const availability = useAuthenticatedQuery(
+    api.functions.scheduling.availability.availabilityForPlan,
+    visible ? { planId } : "skip",
+  ) as AvailabilityForPlan | null | undefined;
+
+  const availabilityByUser = useMemo(
+    () =>
+      new Map<string, AvailabilityStatus>(
+        (availability?.members ?? []).map((m) => [
+          m.userId as string,
+          m.status,
+        ]),
+      ),
+    [availability],
+  );
 
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
@@ -409,12 +465,18 @@ export function AssignSheet({
   // static-styled inner <View> and only use Pressable for the tap target.
   // ---------------------------------------------------------------------------
   /**
-   * Person identity block (avatar + name + optional "Invited" tag + phone).
-   * Shared between both row variants so GROUP and COMMUNITY rows show
-   * disambiguating phone numbers identically.
+   * Person identity block (avatar + name + optional "Invited" tag + optional
+   * availability pill + phone). Shared between both row variants so GROUP and
+   * COMMUNITY rows show disambiguating phone numbers and availability
+   * identically.
    */
   const renderPersonIdentity = (person: CommunityPerson) => {
     const phoneLine = formatPhoneForDisplay(person.phone);
+    const availabilityStatus = availabilityByUser.get(person.userId as string);
+    const availabilityText = availabilityStatus
+      ? availabilityLabel(availabilityStatus)
+      : null;
+    const available = availabilityStatus === "available";
     return (
       <>
         <Avatar
@@ -444,6 +506,26 @@ export function AssignSheet({
                   style={[styles.badgeText, { color: colors.textSecondary }]}
                 >
                   Invited
+                </Text>
+              </View>
+            )}
+            {availabilityText && (
+              <View
+                style={[
+                  styles.availabilityTag,
+                  {
+                    backgroundColor:
+                      (available ? colors.success : colors.destructive) + "22",
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.availabilityTagText,
+                    { color: available ? colors.success : colors.destructive },
+                  ]}
+                >
+                  {availabilityText}
                 </Text>
               </View>
             )}
@@ -912,6 +994,15 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     letterSpacing: 0.4,
+  },
+  availabilityTag: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  availabilityTagText: {
+    fontSize: 11,
+    fontWeight: "600",
   },
   addAssignWrap: {
     flexDirection: "row",

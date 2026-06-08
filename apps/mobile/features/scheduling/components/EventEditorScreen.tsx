@@ -95,6 +95,23 @@ export function EventEditorScreen() {
     planId ? { planId } : "skip",
   ) as EventDoc | null | undefined;
 
+  // Compact availability summary for the event (display-only). A full roster
+  // view is deferred — the per-candidate detail lives in AssignSheet.
+  const availability = useAuthenticatedQuery(
+    api.functions.scheduling.availability.availabilityForPlan,
+    planId ? { planId } : "skip",
+  ) as
+    | {
+        counts: {
+          available: number;
+          unavailable: number;
+          noResponse: number;
+          total: number;
+        };
+      }
+    | null
+    | undefined;
+
   const updateEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.updateEvent,
   );
@@ -422,6 +439,19 @@ export function EventEditorScreen() {
         <Text style={[styles.autoSaveHint, { color: colors.textSecondary }]}>
           Changes are saved automatically. Publishing notifies volunteers.
         </Text>
+
+        {/* Availability summary — a single compact line. Detailed per-person
+            availability shows up in the assign sheet. */}
+        {availability && availability.counts.total > 0 && (
+          <Text
+            style={[styles.availabilitySummary, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            🗓 Availability — {availability.counts.available} available ·{" "}
+            {availability.counts.unavailable} can't ·{" "}
+            {availability.counts.noResponse} no response
+          </Text>
+        )}
 
         {/* Needed roles editor entry */}
         <Pressable
@@ -863,6 +893,11 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   autoSaveHint: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 8,
+  },
+  availabilitySummary: {
     fontSize: 12,
     lineHeight: 16,
     marginTop: 8,
