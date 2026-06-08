@@ -16,7 +16,7 @@
  *
  * Route: /rostering/[group_id]/run-sheet/[plan_id]
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -385,11 +385,24 @@ function EditableRow({
   const isHeader = item.type === "header";
   const isSong = item.type === "song";
 
-  const linkedRoleIds = new Set(item.assignments.map((a) => a.roleId as string));
+  // Local selection state so rapid toggles compound instead of each starting
+  // from the last server-synced `item.assignments` (which lags a mutation
+  // round-trip and would drop quick successive taps). Re-syncs only when the
+  // server's set genuinely changes (e.g. another device edited it).
+  const serverRoleKey = item.assignments.map((a) => a.roleId).join(",");
+  const [linkedRoleIds, setLinkedRoleIds] = useState<Set<string>>(
+    () => new Set(item.assignments.map((a) => a.roleId as string)),
+  );
+  useEffect(() => {
+    setLinkedRoleIds(new Set(serverRoleKey ? serverRoleKey.split(",") : []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverRoleKey]);
+
   const toggleRole = (roleId: string) => {
     const next = new Set(linkedRoleIds);
     if (next.has(roleId)) next.delete(roleId);
     else next.add(roleId);
+    setLinkedRoleIds(next);
     onPatch({
       assignments: [...next].map((id) => ({ roleId: id as Id<"teamRoles"> })),
     });
