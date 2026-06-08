@@ -64,6 +64,24 @@ export function formatClockTime(ms: number): string {
 }
 
 /**
+ * Per-service start–end ranges for the header, e.g.
+ * "10:00 AM – 10:37 AM · 12:00 PM – 12:37 PM". The run sheet's order and
+ * durations are shared across every service time; only the start differs, so
+ * each service ends `totalSec` after its own start.
+ */
+export function formatServiceRanges(
+  times: Array<{ startsAt: number }>,
+  totalSec: number,
+): string {
+  return times
+    .map((t) => {
+      const end = t.startsAt + Math.max(0, totalSec) * 1000;
+      return `${formatClockTime(t.startsAt)} – ${formatClockTime(end)}`;
+    })
+    .join("  ·  ");
+}
+
+/**
  * "5 min" / "1 hr 5 min" / "45 sec" — compact duration label. Returns an empty
  * string for a zero duration (e.g. a header) so callers can hide it.
  */

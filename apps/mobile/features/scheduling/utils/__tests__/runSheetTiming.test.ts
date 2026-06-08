@@ -1,6 +1,7 @@
 import {
   computeItemClockTimes,
   formatDuration,
+  formatServiceRanges,
   type TimingItem,
 } from "../runSheetTiming";
 
@@ -49,6 +50,16 @@ describe("computeItemClockTimes", () => {
     const times = computeItemClockTimes(items, noon);
     expect(times.a).toBe(noon);
     expect(times.b).toBe(noon + 120_000);
+  });
+});
+
+describe("formatServiceRanges", () => {
+  it("shows each service as a start–end range spanning the total", () => {
+    const ten = new Date("2026-06-07T10:00:00").getTime();
+    const noon = new Date("2026-06-07T12:00:00").getTime();
+    // 37 minutes total.
+    const label = formatServiceRanges([{ startsAt: ten }, { startsAt: noon }], 37 * 60);
+    expect(label).toBe("10:00 AM – 10:37 AM  ·  12:00 PM – 12:37 PM");
   });
 });
 

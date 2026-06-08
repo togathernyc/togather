@@ -58,6 +58,7 @@ export {
   createItem,
   updateItem,
   deleteItem,
+  duplicateItem,
   reorderItems,
 } from "./eventItems";
 

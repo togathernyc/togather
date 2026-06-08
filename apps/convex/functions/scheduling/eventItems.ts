@@ -292,6 +292,62 @@ export const deleteItem = mutation({
 });
 
 /**
+ * Duplicate a run sheet item, placing the copy immediately after the source and
+ * resequencing the plan so the order stays contiguous. The copy keeps the
+ * source's role `assignments` (unlike duplicating a whole plan) — duplicating a
+ * single item within the same plan means the same roster still applies.
+ *
+ * Auth: scheduler for the item's plan.
+ */
+export const duplicateItem = mutation({
+  args: {
+    token: v.string(),
+    itemId: v.id("eventItems"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const { item, plan } = await requireItemScheduler(ctx, args.itemId, userId);
+
+    const nowMs = Date.now();
+    const newItemId = await ctx.db.insert("eventItems", {
+      planId: item.planId,
+      communityId: plan.communityId,
+      sequence: item.sequence, // provisional; resequenced below
+      type: item.type,
+      title: item.title,
+      description: item.description,
+      durationSec: item.durationSec,
+      notes: item.notes,
+      assignments: item.assignments,
+      songDetails: item.songDetails,
+      createdAt: nowMs,
+      createdById: userId,
+      updatedAt: nowMs,
+    });
+
+    // Rebuild contiguous sequences with the copy directly after the source.
+    const all = await ctx.db
+      .query("eventItems")
+      .withIndex("by_plan", (q) => q.eq("planId", item.planId))
+      .collect();
+    const existingOrder = all
+      .filter((i) => i._id !== newItemId)
+      .sort((a, b) => a.sequence - b.sequence)
+      .map((i) => i._id);
+    const sourceIndex = existingOrder.findIndex((id) => id === item._id);
+    existingOrder.splice(sourceIndex + 1, 0, newItemId);
+
+    await Promise.all(
+      existingOrder.map((id, index) =>
+        ctx.db.patch(id, { sequence: index, updatedAt: nowMs }),
+      ),
+    );
+
+    return { itemId: newItemId };
+  },
+});
+
+/**
  * Reorder a plan's run sheet by rewriting each item's `sequence` to its index
  * in `orderedIds`. Every id must belong to the plan, and the set must be
  * complete — this rejects a stale client list rather than silently dropping or

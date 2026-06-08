@@ -240,6 +240,66 @@ describe("reorderItems", () => {
   });
 });
 
+describe("duplicateItem", () => {
+  it("places the copy directly after the source and resequences", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    const ids: Id<"eventItems">[] = [];
+    for (const title of ["A", "B", "C"]) {
+      const { itemId } = await t.mutation(
+        api.functions.scheduling.eventItems.createItem,
+        { token, planId, type: "item", title },
+      );
+      ids.push(itemId);
+    }
+
+    // Duplicate the first item ("A").
+    const { itemId: copyId } = await t.mutation(
+      api.functions.scheduling.eventItems.duplicateItem,
+      { token, itemId: ids[0] },
+    );
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    // Copy sits right after the source: A, A(copy), B, C.
+    expect(items?.map((i) => i.title)).toEqual(["A", "A", "B", "C"]);
+    expect(items?.map((i) => i.sequence)).toEqual([0, 1, 2, 3]);
+    expect(items?.[1]._id).toBe(copyId);
+  });
+
+  it("copies the source's role assignments", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    const { itemId } = await t.mutation(
+      api.functions.scheduling.eventItems.createItem,
+      {
+        token,
+        planId,
+        type: "song",
+        title: "Opener",
+        assignments: [{ roleId: world.roleId }],
+      },
+    );
+    const { itemId: copyId } = await t.mutation(
+      api.functions.scheduling.eventItems.duplicateItem,
+      { token, itemId },
+    );
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    const copy = items?.find((i) => i._id === copyId);
+    expect(copy?.assignments[0].roleName).toBe("Drums");
+  });
+});
+
 describe("item → role linkage", () => {
   it("accepts a link to a role in the plan's group", async () => {
     const { t, world } = await setupSchedulingWorld();
