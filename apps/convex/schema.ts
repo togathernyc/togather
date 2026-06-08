@@ -2606,6 +2606,54 @@ export default defineSchema({
     // window are derived from assignments matched by team + date.
     .index("by_team_eventDate", ["teamId", "eventDate"]),
 
+  /**
+   * A single ordered item on an event plan's run sheet (ADR-026). The native
+   * replacement for the PCO-derived order-of-items. One run sheet = many rows,
+   * keyed by `planId` and ordered by `sequence`; the same run sheet is shared
+   * across all of the plan's `times` (clock times are computed client-side by
+   * cascading `durationSec` from the selected service time — never stored).
+   */
+  eventItems: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    /** Ordering within the run sheet; reordering rewrites these. */
+    sequence: v.number(),
+    /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
+    type: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    /** Drives the cascading clock times. A `header` is typically 0. */
+    durationSec: v.number(),
+    /** Role-categorized free-text notes (e.g. Audio / Video cues). */
+    notes: v.optional(
+      v.array(v.object({ category: v.string(), content: v.string() })),
+    ),
+    /**
+     * Links this item to roles rostered on the plan. `roleId` alone surfaces
+     * "whoever fills this role"; an optional `userId` pins a specific
+     * volunteer. Points at the plan's roster rather than copying names.
+     */
+    assignments: v.optional(
+      v.array(
+        v.object({
+          roleId: v.id("teamRoles"),
+          userId: v.optional(v.id("users")),
+        }),
+      ),
+    ),
+    /** Lightweight song metadata. No CCLI / library (ADR-023 Phase 3). */
+    songDetails: v.optional(
+      v.object({
+        key: v.optional(v.string()),
+        bpm: v.optional(v.number()),
+        author: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  }).index("by_plan", ["planId"]),
+
   // =============================================================================
   // PRAYERS (Church feature, gated by communities.churchFeatures.prayerEnabled)
   // =============================================================================
