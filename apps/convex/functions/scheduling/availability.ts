@@ -23,7 +23,7 @@ import { mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
-import { requireGroupMember } from "./permissions";
+import { requireGroupMember, requireGroupScheduler } from "./permissions";
 
 /** Valid availability states a member can report. */
 const AVAILABILITY_STATUSES = new Set(["available", "unavailable"]);
@@ -278,5 +278,142 @@ export const availabilityForPlan = query({
     };
 
     return { planId: args.planId, counts, members: rows };
+  },
+});
+
+/** Cap on event-plan columns in the matrix — the grid is "up to ~10 events". */
+const MATRIX_MAX_EVENTS = 10;
+
+/**
+ * Leader matrix: every active group member (rows) × the group's upcoming event
+ * plans (columns), with each cell the member's availability for that plan
+ * (`available` / `unavailable` / `no_response`). Powers the web availability
+ * grid — built to scan a large roster against up to ~10 events at once.
+ *
+ * Each member carries an `availableCount` (how many of the listed events they
+ * can serve) so the grid can sort "most available first", and each event a
+ * tally for its column header. Members are returned sorted by availableCount
+ * desc then name; the client can re-sort.
+ *
+ * Auth: group leader or community admin — this exposes the whole roster's
+ * responses, so it's gated tighter than the per-member reads.
+ */
+export const availabilityMatrix = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    /** Max event columns (default + hard cap MATRIX_MAX_EVENTS). */
+    limit: v.optional(v.number()),
+    includePast: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupScheduler(ctx, args.groupId, userId);
+
+    const cap = Math.min(args.limit ?? MATRIX_MAX_EVENTS, MATRIX_MAX_EVENTS);
+    const cutoff = startOfTodayMs();
+    const plans = (
+      await ctx.db
+        .query("eventPlans")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    )
+      .filter((p) => args.includePast || p.eventDate >= cutoff)
+      .sort((a, b) => a.eventDate - b.eventDate)
+      .slice(0, cap);
+
+    const events = plans.map((p) => ({
+      _id: p._id,
+      title: p.title,
+      eventDate: p.eventDate,
+      times: p.times,
+    }));
+
+    // Availability rows for the listed plans, indexed by `${planId}:${userId}`.
+    const statusByPlanUser = new Map<string, "available" | "unavailable">();
+    await Promise.all(
+      plans.map(async (plan) => {
+        const rows = await ctx.db
+          .query("eventAvailability")
+          .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+          .collect();
+        for (const r of rows) {
+          statusByPlanUser.set(
+            `${plan._id}:${r.userId}`,
+            r.status as "available" | "unavailable",
+          );
+        }
+      }),
+    );
+
+    const members = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const activeMembers = members.filter(
+      (m) => !m.requestStatus || m.requestStatus === "accepted",
+    );
+
+    // Per-event tallies for the column headers.
+    const eventCounts: Record<
+      string,
+      { available: number; unavailable: number; noResponse: number }
+    > = {};
+    for (const plan of plans) {
+      eventCounts[plan._id] = { available: 0, unavailable: 0, noResponse: 0 };
+    }
+
+    const rows = await Promise.all(
+      activeMembers.map(async (m) => {
+        const user = await ctx.db.get(m.userId);
+        const userName =
+          `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim() ||
+          "Someone";
+        const cells: Record<
+          string,
+          "available" | "unavailable" | "no_response"
+        > = {};
+        let availableCount = 0;
+        for (const plan of plans) {
+          const status =
+            statusByPlanUser.get(`${plan._id}:${m.userId}`) ?? "no_response";
+          cells[plan._id] = status;
+          if (status === "available") {
+            availableCount += 1;
+            eventCounts[plan._id].available += 1;
+          } else if (status === "unavailable") {
+            eventCounts[plan._id].unavailable += 1;
+          } else {
+            eventCounts[plan._id].noResponse += 1;
+          }
+        }
+        return {
+          userId: m.userId,
+          userName,
+          isLeader: isLeaderRole(m.role),
+          availableCount,
+          // Whether they've responded to ANY listed event.
+          hasResponded: Object.values(cells).some((s) => s !== "no_response"),
+          cells,
+        };
+      }),
+    );
+
+    rows.sort(
+      (a, b) =>
+        b.availableCount - a.availableCount ||
+        a.userName.localeCompare(b.userName),
+    );
+
+    return {
+      events,
+      members: rows,
+      eventCounts,
+      summary: {
+        totalMembers: rows.length,
+        respondedMembers: rows.filter((r) => r.hasResponded).length,
+      },
+    };
   },
 });

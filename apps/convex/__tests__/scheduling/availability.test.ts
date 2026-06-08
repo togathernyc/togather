@@ -277,6 +277,98 @@ describe("sendAvailabilityRequest + getAvailabilityRequest (chat card)", () => {
   });
 });
 
+describe("availabilityMatrix (leader grid)", () => {
+  it("returns events as columns and members as rows with per-cell status", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const modToken = (await generateTokens(world.channelModeratorId)).accessToken;
+
+    const planA = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Week 1",
+      Date.now() + 7 * DAY,
+    );
+    const planB = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Week 2",
+      Date.now() + 14 * DAY,
+    );
+
+    // member: available wk1, unavailable wk2. moderator: available wk1 only.
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId: planA,
+      status: "available",
+    });
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId: planB,
+      status: "unavailable",
+    });
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: modToken,
+      planId: planA,
+      status: "available",
+    });
+
+    const matrix = await t.query(
+      api.functions.scheduling.availability.availabilityMatrix,
+      { token: leaderToken, groupId: world.groupId },
+    );
+
+    // Columns in date order.
+    expect(matrix.events.map((e) => e.title)).toEqual(["Week 1", "Week 2"]);
+    // Per-event tally for wk1: 2 available.
+    expect(matrix.eventCounts[planA].available).toBe(2);
+    expect(matrix.eventCounts[planB].unavailable).toBe(1);
+
+    // Most-available first → the member (2 responses, 1 available) and the
+    // moderator (1 available) lead; everyone else is all no_response.
+    const member = matrix.members.find((m) => m.userId === world.channelMemberId);
+    expect(member?.cells[planA]).toBe("available");
+    expect(member?.cells[planB]).toBe("unavailable");
+    expect(member?.availableCount).toBe(1);
+    expect(member?.hasResponded).toBe(true);
+
+    // A non-responder has all no_response and counts toward the total only.
+    const total = matrix.summary.totalMembers;
+    expect(total).toBeGreaterThanOrEqual(5);
+    expect(matrix.summary.respondedMembers).toBe(2);
+    expect(matrix.members[0].availableCount).toBeGreaterThanOrEqual(
+      matrix.members[total - 1].availableCount,
+    );
+  });
+
+  it("caps columns at 10 upcoming events", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    for (let i = 1; i <= 12; i++) {
+      await createPlan(t, leaderToken, world.groupId, `E${i}`, Date.now() + i * DAY);
+    }
+    const matrix = await t.query(
+      api.functions.scheduling.availability.availabilityMatrix,
+      { token: leaderToken, groupId: world.groupId },
+    );
+    expect(matrix.events).toHaveLength(10);
+  });
+
+  it("rejects a non-scheduler", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    await expect(
+      t.query(api.functions.scheduling.availability.availabilityMatrix, {
+        token: memberToken,
+        groupId: world.groupId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
+
 describe("public availability link (app-optional, OTP-verified)", () => {
   it("creates a shareable link and exposes a public read", async () => {
     const { t, world } = await setupSchedulingWorld();
