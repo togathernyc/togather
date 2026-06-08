@@ -313,7 +313,7 @@ describe("item → role linkage", () => {
         planId,
         type: "song",
         title: "Opener",
-        assignments: [{ roleId: world.roleId, userId: world.channelMemberId }],
+        assignments: [{ roleId: world.roleId }],
       },
     );
 
@@ -322,8 +322,8 @@ describe("item → role linkage", () => {
       planId,
     });
     const linked = items?.find((i) => i._id === itemId);
+    // Links are role-only — the name resolves live from the roster client-side.
     expect(linked?.assignments[0].roleName).toBe("Drums");
-    expect(linked?.assignments[0].userName).toBe("Memberly Test");
   });
 
   it("rejects a link to a role from another group", async () => {
@@ -445,7 +445,7 @@ describe("plan lifecycle integration", () => {
     expect(leftover).toEqual([]);
   });
 
-  it("duplicateEvent copies items but drops per-item assignments", async () => {
+  it("duplicateEvent copies items including their role-only links", async () => {
     const { t, world } = await setupSchedulingWorld();
     const token = (await generateTokens(world.groupLeaderId)).accessToken;
     const planId = await createPlan(t, token, world.groupId);
@@ -455,7 +455,7 @@ describe("plan lifecycle integration", () => {
       type: "song",
       title: "Opener",
       durationSec: 300,
-      assignments: [{ roleId: world.roleId, userId: world.channelMemberId }],
+      assignments: [{ roleId: world.roleId }],
     });
 
     const { planId: copyId } = await t.mutation(
@@ -470,7 +470,8 @@ describe("plan lifecycle integration", () => {
     expect(items?.length).toBe(1);
     expect(items?.[0].title).toBe("Opener");
     expect(items?.[0].durationSec).toBe(300);
-    // Assignments are intentionally NOT copied.
-    expect(items?.[0].assignments).toEqual([]);
+    // Role-only links are structural (they point at shared teamRoles), so they
+    // are copied — they resolve to the new plan's (empty) roster.
+    expect(items?.[0].assignments.map((a) => a.roleName)).toEqual(["Drums"]);
   });
 });

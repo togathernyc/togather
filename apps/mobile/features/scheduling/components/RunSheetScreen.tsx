@@ -52,8 +52,6 @@ type ItemAssignment = {
   roleId: Id<"teamRoles">;
   roleName: string;
   roleColor: string | null;
-  userId: Id<"users"> | null;
-  userName: string | null;
 };
 
 type RunSheetItem = {
@@ -481,9 +479,7 @@ function EditableRow({
       {!isHeader && item.assignments.length > 0 ? (
         <View style={styles.assignWrap}>
           {item.assignments.map((a) => {
-            const names = a.userName
-              ? [a.userName]
-              : peopleByRole[a.roleId as string] ?? [];
+            const names = peopleByRole[a.roleId as string] ?? [];
             return (
               <View
                 key={a.roleId}

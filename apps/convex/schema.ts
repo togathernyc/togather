@@ -2629,17 +2629,13 @@ export default defineSchema({
       v.array(v.object({ category: v.string(), content: v.string() })),
     ),
     /**
-     * Links this item to roles rostered on the plan. `roleId` alone surfaces
-     * "whoever fills this role"; an optional `userId` pins a specific
-     * volunteer. Points at the plan's roster rather than copying names.
+     * Links this item to roles rostered on the plan. The row displays
+     * "whoever currently fills this role", resolved live from the plan's
+     * `roleAssignments` — it never copies a person's name, so there is no
+     * second source of truth to drift.
      */
     assignments: v.optional(
-      v.array(
-        v.object({
-          roleId: v.id("teamRoles"),
-          userId: v.optional(v.id("users")),
-        }),
-      ),
+      v.array(v.object({ roleId: v.id("teamRoles") })),
     ),
     /** Lightweight song metadata. No CCLI / library (ADR-023 Phase 3). */
     songDetails: v.optional(

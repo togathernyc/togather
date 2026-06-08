@@ -30,7 +30,6 @@ const noteValidator = v.object({
 
 const itemAssignmentValidator = v.object({
   roleId: v.id("teamRoles"),
-  userId: v.optional(v.id("users")),
 });
 
 const songDetailsValidator = v.object({
@@ -61,8 +60,7 @@ async function requireItemScheduler(
 
 /**
  * Validate that every `assignments` entry references a role belonging to a team
- * in the plan's group (and, if a `userId` is pinned, that the role is actually
- * needed on the plan). Mirrors the cross-group checks in `events.ts` so an item
+ * in the plan's group. Mirrors the cross-group checks in `events.ts` so an item
  * cannot link to a foreign group's role.
  *
  * @throws ConvexError on any invalid reference.
@@ -70,7 +68,7 @@ async function requireItemScheduler(
 async function validateItemAssignments(
   ctx: MutationCtx,
   plan: Doc<"eventPlans">,
-  assignments: Array<{ roleId: Id<"teamRoles">; userId?: Id<"users"> }>,
+  assignments: Array<{ roleId: Id<"teamRoles"> }>,
 ): Promise<void> {
   for (const link of assignments) {
     const role = await ctx.db.get(link.roleId);
@@ -129,18 +127,10 @@ async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
   const assignments = await Promise.all(
     (item.assignments ?? []).map(async (link) => {
       const role = await ctx.db.get(link.roleId);
-      let userName: string | null = null;
-      if (link.userId) {
-        const user = await ctx.db.get(link.userId);
-        userName =
-          `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim() || "Someone";
-      }
       return {
         roleId: link.roleId,
         roleName: role?.name ?? "Role",
         roleColor: role?.color ?? null,
-        userId: link.userId ?? null,
-        userName,
       };
     }),
   );

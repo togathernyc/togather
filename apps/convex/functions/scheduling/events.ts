@@ -159,9 +159,10 @@ export const duplicateEvent = mutation({
       ),
     );
 
-    // Copy the run sheet structure (ADR-026). Per-item `assignments` are
-    // dropped — a duplicated plan seeds a fresh roster, so item→person links
-    // would dangle.
+    // Copy the run sheet structure (ADR-026), including the role-only
+    // `assignments` links: they reference `teamRoles` (shared across plans), so
+    // each "Who's involved" chip stays valid and simply resolves to the new
+    // plan's roster (empty until it is filled).
     const items = await ctx.db
       .query("eventItems")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
@@ -177,6 +178,7 @@ export const duplicateEvent = mutation({
           description: item.description,
           durationSec: item.durationSec,
           notes: item.notes,
+          assignments: item.assignments,
           songDetails: item.songDetails,
           createdAt: nowMs,
           createdById: userId,

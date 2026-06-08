@@ -58,13 +58,11 @@ eventItems: defineTable({
   description: v.optional(v.string()),
   durationSec: v.number(),             // drives the cascading clock times
   notes: v.optional(v.array(v.object({ category: v.string(), content: v.string() }))),
-  // Links the item to roles rostered on this plan. userId is optional — a link
-  // to a roleId alone surfaces "whoever fills this role"; a userId pins a
-  // specific volunteer.
-  assignments: v.optional(v.array(v.object({
-    roleId: v.id("teamRoles"),
-    userId: v.optional(v.id("users")),
-  }))),
+  // Links the item to roles rostered on this plan. Role-only by design: the
+  // row displays "whoever currently fills this role", resolved live from the
+  // plan's roleAssignments — never a copied name, so there is no second
+  // source of truth to drift.
+  assignments: v.optional(v.array(v.object({ roleId: v.id("teamRoles") }))),
   // Lightweight song metadata. No CCLI / library / chord charts (ADR-023 Phase 3).
   songDetails: v.optional(v.object({
     key: v.optional(v.string()),
@@ -99,11 +97,13 @@ PCO's pre/post positions and lives in the PCO action path.)
 
 ### People linkage reuses rostering
 
-An item's `assignments` reference the plan's existing `roleAssignments` by
-`roleId` (optionally pinning a `userId`). The run sheet does not introduce a
-second source of truth for who serves — it points at the roster already on the
-plan, so "Song 1 — Lead Vocal: Sarah" stays correct as the roster changes.
-`listItems` joins role name/color and assignee display name for rendering.
+An item's `assignments` reference the plan's roles by `roleId` only — never a
+specific user. The run sheet does not introduce a second source of truth for
+who serves: each "Who's involved" chip resolves live from the plan's
+`roleAssignments`, so "Song 1 — Lead Vocal: Sarah" stays correct as the roster
+changes (and shows just the role until someone is assigned). `listItems` joins
+role name/color; the assigned names are resolved client-side from the plan's
+roster.
 
 ### Permissions reuse the event-plan guards
 
@@ -118,8 +118,9 @@ resolve the owning plan from the item and delegate to `requirePlanScheduler`.
 - **`deleteEvent` cascades** to `eventItems` (alongside `neededRoles` /
   `roleAssignments`), matching ADR-023's "deletion must cascade" rule.
 - **`duplicateEvent` copies** run sheet items (structure copy, like
-  `neededRoles`). Per-item `assignments` are dropped in the copy — a duplicated
-  plan seeds a fresh roster, so item→person links would dangle.
+  `neededRoles`), including their role-only `assignments` links — those
+  reference shared `teamRoles`, so they stay valid and resolve to the new
+  plan's (initially empty) roster.
 
 ### Cross-device editing
 
