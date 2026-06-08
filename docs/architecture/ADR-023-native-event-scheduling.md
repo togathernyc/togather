@@ -291,8 +291,32 @@ are still derived** from the existing `previousFillers` "previously served"
 signal — no qualification table (consistent with the non-goal above). Leaders
 still make the final call.
 
+**Public, app-optional link.** A leader can share a standalone link
+(`https://<domain>/a/<publicToken>`) so people can mark availability **without
+the app**. `availabilityRequests.channelId` is optional (standalone requests
+have no host message) and every request carries an unguessable `publicToken`.
+
+- `scheduling/publicAvailability.ts` exposes `createAvailabilityLink` (leader)
+  plus two **unauthenticated** functions — `getPublicAvailabilityRequest` and
+  `submitPublicAvailability`. The token is the capability; submits are
+  rate-limited.
+- **Matching, the RSVP way:** a submission find-or-creates a *placeholder* user
+  keyed by the normalized phone (exactly like `inviteAndAssign`) and writes
+  availability against that stable `_id`. When the person later signs up and
+  **verifies that phone**, the existing `claimPlaceholderByPhoneInternal` path
+  activates the same account — their availability (and any assignments) become
+  theirs with no separate reconciliation step. The submit returns `matched`
+  when the phone already belonged to a claimed account.
+- **Surfaces:** a public web page at `apps/web` `/a/:token` (the web app's first
+  Convex integration; Vite + React Router) that works in any browser and
+  deep-links into the app when installed; and a mobile `/a/[token]` route that
+  forwards app users to the in-app My Availability page. App Links: `/a/` added
+  to Android intent filters; iOS `applinks:togather.nyc` already covers it.
+  Leaders generate/share the link from the rostering hub (`EventListScreen`).
+
 **Still out of scope:** a blockout calendar, per-time-slot availability,
-automatic placement / suggestions.
+automatic placement / suggestions, and SMS verification *on the web form*
+(verification happens at app signup, RSVP-style).
 
 ## Open questions
 
