@@ -200,8 +200,11 @@ export const submitAvailabilityForRequest = mutation({
 
     const now = Date.now();
 
-    // Ensure group membership so the response shows in the leader grid and the
-    // person can manage their availability in-app afterwards.
+    // Ensure ACCEPTED group membership so the response shows in the leader grid
+    // (`availabilityForPlan` filters out non-accepted memberships) and the
+    // person can manage their availability in-app afterwards. Responding to the
+    // link is an explicit opt-in, so a stale pending/declined join request is
+    // reactivated to accepted rather than left to hide the response.
     const membership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
@@ -216,6 +219,14 @@ export const submitAvailabilityForRequest = mutation({
         role: "member",
         joinedAt: now,
         notificationsEnabled: true,
+      });
+    } else if (
+      membership.requestStatus &&
+      membership.requestStatus !== "accepted"
+    ) {
+      await ctx.db.patch(membership._id, {
+        requestStatus: "accepted",
+        requestReviewedAt: now,
       });
     }
 

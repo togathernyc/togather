@@ -355,6 +355,66 @@ describe("public availability link (app-optional, OTP-verified)", () => {
     expect(grid?.counts.available).toBe(1);
   });
 
+  it("reactivates a stale pending/declined membership so the response shows", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    // communityOnlyAId is a real account; give them a *pending* join request to
+    // the group — availabilityForPlan would hide them until it's accepted.
+    const responderToken = (await generateTokens(world.communityOnlyAId))
+      .accessToken;
+
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Sunday",
+      Date.now() + 7 * DAY,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("groupMembers", {
+        groupId: world.groupId,
+        userId: world.communityOnlyAId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+        requestStatus: "pending",
+        requestedAt: Date.now(),
+      });
+    });
+
+    const { publicToken } = await t.mutation(
+      api.functions.scheduling.publicAvailability.createAvailabilityLink,
+      { token: leaderToken, groupId: world.groupId },
+    );
+    await t.mutation(
+      api.functions.scheduling.publicAvailability.submitAvailabilityForRequest,
+      {
+        token: responderToken,
+        publicToken,
+        responses: [{ planId, status: "available" }],
+      },
+    );
+
+    await t.run(async (ctx) => {
+      const m = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.communityOnlyAId),
+        )
+        .first();
+      expect(m?.requestStatus).toBe("accepted");
+    });
+
+    const grid = await t.query(
+      api.functions.scheduling.availability.availabilityForPlan,
+      { token: leaderToken, planId },
+    );
+    const row = grid?.members.find(
+      (mm) => mm.userId === world.communityOnlyAId,
+    );
+    expect(row?.status).toBe("available");
+  });
+
   it("rejects an invalid public token", async () => {
     const { t, world } = await setupSchedulingWorld();
     const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
