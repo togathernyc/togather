@@ -430,6 +430,11 @@ export default defineSchema({
             order: v.array(v.string()), // ordered visible category names
           }),
         ),
+        // Legacy drift: some existing `groups` docs carry `source: "native"`
+        // here. Nothing in the codebase reads or writes it anymore, but the
+        // deploy-time schema validation rejects the extra field. Accept it so
+        // deploys pass. TODO: backfill-strip this field, then remove.
+        source: v.optional(v.string()),
       }),
     ),
 
