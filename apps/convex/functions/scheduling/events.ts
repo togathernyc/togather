@@ -159,6 +159,34 @@ export const duplicateEvent = mutation({
       ),
     );
 
+    // Copy the run sheet structure (ADR-026), including the role-only
+    // `assignments` links: they reference `teamRoles` (shared across plans), so
+    // each "Who's involved" chip stays valid and simply resolves to the new
+    // plan's roster (empty until it is filled).
+    const items = await ctx.db
+      .query("eventItems")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+    await Promise.all(
+      items.map((item) =>
+        ctx.db.insert("eventItems", {
+          planId: newPlanId,
+          communityId: item.communityId,
+          sequence: item.sequence,
+          type: item.type,
+          title: item.title,
+          description: item.description,
+          durationSec: item.durationSec,
+          notes: item.notes,
+          assignments: item.assignments,
+          songDetails: item.songDetails,
+          createdAt: nowMs,
+          createdById: userId,
+          updatedAt: nowMs,
+        }),
+      ),
+    );
+
     return { planId: newPlanId };
   },
 });
@@ -248,13 +276,18 @@ export const deleteEvent = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requirePlanScheduler(ctx, args.planId, userId);
 
-    const [neededRoles, assignments] = await Promise.all([
+    const [neededRoles, assignments, items] = await Promise.all([
       ctx.db
         .query("neededRoles")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
         .collect(),
       ctx.db
         .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      // Run sheet items cascade with the plan (ADR-026).
+      ctx.db
+        .query("eventItems")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
         .collect(),
     ]);
@@ -266,6 +299,7 @@ export const deleteEvent = mutation({
     await Promise.all([
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
       ...assignments.map((row) => ctx.db.delete(row._id)),
+      ...items.map((row) => ctx.db.delete(row._id)),
     ]);
     await ctx.db.delete(args.planId);
 
@@ -290,6 +324,7 @@ export const deleteEvent = mutation({
     return {
       deletedNeededRoles: neededRoles.length,
       deletedAssignments: assignments.length,
+      deletedItems: items.length,
     };
   },
 });

@@ -1,5 +1,5 @@
-import { RunSheetScreen } from "@features/leader-tools/components/RunSheetScreen";
+import { RunSheetToolScreen } from "@features/leader-tools/components/RunSheetToolScreen";
 
 export default function RunSheetPage() {
-  return <RunSheetScreen />;
+  return <RunSheetToolScreen />;
 }

@@ -1,0 +1,828 @@
+/**
+ * RunSheetScreen
+ *
+ * The native, editable run sheet (order-of-items) for an event plan (ADR-026).
+ *
+ * One run sheet is shared across all of a plan's service times — the order and
+ * durations are identical; only the start differs. So there is no per-time
+ * toggle: rows show clock times from the earliest start, and the header shows
+ * every service as a start–end range that grows as items/durations change.
+ *
+ * Editing is spreadsheet-style and inline: title, duration, description, and
+ * song key are edited in place (debounced autosave via `updateItem`); rows
+ * expand for role links and notes. Reordering is drag-and-drop from a grip
+ * handle (web + native, see `RunSheetDragList`). Each row can be duplicated or
+ * deleted. There is no modal sub-page.
+ *
+ * Route: /rostering/[group_id]/run-sheet/[plan_id]
+ */
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
+import type { Id } from "@services/api/convex";
+import { DEFAULT_ROLE_COLOR, formatEventDateLong } from "../utils/format";
+import {
+  computeItemClockTimes,
+  formatClockTime,
+  formatDuration,
+  formatServiceRanges,
+} from "../utils/runSheetTiming";
+import { InlineText } from "./InlineText";
+import { RunSheetDragList } from "./RunSheetDragList";
+
+type ItemAssignment = {
+  roleId: Id<"teamRoles">;
+  roleName: string;
+  roleColor: string | null;
+};
+
+type RunSheetItem = {
+  _id: Id<"eventItems">;
+  planId: Id<"eventPlans">;
+  sequence: number;
+  type: string;
+  title: string;
+  description: string | null;
+  durationSec: number;
+  notes: Array<{ category: string; content: string }>;
+  songDetails: { key?: string; bpm?: number; author?: string } | null;
+  assignments: ItemAssignment[];
+};
+
+type EventRole = {
+  roleId: Id<"teamRoles">;
+  roleName: string;
+  roleColor?: string;
+  assignments: Array<{ userId: Id<"users">; userName: string; status: string }>;
+};
+
+type EventDoc = {
+  _id: Id<"eventPlans">;
+  title: string;
+  eventDate: number;
+  times: Array<{ label: string; startsAt: number }>;
+  roles: EventRole[];
+};
+
+type RoleOption = {
+  roleId: Id<"teamRoles">;
+  roleName: string;
+  roleColor?: string;
+  people: string[];
+};
+
+/** Item field patch shape sent to updateItem. */
+type ItemPatch = {
+  type?: string;
+  title?: string;
+  durationSec?: number;
+  description?: string;
+  notes?: Array<{ category: string; content: string }>;
+  assignments?: Array<{ roleId: Id<"teamRoles"> }>;
+  songDetails?: { key?: string; bpm?: number };
+};
+
+export function RunSheetScreen() {
+  const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { plan_id } = useLocalSearchParams<{ plan_id: string }>();
+  const planId = plan_id as Id<"eventPlans">;
+
+  const event = useAuthenticatedQuery(
+    api.functions.scheduling.events.getEvent,
+    planId ? { planId } : "skip",
+  ) as EventDoc | null | undefined;
+
+  const items = useAuthenticatedQuery(
+    api.functions.scheduling.eventItems.listItems,
+    planId ? { planId } : "skip",
+  ) as RunSheetItem[] | null | undefined;
+
+  const createItem = useAuthenticatedMutation(
+    api.functions.scheduling.eventItems.createItem,
+  );
+  const updateItem = useAuthenticatedMutation(
+    api.functions.scheduling.eventItems.updateItem,
+  );
+  const deleteItem = useAuthenticatedMutation(
+    api.functions.scheduling.eventItems.deleteItem,
+  );
+  const duplicateItem = useAuthenticatedMutation(
+    api.functions.scheduling.eventItems.duplicateItem,
+  );
+  const reorderItems = useAuthenticatedMutation(
+    api.functions.scheduling.eventItems.reorderItems,
+  );
+
+  // The just-created item to autofocus its title for immediate editing.
+  const [focusId, setFocusId] = useState<string | null>(null);
+
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+  }, [router]);
+
+  // The shared run sheet is timed from the earliest service start.
+  const times = event?.times ?? [];
+  const earliestStart = useMemo(
+    () =>
+      times.length > 0
+        ? Math.min(...times.map((t) => t.startsAt))
+        : (event?.eventDate ?? Date.now()),
+    [times, event?.eventDate],
+  );
+
+  const clockTimes = useMemo(
+    () => computeItemClockTimes(items ?? [], earliestStart),
+    [items, earliestStart],
+  );
+
+  const totalSec = useMemo(
+    () => (items ?? []).reduce((sum, i) => sum + i.durationSec, 0),
+    [items],
+  );
+
+  const roleOptions: RoleOption[] = useMemo(
+    () =>
+      (event?.roles ?? []).map((r) => ({
+        roleId: r.roleId,
+        roleName: r.roleName,
+        roleColor: r.roleColor,
+        people: r.assignments
+          .filter((a) => a.status !== "declined")
+          .map((a) => a.userName),
+      })),
+    [event?.roles],
+  );
+  const peopleByRole = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const r of roleOptions) map[r.roleId as string] = r.people;
+    return map;
+  }, [roleOptions]);
+
+  const patchItem = useCallback(
+    (itemId: Id<"eventItems">, patch: ItemPatch) =>
+      updateItem({ itemId, ...patch }).catch((e: any) =>
+        Alert.alert("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
+      ),
+    [updateItem],
+  );
+
+  const handleAdd = useCallback(
+    async (type: string) => {
+      try {
+        const { itemId } = await createItem({
+          planId,
+          type,
+          title: type === "header" ? "New section" : "New item",
+        });
+        setFocusId(itemId as string);
+      } catch (e: any) {
+        Alert.alert("Couldn't add item", e?.message ?? "Please try again.");
+      }
+    },
+    [createItem, planId],
+  );
+
+  const handleDuplicate = useCallback(
+    (itemId: Id<"eventItems">) =>
+      duplicateItem({ itemId }).catch((e: any) =>
+        Alert.alert("Couldn't duplicate", e?.message ?? "Please try again."),
+      ),
+    [duplicateItem],
+  );
+
+  const handleDelete = useCallback(
+    (item: RunSheetItem) => {
+      Alert.alert("Delete item?", `Remove "${item.title}" from the run sheet?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            deleteItem({ itemId: item._id }).catch((e: any) =>
+              Alert.alert("Couldn't delete", e?.message ?? "Please try again."),
+            ),
+        },
+      ]);
+    },
+    [deleteItem],
+  );
+
+  const handleReorder = useCallback(
+    (orderedKeys: string[]) =>
+      reorderItems({
+        planId,
+        orderedIds: orderedKeys as Id<"eventItems">[],
+      }).catch((e: any) =>
+        Alert.alert("Couldn't reorder", e?.message ?? "Please try again."),
+      ),
+    [reorderItems, planId],
+  );
+
+  const loading = event === undefined || items === undefined;
+
+  return (
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, backgroundColor: colors.surface },
+      ]}
+    >
+      <View
+        style={[
+          styles.header,
+          { backgroundColor: colors.surface, borderBottomColor: colors.border },
+        ]}
+      >
+        <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
+          <Ionicons name="chevron-back" size={28} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Run sheet</Text>
+        <View style={styles.headerBtn} />
+      </View>
+
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="small" color={colors.text} />
+        </View>
+      ) : !event || !items ? (
+        <View style={styles.centered}>
+          <Text style={[styles.errorText, { color: colors.textSecondary }]}>
+            This run sheet is no longer available.
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: insets.bottom + 96 },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={[styles.planTitle, { color: colors.text }]}>
+            {event.title}
+          </Text>
+          <Text style={[styles.planDate, { color: colors.textSecondary }]}>
+            {formatEventDateLong(event.eventDate)}
+          </Text>
+          {/* Each service as a start–end range; grows with items/durations. */}
+          {times.length > 0 ? (
+            <Text style={[styles.ranges, { color: colors.text }]}>
+              {formatServiceRanges(times, totalSec)}
+            </Text>
+          ) : null}
+
+          {items.length === 0 ? (
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              No items yet. Add songs, headers, media, and other moments — drag
+              the grip to reorder, tap a field to edit it inline.
+            </Text>
+          ) : (
+            <View style={styles.list}>
+              <RunSheetDragList
+                data={items}
+                keyExtractor={(i) => i._id as string}
+                onReorder={handleReorder}
+                renderRow={({ item, Handle, isActive }) => (
+                  <EditableRow
+                    item={item}
+                    clockMs={clockTimes[item._id]}
+                    roleOptions={roleOptions}
+                    peopleByRole={peopleByRole}
+                    autoFocus={focusId === (item._id as string)}
+                    isActive={isActive}
+                    Handle={Handle}
+                    onPatch={(patch) => patchItem(item._id, patch)}
+                    onDuplicate={() => handleDuplicate(item._id)}
+                    onDelete={() => handleDelete(item)}
+                  />
+                )}
+              />
+            </View>
+          )}
+
+          {/* Add controls */}
+          <View style={styles.addBar}>
+            <AddButton label="Add item" icon="add" onPress={() => handleAdd("item")} primaryColor={primaryColor} colors={colors} />
+            <AddButton label="Song" icon="musical-notes" onPress={() => handleAdd("song")} primaryColor={primaryColor} colors={colors} />
+            <AddButton label="Header" icon="bookmark" onPress={() => handleAdd("header")} primaryColor={primaryColor} colors={colors} />
+          </View>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+function AddButton({
+  label,
+  icon,
+  onPress,
+  primaryColor,
+  colors,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  primaryColor: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <Pressable onPress={onPress} style={styles.addPressable}>
+      <View style={[styles.addRow, { borderColor: colors.border }]}>
+        <Ionicons name={icon} size={18} color={primaryColor} />
+        <Text style={[styles.addText, { color: primaryColor }]}>{label}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** One inline-editable run sheet row. */
+function EditableRow({
+  item,
+  clockMs,
+  roleOptions,
+  peopleByRole,
+  autoFocus,
+  isActive,
+  Handle,
+  onPatch,
+  onDuplicate,
+  onDelete,
+}: {
+  item: RunSheetItem;
+  clockMs: number | null;
+  roleOptions: RoleOption[];
+  peopleByRole: Record<string, string[]>;
+  autoFocus: boolean;
+  isActive: boolean;
+  Handle: React.ComponentType<{ children: React.ReactNode }>;
+  onPatch: (patch: ItemPatch) => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const isHeader = item.type === "header";
+  const isSong = item.type === "song";
+
+  // Local selection state so rapid toggles compound instead of each starting
+  // from the last server-synced `item.assignments` (which lags a mutation
+  // round-trip and would drop quick successive taps). Re-syncs only when the
+  // server's set genuinely changes (e.g. another device edited it).
+  const serverRoleKey = item.assignments.map((a) => a.roleId).join(",");
+  const [linkedRoleIds, setLinkedRoleIds] = useState<Set<string>>(
+    () => new Set(item.assignments.map((a) => a.roleId as string)),
+  );
+  useEffect(() => {
+    setLinkedRoleIds(new Set(serverRoleKey ? serverRoleKey.split(",") : []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverRoleKey]);
+
+  const toggleRole = (roleId: string) => {
+    const next = new Set(linkedRoleIds);
+    if (next.has(roleId)) next.delete(roleId);
+    else next.add(roleId);
+    setLinkedRoleIds(next);
+    onPatch({
+      assignments: [...next].map((id) => ({ roleId: id as Id<"teamRoles"> })),
+    });
+  };
+
+  return (
+    <View
+      style={[
+        styles.row,
+        {
+          backgroundColor: isHeader ? "transparent" : colors.surfaceSecondary,
+          opacity: isActive ? 0.6 : 1,
+          borderColor: colors.border,
+        },
+        isHeader && styles.headerRow,
+      ]}
+    >
+      <View style={styles.rowTop}>
+        {/* Drag grip */}
+        <Handle>
+          <View style={styles.grip} accessibilityLabel="Drag to reorder">
+            <Ionicons name="reorder-three" size={20} color={colors.textTertiary} />
+          </View>
+        </Handle>
+
+        {/* Time */}
+        <View style={styles.timeCol}>
+          <Text style={[styles.timeText, { color: isHeader ? colors.textTertiary : colors.text }]}>
+            {clockMs != null ? formatClockTime(clockMs) : "—"}
+          </Text>
+        </View>
+
+        {/* Title (inline) */}
+        <View style={styles.titleCol}>
+          <InlineText
+            value={item.title}
+            onSave={(t) => onPatch({ title: t })}
+            placeholder={isHeader ? "Section name" : "Item title"}
+            autoFocus={autoFocus}
+            maxLength={120}
+            accessibilityLabel="Item title"
+            style={[
+              styles.titleInput,
+              isHeader && styles.headerTitleInput,
+              { color: colors.text },
+            ]}
+          />
+        </View>
+
+        {/* Duration (inline m:ss) — hidden for headers */}
+        {!isHeader ? (
+          <View style={styles.durationCol}>
+            <DurationCell
+              durationSec={item.durationSec}
+              onSave={(sec) => onPatch({ durationSec: sec })}
+              colors={colors}
+            />
+          </View>
+        ) : null}
+
+        {/* Row actions */}
+        <View style={styles.actions}>
+          {!isHeader ? (
+            <Pressable
+              onPress={() => setExpanded((v) => !v)}
+              hitSlop={6}
+              style={styles.actionBtn}
+              accessibilityLabel={expanded ? "Collapse" : "Expand details"}
+            >
+              <Ionicons
+                name={expanded ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.textTertiary}
+              />
+            </Pressable>
+          ) : null}
+          <Pressable onPress={onDuplicate} hitSlop={6} style={styles.actionBtn} accessibilityLabel="Duplicate">
+            <Ionicons name="copy-outline" size={17} color={colors.textTertiary} />
+          </Pressable>
+          <Pressable onPress={onDelete} hitSlop={6} style={styles.actionBtn} accessibilityLabel="Delete">
+            <Ionicons name="close" size={18} color={colors.textTertiary} />
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Linked people (always visible when present) */}
+      {!isHeader && item.assignments.length > 0 ? (
+        <View style={styles.assignWrap}>
+          {item.assignments.map((a) => {
+            const names = peopleByRole[a.roleId as string] ?? [];
+            return (
+              <View
+                key={a.roleId}
+                style={[
+                  styles.assignChip,
+                  { backgroundColor: (a.roleColor ?? DEFAULT_ROLE_COLOR) + "22" },
+                ]}
+              >
+                <View style={[styles.assignSwatch, { backgroundColor: a.roleColor ?? DEFAULT_ROLE_COLOR }]} />
+                <Text style={[styles.assignText, { color: colors.text }]} numberOfLines={1}>
+                  {a.roleName}
+                  {names.length > 0 ? `: ${names.join(", ")}` : ""}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {/* Expanded inline editors */}
+      {expanded && !isHeader ? (
+        <View style={styles.expanded}>
+          {isSong ? (
+            <View style={styles.songRow}>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
+              <InlineText
+                value={item.songDetails?.key ?? ""}
+                onSave={(key) =>
+                  onPatch({
+                    songDetails: { key: key.trim() || undefined, bpm: item.songDetails?.bpm },
+                  })
+                }
+                placeholder="—"
+                maxLength={8}
+                accessibilityLabel="Song key"
+                style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+              />
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>BPM</Text>
+              <InlineText
+                value={item.songDetails?.bpm ? String(item.songDetails.bpm) : ""}
+                onSave={(bpm) =>
+                  onPatch({
+                    songDetails: {
+                      key: item.songDetails?.key,
+                      bpm: parseInt(bpm, 10) || undefined,
+                    },
+                  })
+                }
+                placeholder="—"
+                keyboardType="number-pad"
+                maxLength={3}
+                accessibilityLabel="Song BPM"
+                style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+              />
+            </View>
+          ) : null}
+
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Description</Text>
+          <InlineText
+            value={item.description ?? ""}
+            onSave={(d) => onPatch({ description: d })}
+            placeholder="Optional details for this moment"
+            multiline
+            accessibilityLabel="Item description"
+            style={[styles.descInput, { color: colors.text, borderColor: colors.border }]}
+          />
+
+          {roleOptions.length > 0 ? (
+            <>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Who's involved</Text>
+              <View style={styles.roleWrap}>
+                {roleOptions.map((r) => {
+                  const selected = linkedRoleIds.has(r.roleId as string);
+                  const swatch = r.roleColor ?? DEFAULT_ROLE_COLOR;
+                  return (
+                    <Pressable
+                      key={r.roleId}
+                      onPress={() => toggleRole(r.roleId as string)}
+                      style={styles.rolePressable}
+                    >
+                      <View
+                        style={[
+                          styles.roleChip,
+                          {
+                            backgroundColor: selected ? swatch + "22" : colors.surface,
+                            borderColor: selected ? swatch : colors.border,
+                          },
+                        ]}
+                      >
+                        <View style={[styles.roleSwatch, { backgroundColor: swatch }]} />
+                        <Text style={[styles.roleChipText, { color: colors.text }]} numberOfLines={1}>
+                          {r.roleName}
+                          {r.people.length > 0 ? `: ${r.people.join(", ")}` : ""}
+                        </Text>
+                        {selected ? (
+                          <Ionicons name="checkmark-circle" size={15} color={swatch} />
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
+
+          <NotesEditor
+            notes={item.notes}
+            onChange={(notes) => onPatch({ notes })}
+            colors={colors}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Inline m:ss duration cell. Parses "5", "5:30", or "330s"-style minute input. */
+function DurationCell({
+  durationSec,
+  onSave,
+  colors,
+}: {
+  durationSec: number;
+  onSave: (sec: number) => void;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  const mm = Math.floor(durationSec / 60);
+  const ss = durationSec % 60;
+  const display = `${mm}:${String(ss).padStart(2, "0")}`;
+  return (
+    <InlineText
+      value={display}
+      onSave={(text) => onSave(parseDuration(text))}
+      placeholder="0:00"
+      keyboardType="numbers-and-punctuation"
+      maxLength={6}
+      accessibilityLabel="Duration (minutes:seconds)"
+      style={[styles.durationInput, { color: colors.text, borderColor: colors.border }]}
+    />
+  );
+}
+
+/** Parse "m:ss" or plain minutes into seconds. */
+function parseDuration(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed.includes(":")) {
+    const [m, s] = trimmed.split(":");
+    return Math.max(0, (parseInt(m, 10) || 0) * 60 + (parseInt(s, 10) || 0));
+  }
+  return Math.max(0, Math.round((parseFloat(trimmed) || 0) * 60));
+}
+
+/** Inline role-categorized notes editor. */
+function NotesEditor({
+  notes,
+  onChange,
+  colors,
+}: {
+  notes: Array<{ category: string; content: string }>;
+  onChange: (notes: Array<{ category: string; content: string }>) => void;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  const setNote = (idx: number, patch: Partial<{ category: string; content: string }>) =>
+    onChange(notes.map((n, i) => (i === idx ? { ...n, ...patch } : n)));
+  const removeNote = (idx: number) => onChange(notes.filter((_, i) => i !== idx));
+
+  return (
+    <>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Notes</Text>
+      {notes.map((note, idx) => (
+        <View key={idx} style={styles.noteRow}>
+          <InlineText
+            value={note.category}
+            onSave={(v) => setNote(idx, { category: v })}
+            placeholder="Role"
+            maxLength={30}
+            accessibilityLabel="Note role"
+            style={[styles.noteCategory, { color: colors.text, borderColor: colors.border }]}
+          />
+          <InlineText
+            value={note.content}
+            onSave={(v) => setNote(idx, { content: v })}
+            placeholder="Cue or instruction"
+            accessibilityLabel="Note content"
+            style={[styles.noteContent, { color: colors.text, borderColor: colors.border }]}
+          />
+          <Pressable onPress={() => removeNote(idx)} hitSlop={8} style={styles.actionBtn} accessibilityLabel="Remove note">
+            <Ionicons name="close" size={16} color={colors.textTertiary} />
+          </Pressable>
+        </View>
+      ))}
+      <Pressable
+        onPress={() => onChange([...notes, { category: "", content: "" }])}
+        style={styles.addNotePressable}
+      >
+        <View style={styles.addNoteRow}>
+          <Ionicons name="add" size={16} color={colors.buttonPrimary} />
+          <Text style={[styles.addNoteText, { color: colors.buttonPrimary }]}>Add a note</Text>
+        </View>
+      </Pressable>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerBtn: { width: 36, padding: 4, alignItems: "center" },
+  headerTitle: { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  errorText: { fontSize: 14 },
+  scrollContent: { padding: 16 },
+  planTitle: { fontSize: 22, fontWeight: "700" },
+  planDate: { fontSize: 13, marginTop: 4 },
+  ranges: { fontSize: 14, fontWeight: "600", marginTop: 8 },
+  emptyText: { fontSize: 14, lineHeight: 20, marginTop: 24 },
+  list: { marginTop: 16 },
+  row: {
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  headerRow: {
+    borderWidth: 0,
+    paddingVertical: 4,
+    marginBottom: 4,
+    marginTop: 4,
+  },
+  rowTop: { flexDirection: "row", alignItems: "center", gap: 6 },
+  grip: { paddingHorizontal: 2, paddingVertical: 6, justifyContent: "center" },
+  timeCol: { width: 62 },
+  timeText: { fontSize: 13, fontWeight: "700" },
+  titleCol: { flex: 1 },
+  titleInput: { fontSize: 15, fontWeight: "600" },
+  headerTitleInput: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase" },
+  durationCol: { width: 56 },
+  durationInput: {
+    fontSize: 13,
+    textAlign: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 4,
+  },
+  actions: { flexDirection: "row", alignItems: "center" },
+  actionBtn: { padding: 4 },
+  assignWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8, paddingLeft: 30 },
+  assignChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    maxWidth: "100%",
+  },
+  assignSwatch: { width: 8, height: 8, borderRadius: 4 },
+  assignText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
+  expanded: { marginTop: 10, paddingLeft: 30, gap: 4 },
+  fieldLabel: { fontSize: 11, fontWeight: "700", marginTop: 8, textTransform: "uppercase", letterSpacing: 0.4 },
+  songRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  songInput: {
+    minWidth: 52,
+    fontSize: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  descInput: {
+    fontSize: 14,
+    minHeight: 40,
+    textAlignVertical: "top",
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  roleWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  rolePressable: { borderRadius: 999, maxWidth: "100%" },
+  roleChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  roleSwatch: { width: 9, height: 9, borderRadius: 5 },
+  roleChipText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
+  noteRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  noteCategory: {
+    width: 88,
+    fontSize: 13,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  noteContent: {
+    flex: 1,
+    fontSize: 13,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  addNotePressable: { marginTop: 6 },
+  addNoteRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  addNoteText: { fontSize: 13, fontWeight: "600" },
+  addBar: { flexDirection: "row", gap: 8, marginTop: 16, flexWrap: "wrap" },
+  addPressable: { flexGrow: 1, borderRadius: 12 },
+  addRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
+  },
+  addText: { fontSize: 14, fontWeight: "600" },
+});

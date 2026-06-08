@@ -95,6 +95,12 @@ export function EventEditorScreen() {
     planId ? { planId } : "skip",
   ) as EventDoc | null | undefined;
 
+  // Run sheet item count, for the "Run sheet" entry row (ADR-026).
+  const runSheetItems = useAuthenticatedQuery(
+    api.functions.scheduling.eventItems.listItems,
+    planId ? { planId } : "skip",
+  ) as Array<unknown> | null | undefined;
+
   // Compact availability summary for the event (display-only). A full roster
   // view is deferred — the per-candidate detail lives in AssignSheet.
   const availability = useAuthenticatedQuery(
@@ -468,6 +474,37 @@ export function EventEditorScreen() {
           </Text>
           <Text style={[styles.actionValue, { color: colors.textSecondary }]}>
             {event.fillSummary.totalFilled}/{event.fillSummary.totalNeeded}
+          </Text>
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={colors.textTertiary}
+          />
+        </Pressable>
+
+        {/* Run sheet (order-of-items) entry — ADR-026. */}
+        <Pressable
+          onPress={() =>
+            router.push(
+              `/rostering/${event.groupId}/run-sheet/${planId}` as never,
+            )
+          }
+          style={({ pressed }) => [
+            styles.actionRow,
+            { backgroundColor: colors.surfaceSecondary, marginTop: 12 },
+            pressed && { opacity: 0.8 },
+          ]}
+        >
+          <Ionicons name="list-outline" size={20} color={colors.text} />
+          <Text style={[styles.actionLabel, { color: colors.text }]}>
+            Run sheet
+          </Text>
+          <Text style={[styles.actionValue, { color: colors.textSecondary }]}>
+            {runSheetItems === undefined
+              ? ""
+              : `${runSheetItems?.length ?? 0} item${
+                  (runSheetItems?.length ?? 0) === 1 ? "" : "s"
+                }`}
           </Text>
           <Ionicons
             name="chevron-forward"

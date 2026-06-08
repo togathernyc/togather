@@ -421,6 +421,14 @@ export default defineSchema({
     // Stores default service type filters and view preferences
     runSheetConfig: v.optional(
       v.object({
+        // Which run sheet the leader-tools "Run Sheet" tool shows for this
+        // group: "pco" (default/legacy — live from Planning Center) or
+        // "native" (the group's upcoming event-plan run sheet, ADR-026). Typed
+        // as a permissive string here so the schema also tolerates pre-existing
+        // legacy `source` drift on some prod docs; writes are constrained to
+        // "pco"|"native" by `updateRunSheetConfig`, and readers default any
+        // other/absent value to "pco".
+        source: v.optional(v.string()),
         defaultServiceTypeIds: v.optional(v.array(v.string())),
         defaultView: v.optional(v.string()), // "compact" | "detailed"
         // Chip configuration for filtering/ordering plan item categories
@@ -430,11 +438,6 @@ export default defineSchema({
             order: v.array(v.string()), // ordered visible category names
           }),
         ),
-        // Legacy drift: some existing `groups` docs carry `source: "native"`
-        // here. Nothing in the codebase reads or writes it anymore, but the
-        // deploy-time schema validation rejects the extra field. Accept it so
-        // deploys pass. TODO: backfill-strip this field, then remove.
-        source: v.optional(v.string()),
       }),
     ),
 
@@ -2612,6 +2615,50 @@ export default defineSchema({
     // powers team auto-sync: desired members of a team within a rotation
     // window are derived from assignments matched by team + date.
     .index("by_team_eventDate", ["teamId", "eventDate"]),
+
+  /**
+   * A single ordered item on an event plan's run sheet (ADR-026). The native
+   * replacement for the PCO-derived order-of-items. One run sheet = many rows,
+   * keyed by `planId` and ordered by `sequence`; the same run sheet is shared
+   * across all of the plan's `times` (clock times are computed client-side by
+   * cascading `durationSec` from the selected service time — never stored).
+   */
+  eventItems: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    /** Ordering within the run sheet; reordering rewrites these. */
+    sequence: v.number(),
+    /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
+    type: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    /** Drives the cascading clock times. A `header` is typically 0. */
+    durationSec: v.number(),
+    /** Role-categorized free-text notes (e.g. Audio / Video cues). */
+    notes: v.optional(
+      v.array(v.object({ category: v.string(), content: v.string() })),
+    ),
+    /**
+     * Links this item to roles rostered on the plan. The row displays
+     * "whoever currently fills this role", resolved live from the plan's
+     * `roleAssignments` — it never copies a person's name, so there is no
+     * second source of truth to drift.
+     */
+    assignments: v.optional(
+      v.array(v.object({ roleId: v.id("teamRoles") })),
+    ),
+    /** Lightweight song metadata. No CCLI / library (ADR-023 Phase 3). */
+    songDetails: v.optional(
+      v.object({
+        key: v.optional(v.string()),
+        bpm: v.optional(v.number()),
+        author: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  }).index("by_plan", ["planId"]),
 
   /**
    * A member's self-reported availability for a single event plan (ADR-023
