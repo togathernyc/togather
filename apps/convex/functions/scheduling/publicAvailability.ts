@@ -1,61 +1,34 @@
 /**
- * Public availability — the standalone, app-optional link flow.
+ * Public availability — the shareable, app-optional link flow.
  *
- * A leader generates a shareable link (`/a/<publicToken>`) for an availability
- * request. Anyone with the link can open a public web page (no app, no login),
- * enter their name + phone, and mark which upcoming events they can serve.
+ * A leader shares a link (`/a/<publicToken>`) for an availability request. It
+ * opens an Expo Router page that renders on the web (no install needed) and
+ * deep-links into the app when installed — modeled on the public event page
+ * (`/e/<shortId>`). A visitor marks which upcoming events they can serve and
+ * **verifies their phone via SMS OTP** (the same phone → OTP → account flow as
+ * guest event RSVPs). By the time availability is recorded they hold a real,
+ * verified account, so `submitAvailabilityForRequest` is a normal
+ * authenticated mutation — no placeholder/deferred-matching needed.
  *
- * Matching, the RSVP way: a submission find-or-creates a **placeholder user**
- * keyed by the normalized phone (exactly like `inviteAndAssign`). Their
- * availability is written against that placeholder's stable `_id`. When the
- * person later signs up and **verifies that phone**, the existing placeholder-
- * claim path (`claimPlaceholderByPhoneInternal`) activates that same account —
- * so their availability (and any role assignments) transparently become theirs.
- * No separate reconciliation step is needed.
- *
- * The two write functions here are intentionally token-free (public): the
- * unguessable `publicToken` is the capability. They are rate-limited and only
- * ever touch the events snapshotted on the request.
+ * `getPublicAvailabilityRequest` is the one unauthenticated read that powers
+ * the page before sign-in; the unguessable token is the capability.
  */
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import {
-  buildSearchText,
-  generateShortId,
-  getDisplayName,
-  normalizePhone,
-} from "../../lib/utils";
-import { COMMUNITY_ROLES } from "../../lib/permissions";
-import { checkRateLimit } from "../../lib/rateLimit";
+import { generateShortId } from "../../lib/utils";
 import { requireGroupScheduler } from "./permissions";
 
-const AVAILABILITY_STATUSES = new Set(["available", "unavailable"]);
 const MAX_MESSAGE_LENGTH = 280;
 const MAX_EVENTS = 12;
-const MAX_NAME_LENGTH = 80;
 
 /** Midnight (local server time) at the start of today, in ms. */
 function startOfTodayMs(): number {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.getTime();
-}
-
-/**
- * A phone is acceptable for matching if it normalizes to E.164 with at least
- * 10 national digits. We don't verify ownership here — verification happens
- * when the person signs up and confirms the number via OTP.
- */
-function normalizeSubmittablePhone(raw: string): string {
-  const normalized = normalizePhone(raw);
-  const digits = normalized.replace(/\D/g, "");
-  if (digits.length < 10) {
-    throw new ConvexError("Enter a valid phone number");
-  }
-  return normalized;
 }
 
 // ============================================================================
@@ -137,13 +110,13 @@ export const createAvailabilityLink = mutation({
 });
 
 // ============================================================================
-// Public (no auth): read + submit
+// Public read (no auth) — powers the page before sign-in
 // ============================================================================
 
 /**
- * Public read for the `/a/<token>` web page. Returns enough to render the form
- * — group + community display info and the snapshotted events. No per-viewer
- * status (the visitor is anonymous until they submit).
+ * Public read for the `/a/<token>` page. Returns enough to render the form —
+ * group + community display info and the snapshotted events. No per-viewer
+ * status (the visitor is anonymous until they verify and sign in).
  *
  * Unauthenticated by design; the unguessable token is the capability.
  */
@@ -189,23 +162,22 @@ export const getPublicAvailabilityRequest = query({
   },
 });
 
+// ============================================================================
+// Record (authenticated) — called after the visitor verifies via OTP
+// ============================================================================
+
 /**
- * Public submission from the `/a/<token>` web page. Find-or-creates a
- * placeholder user by phone, ensures they're in the request's group, and
- * upserts their availability for each event in the submission.
+ * Record availability for an authenticated user against a public request.
+ * Called once the visitor has verified their phone and signed in (so the token
+ * belongs to a real, phone-verified account). Ensures they're a member of the
+ * request's group, then upserts their availability for each submitted event.
  *
- * Returns `{ matched }` — true when the phone already belonged to a real
- * (claimed) account, so the web UI can nudge them to open/install the app.
- *
- * Unauthenticated by design; rate-limited per token to blunt abuse. Only the
- * events snapshotted on the request are accepted.
+ * Only the events snapshotted on the request are accepted.
  */
-export const submitPublicAvailability = mutation({
+export const submitAvailabilityForRequest = mutation({
   args: {
+    token: v.string(),
     publicToken: v.string(),
-    firstName: v.string(),
-    lastName: v.optional(v.string()),
-    phone: v.string(),
     responses: v.array(
       v.object({
         planId: v.id("eventPlans"),
@@ -214,6 +186,8 @@ export const submitPublicAvailability = mutation({
     ),
   },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
     const request = await ctx.db
       .query("availabilityRequests")
       .withIndex("by_public_token", (q) =>
@@ -224,81 +198,10 @@ export const submitPublicAvailability = mutation({
       throw new ConvexError("This availability link is no longer valid");
     }
 
-    // Rate limit per link: a public endpoint that creates users + memberships.
-    await checkRateLimit(ctx, `availSubmit:${args.publicToken}`, 30, 60_000);
-
-    const firstName = args.firstName.trim();
-    if (!firstName) {
-      throw new ConvexError("Enter your name");
-    }
-    if (firstName.length > MAX_NAME_LENGTH) {
-      throw new ConvexError("That name is too long");
-    }
-    const lastName = args.lastName?.trim() || undefined;
-    const normalizedPhone = normalizeSubmittablePhone(args.phone);
-
-    // Only the events this request actually asked about are writable.
-    const allowed = new Set(request.planIds.map((id) => id as string));
-    const responses = args.responses.filter((r) =>
-      allowed.has(r.planId as string),
-    );
-    for (const r of responses) {
-      if (!AVAILABILITY_STATUSES.has(r.status)) {
-        throw new ConvexError("Invalid availability status");
-      }
-    }
-
     const now = Date.now();
 
-    // --- Find or create the (placeholder) user by phone. ---
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_phone", (q) => q.eq("phone", normalizedPhone))
-      .first();
-
-    let userId: Id<"users">;
-    let matched = false;
-    if (existing) {
-      userId = existing._id;
-      // A claimed (real) account → don't downgrade anything; just attribute.
-      matched = existing.isPlaceholder !== true;
-      // Backfill a name on a bare placeholder so the leader grid reads well.
-      if (existing.isPlaceholder === true && !existing.firstName) {
-        await ctx.db.patch(existing._id, {
-          firstName,
-          lastName: existing.lastName ?? lastName,
-          updatedAt: now,
-          searchText: buildSearchText({ firstName, lastName, phone: normalizedPhone }),
-        });
-      }
-    } else {
-      // New placeholder — mirrors inviteAndAssign so the phone-OTP signup
-      // claim path activates this same account later.
-      userId = await ctx.db.insert("users", {
-        firstName,
-        lastName,
-        phone: normalizedPhone,
-        phoneVerified: false,
-        isActive: false,
-        isPlaceholder: true,
-        isStaff: false,
-        isSuperuser: false,
-        dateJoined: now,
-        createdAt: now,
-        updatedAt: now,
-        searchText: buildSearchText({ firstName, lastName, phone: normalizedPhone }),
-      });
-      await ctx.db.insert("userCommunities", {
-        userId,
-        communityId: request.communityId,
-        roles: COMMUNITY_ROLES.MEMBER,
-        status: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    // --- Ensure group membership so the response shows in the leader grid. ---
+    // Ensure group membership so the response shows in the leader grid and the
+    // person can manage their availability in-app afterwards.
     const membership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
@@ -316,10 +219,11 @@ export const submitPublicAvailability = mutation({
       });
     }
 
-    // --- Upsert availability for each submitted event. ---
-    for (const r of responses) {
-      const plan = await ctx.db.get(r.planId);
-      if (!plan || plan.groupId !== request.groupId) continue;
+    // Only events this request asked about are writable.
+    const allowed = new Set(request.planIds.map((id) => id as string));
+    let savedCount = 0;
+    for (const r of args.responses) {
+      if (!allowed.has(r.planId as string)) continue;
       const prior = await ctx.db
         .query("eventAvailability")
         .withIndex("by_plan_user", (q) =>
@@ -339,11 +243,9 @@ export const submitPublicAvailability = mutation({
           updatedAt: now,
         });
       }
+      savedCount += 1;
     }
 
-    return { matched, savedCount: responses.length };
+    return { savedCount };
   },
 });
-
-/** Display helper re-exported for callers that want a consistent name. */
-export { getDisplayName };

@@ -277,18 +277,12 @@ describe("sendAvailabilityRequest + getAvailabilityRequest (chat card)", () => {
   });
 });
 
-describe("public availability link (app-optional)", () => {
-  it("creates a placeholder for a new phone and records availability", async () => {
+describe("public availability link (app-optional, OTP-verified)", () => {
+  it("creates a shareable link and exposes a public read", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
 
-    const planId = await createPlan(
-      t,
-      leaderToken,
-      world.groupId,
-      "Sunday",
-      Date.now() + 7 * DAY,
-    );
+    await createPlan(t, leaderToken, world.groupId, "Sunday", Date.now() + 7 * DAY);
 
     const { publicToken } = await t.mutation(
       api.functions.scheduling.publicAvailability.createAvailabilityLink,
@@ -296,43 +290,50 @@ describe("public availability link (app-optional)", () => {
     );
     expect(publicToken).toBeTruthy();
 
-    // Public read needs no token.
+    // Public read needs no token (the page renders before sign-in).
     const pub = await t.query(
       api.functions.scheduling.publicAvailability.getPublicAvailabilityRequest,
       { publicToken },
     );
     expect(pub).not.toBeNull();
     expect(pub?.events).toHaveLength(1);
+    expect(pub?.groupName).toBeTruthy();
+  });
 
-    // A brand-new guest submits.
+  it("records availability for a verified user and auto-joins the group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    // `outsiderId` is a real account but NOT a member of the group — stands in
+    // for someone who just verified via OTP and is recording availability.
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Sunday",
+      Date.now() + 7 * DAY,
+    );
+    const { publicToken } = await t.mutation(
+      api.functions.scheduling.publicAvailability.createAvailabilityLink,
+      { token: leaderToken, groupId: world.groupId },
+    );
+
     const result = await t.mutation(
-      api.functions.scheduling.publicAvailability.submitPublicAvailability,
+      api.functions.scheduling.publicAvailability.submitAvailabilityForRequest,
       {
+        token: outsiderToken,
         publicToken,
-        firstName: "Guesty",
-        phone: "(202) 555-9999",
         responses: [{ planId, status: "available" }],
       },
     );
-    expect(result.matched).toBe(false);
     expect(result.savedCount).toBe(1);
 
-    // A placeholder user keyed by the normalized phone now exists, with a
-    // group membership and the availability row — the preconditions the
-    // existing phone-OTP claim path relies on.
     await t.run(async (ctx) => {
-      const u = await ctx.db
-        .query("users")
-        .withIndex("by_phone", (q) => q.eq("phone", "+12025559999"))
-        .first();
-      expect(u).not.toBeNull();
-      expect(u?.isPlaceholder).toBe(true);
-      expect(u?.phoneVerified).toBe(false);
-
       const membership = await ctx.db
         .query("groupMembers")
         .withIndex("by_group_user", (q) =>
-          q.eq("groupId", world.groupId).eq("userId", u!._id),
+          q.eq("groupId", world.groupId).eq("userId", world.outsiderId),
         )
         .first();
       expect(membership).not.toBeNull();
@@ -340,13 +341,13 @@ describe("public availability link (app-optional)", () => {
       const avail = await ctx.db
         .query("eventAvailability")
         .withIndex("by_plan_user", (q) =>
-          q.eq("planId", planId).eq("userId", u!._id),
+          q.eq("planId", planId).eq("userId", world.outsiderId),
         )
         .first();
       expect(avail?.status).toBe("available");
     });
 
-    // The guest now shows up in the leader grid.
+    // Shows up in the leader grid.
     const grid = await t.query(
       api.functions.scheduling.availability.availabilityForPlan,
       { token: leaderToken, planId },
@@ -354,81 +355,14 @@ describe("public availability link (app-optional)", () => {
     expect(grid?.counts.available).toBe(1);
   });
 
-  it("attributes to an existing real account and reports matched=true", async () => {
+  it("rejects an invalid public token", async () => {
     const { t, world } = await setupSchedulingWorld();
-    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
-
-    const planId = await createPlan(
-      t,
-      leaderToken,
-      world.groupId,
-      "Sunday",
-      Date.now() + 7 * DAY,
-    );
-    const { publicToken } = await t.mutation(
-      api.functions.scheduling.publicAvailability.createAvailabilityLink,
-      { token: leaderToken, groupId: world.groupId },
-    );
-
-    // channelMemberId is a real, active user with phone +12025550003.
-    const result = await t.mutation(
-      api.functions.scheduling.publicAvailability.submitPublicAvailability,
-      {
-        publicToken,
-        firstName: "Memberly",
-        phone: "+12025550003",
-        responses: [{ planId, status: "unavailable" }],
-      },
-    );
-    expect(result.matched).toBe(true);
-
-    await t.run(async (ctx) => {
-      const avail = await ctx.db
-        .query("eventAvailability")
-        .withIndex("by_plan_user", (q) =>
-          q.eq("planId", planId).eq("userId", world.channelMemberId),
-        )
-        .first();
-      expect(avail?.status).toBe("unavailable");
-    });
-  });
-
-  it("rejects an invalid token and an unparseable phone", async () => {
-    const { t, world } = await setupSchedulingWorld();
-    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
-    const planId = await createPlan(
-      t,
-      leaderToken,
-      world.groupId,
-      "Sunday",
-      Date.now() + 7 * DAY,
-    );
-    const { publicToken } = await t.mutation(
-      api.functions.scheduling.publicAvailability.createAvailabilityLink,
-      { token: leaderToken, groupId: world.groupId },
-    );
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
 
     await expect(
       t.mutation(
-        api.functions.scheduling.publicAvailability.submitPublicAvailability,
-        {
-          publicToken: "nope-not-real",
-          firstName: "X",
-          phone: "+12025550003",
-          responses: [],
-        },
-      ),
-    ).rejects.toThrow(ConvexError);
-
-    await expect(
-      t.mutation(
-        api.functions.scheduling.publicAvailability.submitPublicAvailability,
-        {
-          publicToken,
-          firstName: "Shorty",
-          phone: "123",
-          responses: [{ planId, status: "available" }],
-        },
+        api.functions.scheduling.publicAvailability.submitAvailabilityForRequest,
+        { token: outsiderToken, publicToken: "nope-not-real", responses: [] },
       ),
     ).rejects.toThrow(ConvexError);
   });
