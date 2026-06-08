@@ -22,6 +22,7 @@ export { EventEditorScreen } from "./components/EventEditorScreen";
 export { RunSheetScreen } from "./components/RunSheetScreen";
 export { MyScheduleScreen } from "./components/MyScheduleScreen";
 export { MyAvailabilityScreen } from "./components/MyAvailabilityScreen";
+export { AvailabilityGridScreen } from "./components/AvailabilityGridScreen";
 export { AssignmentDetailScreen } from "./components/AssignmentDetailScreen";
 
 /** Rostering hub — see ADR-024. */
