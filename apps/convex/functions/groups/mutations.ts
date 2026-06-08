@@ -848,6 +848,7 @@ export const updateRunSheetConfig = mutation({
     token: v.string(),
     groupId: v.id("groups"),
     runSheetConfig: v.object({
+      source: v.optional(v.union(v.literal("pco"), v.literal("native"))),
       defaultServiceTypeIds: v.optional(v.array(v.string())),
       defaultView: v.optional(v.string()),
       chipConfig: v.optional(

@@ -37,6 +37,7 @@ interface Props {
 // Type for group data with runSheetConfig
 interface GroupWithRunSheetConfig {
   runSheetConfig?: {
+    source?: "pco" | "native";
     defaultServiceTypeIds?: string[];
     defaultView?: string;
     chipConfig?: {
@@ -45,6 +46,8 @@ interface GroupWithRunSheetConfig {
     };
   };
 }
+
+type RunSheetSource = "pco" | "native";
 
 export function RunSheetToolSettings({ groupId }: Props) {
   const { colors } = useTheme();
@@ -61,6 +64,9 @@ export function RunSheetToolSettings({ groupId }: Props) {
   }>({ hidden: [], order: [] });
   const [allCategories, setAllCategories] = useState<Set<string>>(new Set());
   const [loadingRunSheet, setLoadingRunSheet] = useState(false);
+  // Which run sheet this group's tool shows (ADR-026). Absent = "pco".
+  const [source, setSource] = useState<RunSheetSource>("pco");
+  const [hasInitializedSource, setHasInitializedSource] = useState(false);
 
   // Fetch group data (needs authentication to access runSheetConfig)
   const groupData = useAuthenticatedQuery(
@@ -104,6 +110,15 @@ export function RunSheetToolSettings({ groupId }: Props) {
       setHasInitializedDefaults(true);
     }
   }, [groupData, hasInitializedDefaults]);
+
+  // Load existing source from group data (only once on initial load)
+  useEffect(() => {
+    if (hasInitializedSource) return;
+    if (groupData !== undefined && groupData !== null) {
+      setSource(groupData.runSheetConfig?.source ?? "pco");
+      setHasInitializedSource(true);
+    }
+  }, [groupData, hasInitializedSource]);
 
   // Load existing chipConfig from group data (only once on initial load)
   const [hasInitializedChipConfig, setHasInitializedChipConfig] = useState(false);
@@ -214,6 +229,7 @@ export function RunSheetToolSettings({ groupId }: Props) {
       await updateRunSheetConfig({
         groupId,
         runSheetConfig: {
+          source,
           defaultServiceTypeIds,
           defaultView: groupData?.runSheetConfig?.defaultView,
           chipConfig,
@@ -223,7 +239,7 @@ export function RunSheetToolSettings({ groupId }: Props) {
     } catch (error) {
       console.error("Failed to save run sheet config:", error);
     }
-  }, [groupId, defaultServiceTypeIds, groupData?.runSheetConfig?.defaultView, chipConfig, updateRunSheetConfig, hasChanges]);
+  }, [groupId, source, defaultServiceTypeIds, groupData?.runSheetConfig?.defaultView, chipConfig, updateRunSheetConfig, hasChanges]);
 
   if (!groupData) {
     return (
@@ -239,6 +255,58 @@ export function RunSheetToolSettings({ groupId }: Props) {
       contentContainerStyle={styles.content}
     >
       <DragHandle />
+
+      {/* Run sheet source (ADR-026) */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>
+          Run Sheet Source
+        </Text>
+        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+          Choose where this group's run sheet comes from
+        </Text>
+        {(
+          [
+            {
+              value: "native" as const,
+              label: "Togather",
+              description: "Built and edited natively in the app, per event plan",
+            },
+            {
+              value: "pco" as const,
+              label: "Planning Center",
+              description: "Pulled live from your Planning Center service plans",
+            },
+          ]
+        ).map((opt) => {
+          const isSelected = source === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              style={[styles.sourceRow, { borderColor: isSelected ? themeColor : colors.border }]}
+              onPress={() => {
+                setSource(opt.value);
+                setHasChanges(true);
+              }}
+            >
+              <Ionicons
+                name={isSelected ? "radio-button-on" : "radio-button-off"}
+                size={22}
+                color={isSelected ? themeColor : colors.textTertiary}
+              />
+              <View style={styles.sourceText}>
+                <Text style={[styles.sourceLabel, { color: colors.text }]}>{opt.label}</Text>
+                <Text style={[styles.sourceDescription, { color: colors.textSecondary }]}>
+                  {opt.description}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* PCO-only settings — hidden when the group uses native run sheets. */}
+      {source === "pco" ? (
+        <>
       {/* Service Type Selection */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
@@ -306,6 +374,8 @@ export function RunSheetToolSettings({ groupId }: Props) {
           />
         )}
       </View>
+        </>
+      ) : null}
 
       {/* Save Button */}
       {hasChanges && (
@@ -365,6 +435,27 @@ const styles = StyleSheet.create({
   serviceTypeName: {
     fontSize: 16,
     flex: 1,
+  },
+  sourceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  sourceText: {
+    flex: 1,
+  },
+  sourceLabel: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  sourceDescription: {
+    fontSize: 13,
+    marginTop: 2,
   },
   saveButton: {
     paddingVertical: 14,

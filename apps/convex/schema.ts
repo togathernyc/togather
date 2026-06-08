@@ -421,6 +421,13 @@ export default defineSchema({
     // Stores default service type filters and view preferences
     runSheetConfig: v.optional(
       v.object({
+        // Which run sheet the leader-tools "Run Sheet" tool shows for this
+        // group. "pco" reads live from Planning Center (default, legacy);
+        // "native" shows the group's upcoming event plan's native run sheet
+        // (ADR-026). Absent = "pco" for backward compatibility.
+        source: v.optional(
+          v.union(v.literal("pco"), v.literal("native")),
+        ),
         defaultServiceTypeIds: v.optional(v.array(v.string())),
         defaultView: v.optional(v.string()), // "compact" | "detailed"
         // Chip configuration for filtering/ordering plan item categories

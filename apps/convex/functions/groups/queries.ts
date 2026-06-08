@@ -133,6 +133,10 @@ export const getById = query({
       groupTypeName: groupType?.name,
       groupTypeSlug: groupType?.slug,
       memberCount,
+      // Which run sheet the group's Run Sheet tool shows (ADR-026). Exposed
+      // outside the sensitive block so members viewing the tool resolve the
+      // right source; the rest of runSheetConfig stays leader-only below.
+      runSheetSource: group.runSheetConfig?.source ?? "pco",
     };
 
     // Add sensitive fields only for authorized users

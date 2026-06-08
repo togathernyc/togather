@@ -139,9 +139,27 @@ gesture pitfalls.
 
 - New route `rostering/[group_id]/run-sheet/[plan_id]` → `RunSheetScreen`.
 - An entry row on `EventEditorScreen` ("Run sheet — N items") navigates to it.
-- The screen reuses the PCO run sheet's *display* conventions (time column,
-  collapsible headers) but is backed by native data with inline add / edit /
-  delete / reorder and a service-time toggle.
+- The editor is spreadsheet-style: inline-edited fields (debounced autosave),
+  drag-to-reorder from a grip (web HTML5 + native gesture-handler), per-row
+  duplicate/delete, and an "Add item / Song / Header" bar. Times cascade from
+  the earliest service start; the header shows each service as a range.
+
+### Run sheet source (leader-tools tool)
+
+The legacy leader-tools "Run Sheet" tool can be pointed at either source per
+group via `groups.runSheetConfig.source` ("pco" | "native", default "pco"):
+
+- Set in **Run Sheet Settings** (a "Run Sheet Source" toggle; the PCO-only
+  Service Types / Filter Chips settings hide when "native" is chosen).
+- `RunSheetToolScreen` branches on the group's `runSheetSource` (exposed on
+  `groups.getById` so members resolve it too): "native" renders
+  `NativeRunSheetView` — a read-only view of the group's upcoming event plan
+  run sheets (tab per upcoming plan, "Edit" shortcut into the editor for
+  leaders), built from `listEvents` / `getEvent` / `listItems` with no new
+  backend; "pco" keeps the existing Planning Center `RunSheetScreen`.
+- The two coexist (ADR-024); no forced migration. *Native run sheets on the
+  public `/t/[shortId]` share path are not yet implemented — that path stays
+  PCO-only for now.*
 
 ## Deliberately out of scope (v1)
 
