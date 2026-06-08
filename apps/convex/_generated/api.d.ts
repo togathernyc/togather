@@ -76,6 +76,7 @@ import type * as functions_meetings_myEvents from "../functions/meetings/myEvent
 import type * as functions_meetings_queries from "../functions/meetings/queries.js";
 import type * as functions_meetings_reports from "../functions/meetings/reports.js";
 import type * as functions_memberFollowups from "../functions/memberFollowups.js";
+import type * as functions_messaging_availabilityRequests from "../functions/messaging/availabilityRequests.js";
 import type * as functions_messaging_blocking from "../functions/messaging/blocking.js";
 import type * as functions_messaging_channelInvites from "../functions/messaging/channelInvites.js";
 import type * as functions_messaging_channels from "../functions/messaging/channels.js";
@@ -126,6 +127,7 @@ import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_resources from "../functions/resources.js";
 import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
+import type * as functions_scheduling_availability from "../functions/scheduling/availability.js";
 import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
 import type * as functions_scheduling_eventItems from "../functions/scheduling/eventItems.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
@@ -133,6 +135,7 @@ import type * as functions_scheduling_index from "../functions/scheduling/index.
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
 import type * as functions_scheduling_people from "../functions/scheduling/people.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
+import type * as functions_scheduling_publicAvailability from "../functions/scheduling/publicAvailability.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_starterRoles from "../functions/scheduling/starterRoles.js";
 import type * as functions_scheduling_teamChannelSync from "../functions/scheduling/teamChannelSync.js";
@@ -272,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   "functions/meetings/queries": typeof functions_meetings_queries;
   "functions/meetings/reports": typeof functions_meetings_reports;
   "functions/memberFollowups": typeof functions_memberFollowups;
+  "functions/messaging/availabilityRequests": typeof functions_messaging_availabilityRequests;
   "functions/messaging/blocking": typeof functions_messaging_blocking;
   "functions/messaging/channelInvites": typeof functions_messaging_channelInvites;
   "functions/messaging/channels": typeof functions_messaging_channels;
@@ -322,6 +326,7 @@ declare const fullApi: ApiFromModules<{
   "functions/resources": typeof functions_resources;
   "functions/scheduledJobs": typeof functions_scheduledJobs;
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
+  "functions/scheduling/availability": typeof functions_scheduling_availability;
   "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
   "functions/scheduling/eventItems": typeof functions_scheduling_eventItems;
   "functions/scheduling/events": typeof functions_scheduling_events;
@@ -329,6 +334,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
   "functions/scheduling/people": typeof functions_scheduling_people;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
+  "functions/scheduling/publicAvailability": typeof functions_scheduling_publicAvailability;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/starterRoles": typeof functions_scheduling_starterRoles;
   "functions/scheduling/teamChannelSync": typeof functions_scheduling_teamChannelSync;

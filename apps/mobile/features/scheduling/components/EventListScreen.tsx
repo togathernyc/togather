@@ -22,10 +22,12 @@ import {
   ActionSheetIOS,
   Alert,
   Platform,
+  Share,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { EmptyState } from "@components/ui/EmptyState";
@@ -72,7 +74,36 @@ export function EventListScreen() {
   const deleteEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.deleteEvent,
   );
+  const createAvailabilityLink = useAuthenticatedMutation(
+    api.functions.scheduling.publicAvailability.createAvailabilityLink,
+  );
   const [creating, setCreating] = useState(false);
+  const [sharingLink, setSharingLink] = useState(false);
+
+  // Generate a public, app-optional availability link and hand it to the OS
+  // share sheet. People can open it in a browser (no app needed) and their
+  // response is matched to their account when they later sign up.
+  const handleShareLink = useCallback(async () => {
+    if (sharingLink) return;
+    setSharingLink(true);
+    try {
+      const { publicToken } = await createAvailabilityLink({ groupId });
+      const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
+      await Share.share({
+        message: `Let us know when you can serve: ${url}`,
+      });
+    } catch (e) {
+      const err = e as { data?: { message?: string }; message?: string };
+      Alert.alert(
+        "Couldn't create link",
+        err?.data?.message ??
+          err?.message ??
+          "Add an upcoming event plan first, then try again.",
+      );
+    } finally {
+      setSharingLink(false);
+    }
+  }, [sharingLink, createAvailabilityLink, groupId]);
 
   const handleNewEvent = useCallback(async () => {
     if (creating) return;
@@ -200,6 +231,27 @@ export function EventListScreen() {
         )}
         <Text style={[styles.newLabel, { color: primaryColor }]}>
           New event plan
+        </Text>
+      </Pressable>
+
+      <Pressable
+        onPress={handleShareLink}
+        disabled={sharingLink}
+        style={styles.shareRow}
+        accessibilityRole="button"
+        accessibilityLabel="Share an availability link"
+      >
+        {sharingLink ? (
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+        ) : (
+          <Ionicons
+            name="share-outline"
+            size={18}
+            color={colors.textSecondary}
+          />
+        )}
+        <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
+          Share availability link
         </Text>
       </Pressable>
 
@@ -348,6 +400,17 @@ const styles = StyleSheet.create({
   newLabel: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  shareRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 4,
+  },
+  shareLabel: {
+    fontSize: 14,
+    fontWeight: "500",
   },
   card: {
     borderRadius: 12,
