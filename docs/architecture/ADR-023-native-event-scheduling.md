@@ -141,9 +141,12 @@ Per product direction, these PCO features are **not** replicated:
 - **Role qualifications.** Anyone in the campus group can fill any role.
   Instead of a qualification table, the assign UI surfaces a derived
   "previously filled by" quicklink — a query over `roleAssignments` history.
-- **Blockout dates / availability.** No availability system. A lightweight
-  **double-booking warning** (same person, two teams, same calendar day) is
-  kept because it is a free derived query — no blockout table.
+- **Blockout dates / availability.** No availability system *in Phase 1*. A
+  lightweight **double-booking warning** (same person, two teams, same calendar
+  day) is kept because it is a free derived query — no blockout table.
+  **Update (follow-up):** intentional availability collection has since shipped
+  — see "Availability collection (follow-up)" below. There is still no blockout
+  *calendar*; members opt in per event plan.
 - **Song library, arrangements, keys, CCLI reporting.** Deferred; rostering is
   the priority.
 
@@ -254,9 +257,50 @@ roleAssignments: defineTable({
   keeps `eventPlans` naming explicit, and user-facing copy always says
   "event plan", to avoid the collision.
 
+## Availability collection (follow-up)
+
+Phase 1 shipped without any way to gather "who can serve which date". This
+follow-up adds **intentional availability** — a member opts in ("I'm available
+to serve this date"), never a blockout calendar. Availability is an *input* to
+the leader's assignment decision; it never schedules anyone.
+
+**Model.** One new table, `eventAvailability`, keyed per `(planId, userId)` with
+`status: "available" | "unavailable"`. Availability is collected at the
+event-plan level (not per time-slot — a deliberate v1 simplification). The
+absence of a row is "no response", rendered distinctly from an explicit
+"unavailable". A second table, `availabilityRequests`, backs the in-chat card
+(mirrors `polls`): a `chatMessages` row with
+`contentType: "availability_request"` + `availabilityRequestId`.
+
+**Backend** (`functions/scheduling/availability.ts`,
+`functions/messaging/availabilityRequests.ts`):
+- `setMyAvailability` / `clearMyAvailability` — a member writes only their own
+  row (userId from the token).
+- `myUpcomingAvailability(groupId)` — upcoming plans + the viewer's response;
+  powers both the dedicated page and the card.
+- `availabilityForPlan(planId)` — leader view: every active group member tagged
+  available / unavailable / no-response, available-first; powers the assign grid.
+- `sendAvailabilityRequest(channelId, …)` — posts the card; the owning group is
+  derived from `channel.groupId` and the sender must be a group scheduler.
+
+**Surfaces.** (1) An in-chat card (composer attachment) where members toggle
+availability inline; (2) a dedicated "My Availability" page at
+`/rostering/[group_id]/availability`; (3) availability badges on each candidate
+in `AssignSheet`, plus a one-line tally on the event editor. **Qualifications
+are still derived** from the existing `previousFillers` "previously served"
+signal — no qualification table (consistent with the non-goal above). Leaders
+still make the final call.
+
+**Still out of scope:** a blockout calendar, per-time-slot availability,
+automatic placement / suggestions.
+
 ## Open questions
 
 1. Should a published event plan auto-create an event-plan-scoped chat, or
    reuse the team channel? Defer to Phase 1 implementation.
 2. Multi-campus event plans (one event plan, several campuses) — one
    `eventPlans` row per campus for now; revisit in Phase 2.
+3. Where should the "My Availability" page surface for members who never
+   received a chat request? Today it's reachable from the card footer link and
+   the direct route; a persistent entry (e.g. a rostering-hub tab) is a
+   follow-up.
