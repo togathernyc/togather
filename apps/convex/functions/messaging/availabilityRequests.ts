@@ -37,9 +37,11 @@ function startOfTodayMs(): number {
 /**
  * Post an availability request as a message in the given channel.
  *
- * Auth: the sender must be a scheduler (group leader / community admin) for
- * `groupId` AND be allowed to post in the channel. Collecting availability is
- * a leader action, so this is gated more tightly than a plain message or poll.
+ * The owning group is derived from the channel (`channel.groupId`) so the
+ * composer doesn't have to plumb a group id through. Auth: the sender must be
+ * a scheduler (group leader / community admin) for that group AND be allowed to
+ * post in the channel. Collecting availability is a leader action, so this is
+ * gated more tightly than a plain message or poll.
  *
  * `planIds` is optional — when omitted we snapshot the group's next upcoming
  * events (capped at MAX_EVENTS). When provided, the ids are validated to
@@ -49,7 +51,6 @@ export const sendAvailabilityRequest = mutation({
   args: {
     token: v.string(),
     channelId: v.id("chatChannels"),
-    groupId: v.id("groups"),
     message: v.optional(v.string()),
     planIds: v.optional(v.array(v.id("eventPlans"))),
     viewingGroupId: v.optional(v.id("groups")),
@@ -61,12 +62,17 @@ export const sendAvailabilityRequest = mutation({
     // every channel member exactly like a normal send.
     await checkRateLimit(ctx, `msg:${userId}`, 20, 60_000);
 
-    const group = await requireGroupScheduler(ctx, args.groupId, userId);
-
     const channel = await ctx.db.get(args.channelId);
     if (!channel) {
       throw new ConvexError("Channel not found");
     }
+    if (!channel.groupId) {
+      throw new ConvexError(
+        "Availability requests can only be sent in a group channel",
+      );
+    }
+    const groupId = channel.groupId;
+    const group = await requireGroupScheduler(ctx, groupId, userId);
     await assertCanPostInChannel(ctx, userId, channel, args.viewingGroupId);
 
     const message = args.message?.trim();
@@ -84,7 +90,7 @@ export const sendAvailabilityRequest = mutation({
       );
       const valid = plans.filter(
         (p): p is NonNullable<typeof p> =>
-          p !== null && p.groupId === args.groupId,
+          p !== null && p.groupId === groupId,
       );
       if (valid.length === 0) {
         throw new ConvexError("No valid events for this group");
@@ -98,7 +104,7 @@ export const sendAvailabilityRequest = mutation({
       const upcoming = (
         await ctx.db
           .query("eventPlans")
-          .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+          .withIndex("by_group", (q) => q.eq("groupId", groupId))
           .collect()
       )
         .filter((p) => p.eventDate >= cutoff)
@@ -139,7 +145,7 @@ export const sendAvailabilityRequest = mutation({
     const requestId = await ctx.db.insert("availabilityRequests", {
       channelId: args.channelId,
       messageId,
-      groupId: args.groupId,
+      groupId,
       communityId: group.communityId,
       authorId: userId,
       message: message || undefined,
