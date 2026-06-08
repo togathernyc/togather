@@ -255,6 +255,20 @@ export function EventListScreen() {
         </Text>
       </Pressable>
 
+      <Pressable
+        onPress={() =>
+          router.push(`/rostering/${groupId}/availability-grid` as never)
+        }
+        style={styles.shareRow}
+        accessibilityRole="button"
+        accessibilityLabel="View the availability grid"
+      >
+        <Ionicons name="grid-outline" size={18} color={colors.textSecondary} />
+        <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
+          View availability grid
+        </Text>
+      </Pressable>
+
       {events.map((event) => {
         const { totalNeeded, totalFilled, totalConfirmed } = event.fillSummary;
         const confirmedPct =
