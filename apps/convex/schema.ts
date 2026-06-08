@@ -2636,19 +2636,24 @@ export default defineSchema({
     .index("by_group_user", ["groupId", "userId"]),
 
   /**
-   * An availability request posted into a chat channel. Backed by a
-   * `chatMessages` row with `contentType: "availability_request"` and
-   * `availabilityRequestId` pointing here — mirrors the `polls` pattern so it
-   * flows through the existing chat list, push, and notification pipelines.
+   * An availability request. Two flavors share this table:
+   *  - **In-chat**: posted into a channel, backed by a `chatMessages` row with
+   *    `contentType: "availability_request"` and `availabilityRequestId`
+   *    pointing here (mirrors the `polls` pattern, flows through chat/push).
+   *  - **Standalone link**: created with no `channelId`, shared as a public web
+   *    URL (`/a/<publicToken>`) that works WITHOUT the app. A guest enters their
+   *    name + phone and marks availability; the response is matched to their
+   *    account when they later sign up and verify that phone (placeholder-claim
+   *    path), exactly like guest invites.
    *
-   * The card lists the group's upcoming event plans (those dated on/after
-   * `createdAt`, capped) and lets each member toggle available/unavailable
-   * inline; responses are stored in `eventAvailability`. We snapshot the
-   * `planIds` at send time so the card's event set is stable even as new plans
-   * are added later.
+   * Either way the card/page lists a snapshot of the group's upcoming event
+   * plans (`planIds`, captured at creation, date-ordered) and responses are
+   * stored in `eventAvailability`. Every request gets a `publicToken` so it is
+   * always shareable as a link, whether or not it was also posted to chat.
    */
   availabilityRequests: defineTable({
-    channelId: v.id("chatChannels"),
+    /** Set for in-chat requests; absent for standalone link-only requests. */
+    channelId: v.optional(v.id("chatChannels")),
     /** Back-pointer to the host message. Set after the message is inserted. */
     messageId: v.optional(v.id("chatMessages")),
     groupId: v.id("groups"),
@@ -2658,10 +2663,13 @@ export default defineSchema({
     message: v.optional(v.string()),
     /** Snapshot of the event plans this request asks about, in date order. */
     planIds: v.array(v.id("eventPlans")),
+    /** Unguessable token for the public `/a/<token>` web link. */
+    publicToken: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_channel", ["channelId"])
-    .index("by_message", ["messageId"]),
+    .index("by_message", ["messageId"])
+    .index("by_public_token", ["publicToken"]),
 
   // =============================================================================
   // PRAYERS (Church feature, gated by communities.churchFeatures.prayerEnabled)

@@ -18,7 +18,7 @@ import { mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { getDisplayName, getMediaUrl, generateShortId } from "../../lib/utils";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { requireGroupScheduler, requireGroupMember } from "../scheduling/permissions";
 import { assertCanPostInChannel } from "./polls";
@@ -150,6 +150,9 @@ export const sendAvailabilityRequest = mutation({
       authorId: userId,
       message: message || undefined,
       planIds,
+      // Every request is shareable as a public `/a/<token>` link, whether or
+      // not it was also posted to chat.
+      publicToken: generateShortId(),
       createdAt: now,
     });
 
