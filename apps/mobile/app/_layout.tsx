@@ -123,6 +123,15 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Public availability pages (/a/[token]) — app-optional, no auth gate */}
+      <Stack.Screen
+        name="a"
+        options={{
+          presentation: "modal",
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
       {/* Public universal-link landings: modal at root so swipe-to-dismiss works (nested stack options are not enough) */}
       <Stack.Screen
         name="(landing)"
