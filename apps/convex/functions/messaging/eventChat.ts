@@ -29,7 +29,7 @@ import {
   resolveEventAdmins,
 } from "../../lib/meetingPermissions";
 import { isActiveLeader } from "../../lib/helpers";
-import { isNotifiedRsvpOptionId } from "../../lib/meetingConfig";
+import { isNotifiedRsvpOptionId, isAttendingRsvpOption } from "../../lib/meetingConfig";
 import { now } from "../../lib/utils";
 
 // ============================================================================
@@ -254,12 +254,14 @@ export const ensureEventChannel = internalMutation({
     }
 
     // Backfill existing Going/Maybe RSVPers as members so they get updates.
+    // Skip stale rows whose option the host has since hidden/disabled — those
+    // users no longer have chat access, so they must not be (re-)seated.
     const rsvps = await ctx.db
       .query("meetingRsvps")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
       .collect();
     for (const rsvp of rsvps) {
-      if (!isNotifiedRsvpOptionId(rsvp.rsvpOptionId)) continue;
+      if (!isAttendingRsvpOption(rsvp.rsvpOptionId, meeting.rsvpOptions)) continue;
       if (seated.has(String(rsvp.userId))) continue; // already an admin
       await ctx.db.insert("chatChannelMembers", {
         channelId,

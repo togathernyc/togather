@@ -370,6 +370,39 @@ describe("ensureEventChannel", () => {
     expect(channel?.memberCount).toBe(3);
   });
 
+  test("does NOT backfill stale RSVPers whose option the host has since disabled", async () => {
+    const t = convexTest(schema, modules);
+    const data = await setupTestData(t);
+
+    // Host hides the Maybe option (id 2) after maybeId already RSVP'd to it.
+    await t.run(async (ctx) => {
+      const meeting = await ctx.db.get(data.meetingId);
+      await ctx.db.patch(data.meetingId, {
+        rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+          o.id === 2 ? { ...o, enabled: false } : o,
+        ),
+      });
+    });
+
+    const channelId = await t.mutation(
+      (internal as any).functions.messaging.eventChat.ensureEventChannel,
+      { meetingId: data.meetingId },
+    );
+
+    const userIds = await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_channel", (q) => q.eq("channelId", channelId))
+        .collect();
+      return rows.map((r) => r.userId);
+    });
+
+    // goingId (enabled option) is seated; maybeId is not, because their
+    // option is now hidden — consistent with losing chat access.
+    expect(userIds).toContain(data.goingId);
+    expect(userIds).not.toContain(data.maybeId);
+  });
+
   test("throws when meeting has no shortId", async () => {
     const t = convexTest(schema, modules);
     const data = await setupTestData(t);

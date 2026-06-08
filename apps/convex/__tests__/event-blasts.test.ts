@@ -262,6 +262,30 @@ describe("Event Blasts", () => {
       expect(recipients).toContain(data.maybeId); // Maybe
       expect(recipients).not.toContain(data.cantGoId); // Can't Go excluded
     });
+
+    test("excludes stale responders whose option the host has hidden", async () => {
+      const t = convexTest(schema, modules);
+      const data = await setupTestData(t);
+
+      // Host hides Maybe (id 2) after maybeId already RSVP'd to it.
+      await t.run(async (ctx) => {
+        const meeting = await ctx.db.get(data.meetingId);
+        await ctx.db.patch(data.meetingId, {
+          rsvpOptions: (meeting!.rsvpOptions ?? []).map((o) =>
+            o.id === 2 ? { ...o, enabled: false } : o,
+          ),
+        });
+      });
+
+      const recipients: Id<"users">[] = await t.query(
+        (internal as any).functions.eventBlasts.getRsvpUserIds,
+        { meetingId: data.meetingId, optionIds: [1, 2] }
+      );
+
+      // Only the Going responder remains; the hidden-Maybe responder is
+      // excluded, matching their loss of chat access.
+      expect(recipients).toEqual([data.attendeeId]);
+    });
   });
 
   describe("blast list query", () => {

@@ -11,7 +11,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
 import { canEditMeeting } from "../lib/meetingPermissions";
-import { NOTIFIED_RSVP_OPTION_IDS } from "../lib/meetingConfig";
+import { NOTIFIED_RSVP_OPTION_IDS, isAttendingRsvpOption } from "../lib/meetingConfig";
 import { now, getMediaUrl } from "../lib/utils";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
@@ -288,7 +288,10 @@ export const send = internalAction({
 // ============================================================================
 
 /**
- * Get user IDs who RSVPed with any of the given options
+ * Get user IDs who RSVPed with any of the given options AND whose option is
+ * still enabled on the meeting. The enabled check excludes stale rows for an
+ * option the host has since hidden (e.g. Maybe), mirroring chat access so a
+ * hidden option's responders don't keep receiving blasts.
  */
 export const getRsvpUserIds = internalQuery({
   args: {
@@ -296,13 +299,21 @@ export const getRsvpUserIds = internalQuery({
     optionIds: v.array(v.number()),
   },
   handler: async (ctx, args) => {
+    const meeting = await ctx.db.get(args.meetingId);
+    const rsvpOptions = meeting?.rsvpOptions;
     const allowed = new Set(args.optionIds);
     const rsvps = await ctx.db
       .query("meetingRsvps")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
       .collect();
 
-    return rsvps.filter((r) => allowed.has(r.rsvpOptionId)).map((r) => r.userId);
+    return rsvps
+      .filter(
+        (r) =>
+          allowed.has(r.rsvpOptionId) &&
+          isAttendingRsvpOption(r.rsvpOptionId, rsvpOptions),
+      )
+      .map((r) => r.userId);
   },
 });
 

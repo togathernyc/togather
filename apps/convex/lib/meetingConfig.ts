@@ -76,3 +76,26 @@ export const NOTIFIED_RSVP_OPTION_IDS: number[] = [1, 2];
 export function isNotifiedRsvpOptionId(optionId: number): boolean {
   return NOTIFIED_RSVP_OPTION_IDS.includes(optionId);
 }
+
+/**
+ * Whether an RSVP counts as "attending" for seating an event-chat member or
+ * picking a blast recipient: its option id is notified (Going/Maybe) AND that
+ * option is still present and enabled on the meeting.
+ *
+ * The enabled check matters for historical rows: a host can hide an option
+ * (e.g. Maybe) after people have RSVP'd — the editor drops the disabled option
+ * from `meeting.rsvpOptions`, but old `meetingRsvps` rows keep the id. Those
+ * stale responders must not keep receiving chat updates or blasts, mirroring
+ * `canAccessEventChannel`, which also keys off the currently-enabled options.
+ *
+ * (RSVP submit/batchUpdate don't need this — they can only set an option that
+ * is currently enabled, so the id check alone suffices there.)
+ */
+export function isAttendingRsvpOption(
+  optionId: number,
+  rsvpOptions: ReadonlyArray<{ id: number; enabled: boolean }> | undefined,
+): boolean {
+  if (!isNotifiedRsvpOptionId(optionId)) return false;
+  const option = (rsvpOptions ?? []).find((o) => o.id === optionId);
+  return Boolean(option && option.enabled);
+}
