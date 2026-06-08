@@ -99,7 +99,7 @@ export function EventBlastSheet({
 
             <View style={styles.body}>
               <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                Text everyone going to {eventTitle}. The message will also post to the event's Activity feed.
+                Text everyone going to or interested in {eventTitle}. The message will also post to the event's Activity feed.
               </Text>
 
               {/* Message Input */}

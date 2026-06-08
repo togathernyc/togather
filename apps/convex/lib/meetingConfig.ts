@@ -60,3 +60,19 @@ export const DEFAULT_RSVP_OPTIONS: RsvpOption[] = [
   { id: 2, label: "Maybe", enabled: true },
   { id: 3, label: "Can't Go", enabled: true },
 ];
+
+/**
+ * RSVP option IDs whose responders are considered "attending enough" to:
+ *   - be seated in the event chat channel (and thus get update notifications)
+ *   - receive host text blasts
+ *
+ * 1 = "Going", 2 = "Maybe" (see DEFAULT_RSVP_OPTIONS). "Can't Go" (3) is
+ * excluded. These are matched by id, so events using custom option labels are
+ * still keyed off the conventional Going/Maybe slots.
+ */
+export const NOTIFIED_RSVP_OPTION_IDS: number[] = [1, 2];
+
+/** Whether an RSVP option id grants chat membership + blast/update delivery. */
+export function isNotifiedRsvpOptionId(optionId: number): boolean {
+  return NOTIFIED_RSVP_OPTION_IDS.includes(optionId);
+}

@@ -29,6 +29,7 @@ import {
   resolveEventAdmins,
 } from "../../lib/meetingPermissions";
 import { isActiveLeader } from "../../lib/helpers";
+import { isNotifiedRsvpOptionId } from "../../lib/meetingConfig";
 import { now } from "../../lib/utils";
 
 // ============================================================================
@@ -173,17 +174,22 @@ export const getChannelStateForEditor = query({
 // ============================================================================
 
 /**
- * Idempotently create the chat channel for an event and seat its admins.
+ * Idempotently create the chat channel for an event and seat its members.
  *
  * Call this the first time we need a channel for a meeting (e.g. when an
  * admin opens the chat UI, or on the first blast). Safe to call repeatedly —
  * if a channel already exists for the meeting, the existing id is returned.
  *
  * Seating model: admins (hosts when set, otherwise the group's active
- * leaders — see `resolveEventAdmins`) are seated here. RSVPer members are
- * added lazily by `openEventChat` (they only become subscribers after
- * explicitly opening the chat), which prevents unrelated push notifications
- * and caps the write set for this mutation regardless of RSVP scale.
+ * leaders — see `resolveEventAdmins`) are seated first. We then backfill
+ * every existing Going/Maybe RSVPer (NOTIFIED_RSVP_OPTION_IDS) as a member so
+ * they receive event updates — channels are created lazily (first open/blast),
+ * so RSVPs made before the channel existed would otherwise never be seated.
+ * Forward RSVPs are kept in sync by `addEventChannelMember` /
+ * `removeEventChannelMember` from the RSVP mutations.
+ *
+ * NOTE: backfilling all RSVPers means the write set scales with RSVP count
+ * (the previous lazy model capped it). Fine for typical event sizes.
  */
 export const ensureEventChannel = internalMutation({
   args: {
@@ -229,10 +235,12 @@ export const ensureEventChannel = internalMutation({
       isArchived: false,
       isEnabled: true,
       meetingId: args.meetingId,
+      // Patched below once members are backfilled.
       memberCount: admins.length,
     });
 
-    // Seat every admin. RSVPer members are seated lazily by openEventChat.
+    // Seat every admin.
+    const seated = new Set<string>();
     for (const userId of admins) {
       await ctx.db.insert("chatChannelMembers", {
         channelId,
@@ -242,6 +250,30 @@ export const ensureEventChannel = internalMutation({
         joinedAt: ts,
         isMuted: false,
       });
+      seated.add(String(userId));
+    }
+
+    // Backfill existing Going/Maybe RSVPers as members so they get updates.
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .collect();
+    for (const rsvp of rsvps) {
+      if (!isNotifiedRsvpOptionId(rsvp.rsvpOptionId)) continue;
+      if (seated.has(String(rsvp.userId))) continue; // already an admin
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: rsvp.userId,
+        role: "member",
+        syncSource: "event_rsvp",
+        joinedAt: ts,
+        isMuted: false,
+      });
+      seated.add(String(rsvp.userId));
+    }
+
+    if (seated.size !== admins.length) {
+      await ctx.db.patch(channelId, { memberCount: seated.size });
     }
 
     return channelId;
