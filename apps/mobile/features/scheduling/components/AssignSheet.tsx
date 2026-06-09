@@ -660,34 +660,44 @@ export function AssignSheet({
   return (
     <Modal
       visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
+      transparent
+      animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={[styles.container, { backgroundColor: colors.surface }]}>
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
-            <Ionicons name="chevron-back" size={26} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerTextWrap}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>
-              Assign someone
-            </Text>
-            <Text
-              style={[styles.headerSub, { color: colors.textSecondary }]}
-              numberOfLines={1}
-            >
-              {subtitle}
-              {timeLabel ? ` · ${timeLabel}` : ""}
-            </Text>
-          </View>
-        </View>
-
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
+      {/* Inline popup: a centered card over a dim backdrop, so the roster grid
+          stays visible behind it instead of a full-screen sheet. */}
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable
+          style={[
+            styles.card,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+          onPress={(e) => e.stopPropagation()}
         >
+          <View style={[styles.header, { borderBottomColor: colors.border }]}>
+            <View style={styles.headerTextWrap}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>
+                Assign someone
+              </Text>
+              <Text
+                style={[styles.headerSub, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {subtitle}
+                {timeLabel ? ` · ${timeLabel}` : ""}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <KeyboardAvoidingView
+            style={styles.cardBody}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
           <ScrollView
+            style={styles.scrollFlex}
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
             automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
@@ -914,23 +924,39 @@ export function AssignSheet({
               </Pressable>
             )}
           </ScrollView>
-        </KeyboardAvoidingView>
-      </View>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  backdrop: {
     flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
   },
-  flex: {
-    flex: 1,
+  card: {
+    width: "100%",
+    maxWidth: 460,
+    maxHeight: "85%",
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  cardBody: {
+    flexShrink: 1,
+  },
+  scrollFlex: {
+    flexShrink: 1,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,

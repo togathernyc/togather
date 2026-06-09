@@ -8,8 +8,8 @@
  *   - people-centric: members (rows) × events (columns), cell = assignment,
  *     shaded by that member's availability
  *
- * It's effectively `events.getEvent` fanned across N plans, plus the
- * `availability.availabilityMatrix` lens, shaped for the grid. Reuses the
+ * It's effectively `events.getEvent` fanned across N plans, plus a per-member
+ * availability lens, shaped for the grid. Reuses the
  * settled fill math (confirmed + unconfirmed = filled; declined reopens) and
  * the same-UTC-day double-booking rule as the rest of scheduling.
  *
@@ -23,7 +23,7 @@ import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { requireGroupScheduler } from "./permissions";
 
-/** Column cap — matches availabilityMatrix; a leader rosters a horizon. */
+/** Column cap — a leader rosters a horizon of upcoming events. */
 const MAX_EVENTS = 10;
 const MS_PER_DAY = 86_400_000;
 /** Statuses that consume a slot (mirrors events.ts FILLED_STATUSES). */
@@ -147,6 +147,7 @@ export const rosterMatrix = query({
           assignmentId: Id<"roleAssignments">;
           userId: Id<"users">;
           userName: string;
+          profilePhoto?: string;
           status: CellStatus;
         }>;
       }
@@ -188,6 +189,7 @@ export const rosterMatrix = query({
             assignmentId: a._id,
             userId: a.userId,
             userName: userName(a.userId as string, userDocs.get(a.userId as string) ?? null),
+            profilePhoto: userDocs.get(a.userId as string)?.profilePhoto,
             status: a.status as CellStatus,
           })),
         };

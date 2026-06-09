@@ -1,9 +1,8 @@
 /**
  * RosterGridScreen
  *
- * The leader's "both-toggle" rostering matrix — a generalization of the
- * availability grid (see AvailabilityGridScreen) that turns availability into
- * a placed roster. One screen, two lenses on the same backend matrix:
+ * The leader's "both-toggle" rostering matrix — turns collected availability
+ * into a placed roster. One screen, two lenses on the same backend matrix:
  *
  *  - ROLES view (default): rows = team roles, columns = events. Each cell shows
  *    coverage (filled/needed) and lets a leader fill an open slot (AssignSheet)
@@ -14,8 +13,8 @@
  *    and unassigned — an inviting "av" tap-target that opens an *open-roles
  *    menu* for one-tap placement. This is the availability → roster bridge.
  *
- * Scaffold (frozen header row + frozen first column + synced two-axis scroll,
- * measured body height, responsive widths) is cloned from AvailabilityGridScreen.
+ * Scaffold: frozen header row + frozen first column + synced two-axis scroll,
+ * measured body height, responsive widths.
  * Assignment is delegated entirely to AssignSheet — we never fork that logic.
  *
  * Route: /rostering/[group_id]/grid
@@ -42,6 +41,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
+import { Avatar } from "@components/ui/Avatar";
 import { EmptyState } from "@components/ui/EmptyState";
 import {
   useAuthenticatedQuery,
@@ -84,6 +84,7 @@ type RoleCell = {
     assignmentId: Id<"roleAssignments">;
     userId: Id<"users">;
     userName: string;
+    profilePhoto?: string;
     status: AssignmentStatus;
   }>;
 };
@@ -227,7 +228,7 @@ export function RosterGridScreen() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
 
-  // --- Synced scroll scaffold (cloned from AvailabilityGridScreen) ---
+  // --- Synced scroll scaffold (frozen header row + frozen first column) ---
   const headerScrollRef = useRef<ScrollView>(null);
   const frozenScrollRef = useRef<ScrollView>(null);
   const [bodyH, setBodyH] = useState(0);
@@ -613,7 +614,11 @@ export function RosterGridScreen() {
       ref={frozenScrollRef}
       scrollEnabled={false}
       showsVerticalScrollIndicator={false}
-      style={{ width: NAME_W }}
+      // Pin the frozen column to NAME_W. On RN-Web a bare ScrollView defaults to
+      // flexGrow:1/flexBasis:0%, which overrides `width` and lets the column
+      // grow to fill the body — knocking the data cells out of line with their
+      // event-date headers. flexGrow/Shrink:0 + flexBasis hold it to NAME_W.
+      style={{ width: NAME_W, flexGrow: 0, flexShrink: 0, flexBasis: NAME_W }}
     >
       {roleRows.map((r, i) => {
         if (r.kind === "section") {
@@ -732,7 +737,9 @@ export function RosterGridScreen() {
       ref={frozenScrollRef}
       scrollEnabled={false}
       showsVerticalScrollIndicator={false}
-      style={{ width: NAME_W }}
+      // See renderRoleFrozen: pin to NAME_W so RN-Web's ScrollView flex defaults
+      // don't let the frozen column grow and misalign the data cells.
+      style={{ width: NAME_W, flexGrow: 0, flexShrink: 0, flexBasis: NAME_W }}
     >
       {visibleMembers.map((m, i) => {
         const heavy = m.load >= Math.ceil(events.length / 2);
@@ -969,44 +976,84 @@ function RoleCellView({
     );
   }
 
-  const fullyConfirmed = cell.filled === cell.needed && cell.confirmed === cell.needed;
-  const fullyFilled = cell.filled === cell.needed;
-  const hasDeclined = cell.occupants.some((o) => o.status === "declined");
+  // Show the rostered people as avatars (status-ringed), plus a dashed "+"
+  // chip for each still-open slot. Coverage is conveyed by who's in the cell —
+  // the role's row header carries the textual "covered X/Y".
+  const AV = 22;
+  const MAX_AVATARS = 2;
+  const visible = cell.occupants.slice(0, MAX_AVATARS);
+  const overflow = cell.occupants.length - visible.length;
 
-  let bg = base;
-  const label = `${cell.filled}/${cell.needed}`;
-  let tint = colors.text;
-  let trailing: keyof typeof Ionicons.glyphMap | null = "ellipse-outline";
-  let trailingTint = colors.textTertiary;
-
-  if (cell.open > 0) {
-    bg = base;
-    tint = colors.textSecondary;
-  } else if (fullyConfirmed) {
-    bg = colors.success + "22";
-    tint = colors.success;
-    trailing = "checkmark";
-    trailingTint = colors.success;
-  } else if (fullyFilled) {
-    bg = colors.warning + "22";
-    tint = colors.warning;
-    trailing = "time-outline";
-    trailingTint = colors.warning;
-  }
+  // Subtle cell tint mirrors the legend: green when fully confirmed, amber
+  // when filled-but-awaiting, neutral when a slot is still open.
+  const fullyConfirmed = cell.open === 0 && cell.confirmed === cell.needed;
+  const bg = cell.open > 0 ? base : fullyConfirmed ? colors.success + "14" : colors.warning + "14";
 
   return (
     <Pressable
       onPress={onPress}
       style={[styles.cell, { width, height, backgroundColor: bg, borderColor: colors.border }]}
       accessibilityRole="button"
+      accessibilityLabel={
+        cell.occupants.length > 0
+          ? `${cell.occupants.map((o) => o.userName).join(", ")}${
+              cell.open > 0 ? `, ${cell.open} open` : ""
+            }`
+          : `${cell.open} open — tap to assign`
+      }
     >
-      <View style={styles.cellInner}>
-        <Text style={[styles.cellCount, { color: tint }]}>{label}</Text>
-        {trailing && <Ionicons name={trailing} size={12} color={trailingTint} />}
+      <View style={styles.cellAvatars}>
+        {visible.map((o, idx) => (
+          <View
+            key={o.assignmentId}
+            style={[
+              styles.avatarRing,
+              {
+                borderColor: statusColor(o.status, colors),
+                backgroundColor: colors.surface,
+                marginLeft: idx === 0 ? 0 : -7,
+              },
+            ]}
+          >
+            <Avatar name={o.userName} imageUrl={o.profilePhoto} size={AV} />
+          </View>
+        ))}
+        {overflow > 0 && (
+          <View
+            style={[
+              styles.avatarRing,
+              styles.overflowChip,
+              { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: -7 },
+            ]}
+          >
+            <Text style={[styles.overflowText, { color: colors.textSecondary }]}>
+              +{overflow}
+            </Text>
+          </View>
+        )}
+        {/* One dashed chip stands for the open slots; when more than one is
+            open it shows the count so a multi-person role doesn't read as a
+            single empty slot. */}
+        {cell.open > 0 && (
+          <View
+            style={[
+              styles.openSlot,
+              {
+                borderColor: colors.textTertiary,
+                marginLeft: visible.length > 0 || overflow > 0 ? -7 : 0,
+              },
+            ]}
+          >
+            {cell.open > 1 ? (
+              <Text style={[styles.openSlotCount, { color: colors.textTertiary }]}>
+                {cell.open}
+              </Text>
+            ) : (
+              <Ionicons name="add" size={13} color={colors.textTertiary} />
+            )}
+          </View>
+        )}
       </View>
-      {hasDeclined && (
-        <Ionicons name="close" size={11} color={colors.destructive} style={styles.cellCorner} />
-      )}
     </Pressable>
   );
 }
@@ -1495,7 +1542,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   cellInner: { flexDirection: "row", alignItems: "center", gap: 3 },
-  cellCount: { fontSize: 13, fontWeight: "700" },
+  cellAvatars: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  avatarRing: {
+    borderWidth: 1.5,
+    borderRadius: 999,
+    padding: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  overflowChip: { width: 26, height: 26 },
+  overflowText: { fontSize: 10, fontWeight: "700" },
+  openSlot: {
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  openSlotCount: { fontSize: 12, fontWeight: "700" },
   cellRole: { fontSize: 11, fontWeight: "600", paddingHorizontal: 3, textAlign: "center" },
   cellAv: { fontSize: 11, fontWeight: "700" },
   cellMuted: { fontSize: 13 },
