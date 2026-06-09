@@ -46,9 +46,8 @@ import {
   type SongChart,
 } from "../utils/songRehearsal";
 
-// TODO(integration): the joined `item.song` is typed locally via
-// `../utils/songRehearsal` until `features/songs/types` lands and the orchestrator
-// unifies the two. `getEvent` / `listItems` will return these shapes per ADR-027.
+// The joined `item.song` shape (returned by `getEvent` / `listItems` per
+// ADR-027) is typed via `Song` re-exported from `features/songs/types`.
 
 type RehearsalItem = {
   _id: Id<"eventItems">;

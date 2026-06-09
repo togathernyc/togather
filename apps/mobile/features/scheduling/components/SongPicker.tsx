@@ -24,6 +24,7 @@ import {
   useAuthenticatedMutation,
   api,
 } from "@services/api/convex";
+import type { Id } from "@services/api/convex";
 import type { Song } from "@features/songs/types";
 
 export interface SongPickerProps {
@@ -56,7 +57,9 @@ export function SongPicker({
 
   const songs = useAuthenticatedQuery(
     api.functions.scheduling.songs.listSongs,
-    communityId ? { communityId } : "skip",
+    communityId
+      ? { communityId: communityId as Id<"communities"> }
+      : "skip",
   ) as Song[] | null | undefined;
 
   const createSong = useAuthenticatedMutation(
@@ -88,7 +91,7 @@ export function SongPicker({
   const handleCreate = async () => {
     if (!trimmed) return;
     const newId = await createSong({
-      communityId,
+      communityId: communityId as Id<"communities">,
       input: { title: trimmed },
     });
     setQuery("");

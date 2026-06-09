@@ -26,7 +26,7 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -36,6 +36,7 @@ import {
   useAuthenticatedMutation,
   api,
 } from "@services/api/convex";
+import type { Id } from "@services/api/convex";
 import {
   useFileUpload,
   type SelectedFile,
@@ -81,7 +82,10 @@ export function SongLibraryScreen() {
   const songs = useAuthenticatedQuery(
     api.functions.scheduling.songs.listSongs,
     communityId
-      ? { communityId, ...(search.trim() ? { search: search.trim() } : {}) }
+      ? {
+          communityId: communityId as Id<"communities">,
+          ...(search.trim() ? { search: search.trim() } : {}),
+        }
       : "skip",
   ) as Song[] | null | undefined;
 
@@ -281,9 +285,12 @@ function SongEditor({
     setSaving(true);
     try {
       if (song) {
-        await updateSong({ songId: song._id, patch: input });
+        await updateSong({ songId: song._id as Id<"songs">, patch: input });
       } else {
-        await createSong({ communityId, input });
+        await createSong({
+          communityId: communityId as Id<"communities">,
+          input,
+        });
       }
       onClose();
     } catch (e: any) {
@@ -296,7 +303,7 @@ function SongEditor({
   const handleDelete = useCallback(() => {
     if (!song) return;
     confirmDestructive(`Delete "${song.title}" from the library?`, () => {
-      void deleteSong({ songId: song._id })
+      void deleteSong({ songId: song._id as Id<"songs"> })
         .then(onClose)
         .catch((e: any) =>
           notifyError("Couldn't delete", e?.message ?? "Please try again."),
@@ -333,7 +340,7 @@ function SongEditor({
         return;
       }
       await attachChart({
-        songId: song._id,
+        songId: song._id as Id<"songs">,
         chart: {
           label: defaultKey.trim()
             ? `${file.name} (${defaultKey.trim()})`
@@ -351,7 +358,7 @@ function SongEditor({
   const handleRemoveChart = useCallback(
     (fileKey: string) => {
       if (!song) return;
-      void removeChart({ songId: song._id, fileKey }).catch((e: any) =>
+      void removeChart({ songId: song._id as Id<"songs">, fileKey }).catch((e: any) =>
         notifyError("Couldn't remove chart", e?.message ?? "Please try again."),
       );
     },
