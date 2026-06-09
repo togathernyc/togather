@@ -2654,7 +2654,11 @@ export default defineSchema({
     assignments: v.optional(
       v.array(v.object({ roleId: v.id("teamRoles") })),
     ),
-    /** Lightweight song metadata. No CCLI / library (ADR-023 Phase 3). */
+    /**
+     * Lightweight per-occurrence song metadata, retained as an OVERRIDE of the
+     * linked library song's defaults (ADR-027). Display resolves
+     * `songDetails.key ?? song.defaultKey`.
+     */
     songDetails: v.optional(
       v.object({
         key: v.optional(v.string()),
@@ -2662,10 +2666,68 @@ export default defineSchema({
         author: v.optional(v.string()),
       }),
     ),
+    /**
+     * Optional link to a library song (ADR-027). When set, the run sheet row
+     * renders the joined song's title/charts/links; `songDetails` overrides its
+     * defaults. Cleared (nulled) when the referenced song is deleted.
+     */
+    songId: v.optional(v.id("songs")),
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
-  }).index("by_plan", ["planId"]),
+  })
+    .index("by_plan", ["planId"])
+    // Scan items referencing a song so deleteSong can null them out (ADR-027).
+    .index("by_song", ["songId"]),
+
+  /**
+   * Per-community song library (ADR-027). A song lives once and is referenced
+   * by run sheet `eventItems` via `songId`, so editing its charts/metadata
+   * updates every plan that uses it (no copied-string drift). `ccliNumber` is
+   * the worship world's universal song ID, stored as plain metadata — there is
+   * no live CCLI/MultiTracks integration. Charts are key-specific files in the
+   * existing R2 document pipeline (`functions/uploads.ts`); `multitracksUrl` is
+   * a link-out, never re-hosted audio.
+   *
+   * TODO: cascade songs on community delete — there is no central
+   * community-deletion cascade in the codebase today (eventPlans/eventItems
+   * aren't cascaded either), so `songs` follows the same (absent) pattern. Add
+   * `songs` to that cascade if/when one lands.
+   */
+  songs: defineTable({
+    communityId: v.id("communities"),
+    title: v.string(),
+    author: v.optional(v.string()),
+    /** Universal song ID; the join key for a future Phase-3 integration. */
+    ccliNumber: v.optional(v.string()),
+    defaultKey: v.optional(v.string()),
+    bpm: v.optional(v.number()),
+    meter: v.optional(v.string()),
+    arrangementName: v.optional(v.string()),
+    structure: v.optional(v.array(v.string())),
+    /**
+     * Bring-your-own charts (Phase 2). One file per key. `fileKey` is the R2
+     * stored path (e.g. `r2:...`) from the upload pipeline; the served `url` is
+     * resolved on read, never stored.
+     */
+    charts: v.optional(
+      v.array(
+        v.object({
+          key: v.optional(v.string()),
+          label: v.string(),
+          fileKey: v.string(),
+          mimeType: v.string(),
+        }),
+      ),
+    ),
+    multitracksUrl: v.optional(v.string()),
+    notes: v.optional(v.string()),
+    createdAt: v.number(),
+    createdById: v.id("users"),
+    updatedAt: v.number(),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_community_ccli", ["communityId", "ccliNumber"]),
 
   /**
    * A member's self-reported availability for a single event plan (ADR-023
