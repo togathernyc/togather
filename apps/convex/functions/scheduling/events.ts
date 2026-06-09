@@ -130,12 +130,29 @@ export const duplicateEvent = mutation({
     const group = await requireGroupScheduler(ctx, source.groupId, userId);
 
     const nowMs = Date.now();
+
+    // Duplicates default to the source's next weekly occurrence. When the
+    // source is in the past (duplicating an old plan to re-run it), roll
+    // forward by whole weeks so the copy lands on the next *upcoming*
+    // occurrence — same weekday and time-of-day — instead of another past
+    // draft the leader would then have to reschedule by hand.
+    let eventDate = source.eventDate + ONE_WEEK_MS;
+    const todayStart = startOfTodayMs();
+    if (eventDate < todayStart) {
+      const weeksBehind = Math.ceil((todayStart - eventDate) / ONE_WEEK_MS);
+      eventDate += weeksBehind * ONE_WEEK_MS;
+    }
+
+    // Shift each time's absolute `startsAt` by the same offset the event moved,
+    // so the copied times stay aligned with the new date (the label, e.g.
+    // "9:00 AM", is preserved).
+    const dateDelta = eventDate - source.eventDate;
     const newPlanId = await ctx.db.insert("eventPlans", {
       groupId: source.groupId,
       communityId: group.communityId,
       title: source.title,
-      eventDate: source.eventDate + ONE_WEEK_MS,
-      times: source.times,
+      eventDate,
+      times: source.times.map((t) => ({ ...t, startsAt: t.startsAt + dateDelta })),
       status: "draft",
       notes: source.notes,
       createdAt: nowMs,

@@ -60,9 +60,12 @@ export function EventListScreen() {
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const groupId = group_id as Id<"groups">;
 
+  // Fetch past plans too so leaders can review and re-run them (duplicate
+  // copies the roster shape + run sheet). They're split out into a collapsed
+  // "Past plans" section below so the default view stays focused on upcoming.
   const events = useAuthenticatedQuery(
     api.functions.scheduling.events.listEvents,
-    groupId ? { groupId } : "skip",
+    groupId ? { groupId, includePast: true } : "skip",
   ) as EventRow[] | undefined;
 
   const createEvent = useAuthenticatedMutation(
@@ -79,6 +82,7 @@ export function EventListScreen() {
   );
   const [creating, setCreating] = useState(false);
   const [sharingLink, setSharingLink] = useState(false);
+  const [showPast, setShowPast] = useState(false);
 
   // Generate a public, app-optional availability link and hand it to the OS
   // share sheet. People can open it in a browser (no app needed) and their
@@ -188,6 +192,89 @@ export function EventListScreen() {
     [handleDuplicate, handleDelete],
   );
 
+  const renderEventCard = (event: EventRow) => {
+    const { totalNeeded, totalFilled, totalConfirmed } = event.fillSummary;
+    const confirmedPct =
+      totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
+    const filledPct = totalNeeded > 0 ? (totalFilled / totalNeeded) * 100 : 0;
+    // Filled-but-not-yet-confirmed portion of the bar.
+    const pendingPct = Math.max(0, filledPct - confirmedPct);
+    const isPublished = event.status === "published";
+    return (
+      <Pressable
+        key={event._id}
+        onPress={() =>
+          router.push(`/rostering/${groupId}/event/${event._id}` as never)
+        }
+        style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+      >
+        <View style={styles.cardTop}>
+          <View style={styles.cardTitleWrap}>
+            <Text
+              style={[styles.cardTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {event.title}
+            </Text>
+            <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
+              {formatEventDate(event.eventDate)}
+              {event.times.length > 0
+                ? ` · ${event.times.map((t) => t.label).join(", ")}`
+                : ""}
+            </Text>
+          </View>
+          <StatusPill
+            label={isPublished ? "Published" : "Draft"}
+            color={isPublished ? colors.success : colors.textSecondary}
+            bg={isPublished ? colors.success + "22" : colors.border}
+          />
+          <TouchableOpacity
+            onPress={(e) => {
+              // Keep the ⋯ tap distinct from the card's open-editor press.
+              e.stopPropagation();
+              handleEventMenu(event);
+            }}
+            hitSlop={12}
+            style={styles.menuButton}
+            accessibilityLabel="Event plan options"
+          >
+            <Ionicons
+              name="ellipsis-horizontal"
+              size={20}
+              color={colors.textSecondary}
+            />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.fillRow}>
+          <View style={[styles.fillTrack, { backgroundColor: colors.border }]}>
+            {/* Confirmed (accepted) — solid. */}
+            <View
+              style={{
+                width: `${confirmedPct}%`,
+                backgroundColor: colors.success,
+              }}
+            />
+            {/* Filled but awaiting a response — faded. */}
+            <View
+              style={{
+                width: `${pendingPct}%`,
+                backgroundColor: colors.success + "59",
+              }}
+            />
+          </View>
+          <View style={styles.fillTextWrap}>
+            <Text style={[styles.fillText, { color: colors.textSecondary }]}>
+              {totalFilled}/{totalNeeded} filled
+            </Text>
+            <Text style={[styles.fillSubText, { color: colors.textSecondary }]}>
+              {totalConfirmed} confirmed
+            </Text>
+          </View>
+        </View>
+      </Pressable>
+    );
+  };
+
   if (events === undefined) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.surface }]}>
@@ -209,6 +296,14 @@ export function EventListScreen() {
       </View>
     );
   }
+
+  // Split into upcoming vs. past around the start of today. `events` arrives
+  // sorted ascending; past is reversed so the most recent shows first.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const cutoff = todayStart.getTime();
+  const upcoming = events.filter((e) => e.eventDate >= cutoff);
+  const past = events.filter((e) => e.eventDate < cutoff).reverse();
 
   return (
     <ScrollView
@@ -271,107 +366,36 @@ export function EventListScreen() {
         </Text>
       </Pressable>
 
-      <Pressable
-        onPress={() =>
-          router.push(`/rostering/${groupId}/availability-grid` as never)
-        }
-        style={styles.shareRow}
-        accessibilityRole="button"
-        accessibilityLabel="View the availability grid"
-      >
-        <Ionicons name="grid-outline" size={18} color={colors.textSecondary} />
-        <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
-          View availability grid
-        </Text>
-      </Pressable>
+      {upcoming.map(renderEventCard)}
 
-      {events.map((event) => {
-        const { totalNeeded, totalFilled, totalConfirmed } = event.fillSummary;
-        const confirmedPct =
-          totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
-        const filledPct =
-          totalNeeded > 0 ? (totalFilled / totalNeeded) * 100 : 0;
-        // Filled-but-not-yet-confirmed portion of the bar.
-        const pendingPct = Math.max(0, filledPct - confirmedPct);
-        const isPublished = event.status === "published";
-        return (
+      {upcoming.length === 0 && past.length > 0 && (
+        <Text style={[styles.noUpcoming, { color: colors.textSecondary }]}>
+          No upcoming plans. Duplicate a past plan below to re-run it.
+        </Text>
+      )}
+
+      {past.length > 0 && (
+        <>
           <Pressable
-            key={event._id}
-            onPress={() =>
-              router.push(`/rostering/${groupId}/event/${event._id}` as never)
+            onPress={() => setShowPast((v) => !v)}
+            style={styles.pastToggle}
+            accessibilityRole="button"
+            accessibilityLabel={
+              showPast ? "Hide past plans" : "Show past plans"
             }
-            style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
           >
-            <View style={styles.cardTop}>
-              <View style={styles.cardTitleWrap}>
-                <Text
-                  style={[styles.cardTitle, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  {event.title}
-                </Text>
-                <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
-                  {formatEventDate(event.eventDate)}
-                  {event.times.length > 0
-                    ? ` · ${event.times.map((t) => t.label).join(", ")}`
-                    : ""}
-                </Text>
-              </View>
-              <StatusPill
-                label={isPublished ? "Published" : "Draft"}
-                color={isPublished ? colors.success : colors.textSecondary}
-                bg={isPublished ? colors.success + "22" : colors.border}
-              />
-              <TouchableOpacity
-                onPress={(e) => {
-                  // Keep the ⋯ tap distinct from the card's open-editor press.
-                  e.stopPropagation();
-                  handleEventMenu(event);
-                }}
-                hitSlop={12}
-                style={styles.menuButton}
-                accessibilityLabel="Event plan options"
-              >
-                <Ionicons
-                  name="ellipsis-horizontal"
-                  size={20}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.fillRow}>
-              <View
-                style={[styles.fillTrack, { backgroundColor: colors.border }]}
-              >
-                {/* Confirmed (accepted) — solid. */}
-                <View
-                  style={{
-                    width: `${confirmedPct}%`,
-                    backgroundColor: colors.success,
-                  }}
-                />
-                {/* Filled but awaiting a response — faded. */}
-                <View
-                  style={{
-                    width: `${pendingPct}%`,
-                    backgroundColor: colors.success + "59",
-                  }}
-                />
-              </View>
-              <View style={styles.fillTextWrap}>
-                <Text style={[styles.fillText, { color: colors.textSecondary }]}>
-                  {totalFilled}/{totalNeeded} filled
-                </Text>
-                <Text
-                  style={[styles.fillSubText, { color: colors.textSecondary }]}
-                >
-                  {totalConfirmed} confirmed
-                </Text>
-              </View>
-            </View>
+            <Ionicons
+              name={showPast ? "chevron-down" : "chevron-forward"}
+              size={16}
+              color={colors.textSecondary}
+            />
+            <Text style={[styles.pastToggleText, { color: colors.textSecondary }]}>
+              Past plans ({past.length})
+            </Text>
           </Pressable>
-        );
-      })}
+          {showPast && past.map(renderEventCard)}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -441,6 +465,23 @@ const styles = StyleSheet.create({
   shareLabel: {
     fontSize: 14,
     fontWeight: "500",
+  },
+  pastToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    marginTop: 4,
+  },
+  pastToggleText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  noUpcoming: {
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 8,
   },
   card: {
     borderRadius: 12,

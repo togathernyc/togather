@@ -205,6 +205,48 @@ describe("duplicateEvent", () => {
       expect(assignments).toHaveLength(0);
     });
   });
+
+  it("rolls a past plan's copy forward to the next upcoming occurrence", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const WEEK = 7 * DAY;
+    // A plan three weeks in the past — naive +1 week would still be past.
+    const eventDate = Date.now() - 3 * WEEK;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday Service",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+      },
+    );
+
+    const { planId: copyId } = await t.mutation(
+      api.functions.scheduling.events.duplicateEvent,
+      { token: leaderToken, planId },
+    );
+
+    const copy = await t.run(async (ctx) => ctx.db.get(copyId));
+    expect(copy).not.toBeNull();
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const cutoff = todayStart.getTime();
+
+    // Lands in the future, on the same weekday (whole weeks from the source),
+    // and is the *next* such occurrence (one week earlier would still be past).
+    expect((copy!.eventDate - eventDate) % WEEK).toBe(0);
+    expect(copy!.eventDate).toBeGreaterThanOrEqual(cutoff);
+    expect(copy!.eventDate - WEEK).toBeLessThan(cutoff);
+
+    // Times shift with the date; the label is preserved.
+    const delta = copy!.eventDate - eventDate;
+    expect(copy!.times[0].startsAt).toBe(eventDate + delta);
+    expect(copy!.times[0].label).toBe("9 AM");
+  });
 });
 
 describe("seedNeededRolesFromDefaults", () => {
