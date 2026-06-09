@@ -104,6 +104,28 @@ export function stripChannelInviteLinksFromText(text: string | undefined): strin
 }
 
 // ============================================================================
+// Availability Link Detection (/a/<token>)
+// ============================================================================
+
+/**
+ * Extract availability link public tokens from message text.
+ */
+export function extractAvailabilityTokens(text: string | undefined): string[] {
+  if (!text) return [];
+  const regex = DOMAIN_CONFIG.availabilityLinkRegex();
+  const matches = [...text.matchAll(regex)];
+  return matches.map(m => m[1]);
+}
+
+/**
+ * Remove availability links from message text for display.
+ */
+export function stripAvailabilityLinksFromText(text: string | undefined): string {
+  if (!text) return '';
+  return text.replace(DOMAIN_CONFIG.availabilityLinkRegex(), '').trim();
+}
+
+// ============================================================================
 // External Link Detection
 // ============================================================================
 

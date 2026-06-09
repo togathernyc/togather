@@ -91,6 +91,9 @@ const DOMAIN_CONFIG = {
   channelInviteLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/ch\\/([a-zA-Z0-9]+)`),
   // Public availability link URL (works without the app; opens in-app if installed)
   availabilityLinkUrl: (token) => `https://${BASE_DOMAIN}/a/${token}`,
+  // Regex helpers for detecting availability links (`/a/<token>`) in chat text
+  availabilityLinkRegex: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/a\\/([a-zA-Z0-9]+)`, 'g'),
+  availabilityLinkRegexSingle: () => new RegExp(`(?:https?:\\/\\/)?${COMBINED_DOMAIN_PATTERN}\\/a\\/([a-zA-Z0-9]+)`),
   // Community landing page URL
   communityLandingUrl: (slug) => `https://${BASE_DOMAIN}/c/${slug}`,
   // Domain suffix for subdomain parsing (with leading dot)

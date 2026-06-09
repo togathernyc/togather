@@ -277,6 +277,54 @@ describe("sendAvailabilityRequest + getAvailabilityRequest (chat card)", () => {
   });
 });
 
+describe("getAvailabilityRequestByToken (availability link card in chat)", () => {
+  it("resolves a request by its public token with the viewer's status", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Soon",
+      Date.now() + 3 * DAY,
+    );
+
+    const { publicToken } = await t.mutation(
+      api.functions.scheduling.publicAvailability.createAvailabilityLink,
+      { token: leaderToken, groupId: world.groupId },
+    );
+
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "available",
+    });
+
+    const card = await t.query(
+      api.functions.messaging.availabilityRequests.getAvailabilityRequestByToken,
+      { token: memberToken, publicToken },
+    );
+    expect(card).not.toBeNull();
+    if (!card) return;
+    expect(card.publicToken).toBe(publicToken);
+    expect(card.isMember).toBe(true);
+    const soon = card.events.find((e) => e.title === "Soon");
+    expect(soon?.myStatus).toBe("available");
+  });
+
+  it("returns null for an unknown token", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const card = await t.query(
+      api.functions.messaging.availabilityRequests.getAvailabilityRequestByToken,
+      { token: memberToken, publicToken: "does-not-exist" },
+    );
+    expect(card).toBeNull();
+  });
+});
+
 describe("public availability link (app-optional, OTP-verified)", () => {
   it("creates a shareable link and exposes a public read", async () => {
     const { t, world } = await setupSchedulingWorld();

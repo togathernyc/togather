@@ -15,7 +15,8 @@
 
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
+import type { QueryCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl, generateShortId } from "../../lib/utils";
@@ -189,6 +190,50 @@ export const sendAvailabilityRequest = mutation({
  *
  * Auth: an active member of the request's group (or community admin).
  */
+/**
+ * Hydrate a request's snapshotted events with the viewer's current response.
+ * Shared by the requestId- and publicToken-keyed card queries.
+ */
+async function hydrateRequestForViewer(
+  ctx: QueryCtx,
+  request: Doc<"availabilityRequests">,
+  userId: Id<"users">,
+) {
+  const myRows = await ctx.db
+    .query("eventAvailability")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", request.groupId).eq("userId", userId),
+    )
+    .collect();
+  const byPlan = new Map(myRows.map((r) => [r.planId as string, r]));
+
+  const events = (
+    await Promise.all(
+      request.planIds.map(async (planId) => {
+        const plan = await ctx.db.get(planId);
+        if (!plan) return null;
+        const row = byPlan.get(planId);
+        return {
+          _id: plan._id,
+          title: plan.title,
+          eventDate: plan.eventDate,
+          times: plan.times,
+          myStatus: (row?.status as "available" | "unavailable") ?? null,
+        };
+      }),
+    )
+  ).filter((e): e is NonNullable<typeof e> => e !== null);
+
+  return {
+    _id: request._id,
+    groupId: request.groupId,
+    publicToken: request.publicToken,
+    message: request.message,
+    authorId: request.authorId,
+    events,
+  };
+}
+
 export const getAvailabilityRequest = query({
   args: {
     token: v.string(),
@@ -201,38 +246,50 @@ export const getAvailabilityRequest = query({
     if (!request) return null;
     await requireGroupMember(ctx, request.groupId, userId);
 
-    // Viewer's responses across this group, keyed by plan.
-    const myRows = await ctx.db
-      .query("eventAvailability")
+    return hydrateRequestForViewer(ctx, request, userId);
+  },
+});
+
+/**
+ * Same card payload as `getAvailabilityRequest`, but keyed by the request's
+ * public token (`/a/<token>`). Powers the native availability card that renders
+ * when an `/a/` link appears in chat.
+ *
+ * NOT member-gated: the public `/a/` flow is designed to onboard non-members
+ * (e.g. a link shared in a DM), and the unguessable token is the capability —
+ * same as the public `getPublicAvailabilityRequest`. The returned `isMember`
+ * tells the card whether the viewer can respond inline (members) or should be
+ * sent to the public page to respond (non-members). `myStatus` is the viewer's
+ * own response, so it's safe to return regardless.
+ */
+export const getAvailabilityRequestByToken = query({
+  args: {
+    token: v.string(),
+    publicToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const request = await ctx.db
+      .query("availabilityRequests")
+      .withIndex("by_public_token", (q) =>
+        q.eq("publicToken", args.publicToken),
+      )
+      .first();
+    if (!request) return null;
+
+    const membership = await ctx.db
+      .query("groupMembers")
       .withIndex("by_group_user", (q) =>
         q.eq("groupId", request.groupId).eq("userId", userId),
       )
-      .collect();
-    const byPlan = new Map(myRows.map((r) => [r.planId as string, r]));
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    const isMember =
+      !!membership &&
+      (!membership.requestStatus || membership.requestStatus === "accepted");
 
-    const events = (
-      await Promise.all(
-        request.planIds.map(async (planId) => {
-          const plan = await ctx.db.get(planId);
-          if (!plan) return null;
-          const row = byPlan.get(planId);
-          return {
-            _id: plan._id,
-            title: plan.title,
-            eventDate: plan.eventDate,
-            times: plan.times,
-            myStatus: (row?.status as "available" | "unavailable") ?? null,
-          };
-        }),
-      )
-    ).filter((e): e is NonNullable<typeof e> => e !== null);
-
-    return {
-      _id: request._id,
-      groupId: request.groupId,
-      message: request.message,
-      authorId: request.authorId,
-      events,
-    };
+    const hydrated = await hydrateRequestForViewer(ctx, request, userId);
+    return { ...hydrated, isMember };
   },
 });
