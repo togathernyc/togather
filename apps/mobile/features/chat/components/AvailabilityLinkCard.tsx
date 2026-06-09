@@ -1,34 +1,40 @@
 /**
- * AvailabilityRequestCardFromMessage — wrapper that fetches an availability
- * request by id and wires the set/clear availability mutations to
- * AvailabilityRequestCard.
+ * AvailabilityLinkCard — native chat card for an `/a/<token>` availability link.
  *
- * Mounted from MessageItem when contentType === "availability_request". The
- * underlying `getAvailabilityRequest` query is reactive, so each event's
- * `myStatus` and the summary count update the moment the viewer taps a pill.
+ * Mounted from MessageItem when an availability link (`togather.nyc/a/<token>`)
+ * is detected in a message, the same way `/e/` event links render an
+ * EventLinkCard. Resolves the request by its public token, lets the (logged-in)
+ * viewer respond inline, exposes a "Copy link" button, and opens the public
+ * `/a/<token>` page. Mirrors AvailabilityRequestCardFromMessage, keyed by token.
  */
 import React, { useCallback, useState } from 'react';
 import { View, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { DOMAIN_CONFIG } from '@togather/shared';
 import type { Id } from '@services/api/convex';
-import { api, useQuery, useStoredAuthToken, useAuthenticatedMutation } from '@services/api/convex';
+import {
+  api,
+  useQuery,
+  useStoredAuthToken,
+  useAuthenticatedMutation,
+} from '@services/api/convex';
 import { useTheme } from '@hooks/useTheme';
 import { AvailabilityRequestCard } from './AvailabilityRequestCard';
 
 interface Props {
-  requestId: Id<'availabilityRequests'>;
+  /** The `/a/<token>` public token from the link. */
+  token: string;
 }
 
-export function AvailabilityRequestCardFromMessage({ requestId }: Props) {
+export function AvailabilityLinkCard({ token: publicToken }: Props) {
   const { colors } = useTheme();
-  const token = useStoredAuthToken();
+  const authToken = useStoredAuthToken();
   const router = useRouter();
   const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
 
   const request = useQuery(
-    api.functions.messaging.availabilityRequests.getAvailabilityRequest,
-    token ? { token, requestId } : 'skip',
+    api.functions.messaging.availabilityRequests.getAvailabilityRequestByToken,
+    authToken ? { token: authToken, publicToken } : 'skip',
   );
 
   const setMyAvailability = useAuthenticatedMutation(
@@ -41,6 +47,12 @@ export function AvailabilityRequestCardFromMessage({ requestId }: Props) {
   const handleSetStatus = useCallback(
     async (planId: Id<'eventPlans'>, status: 'available' | 'unavailable') => {
       if (!request) return;
+      // Non-members can't write availability directly — send them to the public
+      // /a/ page, which handles SMS onboarding and recording.
+      if (!request.isMember) {
+        router.push(`/a/${publicToken}` as never);
+        return;
+      }
       const event = request.events.find((e) => e._id === planId);
       // Tapping the already-selected status toggles it off.
       const shouldClear = event?.myStatus === status;
@@ -58,7 +70,7 @@ export function AvailabilityRequestCardFromMessage({ requestId }: Props) {
         setBusyPlanId(null);
       }
     },
-    [request, setMyAvailability, clearMyAvailability],
+    [request, setMyAvailability, clearMyAvailability, router, publicToken],
   );
 
   if (request === undefined) {
@@ -78,14 +90,9 @@ export function AvailabilityRequestCardFromMessage({ requestId }: Props) {
       events={request.events}
       busyPlanId={busyPlanId}
       onSetStatus={handleSetStatus}
-      copyLinkUrl={
-        request.publicToken
-          ? DOMAIN_CONFIG.availabilityLinkUrl(request.publicToken)
-          : undefined
-      }
-      onOpenPage={() =>
-        router.push(`/rostering/${request.groupId}/availability` as never)
-      }
+      canRespond={request.isMember}
+      copyLinkUrl={DOMAIN_CONFIG.availabilityLinkUrl(publicToken)}
+      onOpenPage={() => router.push(`/a/${publicToken}` as never)}
     />
   );
 }

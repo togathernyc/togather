@@ -43,7 +43,8 @@ import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage
 import { TaskCardFromMessage } from './TaskCardFromMessage';
 import { PollCardFromMessage } from './PollCardFromMessage';
 import { AvailabilityRequestCardFromMessage } from './AvailabilityRequestCardFromMessage';
-import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
+import { AvailabilityLinkCard } from './AvailabilityLinkCard';
+import { extractEventShortIds, extractToolShortIds, extractChannelInviteShortIds, extractAvailabilityTokens, stripEventLinksFromText, stripToolLinksFromText, stripChannelInviteLinksFromText, stripAvailabilityLinksFromText, extractFirstExternalUrl } from '../utils/eventLinkUtils';
 import { useLinkPreview } from '../hooks/useLinkPreview';
 import { parseMessageContent } from '@features/shared/utils/linkify';
 import { getMediaUrl } from '@/utils/media';
@@ -293,7 +294,13 @@ function MessageItemInner({
     return extractChannelInviteShortIds(message.content);
   }, [message.content, message.isDeleted]);
 
-  // Get display text (with event, tool, and channel invite links stripped if we're showing cards)
+  // Detect availability links (/a/<token>) in message content
+  const availabilityTokens = useMemo(() => {
+    if (message.isDeleted) return [];
+    return extractAvailabilityTokens(message.content);
+  }, [message.content, message.isDeleted]);
+
+  // Get display text (with event, tool, channel invite, and availability links stripped if we're showing cards)
   const displayText = useMemo(() => {
     let text = message.content;
     if (eventShortIds.length > 0) {
@@ -305,17 +312,20 @@ function MessageItemInner({
     if (channelInviteShortIds.length > 0) {
       text = stripChannelInviteLinksFromText(text);
     }
+    if (availabilityTokens.length > 0) {
+      text = stripAvailabilityLinksFromText(text);
+    }
     return text;
-  }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds]);
+  }, [message.content, eventShortIds, toolShortIds, channelInviteShortIds, availabilityTokens]);
 
   // Whether this message has visible text content (used to avoid empty padding wrapper)
   const hasTextContent = message.isDeleted || displayText.trim().length > 0;
 
-  // Detect external URLs for link preview (only if no event/tool/channel invite cards)
+  // Detect external URLs for link preview (only if no event/tool/channel invite/availability cards)
   const externalUrl = useMemo(() => {
-    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0) return null;
+    if (message.isDeleted || eventShortIds.length > 0 || toolShortIds.length > 0 || channelInviteShortIds.length > 0 || availabilityTokens.length > 0) return null;
     return extractFirstExternalUrl(message.content);
-  }, [message.content, message.isDeleted, eventShortIds, toolShortIds, channelInviteShortIds]);
+  }, [message.content, message.isDeleted, eventShortIds, toolShortIds, channelInviteShortIds, availabilityTokens]);
 
   // Check for prefetched link preview first
   const prefetchedLinkPreview = useMemo(() => {
@@ -587,6 +597,19 @@ function MessageItemInner({
             shortId={shortId}
             groupId={groupId}
           />
+        ))}
+      </View>
+    );
+  };
+
+  // Render availability cards for detected togather.nyc/a/ links
+  const renderAvailabilityLinkCards = () => {
+    if (availabilityTokens.length === 0) return null;
+
+    return (
+      <View style={styles.eventCardsContainer}>
+        {availabilityTokens.map((token) => (
+          <AvailabilityLinkCard key={`a-${token}`} token={token} />
         ))}
       </View>
     );
@@ -1097,6 +1120,9 @@ function MessageItemInner({
 
           {/* Channel invite link cards */}
           {renderChannelInviteCards()}
+
+          {/* Availability cards for /a/ links */}
+          {renderAvailabilityLinkCards()}
 
           {/* Link preview for external URLs */}
           {renderLinkPreview()}

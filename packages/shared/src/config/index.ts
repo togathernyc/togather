@@ -23,6 +23,8 @@ export interface DomainConfig {
   communityUrl(subdomain: string): string;
   communityLandingUrl(slug: string): string;
   availabilityLinkUrl(token: string): string;
+  availabilityLinkRegex(): RegExp;
+  availabilityLinkRegexSingle(): RegExp;
   attendanceConfirmationUrl(token: string): string;
   eventLinkRegex(): RegExp;
   eventLinkRegexSingle(): RegExp;
