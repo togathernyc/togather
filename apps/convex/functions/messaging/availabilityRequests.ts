@@ -253,8 +253,14 @@ export const getAvailabilityRequest = query({
 /**
  * Same card payload as `getAvailabilityRequest`, but keyed by the request's
  * public token (`/a/<token>`). Powers the native availability card that renders
- * when an `/a/` link appears in chat. The viewer must be an active group member
- * — the same gate as the requestId variant.
+ * when an `/a/` link appears in chat.
+ *
+ * NOT member-gated: the public `/a/` flow is designed to onboard non-members
+ * (e.g. a link shared in a DM), and the unguessable token is the capability —
+ * same as the public `getPublicAvailabilityRequest`. The returned `isMember`
+ * tells the card whether the viewer can respond inline (members) or should be
+ * sent to the public page to respond (non-members). `myStatus` is the viewer's
+ * own response, so it's safe to return regardless.
  */
 export const getAvailabilityRequestByToken = query({
   args: {
@@ -271,8 +277,19 @@ export const getAvailabilityRequestByToken = query({
       )
       .first();
     if (!request) return null;
-    await requireGroupMember(ctx, request.groupId, userId);
 
-    return hydrateRequestForViewer(ctx, request, userId);
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", request.groupId).eq("userId", userId),
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    const isMember =
+      !!membership &&
+      (!membership.requestStatus || membership.requestStatus === "accepted");
+
+    const hydrated = await hydrateRequestForViewer(ctx, request, userId);
+    return { ...hydrated, isMember };
   },
 });

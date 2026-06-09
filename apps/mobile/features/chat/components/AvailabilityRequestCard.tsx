@@ -36,6 +36,12 @@ export interface AvailabilityRequestCardProps {
   onOpenPage?: () => void;
   /** Public `/a/<token>` URL; when set, a "Copy link" button is shown. */
   copyLinkUrl?: string;
+  /**
+   * Whether the viewer can record availability inline (group members). When
+   * false (e.g. a non-member who got a shared link), tapping a date routes to
+   * the public page instead — see the wrapper's onSetStatus. Default true.
+   */
+  canRespond?: boolean;
 }
 
 function formatEventDate(ms: number): string {
@@ -53,6 +59,7 @@ export function AvailabilityRequestCard({
   onSetStatus,
   onOpenPage,
   copyLinkUrl,
+  canRespond = true,
 }: AvailabilityRequestCardProps) {
   const { colors } = useTheme();
   const [copied, setCopied] = useState(false);
@@ -92,7 +99,9 @@ export function AvailabilityRequestCard({
 
       {/* Summary line */}
       <Text style={[styles.summary, { color: colors.textSecondary }]}>
-        {`You're available for ${availableCount} of ${events.length}`}
+        {canRespond
+          ? `You're available for ${availableCount} of ${events.length}`
+          : 'Tap a date to share your availability'}
       </Text>
 
       {/* Events */}

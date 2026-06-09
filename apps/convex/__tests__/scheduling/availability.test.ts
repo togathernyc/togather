@@ -309,6 +309,7 @@ describe("getAvailabilityRequestByToken (availability link card in chat)", () =>
     expect(card).not.toBeNull();
     if (!card) return;
     expect(card.publicToken).toBe(publicToken);
+    expect(card.isMember).toBe(true);
     const soon = card.events.find((e) => e.title === "Soon");
     expect(soon?.myStatus).toBe("available");
   });

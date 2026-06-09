@@ -47,6 +47,12 @@ export function AvailabilityLinkCard({ token: publicToken }: Props) {
   const handleSetStatus = useCallback(
     async (planId: Id<'eventPlans'>, status: 'available' | 'unavailable') => {
       if (!request) return;
+      // Non-members can't write availability directly — send them to the public
+      // /a/ page, which handles SMS onboarding and recording.
+      if (!request.isMember) {
+        router.push(`/a/${publicToken}` as never);
+        return;
+      }
       const event = request.events.find((e) => e._id === planId);
       // Tapping the already-selected status toggles it off.
       const shouldClear = event?.myStatus === status;
@@ -64,7 +70,7 @@ export function AvailabilityLinkCard({ token: publicToken }: Props) {
         setBusyPlanId(null);
       }
     },
-    [request, setMyAvailability, clearMyAvailability],
+    [request, setMyAvailability, clearMyAvailability, router, publicToken],
   );
 
   if (request === undefined) {
@@ -84,6 +90,7 @@ export function AvailabilityLinkCard({ token: publicToken }: Props) {
       events={request.events}
       busyPlanId={busyPlanId}
       onSetStatus={handleSetStatus}
+      canRespond={request.isMember}
       copyLinkUrl={DOMAIN_CONFIG.availabilityLinkUrl(publicToken)}
       onOpenPage={() => router.push(`/a/${publicToken}` as never)}
     />
