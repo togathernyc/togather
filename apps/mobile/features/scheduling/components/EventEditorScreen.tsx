@@ -23,7 +23,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
-  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -37,6 +36,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
@@ -174,7 +174,7 @@ export function EventEditorScreen() {
     try {
       await updateEvent({ planId, title: trimmed });
     } catch (e: any) {
-      Alert.alert("Couldn't rename", e?.message ?? "Please try again.");
+      notify("Couldn't rename", e?.message ?? "Please try again.");
     }
   }, [event?.title, updateEvent, planId]);
 
@@ -206,7 +206,7 @@ export function EventEditorScreen() {
       try {
         await updateEvent({ planId, eventDate: date.getTime() });
       } catch (e: any) {
-        Alert.alert("Couldn't update date", e?.message ?? "Please try again.");
+        notify("Couldn't update date", e?.message ?? "Please try again.");
       }
     },
     [updateEvent, planId],
@@ -218,7 +218,7 @@ export function EventEditorScreen() {
       try {
         await updateEvent({ planId, times });
       } catch (e: any) {
-        Alert.alert("Couldn't update times", e?.message ?? "Please try again.");
+        notify("Couldn't update times", e?.message ?? "Please try again.");
       }
     },
     [updateEvent, planId],
@@ -265,59 +265,52 @@ export function EventEditorScreen() {
   const handleUnassign = useCallback(
     (assignmentId: Id<"roleAssignments">) => {
       unassign({ assignmentId }).catch((e: any) =>
-        Alert.alert("Couldn't remove", e?.message ?? "Please try again."),
+        notify("Couldn't remove", e?.message ?? "Please try again."),
       );
     },
     [unassign],
   );
 
-  const handleDelete = useCallback(() => {
-    Alert.alert("Delete event plan?", "This removes the event plan and all its assignments.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteEvent({ planId });
-            if (router.canGoBack()) router.back();
-          } catch (e: any) {
-            Alert.alert("Couldn't delete", e?.message ?? "Please try again.");
-          }
-        },
-      },
-    ]);
+  const handleDelete = useCallback(async () => {
+    const ok = await confirmAsync({
+      title: "Delete event plan?",
+      message: "This removes the event plan and all its assignments.",
+      confirmText: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteEvent({ planId });
+      if (router.canGoBack()) router.back();
+    } catch (e: any) {
+      notify("Couldn't delete", e?.message ?? "Please try again.");
+    }
   }, [deleteEvent, planId, router]);
 
-  const handlePublish = useCallback(() => {
-    Alert.alert(
-      "Publish & send requests?",
-      "Volunteers with an open request will get a push and SMS asking them to accept or decline.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Publish",
-          onPress: async () => {
-            setPublishing(true);
-            try {
-              const result = await publishEvent({ planId });
-              Alert.alert(
-                "Event plan published",
-                result.requestCount > 0
-                  ? `Sent ${result.requestCount} request${
-                      result.requestCount === 1 ? "" : "s"
-                    }.`
-                  : "No pending requests to send.",
-              );
-            } catch (e: any) {
-              Alert.alert("Couldn't publish", e?.message ?? "Please try again.");
-            } finally {
-              setPublishing(false);
-            }
-          },
-        },
-      ],
-    );
+  const handlePublish = useCallback(async () => {
+    const ok = await confirmAsync({
+      title: "Publish & send requests?",
+      message:
+        "Volunteers with an open request will get a push and SMS asking them to accept or decline.",
+      confirmText: "Publish",
+    });
+    if (!ok) return;
+    setPublishing(true);
+    try {
+      const result = await publishEvent({ planId });
+      notify(
+        "Event plan published",
+        result.requestCount > 0
+          ? `Sent ${result.requestCount} request${
+              result.requestCount === 1 ? "" : "s"
+            }.`
+          : "No pending requests to send.",
+      );
+    } catch (e: any) {
+      notify("Couldn't publish", e?.message ?? "Please try again.");
+    } finally {
+      setPublishing(false);
+    }
   }, [publishEvent, planId]);
 
   if (event === undefined) {

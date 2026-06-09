@@ -35,6 +35,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import { RolesEditor } from "./RolesEditor";
 import { ROLE_COLORS } from "../utils/format";
 
@@ -376,31 +377,22 @@ function PermanentMembersSection({
   const [removing, setRemoving] = useState<string | null>(null);
 
   const handleRemove = useCallback(
-    (member: PermanentMember) => {
-      Alert.alert(
-        "Remove member?",
-        `${member.displayName} will be removed from this channel.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: async () => {
-              setRemoving(member.userId as string);
-              try {
-                await removeMember({ teamId, userId: member.userId });
-              } catch (e: any) {
-                Alert.alert(
-                  "Couldn't remove",
-                  e?.message ?? "Please try again.",
-                );
-              } finally {
-                setRemoving(null);
-              }
-            },
-          },
-        ],
-      );
+    async (member: PermanentMember) => {
+      const ok = await confirmAsync({
+        title: "Remove member?",
+        message: `${member.displayName} will be removed from this channel.`,
+        confirmText: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
+      setRemoving(member.userId as string);
+      try {
+        await removeMember({ teamId, userId: member.userId });
+      } catch (e: any) {
+        notify("Couldn't remove", e?.message ?? "Please try again.");
+      } finally {
+        setRemoving(null);
+      }
     },
     [removeMember, teamId],
   );
