@@ -47,8 +47,11 @@ import {
   formatServiceRanges,
   totalDurationSec,
 } from "../utils/runSheetTiming";
+import { useAuth } from "@providers/AuthProvider";
 import { InlineText } from "./InlineText";
 import { RunSheetDragList } from "./RunSheetDragList";
+import { SongPicker } from "./SongPicker";
+import type { Song } from "@features/songs/types";
 
 /** When an item happens relative to the event's service times. */
 type Segment = "before" | "during" | "after";
@@ -88,6 +91,10 @@ type RunSheetItem = {
   durationSec: number;
   notes: Array<{ category: string; content: string }>;
   songDetails: { key?: string; bpm?: number; author?: string } | null;
+  // Link to a library song (ADR-027). When set, the joined `song` carries the
+  // defaults; `songDetails.key`/`.bpm` become per-service overrides of them.
+  songId: Id<"songs"> | null;
+  song: Song | null;
   assignments: ItemAssignment[];
 };
 
@@ -123,6 +130,8 @@ type ItemPatch = {
   notes?: Array<{ category: string; content: string }>;
   assignments?: Array<{ roleId: Id<"teamRoles"> }>;
   songDetails?: { key?: string; bpm?: number };
+  // Link / unlink a library song. `null` clears the link (ADR-027).
+  songId?: Id<"songs"> | null;
 };
 
 export function RunSheetScreen() {
@@ -130,8 +139,13 @@ export function RunSheetScreen() {
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { plan_id } = useLocalSearchParams<{ plan_id: string }>();
+  const { community } = useAuth();
+  const { plan_id, group_id } = useLocalSearchParams<{
+    plan_id: string;
+    group_id: string;
+  }>();
   const planId = plan_id as Id<"eventPlans">;
+  const communityId = community?.id ?? "";
 
   const event = useAuthenticatedQuery(
     api.functions.scheduling.events.getEvent,
@@ -405,6 +419,8 @@ export function RunSheetScreen() {
                     <EditableRow
                       item={row.item}
                       clockMs={clockTimes[row.item._id]}
+                      communityId={communityId}
+                      groupId={group_id ?? ""}
                       roleOptions={roleOptions}
                       peopleByRole={peopleByRole}
                       autoFocus={focusId === (row.item._id as string)}
@@ -495,6 +511,8 @@ function AddButton({
 function EditableRow({
   item,
   clockMs,
+  communityId,
+  groupId,
   roleOptions,
   peopleByRole,
   autoFocus,
@@ -506,6 +524,8 @@ function EditableRow({
 }: {
   item: RunSheetItem;
   clockMs: number | null;
+  communityId: string;
+  groupId: string;
   roleOptions: RoleOption[];
   peopleByRole: Record<string, string[]>;
   autoFocus: boolean;
@@ -691,38 +711,57 @@ function EditableRow({
           </View>
 
           {isSong ? (
-            <View style={styles.songRow}>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
-              <InlineText
-                value={item.songDetails?.key ?? ""}
-                onSave={(key) =>
-                  onPatch({
-                    songDetails: { key: key.trim() || undefined, bpm: item.songDetails?.bpm },
-                  })
+            <>
+              {/* Link this row to a library song (ADR-027). Free-typed rows
+                  (no songId) keep working — the picker just stays unlinked. */}
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Song</Text>
+              <SongPicker
+                communityId={communityId}
+                groupId={groupId}
+                songId={item.songId}
+                song={item.song}
+                onSelect={(songId) =>
+                  onPatch({ songId: songId as Id<"songs"> | null })
                 }
-                placeholder="—"
-                maxLength={8}
-                accessibilityLabel="Song key"
-                style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
               />
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>BPM</Text>
-              <InlineText
-                value={item.songDetails?.bpm ? String(item.songDetails.bpm) : ""}
-                onSave={(bpm) =>
-                  onPatch({
-                    songDetails: {
-                      key: item.songDetails?.key,
-                      bpm: parseInt(bpm, 10) || undefined,
-                    },
-                  })
-                }
-                placeholder="—"
-                keyboardType="number-pad"
-                maxLength={3}
-                accessibilityLabel="Song BPM"
-                style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
-              />
-            </View>
+
+              {/* Key / BPM. When a song is linked these are PER-SERVICE
+                  OVERRIDES: the value is only the override (blank if none),
+                  the placeholder is the song's default, and saving writes
+                  songDetails. Display elsewhere resolves override ?? default. */}
+              <View style={styles.songRow}>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
+                <InlineText
+                  value={item.songDetails?.key ?? ""}
+                  onSave={(key) =>
+                    onPatch({
+                      songDetails: { key: key.trim() || undefined, bpm: item.songDetails?.bpm },
+                    })
+                  }
+                  placeholder={item.song?.defaultKey ?? "—"}
+                  maxLength={8}
+                  accessibilityLabel="Song key"
+                  style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+                />
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>BPM</Text>
+                <InlineText
+                  value={item.songDetails?.bpm ? String(item.songDetails.bpm) : ""}
+                  onSave={(bpm) =>
+                    onPatch({
+                      songDetails: {
+                        key: item.songDetails?.key,
+                        bpm: parseInt(bpm, 10) || undefined,
+                      },
+                    })
+                  }
+                  placeholder={item.song?.bpm ? String(item.song.bpm) : "—"}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                  accessibilityLabel="Song BPM"
+                  style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+                />
+              </View>
+            </>
           ) : null}
 
           <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Description</Text>
