@@ -58,6 +58,19 @@ const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
   { key: "after", label: "After event" },
 ];
 
+/**
+ * Show a one-button error. React Native's Alert.alert is a no-op on web in this
+ * codebase, so fall back to window.alert there — otherwise a failed save /
+ * delete / reorder would fail silently for web users.
+ */
+function notifyError(title: string, message: string) {
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined") window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
 type ItemAssignment = {
   roleId: Id<"teamRoles">;
   roleName: string;
@@ -218,7 +231,7 @@ export function RunSheetScreen() {
   const patchItem = useCallback(
     (itemId: Id<"eventItems">, patch: ItemPatch) =>
       updateItem({ itemId, ...patch }).catch((e: any) =>
-        Alert.alert("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
+        notifyError("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
       ),
     [updateItem],
   );
@@ -234,7 +247,7 @@ export function RunSheetScreen() {
         });
         setFocusId(itemId as string);
       } catch (e: any) {
-        Alert.alert("Couldn't add item", e?.message ?? "Please try again.");
+        notifyError("Couldn't add item", e?.message ?? "Please try again.");
       }
     },
     [createItem, planId, addSegment],
@@ -243,7 +256,7 @@ export function RunSheetScreen() {
   const handleDuplicate = useCallback(
     (itemId: Id<"eventItems">) =>
       duplicateItem({ itemId }).catch((e: any) =>
-        Alert.alert("Couldn't duplicate", e?.message ?? "Please try again."),
+        notifyError("Couldn't duplicate", e?.message ?? "Please try again."),
       ),
     [duplicateItem],
   );
@@ -252,7 +265,7 @@ export function RunSheetScreen() {
     (item: RunSheetItem) => {
       const doDelete = () =>
         deleteItem({ itemId: item._id }).catch((e: any) =>
-          Alert.alert("Couldn't delete", e?.message ?? "Please try again."),
+          notifyError("Couldn't delete", e?.message ?? "Please try again."),
         );
       const prompt = `Remove "${item.title}" from the run sheet?`;
       // React Native's Alert.alert is a no-op on web in this codebase, so the
@@ -288,7 +301,7 @@ export function RunSheetScreen() {
         }
       }
       return reorderItems({ planId, orderedItems }).catch((e: any) =>
-        Alert.alert("Couldn't reorder", e?.message ?? "Please try again."),
+        notifyError("Couldn't reorder", e?.message ?? "Please try again."),
       );
     },
     [reorderItems, planId],
