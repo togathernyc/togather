@@ -26,6 +26,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -249,16 +250,23 @@ export function RunSheetScreen() {
 
   const handleDelete = useCallback(
     (item: RunSheetItem) => {
-      Alert.alert("Delete item?", `Remove "${item.title}" from the run sheet?`, [
+      const doDelete = () =>
+        deleteItem({ itemId: item._id }).catch((e: any) =>
+          Alert.alert("Couldn't delete", e?.message ?? "Please try again."),
+        );
+      const prompt = `Remove "${item.title}" from the run sheet?`;
+      // React Native's Alert.alert is a no-op on web in this codebase, so the
+      // delete (X) confirm never resolved there — fall back to window.confirm
+      // (same pattern as HostsPicker / EventPageClient).
+      if (Platform.OS === "web") {
+        if (typeof window !== "undefined" && window.confirm(prompt)) {
+          void doDelete();
+        }
+        return;
+      }
+      Alert.alert("Delete item?", prompt, [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () =>
-            deleteItem({ itemId: item._id }).catch((e: any) =>
-              Alert.alert("Couldn't delete", e?.message ?? "Please try again."),
-            ),
-        },
+        { text: "Delete", style: "destructive", onPress: () => void doDelete() },
       ]);
     },
     [deleteItem],
