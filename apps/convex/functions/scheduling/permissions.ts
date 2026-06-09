@@ -212,6 +212,49 @@ export async function requireTeamGroupMember(
 }
 
 /**
+ * Require that `userId` is an active member of `communityId`. Community-scoped
+ * read gate for library resources (ADR-027 song library) that are not tied to a
+ * single group. Throws `ConvexError` (not a plain `Error`) so the mobile
+ * `AuthErrorBoundary` can recover, unlike `lib/permissions.requireCommunityAdmin`.
+ *
+ * @throws ConvexError if the caller is not an active community member.
+ */
+export async function requireCommunityMember(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<void> {
+  const membership = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_user_community", (q) =>
+      q.eq("userId", userId).eq("communityId", communityId),
+    )
+    .first();
+  if (!membership || membership.status !== 1) {
+    throw new ConvexError("You must be a member of this community");
+  }
+}
+
+/**
+ * Require that `userId` is an admin of `communityId`. Community-scoped edit gate
+ * for the song library (ADR-027) — the closest existing community-admin concept
+ * (`isCommunityAdmin`), wrapped to throw `ConvexError` for the mobile client.
+ *
+ * @throws ConvexError if the caller is not a community admin.
+ */
+export async function requireCommunityAdmin(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<void> {
+  if (!(await isCommunityAdmin(ctx, communityId, userId))) {
+    throw new ConvexError(
+      "You must be a community admin to manage the song library",
+    );
+  }
+}
+
+/**
  * Resolve the campus-group scheduler used by an event plan, asserting the
  * caller may manage it. Returns both the plan and its owning group.
  *
