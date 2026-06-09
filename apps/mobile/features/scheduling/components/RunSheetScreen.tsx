@@ -26,6 +26,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -56,6 +57,19 @@ const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
   { key: "during", label: "During event" },
   { key: "after", label: "After event" },
 ];
+
+/**
+ * Show a one-button error. React Native's Alert.alert is a no-op on web in this
+ * codebase, so fall back to window.alert there — otherwise a failed save /
+ * delete / reorder would fail silently for web users.
+ */
+function notifyError(title: string, message: string) {
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined") window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
 
 type ItemAssignment = {
   roleId: Id<"teamRoles">;
@@ -217,7 +231,7 @@ export function RunSheetScreen() {
   const patchItem = useCallback(
     (itemId: Id<"eventItems">, patch: ItemPatch) =>
       updateItem({ itemId, ...patch }).catch((e: any) =>
-        Alert.alert("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
+        notifyError("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
       ),
     [updateItem],
   );
@@ -233,7 +247,7 @@ export function RunSheetScreen() {
         });
         setFocusId(itemId as string);
       } catch (e: any) {
-        Alert.alert("Couldn't add item", e?.message ?? "Please try again.");
+        notifyError("Couldn't add item", e?.message ?? "Please try again.");
       }
     },
     [createItem, planId, addSegment],
@@ -242,23 +256,30 @@ export function RunSheetScreen() {
   const handleDuplicate = useCallback(
     (itemId: Id<"eventItems">) =>
       duplicateItem({ itemId }).catch((e: any) =>
-        Alert.alert("Couldn't duplicate", e?.message ?? "Please try again."),
+        notifyError("Couldn't duplicate", e?.message ?? "Please try again."),
       ),
     [duplicateItem],
   );
 
   const handleDelete = useCallback(
     (item: RunSheetItem) => {
-      Alert.alert("Delete item?", `Remove "${item.title}" from the run sheet?`, [
+      const doDelete = () =>
+        deleteItem({ itemId: item._id }).catch((e: any) =>
+          notifyError("Couldn't delete", e?.message ?? "Please try again."),
+        );
+      const prompt = `Remove "${item.title}" from the run sheet?`;
+      // React Native's Alert.alert is a no-op on web in this codebase, so the
+      // delete (X) confirm never resolved there — fall back to window.confirm
+      // (same pattern as HostsPicker / EventPageClient).
+      if (Platform.OS === "web") {
+        if (typeof window !== "undefined" && window.confirm(prompt)) {
+          void doDelete();
+        }
+        return;
+      }
+      Alert.alert("Delete item?", prompt, [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () =>
-            deleteItem({ itemId: item._id }).catch((e: any) =>
-              Alert.alert("Couldn't delete", e?.message ?? "Please try again."),
-            ),
-        },
+        { text: "Delete", style: "destructive", onPress: () => void doDelete() },
       ]);
     },
     [deleteItem],
@@ -280,7 +301,7 @@ export function RunSheetScreen() {
         }
       }
       return reorderItems({ planId, orderedItems }).catch((e: any) =>
-        Alert.alert("Couldn't reorder", e?.message ?? "Please try again."),
+        notifyError("Couldn't reorder", e?.message ?? "Please try again."),
       );
     },
     [reorderItems, planId],
