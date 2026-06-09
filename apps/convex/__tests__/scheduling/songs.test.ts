@@ -433,4 +433,73 @@ describe("eventItems ⇄ song integration", () => {
       }),
     ).rejects.toThrow(ConvexError);
   });
+
+  it("duplicateItem preserves the song link", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const adminToken = (await generateTokens(world.communityAdminId)).accessToken;
+    const planId = await createPlan(t, leaderToken, world.groupId);
+
+    const songId = await t.mutation(api.functions.scheduling.songs.createSong, {
+      token: adminToken,
+      communityId: world.communityId,
+      input: { title: "Build My Life", defaultKey: "G" },
+    });
+    const { itemId } = await t.mutation(
+      api.functions.scheduling.eventItems.createItem,
+      { token: leaderToken, planId, type: "song", title: "Opener" },
+    );
+    await t.mutation(api.functions.scheduling.eventItems.updateItem, {
+      token: leaderToken,
+      itemId,
+      songId,
+    });
+
+    const { itemId: copyId } = await t.mutation(
+      api.functions.scheduling.eventItems.duplicateItem,
+      { token: leaderToken, itemId },
+    );
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token: leaderToken,
+      planId,
+    });
+    const copy = items?.find((i) => i._id === copyId);
+    expect(copy?.songId).toBe(songId);
+    expect(copy?.song?.title).toBe("Build My Life");
+  });
+
+  it("duplicateEvent preserves song links on copied items", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const adminToken = (await generateTokens(world.communityAdminId)).accessToken;
+    const planId = await createPlan(t, leaderToken, world.groupId);
+
+    const songId = await t.mutation(api.functions.scheduling.songs.createSong, {
+      token: adminToken,
+      communityId: world.communityId,
+      input: { title: "Great Are You Lord" },
+    });
+    const { itemId } = await t.mutation(
+      api.functions.scheduling.eventItems.createItem,
+      { token: leaderToken, planId, type: "song", title: "Worship 1" },
+    );
+    await t.mutation(api.functions.scheduling.eventItems.updateItem, {
+      token: leaderToken,
+      itemId,
+      songId,
+    });
+
+    const { planId: newPlanId } = await t.mutation(
+      api.functions.scheduling.events.duplicateEvent,
+      { token: leaderToken, planId },
+    );
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token: leaderToken,
+      planId: newPlanId,
+    });
+    expect(items?.[0]?.songId).toBe(songId);
+    expect(items?.[0]?.song?.title).toBe("Great Are You Lord");
+  });
 });

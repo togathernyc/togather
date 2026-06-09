@@ -393,6 +393,7 @@ export const duplicateItem = mutation({
       notes: item.notes,
       assignments: item.assignments,
       songDetails: item.songDetails,
+      songId: item.songId,
       createdAt: nowMs,
       createdById: userId,
       updatedAt: nowMs,
