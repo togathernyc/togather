@@ -74,6 +74,7 @@ export const rosterMatrix = query({
       title: p.title,
       eventDate: p.eventDate,
       times: p.times,
+      status: p.status, // "draft" | "published" — AssignSheet needs this
     }));
     const planDate = new Map(plans.map((p) => [p._id as string, p.eventDate]));
 
@@ -144,6 +145,7 @@ export const rosterMatrix = query({
         confirmed: number;
         open: number;
         occupants: Array<{
+          assignmentId: Id<"roleAssignments">;
           userId: Id<"users">;
           userName: string;
           status: CellStatus;
@@ -184,6 +186,7 @@ export const rosterMatrix = query({
           confirmed,
           open,
           occupants: list.map((a) => ({
+            assignmentId: a._id,
             userId: a.userId,
             userName: userName(a.userId as string, userDocs.get(a.userId as string) ?? null),
             status: a.status as CellStatus,
@@ -233,7 +236,12 @@ export const rosterMatrix = query({
     const availByUserPlan = new Map<string, Availability>();
     const assignsByUser = new Map<
       string,
-      Array<{ planId: string; roleId: string; status: string }>
+      Array<{
+        assignmentId: Id<"roleAssignments">;
+        planId: string;
+        roleId: string;
+        status: string;
+      }>
     >();
     for (const { plan, assignments, availability } of perPlan) {
       for (const r of availability) {
@@ -245,6 +253,7 @@ export const rosterMatrix = query({
       for (const a of assignments) {
         const arr = assignsByUser.get(a.userId as string) ?? [];
         arr.push({
+          assignmentId: a._id,
           planId: plan._id as string,
           roleId: a.roleId as string,
           status: a.status,
@@ -274,6 +283,7 @@ export const rosterMatrix = query({
           {
             availability: Availability;
             assignments: Array<{
+              assignmentId: Id<"roleAssignments">;
               roleId: Id<"teamRoles">;
               roleName: string;
               status: CellStatus;
@@ -294,6 +304,7 @@ export const rosterMatrix = query({
           cells[planKey] = {
             availability,
             assignments: planAssigns.map((a) => ({
+              assignmentId: a.assignmentId,
               roleId: a.roleId as Id<"teamRoles">,
               roleName: roleDocs.get(a.roleId)?.name ?? "Role",
               status: a.status as CellStatus,
