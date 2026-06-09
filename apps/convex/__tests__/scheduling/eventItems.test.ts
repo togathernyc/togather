@@ -180,7 +180,10 @@ describe("reorderItems", () => {
     await t.mutation(api.functions.scheduling.eventItems.reorderItems, {
       token,
       planId,
-      orderedIds: [ids[2], ids[0], ids[1]],
+      orderedItems: [ids[2], ids[0], ids[1]].map((id) => ({
+        id,
+        segment: "during",
+      })),
     });
 
     const items = await t.query(api.functions.scheduling.eventItems.listItems, {
@@ -210,7 +213,7 @@ describe("reorderItems", () => {
       t.mutation(api.functions.scheduling.eventItems.reorderItems, {
         token,
         planId,
-        orderedIds: [a], // only one id; plan has two
+        orderedItems: [{ id: a, segment: "during" }], // only one; plan has two
       }),
     ).rejects.toThrow(ConvexError);
   });
@@ -234,7 +237,7 @@ describe("reorderItems", () => {
       t.mutation(api.functions.scheduling.eventItems.reorderItems, {
         token,
         planId: planA,
-        orderedIds: [onA, onB], // onB belongs to planB
+        orderedItems: [onA, onB].map((id) => ({ id, segment: "during" })), // onB ∈ planB
       }),
     ).rejects.toThrow(ConvexError);
   });
@@ -473,5 +476,180 @@ describe("plan lifecycle integration", () => {
     // Role-only links are structural (they point at shared teamRoles), so they
     // are copied — they resolve to the new plan's (empty) roster.
     expect(items?.[0].assignments.map((a) => a.roleName)).toEqual(["Drums"]);
+  });
+});
+
+describe("run sheet segments (before / during / after)", () => {
+  const create = (
+    t: ReturnType<typeof convexTest>,
+    token: string,
+    planId: Id<"eventPlans">,
+    title: string,
+    segment?: string,
+  ) =>
+    t.mutation(api.functions.scheduling.eventItems.createItem, {
+      token,
+      planId,
+      type: "item",
+      title,
+      segment,
+    });
+
+  it("defaults to 'during' and groups items before → during → after", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    // Created out of phase order; listItems must regroup them.
+    await create(t, token, planId, "Teardown", "after");
+    await create(t, token, planId, "Welcome"); // defaults to during
+    await create(t, token, planId, "Call time", "before");
+    await create(t, token, planId, "Worship"); // during
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    expect(items?.map((i) => i.title)).toEqual([
+      "Call time",
+      "Welcome",
+      "Worship",
+      "Teardown",
+    ]);
+    expect(items?.map((i) => i.segment)).toEqual([
+      "before",
+      "during",
+      "during",
+      "after",
+    ]);
+  });
+
+  it("sequence is per-segment (independent ordering within each phase)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    await create(t, token, planId, "Before 1", "before");
+    await create(t, token, planId, "During 1", "during");
+    await create(t, token, planId, "Before 2", "before");
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    const byTitle = Object.fromEntries(
+      (items ?? []).map((i) => [i.title, i]),
+    );
+    // Each phase counts from 0 independently.
+    expect(byTitle["Before 1"].sequence).toBe(0);
+    expect(byTitle["Before 2"].sequence).toBe(1);
+    expect(byTitle["During 1"].sequence).toBe(0);
+  });
+
+  it("moving an item to another phase appends it there", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    await create(t, token, planId, "Before A", "before");
+    const { itemId: moved } = await create(t, token, planId, "Welcome"); // during
+
+    await t.mutation(api.functions.scheduling.eventItems.updateItem, {
+      token,
+      itemId: moved,
+      segment: "before",
+    });
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    const moveItem = (items ?? []).find((i) => i._id === moved);
+    expect(moveItem?.segment).toBe("before");
+    // Appended after the existing "Before A" (sequence 0) → sequence 1.
+    expect(moveItem?.sequence).toBe(1);
+    expect(items?.map((i) => i.title)).toEqual(["Before A", "Welcome"]);
+  });
+
+  it("reorderItems can drag an item across phases", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    const { itemId: b1 } = await create(t, token, planId, "Before 1", "before");
+    const { itemId: b2 } = await create(t, token, planId, "Before 2", "before");
+    const { itemId: d1 } = await create(t, token, planId, "During 1", "during");
+
+    // Drag "Before 2" into the during phase, ahead of "During 1", and leave
+    // "Before 1" in before — the whole plan is sent with each item's new phase.
+    await t.mutation(api.functions.scheduling.eventItems.reorderItems, {
+      token,
+      planId,
+      orderedItems: [
+        { id: b1, segment: "before" },
+        { id: b2, segment: "during" },
+        { id: d1, segment: "during" },
+      ],
+    });
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    expect(items?.map((i) => i.title)).toEqual([
+      "Before 1",
+      "Before 2",
+      "During 1",
+    ]);
+    const byTitle = Object.fromEntries((items ?? []).map((i) => [i.title, i]));
+    expect(byTitle["Before 2"].segment).toBe("during");
+    expect(byTitle["Before 2"].sequence).toBe(0); // first in during now
+    expect(byTitle["During 1"].sequence).toBe(1);
+    expect(byTitle["Before 1"].segment).toBe("before");
+
+    // A stale/incomplete list (missing an item) is rejected.
+    await expect(
+      t.mutation(api.functions.scheduling.eventItems.reorderItems, {
+        token,
+        planId,
+        orderedItems: [{ id: b1, segment: "before" }],
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("duplicateItem keeps the source's segment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    const { itemId: src } = await create(t, token, planId, "Call time", "before");
+    await create(t, token, planId, "Welcome"); // during
+
+    await t.mutation(api.functions.scheduling.eventItems.duplicateItem, {
+      token,
+      itemId: src,
+    });
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    const before = (items ?? []).filter((i) => i.segment === "before");
+    expect(before.map((i) => i.title)).toEqual(["Call time", "Call time"]);
+    // The copy stays in the before phase; the during item is untouched.
+    expect(items?.map((i) => i.title)).toEqual([
+      "Call time",
+      "Call time",
+      "Welcome",
+    ]);
+  });
+
+  it("rejects an unknown segment", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+    await expect(
+      create(t, token, planId, "Oops", "midway"),
+    ).rejects.toThrow(ConvexError);
   });
 });

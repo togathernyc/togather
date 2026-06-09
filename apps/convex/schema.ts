@@ -2626,7 +2626,14 @@ export default defineSchema({
   eventItems: defineTable({
     planId: v.id("eventPlans"),
     communityId: v.id("communities"),
-    /** Ordering within the run sheet; reordering rewrites these. */
+    /**
+     * When this item happens relative to the event's service times:
+     * "before" | "during" | "after". Items group into these three phases
+     * (PCO's "Before All" / "After All"). Optional for legacy rows, which are
+     * treated as "during". `sequence` orders items WITHIN a segment.
+     */
+    segment: v.optional(v.string()),
+    /** Ordering within the run sheet segment; reordering rewrites these. */
     sequence: v.number(),
     /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
     type: v.string(),

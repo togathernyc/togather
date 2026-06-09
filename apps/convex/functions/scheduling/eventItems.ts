@@ -23,6 +23,39 @@ import { requireGroupMember, requirePlanScheduler } from "./permissions";
 /** Run sheet item types — mirrors PCO vocabulary. */
 const ITEM_TYPES = new Set(["song", "header", "media", "item"]);
 
+/**
+ * When an item happens relative to the event's service times. Items group into
+ * these three phases (like PCO's "Before All" / "After All"). Legacy rows with
+ * no `segment` are treated as "during".
+ */
+const SEGMENTS = ["before", "during", "after"] as const;
+type Segment = (typeof SEGMENTS)[number];
+const SEGMENT_SET = new Set<string>(SEGMENTS);
+
+/** An item's segment, defaulting legacy rows to "during". */
+function itemSegment(item: Doc<"eventItems">): Segment {
+  const s = item.segment;
+  return s && SEGMENT_SET.has(s) ? (s as Segment) : "during";
+}
+
+/** Validate a run sheet segment, throwing on an unknown value. */
+function assertSegment(segment: string): void {
+  if (!SEGMENT_SET.has(segment)) {
+    throw new ConvexError(`Unknown run sheet segment: ${segment}`);
+  }
+}
+
+/** Highest `sequence` among a plan's items in `segment`, or -1 if none. */
+function lastSequenceInSegment(
+  items: Doc<"eventItems">[],
+  segment: Segment,
+): number {
+  return items.reduce(
+    (max, i) => (itemSegment(i) === segment ? Math.max(max, i.sequence) : max),
+    -1,
+  );
+}
+
 const noteValidator = v.object({
   category: v.string(),
   content: v.string(),
@@ -113,7 +146,9 @@ export const listItems = query({
       .query("eventItems")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
-    items.sort((a, b) => a.sequence - b.sequence);
+    // Group by segment (before → during → after), then by sequence within it.
+    const segRank = (i: Doc<"eventItems">) => SEGMENTS.indexOf(itemSegment(i));
+    items.sort((a, b) => segRank(a) - segRank(b) || a.sequence - b.sequence);
 
     return Promise.all(items.map((item) => hydrateItem(ctx, item)));
   },
@@ -138,6 +173,7 @@ async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
   return {
     _id: item._id,
     planId: item.planId,
+    segment: itemSegment(item),
     sequence: item.sequence,
     type: item.type,
     title: item.title,
@@ -160,6 +196,8 @@ export const createItem = mutation({
     planId: v.id("eventPlans"),
     type: v.string(),
     title: v.string(),
+    /** "before" | "during" | "after" — defaults to "during". */
+    segment: v.optional(v.string()),
     durationSec: v.optional(v.number()),
     description: v.optional(v.string()),
     notes: v.optional(v.array(noteValidator)),
@@ -171,6 +209,8 @@ export const createItem = mutation({
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
     assertItemType(args.type);
+    const segment: Segment = (args.segment as Segment) ?? "during";
+    assertSegment(segment);
     const title = args.title.trim();
     if (!title) {
       throw new ConvexError("Run sheet item title cannot be empty");
@@ -179,18 +219,18 @@ export const createItem = mutation({
       await validateItemAssignments(ctx, plan, args.assignments);
     }
 
-    // Append after the current last item.
+    // Append after the current last item in the same segment.
     const existing = await ctx.db
       .query("eventItems")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
-    const nextSequence =
-      existing.reduce((max, i) => Math.max(max, i.sequence), -1) + 1;
+    const nextSequence = lastSequenceInSegment(existing, segment) + 1;
 
     const nowMs = Date.now();
     const itemId = await ctx.db.insert("eventItems", {
       planId: args.planId,
       communityId: plan.communityId,
+      segment,
       sequence: nextSequence,
       type: args.type,
       title,
@@ -220,6 +260,8 @@ export const updateItem = mutation({
     itemId: v.id("eventItems"),
     type: v.optional(v.string()),
     title: v.optional(v.string()),
+    /** Move the item to "before" | "during" | "after"; appended to that phase. */
+    segment: v.optional(v.string()),
     durationSec: v.optional(v.number()),
     description: v.optional(v.string()),
     notes: v.optional(v.array(noteValidator)),
@@ -228,9 +270,22 @@ export const updateItem = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const { plan } = await requireItemScheduler(ctx, args.itemId, userId);
+    const { item, plan } = await requireItemScheduler(ctx, args.itemId, userId);
 
     const patch: Partial<Doc<"eventItems">> = { updatedAt: Date.now() };
+    if (args.segment !== undefined) {
+      assertSegment(args.segment);
+      // Moving to another phase appends the item to the end of it, so its
+      // sequence doesn't collide with that phase's existing items.
+      if (args.segment !== itemSegment(item)) {
+        const siblings = await ctx.db
+          .query("eventItems")
+          .withIndex("by_plan", (q) => q.eq("planId", item.planId))
+          .collect();
+        patch.segment = args.segment;
+        patch.sequence = lastSequenceInSegment(siblings, args.segment as Segment) + 1;
+      }
+    }
     if (args.type !== undefined) {
       assertItemType(args.type);
       patch.type = args.type;
@@ -298,10 +353,12 @@ export const duplicateItem = mutation({
     const userId = await requireAuth(ctx, args.token);
     const { item, plan } = await requireItemScheduler(ctx, args.itemId, userId);
 
+    const segment = itemSegment(item);
     const nowMs = Date.now();
     const newItemId = await ctx.db.insert("eventItems", {
       planId: item.planId,
       communityId: plan.communityId,
+      segment,
       sequence: item.sequence, // provisional; resequenced below
       type: item.type,
       title: item.title,
@@ -315,20 +372,21 @@ export const duplicateItem = mutation({
       updatedAt: nowMs,
     });
 
-    // Rebuild contiguous sequences with the copy directly after the source.
+    // Rebuild contiguous sequences WITHIN the source's segment, with the copy
+    // directly after the source. Other segments are untouched.
     const all = await ctx.db
       .query("eventItems")
       .withIndex("by_plan", (q) => q.eq("planId", item.planId))
       .collect();
-    const existingOrder = all
-      .filter((i) => i._id !== newItemId)
+    const segmentOrder = all
+      .filter((i) => i._id !== newItemId && itemSegment(i) === segment)
       .sort((a, b) => a.sequence - b.sequence)
       .map((i) => i._id);
-    const sourceIndex = existingOrder.findIndex((id) => id === item._id);
-    existingOrder.splice(sourceIndex + 1, 0, newItemId);
+    const sourceIndex = segmentOrder.findIndex((id) => id === item._id);
+    segmentOrder.splice(sourceIndex + 1, 0, newItemId);
 
     await Promise.all(
-      existingOrder.map((id, index) =>
+      segmentOrder.map((id, index) =>
         ctx.db.patch(id, { sequence: index, updatedAt: nowMs }),
       ),
     );
@@ -338,10 +396,14 @@ export const duplicateItem = mutation({
 });
 
 /**
- * Reorder a plan's run sheet by rewriting each item's `sequence` to its index
- * in `orderedIds`. Every id must belong to the plan, and the set must be
- * complete — this rejects a stale client list rather than silently dropping or
- * stranding items.
+ * Reorder a plan's whole run sheet, carrying each item's (possibly changed)
+ * `segment`. This is what powers drag-and-drop, including dragging an item from
+ * one phase (before / during / after) into another: the client sends every item
+ * in its new display order, each tagged with the phase it landed in, and this
+ * rewrites `segment` + a per-phase `sequence` for all of them in one atomic pass.
+ *
+ * Every id must belong to the plan and the set must be complete — this rejects a
+ * stale client list rather than silently dropping or stranding items.
  *
  * Auth: scheduler for the plan's group.
  */
@@ -349,7 +411,10 @@ export const reorderItems = mutation({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
-    orderedIds: v.array(v.id("eventItems")),
+    /** Every item in new display order, each tagged with its phase. */
+    orderedItems: v.array(
+      v.object({ id: v.id("eventItems"), segment: v.string() }),
+    ),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -362,28 +427,34 @@ export const reorderItems = mutation({
 
     const existingIds = new Set(existing.map((i) => i._id as string));
     const seen = new Set<string>();
-    for (const id of args.orderedIds) {
-      if (!existingIds.has(id as string)) {
+    for (const entry of args.orderedItems) {
+      assertSegment(entry.segment);
+      if (!existingIds.has(entry.id as string)) {
         throw new ConvexError("Reorder list references an item not on this plan");
       }
-      if (seen.has(id as string)) {
+      if (seen.has(entry.id as string)) {
         throw new ConvexError("Reorder list contains a duplicate item");
       }
-      seen.add(id as string);
+      seen.add(entry.id as string);
     }
-    if (args.orderedIds.length !== existing.length) {
+    if (args.orderedItems.length !== existing.length) {
       throw new ConvexError(
         "Reorder list is stale — it does not match the plan's current items",
       );
     }
 
+    // Sequence counts up independently within each phase, in the order items
+    // appear in the client's list.
+    const counters: Record<Segment, number> = { before: 0, during: 0, after: 0 };
     const nowMs = Date.now();
     await Promise.all(
-      args.orderedIds.map((id, index) =>
-        ctx.db.patch(id, { sequence: index, updatedAt: nowMs }),
-      ),
+      args.orderedItems.map((entry) => {
+        const segment = entry.segment as Segment;
+        const sequence = counters[segment]++;
+        return ctx.db.patch(entry.id, { segment, sequence, updatedAt: nowMs });
+      }),
     );
 
-    return { reordered: args.orderedIds.length };
+    return { reordered: args.orderedItems.length };
   },
 });

@@ -40,13 +40,22 @@ import {
 import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR, formatEventDateLong } from "../utils/format";
 import {
-  computeItemClockTimes,
+  computeSegmentedClockTimes,
   formatClockTime,
   formatDuration,
   formatServiceRanges,
+  totalDurationSec,
 } from "../utils/runSheetTiming";
 import { InlineText } from "./InlineText";
 import { RunSheetDragList } from "./RunSheetDragList";
+
+/** When an item happens relative to the event's service times. */
+type Segment = "before" | "during" | "after";
+const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
+  { key: "before", label: "Before event" },
+  { key: "during", label: "During event" },
+  { key: "after", label: "After event" },
+];
 
 type ItemAssignment = {
   roleId: Id<"teamRoles">;
@@ -57,6 +66,7 @@ type ItemAssignment = {
 type RunSheetItem = {
   _id: Id<"eventItems">;
   planId: Id<"eventPlans">;
+  segment: string;
   sequence: number;
   type: string;
   title: string;
@@ -93,6 +103,7 @@ type RoleOption = {
 type ItemPatch = {
   type?: string;
   title?: string;
+  segment?: Segment;
   durationSec?: number;
   description?: string;
   notes?: Array<{ category: string; content: string }>;
@@ -136,6 +147,8 @@ export function RunSheetScreen() {
 
   // The just-created item to autofocus its title for immediate editing.
   const [focusId, setFocusId] = useState<string | null>(null);
+  // Which phase the "Add" buttons create into.
+  const [addSegment, setAddSegment] = useState<Segment>("during");
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -151,14 +164,36 @@ export function RunSheetScreen() {
     [times, event?.eventDate],
   );
 
+  // Group items into before / during / after phases. `listItems` already
+  // returns them sorted by (segment, sequence), so each group stays ordered.
+  const itemsBySegment = useMemo(() => {
+    const groups: Record<Segment, RunSheetItem[]> = {
+      before: [],
+      during: [],
+      after: [],
+    };
+    for (const it of items ?? []) {
+      const seg = (it.segment as Segment) ?? "during";
+      (groups[seg] ?? groups.during).push(it);
+    }
+    return groups;
+  }, [items]);
+
   const clockTimes = useMemo(
-    () => computeItemClockTimes(items ?? [], earliestStart),
-    [items, earliestStart],
+    () =>
+      computeSegmentedClockTimes(
+        itemsBySegment.before,
+        itemsBySegment.during,
+        itemsBySegment.after,
+        earliestStart,
+      ),
+    [itemsBySegment, earliestStart],
   );
 
-  const totalSec = useMemo(
-    () => (items ?? []).reduce((sum, i) => sum + i.durationSec, 0),
-    [items],
+  // The service window is the "during" phase — before/after bracket it.
+  const duringTotalSec = useMemo(
+    () => totalDurationSec(itemsBySegment.during),
+    [itemsBySegment.during],
   );
 
   const roleOptions: RoleOption[] = useMemo(
@@ -194,13 +229,14 @@ export function RunSheetScreen() {
           planId,
           type,
           title: type === "header" ? "New section" : "New item",
+          segment: addSegment,
         });
         setFocusId(itemId as string);
       } catch (e: any) {
         Alert.alert("Couldn't add item", e?.message ?? "Please try again.");
       }
     },
-    [createItem, planId],
+    [createItem, planId, addSegment],
   );
 
   const handleDuplicate = useCallback(
@@ -228,16 +264,44 @@ export function RunSheetScreen() {
     [deleteItem],
   );
 
+  // The unified list interleaves phase-header rows (keyed `seg:<phase>`) with
+  // item rows. After a drag, walk the new key order: each header switches the
+  // running phase, and every item that follows takes it — so dragging an item
+  // past a header moves it into that phase.
   const handleReorder = useCallback(
-    (orderedKeys: string[]) =>
-      reorderItems({
-        planId,
-        orderedIds: orderedKeys as Id<"eventItems">[],
-      }).catch((e: any) =>
+    (orderedKeys: string[]) => {
+      const orderedItems: Array<{ id: Id<"eventItems">; segment: Segment }> = [];
+      let current: Segment = "before";
+      for (const key of orderedKeys) {
+        if (key.startsWith("seg:")) {
+          current = key.slice(4) as Segment;
+        } else {
+          orderedItems.push({ id: key as Id<"eventItems">, segment: current });
+        }
+      }
+      return reorderItems({ planId, orderedItems }).catch((e: any) =>
         Alert.alert("Couldn't reorder", e?.message ?? "Please try again."),
-      ),
+      );
+    },
     [reorderItems, planId],
   );
+
+  // Flat rows for the single drag list: each phase's header followed by its
+  // items. Phase headers are always present so an empty phase is still a drop
+  // target — you can drag the first item into it.
+  const rows = useMemo(() => {
+    type Row =
+      | { kind: "header"; segment: Segment; key: string }
+      | { kind: "item"; item: RunSheetItem; key: string };
+    const out: Row[] = [];
+    for (const seg of SEGMENT_OPTIONS) {
+      out.push({ kind: "header", segment: seg.key, key: `seg:${seg.key}` });
+      for (const it of itemsBySegment[seg.key]) {
+        out.push({ kind: "item", item: it, key: it._id as string });
+      }
+    }
+    return out;
+  }, [itemsBySegment]);
 
   const loading = event === undefined || items === undefined;
 
@@ -285,43 +349,93 @@ export function RunSheetScreen() {
           <Text style={[styles.planDate, { color: colors.textSecondary }]}>
             {formatEventDateLong(event.eventDate)}
           </Text>
-          {/* Each service as a start–end range; grows with items/durations. */}
+          {/* The "during" phase is the event window; before/after bracket it. */}
           {times.length > 0 ? (
             <Text style={[styles.ranges, { color: colors.text }]}>
-              {formatServiceRanges(times, totalSec)}
+              {formatServiceRanges(times, duringTotalSec)}
             </Text>
           ) : null}
 
           {items.length === 0 ? (
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No items yet. Add songs, headers, media, and other moments — drag
-              the grip to reorder, tap a field to edit it inline.
+              No items yet. Pick a phase under "Add to" below, then add songs,
+              headers, and other moments. Drag the grip to reorder — drag across
+              a phase heading to move an item before, during, or after the event.
             </Text>
           ) : (
             <View style={styles.list}>
+              {/* One drag list over all phases. Phase headings are drop zones:
+                  drag an item past one to change its phase. */}
               <RunSheetDragList
-                data={items}
-                keyExtractor={(i) => i._id as string}
+                data={rows}
+                keyExtractor={(r) => r.key}
                 onReorder={handleReorder}
-                renderRow={({ item, Handle, isActive }) => (
-                  <EditableRow
-                    item={item}
-                    clockMs={clockTimes[item._id]}
-                    roleOptions={roleOptions}
-                    peopleByRole={peopleByRole}
-                    autoFocus={focusId === (item._id as string)}
-                    isActive={isActive}
-                    Handle={Handle}
-                    onPatch={(patch) => patchItem(item._id, patch)}
-                    onDuplicate={() => handleDuplicate(item._id)}
-                    onDelete={() => handleDelete(item)}
-                  />
-                )}
+                renderRow={({ item: row, Handle, isActive }) =>
+                  row.kind === "header" ? (
+                    <Text
+                      style={[
+                        styles.segmentLabel,
+                        { color: colors.textSecondary },
+                      ]}
+                    >
+                      {SEGMENT_OPTIONS.find((s) => s.key === row.segment)?.label.toUpperCase()}
+                    </Text>
+                  ) : (
+                    <EditableRow
+                      item={row.item}
+                      clockMs={clockTimes[row.item._id]}
+                      roleOptions={roleOptions}
+                      peopleByRole={peopleByRole}
+                      autoFocus={focusId === (row.item._id as string)}
+                      isActive={isActive}
+                      Handle={Handle}
+                      onPatch={(patch) => patchItem(row.item._id, patch)}
+                      onDuplicate={() => handleDuplicate(row.item._id)}
+                      onDelete={() => handleDelete(row.item)}
+                    />
+                  )
+                }
               />
             </View>
           )}
 
-          {/* Add controls */}
+          {/* Add controls — choose the phase, then add. */}
+          <View style={styles.addToRow}>
+            <Text style={[styles.addToLabel, { color: colors.textSecondary }]}>
+              Add to:
+            </Text>
+            {SEGMENT_OPTIONS.map((seg) => {
+              const active = addSegment === seg.key;
+              return (
+                <Pressable
+                  key={seg.key}
+                  onPress={() => setAddSegment(seg.key)}
+                  style={styles.addToChipPressable}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <View
+                    style={[
+                      styles.addToChip,
+                      {
+                        borderColor: active ? primaryColor : colors.border,
+                        backgroundColor: active ? primaryColor + "18" : "transparent",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.addToChipText,
+                        { color: active ? primaryColor : colors.textSecondary },
+                      ]}
+                    >
+                      {seg.label}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
           <View style={styles.addBar}>
             <AddButton label="Add item" icon="add" onPress={() => handleAdd("item")} primaryColor={primaryColor} colors={colors} />
             <AddButton label="Song" icon="musical-notes" onPress={() => handleAdd("song")} primaryColor={primaryColor} colors={colors} />
@@ -515,6 +629,46 @@ function EditableRow({
       {/* Expanded inline editors */}
       {expanded && !isHeader ? (
         <View style={styles.expanded}>
+          {/* Timing phase — before / during / after the event (PCO's position). */}
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+            Timing
+          </Text>
+          <View style={styles.timingToggle}>
+            {SEGMENT_OPTIONS.map((seg) => {
+              const active = (item.segment as Segment) === seg.key;
+              return (
+                <Pressable
+                  key={seg.key}
+                  onPress={() => onPatch({ segment: seg.key })}
+                  style={styles.timingPressable}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <View
+                    style={[
+                      styles.timingChip,
+                      {
+                        borderColor: active ? colors.buttonPrimary : colors.border,
+                        backgroundColor: active
+                          ? colors.buttonPrimary + "1F"
+                          : "transparent",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.timingChipText,
+                        { color: active ? colors.buttonPrimary : colors.textSecondary },
+                      ]}
+                    >
+                      {seg.label}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+
           {isSong ? (
             <View style={styles.songRow}>
               <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
@@ -715,7 +869,39 @@ const styles = StyleSheet.create({
   planDate: { fontSize: 13, marginTop: 4 },
   ranges: { fontSize: 14, fontWeight: "600", marginTop: 8 },
   emptyText: { fontSize: 14, lineHeight: 20, marginTop: 24 },
-  list: { marginTop: 16 },
+  segmentLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  list: { marginTop: 10 },
+  addToRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 24,
+  },
+  addToLabel: { fontSize: 13, fontWeight: "600" },
+  addToChipPressable: { borderRadius: 999 },
+  addToChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  addToChipText: { fontSize: 13, fontWeight: "600" },
+  timingToggle: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
+  timingPressable: { borderRadius: 999 },
+  timingChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  timingChipText: { fontSize: 12, fontWeight: "600" },
   row: {
     borderRadius: 12,
     padding: 10,
