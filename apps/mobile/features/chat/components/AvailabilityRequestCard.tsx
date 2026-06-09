@@ -12,9 +12,10 @@
  * rows. Each event shows a title + date/time line on the left and two pill
  * buttons ("Available" / "Can't") on the right. The selected pill is filled.
  */
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useTheme } from '@hooks/useTheme';
 import type { Id } from '@services/api/convex';
 
@@ -33,6 +34,8 @@ export interface AvailabilityRequestCardProps {
   onSetStatus: (planId: Id<'eventPlans'>, status: 'available' | 'unavailable') => void;
   /** Opens the full "My Availability" page for the request's group, if wired. */
   onOpenPage?: () => void;
+  /** Public `/a/<token>` URL; when set, a "Copy link" button is shown. */
+  copyLinkUrl?: string;
 }
 
 function formatEventDate(ms: number): string {
@@ -49,13 +52,22 @@ export function AvailabilityRequestCard({
   busyPlanId,
   onSetStatus,
   onOpenPage,
+  copyLinkUrl,
 }: AvailabilityRequestCardProps) {
   const { colors } = useTheme();
+  const [copied, setCopied] = useState(false);
 
   const availableCount = useMemo(
     () => events.filter((e) => e.myStatus === 'available').length,
     [events],
   );
+
+  const handleCopy = useCallback(async () => {
+    if (!copyLinkUrl) return;
+    await Clipboard.setStringAsync(copyLinkUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [copyLinkUrl]);
 
   return (
     <View
@@ -167,14 +179,32 @@ export function AvailabilityRequestCard({
         })}
       </View>
 
-      {/* Footer link to the full availability page. */}
-      {onOpenPage ? (
-        <Pressable onPress={onOpenPage} hitSlop={6} style={styles.footer}>
-          <Text style={[styles.footerText, { color: colors.link }]}>
-            Manage all upcoming
-          </Text>
-          <Ionicons name="chevron-forward" size={13} color={colors.link} />
-        </Pressable>
+      {/* Footer: copy the shareable link + open the full page. */}
+      {copyLinkUrl || onOpenPage ? (
+        <View style={[styles.footerRow, { borderTopColor: colors.border }]}>
+          {copyLinkUrl ? (
+            <Pressable onPress={handleCopy} hitSlop={6} style={styles.footer}>
+              <Ionicons
+                name={copied ? 'checkmark' : 'link-outline'}
+                size={14}
+                color={colors.link}
+              />
+              <Text style={[styles.footerText, { color: colors.link }]}>
+                {copied ? 'Copied' : 'Copy link'}
+              </Text>
+            </Pressable>
+          ) : (
+            <View />
+          )}
+          {onOpenPage ? (
+            <Pressable onPress={onOpenPage} hitSlop={6} style={styles.footer}>
+              <Text style={[styles.footerText, { color: colors.link }]}>
+                Manage all upcoming
+              </Text>
+              <Ionicons name="chevron-forward" size={13} color={colors.link} />
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -249,11 +279,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
-    marginTop: 12,
+    gap: 4,
   },
   footerText: {
     fontSize: 13,
