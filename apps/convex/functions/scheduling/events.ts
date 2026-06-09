@@ -23,6 +23,7 @@ import {
   requireGroupScheduler,
   requirePlanScheduler,
 } from "./permissions";
+import { hydrateItem } from "./eventItems";
 
 /** Statuses that consume a slot in fill-summary math (ADR-023). */
 const FILLED_STATUSES = new Set(["confirmed", "unconfirmed"]);
@@ -198,6 +199,7 @@ export const duplicateEvent = mutation({
           notes: item.notes,
           assignments: item.assignments,
           songDetails: item.songDetails,
+          songId: item.songId,
           createdAt: nowMs,
           createdById: userId,
           updatedAt: nowMs,
@@ -571,7 +573,7 @@ export const getEvent = query({
 
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    const [neededRoles, assignments] = await Promise.all([
+    const [neededRoles, assignments, rawItems] = await Promise.all([
       ctx.db
         .query("neededRoles")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
@@ -580,7 +582,20 @@ export const getEvent = query({
         .query("roleAssignments")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
         .collect(),
+      ctx.db
+        .query("eventItems")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
     ]);
+
+    // Run sheet items with their linked library song joined (ADR-027), in the
+    // same before → during → after, then sequence, order as `listItems`.
+    const SEGMENT_RANK: Record<string, number> = { before: 0, during: 1, after: 2 };
+    const segRank = (s: string | undefined) => SEGMENT_RANK[s ?? "during"] ?? 1;
+    rawItems.sort(
+      (a, b) => segRank(a.segment) - segRank(b.segment) || a.sequence - b.sequence,
+    );
+    const items = await Promise.all(rawItems.map((item) => hydrateItem(ctx, item)));
 
     const fill = buildFillSummary(neededRoles, assignments);
     const fillByRole = new Map(fill.roles.map((r) => [r.roleId as string, r]));
@@ -641,6 +656,7 @@ export const getEvent = query({
       meetingIds: plan.meetingIds,
       fillSummary: { totalNeeded: fill.totalNeeded, totalFilled: fill.totalFilled },
       roles,
+      items,
     };
   },
 });

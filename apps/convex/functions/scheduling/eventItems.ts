@@ -19,6 +19,7 @@ import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { requireGroupMember, requirePlanScheduler } from "./permissions";
+import { getHydratedSongForJoin } from "./songs";
 
 /** Run sheet item types — mirrors PCO vocabulary. */
 const ITEM_TYPES = new Set(["song", "header", "media", "item"]);
@@ -158,7 +159,7 @@ export const listItems = query({
  * Join an item's linked assignments with role + user display info. Kept small
  * and shared so the shape stays consistent across mutations that echo an item.
  */
-async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
+export async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
   const assignments = await Promise.all(
     (item.assignments ?? []).map(async (link) => {
       const role = await ctx.db.get(link.roleId);
@@ -169,6 +170,10 @@ async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
       };
     }),
   );
+
+  // Join the linked library song (ADR-027). `songDetails` overrides the song's
+  // defaults; the frontend resolves `songDetails.key ?? song.defaultKey`.
+  const song = await getHydratedSongForJoin(ctx, item.songId);
 
   return {
     _id: item._id,
@@ -181,6 +186,8 @@ async function hydrateItem(ctx: QueryCtx, item: Doc<"eventItems">) {
     durationSec: item.durationSec,
     notes: item.notes ?? [],
     songDetails: item.songDetails ?? null,
+    songId: item.songId ?? null,
+    song,
     assignments,
   };
 }
@@ -267,6 +274,12 @@ export const updateItem = mutation({
     notes: v.optional(v.array(noteValidator)),
     assignments: v.optional(v.array(itemAssignmentValidator)),
     songDetails: v.optional(songDetailsValidator),
+    /**
+     * Link this item to a library song, or clear the link (ADR-027). An id sets
+     * `songId`; `null` clears it; omitted leaves it unchanged. Reuses the same
+     * `requirePlanScheduler` gate as the rest of `updateItem`.
+     */
+    songId: v.optional(v.union(v.id("songs"), v.null())),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -311,6 +324,19 @@ export const updateItem = mutation({
       patch.assignments = args.assignments;
     }
     if (args.songDetails !== undefined) patch.songDetails = args.songDetails;
+    if (args.songId !== undefined) {
+      if (args.songId === null) {
+        patch.songId = undefined;
+      } else {
+        // The song must belong to the same community as the plan — an item
+        // cannot link a foreign community's song.
+        const song = await ctx.db.get(args.songId);
+        if (!song || song.communityId !== plan.communityId) {
+          throw new ConvexError("Linked song does not belong to this community");
+        }
+        patch.songId = args.songId;
+      }
+    }
 
     await ctx.db.patch(args.itemId, patch);
     return { itemId: args.itemId };
@@ -367,6 +393,7 @@ export const duplicateItem = mutation({
       notes: item.notes,
       assignments: item.assignments,
       songDetails: item.songDetails,
+      songId: item.songId,
       createdAt: nowMs,
       createdById: userId,
       updatedAt: nowMs,

@@ -164,6 +164,11 @@ export function NativeRunSheetView({
               `/rostering/${groupId}/run-sheet/${activePlanId}` as never,
             )
           }
+          onRehearse={() =>
+            router.push(
+              `/rostering/${groupId}/run-sheet/rehearse/${activePlanId}` as never,
+            )
+          }
         />
       ) : null}
     </View>
@@ -174,11 +179,14 @@ function PlanRunSheet({
   planId,
   canEdit,
   onEdit,
+  onRehearse,
 }: {
   planId: Id<"eventPlans">;
   groupId: Id<"groups">;
   canEdit: boolean;
   onEdit: () => void;
+  /** Open the read-only musician rehearsal view for this plan (all members). */
+  onRehearse: () => void;
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -246,6 +254,11 @@ function PlanRunSheet({
     }
     return map;
   }, [event?.roles]);
+  // Only surface the rehearsal shortcut when the sheet actually has songs.
+  const hasSongs = useMemo(
+    () => (items ?? []).some((it) => it.type === "song"),
+    [items],
+  );
 
   if (event === undefined || items === undefined) {
     return (
@@ -277,14 +290,37 @@ function PlanRunSheet({
             </Text>
           ) : null}
         </View>
-        {canEdit ? (
-          <Pressable onPress={onEdit} hitSlop={8} accessibilityRole="button">
-            <View style={styles.editRow}>
-              <Ionicons name="create-outline" size={16} color={primaryColor} />
-              <Text style={[styles.editText, { color: primaryColor }]}>Edit</Text>
-            </View>
-          </Pressable>
-        ) : null}
+        <View style={styles.sheetHeaderActions}>
+          {hasSongs ? (
+            <Pressable
+              onPress={onRehearse}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Rehearse songs"
+            >
+              <View style={styles.editRow}>
+                <Ionicons
+                  name="musical-notes-outline"
+                  size={16}
+                  color={primaryColor}
+                />
+                <Text style={[styles.editText, { color: primaryColor }]}>
+                  Rehearse
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+          {canEdit ? (
+            <Pressable onPress={onEdit} hitSlop={8} accessibilityRole="button">
+              <View style={styles.editRow}>
+                <Ionicons name="create-outline" size={16} color={primaryColor} />
+                <Text style={[styles.editText, { color: primaryColor }]}>
+                  Edit
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {items.length === 0 ? (
@@ -413,6 +449,7 @@ const styles = StyleSheet.create({
   sheet: { padding: 16, gap: 8 },
   sheetHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
   sheetHeaderText: { flex: 1 },
+  sheetHeaderActions: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   planTitle: { fontSize: 20, fontWeight: "700" },
   ranges: { fontSize: 13, fontWeight: "600", marginTop: 4 },
   segmentLabel: {

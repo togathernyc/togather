@@ -20,6 +20,7 @@ export {
 export { EventListScreen } from "./components/EventListScreen";
 export { EventEditorScreen } from "./components/EventEditorScreen";
 export { RunSheetScreen } from "./components/RunSheetScreen";
+export { MusicianRehearsalScreen } from "./components/MusicianRehearsalScreen";
 export { MyScheduleScreen } from "./components/MyScheduleScreen";
 export { MyAvailabilityScreen } from "./components/MyAvailabilityScreen";
 export { RosterGridScreen } from "./components/RosterGridScreen";
