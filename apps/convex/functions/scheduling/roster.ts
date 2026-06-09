@@ -76,7 +76,6 @@ export const rosterMatrix = query({
       times: p.times,
       status: p.status, // "draft" | "published" — AssignSheet needs this
     }));
-    const planDate = new Map(plans.map((p) => [p._id as string, p.eventDate]));
 
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(
@@ -194,9 +193,12 @@ export const rosterMatrix = query({
         };
       }
       eventCounts[planKey] = {
-        available: availability.filter((r) => r.status === "available").length,
-        unavailable: availability.filter((r) => r.status === "unavailable").length,
-        noResponse: 0, // filled in once we know the active roster size
+        // available/unavailable are filled below, counting ONLY active roster
+        // members (a left/non-accepted member's stale row must not inflate the
+        // tally or push noResponse negative).
+        available: 0,
+        unavailable: 0,
+        noResponse: 0,
         openSlots,
         neededTotal,
       };
@@ -231,6 +233,19 @@ export const rosterMatrix = query({
     const activeMembers = memberRows.filter(
       (m) => !m.requestStatus || m.requestStatus === "accepted",
     );
+    const activeUserIds = new Set(activeMembers.map((m) => m.userId as string));
+
+    // Per-event availability tallies, counting ONLY active members (stale rows
+    // from people who left must not inflate available/unavailable).
+    for (const { plan, availability } of perPlan) {
+      const planKey = plan._id as string;
+      for (const r of availability) {
+        if (!activeUserIds.has(r.userId as string)) continue;
+        if (r.status === "available") eventCounts[planKey].available += 1;
+        else if (r.status === "unavailable")
+          eventCounts[planKey].unavailable += 1;
+      }
+    }
 
     // Index availability + assignments by user for quick per-member assembly.
     const availByUserPlan = new Map<string, Availability>();
@@ -268,11 +283,18 @@ export const rosterMatrix = query({
         const u = userDocs.get(uid) ?? (await ctx.db.get(m.userId));
         const myAssigns = assignsByUser.get(uid) ?? [];
 
-        // Double-booking: any local day with ≥2 non-declined assignments.
+        // Double-booking uses the member's FULL assignment set (denormalized
+        // eventDate via by_user) — same scope as the assign mutation's check —
+        // so a same-day conflict in another event/group or beyond the column
+        // cap still flags. Counting only the matrix plans would under-report.
+        const allAssigns = await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_user", (q) => q.eq("userId", m.userId))
+          .collect();
         const dayCounts = new Map<number, number>();
-        for (const a of myAssigns) {
+        for (const a of allAssigns) {
           if (a.status === "declined") continue;
-          const day = utcDayBucket(planDate.get(a.planId) ?? 0);
+          const day = utcDayBucket(a.eventDate);
           dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
         }
 
