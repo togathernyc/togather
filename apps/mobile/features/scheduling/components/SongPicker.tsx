@@ -19,6 +19,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useAuth } from "@providers/AuthProvider";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -26,6 +27,7 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import type { Song } from "@features/songs/types";
+import { notify } from "@/utils/platformAlert";
 
 export interface SongPickerProps {
   /** Community the song library belongs to. */
@@ -53,6 +55,11 @@ export function SongPicker({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
+  const { user } = useAuth();
+  // Creating a library song is community-admin-only (backend `requireCommunityAdmin`).
+  // Plan schedulers who aren't admins can still link existing songs, but the
+  // inline Create affordance is hidden so it can't reject under them.
+  const canCreate = !!user?.is_admin;
   const [query, setQuery] = useState("");
 
   const songs = useAuthenticatedQuery(
@@ -90,12 +97,19 @@ export function SongPicker({
 
   const handleCreate = async () => {
     if (!trimmed) return;
-    const newId = await createSong({
-      communityId: communityId as Id<"communities">,
-      input: { title: trimmed },
-    });
-    setQuery("");
-    onSelect(newId as unknown as string);
+    try {
+      const newId = await createSong({
+        communityId: communityId as Id<"communities">,
+        input: { title: trimmed },
+      });
+      setQuery("");
+      onSelect(newId as unknown as string);
+    } catch (e: any) {
+      notify(
+        "Couldn't create song",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      );
+    }
   };
 
   // Linked state: show the song + clear / change controls.
@@ -166,7 +180,7 @@ export function SongPicker({
             </Text>
           </Pressable>
         ))}
-        {trimmed && !exactExists ? (
+        {trimmed && !exactExists && canCreate ? (
           <Pressable
             onPress={handleCreate}
             style={[styles.createRow, { borderColor: primaryColor }]}

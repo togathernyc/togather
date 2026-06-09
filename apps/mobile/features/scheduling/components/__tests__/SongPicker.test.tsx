@@ -31,6 +31,16 @@ jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#2563EB" }),
 }));
 
+let mockIsAdmin = true;
+jest.mock("@providers/AuthProvider", () => ({
+  useAuth: () => ({ user: { is_admin: mockIsAdmin } }),
+}));
+
+const mockNotify = jest.fn();
+jest.mock("@/utils/platformAlert", () => ({
+  notify: (...args: unknown[]) => mockNotify(...args),
+}));
+
 jest.mock("@services/api/convex", () => ({
   api: {
     functions: {
@@ -68,6 +78,7 @@ describe("SongPicker", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockIsAdmin = true;
     onSelect = jest.fn();
     (useAuthenticatedQuery as jest.Mock).mockImplementation(
       (fn: string, args: unknown) => {
@@ -169,6 +180,48 @@ describe("SongPicker", () => {
       });
       expect(onSelect).toHaveBeenCalledWith("song-new");
     });
+  });
+
+  it("hides the inline Create action for non-admins (createSong is admin-only)", () => {
+    mockIsAdmin = false;
+    const { getByPlaceholderText, queryByText } = render(
+      <SongPicker
+        communityId="community-1"
+        groupId="group-1"
+        songId={null}
+        song={null}
+        onSelect={onSelect}
+      />,
+    );
+
+    // A non-admin can still search/link existing songs…
+    fireEvent.changeText(getByPlaceholderText("Search songs…"), "Brand New Song");
+    // …but the inline Create affordance (which would hit the admin-only
+    // createSong guard) is not offered.
+    expect(queryByText('Create "Brand New Song"')).toBeNull();
+  });
+
+  it("surfaces an error instead of failing silently when createSong rejects", async () => {
+    const createSong = jest
+      .fn()
+      .mockRejectedValue(new Error("Only community admins can do that"));
+    (useAuthenticatedMutation as jest.Mock).mockReturnValue(createSong);
+
+    const { getByPlaceholderText, getByText } = render(
+      <SongPicker
+        communityId="community-1"
+        groupId="group-1"
+        songId={null}
+        song={null}
+        onSelect={onSelect}
+      />,
+    );
+
+    fireEvent.changeText(getByPlaceholderText("Search songs…"), "Brand New Song");
+    fireEvent.press(getByText('Create "Brand New Song"'));
+
+    await waitFor(() => expect(mockNotify).toHaveBeenCalled());
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("navigates to the song library when Manage song library is pressed", () => {
