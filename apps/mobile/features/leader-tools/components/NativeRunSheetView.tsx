@@ -28,11 +28,20 @@ import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR, formatEventDate } from "@features/scheduling/utils/format";
 import {
-  computeItemClockTimes,
+  computeSegmentedClockTimes,
   formatClockTime,
   formatDuration,
   formatServiceRanges,
+  totalDurationSec,
 } from "@features/scheduling/utils/runSheetTiming";
+
+/** When an item happens relative to the event's service times. */
+type Segment = "before" | "during" | "after";
+const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
+  { key: "before", label: "Before event" },
+  { key: "during", label: "During event" },
+  { key: "after", label: "After event" },
+];
 
 type PlanSummary = {
   _id: Id<"eventPlans">;
@@ -43,6 +52,7 @@ type PlanSummary = {
 
 type RunSheetItem = {
   _id: Id<"eventItems">;
+  segment: string;
   type: string;
   title: string;
   description: string | null;
@@ -196,13 +206,36 @@ function PlanRunSheet({
     () => (times.length > 0 ? Math.min(...times.map((t) => t.startsAt)) : Date.now()),
     [times],
   );
+  // Group into before / during / after phases (listItems returns them sorted
+  // by (segment, sequence)), then time each phase: during from the event start,
+  // before backward to it, after from the event end. Keeps clocks consistent
+  // with the editor's segmented timing.
+  const itemsBySegment = useMemo(() => {
+    const groups: Record<Segment, RunSheetItem[]> = {
+      before: [],
+      during: [],
+      after: [],
+    };
+    for (const it of items ?? []) {
+      const seg = (it.segment as Segment) ?? "during";
+      (groups[seg] ?? groups.during).push(it);
+    }
+    return groups;
+  }, [items]);
   const clockTimes = useMemo(
-    () => computeItemClockTimes(items ?? [], earliestStart),
-    [items, earliestStart],
+    () =>
+      computeSegmentedClockTimes(
+        itemsBySegment.before,
+        itemsBySegment.during,
+        itemsBySegment.after,
+        earliestStart,
+      ),
+    [itemsBySegment, earliestStart],
   );
-  const totalSec = useMemo(
-    () => (items ?? []).reduce((s, i) => s + i.durationSec, 0),
-    [items],
+  // The service window is the "during" phase — before/after bracket it.
+  const duringTotalSec = useMemo(
+    () => totalDurationSec(itemsBySegment.during),
+    [itemsBySegment.during],
   );
   const peopleByRole = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -240,7 +273,7 @@ function PlanRunSheet({
           </Text>
           {times.length > 0 ? (
             <Text style={[styles.ranges, { color: colors.textSecondary }]}>
-              {formatServiceRanges(times, totalSec)}
+              {formatServiceRanges(times, duringTotalSec)}
             </Text>
           ) : null}
         </View>
@@ -259,15 +292,26 @@ function PlanRunSheet({
           This event plan's run sheet is empty.
         </Text>
       ) : (
-        items.map((item) => (
-          <ReadOnlyRow
-            key={item._id}
-            item={item}
-            clockMs={clockTimes[item._id]}
-            peopleByRole={peopleByRole}
-            colors={colors}
-          />
-        ))
+        SEGMENT_OPTIONS.map((seg) => {
+          const segItems = itemsBySegment[seg.key];
+          if (segItems.length === 0) return null;
+          return (
+            <View key={seg.key}>
+              <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
+                {seg.label.toUpperCase()}
+              </Text>
+              {segItems.map((item) => (
+                <ReadOnlyRow
+                  key={item._id}
+                  item={item}
+                  clockMs={clockTimes[item._id]}
+                  peopleByRole={peopleByRole}
+                  colors={colors}
+                />
+              ))}
+            </View>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -371,6 +415,13 @@ const styles = StyleSheet.create({
   sheetHeaderText: { flex: 1 },
   planTitle: { fontSize: 20, fontWeight: "700" },
   ranges: { fontSize: 13, fontWeight: "600", marginTop: 4 },
+  segmentLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    marginTop: 14,
+    marginBottom: 6,
+  },
   editRow: { flexDirection: "row", alignItems: "center", gap: 4, paddingTop: 4 },
   editText: { fontSize: 14, fontWeight: "600" },
   row: { flexDirection: "row", gap: 10, borderRadius: 12, padding: 12, marginTop: 4 },

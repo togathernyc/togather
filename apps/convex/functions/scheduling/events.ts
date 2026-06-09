@@ -189,6 +189,7 @@ export const duplicateEvent = mutation({
         ctx.db.insert("eventItems", {
           planId: newPlanId,
           communityId: item.communityId,
+          segment: item.segment,
           sequence: item.sequence,
           type: item.type,
           title: item.title,

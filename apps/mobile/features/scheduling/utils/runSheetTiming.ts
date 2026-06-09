@@ -55,6 +55,39 @@ export function computeItemClockTimes(
   return times;
 }
 
+/** Sum of item durations (seconds), ignoring negatives. */
+export function totalDurationSec(items: TimingItem[]): number {
+  return items.reduce((sum, i) => sum + Math.max(0, i.durationSec), 0);
+}
+
+/**
+ * Clock times for a run sheet split into before / during / after phases:
+ *
+ *  - **during** cascades forward from the event start (`serviceStartMs`).
+ *  - **before** counts BACKWARD so its items lead up to the start — the last
+ *    "before" item ends exactly at `serviceStartMs`.
+ *  - **after** cascades forward from the event end (start + total "during").
+ *
+ * Returns one merged map of item id → start time, so a single lookup works
+ * regardless of an item's phase.
+ */
+export function computeSegmentedClockTimes(
+  before: TimingItem[],
+  during: TimingItem[],
+  after: TimingItem[],
+  serviceStartMs: number,
+): Record<string, number | null> {
+  const duringTotalMs = totalDurationSec(during) * 1000;
+  const beforeTotalMs = totalDurationSec(before) * 1000;
+  const eventEndMs = serviceStartMs + duringTotalMs;
+  const beforeStartMs = serviceStartMs - beforeTotalMs;
+  return {
+    ...computeItemClockTimes(before, beforeStartMs),
+    ...computeItemClockTimes(during, serviceStartMs),
+    ...computeItemClockTimes(after, eventEndMs),
+  };
+}
+
 /** "10:04 AM" — clock label for a run sheet row. */
 export function formatClockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", {

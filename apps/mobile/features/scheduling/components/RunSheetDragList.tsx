@@ -17,7 +17,7 @@
  * Reorder math (`moveKey`) is shared; the platforms only differ in how a drag
  * is driven and how the drop target is detected.
  */
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { View, StyleSheet, Platform } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -62,12 +62,21 @@ export function RunSheetDragList<T>({
 }) {
   const { colors } = useTheme();
   const keys = data.map(keyExtractor);
+  const keysSignature = keys.join("|");
 
   const [activeKey, setActiveKey] = useState<string | null>(null);
   // Insertion slot the dragged row would drop into (0..length), or null.
   const [overSlot, setOverSlot] = useState<number | null>(null);
   // Measured row heights (native offset math only).
   const heights = useRef<Record<string, number>>({});
+
+  // Latest key order in a ref so `commit` (and the Handles built from it) can
+  // stay identity-stable across renders. If they were rebuilt every render, the
+  // re-render triggered by `setActiveKey` / `setOverSlot` mid-drag would give
+  // each row a NEW Handle type, making React remount the dragged element — which
+  // cancels an in-progress HTML5 drag. That was the "have to drag twice" bug.
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
 
   const reset = useCallback(() => {
     setActiveKey(null);
@@ -76,14 +85,47 @@ export function RunSheetDragList<T>({
 
   const commit = useCallback(
     (key: string, toSlot: number) => {
-      const from = keys.indexOf(key);
+      const ks = keysRef.current;
+      const from = ks.indexOf(key);
       if (from !== -1 && toSlot !== from && toSlot !== from + 1) {
-        onReorder(moveKey(keys, key, toSlot));
+        onReorder(moveKey(ks, key, toSlot));
       }
       reset();
     },
-    [keys, onReorder, reset],
+    [onReorder, reset],
   );
+
+  // Stable per-key Handle components. Recomputed only when the row set/order
+  // changes — never on `activeKey` / `overSlot` updates during a drag — so the
+  // dragged element is not remounted while the user is dragging it.
+  const handlesByKey = useMemo(() => {
+    const map: Record<string, HandleComponent> = {};
+    keysRef.current.forEach((k, i) => {
+      map[k] =
+        Platform.OS === "web"
+          ? ({ children }) => (
+              <WebHandle dragKey={k} setActiveKey={setActiveKey} reset={reset}>
+                {children}
+              </WebHandle>
+            )
+          : ({ children }) => (
+              <NativeHandle
+                dragKey={k}
+                index={i}
+                keys={keysRef.current}
+                heights={heights}
+                setActiveKey={setActiveKey}
+                setOverSlot={setOverSlot}
+                commit={commit}
+                reset={reset}
+              >
+                {children}
+              </NativeHandle>
+            );
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keysSignature, commit, reset]);
 
   const line = (
     <View style={[styles.insertLine, { backgroundColor: colors.buttonPrimary }]} />
@@ -94,27 +136,7 @@ export function RunSheetDragList<T>({
       {data.map((item, index) => {
         const key = keyExtractor(item);
         const isActive = key === activeKey;
-
-        const Handle: HandleComponent =
-          Platform.OS === "web"
-            ? ({ children }) => (
-                <WebHandle dragKey={key} setActiveKey={setActiveKey}>
-                  {children}
-                </WebHandle>
-              )
-            : ({ children }) => (
-                <NativeHandle
-                  dragKey={key}
-                  index={index}
-                  keys={keys}
-                  heights={heights}
-                  setActiveKey={setActiveKey}
-                  setOverSlot={setOverSlot}
-                  commit={commit}
-                >
-                  {children}
-                </NativeHandle>
-              );
+        const Handle = handlesByKey[key];
 
         const rowBody = (
           <>
@@ -131,7 +153,12 @@ export function RunSheetDragList<T>({
               key,
               "data-runsheet-row": "true",
               onDragOver: (e: any) => {
-                if (!activeKey) return;
+                // Always preventDefault so the row is a valid drop target from
+                // the very first dragover frame — even before React has
+                // re-rendered with `activeKey` set. Guarding on `activeKey`
+                // here skipped preventDefault on the opening frames of a drag,
+                // so the browser refused the drop and the item only moved on a
+                // second attempt.
                 e.preventDefault();
                 const rect = e.currentTarget?.getBoundingClientRect?.();
                 const after =
@@ -170,10 +197,12 @@ export function RunSheetDragList<T>({
 function WebHandle({
   dragKey,
   setActiveKey,
+  reset,
   children,
 }: {
   dragKey: string;
   setActiveKey: (k: string | null) => void;
+  reset: () => void;
   children: React.ReactNode;
 }) {
   return React.createElement(
@@ -190,6 +219,10 @@ function WebHandle({
         }
         setActiveKey(dragKey);
       },
+      // Always clear the active/insert state when the drag ends — including a
+      // cancelled drop (released outside any row). Without this the row stays
+      // "lifted" and a stale activeKey forces a second drag before it moves.
+      onDragEnd: () => reset(),
     },
     children,
   );
@@ -204,6 +237,7 @@ function NativeHandle({
   setActiveKey,
   setOverSlot,
   commit,
+  reset,
   children,
 }: {
   dragKey: string;
@@ -213,6 +247,7 @@ function NativeHandle({
   setActiveKey: (k: string | null) => void;
   setOverSlot: (i: number | null) => void;
   commit: (key: string, toSlot: number) => void;
+  reset: () => void;
   children: React.ReactNode;
 }) {
   const translateY = useSharedValue(0);
@@ -250,7 +285,10 @@ function NativeHandle({
 
   const pan = Gesture.Pan()
     .activateAfterLongPress(150)
-    .onBegin(() => runOnJS(setActiveKey)(dragKey))
+    // Mark the row active only once the drag actually starts (after the
+    // long-press activates) — not on mere touch-down — so a quick tap/flick
+    // doesn't leave it "lifted".
+    .onStart(() => runOnJS(setActiveKey)(dragKey))
     .onUpdate((e) => {
       translateY.value = e.translationY;
       runOnJS(onMove)(e.translationY);
@@ -259,8 +297,11 @@ function NativeHandle({
       runOnJS(onDrop)(e.translationY);
       translateY.value = 0;
     })
+    // Always runs (commit or cancel): drop the lift and clear active/insert
+    // state so the next drag starts clean.
     .onFinalize(() => {
       translateY.value = 0;
+      runOnJS(reset)();
     });
 
   const animatedStyle = useAnimatedStyle(() => ({
