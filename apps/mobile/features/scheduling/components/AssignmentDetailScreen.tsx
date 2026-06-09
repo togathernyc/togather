@@ -51,6 +51,7 @@ type MyAssignment = {
 };
 
 type EventDoc = {
+  groupId: Id<"groups">;
   roles: Array<{
     roleId: Id<"teamRoles">;
     teamId: Id<"teams">;
@@ -61,6 +62,7 @@ type EventDoc = {
       status: string;
     }>;
   }>;
+  items: Array<{ _id: string; type: string; title: string }>;
 };
 
 export function AssignmentDetailScreen() {
@@ -112,6 +114,18 @@ export function AssignmentDetailScreen() {
   }, [event, assignment, assignmentId]);
 
   const busy = busyId === (assignmentId as string);
+
+  // Musician rehearsal entry (ADR-027): only when the plan's run sheet has songs.
+  const hasSongs = useMemo(
+    () => (event?.items ?? []).some((it) => it.type === "song"),
+    [event?.items],
+  );
+  const openRehearsal = useCallback(() => {
+    if (!event || !assignment) return;
+    router.push(
+      `/rostering/${event.groupId}/run-sheet/rehearse/${assignment.planId}` as any,
+    );
+  }, [router, event, assignment]);
 
   return (
     <View
@@ -236,6 +250,34 @@ export function AssignmentDetailScreen() {
                 {assignment.declineNote ? ` — "${assignment.declineNote}"` : ""}
               </Text>
             </View>
+          )}
+
+          {/* Rehearse songs (ADR-027) */}
+          {hasSongs && (
+            <Pressable
+              onPress={openRehearsal}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.group,
+                styles.rehearseRow,
+                { backgroundColor: colors.surfaceSecondary },
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Ionicons
+                name="musical-notes-outline"
+                size={20}
+                color={colors.text}
+              />
+              <Text style={[styles.rehearseText, { color: colors.text }]}>
+                Rehearse songs
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.textTertiary}
+              />
+            </Pressable>
           )}
 
           {/* Teammates */}
@@ -447,6 +489,14 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginTop: 16,
   },
+  rehearseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  rehearseText: { flex: 1, fontSize: 16, fontWeight: "500" },
   detailRow: {
     flexDirection: "row",
     alignItems: "center",
