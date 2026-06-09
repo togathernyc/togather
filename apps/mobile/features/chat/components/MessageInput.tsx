@@ -49,7 +49,6 @@ import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
 import { GifPicker } from './GifPicker';
 import { PollCreatorSheet } from './PollCreatorSheet';
-import { AvailabilityRequestCreatorSheet } from './AvailabilityRequestCreatorSheet';
 import { classifyChatSendError } from '../utils/chatSendErrors';
 
 interface MessageInputProps {
@@ -145,7 +144,6 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showPollCreator, setShowPollCreator] = useState(false);
-  const [showAvailabilityCreator, setShowAvailabilityCreator] = useState(false);
   // Inline hint shown after a soft-fail send (e.g. attachments-pending,
   // profile-photo-required). Auto-clears after a short window. Used INSTEAD
   // of Alert/popup, which previously kept enough state churning to crash the
@@ -877,15 +875,6 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           if (channelId) setShowPollCreator(true);
         },
       });
-      options.push({
-        id: 'availability',
-        label: 'Availability',
-        icon: 'calendar-outline',
-        iconColor: '#FF9500',
-        onPress: () => {
-          if (channelId) setShowAvailabilityCreator(true);
-        },
-      });
     }
     if (process.env.EXPO_PUBLIC_KLIPY_API_KEY) {
       options.push({
@@ -1191,16 +1180,6 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           visible={showPollCreator}
           channelId={channelId}
           onClose={() => setShowPollCreator(false)}
-        />
-      )}
-
-      {/* Availability Request Creator Modal — same `recipientPending` guard
-          as the poll composer so an unaccepted DM never sees it. */}
-      {channelId && showAvailabilityCreator && !recipientPending && (
-        <AvailabilityRequestCreatorSheet
-          visible={showAvailabilityCreator}
-          channelId={channelId}
-          onClose={() => setShowAvailabilityCreator(false)}
         />
       )}
     </View>
