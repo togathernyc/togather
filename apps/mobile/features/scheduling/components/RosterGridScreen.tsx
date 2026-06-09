@@ -996,8 +996,10 @@ function RoleCellView({
       accessibilityRole="button"
       accessibilityLabel={
         cell.occupants.length > 0
-          ? cell.occupants.map((o) => o.userName).join(", ")
-          : "Open — tap to assign"
+          ? `${cell.occupants.map((o) => o.userName).join(", ")}${
+              cell.open > 0 ? `, ${cell.open} open` : ""
+            }`
+          : `${cell.open} open — tap to assign`
       }
     >
       <View style={styles.cellAvatars}>
@@ -1029,6 +1031,9 @@ function RoleCellView({
             </Text>
           </View>
         )}
+        {/* One dashed chip stands for the open slots; when more than one is
+            open it shows the count so a multi-person role doesn't read as a
+            single empty slot. */}
         {cell.open > 0 && (
           <View
             style={[
@@ -1039,7 +1044,13 @@ function RoleCellView({
               },
             ]}
           >
-            <Ionicons name="add" size={13} color={colors.textTertiary} />
+            {cell.open > 1 ? (
+              <Text style={[styles.openSlotCount, { color: colors.textTertiary }]}>
+                {cell.open}
+              </Text>
+            ) : (
+              <Ionicons name="add" size={13} color={colors.textTertiary} />
+            )}
           </View>
         )}
       </View>
@@ -1550,6 +1561,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  openSlotCount: { fontSize: 12, fontWeight: "700" },
   cellRole: { fontSize: 11, fontWeight: "600", paddingHorizontal: 3, textAlign: "center" },
   cellAv: { fontSize: 11, fontWeight: "700" },
   cellMuted: { fontSize: 13 },
