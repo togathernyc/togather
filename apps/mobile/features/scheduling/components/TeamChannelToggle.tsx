@@ -16,11 +16,12 @@
  * Backend: scheduling.teams.linkChannel / unlinkChannel.
  */
 import React, { useCallback, useState } from "react";
-import { View, Text, Pressable, Alert, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, Pressable, ActivityIndicator, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 
 export function TeamChannelToggle({
   teamId,
@@ -57,7 +58,7 @@ export function TeamChannelToggle({
         }
         // Convex queries re-fetch reactively — no manual refresh needed.
       } catch (e: any) {
-        Alert.alert(
+        notify(
           turningOn ? "Couldn't turn on chat" : "Couldn't turn off chat",
           e?.data?.message ?? e?.message ?? "Couldn't update the team's chat channel",
         );
@@ -68,35 +69,26 @@ export function TeamChannelToggle({
     [linkChannel, unlinkChannel, teamId],
   );
 
-  const handlePress = useCallback(() => {
+  const handlePress = useCallback(async () => {
     if (busy) return;
     if (hasChannel) {
-      Alert.alert(
-        `Turn off chat for ${teamName}?`,
-        `The team's chat channel will be unlinked. ${channelMemberCount} auto-synced ${
+      const ok = await confirmAsync({
+        title: `Turn off chat for ${teamName}?`,
+        message: `The team's chat channel will be unlinked. ${channelMemberCount} auto-synced ${
           channelMemberCount === 1 ? "member is" : "members are"
         } removed from it; the channel itself stays in the inbox as a regular custom channel. You can turn chat back on later. This affects every event this team is on.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Turn off",
-            style: "destructive",
-            onPress: () => void performToggle(false),
-          },
-        ],
-      );
+        confirmText: "Turn off",
+        destructive: true,
+      });
+      if (ok) void performToggle(false);
     } else {
-      Alert.alert(
-        `Turn on chat for ${teamName}?`,
-        "A new chat channel will be created in the inbox. Membership auto-syncs from the team's event-plan assignments. This affects every event this team is on.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Turn on",
-            onPress: () => void performToggle(true),
-          },
-        ],
-      );
+      const ok = await confirmAsync({
+        title: `Turn on chat for ${teamName}?`,
+        message:
+          "A new chat channel will be created in the inbox. Membership auto-syncs from the team's event-plan assignments. This affects every event this team is on.",
+        confirmText: "Turn on",
+      });
+      if (ok) void performToggle(true);
     }
   }, [busy, hasChannel, teamName, channelMemberCount, performToggle]);
 

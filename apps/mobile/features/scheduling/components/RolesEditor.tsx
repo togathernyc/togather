@@ -16,7 +16,6 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
-  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { CustomModal } from "@components/ui/Modal";
@@ -27,6 +26,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import { ROLE_COLORS, DEFAULT_ROLE_COLOR } from "../utils/format";
 
 type Role = {
@@ -89,7 +89,7 @@ export function RolesEditor({ teamId }: { teamId: Id<"teams"> }) {
         setEditorVisible(false);
         setEditing(null);
       } catch (e: any) {
-        Alert.alert("Couldn't save role", e?.message ?? "Please try again.");
+        notify("Couldn't save role", e?.message ?? "Please try again.");
       } finally {
         setBusy(false);
       }
@@ -98,28 +98,19 @@ export function RolesEditor({ teamId }: { teamId: Id<"teams"> }) {
   );
 
   const handleArchive = useCallback(
-    (role: Role) => {
-      Alert.alert(
-        "Archive role?",
-        `"${role.name}" stays on past event plans but won't appear on new ones.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Archive",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await archiveRole({ roleId: role._id });
-              } catch (e: any) {
-                Alert.alert(
-                  "Couldn't archive",
-                  e?.message ?? "Please try again.",
-                );
-              }
-            },
-          },
-        ],
-      );
+    async (role: Role) => {
+      const ok = await confirmAsync({
+        title: "Archive role?",
+        message: `"${role.name}" stays on past event plans but won't appear on new ones.`,
+        confirmText: "Archive",
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await archiveRole({ roleId: role._id });
+      } catch (e: any) {
+        notify("Couldn't archive", e?.message ?? "Please try again.");
+      }
     },
     [archiveRole],
   );
@@ -134,7 +125,7 @@ export function RolesEditor({ teamId }: { teamId: Id<"teams"> }) {
       try {
         await reorderRoles({ teamId, orderedRoleIds: ordered });
       } catch (e: any) {
-        Alert.alert("Couldn't reorder", e?.message ?? "Please try again.");
+        notify("Couldn't reorder", e?.message ?? "Please try again.");
       }
     },
     [roles, reorderRoles, teamId],
