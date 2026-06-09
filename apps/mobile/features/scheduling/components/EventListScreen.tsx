@@ -37,6 +37,8 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { ActionMenuSheet } from "@components/ui/ActionMenuSheet";
+import { confirmAsync } from "@/utils/platformAlert";
 import { formatEventDate } from "../utils/format";
 
 type EventRow = {
@@ -83,6 +85,8 @@ export function EventListScreen() {
   const [creating, setCreating] = useState(false);
   const [sharingLink, setSharingLink] = useState(false);
   const [showPast, setShowPast] = useState(false);
+  // Web ⋯ menu target (ActionSheetIOS/Alert don't work on web).
+  const [menuEvent, setMenuEvent] = useState<EventRow | null>(null);
 
   // Generate a public, app-optional availability link and hand it to the OS
   // share sheet. People can open it in a browser (no app needed) and their
@@ -137,26 +141,20 @@ export function EventListScreen() {
   );
 
   const handleDelete = useCallback(
-    (event: EventRow) => {
-      Alert.alert(
-        "Delete event plan?",
-        `"${event.title}" and its roster will be permanently deleted.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: () => {
-              void deleteEvent({ planId: event._id });
-            },
-          },
-        ],
-      );
+    async (event: EventRow) => {
+      const ok = await confirmAsync({
+        title: "Delete event plan?",
+        message: `"${event.title}" and its roster will be permanently deleted.`,
+        confirmText: "Delete",
+        destructive: true,
+      });
+      if (ok) void deleteEvent({ planId: event._id });
     },
     [deleteEvent],
   );
 
-  // Contextual ⋯ menu for an event card — Duplicate / Delete.
+  // Contextual ⋯ menu for an event card — Duplicate / Delete. ActionSheetIOS is
+  // iOS-only and Alert.alert is a no-op on web, so web uses ActionMenuSheet.
   const handleEventMenu = useCallback(
     (event: EventRow) => {
       if (Platform.OS === "ios") {
@@ -169,24 +167,21 @@ export function EventListScreen() {
           },
           (buttonIndex) => {
             if (buttonIndex === 1) void handleDuplicate(event);
-            else if (buttonIndex === 2) handleDelete(event);
+            else if (buttonIndex === 2) void handleDelete(event);
           },
         );
-      } else {
+      } else if (Platform.OS === "android") {
         Alert.alert(event.title, undefined, [
           { text: "Cancel", style: "cancel" },
-          {
-            text: "Duplicate",
-            onPress: () => {
-              void handleDuplicate(event);
-            },
-          },
+          { text: "Duplicate", onPress: () => void handleDuplicate(event) },
           {
             text: "Delete",
             style: "destructive",
-            onPress: () => handleDelete(event),
+            onPress: () => void handleDelete(event),
           },
         ]);
+      } else {
+        setMenuEvent(event);
       }
     },
     [handleDuplicate, handleDelete],
@@ -306,6 +301,7 @@ export function EventListScreen() {
   const past = events.filter((e) => e.eventDate < cutoff).reverse();
 
   return (
+    <>
     <ScrollView
       style={{ backgroundColor: colors.surface }}
       contentContainerStyle={[
@@ -397,6 +393,24 @@ export function EventListScreen() {
         </>
       )}
     </ScrollView>
+    <ActionMenuSheet
+      visible={menuEvent !== null}
+      title={menuEvent?.title}
+      actions={
+        menuEvent
+          ? [
+              { label: "Duplicate", onPress: () => void handleDuplicate(menuEvent) },
+              {
+                label: "Delete",
+                destructive: true,
+                onPress: () => void handleDelete(menuEvent),
+              },
+            ]
+          : []
+      }
+      onClose={() => setMenuEvent(null)}
+    />
+    </>
   );
 }
 
