@@ -617,6 +617,34 @@ describe("run sheet segments (before / during / after)", () => {
     ).rejects.toThrow(ConvexError);
   });
 
+  it("reorderItems accepts the legacy orderedIds shape, preserving phases", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+
+    const { itemId: b1 } = await create(t, token, planId, "Before 1", "before");
+    const { itemId: d1 } = await create(t, token, planId, "During 1", "during");
+    const { itemId: d2 } = await create(t, token, planId, "During 2", "during");
+
+    // An old client sends a flat id order with no phase — phases are preserved.
+    await t.mutation(api.functions.scheduling.eventItems.reorderItems, {
+      token,
+      planId,
+      orderedIds: [b1, d2, d1],
+    });
+
+    const items = await t.query(api.functions.scheduling.eventItems.listItems, {
+      token,
+      planId,
+    });
+    expect(items?.map((i) => i.title)).toEqual(["Before 1", "During 2", "During 1"]);
+    const byTitle = Object.fromEntries((items ?? []).map((i) => [i.title, i]));
+    expect(byTitle["Before 1"].segment).toBe("before");
+    expect(byTitle["During 2"].segment).toBe("during");
+    expect(byTitle["During 2"].sequence).toBe(0);
+    expect(byTitle["During 1"].sequence).toBe(1);
+  });
+
   it("duplicateItem keeps the source's segment", async () => {
     const { t, world } = await setupSchedulingWorld();
     const token = (await generateTokens(world.groupLeaderId)).accessToken;

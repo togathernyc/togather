@@ -412,9 +412,16 @@ export const reorderItems = mutation({
     token: v.string(),
     planId: v.id("eventPlans"),
     /** Every item in new display order, each tagged with its phase. */
-    orderedItems: v.array(
-      v.object({ id: v.id("eventItems"), segment: v.string() }),
+    orderedItems: v.optional(
+      v.array(v.object({ id: v.id("eventItems"), segment: v.string() })),
     ),
+    /**
+     * Legacy shape (pre-phases clients): a flat id order with no phase. Convex
+     * deploys ahead of native app updates, so an older bundle may still send
+     * this — we honour it, preserving each item's current phase. New clients
+     * send `orderedItems`.
+     */
+    orderedIds: v.optional(v.array(v.id("eventItems"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -425,9 +432,25 @@ export const reorderItems = mutation({
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
 
+    // Normalize legacy `orderedIds` into `orderedItems` by keeping each item's
+    // stored phase, so an old client's reorder doesn't drop items out of phase.
+    let orderedItems = args.orderedItems;
+    if (!orderedItems) {
+      if (!args.orderedIds) {
+        throw new ConvexError("Reorder requires orderedItems or orderedIds");
+      }
+      const segById = new Map(
+        existing.map((i) => [i._id as string, itemSegment(i)]),
+      );
+      orderedItems = args.orderedIds.map((id) => ({
+        id,
+        segment: segById.get(id as string) ?? "during",
+      }));
+    }
+
     const existingIds = new Set(existing.map((i) => i._id as string));
     const seen = new Set<string>();
-    for (const entry of args.orderedItems) {
+    for (const entry of orderedItems) {
       assertSegment(entry.segment);
       if (!existingIds.has(entry.id as string)) {
         throw new ConvexError("Reorder list references an item not on this plan");
@@ -437,7 +460,7 @@ export const reorderItems = mutation({
       }
       seen.add(entry.id as string);
     }
-    if (args.orderedItems.length !== existing.length) {
+    if (orderedItems.length !== existing.length) {
       throw new ConvexError(
         "Reorder list is stale — it does not match the plan's current items",
       );
@@ -448,13 +471,13 @@ export const reorderItems = mutation({
     const counters: Record<Segment, number> = { before: 0, during: 0, after: 0 };
     const nowMs = Date.now();
     await Promise.all(
-      args.orderedItems.map((entry) => {
+      orderedItems.map((entry) => {
         const segment = entry.segment as Segment;
         const sequence = counters[segment]++;
         return ctx.db.patch(entry.id, { segment, sequence, updatedAt: nowMs });
       }),
     );
 
-    return { reordered: args.orderedItems.length };
+    return { reordered: orderedItems.length };
   },
 });
