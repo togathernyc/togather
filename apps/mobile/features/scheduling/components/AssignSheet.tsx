@@ -163,6 +163,8 @@ export function AssignSheet({
   roleName,
   timeLabel,
   assignedUserIds,
+  prioritizeAvailable = false,
+  keepOpenWhileUnfilled = false,
   onClose,
 }: {
   visible: boolean;
@@ -182,6 +184,17 @@ export function AssignSheet({
   timeLabel?: string;
   /** Users already on this role — shown as disabled. */
   assignedUserIds: Set<string>;
+  /**
+   * Sort GROUP candidates available-first (when opened from the roster grid,
+   * where availability is the primary lens). Default keeps name order.
+   */
+  prioritizeAvailable?: boolean;
+  /**
+   * Keep the sheet open after assigning instead of closing — lets a leader
+   * fill a multi-person role (e.g. "Vocals 3") without re-opening. The parent
+   * reactively updates `assignedUserIds`, so filled people grey out in place.
+   */
+  keepOpenWhileUnfilled?: boolean;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
@@ -294,8 +307,20 @@ export function AssignSheet({
         communityRows.push(c);
       }
     }
+    if (prioritizeAvailable) {
+      // Available → no-response → unavailable, then existing (name) order.
+      const rank = (uid: string): number => {
+        const s = availabilityByUser.get(uid);
+        if (s === "available") return 0;
+        if (s === "unavailable") return 2;
+        return 1;
+      };
+      groupRows.sort(
+        (a, b) => rank(a.userId as string) - rank(b.userId as string),
+      );
+    }
     return { previousRows, groupRows, communityRows };
-  }, [candidates, previous, debouncedSearch]);
+  }, [candidates, previous, debouncedSearch, prioritizeAvailable, availabilityByUser]);
 
   // ---------------------------------------------------------------------------
   // Mutation handlers
@@ -328,7 +353,10 @@ export function AssignSheet({
             `${person.displayName} is already scheduled somewhere else this day. They've still been assigned — they can sort it out when they respond.`,
           );
         }
-        onClose();
+        // Multi-person roles (e.g. "Vocals 3") stay open so the leader fills
+        // the rest without re-opening; the just-assigned person greys out as
+        // the parent's reactive `assignedUserIds` updates.
+        if (!keepOpenWhileUnfilled) onClose();
       } catch (e) {
         surfaceError("Couldn't assign", e);
       } finally {
@@ -342,6 +370,7 @@ export function AssignSheet({
       teamId,
       roleId,
       timeLabel,
+      keepOpenWhileUnfilled,
       onClose,
       surfaceError,
     ],
