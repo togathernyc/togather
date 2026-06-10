@@ -20,6 +20,7 @@ import { generateTokens } from "../../lib/auth";
 import { api, internal } from "../../_generated/api";
 import { buildSchedulingWorld } from "../scheduling/fixtures";
 import { mapPcoSongs } from "../../functions/pcoServices/songImport";
+import { PcoApiError } from "../../lib/pcoServicesApi";
 import type { PcoArrangement, PcoSong } from "../../lib/pcoServicesApi";
 
 // Mock only the PCO HTTP layer — token + fetch helpers. Everything else
@@ -518,5 +519,22 @@ describe("importSongsFromPco", () => {
         communityId: world.communityId,
       }),
     ).rejects.toThrow(/group leader or community admin/);
+  });
+
+  it("maps a PCO 403 to an actionable permission message", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await connectPco(t, world.communityId);
+
+    (fetchAllSongs as any).mockRejectedValue(
+      new PcoApiError(403, "PCO API error: Forbidden", "forbidden"),
+    );
+
+    await expect(
+      t.action(api.functions.pcoServices.songImport.importSongsFromPco, {
+        token,
+        communityId: world.communityId,
+      }),
+    ).rejects.toThrow(/Editor or Administrator access to Services/);
   });
 });
