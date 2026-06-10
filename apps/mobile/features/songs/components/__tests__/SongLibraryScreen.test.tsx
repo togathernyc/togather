@@ -5,6 +5,7 @@ import { SongLibraryScreen } from "../SongLibraryScreen";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
+  useAuthenticatedAction,
 } from "@services/api/convex";
 import { useFileUpload } from "@features/chat/hooks/useFileUpload";
 
@@ -40,6 +41,9 @@ jest.mock("@hooks/useCommunityTheme", () => ({
 // Whether the current user may manage songs (admin or group leader), surfaced
 // by the canManageSongs query.
 let mockCanManage = true;
+// Whether the community has a connected PCO integration, surfaced by the
+// integrations.planningCenterStatus query (gates the import button).
+let mockPcoConnected = true;
 jest.mock("@providers/AuthProvider", () => ({
   useAuth: () => ({ community: { id: "community-1" } }),
 }));
@@ -80,10 +84,20 @@ jest.mock("@services/api/convex", () => ({
           canManageSongs: "api.functions.scheduling.songs.canManageSongs",
         },
       },
+      integrations: {
+        planningCenterStatus: "api.functions.integrations.planningCenterStatus",
+      },
+      pcoServices: {
+        songImport: {
+          importSongsFromPco:
+            "api.functions.pcoServices.songImport.importSongsFromPco",
+        },
+      },
     },
   },
   useAuthenticatedQuery: jest.fn(),
   useAuthenticatedMutation: jest.fn(),
+  useAuthenticatedAction: jest.fn(),
 }));
 
 const SONGS = [
@@ -116,16 +130,20 @@ describe("SongLibraryScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockCanManage = true;
+    mockPcoConnected = true;
     (useAuthenticatedQuery as jest.Mock).mockImplementation(
       (fn: string, args: unknown) => {
         if (args === "skip") return undefined;
         if (fn === "api.functions.scheduling.songs.listSongs") return SONGS;
         if (fn === "api.functions.scheduling.songs.canManageSongs")
           return mockCanManage;
+        if (fn === "api.functions.integrations.planningCenterStatus")
+          return { isConnected: mockPcoConnected };
         return undefined;
       },
     );
     setMutations({});
+    (useAuthenticatedAction as jest.Mock).mockReturnValue(jest.fn());
     (useFileUpload as jest.Mock).mockReturnValue({
       uploadFile: jest.fn(),
       uploading: false,
@@ -260,5 +278,67 @@ describe("SongLibraryScreen", () => {
     const { queryByText } = render(<SongLibraryScreen />);
     expect(queryByText("Add song")).toBeNull();
     expect(queryByText("Edit")).toBeNull();
+    expect(queryByText("Import from Planning Center")).toBeNull();
+  });
+
+  describe("Import from Planning Center", () => {
+    it("shows the import button for editors when PCO is connected", () => {
+      const { getByText } = render(<SongLibraryScreen />);
+      expect(getByText("Import from Planning Center")).toBeTruthy();
+    });
+
+    it("hides the import button when PCO is not connected", () => {
+      mockPcoConnected = false;
+      const { queryByText } = render(<SongLibraryScreen />);
+      expect(queryByText("Import from Planning Center")).toBeNull();
+    });
+
+    it("calls the import action and shows the result counts", async () => {
+      const importFromPco = jest.fn().mockResolvedValue({
+        imported: 42,
+        updated: 3,
+        skipped: 12,
+        total: 57,
+      });
+      (useAuthenticatedAction as jest.Mock).mockReturnValue(importFromPco);
+      const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+
+      const { getByText } = render(<SongLibraryScreen />);
+      fireEvent.press(getByText("Import from Planning Center"));
+
+      await waitFor(() => {
+        expect(importFromPco).toHaveBeenCalledWith({
+          communityId: "community-1",
+        });
+        expect(alertSpy).toHaveBeenCalledWith(
+          "Import complete",
+          "Imported 42 songs, updated 3, skipped 12.",
+        );
+      });
+      alertSpy.mockRestore();
+    });
+
+    it("notifies when the import fails", async () => {
+      const importFromPco = jest
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("ConvexError"), {
+            data: "Planning Center is not connected",
+          }),
+        );
+      (useAuthenticatedAction as jest.Mock).mockReturnValue(importFromPco);
+      const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+
+      const { getByText } = render(<SongLibraryScreen />);
+      fireEvent.press(getByText("Import from Planning Center"));
+
+      await waitFor(() => {
+        expect(alertSpy).toHaveBeenCalledWith(
+          "Import failed",
+          "Planning Center is not connected",
+        );
+      });
+      alertSpy.mockRestore();
+    });
   });
 });

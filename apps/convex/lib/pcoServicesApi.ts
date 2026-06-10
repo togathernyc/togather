@@ -823,3 +823,54 @@ export async function fetchPlanTeamMembersForItems(
       : null,
   }));
 }
+
+// ============================================================================
+// Song Library API (one-time import — ADR-027 open question #2)
+// ============================================================================
+
+interface PcoSongsPageResponse {
+  data: PcoSong[];
+  links?: { next?: string };
+}
+
+/**
+ * Fetch ALL songs in the organization's PCO Services song library.
+ * GET /services/v2/songs?per_page=100
+ *
+ * Follows `links.next` until exhausted (same pagination convention as
+ * fetchPlanItems). One request per 100 songs keeps us far under the
+ * 100-requests/20s rate limit.
+ */
+export async function fetchAllSongs(accessToken: string): Promise<PcoSong[]> {
+  const songs: PcoSong[] = [];
+  let nextUrl: string | undefined = `${PCO_SERVICES_BASE}/songs?per_page=100`;
+
+  while (nextUrl) {
+    const response: PcoSongsPageResponse =
+      await pcoFetch<PcoSongsPageResponse>(accessToken, nextUrl);
+    songs.push(...response.data);
+    nextUrl = response.links?.next;
+  }
+
+  return songs;
+}
+
+/**
+ * Fetch a song's arrangements (first is PCO's default).
+ * GET /services/v2/songs/{id}/arrangements
+ *
+ * NOTE: This is a per-song call because the songs list endpoint does not
+ * support `?include=arrangements` — PCO's Song vertex documents no includes.
+ * Callers must batch these requests (BATCH_SIZE=15, see actions.ts) to
+ * respect the 100-requests/20s rate limit.
+ */
+export async function fetchSongArrangements(
+  accessToken: string,
+  songId: string
+): Promise<PcoArrangement[]> {
+  const response = await pcoFetch<{ data: PcoArrangement[] }>(
+    accessToken,
+    `${PCO_SERVICES_BASE}/songs/${songId}/arrangements?per_page=100`
+  );
+  return response.data;
+}

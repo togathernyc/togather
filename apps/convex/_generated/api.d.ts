@@ -119,6 +119,7 @@ import type * as functions_pcoServices_queries from "../functions/pcoServices/qu
 import type * as functions_pcoServices_rotation from "../functions/pcoServices/rotation.js";
 import type * as functions_pcoServices_runSheet from "../functions/pcoServices/runSheet.js";
 import type * as functions_pcoServices_servingHistory from "../functions/pcoServices/servingHistory.js";
+import type * as functions_pcoServices_songImport from "../functions/pcoServices/songImport.js";
 import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.js";
 import type * as functions_posters from "../functions/posters.js";
 import type * as functions_prayers from "../functions/prayers.js";
@@ -320,6 +321,7 @@ declare const fullApi: ApiFromModules<{
   "functions/pcoServices/rotation": typeof functions_pcoServices_rotation;
   "functions/pcoServices/runSheet": typeof functions_pcoServices_runSheet;
   "functions/pcoServices/servingHistory": typeof functions_pcoServices_servingHistory;
+  "functions/pcoServices/songImport": typeof functions_pcoServices_songImport;
   "functions/peopleSavedViews": typeof functions_peopleSavedViews;
   "functions/posters": typeof functions_posters;
   "functions/prayers": typeof functions_prayers;
