@@ -7,9 +7,11 @@
  * native `songs` table. Import is additive and never clobbers user edits —
  * matched songs only have their *missing* fields filled.
  *
- * Dedupe rules: rows carrying a CCLI number match existing songs by
+ * Dedupe rules: a row carrying a CCLI number matches an existing song by
  * `ccliNumber` (the worship world's universal song ID, via the
- * `by_community_ccli` index); rows without one match by case-insensitive
+ * `by_community_ccli` index); failing that, it enriches a same-title song that
+ * has no CCLI yet (rather than create a duplicate), but never one that already
+ * carries a different CCLI. A row without a CCLI matches by case-insensitive
  * title within the community.
  */
 
@@ -160,11 +162,22 @@ export const upsertImportedSongs = internalMutation({
     let skipped = 0;
 
     for (const row of args.songs) {
-      // Rows with a CCLI number match by it alone — same title without that
-      // CCLI is treated as a different song. CCLI-less rows match by title.
-      const match = row.ccliNumber
-        ? byCcli.get(row.ccliNumber)
-        : byTitle.get(row.title.toLowerCase());
+      // Match priority:
+      //   - row has a CCLI → match that CCLI; if none, fall back to a title
+      //     match that has NO CCLI yet (enrich a manually-entered song rather
+      //     than create a duplicate), but never a title match that already
+      //     carries a *different* CCLI (those are distinct songs).
+      //   - row has no CCLI → match by title.
+      let match: Doc<"songs"> | undefined;
+      if (row.ccliNumber) {
+        match = byCcli.get(row.ccliNumber);
+        if (!match) {
+          const titleMatch = byTitle.get(row.title.toLowerCase());
+          if (titleMatch && !titleMatch.ccliNumber) match = titleMatch;
+        }
+      } else {
+        match = byTitle.get(row.title.toLowerCase());
+      }
 
       if (!match) {
         const nowMs = Date.now();

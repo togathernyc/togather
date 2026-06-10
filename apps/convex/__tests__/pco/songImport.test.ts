@@ -328,9 +328,9 @@ describe("upsertImportedSongs", () => {
     expect(all).toHaveLength(1);
   });
 
-  it("inserts a row whose ccli matches nothing (ccli rows do not fall back to title)", async () => {
-    // Per the import spec: rows carrying a ccli number match by ccli only.
-    // A same-title song without that ccli is treated as a different song.
+  it("enriches a manually-entered (ccli-less) song instead of duplicating it", async () => {
+    // A leader hand-added "Way Maker" without a CCLI; the import row carries one.
+    // It should fill the CCLI into the existing row, not create a second song.
     const { t, world } = await setupSchedulingWorld();
     const token = (await generateTokens(world.communityAdminId)).accessToken;
 
@@ -345,11 +345,46 @@ describe("upsertImportedSongs", () => {
       {
         communityId: world.communityId,
         userId: world.groupLeaderId,
-        songs: [{ title: "Way Maker", ccliNumber: "7115744" }],
+        songs: [{ title: "Way Maker", ccliNumber: "7115744", bpm: 68 }],
+      },
+    );
+
+    expect(counts).toEqual({ imported: 0, updated: 1, skipped: 0 });
+    const songs = await t.query(api.functions.scheduling.songs.listSongs, {
+      token,
+      communityId: world.communityId,
+    });
+    expect(songs.length).toBe(1);
+    expect(songs[0].ccliNumber).toBe("7115744");
+    expect(songs[0].bpm).toBe(68);
+  });
+
+  it("does not merge two distinct songs that share a title but differ in ccli", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.communityAdminId)).accessToken;
+
+    await t.mutation(api.functions.scheduling.songs.createSong, {
+      token,
+      communityId: world.communityId,
+      input: { title: "Glory", ccliNumber: "111" },
+    });
+
+    const counts = await t.mutation(
+      internal.functions.pcoServices.songImport.upsertImportedSongs,
+      {
+        communityId: world.communityId,
+        userId: world.groupLeaderId,
+        // Same title, different CCLI → a genuinely different song → insert.
+        songs: [{ title: "Glory", ccliNumber: "222" }],
       },
     );
 
     expect(counts).toEqual({ imported: 1, updated: 0, skipped: 0 });
+    const songs = await t.query(api.functions.scheduling.songs.listSongs, {
+      token,
+      communityId: world.communityId,
+    });
+    expect(songs.length).toBe(2);
   });
 
   it("dedupes repeated rows within a single import batch", async () => {
