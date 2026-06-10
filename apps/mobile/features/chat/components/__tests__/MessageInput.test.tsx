@@ -108,6 +108,7 @@ jest.mock('@hooks/useTheme', () => ({
       textDisabled: '#ccc',
       inputBackground: '#f9f9f9',
       surfaceSecondary: '#f5f5f5',
+      error: '#FF3B30',
     },
   }),
 }));
@@ -321,6 +322,44 @@ describe('MessageInput', () => {
         />
       );
       expect(getByPlaceholderText('Message...')).toBeTruthy();
+    });
+
+    it('caps the input at 1000 chars when recipient is pending', () => {
+      // Matches the backend PENDING_MAX_TEXT_LENGTH. Before this, the input
+      // allowed 2000 chars so users could type a message the server would
+      // silently reject — making the send button look broken.
+      const { getByPlaceholderText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending
+        />
+      );
+      expect(getByPlaceholderText('Message...').props.maxLength).toBe(1000);
+    });
+
+    it('caps the input at 2000 chars once the recipient has accepted', () => {
+      const { getByPlaceholderText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending={false}
+        />
+      );
+      expect(getByPlaceholderText('Message...').props.maxLength).toBe(2000);
+    });
+
+    it('shows a live character counter against the pending limit', () => {
+      const { getByPlaceholderText, queryByText } = render(
+        <MessageInput
+          channelId={'test-channel' as any}
+          recipientPending
+        />
+      );
+      expect(queryByText('0/1000')).toBeTruthy();
+
+      act(() => {
+        fireEvent.changeText(getByPlaceholderText('Message...'), 'hello');
+      });
+      expect(queryByText('5/1000')).toBeTruthy();
     });
   });
 });

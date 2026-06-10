@@ -94,6 +94,14 @@ const INPUT_PADDING_VERTICAL = 10;
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
+// Composer text caps. The default cap matches the server's general message
+// limit; the pending cap matches the tighter limit the backend enforces on
+// ad-hoc DMs until the recipient accepts the request (`PENDING_MAX_TEXT_LENGTH`
+// in apps/convex/functions/messaging/messages.ts). Keep these in sync — the
+// input enforces the cap so the user never hits a silent server-side rejection.
+const MAX_TEXT_LENGTH = 2000;
+const PENDING_MAX_TEXT_LENGTH = 1000;
+
 /**
  * Detect @ mention pattern in text
  */
@@ -1073,7 +1081,22 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         <View style={styles.offlineHint}>
           <Ionicons name="lock-closed-outline" size={12} color={themeColors.textTertiary} />
           <Text style={[styles.offlineHintText, { color: themeColors.textTertiary }]}>
-            They'll need to accept your chat request before you can send photos or GIFs.
+            They'll need to accept your chat request before you can send photos, GIFs, or messages
+            over {PENDING_MAX_TEXT_LENGTH} characters.
+          </Text>
+          <Text
+            style={[
+              styles.offlineHintText,
+              styles.pendingCharCount,
+              {
+                color:
+                  text.length >= PENDING_MAX_TEXT_LENGTH
+                    ? themeColors.error
+                    : themeColors.textTertiary,
+              },
+            ]}
+          >
+            {text.length}/{PENDING_MAX_TEXT_LENGTH}
           </Text>
         </View>
       )}
@@ -1136,7 +1159,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           placeholderTextColor={themeColors.textTertiary}
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
-          maxLength={2000}
+          maxLength={recipientPending ? PENDING_MAX_TEXT_LENGTH : MAX_TEXT_LENGTH}
           editable={!uploading}
         />
 
@@ -1306,6 +1329,9 @@ const styles = StyleSheet.create({
   },
   offlineHintText: {
     fontSize: 11,
+  },
+  pendingCharCount: {
+    fontVariant: ['tabular-nums'],
   },
   inputRow: {
     flexDirection: 'row',
