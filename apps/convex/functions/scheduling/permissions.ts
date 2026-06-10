@@ -253,7 +253,11 @@ export async function isCommunityGroupLeader(
   for (const m of memberships) {
     if (!isLeaderRole(m.role)) continue;
     const group = await ctx.db.get(m.groupId);
-    if (group && group.communityId === communityId) return true;
+    // Archived groups don't confer active leader status (memberships are
+    // retained on archive), matching how leader status is derived elsewhere.
+    if (group && group.communityId === communityId && !group.isArchived) {
+      return true;
+    }
   }
   return false;
 }

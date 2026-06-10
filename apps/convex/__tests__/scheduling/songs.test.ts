@@ -332,6 +332,33 @@ describe("songs permissions", () => {
     });
   });
 
+  it("does not grant edit rights from a leader role on an archived group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Archive the only group the user leads; their membership is retained.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(world.groupId, {
+        isArchived: true,
+        archivedAt: Date.now(),
+      });
+    });
+
+    expect(
+      await t.query(api.functions.scheduling.songs.canManageSongs, {
+        token: leaderToken,
+        communityId: world.communityId,
+      }),
+    ).toBe(false);
+    await expect(
+      t.mutation(api.functions.scheduling.songs.createSong, {
+        token: leaderToken,
+        communityId: world.communityId,
+        input: { title: "From an archived group" },
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
   it("canManageSongs reflects admin/leader vs plain member", async () => {
     const { t, world } = await setupSchedulingWorld();
     const adminToken = (await generateTokens(world.communityAdminId)).accessToken;
