@@ -219,5 +219,10 @@ the run sheet renders title/charts/links without extra round-trips.
 2. Should the song library be seedable/importable from an existing PCO plan
    (one-time map of a plan's songs → `songs`, carrying CCLI#s) to ease the
    switch? Likely a useful migration aid; deferred to a follow-up.
+   **Resolved:** implemented as a one-time import of the *whole* PCO song
+   library (not a single plan) — `functions/pcoServices/songImport.ts`
+   (`importSongsFromPco`), surfaced as "Import from Planning Center" in the
+   Song Library screen. Matches by CCLI# (else case-insensitive title) and
+   fills only missing fields, so re-running never clobbers user edits.
 3. Per-item multitracks override vs. song-level only — start song-level; add the
    per-item override if a real "different mix this week" need appears.

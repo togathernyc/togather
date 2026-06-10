@@ -34,6 +34,7 @@ import { useAuth } from "@providers/AuthProvider";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
+  useAuthenticatedAction,
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
@@ -43,14 +44,17 @@ import {
 } from "@features/chat/hooks/useFileUpload";
 import type { Song, SongInput } from "../types";
 
-/** One-button error that works on web (Alert.alert is a no-op on web here). */
-function notifyError(title: string, message: string) {
+/** One-button notice that works on web (Alert.alert is a no-op on web here). */
+function notify(title: string, message: string) {
   if (Platform.OS === "web") {
     if (typeof window !== "undefined") window.alert(`${title}\n\n${message}`);
     return;
   }
   Alert.alert(title, message);
 }
+
+/** Alias for error notices — same dialog, kept for call-site readability. */
+const notifyError = notify;
 
 /** Confirm dialog that works on web (Alert.alert is a no-op on web here). */
 function confirmDestructive(prompt: string, onConfirm: () => void) {
@@ -84,6 +88,41 @@ export function SongLibraryScreen() {
   const [search, setSearch] = useState("");
   // The song currently open in the editor: `null` = closed, "new" = create.
   const [editing, setEditing] = useState<Song | "new" | null>(null);
+
+  // One-time PCO library import (ADR-027 open question #2): offered only when
+  // the community's Planning Center integration is connected. The action
+  // re-checks both permission and connection server-side.
+  const pcoStatus = useAuthenticatedQuery(
+    api.functions.integrations.planningCenterStatus,
+    communityId ? { communityId: communityId as Id<"communities"> } : "skip",
+  );
+  const pcoConnected = pcoStatus?.isConnected ?? false;
+  const importFromPco = useAuthenticatedAction(
+    api.functions.pcoServices.songImport.importSongsFromPco,
+  );
+  const [importing, setImporting] = useState(false);
+
+  const handleImport = useCallback(async () => {
+    if (!communityId || importing) return;
+    setImporting(true);
+    try {
+      const result = await importFromPco({
+        communityId: communityId as Id<"communities">,
+      });
+      notify(
+        "Import complete",
+        `Imported ${result.imported} songs, updated ${result.updated}, skipped ${result.skipped}.`,
+      );
+    } catch (e: any) {
+      // ConvexError carries its message in `data`.
+      notifyError(
+        "Import failed",
+        typeof e?.data === "string" ? e.data : e?.message ?? "Please try again.",
+      );
+    } finally {
+      setImporting(false);
+    }
+  }, [communityId, importing, importFromPco]);
 
   const songs = useAuthenticatedQuery(
     api.functions.scheduling.songs.listSongs,
@@ -155,6 +194,31 @@ export function SongLibraryScreen() {
             >
               <Ionicons name="add" size={18} color={primaryColor} />
               <Text style={[styles.addText, { color: primaryColor }]}>Add song</Text>
+            </Pressable>
+          ) : null}
+
+          {canEdit && pcoConnected ? (
+            <Pressable
+              onPress={handleImport}
+              disabled={importing}
+              style={[
+                styles.addRow,
+                { borderColor: primaryColor, opacity: importing ? 0.6 : 1 },
+              ]}
+              accessibilityRole="button"
+            >
+              {importing ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <Ionicons
+                  name="cloud-download-outline"
+                  size={18}
+                  color={primaryColor}
+                />
+              )}
+              <Text style={[styles.addText, { color: primaryColor }]}>
+                {importing ? "Importing…" : "Import from Planning Center"}
+              </Text>
             </Pressable>
           ) : null}
 
