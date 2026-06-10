@@ -19,7 +19,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { useAuth } from "@providers/AuthProvider";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -55,11 +54,17 @@ export function SongPicker({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
-  const { user } = useAuth();
-  // Creating a library song is community-admin-only (backend `requireCommunityAdmin`).
-  // Plan schedulers who aren't admins can still link existing songs, but the
-  // inline Create affordance is hidden so it can't reject under them.
-  const canCreate = !!user?.is_admin;
+  // Creating a library song is open to community admins and group leaders
+  // (backend `requireCommunitySongEditor`). Gate the inline Create affordance on
+  // the authoritative check so a scheduler who can't edit the library (e.g. a
+  // team moderator who isn't a leader) links existing songs without a dead tap.
+  const canCreate =
+    useAuthenticatedQuery(
+      api.functions.scheduling.songs.canManageSongs,
+      communityId
+        ? { communityId: communityId as Id<"communities"> }
+        : "skip",
+    ) ?? false;
   const [query, setQuery] = useState("");
 
   const songs = useAuthenticatedQuery(
