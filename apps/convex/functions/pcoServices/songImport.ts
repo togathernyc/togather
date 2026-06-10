@@ -16,7 +16,12 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import { action, internalMutation } from "../../_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  type ActionCtx,
+} from "../../_generated/server";
 import { api, internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuthFromTokenAction } from "../../lib/auth";
@@ -24,9 +29,14 @@ import {
   getValidAccessToken,
   fetchAllSongs,
   fetchSongArrangements,
+  fetchArrangementAttachments,
+  openAttachmentUrl,
+  downloadAttachmentBytes,
   type PcoArrangement,
   type PcoSong,
+  type PcoSongAttachment,
 } from "../../lib/pcoServicesApi";
+import { putR2Object } from "../../lib/r2";
 
 // ============================================================================
 // Pure transform
@@ -98,6 +108,102 @@ export function mapPcoSongs(
   }
 
   return rows;
+}
+
+// ============================================================================
+// Church-uploaded chart filter (licensing guardrail, ADR-027)
+// ============================================================================
+
+/**
+ * Content types we can store as a chart. PDFs and images are the chart formats
+ * the rest of the song library already accepts (`uploads.ts` / SongLibrary
+ * screen's document picker). Audio is allowed too — a church's own recorded
+ * reference track is bring-your-own media it holds the rights to. Anything else
+ * (Google Docs, video, octet-stream links) is skipped.
+ */
+const SUPPORTED_CHART_CONTENT_TYPES = new Set<string>([
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/m4a",
+  "audio/x-m4a",
+  "audio/mp4",
+]);
+
+/**
+ * Lower-cased substrings in `pco_type` that mark third-party / licensed sources
+ * we must NOT re-host: SongSelect/CCLI (the church's license does not grant us
+ * API re-hosting rights), PraiseCharts and MultiTracks (paid catalog content),
+ * and pure link types (Spotify/Drive/Dropbox/YouTube/Vimeo) which are not files
+ * we own anyway. A plain church upload's `pco_type` (e.g. "AttachmentTypes::S3"
+ * / file upload) matches none of these.
+ */
+const BLOCKED_PCO_TYPE_SUBSTRINGS = [
+  "songselect",
+  "ccli",
+  "praisecharts",
+  "multitracks",
+  "spotify",
+  "youtube",
+  "vimeo",
+  "googledrive",
+  "google_drive",
+  "dropbox",
+  "url",
+  "link",
+];
+
+/**
+ * Decide whether a PCO arrangement attachment is a church-uploaded chart we may
+ * copy. CONSERVATIVE by design (the licensing guardrail): an attachment is
+ * imported only when it is positively identifiable as the church's own file —
+ * every ambiguous or third-party-sourced one is rejected (and counted as
+ * skipped by the caller).
+ *
+ * An attachment is imported only if ALL hold:
+ *  - it is `downloadable` (PCO itself permits download);
+ *  - it carries NO CCLI/SongSelect license tracking (`licenses_purchased` etc.
+ *    are null/0 — licensed content always tracks these);
+ *  - it has NO `linked_url` or `remote_link` (a link-out, not an uploaded file);
+ *  - its `pco_type` contains none of the blocked provider/link markers;
+ *  - its `content_type` is a chart/audio format we support.
+ *
+ * The license-tracking + `pco_type` provider check is the primary signal that
+ * distinguishes a SongSelect/CCLI chart from a file the church uploaded itself.
+ */
+export function isChurchUploadedChart(
+  attachment: PcoSongAttachment,
+): boolean {
+  const a = attachment.attributes;
+
+  if (!a.downloadable) return false;
+
+  // Any CCLI/SongSelect license tracking → licensed content, never re-hosted.
+  if ((a.licenses_purchased ?? 0) > 0) return false;
+  if ((a.licenses_used ?? 0) > 0) return false;
+  if ((a.licenses_remaining ?? 0) > 0) return false;
+
+  // A linked/remote file is not an upload we own. PCO exposes link-outs via
+  // either `linked_url` or `remote_link`; reject both.
+  if (a.linked_url) return false;
+  if (a.remote_link) return false;
+
+  // Provider / link markers in pco_type are off-limits.
+  const pcoType = (a.pco_type ?? "").toLowerCase();
+  if (BLOCKED_PCO_TYPE_SUBSTRINGS.some((s) => pcoType.includes(s))) return false;
+
+  // Only file types we can serve as charts.
+  if (!SUPPORTED_CHART_CONTENT_TYPES.has(a.content_type)) return false;
+
+  return true;
 }
 
 // ============================================================================
@@ -223,6 +329,72 @@ export const upsertImportedSongs = internalMutation({
 });
 
 // ============================================================================
+// Chart attach mutation + matching query (file import, ADR-027 Phase 2)
+// ============================================================================
+
+const importedChartValidator = v.object({
+  key: v.optional(v.string()),
+  label: v.string(),
+  fileKey: v.string(),
+  mimeType: v.string(),
+});
+
+/**
+ * Minimal projection of a community's songs for matching imported PCO files
+ * back to native song docs in the action. Returns each song's id, title, ccli,
+ * and the labels of charts it already has (so the action skips re-downloading a
+ * file it already imported — idempotent re-runs).
+ *
+ * Internal-only: the public action authenticates/permission-checks first.
+ */
+export const listCommunitySongsForMatching = internalQuery({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const songs = await ctx.db
+      .query("songs")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    return songs.map((s) => ({
+      _id: s._id,
+      title: s.title,
+      ccliNumber: s.ccliNumber,
+      chartLabels: (s.charts ?? []).map((c) => c.label),
+    }));
+  },
+});
+
+/**
+ * Append charts to a song, skipping any whose `label` the song already has.
+ * Idempotent: re-running the import never duplicates a chart. The label encodes
+ * the PCO filename (+ key), so the same source file maps to the same label.
+ *
+ * Returns how many charts were actually added.
+ *
+ * Internal-only: the public action authenticates/permission-checks first.
+ */
+export const attachImportedCharts = internalMutation({
+  args: {
+    songId: v.id("songs"),
+    charts: v.array(importedChartValidator),
+  },
+  handler: async (ctx, args): Promise<{ added: number }> => {
+    const song = await ctx.db.get(args.songId);
+    if (!song) return { added: 0 };
+
+    const existing = song.charts ?? [];
+    const existingLabels = new Set(existing.map((c) => c.label));
+    const toAdd = args.charts.filter((c) => !existingLabels.has(c.label));
+    if (toAdd.length === 0) return { added: 0 };
+
+    await ctx.db.patch(args.songId, {
+      charts: [...existing, ...toAdd],
+      updatedAt: Date.now(),
+    });
+    return { added: toAdd.length };
+  },
+});
+
+// ============================================================================
 // Public action
 // ============================================================================
 
@@ -233,6 +405,25 @@ export const upsertImportedSongs = internalMutation({
 const BATCH_SIZE = 15;
 const MIN_BATCH_INTERVAL_MS = 3500;
 
+/** A native chart row resolved from a church-uploaded PCO attachment. */
+interface ResolvedChart {
+  key?: string;
+  label: string;
+  fileKey: string;
+  mimeType: string;
+}
+
+/**
+ * Build the chart `label` for an imported attachment. The label is the
+ * idempotency key (re-runs skip a song's existing labels), so it must be stable
+ * for the same source file: PCO's filename, suffixed with the arrangement key
+ * when known (charts are key-specific in worship).
+ */
+function chartLabel(filename: string, key: string | undefined): string {
+  const name = filename.trim() || "Chart";
+  return key ? `${name} (${key})` : name;
+}
+
 /**
  * One-time import of the community's PCO Services song library into the
  * native `songs` table.
@@ -240,13 +431,19 @@ const MIN_BATCH_INTERVAL_MS = 3500;
  * Auth: community admin or group leader (`canManageSongs`); the community
  * must have a connected Planning Center integration.
  *
- * Returns `{ imported, updated, skipped, total }` — `total` is the number of
- * library rows processed (imported + updated + skipped).
+ * When `includeFiles` is true (the default), also copies each matched song's
+ * CHURCH-UPLOADED chart/audio attachments out of PCO into R2 and attaches them
+ * to the song (see `isChurchUploadedChart` for the licensing guardrail).
+ *
+ * Returns `{ imported, updated, skipped, total, filesImported, filesSkipped }`
+ * — `total` is the number of library rows processed; `filesSkipped` counts
+ * attachments rejected by the licensing/type guardrail.
  */
 export const importSongsFromPco = action({
   args: {
     token: v.string(),
     communityId: v.id("communities"),
+    includeFiles: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -256,6 +453,8 @@ export const importSongsFromPco = action({
     updated: number;
     skipped: number;
     total: number;
+    filesImported: number;
+    filesSkipped: number;
   }> => {
     // 1. Authenticate and check song-library permission. Guards like
     //    requireCommunitySongEditor need query/mutation ctx, so the action
@@ -315,7 +514,7 @@ export const importSongsFromPco = action({
       }
     }
 
-    // 4. Transform and upsert.
+    // 4. Transform and upsert metadata.
     const songs = mapPcoSongs(pcoSongs, arrangementsBySongId);
     const counts: { imported: number; updated: number; skipped: number } =
       await ctx.runMutation(
@@ -323,6 +522,177 @@ export const importSongsFromPco = action({
         { communityId: args.communityId, userId, songs },
       );
 
-    return { ...counts, total: songs.length };
+    // 5. Optionally copy church-uploaded chart files into R2 and attach them.
+    let filesImported = 0;
+    let filesSkipped = 0;
+    if (args.includeFiles ?? true) {
+      const fileResult = await importSongFiles(ctx, {
+        communityId: args.communityId,
+        accessToken,
+        pcoSongs,
+        arrangementsBySongId,
+      });
+      filesImported = fileResult.filesImported;
+      filesSkipped = fileResult.filesSkipped;
+    }
+
+    return {
+      ...counts,
+      total: songs.length,
+      filesImported,
+      filesSkipped,
+    };
   },
 });
+
+/**
+ * Copy each matched song's church-uploaded chart attachments from PCO into R2
+ * and attach them to the native song. Shared by the action; pulled out to keep
+ * the handler readable.
+ *
+ * Matching mirrors the metadata upsert: a PCO song maps to a native song by
+ * CCLI number, else case-insensitive title. Attachments live on the song's
+ * arrangements; we fetch them in the same paced batches and apply the
+ * `isChurchUploadedChart` guardrail. Re-runs are idempotent — the attach
+ * mutation skips charts whose label already exists, and we skip whole songs
+ * whose existing chart labels already cover the source file.
+ */
+async function importSongFiles(
+  ctx: ActionCtx,
+  params: {
+    communityId: Id<"communities">;
+    accessToken: string;
+    pcoSongs: PcoSong[];
+    arrangementsBySongId: Map<string, PcoArrangement[]>;
+  },
+): Promise<{ filesImported: number; filesSkipped: number }> {
+  const { communityId, accessToken, pcoSongs, arrangementsBySongId } = params;
+
+  // Build CCLI/title → native song lookup so we can attach to the right doc.
+  const nativeSongs = await ctx.runQuery(
+    internal.functions.pcoServices.songImport.listCommunitySongsForMatching,
+    { communityId },
+  );
+  const byCcli = new Map<string, (typeof nativeSongs)[number]>();
+  const byTitle = new Map<string, (typeof nativeSongs)[number]>();
+  for (const s of nativeSongs) {
+    if (s.ccliNumber) byCcli.set(s.ccliNumber, s);
+    if (!byTitle.has(s.title.toLowerCase())) byTitle.set(s.title.toLowerCase(), s);
+  }
+
+  // Existing chart labels per native song id — to skip already-imported files
+  // before doing any network work (idempotent re-runs make no PCO requests).
+  const existingLabels = new Map<string, Set<string>>(
+    nativeSongs.map((s) => [s._id, new Set(s.chartLabels)]),
+  );
+
+  let filesImported = 0;
+  let filesSkipped = 0;
+
+  for (let i = 0; i < pcoSongs.length; i += BATCH_SIZE) {
+    const batchStart = Date.now();
+    const batch = pcoSongs.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (pcoSong) => {
+        // Resolve which native song this maps to (CCLI first, else title).
+        const ccli =
+          pcoSong.attributes.ccli_number == null
+            ? undefined
+            : String(pcoSong.attributes.ccli_number).trim() || undefined;
+        const title = pcoSong.attributes.title?.trim();
+        const native =
+          (ccli ? byCcli.get(ccli) : undefined) ??
+          (title ? byTitle.get(title.toLowerCase()) : undefined);
+        if (!native) return;
+
+        const arrangement = arrangementsBySongId.get(pcoSong.id)?.[0];
+        if (!arrangement) return;
+
+        let attachments: PcoSongAttachment[];
+        try {
+          attachments = await fetchArrangementAttachments(
+            accessToken,
+            pcoSong.id,
+            arrangement.id,
+          );
+        } catch {
+          // A single song's attachment fetch failing must not abort the import.
+          return;
+        }
+
+        const labels = existingLabels.get(native._id) ?? new Set<string>();
+        const charts: ResolvedChart[] = [];
+
+        for (const attachment of attachments) {
+          if (!isChurchUploadedChart(attachment)) {
+            filesSkipped++;
+            continue;
+          }
+          const key = arrangement.attributes.chord_chart_key?.trim() || undefined;
+          const label = chartLabel(attachment.attributes.filename, key);
+          // Idempotency: skip a file we already imported for this song.
+          if (labels.has(label)) continue;
+
+          let url = attachment.attributes.url;
+          if (!url) {
+            url = await openAttachmentUrl(
+              accessToken,
+              pcoSong.id,
+              arrangement.id,
+              attachment.id,
+            );
+          }
+          if (!url) {
+            filesSkipped++;
+            continue;
+          }
+
+          let bytes: ArrayBuffer;
+          try {
+            bytes = await downloadAttachmentBytes(url);
+          } catch {
+            filesSkipped++;
+            continue;
+          }
+
+          const { storagePath } = await putR2Object({
+            folder: "uploads",
+            fileName: attachment.attributes.filename,
+            contentType: attachment.attributes.content_type,
+            body: bytes,
+          });
+
+          charts.push({
+            ...(key ? { key } : {}),
+            label,
+            fileKey: storagePath,
+            mimeType: attachment.attributes.content_type,
+          });
+          labels.add(label);
+        }
+
+        if (charts.length > 0) {
+          const { added } = await ctx.runMutation(
+            internal.functions.pcoServices.songImport.attachImportedCharts,
+            { songId: native._id, charts },
+          );
+          filesImported += added;
+        }
+      }),
+    );
+
+    // Same pacing as the arrangement fetch — stay under 100 req/20s.
+    const isLastBatch = i + BATCH_SIZE >= pcoSongs.length;
+    if (!isLastBatch) {
+      const elapsed = Date.now() - batchStart;
+      if (elapsed < MIN_BATCH_INTERVAL_MS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, MIN_BATCH_INTERVAL_MS - elapsed),
+        );
+      }
+    }
+  }
+
+  return { filesImported, filesSkipped };
+}

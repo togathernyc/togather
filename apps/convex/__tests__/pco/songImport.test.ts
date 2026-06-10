@@ -32,6 +32,11 @@ vi.mock("../../lib/pcoServicesApi", async (importOriginal) => {
     getValidAccessToken: vi.fn().mockResolvedValue("mock-access-token"),
     fetchAllSongs: vi.fn().mockResolvedValue([]),
     fetchSongArrangements: vi.fn().mockResolvedValue([]),
+    // File-import phase: default to no attachments so these metadata-focused
+    // tests don't exercise the download/R2 path (covered in songFileImport).
+    fetchArrangementAttachments: vi.fn().mockResolvedValue([]),
+    openAttachmentUrl: vi.fn().mockResolvedValue(null),
+    downloadAttachmentBytes: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
   };
 });
 
@@ -467,7 +472,14 @@ describe("importSongsFromPco", () => {
       { token, communityId: world.communityId },
     );
 
-    expect(result).toEqual({ imported: 2, updated: 0, skipped: 0, total: 2 });
+    expect(result).toEqual({
+      imported: 2,
+      updated: 0,
+      skipped: 0,
+      total: 2,
+      filesImported: 0,
+      filesSkipped: 0,
+    });
 
     const songs = await t.run(async (ctx) =>
       ctx.db

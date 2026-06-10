@@ -916,3 +916,116 @@ export async function fetchSongArrangements(
   );
   return response.data;
 }
+
+// ============================================================================
+// Song / Arrangement Attachments (ADR-027 Phase 2 — church-uploaded charts)
+// ============================================================================
+
+/**
+ * A song/arrangement-level attachment in PCO.
+ *
+ * In PCO Services, chord charts and other files hang off a song's *arrangement*
+ * (`/songs/{id}/arrangements/{id}/attachments`). The attributes below are the
+ * ones we need to (a) tell a church-uploaded file from SongSelect/CCLI-sourced
+ * content we may not re-host, and (b) decide whether it is a file type we can
+ * store as a chart.
+ *
+ * Licensing signal (see classifyChurchUploadedChart): SongSelect/CCLI/
+ * PraiseCharts content carries license tracking (`licenses_purchased` etc.) and
+ * a provider `pco_type`; remote/linked files carry a `linked_url`. A file the
+ * church uploaded itself is a plain upload with none of these.
+ */
+export interface PcoSongAttachment {
+  id: string;
+  type: "Attachment";
+  attributes: {
+    filename: string;
+    /** Direct URL PCO exposes; may be empty until the `open` action is called. */
+    url: string | null;
+    content_type: string;
+    /** Non-null for links (Spotify/Drive/Dropbox/remote SongSelect), not uploads. */
+    linked_url: string | null;
+    /** PCO's other link attribute for external/linked files; also not an upload. */
+    remote_link: string | null;
+    /** e.g. "AttachmentTypes::SongSelect", "AttachmentTypes::S3". */
+    pco_type: string | null;
+    downloadable: boolean;
+    /** CCLI/SongSelect license tracking — present on licensed content only. */
+    licenses_purchased: number | null;
+    licenses_used: number | null;
+    licenses_remaining: number | null;
+  };
+}
+
+interface PcoAttachmentsPageResponse {
+  data: PcoSongAttachment[];
+  links?: { next?: string };
+}
+
+/**
+ * Fetch all attachments on a song's arrangement.
+ * GET /services/v2/songs/{songId}/arrangements/{arrangementId}/attachments
+ *
+ * Uses `pcoFetchWithRetry` (429-aware) and follows pagination. Callers must
+ * batch these per-arrangement calls to respect the 100-req/20s rate limit.
+ */
+export async function fetchArrangementAttachments(
+  accessToken: string,
+  songId: string,
+  arrangementId: string
+): Promise<PcoSongAttachment[]> {
+  const attachments: PcoSongAttachment[] = [];
+  let nextUrl: string | undefined = `${PCO_SERVICES_BASE}/songs/${songId}/arrangements/${arrangementId}/attachments?per_page=100`;
+
+  while (nextUrl) {
+    const response: PcoAttachmentsPageResponse =
+      await pcoFetchWithRetry<PcoAttachmentsPageResponse>(accessToken, nextUrl);
+    attachments.push(...response.data);
+    nextUrl = response.links?.next;
+  }
+
+  return attachments;
+}
+
+/**
+ * Resolve an attachment's temporary, downloadable URL.
+ *
+ * PCO does not expose a stable download URL on the attachment itself; you must
+ * POST to `.../attachments/{id}/open`, which returns an `AttachmentActivity`
+ * whose `attachment_url` is a short-lived signed URL. (Confirmed against PCO's
+ * Services API — the Attachment vertex's `open` action.)
+ */
+export async function openAttachmentUrl(
+  accessToken: string,
+  songId: string,
+  arrangementId: string,
+  attachmentId: string
+): Promise<string | null> {
+  const response = await pcoFetchWithRetry<{
+    data?: { attributes?: { attachment_url?: string | null } };
+  }>(
+    accessToken,
+    `${PCO_SERVICES_BASE}/songs/${songId}/arrangements/${arrangementId}/attachments/${attachmentId}/open`,
+    { method: "POST" }
+  );
+  return response.data?.attributes?.attachment_url ?? null;
+}
+
+/**
+ * Download an attachment's bytes from a (temporary) URL.
+ *
+ * The signed `attachment_url` is not a PCO API endpoint — it points straight at
+ * the file store — so this is a plain `fetch`, NOT `pcoFetch` (no bearer auth).
+ */
+export async function downloadAttachmentBytes(
+  url: string
+): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new PcoApiError(
+      response.status,
+      `Failed to download attachment (${response.status})`
+    );
+  }
+  return response.arrayBuffer();
+}
