@@ -21,12 +21,24 @@
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { api, internal } from "../../_generated/api";
 import { modules } from "../../test.setup";
 import type { Id } from "../../_generated/dataModel";
+
+// The claim flow schedules functions (e.g. membership reconciles); drain them
+// after each test so a scheduled write can't fire after its transaction closes
+// ("Write outside of transaction" unhandled rejection), matching the other
+// scheduling-aware suites.
+let activeHandle: ReturnType<typeof convexTest> | null = null;
+afterEach(async () => {
+  if (activeHandle) {
+    await activeHandle.finishInProgressScheduledFunctions();
+    activeHandle = null;
+  }
+});
 
 /**
  * Seed a placeholder user (mirrors what `inviteAndAssign` would have
@@ -122,7 +134,7 @@ async function plantPhoneToken(
 
 describe("placeholder claim on phone-OTP registration", () => {
   it("claims an existing placeholder in-place (no new users row, _id preserved, flags cleared)", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550555";
     const {
       placeholderId,
@@ -174,7 +186,7 @@ describe("placeholder claim on phone-OTP registration", () => {
   });
 
   it("a pre-existing role assignment for the placeholder survives the claim", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550556";
     const seeded = await seedPlaceholderWithMemberships(t, phone);
 
@@ -246,7 +258,7 @@ describe("placeholder claim on phone-OTP registration", () => {
   });
 
   it("never claims a real (non-placeholder) user with the same phone — logs them in instead", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550557";
 
     // Real user, no isPlaceholder flag.
@@ -297,7 +309,7 @@ describe("placeholder claim on phone-OTP registration", () => {
   });
 
   it("rejects claim cleanly when registration supplies an email that already belongs to another user", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550558";
     await seedPlaceholderWithMemberships(t, phone);
 
@@ -327,7 +339,7 @@ describe("placeholder claim on phone-OTP registration", () => {
   });
 
   it("internal claimPlaceholderByPhoneInternal returns null for a non-placeholder user", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550559";
 
     await t.run((ctx) =>
@@ -348,7 +360,7 @@ describe("placeholder claim on phone-OTP registration", () => {
   });
 
   it("internal claimPlaceholderByPhoneInternal claims a placeholder and clears its flags", async () => {
-    const t = convexTest(schema, modules);
+    const t = (activeHandle = convexTest(schema, modules));
     const phone = "+12025550560";
     const placeholderId = await t.run((ctx) =>
       ctx.db.insert("users", {
