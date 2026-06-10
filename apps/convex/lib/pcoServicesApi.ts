@@ -945,6 +945,8 @@ export interface PcoSongAttachment {
     content_type: string;
     /** Non-null for links (Spotify/Drive/Dropbox/remote SongSelect), not uploads. */
     linked_url: string | null;
+    /** PCO's other link attribute for external/linked files; also not an upload. */
+    remote_link: string | null;
     /** e.g. "AttachmentTypes::SongSelect", "AttachmentTypes::S3". */
     pco_type: string | null;
     downloadable: boolean;

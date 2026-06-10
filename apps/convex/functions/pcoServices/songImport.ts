@@ -172,7 +172,7 @@ const BLOCKED_PCO_TYPE_SUBSTRINGS = [
  *  - it is `downloadable` (PCO itself permits download);
  *  - it carries NO CCLI/SongSelect license tracking (`licenses_purchased` etc.
  *    are null/0 — licensed content always tracks these);
- *  - it has NO `linked_url` (a link-out, not an uploaded file);
+ *  - it has NO `linked_url` or `remote_link` (a link-out, not an uploaded file);
  *  - its `pco_type` contains none of the blocked provider/link markers;
  *  - its `content_type` is a chart/audio format we support.
  *
@@ -191,8 +191,10 @@ export function isChurchUploadedChart(
   if ((a.licenses_used ?? 0) > 0) return false;
   if ((a.licenses_remaining ?? 0) > 0) return false;
 
-  // A linked file is not an upload we own.
+  // A linked/remote file is not an upload we own. PCO exposes link-outs via
+  // either `linked_url` or `remote_link`; reject both.
   if (a.linked_url) return false;
+  if (a.remote_link) return false;
 
   // Provider / link markers in pco_type are off-limits.
   const pcoType = (a.pco_type ?? "").toLowerCase();

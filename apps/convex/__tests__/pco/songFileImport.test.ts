@@ -124,6 +124,7 @@ function attachment(
       url: "https://files.pco/chart.pdf",
       content_type: "application/pdf",
       linked_url: null,
+      remote_link: null,
       pco_type: "AttachmentTypes::S3",
       downloadable: true,
       licenses_purchased: null,
@@ -190,6 +191,19 @@ describe("isChurchUploadedChart", () => {
         attachment("a", {
           linked_url: "https://docs.google.com/x",
           pco_type: "AttachmentTypes::GoogleDrive",
+          content_type: "application/pdf",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("skips remote_link attachments even with an upload-like pco_type", () => {
+    // PCO's other link attribute: an external link-out, not a church upload.
+    // License counts null + S3-ish pco_type + PDF MIME must NOT slip through.
+    expect(
+      isChurchUploadedChart(
+        attachment("a", {
+          remote_link: "https://example.com/chart.pdf",
           content_type: "application/pdf",
         }),
       ),
