@@ -226,9 +226,12 @@ export const upsertImportedSongs = internalMutation({
 // Public action
 // ============================================================================
 
-// PCO rate limit is 100 requests per 20 seconds; 15 concurrent arrangement
-// fetches per batch is the established safe convention (see actions.ts).
+// PCO rate limit is 100 requests per 20 seconds. We fetch arrangements 15 at a
+// time AND pace the batches so the request *rate* stays under the limit (concur-
+// rency alone doesn't bound rate): ~15 requests per 3.5s ≈ 86 req/20s. The
+// fetchers also retry 429s honoring Retry-After, so this is belt-and-suspenders.
 const BATCH_SIZE = 15;
+const MIN_BATCH_INTERVAL_MS = 3500;
 
 /**
  * One-time import of the community's PCO Services song library into the
@@ -289,6 +292,7 @@ export const importSongsFromPco = action({
 
     const arrangementsBySongId = new Map<string, PcoArrangement[]>();
     for (let i = 0; i < pcoSongs.length; i += BATCH_SIZE) {
+      const batchStart = Date.now();
       const batch = pcoSongs.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
         batch.map(
@@ -298,6 +302,16 @@ export const importSongsFromPco = action({
       );
       for (const [songId, arrangements] of results) {
         arrangementsBySongId.set(songId, arrangements);
+      }
+      // Pace to stay under PCO's 100/20s rate limit; no wait after the last batch.
+      const isLastBatch = i + BATCH_SIZE >= pcoSongs.length;
+      if (!isLastBatch) {
+        const elapsed = Date.now() - batchStart;
+        if (elapsed < MIN_BATCH_INTERVAL_MS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, MIN_BATCH_INTERVAL_MS - elapsed),
+          );
+        }
       }
     }
 

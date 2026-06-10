@@ -27,16 +27,20 @@ const PCO_OAUTH_TOKEN_URL = "https://api.planningcenteronline.com/oauth/token";
 export class PcoApiError extends Error {
   status: number;
   response?: unknown;
+  /** Parsed `Retry-After` (ms) when PCO returns 429; used to back off. */
+  retryAfterMs?: number;
 
   constructor(
     status: number,
     message: string,
-    response?: unknown
+    response?: unknown,
+    retryAfterMs?: number
   ) {
     super(message);
     this.name = "PcoApiError";
     this.status = status;
     this.response = response;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -186,10 +190,19 @@ export async function pcoFetch<T>(
 
   if (!response.ok) {
     const errorBody = await response.text();
+    // PCO returns 429 + `Retry-After` (seconds) when its 100-req/20s limit is
+    // exceeded; surface it so callers can back off precisely.
+    let retryAfterMs: number | undefined;
+    const retryAfter = response.headers.get("Retry-After");
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (!Number.isNaN(seconds)) retryAfterMs = seconds * 1000;
+    }
     throw new PcoApiError(
       response.status,
       `PCO API error: ${response.statusText}`,
-      errorBody
+      errorBody,
+      retryAfterMs
     );
   }
 
@@ -199,6 +212,35 @@ export async function pcoFetch<T>(
   }
 
   return response.json();
+}
+
+/**
+ * `pcoFetch` with bounded retry on 429 (rate limit), honoring PCO's
+ * `Retry-After` header. PCO enforces 100 requests / 20s and returns 429 when
+ * exceeded; without retry a large bulk operation (e.g. the song-library
+ * import's per-song arrangement fetches) would hard-fail mid-run. Non-429
+ * errors and exhausted retries rethrow unchanged.
+ */
+export async function pcoFetchWithRetry<T>(
+  accessToken: string,
+  url: string,
+  options: RequestInit = {},
+  maxRetries = 4
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await pcoFetch<T>(accessToken, url, options);
+    } catch (err) {
+      const rateLimited = err instanceof PcoApiError && err.status === 429;
+      if (!rateLimited || attempt >= maxRetries) throw err;
+      // Honor Retry-After when present; otherwise exponential backoff capped at
+      // the 20s window.
+      const waitMs =
+        (err as PcoApiError).retryAfterMs ??
+        Math.min(20000, 1000 * 2 ** attempt);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
 }
 
 // ============================================================================
@@ -847,7 +889,7 @@ export async function fetchAllSongs(accessToken: string): Promise<PcoSong[]> {
 
   while (nextUrl) {
     const response: PcoSongsPageResponse =
-      await pcoFetch<PcoSongsPageResponse>(accessToken, nextUrl);
+      await pcoFetchWithRetry<PcoSongsPageResponse>(accessToken, nextUrl);
     songs.push(...response.data);
     nextUrl = response.links?.next;
   }
@@ -868,7 +910,7 @@ export async function fetchSongArrangements(
   accessToken: string,
   songId: string
 ): Promise<PcoArrangement[]> {
-  const response = await pcoFetch<{ data: PcoArrangement[] }>(
+  const response = await pcoFetchWithRetry<{ data: PcoArrangement[] }>(
     accessToken,
     `${PCO_SERVICES_BASE}/songs/${songId}/arrangements?per_page=100`
   );
