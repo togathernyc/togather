@@ -299,6 +299,8 @@ describe("SongLibraryScreen", () => {
         updated: 3,
         skipped: 12,
         total: 57,
+        filesImported: 18,
+        filesSkipped: 5,
       });
       (useAuthenticatedAction as jest.Mock).mockReturnValue(importFromPco);
       const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
@@ -312,7 +314,7 @@ describe("SongLibraryScreen", () => {
         });
         expect(alertSpy).toHaveBeenCalledWith(
           "Import complete",
-          "Imported 42 songs, updated 3, skipped 12.",
+          "Imported 42 songs and 18 charts, updated 3, skipped 12.",
         );
       });
       alertSpy.mockRestore();

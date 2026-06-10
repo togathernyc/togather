@@ -111,7 +111,7 @@ export function SongLibraryScreen() {
       });
       notify(
         "Import complete",
-        `Imported ${result.imported} songs, updated ${result.updated}, skipped ${result.skipped}.`,
+        `Imported ${result.imported} songs and ${result.filesImported} charts, updated ${result.updated}, skipped ${result.skipped}.`,
       );
     } catch (e: any) {
       // ConvexError carries its message in `data`.
