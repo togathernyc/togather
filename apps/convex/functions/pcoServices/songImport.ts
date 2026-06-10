@@ -521,7 +521,18 @@ export const importSongsFromPco = action({
     if (!integration || integration.status !== "connected") {
       throw new ConvexError("Planning Center is not connected");
     }
-    const accessToken = await getValidAccessToken(ctx, args.communityId);
+    // Acquiring/refreshing the token can fail if it's expired or revoked (a
+    // revoked refresh token returns 400, not 401), so map any failure here to
+    // the reconnect guidance regardless of status — it always means reconnect.
+    let accessToken: string;
+    try {
+      accessToken = await getValidAccessToken(ctx, args.communityId);
+    } catch {
+      throw new ConvexError(
+        "Your Planning Center connection has expired or was revoked. " +
+          "Reconnect Planning Center and try again.",
+      );
+    }
 
     // 3. Fetch the whole library, then each song's arrangements in batches
     //    (the songs endpoint has no `include=arrangements`; see

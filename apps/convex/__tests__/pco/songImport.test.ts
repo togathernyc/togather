@@ -44,6 +44,7 @@ vi.mock("../../lib/pcoServicesApi", async (importOriginal) => {
 import {
   fetchAllSongs,
   fetchSongArrangements,
+  getValidAccessToken,
 } from "../../lib/pcoServicesApi";
 
 let activeHandle: ReturnType<typeof convexTest> | null = null;
@@ -536,5 +537,23 @@ describe("importSongsFromPco", () => {
         communityId: world.communityId,
       }),
     ).rejects.toThrow(/Editor or Administrator access to Services/);
+  });
+
+  it("maps a token refresh failure to the reconnect message", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await connectPco(t, world.communityId);
+
+    // A revoked refresh token surfaces from getValidAccessToken (often 400).
+    (getValidAccessToken as any).mockRejectedValueOnce(
+      new PcoApiError(400, "Failed to refresh Planning Center access token"),
+    );
+
+    await expect(
+      t.action(api.functions.pcoServices.songImport.importSongsFromPco, {
+        token,
+        communityId: world.communityId,
+      }),
+    ).rejects.toThrow(/expired or was revoked/);
   });
 });
