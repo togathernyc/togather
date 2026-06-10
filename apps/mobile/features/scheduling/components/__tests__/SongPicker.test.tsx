@@ -31,10 +31,9 @@ jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#2563EB" }),
 }));
 
-let mockIsAdmin = true;
-jest.mock("@providers/AuthProvider", () => ({
-  useAuth: () => ({ user: { is_admin: mockIsAdmin } }),
-}));
+// Whether the current user may manage songs (admin or group leader), surfaced
+// by the canManageSongs query.
+let mockCanManage = true;
 
 const mockNotify = jest.fn();
 jest.mock("@/utils/platformAlert", () => ({
@@ -48,6 +47,7 @@ jest.mock("@services/api/convex", () => ({
         songs: {
           listSongs: "api.functions.scheduling.songs.listSongs",
           createSong: "api.functions.scheduling.songs.createSong",
+          canManageSongs: "api.functions.scheduling.songs.canManageSongs",
         },
       },
     },
@@ -78,12 +78,14 @@ describe("SongPicker", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockIsAdmin = true;
+    mockCanManage = true;
     onSelect = jest.fn();
     (useAuthenticatedQuery as jest.Mock).mockImplementation(
       (fn: string, args: unknown) => {
         if (args === "skip") return undefined;
         if (fn === "api.functions.scheduling.songs.listSongs") return SONGS;
+        if (fn === "api.functions.scheduling.songs.canManageSongs")
+          return mockCanManage;
         return undefined;
       },
     );
@@ -182,8 +184,8 @@ describe("SongPicker", () => {
     });
   });
 
-  it("hides the inline Create action for non-admins (createSong is admin-only)", () => {
-    mockIsAdmin = false;
+  it("hides the inline Create action for users who can't manage songs", () => {
+    mockCanManage = false;
     const { getByPlaceholderText, queryByText } = render(
       <SongPicker
         communityId="community-1"
@@ -194,10 +196,10 @@ describe("SongPicker", () => {
       />,
     );
 
-    // A non-admin can still search/link existing songs…
+    // A non-editor (e.g. a team moderator who isn't a group leader) can still
+    // search/link existing songs…
     fireEvent.changeText(getByPlaceholderText("Search songs…"), "Brand New Song");
-    // …but the inline Create affordance (which would hit the admin-only
-    // createSong guard) is not offered.
+    // …but the inline Create affordance is not offered.
     expect(queryByText('Create "Brand New Song"')).toBeNull();
   });
 

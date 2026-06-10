@@ -8,11 +8,11 @@
  *
  * Songs are community-scoped; the screen resolves the community from the active
  * auth context. It is reached from the run sheet's SongPicker ("Manage song
- * library") at `/rostering/[group_id]/songs`. Editing affordances are gated to
- * community admins client-side; the backend enforces the real guard
- * (`requireGroupLeaderOrCommunityAdmin`).
+ * library") at `/rostering/[group_id]/songs`. Editing affordances are gated on
+ * the `canManageSongs` query (community admin or group leader); the backend
+ * enforces the same rule via `requireCommunitySongEditor`.
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -69,11 +69,17 @@ export function SongLibraryScreen() {
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, community } = useAuth();
+  const { community } = useAuth();
   const communityId = community?.id as string | undefined;
-  // Community admins manage the library; leaders are also allowed by the
-  // backend guard, but `is_admin` is the signal available client-side here.
-  const canEdit = !!user?.is_admin;
+  // Community admins and group leaders manage the library (backend
+  // `requireCommunitySongEditor`); ask the server which applies to this user.
+  const canEdit =
+    useAuthenticatedQuery(
+      api.functions.scheduling.songs.canManageSongs,
+      communityId
+        ? { communityId: communityId as Id<"communities"> }
+        : "skip",
+    ) ?? false;
 
   const [search, setSearch] = useState("");
   // The song currently open in the editor: `null` = closed, "new" = create.

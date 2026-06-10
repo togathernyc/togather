@@ -236,20 +236,57 @@ export async function requireCommunityMember(
 }
 
 /**
- * Require that `userId` is an admin of `communityId`. Community-scoped edit gate
- * for the song library (ADR-027) — the closest existing community-admin concept
- * (`isCommunityAdmin`), wrapped to throw `ConvexError` for the mobile client.
- *
- * @throws ConvexError if the caller is not a community admin.
+ * Whether `userId` leads at least one group in `communityId`. The worship /
+ * ministry leader who builds run sheets is a group leader (ADR-027), so song
+ * library management is open to them, not only community admins.
  */
-export async function requireCommunityAdmin(
+export async function isCommunityGroupLeader(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const memberships = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+  for (const m of memberships) {
+    if (!isLeaderRole(m.role)) continue;
+    const group = await ctx.db.get(m.groupId);
+    if (group && group.communityId === communityId) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether `userId` may edit the community song library (ADR-027): a community
+ * admin OR a leader of any group in the community. Used both to gate mutations
+ * (`requireCommunitySongEditor`) and to drive UI affordances (`canManageSongs`).
+ */
+export async function canEditCommunitySongs(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  if (await isCommunityAdmin(ctx, communityId, userId)) return true;
+  return isCommunityGroupLeader(ctx, communityId, userId);
+}
+
+/**
+ * Require that `userId` may edit the community song library (ADR-027): a
+ * community admin or a group leader in the community. Throws `ConvexError`
+ * (not a plain `Error`) so the mobile `AuthErrorBoundary` can recover.
+ *
+ * @throws ConvexError if the caller is neither.
+ */
+export async function requireCommunitySongEditor(
   ctx: QueryCtx | MutationCtx,
   communityId: Id<"communities">,
   userId: Id<"users">,
 ): Promise<void> {
-  if (!(await isCommunityAdmin(ctx, communityId, userId))) {
+  if (!(await canEditCommunitySongs(ctx, communityId, userId))) {
     throw new ConvexError(
-      "You must be a community admin to manage the song library",
+      "You must be a group leader or community admin to manage the song library",
     );
   }
 }

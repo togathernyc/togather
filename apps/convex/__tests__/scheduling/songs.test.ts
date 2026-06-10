@@ -310,6 +310,46 @@ describe("songs permissions", () => {
       }),
     ).rejects.toThrow(ConvexError);
   });
+
+  it("lets a group leader (not a community admin) manage the library", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const songId = await t.mutation(api.functions.scheduling.songs.createSong, {
+      token: leaderToken,
+      communityId: world.communityId,
+      input: { title: "Leader's pick" },
+    });
+    expect(songId).toBeTruthy();
+    await t.mutation(api.functions.scheduling.songs.updateSong, {
+      token: leaderToken,
+      songId,
+      patch: { defaultKey: "A" },
+    });
+    await t.mutation(api.functions.scheduling.songs.deleteSong, {
+      token: leaderToken,
+      songId,
+    });
+  });
+
+  it("canManageSongs reflects admin/leader vs plain member", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const adminToken = (await generateTokens(world.communityAdminId)).accessToken;
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+
+    const call = (token: string) =>
+      t.query(api.functions.scheduling.songs.canManageSongs, {
+        token,
+        communityId: world.communityId,
+      });
+
+    expect(await call(adminToken)).toBe(true);
+    expect(await call(leaderToken)).toBe(true);
+    expect(await call(memberToken)).toBe(false);
+    expect(await call(outsiderToken)).toBe(false);
+  });
 });
 
 describe("eventItems ⇄ song integration", () => {

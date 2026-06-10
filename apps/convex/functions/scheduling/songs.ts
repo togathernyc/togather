@@ -9,8 +9,9 @@
  * the `fileKey` and resolve the served `url` on read via `getMediaUrl`, the same
  * helper other media features use. `multitracksUrl` is a link-out, never audio.
  *
- * Permissions reuse existing guards: editing the library is a community-admin
- * action (`requireCommunityAdmin`); listing/viewing requires an active
+ * Permissions reuse existing guards: editing the library is open to community
+ * admins and group leaders (`requireCommunitySongEditor`) — the worship leader
+ * who builds run sheets is a group leader; listing/viewing requires an active
  * community member (`requireCommunityMember`). Linking a song to a run sheet
  * item lives in `eventItems.updateItem` and reuses `requirePlanScheduler`.
  */
@@ -21,7 +22,11 @@ import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getMediaUrl } from "../../lib/utils";
-import { requireCommunityAdmin, requireCommunityMember } from "./permissions";
+import {
+  canEditCommunitySongs,
+  requireCommunityMember,
+  requireCommunitySongEditor,
+} from "./permissions";
 
 /** Editable song fields shared by create (`input`) and update (`patch`). */
 const songInputValidator = v.object({
@@ -73,9 +78,28 @@ async function requireSongAdmin(
   if (!song) {
     throw new ConvexError("Song not found");
   }
-  await requireCommunityAdmin(ctx, song.communityId, userId);
+  await requireCommunitySongEditor(ctx, song.communityId, userId);
   return song;
 }
+
+/**
+ * Whether the caller may manage (create/edit/delete) the community song
+ * library — a community admin or a leader of any group in the community. Drives
+ * UI affordances; the mutations enforce the same rule server-side. Returns
+ * `false` (rather than throwing) for non-editors so callers can gate cleanly.
+ *
+ * Auth: any authenticated user.
+ */
+export const canManageSongs = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    return canEditCommunitySongs(ctx, args.communityId, userId);
+  },
+});
 
 /**
  * List a community's songs, sorted by title (case-insensitive). When `search`
@@ -147,7 +171,7 @@ export const createSong = mutation({
   },
   handler: async (ctx, args): Promise<Id<"songs">> => {
     const userId = await requireAuth(ctx, args.token);
-    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireCommunitySongEditor(ctx, args.communityId, userId);
 
     const title = (args.input.title ?? "").trim();
     if (!title) {

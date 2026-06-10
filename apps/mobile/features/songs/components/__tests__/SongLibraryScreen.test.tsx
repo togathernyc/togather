@@ -37,9 +37,11 @@ jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#2563EB" }),
 }));
 
-let mockUser: { is_admin?: boolean } = { is_admin: true };
+// Whether the current user may manage songs (admin or group leader), surfaced
+// by the canManageSongs query.
+let mockCanManage = true;
 jest.mock("@providers/AuthProvider", () => ({
-  useAuth: () => ({ community: { id: "community-1" }, user: mockUser }),
+  useAuth: () => ({ community: { id: "community-1" } }),
 }));
 
 jest.mock("@features/chat/hooks/useFileUpload", () => ({
@@ -75,6 +77,7 @@ jest.mock("@services/api/convex", () => ({
           deleteSong: "api.functions.scheduling.songs.deleteSong",
           attachChart: "api.functions.scheduling.songs.attachChart",
           removeChart: "api.functions.scheduling.songs.removeChart",
+          canManageSongs: "api.functions.scheduling.songs.canManageSongs",
         },
       },
     },
@@ -112,11 +115,13 @@ function setMutations(map: Record<string, jest.Mock>) {
 describe("SongLibraryScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockUser = { is_admin: true };
+    mockCanManage = true;
     (useAuthenticatedQuery as jest.Mock).mockImplementation(
       (fn: string, args: unknown) => {
         if (args === "skip") return undefined;
         if (fn === "api.functions.scheduling.songs.listSongs") return SONGS;
+        if (fn === "api.functions.scheduling.songs.canManageSongs")
+          return mockCanManage;
         return undefined;
       },
     );
@@ -250,8 +255,8 @@ describe("SongLibraryScreen", () => {
     });
   });
 
-  it("hides editing controls for non-admin members", () => {
-    mockUser = { is_admin: false };
+  it("hides editing controls for members who can't manage songs", () => {
+    mockCanManage = false;
     const { queryByText } = render(<SongLibraryScreen />);
     expect(queryByText("Add song")).toBeNull();
     expect(queryByText("Edit")).toBeNull();

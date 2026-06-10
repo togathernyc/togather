@@ -153,12 +153,15 @@ the universal ID in our data now without coupling us to any external service.
 
 ### Permissions reuse existing guards
 
-No new permission concept. **Editing the song library** requires
-`requireGroupLeaderOrCommunityAdmin` (the guard `uploads.ts`/`groups` already
-use). **Linking a song to a run sheet item** reuses ADR-026's
-`requirePlanScheduler`. **Viewing** songs/charts/links in a run sheet requires
-`requireGroupMember`; the musician rehearsal view is available to members
-assigned to the plan (read-only).
+No new role field. **Editing the song library** (`requireCommunitySongEditor`)
+is open to a **community admin or a leader of any group in the community** — the
+worship/ministry leader who builds run sheets is a group leader, so the library
+isn't admin-gated. A `canManageSongs` query exposes the same check to the client
+so it can show/hide edit affordances authoritatively (rather than guessing from
+`is_admin`). **Linking a song to a run sheet item** reuses ADR-026's
+`requirePlanScheduler`. **Viewing** songs/charts/links in a run sheet requires an
+active community member (`requireCommunityMember`); the musician rehearsal view
+is available to members assigned to the plan (read-only).
 
 ### Backend surface
 
