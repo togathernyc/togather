@@ -21,23 +21,27 @@
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { api, internal } from "../../_generated/api";
 import { modules } from "../../test.setup";
 import type { Id } from "../../_generated/dataModel";
 
-// The claim flow schedules functions (e.g. membership reconciles); drain them
-// after each test so a scheduled write can't fire after its transaction closes
-// ("Write outside of transaction" unhandled rejection), matching the other
-// scheduling-aware suites.
+// The claim path schedules `linkPlaceholderTasksForUser` via scheduler.runAfter(0)
+// (authInternal.ts). A zero-delay job may still be PENDING when a test ends, and
+// finishInProgressScheduledFunctions() only awaits already-triggered jobs — so we
+// use fake timers + finishAllScheduledFunctions(vi.runAllTimers) to advance and
+// drain pending jobs too, preventing a post-test "Write outside of transaction"
+// rejection (the convex-test-recommended pattern, as in the messaging suites).
+vi.useFakeTimers();
 let activeHandle: ReturnType<typeof convexTest> | null = null;
 afterEach(async () => {
   if (activeHandle) {
-    await activeHandle.finishInProgressScheduledFunctions();
+    await activeHandle.finishAllScheduledFunctions(vi.runAllTimers);
     activeHandle = null;
   }
+  vi.clearAllTimers();
 });
 
 /**
