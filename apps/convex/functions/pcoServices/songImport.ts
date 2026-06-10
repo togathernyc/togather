@@ -32,11 +32,50 @@ import {
   fetchArrangementAttachments,
   openAttachmentUrl,
   downloadAttachmentBytes,
+  PcoApiError,
   type PcoArrangement,
   type PcoSong,
   type PcoSongAttachment,
 } from "../../lib/pcoServicesApi";
 import { putR2Object } from "../../lib/r2";
+
+/**
+ * Map a PCO API failure to an actionable, user-facing message. A bare
+ * `PcoApiError` would otherwise surface its raw status/stack in the client
+ * dialog. 403 in particular is common here: the OAuth token is valid (it has
+ * the `services` scope) but the connected Planning Center account lacks
+ * permission to read the org's Services song library.
+ */
+function pcoImportError(err: unknown): ConvexError<string> {
+  if (err instanceof PcoApiError) {
+    if (err.status === 403) {
+      return new ConvexError(
+        "Planning Center denied access to your song library. The connected " +
+          "Planning Center account needs Editor or Administrator access to " +
+          "Services. Reconnect Planning Center with an account that has those " +
+          "permissions, then try again.",
+      );
+    }
+    if (err.status === 401) {
+      return new ConvexError(
+        "Your Planning Center connection has expired or was revoked. " +
+          "Reconnect Planning Center and try again.",
+      );
+    }
+    if (err.status === 429) {
+      return new ConvexError(
+        "Planning Center is rate-limiting the import. Wait a minute and try again.",
+      );
+    }
+    return new ConvexError(
+      `Planning Center returned an error (${err.status}). Please try again, or ` +
+        "reconnect Planning Center if this persists.",
+    );
+  }
+  return new ConvexError(
+    "Something went wrong importing from Planning Center. Please try again.",
+  );
+}
 
 // ============================================================================
 // Pure transform
@@ -482,36 +521,54 @@ export const importSongsFromPco = action({
     if (!integration || integration.status !== "connected") {
       throw new ConvexError("Planning Center is not connected");
     }
-    const accessToken = await getValidAccessToken(ctx, args.communityId);
+    // Acquiring/refreshing the token can fail if it's expired or revoked (a
+    // revoked refresh token returns 400, not 401), so map any failure here to
+    // the reconnect guidance regardless of status — it always means reconnect.
+    let accessToken: string;
+    try {
+      accessToken = await getValidAccessToken(ctx, args.communityId);
+    } catch {
+      throw new ConvexError(
+        "Your Planning Center connection has expired or was revoked. " +
+          "Reconnect Planning Center and try again.",
+      );
+    }
 
     // 3. Fetch the whole library, then each song's arrangements in batches
     //    (the songs endpoint has no `include=arrangements`; see
-    //    fetchSongArrangements).
-    const pcoSongs = await fetchAllSongs(accessToken);
-
+    //    fetchSongArrangements). PCO API failures (e.g. a 403 when the
+    //    connected account can't read the song library) are mapped to a clear,
+    //    actionable message rather than surfacing a raw stack trace.
+    let pcoSongs: PcoSong[];
     const arrangementsBySongId = new Map<string, PcoArrangement[]>();
-    for (let i = 0; i < pcoSongs.length; i += BATCH_SIZE) {
-      const batchStart = Date.now();
-      const batch = pcoSongs.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(
-        batch.map(
-          async (song) =>
-            [song.id, await fetchSongArrangements(accessToken, song.id)] as const,
-        ),
-      );
-      for (const [songId, arrangements] of results) {
-        arrangementsBySongId.set(songId, arrangements);
-      }
-      // Pace to stay under PCO's 100/20s rate limit; no wait after the last batch.
-      const isLastBatch = i + BATCH_SIZE >= pcoSongs.length;
-      if (!isLastBatch) {
-        const elapsed = Date.now() - batchStart;
-        if (elapsed < MIN_BATCH_INTERVAL_MS) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, MIN_BATCH_INTERVAL_MS - elapsed),
-          );
+    try {
+      pcoSongs = await fetchAllSongs(accessToken);
+
+      for (let i = 0; i < pcoSongs.length; i += BATCH_SIZE) {
+        const batchStart = Date.now();
+        const batch = pcoSongs.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(
+            async (song) =>
+              [song.id, await fetchSongArrangements(accessToken, song.id)] as const,
+          ),
+        );
+        for (const [songId, arrangements] of results) {
+          arrangementsBySongId.set(songId, arrangements);
+        }
+        // Pace to stay under PCO's 100/20s rate limit; no wait after the last batch.
+        const isLastBatch = i + BATCH_SIZE >= pcoSongs.length;
+        if (!isLastBatch) {
+          const elapsed = Date.now() - batchStart;
+          if (elapsed < MIN_BATCH_INTERVAL_MS) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, MIN_BATCH_INTERVAL_MS - elapsed),
+            );
+          }
         }
       }
+    } catch (err) {
+      throw pcoImportError(err);
     }
 
     // 4. Transform and upsert metadata.
@@ -526,14 +583,21 @@ export const importSongsFromPco = action({
     let filesImported = 0;
     let filesSkipped = 0;
     if (args.includeFiles ?? true) {
-      const fileResult = await importSongFiles(ctx, {
-        communityId: args.communityId,
-        accessToken,
-        pcoSongs,
-        arrangementsBySongId,
-      });
-      filesImported = fileResult.filesImported;
-      filesSkipped = fileResult.filesSkipped;
+      // Best-effort: metadata is already committed above, so a permission or
+      // network failure while copying files must not fail the whole import.
+      // Re-running is idempotent and will retry the files.
+      try {
+        const fileResult = await importSongFiles(ctx, {
+          communityId: args.communityId,
+          accessToken,
+          pcoSongs,
+          arrangementsBySongId,
+        });
+        filesImported = fileResult.filesImported;
+        filesSkipped = fileResult.filesSkipped;
+      } catch {
+        // Swallow — songs imported; files can be retried on the next run.
+      }
     }
 
     return {

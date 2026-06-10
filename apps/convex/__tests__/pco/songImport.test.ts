@@ -20,6 +20,7 @@ import { generateTokens } from "../../lib/auth";
 import { api, internal } from "../../_generated/api";
 import { buildSchedulingWorld } from "../scheduling/fixtures";
 import { mapPcoSongs } from "../../functions/pcoServices/songImport";
+import { PcoApiError } from "../../lib/pcoServicesApi";
 import type { PcoArrangement, PcoSong } from "../../lib/pcoServicesApi";
 
 // Mock only the PCO HTTP layer — token + fetch helpers. Everything else
@@ -43,6 +44,7 @@ vi.mock("../../lib/pcoServicesApi", async (importOriginal) => {
 import {
   fetchAllSongs,
   fetchSongArrangements,
+  getValidAccessToken,
 } from "../../lib/pcoServicesApi";
 
 let activeHandle: ReturnType<typeof convexTest> | null = null;
@@ -518,5 +520,40 @@ describe("importSongsFromPco", () => {
         communityId: world.communityId,
       }),
     ).rejects.toThrow(/group leader or community admin/);
+  });
+
+  it("maps a PCO 403 to an actionable permission message", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await connectPco(t, world.communityId);
+
+    (fetchAllSongs as any).mockRejectedValue(
+      new PcoApiError(403, "PCO API error: Forbidden", "forbidden"),
+    );
+
+    await expect(
+      t.action(api.functions.pcoServices.songImport.importSongsFromPco, {
+        token,
+        communityId: world.communityId,
+      }),
+    ).rejects.toThrow(/Editor or Administrator access to Services/);
+  });
+
+  it("maps a token refresh failure to the reconnect message", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await connectPco(t, world.communityId);
+
+    // A revoked refresh token surfaces from getValidAccessToken (often 400).
+    (getValidAccessToken as any).mockRejectedValueOnce(
+      new PcoApiError(400, "Failed to refresh Planning Center access token"),
+    );
+
+    await expect(
+      t.action(api.functions.pcoServices.songImport.importSongsFromPco, {
+        token,
+        communityId: world.communityId,
+      }),
+    ).rejects.toThrow(/expired or was revoked/);
   });
 });
