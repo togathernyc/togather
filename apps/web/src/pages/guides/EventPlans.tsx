@@ -393,19 +393,11 @@ export function EventPlans() {
           plan.
         </P>
 
-        <Callout tone="note">
-          <strong>Surfacing the run sheet in the group toolbar</strong> — so
-          every member can pull up the order of service — currently requires the
-          group to be <Term>connected to Planning Center</Term>. The{" "}
-          <Term>Run Sheet</Term> toolbar tool only appears for PCO-connected
-          groups; a non-PCO group's leaders still build and use the native run
-          sheet inside Rostering, but can't yet expose it to members through the
-          toolbar.
-        </Callout>
-
         <P>
-          <strong>Surfacing it to the whole group (PCO-connected groups).</strong>{" "}
-          For a group connected to Planning Center, a leader opens{" "}
+          <strong>Surfacing it to the whole group.</strong> The{" "}
+          <Term>Run Sheet</Term> toolbar tool appears for <em>any</em> group
+          that has a run sheet — a native Togather run sheet or a Planning
+          Center connection. A leader opens{" "}
           <Term>GROUP ACTIONS → Toolbar Settings</Term>, enables the{" "}
           <Term>Run Sheet</Term> tool, turns on{" "}
           <Term>Show toolbar to members</Term>, and sets the Run Sheet tool's
@@ -413,7 +405,7 @@ export function EventPlans() {
           sheet in the group toolbar.
         </P>
 
-        <Figure caption="Toolbar Settings (PCO-connected groups) — flip Run Sheet on, show the toolbar to members, and set its visibility to Everyone.">
+        <Figure caption="Toolbar Settings — flip Run Sheet on, show the toolbar to members, and set its visibility to Everyone.">
           <ToolbarSettingsMock />
         </Figure>
 
@@ -1350,7 +1342,7 @@ function ToolbarSettingsMock() {
     <PhoneFrame title="Toolbar Settings">
       <div className="space-y-3 bg-neutral-50 p-3">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-          Toolbar Items · Planning Center connected
+          Toolbar Items
         </div>
         <div className="flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white p-3">
           <Ion name="list-outline" size={18} className="text-neutral-600" />

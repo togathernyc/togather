@@ -684,6 +684,49 @@ export const getEvent = query({
   },
 });
 
+/**
+ * Whether a group has any native run sheet to show — i.e. at least one
+ * `eventPlan` that has at least one `eventItem` (ADR-026). Used to decide
+ * whether the "Run Sheet" toolbar tool should surface for a non-PCO group.
+ *
+ * Auth: like `hasAutoChannels`, this gates on group membership but returns
+ * `false` (rather than throwing) for non-members so the toolbar filter can
+ * call it for everyone without breaking outsiders / loading states.
+ */
+export const groupHasRunSheet = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId),
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (!membership) return false;
+
+    const plans = await ctx.db
+      .query("eventPlans")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .collect();
+
+    for (const plan of plans) {
+      const firstItem = await ctx.db
+        .query("eventItems")
+        .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+        .first();
+      if (firstItem) return true;
+    }
+
+    return false;
+  },
+});
+
 /** Midnight (local server time) at the start of today, in ms. */
 function startOfTodayMs(): number {
   const d = new Date();

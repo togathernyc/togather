@@ -74,6 +74,18 @@ export function RunSheetToolSettings({ groupId }: Props) {
     { groupId }
   ) as GroupWithRunSheetConfig | undefined | null;
 
+  // Signals used to pick a sensible default source when none is saved yet:
+  // a native-only group (has a native run sheet, no PCO) should default to
+  // "native" rather than preselecting Planning Center.
+  const hasNativeRunSheet = useAuthenticatedQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
+    { groupId }
+  ) as boolean | undefined;
+  const hasPcoChannels = useAuthenticatedQuery(
+    api.functions.messaging.channels.hasAutoChannels,
+    { groupId }
+  ) as boolean | undefined;
+
   // Mutation to update run sheet config
   const updateRunSheetConfig = useAuthenticatedMutation(
     api.functions.groups.mutations.updateRunSheetConfig
@@ -111,14 +123,26 @@ export function RunSheetToolSettings({ groupId }: Props) {
     }
   }, [groupData, hasInitializedDefaults]);
 
-  // Load existing source from group data (only once on initial load)
+  // Load existing source from group data (only once on initial load). An
+  // explicitly saved source always wins. When none is saved, default a
+  // native-only group (native run sheet, no PCO) to "native" so the toggle
+  // doesn't preselect Planning Center for a group that can't use it.
   useEffect(() => {
     if (hasInitializedSource) return;
-    if (groupData !== undefined && groupData !== null) {
-      setSource(groupData.runSheetConfig?.source ?? "pco");
+    if (groupData === undefined || groupData === null) return;
+
+    const savedSource = groupData.runSheetConfig?.source;
+    if (savedSource) {
+      setSource(savedSource);
       setHasInitializedSource(true);
+      return;
     }
-  }, [groupData, hasInitializedSource]);
+
+    // No saved source — wait for the native/PCO signals before defaulting.
+    if (hasNativeRunSheet === undefined || hasPcoChannels === undefined) return;
+    setSource(hasNativeRunSheet && !hasPcoChannels ? "native" : "pco");
+    setHasInitializedSource(true);
+  }, [groupData, hasInitializedSource, hasNativeRunSheet, hasPcoChannels]);
 
   // Load existing chipConfig from group data (only once on initial load)
   const [hasInitializedChipConfig, setHasInitializedChipConfig] = useState(false);
