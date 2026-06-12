@@ -893,6 +893,11 @@ function Footer() {
                   </a>
                 </li>
                 <li>
+                  <Link to="/guides" className="hover:text-white">
+                    Guides
+                  </Link>
+                </li>
+                <li>
                   <a href="#faq" className="hover:text-white">
                     FAQ
                   </a>
