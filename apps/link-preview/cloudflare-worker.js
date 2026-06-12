@@ -89,6 +89,8 @@ function generateAppleAppSiteAssociation(hostname) {
     "/terms",
     "/contribute",
     "/issue",
+    "/guides",
+    "/guides/*",
     "/onboarding/*",
     "/admin/*",
     "/billing/*",
@@ -168,10 +170,12 @@ const DEFAULT_OG_IMAGE = "https://togather.nyc/og-image.png";
 
 // Static paths that should go to the landing page (not the app)
 // Note: /android path handling is environment-aware (see isLandingPagePath)
-const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue"];
+const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/legal/terms", "/contribute", "/issue", "/guides"];
 
-// Onboarding, admin, and billing flows are now handled by the Expo web app.
-const LANDING_PAGE_PREFIXES = [];
+// Multi-segment landing page routes served by the Vite site.
+// "/guides/" covers the church onboarding guide pages (e.g. /guides/branding).
+// Trailing slash keeps this from matching community slugs like /guidesxyz.
+const LANDING_PAGE_PREFIXES = ["/guides/"];
 
 // Known single-segment app routes that should NOT be redirected to /c/:slug.
 // These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.

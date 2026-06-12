@@ -333,6 +333,12 @@ function HeroSection() {
               >
                 FAQ
               </a>
+              <Link
+                to="/guides"
+                className="text-sm font-medium text-neutral-700 hover:text-neutral-900"
+              >
+                Guides
+              </Link>
               <a
                 href="https://github.com/togathernyc/togather"
                 target="_blank"
@@ -386,6 +392,13 @@ function HeroSection() {
             >
               FAQ
             </a>
+            <Link
+              to="/guides"
+              className="block text-neutral-600 hover:text-neutral-900 py-2"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              Guides
+            </Link>
             <a
               href="https://github.com/togathernyc/togather"
               target="_blank"
