@@ -181,8 +181,10 @@ export function EventPlans() {
           editor, everyone rostered into that plan gets both a push notification{" "}
           <em>and</em> a text letting them know they're on the schedule to serve
           for that day, and asking them to confirm or decline. Togather then
-          automatically reminds anyone who hasn't responded — 4 days out and
-          again the day before — so you don't have to chase them yourself.
+          chases the stragglers 4 days out, and the day before sends everyone
+          serving a reminder — a final confirm-or-decline nudge for anyone who
+          still hasn't answered, and a simple "you're serving tomorrow" heads-up
+          for those who already confirmed.
         </P>
 
         <Callout tone="tip" title="Publishing is what notifies people">
@@ -192,12 +194,19 @@ export function EventPlans() {
             day — please confirm or decline.
           </p>
           <p>
-            From there, Togather chases the stragglers for you. Anyone who still
-            hasn't confirmed or declined gets an automatic reminder (push{" "}
-            <strong>and</strong> SMS) <strong>4 days before</strong> the event,
-            and again <strong>1 day before</strong>. The moment a volunteer
-            responds — confirm, decline, or you remove them — their reminders
-            stop, so nobody gets nagged after they've answered.
+            From there, Togather chases the stragglers for you.{" "}
+            <strong>4 days before</strong> the event, anyone who still hasn't
+            confirmed or declined gets an automatic reminder (push{" "}
+            <strong>and</strong> SMS) to do so. The moment they respond — or you
+            remove them — those confirm-or-decline nudges stop, so nobody gets
+            nagged after they've answered.
+          </p>
+          <p>
+            Then <strong>1 day before</strong>, everyone still serving gets a
+            reminder. Anyone who hasn't answered gets one last confirm-or-decline
+            nudge, and everyone who already confirmed gets a simple "you're
+            serving tomorrow" heads-up — no action needed, just a friendly
+            reminder before the day.
           </p>
           <p>
             You can also nudge people yourself any time: reopen the plan and tap

@@ -99,6 +99,27 @@ async function inboxCount(
   });
 }
 
+/** The newest scheduling-request inbox title for a user (or null). */
+async function latestInboxTitle(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+): Promise<string | null> {
+  return t.run(async (ctx) => {
+    const rows = await ctx.db
+      .query("notifications")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("userId"), userId),
+          q.eq(q.field("notificationType"), "scheduling_assignment_request"),
+        ),
+      )
+      .collect();
+    if (rows.length === 0) return null;
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    return rows[0].title;
+  });
+}
+
 describe("scheduling reminders — schedule on publish", () => {
   it("schedules both 4d and 1d reminders at the right times with stored ids", async () => {
     vi.useFakeTimers();
@@ -216,7 +237,7 @@ describe("scheduling reminders — fire behavior", () => {
     expect(plan?.reminder1dSent).toBeFalsy();
   });
 
-  it("does NOT remind a volunteer who has confirmed or declined", async () => {
+  it("4d skips a confirmed volunteer but 1d sends them a serving-tomorrow heads-up", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z").getTime());
 
@@ -239,7 +260,7 @@ describe("scheduling reminders — fire behavior", () => {
     await t.finishInProgressScheduledFunctions();
     const baseline = await inboxCount(t, world.channelMemberId);
 
-    // Volunteer confirms before the reminder fires.
+    // Volunteer confirms before the reminders fire.
     await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
       token: memberToken,
       assignmentId,
@@ -247,13 +268,125 @@ describe("scheduling reminders — fire behavior", () => {
     });
     await t.finishInProgressScheduledFunctions();
 
+    // 4-day reminder is unconfirmed-only — a confirmed volunteer gets nothing.
     await t.action(
       internal.functions.scheduling.assignments.sendUnconfirmedReminders,
       { planId, kind: "4d" },
     );
-
-    // No new inbox row — they already responded.
     expect(await inboxCount(t, world.channelMemberId)).toBe(baseline);
+
+    // 1-day reminder still goes to them — a serving-tomorrow heads-up, not a
+    // confirm/decline ask.
+    await t.action(
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind: "1d" },
+    );
+    expect(await inboxCount(t, world.channelMemberId)).toBe(baseline + 1);
+    expect(await latestInboxTitle(t, world.channelMemberId)).toContain(
+      "Serving tomorrow",
+    );
+  });
+
+  it("does NOT remind a volunteer who has declined (neither 4d nor 1d)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z").getTime());
+
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 10);
+    const assignmentId = await assign(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelMemberId,
+    );
+
+    await t.action(api.functions.scheduling.assignments.publishEvent, {
+      token: leaderToken,
+      planId,
+    });
+    await t.finishInProgressScheduledFunctions();
+    const baseline = await inboxCount(t, world.channelMemberId);
+
+    // Volunteer declines before the reminders fire.
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: memberToken,
+      assignmentId,
+      status: "declined",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await t.action(
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind: "4d" },
+    );
+    await t.action(
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind: "1d" },
+    );
+
+    // No new inbox row for either pass — a declined volunteer is excluded.
+    expect(await inboxCount(t, world.channelMemberId)).toBe(baseline);
+  });
+
+  it("1d reminds both a confirmed and an unconfirmed volunteer, with different copy", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z").getTime());
+
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const confirmerToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 10);
+    // channelMemberId will confirm; channelAdminId stays unconfirmed.
+    const confirmerAssignmentId = await assign(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelMemberId,
+    );
+    await assign(t, world, leaderToken, planId, world.channelAdminId);
+
+    await t.action(api.functions.scheduling.assignments.publishEvent, {
+      token: leaderToken,
+      planId,
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: confirmerToken,
+      assignmentId: confirmerAssignmentId,
+      status: "confirmed",
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    const confirmerBaseline = await inboxCount(t, world.channelMemberId);
+    const unconfirmedBaseline = await inboxCount(t, world.channelAdminId);
+
+    await t.action(
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind: "1d" },
+    );
+
+    // Both get a 1-day reminder row.
+    expect(await inboxCount(t, world.channelMemberId)).toBe(
+      confirmerBaseline + 1,
+    );
+    expect(await inboxCount(t, world.channelAdminId)).toBe(
+      unconfirmedBaseline + 1,
+    );
+
+    // The confirmed volunteer gets the serving-tomorrow heads-up; the
+    // unconfirmed one still gets the confirm/decline nudge.
+    expect(await latestInboxTitle(t, world.channelMemberId)).toContain(
+      "Serving tomorrow",
+    );
+    expect(await latestInboxTitle(t, world.channelAdminId)).toContain(
+      "you're scheduled",
+    );
   });
 
   it("skips placeholder users (they can't confirm yet)", async () => {

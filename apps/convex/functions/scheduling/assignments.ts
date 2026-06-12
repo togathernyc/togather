@@ -1083,13 +1083,18 @@ export const markPlanReminderSent = internalMutation({
 });
 
 /**
- * Internal: fire the automatic "you're still unconfirmed" reminder for a
- * published event. Re-queries the roster at fire time (via
- * `getAssignmentRequestTargets`), so a volunteer who has since confirmed,
- * declined, or been unassigned gets nothing — the reminder auto-stops with
- * no proactive cancellation needed. Placeholder users are skipped (they have
- * no app to confirm in yet). Reuses the same push + SMS + inbox path as
+ * Internal: fire the automatic reminder for a published event. Re-queries the
+ * roster at fire time (via `getAssignmentRequestTargets`), so a volunteer who
+ * has since declined or been unassigned gets nothing — the reminder auto-stops
+ * with no proactive cancellation needed. Placeholder users are skipped (they
+ * have no app to confirm in yet). Reuses the same push + SMS + inbox path as
  * `sendAssignmentRequests`, with distinct "reminder" copy.
+ *
+ * Audience by kind:
+ *   - "4d" → only volunteers still `unconfirmed` ("please confirm or decline").
+ *   - "1d" → everyone still rostered. Those still `unconfirmed` get the same
+ *     confirm/decline nudge; those already `confirmed` get a "serving tomorrow"
+ *     heads-up with no confirm/decline ask. Declined/removed get nothing.
  */
 export const sendUnconfirmedReminders = internalAction({
   args: {
@@ -1110,9 +1115,15 @@ export const sendUnconfirmedReminders = internalAction({
       return { pushSent: 0, smsSent: 0 };
     }
 
+    // 1-day reminders also go to confirmed volunteers (serving-tomorrow
+    // heads-up); the 4-day pass stays unconfirmed-only.
     const targets = await ctx.runQuery(
       internal.functions.scheduling.assignments.getAssignmentRequestTargets,
-      { planId: args.planId, publisherId: plan.createdById },
+      {
+        planId: args.planId,
+        publisherId: plan.createdById,
+        includeConfirmed: args.kind === "1d",
+      },
     );
 
     // Mark sent up-front so a duplicate run (or an empty roster) doesn't
@@ -1136,6 +1147,30 @@ export const sendUnconfirmedReminders = internalAction({
     const linkFor = (assignmentId: string) =>
       `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
 
+    // Copy branches on the recipient's current status. A `confirmed`
+    // volunteer (only present in the 1-day pass) gets a no-ask heads-up;
+    // an `unconfirmed` one still gets the confirm/decline nudge.
+    const copyFor = (recipient: (typeof recipients)[number]) => {
+      if (recipient.status === "confirmed") {
+        return {
+          title: `Serving tomorrow: ${targets.title}`,
+          body: `You're on for ${recipient.roleName} on ${eventDate}.`,
+          sms:
+            `Reminder — you're serving ${recipient.roleName} at ` +
+            `${targets.title} on ${eventDate}. See you there!\n\n` +
+            `Details: ${linkFor(recipient.assignmentId)}`,
+        };
+      }
+      return {
+        title: `Reminder: you're scheduled for ${targets.title}`,
+        body: `${recipient.roleName} on ${eventDate} — please confirm or decline.`,
+        sms:
+          `Reminder — you're scheduled for ${recipient.roleName} at ` +
+          `${targets.title} on ${eventDate}.\n\n` +
+          `Confirm or decline: ${linkFor(recipient.assignmentId)}`,
+      };
+    };
+
     // --- Push -------------------------------------------------------------
     const tokenResults: Array<{ userId: string; tokens: string[] }> =
       await ctx.runQuery(
@@ -1146,8 +1181,7 @@ export const sendUnconfirmedReminders = internalAction({
 
     const pushNotifications = recipients.flatMap((recipient) => {
       const tokens = tokensByUser.get(recipient.userId) ?? [];
-      const title = `Reminder: you're scheduled for ${targets.title}`;
-      const body = `${recipient.roleName} on ${eventDate} — please confirm or decline.`;
+      const { title, body } = copyFor(recipient);
       const url = linkFor(recipient.assignmentId);
       return tokens.map((token) => ({
         token,
@@ -1175,14 +1209,10 @@ export const sendUnconfirmedReminders = internalAction({
     let smsSent = 0;
     for (const recipient of recipients) {
       if (!recipient.phone) continue;
-      const smsBody =
-        `Reminder — you're scheduled for ${recipient.roleName} at ` +
-        `${targets.title} on ${eventDate}.\n\n` +
-        `Confirm or decline: ${linkFor(recipient.assignmentId)}`;
       try {
         await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
           phone: recipient.phone,
-          message: smsBody,
+          message: copyFor(recipient).sms,
         });
         smsSent += 1;
       } catch {
@@ -1194,14 +1224,17 @@ export const sendUnconfirmedReminders = internalAction({
     await ctx.runMutation(
       internal.functions.scheduling.assignments.recordAssignmentNotifications,
       {
-        notifications: recipients.map((recipient) => ({
-          userId: recipient.userId,
-          communityId: targets.communityId,
-          groupId: targets.groupId,
-          title: `Reminder: you're scheduled for ${targets.title}`,
-          body: `${recipient.roleName} on ${eventDate} — please confirm or decline.`,
-          url: linkFor(recipient.assignmentId),
-        })),
+        notifications: recipients.map((recipient) => {
+          const { title, body } = copyFor(recipient);
+          return {
+            userId: recipient.userId,
+            communityId: targets.communityId,
+            groupId: targets.groupId,
+            title,
+            body,
+            url: linkFor(recipient.assignmentId),
+          };
+        }),
       },
     );
 
@@ -1230,12 +1263,19 @@ export const getPlanReminderState = internalQuery({
 
 /**
  * Internal: gather everything `sendAssignmentRequests` needs — event display
- * info plus, per unconfirmed-assignment volunteer, their phone number.
+ * info plus, per assignment volunteer, their phone number and status.
+ *
+ * By default only `unconfirmed` assignments are returned (the publish + 4-day
+ * reminder audience). Pass `includeConfirmed: true` for the 1-day reminder,
+ * which goes to everyone still rostered — both `confirmed` and `unconfirmed`,
+ * never `declined`. Each recipient carries its `status` so callers can branch
+ * the copy (a "serving tomorrow" heads-up vs the confirm/decline nudge).
  */
 export const getAssignmentRequestTargets = internalQuery({
   args: {
     planId: v.id("eventPlans"),
     publisherId: v.id("users"),
+    includeConfirmed: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const plan = await ctx.db.get(args.planId);
@@ -1245,7 +1285,14 @@ export const getAssignmentRequestTargets = internalQuery({
       .query("roleAssignments")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
-    const unconfirmed = assignments.filter((a) => a.status === "unconfirmed");
+    // Always nudge the unconfirmed; for the 1-day pass also include those
+    // who've already confirmed (a serving-tomorrow heads-up). Declined and
+    // removed assignments are never notified.
+    const targeted = assignments.filter((a) =>
+      args.includeConfirmed
+        ? a.status === "unconfirmed" || a.status === "confirmed"
+        : a.status === "unconfirmed",
+    );
 
     const [community, publisher] = await Promise.all([
       ctx.db.get(plan.communityId),
@@ -1253,7 +1300,7 @@ export const getAssignmentRequestTargets = internalQuery({
     ]);
 
     const recipients = await Promise.all(
-      unconfirmed.map(async (assignment) => {
+      targeted.map(async (assignment) => {
         const [user, role, team] = await Promise.all([
           ctx.db.get(assignment.userId),
           ctx.db.get(assignment.roleId),
@@ -1262,6 +1309,7 @@ export const getAssignmentRequestTargets = internalQuery({
         return {
           assignmentId: assignment._id,
           userId: assignment.userId,
+          status: assignment.status,
           phone: user?.phone ?? null,
           roleName: role?.name ?? "a role",
           // Placeholder context — these recipients get the join-the-app SMS
