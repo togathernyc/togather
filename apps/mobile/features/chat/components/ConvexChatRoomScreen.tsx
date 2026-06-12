@@ -221,6 +221,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     resolvedGroupId && token ? { token, groupId: resolvedGroupId } : "skip"
   );
 
+  // Whether the group has a native run sheet — surfaces the Run Sheet tool
+  // for native-only groups even without PCO channels.
+  const hasNativeRunSheet = useQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
+    resolvedGroupId && token ? { token, groupId: resolvedGroupId } : "skip"
+  );
+
   // Cache integration for group channels (eliminates tab bar flash)
   const { setGroupChannels: cacheGroupChannels, getGroupChannels: getCachedGroupChannels } = useChannelsCache();
 
@@ -1120,6 +1127,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             onExternalChatPress={() => setExternalChatModalVisible(true)}
             tools={(groupDetails as { leaderToolbarTools?: string[] } | undefined)?.leaderToolbarTools}
             hasPcoChannels={hasPcoChannels ?? false}
+            hasNativeRunSheet={hasNativeRunSheet ?? false}
             toolVisibility={groupWithVisibility?.toolVisibility}
             toolDisplayNames={groupWithVisibility?.toolDisplayNames}
             userRole={userRole}

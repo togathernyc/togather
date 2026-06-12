@@ -154,6 +154,7 @@ type ChatToolbarProps = {
   showLeaderTools: boolean;
   tools?: string[];           // Ordered list of tool IDs (undefined = default)
   hasPcoChannels?: boolean;   // Filter out "sync" if no PCO channels
+  hasNativeRunSheet?: boolean; // Surface "runsheet" for native-only groups
   toolVisibility?: Record<string, string>;  // Per-tool visibility settings
   toolDisplayNames?: Record<string, string>; // Custom display names for tools
   userRole?: "admin" | "leader" | "member"; // Current user's role in the group
@@ -176,6 +177,7 @@ export const ChatToolbar = memo(function ChatToolbar({
   showLeaderTools,
   tools,
   hasPcoChannels,
+  hasNativeRunSheet,
   toolVisibility,
   toolDisplayNames,
   userRole,
@@ -241,11 +243,19 @@ export const ChatToolbar = memo(function ChatToolbar({
           icon: string;
           label: string;
           requiresPco?: boolean;
+          showsWithRunSheet?: boolean;
           defaultVisibility?: "leaders" | "everyone";
         };
 
-        // Filter out PCO-required tools if hasPcoChannels is false
-        if (tool.requiresPco && !hasPcoChannels) return null;
+        // Hide PCO-required tools when the group has no PCO channels — unless
+        // the tool opts into native run sheets and the group has one.
+        if (
+          tool.requiresPco &&
+          !hasPcoChannels &&
+          !(tool.showsWithRunSheet && hasNativeRunSheet)
+        ) {
+          return null;
+        }
 
         const label = toolDisplayNames?.[toolId] || tool.label;
 
@@ -279,6 +289,7 @@ export const ChatToolbar = memo(function ChatToolbar({
     resources,
     isLeaderOrAdmin,
     hasPcoChannels,
+    hasNativeRunSheet,
     toolVisibility,
     toolDisplayNames,
   ]);
@@ -352,6 +363,8 @@ type ChatNavigationProps = {
   tools?: string[];
   /** Whether the group has PCO channels (filters out "sync" if false) */
   hasPcoChannels?: boolean;
+  /** Whether the group has a native run sheet (surfaces "runsheet" without PCO) */
+  hasNativeRunSheet?: boolean;
   /** Per-tool visibility settings */
   toolVisibility?: Record<string, string>;
   /** Custom display names for tools */
@@ -374,6 +387,7 @@ export const ChatNavigation = memo(function ChatNavigation({
   onExternalChatPress,
   tools,
   hasPcoChannels,
+  hasNativeRunSheet,
   toolVisibility,
   toolDisplayNames,
   userRole,
@@ -394,6 +408,7 @@ export const ChatNavigation = memo(function ChatNavigation({
         showLeaderTools={showLeaderTools}
         tools={tools}
         hasPcoChannels={hasPcoChannels}
+        hasNativeRunSheet={hasNativeRunSheet}
         toolVisibility={toolVisibility}
         toolDisplayNames={toolDisplayNames}
         userRole={userRole}

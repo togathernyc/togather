@@ -85,6 +85,11 @@ jest.mock('@services/api/convex', () => ({
           triggerGroupSync: 'api.functions.pcoServices.index.triggerGroupSync',
         },
       },
+      scheduling: {
+        events: {
+          groupHasRunSheet: 'api.functions.scheduling.events.groupHasRunSheet',
+        },
+      },
       groupResources: {
         index: {
           getVisibleForUser: 'api.functions.groupResources.index.getVisibleForUser',

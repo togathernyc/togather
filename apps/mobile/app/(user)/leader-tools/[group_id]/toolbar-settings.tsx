@@ -74,6 +74,13 @@ export default function ToolbarSettingsScreen() {
     token && groupId ? { token, groupId } : "skip"
   );
 
+  // Query if group has a native run sheet (event plan with ≥1 item). Lets the
+  // Run Sheet tool surface for native-only groups, not just PCO-connected ones.
+  const hasNativeRunSheet = useQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
+    token && groupId ? { token, groupId } : "skip"
+  );
+
   // Query resources for the group
   const resources = useQuery(
     api.functions.groupResources.index.listByGroup,
@@ -210,10 +217,18 @@ export default function ToolbarSettingsScreen() {
   // NOTE: This must be a useMemo to ensure hooks are called in consistent order
   const availableTools = useMemo(() => {
     return ALL_TOOLS.filter((tool) => {
-      if (tool.requiresPco && !hasPcoChannels) return false;
+      // A PCO-required tool stays hidden unless the group has PCO channels —
+      // OR it opts into native run sheets and the group has one.
+      if (
+        tool.requiresPco &&
+        !hasPcoChannels &&
+        !(tool.showsWithRunSheet && hasNativeRunSheet)
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [hasPcoChannels]);
+  }, [hasPcoChannels, hasNativeRunSheet]);
 
   // Create unified list of all toolbar items (tools + resources)
   const allUnifiedItems = useMemo((): UnifiedToolbarItem[] => {

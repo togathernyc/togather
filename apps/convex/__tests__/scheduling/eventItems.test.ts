@@ -681,3 +681,66 @@ describe("run sheet segments (before / during / after)", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("groupHasRunSheet", () => {
+  it("returns false when the group has no event plans", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const result = await t.query(
+      api.functions.scheduling.events.groupHasRunSheet,
+      { token, groupId: world.groupId },
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns false when a plan exists but has no items", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await createPlan(t, token, world.groupId);
+
+    const result = await t.query(
+      api.functions.scheduling.events.groupHasRunSheet,
+      { token, groupId: world.groupId },
+    );
+    expect(result).toBe(false);
+  });
+
+  it("returns true once a plan has at least one item", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+    await t.mutation(api.functions.scheduling.eventItems.createItem, {
+      token,
+      planId,
+      type: "item",
+      title: "Welcome",
+    });
+
+    const result = await t.query(
+      api.functions.scheduling.events.groupHasRunSheet,
+      { token, groupId: world.groupId },
+    );
+    expect(result).toBe(true);
+  });
+
+  it("returns false for a non-member token (no throw)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, leaderToken, world.groupId);
+    await t.mutation(api.functions.scheduling.eventItems.createItem, {
+      token: leaderToken,
+      planId,
+      type: "item",
+      title: "Welcome",
+    });
+
+    // Outsider has no membership anywhere — should get false, not an error.
+    const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
+    const result = await t.query(
+      api.functions.scheduling.events.groupHasRunSheet,
+      { token: outsiderToken, groupId: world.groupId },
+    );
+    expect(result).toBe(false);
+  });
+});

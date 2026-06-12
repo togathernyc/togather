@@ -6,8 +6,11 @@
  *   - "native" → the group's upcoming event plan run sheets (NativeRunSheetView)
  *   - "pco" (default) → the legacy Planning Center run sheet (RunSheetScreen)
  *
- * The source is set in Run Sheet Settings. Kept as a thin wrapper so the PCO
- * screen's hook-heavy body is never conditionally mounted mid-render.
+ * The source is set in Run Sheet Settings. When no explicit source is saved,
+ * a non-PCO group that has a native run sheet still resolves to the native
+ * view (the default `getById` "pco" source would otherwise show an empty PCO
+ * screen). Kept as a thin wrapper so the PCO screen's hook-heavy body is never
+ * conditionally mounted mid-render.
  */
 import React from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
@@ -28,7 +31,24 @@ export function RunSheetToolScreen() {
     group_id ? { groupId } : "skip",
   ) as { runSheetSource?: string; userRole?: string } | null | undefined;
 
-  if (groupData === undefined) {
+  // Used to resolve the effective source when no explicit source is saved: a
+  // non-PCO group with a native run sheet should show the native view, not the
+  // empty PCO screen the default "pco" source would otherwise render.
+  const hasNativeRunSheet = useAuthenticatedQuery(
+    api.functions.scheduling.events.groupHasRunSheet,
+    group_id ? { groupId } : "skip",
+  ) as boolean | undefined;
+
+  const hasPcoChannels = useAuthenticatedQuery(
+    api.functions.messaging.channels.hasAutoChannels,
+    group_id ? { groupId } : "skip",
+  ) as boolean | undefined;
+
+  if (
+    groupData === undefined ||
+    hasNativeRunSheet === undefined ||
+    hasPcoChannels === undefined
+  ) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.surface }]}>
         <ActivityIndicator size="small" color={colors.text} />
@@ -36,7 +56,13 @@ export function RunSheetToolScreen() {
     );
   }
 
-  if (groupData?.runSheetSource === "native") {
+  // Explicit "native" always wins; otherwise fall back to native when the
+  // group has a native run sheet and no PCO channels (no explicit source set).
+  const resolveToNative =
+    groupData?.runSheetSource === "native" ||
+    (hasNativeRunSheet && !hasPcoChannels);
+
+  if (resolveToNative) {
     return (
       <NativeRunSheetView
         groupId={groupId}
