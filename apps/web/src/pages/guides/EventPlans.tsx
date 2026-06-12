@@ -187,12 +187,13 @@ export function EventPlans() {
           <p>
             On publish, every rostered volunteer gets a push{" "}
             <strong>and</strong> an SMS: you're on the schedule to serve for this
-            day — please confirm or decline. Anyone who hasn't responded gets
-            follow-up reminders to confirm or decline.
+            day — please confirm or decline.
           </p>
           <p>
-            If you change the plan and publish again, the bottom bar reads{" "}
-            <Term>Re-send requests</Term> instead.
+            To nudge anyone who hasn't responded, reopen the plan and tap the
+            bottom bar again — after the first publish it reads{" "}
+            <Term>Re-send requests</Term>, which sends the confirm-or-decline
+            request once more to volunteers with an open slot.
           </p>
         </Callout>
 
