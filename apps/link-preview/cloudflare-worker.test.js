@@ -557,67 +557,6 @@ test("/guides/:slug sub-pages pass through to landing page", async () => {
   }
 });
 
-// The guide live-preview demo pages (/demo/*.html) are Vite entry points built
-// into the landing deployment. Without the "/demo/" prefix they fell through
-// to the Expo app origin and 404'd inside the guide iframes.
-test("/demo/settings.html passes through to landing page", async () => {
-  const calls = [];
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    calls.push({ url, init });
-    return new Response("settings demo", { status: 200, headers: { "Content-Type": "text/html" } });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/demo/settings.html", {
-      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-    });
-
-    const res = await worker.fetch(req, {});
-
-    assert.equal(res.status, 200);
-    assert.equal(calls.length, 1);
-    assert.ok(
-      calls[0].url.startsWith(LANDING_PAGE_URL),
-      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-// The exact path /demo (no trailing segment) is an Expo app route and must
-// keep going to the app — only /demo/* belongs to the landing site.
-test("/demo (exact, no trailing segment) passes through to EAS Hosting (app)", async () => {
-  const calls = [];
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    calls.push({ url, init });
-    return new Response("app demo route", { status: 200, headers: { "Content-Type": "text/html" } });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/demo", {
-      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-    });
-
-    const res = await worker.fetch(req, {});
-
-    assert.equal(res.status, 200);
-    assert.equal(calls.length, 1);
-    assert.ok(
-      calls[0].url.startsWith(APP_ORIGIN_URL),
-      `expected fetch to ${APP_ORIGIN_URL}, got ${calls[0].url}`
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 // Channel invite link preview tests (/ch/:shortId)
 test("bot /ch/:shortId fetches from Convex and returns OG tags", async () => {
   const calls = [];

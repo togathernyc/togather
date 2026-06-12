@@ -132,15 +132,6 @@ export function GroupTypes() {
           <NewGroupTypeModalMock />
         </Figure>
 
-        <Callout tone="note" title="Live preview">
-          This is the real admin settings screen running in your browser with
-          sample data — scroll down to the <Term>Group Types</Term> section to
-          see the card and the <Term>Add New</Term> action.
-        </Callout>
-        <Figure caption="The live admin settings screen — Group Types running on mock data.">
-          <SettingsLiveDemo />
-        </Figure>
-
         <DeepLink href={appLinks.groupTypes}>Open admin settings</DeepLink>
       </Section>
 
@@ -220,23 +211,6 @@ export function GroupTypes() {
 
 /** Default community primary color (the green used for admin actions). */
 const PRIMARY = "#1E8449";
-
-/**
- * Live demo: the REAL admin SettingsContent screen rendered via
- * react-native-web with mock data (see apps/web/demo/settings.tsx). Embedded in
- * a phone frame so it reads as the in-app screen.
- */
-function SettingsLiveDemo() {
-  return (
-    <PhoneFrame title="Settings">
-      <iframe
-        src="/demo/settings.html"
-        title="Live admin settings — Group Types"
-        className="w-full h-full block border-0"
-      />
-    </PhoneFrame>
-  );
-}
 
 const STARTER_TYPES = [
   {
