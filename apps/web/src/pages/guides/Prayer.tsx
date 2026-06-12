@@ -69,7 +69,11 @@ export function Prayer() {
           <ChurchFeaturesMock />
         </Figure>
 
-        <DeepLink href={appLinks.features}>Open admin settings</DeepLink>
+        <P>
+          Ready to switch it on? This opens your own live community, signed in
+          as you.
+        </P>
+        <DeepLink href={appLinks.features}>Open your admin settings</DeepLink>
       </Section>
 
       <Section id="use" title="How members use it">

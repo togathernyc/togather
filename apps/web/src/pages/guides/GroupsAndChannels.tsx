@@ -397,9 +397,8 @@ export function GroupsAndChannels() {
 
         <Steps>
           <Step n={1}>
-            Open <DeepLink href={appLinks.groups}>Open groups</DeepLink> and tap{" "}
-            <Term>Create group</Term> (or <Term>Request group</Term> if your
-            church requires admin approval).
+            Open <Term>Groups</Term> and tap <Term>Create group</Term> (or{" "}
+            <Term>Request group</Term> if your church requires admin approval).
           </Step>
           <Step n={2}>
             Choose the <Term>group type</Term> — for the Worship Team you&rsquo;d
@@ -421,6 +420,12 @@ export function GroupsAndChannels() {
           always inherits its type&rsquo;s label, so pick the type that best
           matches what the group is for.
         </Callout>
+
+        <P>
+          Ready to create one? This opens your own live community, signed in as
+          you.
+        </P>
+        <DeepLink href={appLinks.groups}>Open your groups</DeepLink>
       </Section>
 
       <Section id="channels" title="The channels inside a group">

@@ -52,7 +52,13 @@ export function Branding() {
           <Term>Branding Colors</Term> — lives in the cards on that screen.
         </P>
         <P>
-          <DeepLink href={appLinks.branding}>Open admin settings</DeepLink>
+          Ready to set this up? This opens your own live community, signed in as
+          you.
+        </P>
+        <P>
+          <DeepLink href={appLinks.branding}>
+            Open your branding settings
+          </DeepLink>
         </P>
         <Figure caption="Admin → Settings. The Basic Information card holds your name, logo, and link.">
           <BasicInfoMock />

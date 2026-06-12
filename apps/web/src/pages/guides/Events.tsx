@@ -198,6 +198,10 @@ export function Events() {
           <CommunityWideEventMock />
         </Figure>
 
+        <P>
+          Ready to schedule one? This opens your own live community, signed in
+          as you.
+        </P>
         <DeepLink href={appLinks.communityWideEvents}>
           Open community-wide events
         </DeepLink>

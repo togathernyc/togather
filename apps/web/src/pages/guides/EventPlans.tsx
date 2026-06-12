@@ -8,10 +8,12 @@ import {
   Steps,
   Step,
   Term,
+  DeepLink,
   Figure,
 } from "../../components/guide/primitives";
 import { PhoneFrame } from "../../components/guide/PhoneFrame";
 import { DesktopFrame } from "../../components/guide/DesktopFrame";
+import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
   { id: "what", label: "What event plans are" },
@@ -92,6 +94,13 @@ export function EventPlans() {
         <Figure caption="Open the group → scroll to GROUP ACTIONS → tap Rostering. That lands you on the Schedule tab.">
           <FindRosteringMock />
         </Figure>
+
+        <P>
+          Ready to plan? Open your groups, pick the group you want to plan for,
+          then tap <Term>Group Actions → Rostering</Term>. This opens your own
+          live community, signed in as you.
+        </P>
+        <DeepLink href={appLinks.groups}>Open your groups</DeepLink>
       </Section>
 
       <Section id="tabs" title="The three tabs">

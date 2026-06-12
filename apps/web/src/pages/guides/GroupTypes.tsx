@@ -132,7 +132,13 @@ export function GroupTypes() {
           <NewGroupTypeModalMock />
         </Figure>
 
-        <DeepLink href={appLinks.groupTypes}>Open admin settings</DeepLink>
+        <P>
+          Ready to set yours up? This opens your own live community, signed in
+          as you.
+        </P>
+        <DeepLink href={appLinks.groupTypes}>
+          Open Group Types in your settings
+        </DeepLink>
       </Section>
 
       <Section id="events" title="Why they matter: community-wide events">
@@ -161,10 +167,6 @@ export function GroupTypes() {
           single step. We cover community-wide events end to end in the Events
           guide.
         </Callout>
-
-        <DeepLink href={appLinks.communityWideEvents}>
-          Open community-wide events
-        </DeepLink>
       </Section>
 
       <Section id="explore" title="Why they matter: Explore & filtering">

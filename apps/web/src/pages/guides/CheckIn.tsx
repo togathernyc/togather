@@ -5,9 +5,11 @@ import {
   P,
   Callout,
   Term,
+  DeepLink,
   Figure,
 } from "../../components/guide/primitives";
 import { PhoneFrame, Avatar } from "../../components/guide/PhoneFrame";
+import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
   { id: "heart", label: "The heart of check-in" },
@@ -65,6 +67,13 @@ export function CheckIn() {
         <Figure caption="The Check-in screen — people triaged by how they're doing.">
           <PeopleListMock />
         </Figure>
+
+        <P>
+          Want to try it? Open your groups, pick a group, then open{" "}
+          <Term>Check-in</Term>. This opens your own live community, signed in as
+          you.
+        </P>
+        <DeepLink href={appLinks.groups}>Open your groups</DeepLink>
       </Section>
 
       <Section id="scores" title="Scores">
