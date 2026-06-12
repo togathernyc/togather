@@ -174,8 +174,12 @@ const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/lega
 
 // Multi-segment landing page routes served by the Vite site.
 // "/guides/" covers the church onboarding guide pages (e.g. /guides/branding).
-// Trailing slash keeps this from matching community slugs like /guidesxyz.
-const LANDING_PAGE_PREFIXES = ["/guides/"];
+// "/demo/" covers the guide live-preview pages (e.g. /demo/settings.html) —
+// Vite entry points built into the landing deployment. Note the EXACT path
+// /demo (no trailing segment) is an Expo app route (KNOWN_APP_ROUTES) and
+// still goes to the app because prefix matching requires the trailing slash.
+// Trailing slash keeps these from matching community slugs like /guidesxyz.
+const LANDING_PAGE_PREFIXES = ["/guides/", "/demo/"];
 
 // Known single-segment app routes that should NOT be redirected to /c/:slug.
 // These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.

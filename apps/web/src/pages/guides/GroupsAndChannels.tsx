@@ -11,76 +11,220 @@ import {
   DeepLink,
   Figure,
 } from "../../components/guide/primitives";
-import { PhoneFrame, Avatar } from "../../components/guide/PhoneFrame";
+import { PhoneFrame } from "../../components/guide/PhoneFrame";
 import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
   { id: "create", label: "Create groups for teams & campuses" },
-  { id: "channels", label: "Every group has channels" },
-  { id: "leaders", label: "Making someone a leader" },
-  { id: "announcements", label: "The announcements channel" },
-  { id: "scale", label: "Large churches" },
+  { id: "channels", label: "The channels inside a group" },
+  { id: "custom-channels", label: "Custom channels & invite links" },
+  { id: "leaders", label: "Members & leaders" },
+  { id: "make-leader", label: "Making someone a leader" },
 ];
 
 /* ------------------------------------------------------------------ */
 /* Page-local mockups — code-reconstructed app screens for the figures */
+/*                                                                     */
+/* These reconstruct real Togather screens closely enough to teach     */
+/* from. Icons are inline SVGs that mirror the Ionicons used in the    */
+/* app (chatbubbles, star, megaphone, chatbubble, etc.).               */
 /* ------------------------------------------------------------------ */
 
-/** A single row in a channel list. */
+/** Inline Ionicons-style glyphs, sized to fill a 40×40 round container. */
+function Icon({ name, color }: { name: string; color: string }) {
+  const common = {
+    width: 20,
+    height: 20,
+    viewBox: "0 0 512 512",
+    fill: color,
+    "aria-hidden": true,
+  } as const;
+  switch (name) {
+    case "chatbubbles":
+      return (
+        <svg {...common}>
+          <path d="M398.33 105.84C372.18 78.71 333.07 64 288 64c-88.22 0-160 65.95-160 147s71.78 147 160 147a204 204 0 0046.54-5.39 10 10 0 018.13 1.6l40.7 26.74a13.5 13.5 0 0020.84-12.62l-3.26-36.62a8.36 8.36 0 013-7.15C434.2 360.36 448 333.2 448 304c0-23.49-9.32-45.62-25.31-64.27l-.13-.15z" />
+          <path d="M167.71 416.71c-39.29 0-71.06-25.66-71.06-57.32 0-9.46 2.84-18.46 8.05-26.39a4.39 4.39 0 00-2.41-6.62A111 111 0 0164 304c-35.35 0-64-25.55-64-57S28.65 190 64 190q3.51 0 7 .35" opacity="0" />
+        </svg>
+      );
+    case "star":
+      return (
+        <svg {...common}>
+          <path d="M394 480a16 16 0 01-9.39-3L256 383.76 127.39 477a16 16 0 01-24.55-18.08L153 310.35 23 221.2a16 16 0 019-29.2h160.38l48.4-148.95a16 16 0 0130.44 0l48.4 149H480a16 16 0 019.05 29.2L359 310.35l50.13 148.53A16 16 0 01394 480z" />
+        </svg>
+      );
+    case "megaphone":
+      return (
+        <svg {...common}>
+          <path d="M48 271.92v-31.84a16 16 0 0110.35-15L224 160v192L58.35 286.91a16 16 0 01-10.35-14.99zM272 354.05V157.95l165.71-65.08A16 16 0 01464 107.92v296.16a16 16 0 01-26.29 15.05zM112 384v-12.28l-48-18.86V408a40 40 0 0040 40h0a40 40 0 0040-40v-11.18l-32-12.58z" />
+        </svg>
+      );
+    case "chatbubble":
+      return (
+        <svg {...common}>
+          <path d="M408 64H104a72.08 72.08 0 00-72 72v224a72.08 72.08 0 0072 72h63.72l34.69 50.06a16 16 0 0026.32-.18L262.39 432H408a72.08 72.08 0 0072-72V136a72.08 72.08 0 00-72-72z" />
+        </svg>
+      );
+    case "person-add":
+      return (
+        <svg {...common}>
+          <path d="M288 256a112 112 0 10-112-112 112 112 0 00112 112zm0 32c-69.42 0-208 42.88-208 128v32a16 16 0 0016 16h280a8 8 0 005.71-13.62A175.49 175.49 0 01336 365.13" />
+          <path d="M496 224h-48v-48a16 16 0 00-32 0v48h-48a16 16 0 000 32h48v48a16 16 0 0032 0v-48h48a16 16 0 000-32z" />
+        </svg>
+      );
+    case "arrow-up":
+      return (
+        <svg {...common}>
+          <path d="M256 464a16 16 0 01-16-16V92.42l-94.13 94.13a16 16 0 01-22.62-22.63l121.44-121.45a16 16 0 0122.62 0L390.75 163.9a16 16 0 01-22.62 22.63L274 92.42V448a16 16 0 01-16 16z" />
+        </svg>
+      );
+    case "person-remove":
+      return (
+        <svg {...common}>
+          <path d="M288 256a112 112 0 10-112-112 112 112 0 00112 112zm0 32c-69.42 0-208 42.88-208 128v32a16 16 0 0016 16h280a8 8 0 005.71-13.62A175.49 175.49 0 01336 365.13" />
+          <path d="M496 240H352a16 16 0 000 32h144a16 16 0 000-32z" />
+        </svg>
+      );
+    case "add":
+      return (
+        <svg {...common}>
+          <path d="M256 112v288M400 256H112" stroke={color} strokeWidth="48" strokeLinecap="round" fill="none" />
+        </svg>
+      );
+    case "link":
+      return (
+        <svg {...common} fill="none" stroke={color} strokeWidth="32" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M208 352h-64a96 96 0 010-192h64M304 160h64a96 96 0 010 192h-64M163.29 256h187.42" />
+        </svg>
+      );
+    default:
+      return <svg {...common} />;
+  }
+}
+
+/** A round 40×40 icon container tinted with the icon color at ~15% opacity. */
+function ChannelIcon({ name, color }: { name: string; color: string }) {
+  return (
+    <span
+      className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+      style={{ backgroundColor: `${color}26` }}
+    >
+      <Icon name={name} color={color} />
+    </span>
+  );
+}
+
+/** Chevron used at the trailing edge of iOS-settings-style rows. */
+function Chevron() {
+  return (
+    <svg
+      className="flex-shrink-0 text-neutral-300"
+      width="16"
+      height="16"
+      viewBox="0 0 512 512"
+      fill="currentColor"
+      aria-hidden
+    >
+      <path d="M184.49 136.49a16 16 0 0122.62 0l112 112a16 16 0 010 22.62l-112 112a16 16 0 01-22.62-22.62L284.69 256 184.49 159.11a16 16 0 010-22.62z" />
+    </svg>
+  );
+}
+
+/** A single iOS-settings-style channel row. */
 function ChannelRow({
   icon,
+  color,
   name,
   subtitle,
-  muted = false,
-  active = false,
+  unread,
 }: {
-  icon: ReactNode;
+  icon: string;
+  color: string;
   name: string;
-  subtitle?: string;
-  muted?: boolean;
-  active?: boolean;
+  subtitle: string;
+  unread?: number;
 }) {
   return (
-    <div
-      className={`flex items-center gap-3 px-4 py-3 border-b border-neutral-100 ${
-        active ? "bg-primary-50" : ""
-      } ${muted ? "opacity-50" : ""}`}
-    >
-      <span className="w-7 h-7 rounded-lg bg-neutral-100 flex items-center justify-center text-sm text-neutral-600 flex-shrink-0">
-        {icon}
-      </span>
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <ChannelIcon name={icon} color={color} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-neutral-900 truncate">
+        <div className="text-[16px] font-semibold text-neutral-900 truncate leading-tight">
           {name}
         </div>
-        {subtitle && (
-          <div className="text-[11px] text-neutral-400 truncate">{subtitle}</div>
-        )}
+        <div className="text-[13px] text-neutral-400 truncate">{subtitle}</div>
       </div>
+      {unread != null && (
+        <span
+          className="flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white"
+          style={{ backgroundColor: color }}
+        >
+          {unread}
+        </span>
+      )}
+      <Chevron />
     </div>
   );
 }
 
-/** (a) A group's channel list: general + locked leaders + announcements. */
+const PRIMARY = "#1E8449"; // community primary (default green)
+const ORANGE = "#FFA500";
+const RED = "#E11D48";
+const CYAN = "#00BCD4";
+
+/** (a) The CHANNELS card with the four canonical rows + Create Channel row. */
 function ChannelListMock() {
   return (
     <PhoneFrame title="Worship Team">
-      <ChannelRow
-        icon="#"
-        name="general"
-        subtitle="Everyone can read and post"
-        active
-      />
-      <ChannelRow
-        icon="🔒"
-        name="leaders"
-        subtitle="Private to leaders"
-      />
-      <ChannelRow
-        icon="📣"
-        name="Announcements"
-        subtitle="Leaders post · everyone reads"
-      />
+      <div className="px-4 pt-4">
+        <div className="rounded-2xl bg-white border border-neutral-200 overflow-hidden divide-y divide-neutral-100">
+          <div className="px-4 pt-3 pb-1 text-[11px] font-semibold tracking-[0.08em] text-neutral-400">
+            CHANNELS
+          </div>
+          <ChannelRow
+            icon="chatbubbles"
+            color={PRIMARY}
+            name="General"
+            subtitle="All members"
+          />
+          <ChannelRow
+            icon="star"
+            color={ORANGE}
+            name="Leaders"
+            subtitle="3 leaders"
+          />
+          <ChannelRow
+            icon="megaphone"
+            color={RED}
+            name="Announcements"
+            subtitle="48 members · Leaders post"
+            unread={2}
+          />
+          <ChannelRow
+            icon="chatbubble"
+            color={CYAN}
+            name="Prayer Chain"
+            subtitle="12 members"
+          />
+        </div>
+
+        {/* Leaders-only: Create Channel row card */}
+        <div className="mt-3 rounded-2xl bg-white border border-neutral-200 overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <span
+              className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: `${PRIMARY}26` }}
+            >
+              <Icon name="add" color={PRIMARY} />
+            </span>
+            <div
+              className="text-[16px] font-semibold flex-1"
+              style={{ color: PRIMARY }}
+            >
+              Create Channel
+            </div>
+          </div>
+        </div>
+      </div>
     </PhoneFrame>
   );
 }
@@ -99,129 +243,136 @@ function LiveChannelList() {
   );
 }
 
-/** A single member row with role pill. */
+/** A member row: white card, 44px avatar, name, role pill, chevron. */
 function MemberRow({
   label,
   color,
   name,
-  role,
-  highlighted = false,
+  isLeader,
+  dimmed = false,
 }: {
   label: string;
   color?: string;
-  name: string;
-  role?: string;
-  highlighted?: boolean;
+  name: ReactNode;
+  isLeader?: boolean;
+  dimmed?: boolean;
 }) {
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 border-b border-neutral-100 ${
-        highlighted ? "bg-primary-50" : ""
+      className={`flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 ${
+        dimmed ? "opacity-40" : ""
       }`}
     >
-      <Avatar label={label} color={color} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-neutral-900 truncate">
-          {name}
-        </div>
+      <span
+        className={`inline-flex items-center justify-center w-11 h-11 rounded-full ${
+          color ?? "bg-primary-400"
+        } text-white text-sm font-semibold flex-shrink-0`}
+      >
+        {label}
+      </span>
+      <div className="min-w-0 flex-1 text-[15px] font-medium text-neutral-900 truncate">
+        {name}
       </div>
-      {role && (
-        <span className="text-[11px] font-semibold text-primary-700 bg-primary-100 rounded-full px-2 py-0.5">
-          {role}
+      {isLeader && (
+        <span
+          className="text-[11px] font-semibold rounded-full px-2 py-0.5"
+          style={{ backgroundColor: `${PRIMARY}1A`, color: PRIMARY }}
+        >
+          Leader
         </span>
       )}
+      <Chevron />
     </div>
   );
 }
 
-/** (b) Member list with an open role menu offering "Promote to Leader". */
-function MemberRoleMock() {
+/** A row inside the member-action bottom sheet. */
+function SheetRow({
+  icon,
+  label,
+  color = "#111827",
+}: {
+  icon: string;
+  label: string;
+  color?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3.5">
+      <Icon name={icon} color={color} />
+      <span className="text-[16px] font-medium" style={{ color }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/** (b) Member list (dimmed) with the member-action bottom sheet over it. */
+function MemberActionSheetMock() {
   return (
     <PhoneFrame title="Members">
-      <MemberRow label="JR" name="Jordan Rivera" role="Leader" />
-      <MemberRow
-        label="SP"
-        color="bg-accent-500"
-        name="Sam Patel"
-        highlighted
-      />
-      {/* Role action menu for the selected member */}
-      <div className="px-4 py-3">
-        <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-          <button
-            type="button"
-            className="w-full text-left px-4 py-2.5 text-sm font-medium text-primary-700 hover:bg-primary-50"
-          >
-            Promote to Leader
-          </button>
-          <div className="border-t border-neutral-100" />
-          <button
-            type="button"
-            className="w-full text-left px-4 py-2.5 text-sm text-neutral-500 hover:bg-neutral-50"
-          >
-            Remove from group
-          </button>
-        </div>
+      {/* Group-name subtitle + person-add affordance under the title */}
+      <div className="px-4 pt-1 pb-2 flex items-center justify-between">
+        <span className="text-[12px] text-neutral-400">Worship Team</span>
+        <Icon name="person-add" color={PRIMARY} />
       </div>
-      <MemberRow
-        label="MA"
-        color="bg-neutral-400"
-        name="Maria Alvarez"
-        role="Member"
-      />
-    </PhoneFrame>
-  );
-}
 
-/** (a/announcements) The announcements channel with a read-only composer. */
-function AnnouncementsMock() {
-  return (
-    <PhoneFrame title="Announcements">
-      <div className="px-4 py-3 bg-primary-50 border-b border-neutral-100 text-[11px] text-primary-700">
-        Visible to all members · only leaders can post
-      </div>
-      <div className="px-4 py-4 space-y-3">
-        <div className="flex gap-2">
-          <Avatar label="JR" />
-          <div className="rounded-2xl rounded-tl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-800 max-w-[80%]">
-            Rehearsal moved to 6:30 this Thursday. See you there! 🙌
+      {/* Dimmed underlying member list */}
+      <div className="relative">
+        <div className="px-4 pb-4 space-y-3 pointer-events-none">
+          {/* Search bar */}
+          <div className="rounded-xl bg-neutral-100 px-3 py-2 text-[13px] text-neutral-400 opacity-40">
+            Search members...
+          </div>
+          {/* Channel filter chips */}
+          <div className="flex gap-2 opacity-40">
+            <span
+              className="text-[12px] font-medium text-white rounded-full px-3 py-1"
+              style={{ backgroundColor: PRIMARY }}
+            >
+              All
+            </span>
+            <span className="text-[12px] font-medium text-neutral-600 bg-neutral-100 rounded-full px-3 py-1">
+              General
+            </span>
+            <span className="text-[12px] font-medium text-neutral-600 bg-neutral-100 rounded-full px-3 py-1">
+              Prayer Chain
+            </span>
+          </div>
+          <MemberRow label="JR" name="Jordan Rivera (you)" isLeader dimmed />
+          <MemberRow
+            label="SP"
+            color="bg-accent-500"
+            name="Sam Patel"
+            dimmed
+          />
+          <MemberRow
+            label="MA"
+            color="bg-neutral-400"
+            name="Maria Alvarez"
+            dimmed
+          />
+        </div>
+
+        {/* Bottom-sheet action modal */}
+        <div className="absolute inset-x-0 bottom-0">
+          <div className="rounded-t-3xl bg-white border-t border-neutral-200 shadow-2xl overflow-hidden">
+            <div className="flex justify-center pt-2 pb-1">
+              <span className="w-9 h-1 rounded-full bg-neutral-300" />
+            </div>
+            <div className="px-4 pb-2 text-center text-[15px] font-semibold text-neutral-900">
+              Sam Patel
+            </div>
+            <div className="divide-y divide-neutral-100">
+              <SheetRow icon="chatbubble" label="View profile" />
+              <SheetRow icon="arrow-up" label="Promote to Leader" />
+              <SheetRow
+                icon="person-remove"
+                label="Remove from Group"
+                color={RED}
+              />
+            </div>
           </div>
         </div>
-      </div>
-      {/* Composer replaced by a read-only notice */}
-      <div className="px-4 py-3 border-t border-neutral-100">
-        <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-center text-xs text-neutral-500">
-          Only leaders can post here. You can react to messages.
-        </div>
-      </div>
-    </PhoneFrame>
-  );
-}
-
-/** (c) Larger-church config: general OFF, announcements as primary. */
-function LargeChurchConfigMock() {
-  return (
-    <PhoneFrame title="Channel settings">
-      <ChannelRow
-        icon="#"
-        name="general"
-        subtitle="Hidden — turned off"
-        muted
-      />
-      <ChannelRow
-        icon="🔒"
-        name="leaders"
-        subtitle="Private to leaders"
-      />
-      <ChannelRow
-        icon="📣"
-        name="Announcements"
-        subtitle="Primary channel · leaders post"
-        active
-      />
-      <div className="px-4 py-3 text-[11px] text-neutral-400 leading-relaxed">
-        General is hidden. Members will not be able to use it until you turn it
-        back on.
       </div>
     </PhoneFrame>
   );
@@ -235,10 +386,10 @@ export function GroupsAndChannels() {
       <Lead>
         Groups are how your church&rsquo;s teams, ministries, and campuses live
         in Togather. Each group has its own members, events, and conversations.
-        Those conversations happen in <strong>channels</strong> — and a couple
-        of them are created for you the moment a group exists. This guide walks
-        through creating groups, the channels inside them, how to make someone a
-        leader, and how larger churches keep things calm at scale.
+        Those conversations happen in <strong>channels</strong> — and two of
+        them are created for you the moment a group exists. This guide covers
+        creating groups, the channels inside them, the custom channels and
+        invite links leaders can spin up, and how members and leaders differ.
       </Lead>
 
       <Section id="create" title="Create groups for teams & campuses">
@@ -253,7 +404,9 @@ export function GroupsAndChannels() {
           type, a <strong>Downtown Campus</strong> group for a specific
           location, or a <strong>Tuesday Small Group</strong> that meets weekly.
           Each one gets its own members, channels, and events — nothing is
-          shared by accident.
+          shared by accident. A group inherits the label of its type, so it
+          shows up as a &ldquo;Team&rdquo; or a &ldquo;Campus&rdquo; wherever
+          it&rsquo;s listed.
         </P>
 
         <Steps>
@@ -278,34 +431,46 @@ export function GroupsAndChannels() {
 
         <Callout tone="tip" title="Group types vary by church">
           The exact group types you see — Teams, Campuses, Small Groups — are
-          set up per community, so the labels in your church may differ. Pick the
-          type that best matches what the group is for.
+          set up per community, so the labels in your church may differ. A group
+          always inherits its type&rsquo;s label, so pick the type that best
+          matches what the group is for.
         </Callout>
       </Section>
 
-      <Section id="channels" title="Every group has channels">
+      <Section id="channels" title="The channels inside a group">
         <P>
-          When a group is created, Togather sets up two channels for you right
-          away — you never start from a blank screen:
+          When a group is created, Togather sets up exactly{" "}
+          <strong>two channels</strong> for you right away — you never start from
+          a blank screen:
         </P>
         <P>
-          A <Term>general</Term> channel where everyone in the group can read and
-          post, and a private <Term>leaders</Term> channel that only the
-          group&rsquo;s leaders and admins can see. The leaders channel is the
-          quiet back room for planning and coordination that members don&rsquo;t
-          need in their feed.
+          <Term>General</Term>, which every member of the group can read and
+          post in, and <Term>Leaders</Term>, a private channel only the
+          group&rsquo;s leaders can see. The Leaders channel is the quiet back
+          room for planning and coordination that members don&rsquo;t need in
+          their feed. If a member doesn&rsquo;t see it, that&rsquo;s working as
+          intended.
+        </P>
+        <P>
+          A third channel, <Term>Announcements</Term>, is{" "}
+          <strong>opt-in per group</strong>. A leader taps to enable it; once
+          it&rsquo;s on, leaders post and every member reads. It&rsquo;s the
+          right place for &ldquo;here&rsquo;s what&rsquo;s happening&rdquo;
+          messages that shouldn&rsquo;t turn into a thread. This is distinct from
+          your community-wide announcement group — the Announcements channel is
+          scoped to just this one group.
         </P>
 
-        <Figure caption="A group's channel list: #general for everyone, a locked leaders channel, and Announcements.">
-          {/* swap-in: <img src="/images/guides/channel-list.png" /> */}
+        <Figure caption="A group's CHANNELS card: General for all members, the leaders-only Leaders channel, an enabled Announcements channel, and a custom Prayer Chain. Leaders also see Create Channel.">
           <ChannelListMock />
         </Figure>
 
         <Callout tone="note">
-          The <Term>leaders</Term> channel is described in the app as
-          &ldquo;Leaders channel is visible to leaders and admins of this
-          group.&rdquo; If a member doesn&rsquo;t see it, that&rsquo;s working as
-          intended — it&rsquo;s private on purpose.
+          The four rows above are the canonical ones: General (all members),
+          Leaders (leaders only), Announcements (opt-in; leaders post, members
+          read), and any custom channels a leader has created. Before
+          Announcements is enabled, its row reads &ldquo;Tap to enable — leaders
+          post, members read.&rdquo;
         </Callout>
 
         <Callout tone="note" title="Live preview">
@@ -314,36 +479,106 @@ export function GroupsAndChannels() {
           the app.
         </Callout>
 
-        <Figure caption="Live render of the app's CHANNELS card: General, the private Leaders channel, Announcements, and more.">
+        <Figure caption="Live render of the app's CHANNELS card.">
           <LiveChannelList />
         </Figure>
       </Section>
 
-      <Section id="leaders" title="Making someone a leader">
+      <Section id="custom-channels" title="Custom channels & invite links">
         <P>
-          Leaders keep a group running: they get the private leaders channel and
-          they&rsquo;re the ones who can post announcements. Promoting someone
-          takes a few taps from the group&rsquo;s member list.
+          Beyond the built-in channels, leaders can create their own{" "}
+          <Term>custom channels</Term> — up to <strong>20 per group</strong>.
+          A custom channel is perfect for an opt-in subgroup: a prayer chain, a
+          class cohort, or a volunteer interest list that not everyone in the
+          group needs to be in.
+        </P>
+        <P>
+          Each custom channel has a <Term>join mode</Term> that decides how
+          people get in:
+        </P>
+        <Steps>
+          <Step n={1}>
+            <strong>Open</strong> — &ldquo;Anyone in the group can join via
+            invite link.&rdquo; Share the link and people add themselves.
+          </Step>
+          <Step n={2}>
+            <strong>Approval required</strong> — &ldquo;Members must request and
+            be approved by a leader.&rdquo; Good when you want to keep an eye on
+            who joins.
+          </Step>
+        </Steps>
+
+        <P>
+          Custom channels also have <Term>invite links</Term>. A leader can
+          share a link in the format <Term>togather.nyc/ch/…</Term>, regenerate
+          it (the old link dies instantly), or disable it entirely. That makes
+          links the easiest way to grow an opt-in subgroup without adding people
+          by hand.
+        </P>
+
+        <Callout tone="tip" title="Regenerating kills the old link">
+          When you regenerate a channel invite link, the previous one stops
+          working immediately. Use that if a link was shared too widely — make a
+          new one and the old one can&rsquo;t be used to join.
+        </Callout>
+      </Section>
+
+      <Section id="leaders" title="Members & leaders">
+        <P>
+          Inside a group there are two roles: <Term>member</Term> and{" "}
+          <Term>leader</Term>. (Community admin is a separate role that lives at
+          the community level, not inside a single group.) Most people are
+          members — they can read and post in General, join custom channels they
+          have access to, and read Announcements.
+        </P>
+        <P>
+          <Term>Leaders</Term> keep the group running. A leader can:
+        </P>
+        <Steps>
+          <Step n={1}>
+            Create custom channels and enable the Announcements channel.
+          </Step>
+          <Step n={2}>
+            Post in the Announcements channel (members can only read it).
+          </Step>
+          <Step n={3}>
+            Manage channel invite links and approve or decline join requests.
+          </Step>
+          <Step n={4}>
+            Add, remove, and promote members within the group.
+          </Step>
+          <Step n={5}>
+            Run the group&rsquo;s events, rostering, and follow-ups.
+          </Step>
+        </Steps>
+      </Section>
+
+      <Section id="make-leader" title="Making someone a leader">
+        <P>
+          Promoting someone takes a few taps from the group&rsquo;s member list.
+          Open the group, go to <Term>Members</Term>, and tap the person you
+          want to promote — a bottom-sheet action menu slides up.
         </P>
 
         <Steps>
           <Step n={1}>
-            Open the group and go to its <Term>Members</Term> list.
+            Open the group and go to its <Term>Members</Term> list. You can
+            search or filter by channel to find someone.
           </Step>
-          <Step n={2}>Tap the member you want to promote.</Step>
+          <Step n={2}>Tap the member&rsquo;s row to open the action sheet.</Step>
           <Step n={3}>
-            Choose <Term>Promote to Leader</Term> from their role menu. Their
-            badge changes from <Term>Member</Term> to <Term>Leader</Term>.
+            Choose <Term>Promote to Leader</Term>. Their role pill changes from{" "}
+            <Term>Member</Term> to <Term>Leader</Term>. (For an existing leader
+            this row reads <Term>Demote to Member</Term> instead.)
           </Step>
           <Step n={4}>
-            They immediately gain access to the leaders channel and can post in
-            the announcements channel.
+            They immediately gain the Leaders channel and everything else a
+            leader can do.
           </Step>
         </Steps>
 
-        <Figure caption="Open a member and choose Promote to Leader to change their role.">
-          {/* swap-in: <img src="/images/guides/member-role-menu.png" /> */}
-          <MemberRoleMock />
+        <Figure caption="Tap a member to open the action sheet: View profile, Promote to Leader, or Remove from Group.">
+          <MemberActionSheetMock />
         </Figure>
 
         <Callout tone="warn" title="Announcement groups are different">
@@ -351,70 +586,6 @@ export function GroupsAndChannels() {
           roles aren&rsquo;t set by hand. The app will tell you: &ldquo;Roles are
           managed automatically based on community admin status.&rdquo; To change
           who can post there, change who is a community admin.
-        </Callout>
-      </Section>
-
-      <Section id="announcements" title="The announcements channel">
-        <P>
-          Alongside <Term>general</Term> and <Term>leaders</Term>, a group can
-          have an <Term>Announcements</Term> channel. It&rsquo;s a one-way
-          broadcast: leaders post, and every member can read — but members
-          can&rsquo;t reply. It&rsquo;s the right place for &ldquo;here&rsquo;s
-          what&rsquo;s happening&rdquo; messages that shouldn&rsquo;t turn into a
-          thread.
-        </P>
-        <P>
-          The app describes the channel exactly this way:{" "}
-          <em>
-            &ldquo;Leader announcements — visible to all members; only leaders
-            can post.&rdquo;
-          </em>
-        </P>
-
-        <Figure caption="In Announcements the composer is replaced by a read-only notice for members.">
-          {/* swap-in: <img src="/images/guides/announcements-channel.png" /> */}
-          <AnnouncementsMock />
-        </Figure>
-
-        <Callout tone="note">
-          When a member opens Announcements, they don&rsquo;t see a text box.
-          Instead they see &ldquo;Only leaders can post in Announcements. You can
-          react to messages.&rdquo; — so the channel stays clean while members
-          can still show they&rsquo;ve seen a post.
-        </Callout>
-      </Section>
-
-      <Section id="scale" title="Large churches: turn off general, use announcements">
-        <P>
-          A wide-open <Term>general</Term> channel is wonderful for a small team
-          where everyone knows each other. For a large congregation it can get
-          noisy fast — hundreds of people all able to post means the important
-          messages get buried.
-        </P>
-        <P>
-          For bigger churches we recommend a simpler shape: turn the{" "}
-          <Term>general</Term> channel off and make <Term>Announcements</Term>{" "}
-          the primary channel. Only leaders broadcast, and members read — calm,
-          clear, and easy to follow.
-        </P>
-        <P>
-          You control this with each channel&rsquo;s <Term>enabled</Term> toggle
-          in the channel settings: switch <Term>general</Term> off and leave{" "}
-          <Term>Announcements</Term> on. Turning general off hides it from
-          members but keeps their memberships, so you can always switch it back
-          on later.
-        </P>
-
-        <Figure caption="A large-church setup: general turned off, Announcements as the primary channel.">
-          {/* swap-in: <img src="/images/guides/large-church-config.png" /> */}
-          <LargeChurchConfigMock />
-        </Figure>
-
-        <Callout tone="tip" title="Reversible at any time">
-          Disabling a channel is not the same as deleting it. The app keeps the
-          history and memberships, so if you ever want the open conversation
-          back, flip <Term>general</Term> on again and everything returns just as
-          it was.
         </Callout>
       </Section>
     </GuideLayout>

@@ -10,87 +10,149 @@ import {
   DeepLink,
   Figure,
 } from "../../components/guide/primitives";
-import { PhoneFrame, Avatar } from "../../components/guide/PhoneFrame";
+import { PhoneFrame } from "../../components/guide/PhoneFrame";
 import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
-  { id: "group", label: "Group events" },
-  { id: "rsvp", label: "RSVP & attendance" },
+  { id: "what", label: "Events aren't event plans" },
+  { id: "anatomy", label: "What an event gives you" },
+  { id: "create", label: "Creating an event" },
+  { id: "card", label: "The event card" },
+  { id: "series", label: "Series: bundle the dates" },
   { id: "cwe", label: "Community-wide events" },
-  { id: "override", label: "Leaders can customize their copy" },
+  { id: "combo", label: "The power combo" },
 ];
 
 /**
- * Guide post: "Create event plans & community-wide events."
+ * Guide post: "Events, series & community-wide events."
  *
- * Reconstructs three in-app screens as code mockups (group create-event form,
- * an event card with RSVP, and a community-wide event form). Field names and
+ * Reconstructs three in-app screens as code mockups (event card, the create
+ * event form, and the community-wide events admin screen). Field names and
  * behavior are kept in sync with the backend:
  *   - meeting fields: apps/convex/functions/meetings/events.ts
  *     (title, scheduledAt, meetingType 1=in-person 2=online, meetingLink,
  *      note, coverImage, rsvpEnabled, rsvpOptions, visibility)
  *   - RSVP options: apps/convex/lib/meetingConfig.ts
- *     (1 = Going, 2 = Maybe, 3 = Can't Go)
+ *     (1 = Going 👍, 2 = Maybe 🤔, 3 = Can't Go 😢; Maybe can be hidden)
+ *   - series: a named bundle of explicit dates (not a recurrence rule); one
+ *     meeting is created per selected date and they share a seriesId.
  *   - community-wide behavior: apps/convex/functions/communityWideEvents.ts
- *     (scope = community + group type, spawns a meeting for every active group,
- *      isOverridden breaks the cascade so leaders can customize their copy)
+ *     (scope = community + group type, spawns a linked meeting for every active
+ *      group; isOverridden breaks the cascade so leaders can customize a copy)
+ *
+ * NOTE: Event *plans* (rostering, run sheets) are a separate feature with its
+ * own guide at /guides/event-plans. This guide is strictly about the public,
+ * RSVP-able event.
  */
 export function Events() {
   return (
     <GuideLayout slug="events" toc={toc}>
       <Lead>
-        Events are what keep your groups actually gathering. With Togather you
-        can schedule a single small-group meetup, or roll out one church-wide
-        push that lands on every team's calendar at once — all from a quick form
-        on your phone.
+        An event is a full-stack invitation — "the men's group is having a
+        picnic." A few taps creates it, texts the group, collects RSVPs with
+        plus-ones, and opens a chat just for the people coming. This guide
+        covers events, series, and how an admin can light one up across an
+        entire community at once.
       </Lead>
 
-      <Section id="group" title="Group events">
+      <Section id="what" title="Events aren't event plans">
         <P>
-          The everyday case: a group leader schedules a meeting inside their own
-          group. You give it a title, pick a date and time, choose whether it's
-          in person or online, and add either a location or a meeting link. An
-          optional note and cover image make it feel warm and on-brand, and RSVP
-          lets people tell you they're coming.
+          It's worth drawing one line up front, because the two get confused. An{" "}
+          <Term>event</Term> is the public-facing invitation: a picnic, a dinner,
+          a service night — something people see, RSVP to, and show up for. An{" "}
+          <Term>event plan</Term> is the behind-the-scenes service plan that
+          makes a gathering run: rostering volunteers, assigning positions,
+          building a run sheet.
+        </P>
+        <P>
+          They're independent. An event might have no plan at all (a casual
+          picnic needs no run sheet), and a plan might have no public event (a
+          volunteer team can be rostered without ever inviting a crowd). This
+          guide is about events. For rostering and run sheets, see the{" "}
+          <a
+            href="/guides/event-plans"
+            className="font-medium text-primary-700 underline decoration-primary-300 underline-offset-2 hover:text-primary-800"
+          >
+            Event plans guide
+          </a>
+          .
+        </P>
+      </Section>
+
+      <Section id="anatomy" title="What an event gives you">
+        <P>
+          Every event has a <Term>hosting group</Term> and a time and place — an
+          address, an online link, or just <Term>Location TBD</Term> — plus a
+          description and a poster image you pick from a curated library or
+          upload yourself. From there, the event does the legwork:
         </P>
 
         <Steps>
           <Step n={1}>
-            From your group, open the leader tools and tap{" "}
-            <Term>Create event</Term>.
+            <strong>Invites by text and push.</strong> Invite group members and
+            they get an SMS <em>and</em> a push invitation. If turnout's thin,
+            fire off another manual reminder round to whoever hasn't responded.
           </Step>
           <Step n={2}>
-            Add a <Term>Title</Term> and pick a <Term>Date &amp; Time</Term>.
+            <strong>RSVPs with plus-ones.</strong> Response options are
+            customizable — the defaults are{" "}
+            <Term>Going 👍</Term> / <Term>Maybe 🤔</Term> /{" "}
+            <Term>Can't Go 😢</Term>, and you can hide <Term>Maybe</Term>.
+            Guests can add plus-ones with <Term>Bringing guests</Term>, so you
+            get a real headcount. You can also hide the RSVP count from
+            attendees while leaders still see it.
           </Step>
           <Step n={3}>
-            Choose <Term>In-person</Term> or <Term>Online Event</Term>. For an
-            in-person event, enter a <Term>Location</Term> (or mark{" "}
-            <Term>Location TBD</Term>); for an online one, paste a{" "}
-            <Term>meeting link</Term>.
+            <strong>Text blasts.</strong> Message everyone who's going or
+            interested by SMS in one shot — the same message also posts to the
+            event's activity feed.
           </Step>
           <Step n={4}>
-            Optionally add a description and a cover image, leave{" "}
-            <Term>RSVP</Term> on, and save.
+            <strong>Event chat.</strong> Flip on an optional chat scoped to just
+            this event. Only people who've RSVP'd can read or post in it.
+          </Step>
+          <Step n={5}>
+            <strong>Visibility.</strong> Choose <Term>Group Only</Term>,{" "}
+            <Term>Community</Term>, or <Term>Public</Term>. Public means anyone
+            with the link can view the event; RSVPing still requires login.
           </Step>
         </Steps>
 
-        <Figure caption="Creating an event inside a single group.">
+        <Callout tone="note" title="Reminders: which channel?">
+          <p>
+            <strong>SMS</strong> goes out for invites, manual re-invites, and
+            text blasts — moments you trigger by hand. <strong>Automatic</strong>{" "}
+            reminders as an event approaches are <em>push</em> notifications, not
+            texts. Togather won't auto-text your group.
+          </p>
+        </Callout>
+      </Section>
+
+      <Section id="create" title="Creating an event">
+        <P>
+          Open the <Term>Create Event</Term> form, pick the hosting group, and
+          fill in as much or as little as you like. Title is optional — leave it
+          blank and Togather uses the group type as the title. Everything else
+          lives on one scrollable form: date and time, poster, location or
+          online toggle, description, hosts, RSVP options, and visibility.
+        </P>
+
+        <Figure caption="A representative slice of the Create Event form. Every label shown here is the real one.">
           {/* swap-in: <img src="/images/guides/events-create.png" /> */}
           <CreateEventMock />
         </Figure>
       </Section>
 
-      <Section id="rsvp" title="RSVP & attendance">
+      <Section id="card" title="The event card">
         <P>
-          Once an event is posted, members RSVP right from the event card —{" "}
-          <Term>Going</Term>, <Term>Maybe</Term>, or <Term>Can't Go</Term>. As a
-          leader you can see who's coming and watch the going count climb, so you
-          know what to plan for. After the event, attendance can be confirmed so
-          your records reflect who actually showed up.
+          Once posted, the event shows up as a card in the events feed: a cover
+          image with the date badged in your community's color, the hosting
+          group, the title, time, location, and a live row of who's going. Tap
+          it to RSVP, bring guests, or jump into the event chat.
         </P>
 
-        <Figure caption="An event card with RSVP options and a live going count.">
-          {/* swap-in: <img src="/images/guides/events-rsvp.png" /> */}
+        <Figure caption="An event card as members see it in the feed.">
+          {/* swap-in: <img src="/images/guides/events-card.png" /> */}
           <EventCardMock />
         </Figure>
 
@@ -103,45 +165,45 @@ export function Events() {
         <Figure caption="The live events list: upcoming gatherings with dates, hosting group, and a running going count.">
           <EventsLiveDemo />
         </Figure>
+      </Section>
 
-        <Callout tone="note">
-          The going count is the number of people who tapped <Term>Going</Term>.
-          You can preview who's attending at a glance before the doors even open,
-          which makes setting out chairs and coffee a lot easier.
+      <Section id="series" title="Series: bundle the dates">
+        <P>
+          A series is a <strong>named bundle of dates</strong>, not a recurrence
+          rule — you pick exactly which dates you want rather than describing a
+          "every other Tuesday" pattern. Flip{" "}
+          <Term>Create / Add to Series</Term> on the event form, tap the dates
+          you want on the calendar, pick one <Term>Time</Term> for all of them,
+          and give it a <Term>Series Name</Term> like{" "}
+          <Term>Weekly Dinner Party</Term>. Togather creates one event per date,
+          all linked together.
+        </P>
+
+        <Callout tone="tip">
+          Editing or cancelling later asks for scope: <Term>this event only</Term>{" "}
+          or <Term>all in series</Term>. Move one week's dinner without touching
+          the rest, or push the whole run at once.
         </Callout>
       </Section>
 
       <Section id="cwe" title="Community-wide events">
         <P>
-          Sometimes you want every group of a kind to gather on the same night —
-          a shared study, a service push, a prayer evening. That's a
-          community-wide event. As an admin you create one event scoped to your
-          community and a <Term>group type</Term>, and Togather automatically
-          creates a meeting for every active group of that type. Schedule a study
-          night for <Term>Small Groups</Term> once, and all of them get the same
-          meeting on the same date.
+          Sometimes you want every group of a kind to gather — a shared study, a
+          prayer night, a serve day. As an admin, create one event scoped to a{" "}
+          <Term>group type</Term> (the form shows{" "}
+          <Term>{`{N} groups`}</Term> so you know the reach), and Togather gives{" "}
+          <em>each group its own linked copy</em> of the event.
+        </P>
+        <P>
+          It's uniform by default but flexible per group. A group's leader can
+          edit their copy — which <strong>disconnects it</strong> from future
+          parent updates — or cancel just theirs, without touching anyone else's.
+          You manage all of them from the{" "}
+          <Term>Community-Wide Events</Term> admin screen, which flags any copy a
+          leader has customized.
         </P>
 
-        <Steps>
-          <Step n={1}>
-            Open <Term>Community-wide events</Term> from your admin area.
-          </Step>
-          <Step n={2}>
-            Add a <Term>Title</Term>, a <Term>Date &amp; Time</Term>, and choose
-            in person or online just like a group event.
-          </Step>
-          <Step n={3}>
-            Pick the <Term>group type</Term> the event applies to — Togather
-            shows how many active groups it will create meetings for.
-          </Step>
-          <Step n={4}>
-            Save, and a meeting lands in every one of those groups at once. (If
-            no active groups of that type exist yet, you'll be asked to create
-            some first.)
-          </Step>
-        </Steps>
-
-        <Figure caption="A community-wide event scoped to a group type.">
+        <Figure caption="The Community-Wide Events admin screen, showing reach and any leader overrides.">
           {/* swap-in: <img src="/images/guides/events-community-wide.png" /> */}
           <CommunityWideEventMock />
         </Figure>
@@ -151,20 +213,20 @@ export function Events() {
         </DeepLink>
       </Section>
 
-      <Section id="override" title="Leaders can customize their copy">
+      <Section id="combo" title="The power combo">
         <P>
-          A church-wide plan shouldn't box anyone in. Each group's leader can
-          override their own copy of a community-wide event — nudge the time,
-          change the location — without touching anyone else's. Only that group's
-          meeting changes; every other group keeps the original.
+          Community-wide and series stack. Want{" "}
+          <em>"all Small Groups meet every Wednesday at 7 for the rest of the
+          semester"</em>? Pick the dates once and pick the group type once.
         </P>
 
-        <Callout tone="tip">
-          Overrides are smart. The moment a leader customizes their meeting it's
-          marked as overridden and stops following the parent event. Groups that
-          haven't been customized still update automatically if you, the admin,
-          later edit the parent — so a single tweak keeps every un-touched group
-          in sync.
+        <Callout tone="tip" title="One form, dozens of events">
+          <p>
+            Select your dates, select your group type, and the form previews the
+            whole rollout before you commit —{" "}
+            <Term>3 dates · 12 groups · 36 events total</Term>. Tap once and
+            Togather creates the event in every small group, for every date.
+          </p>
         </Callout>
       </Section>
     </GuideLayout>
@@ -191,69 +253,29 @@ function EventsLiveDemo() {
   );
 }
 
-/** (a) Create-event form for a single group. */
-function CreateEventMock() {
+/** A small UI label / field heading used inside the mock forms. */
+function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <PhoneFrame title="New Event">
-      <div className="space-y-3 bg-white p-3">
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Title
-          </div>
-          <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800">
-            Tuesday Dinner &amp; Study
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Date &amp; Time
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm">
-            <span className="text-neutral-900">Tue, Jun 16 · 7:00 PM</span>
-            <span className="text-neutral-400">▾</span>
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Location type
-          </div>
-          <div className="flex gap-2">
-            <span className="flex-1 rounded-lg border border-primary-600 bg-primary-600 px-3 py-1.5 text-center text-[12px] font-semibold text-white">
-              In-person
-            </span>
-            <span className="flex-1 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-center text-[12px] font-medium text-neutral-600">
-              Online
-            </span>
-          </div>
-        </div>
-
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Location
-          </div>
-          <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800">
-            114 Grace Ave · Apt 3
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between rounded-xl border border-neutral-200 bg-white p-3">
-          <div className="text-sm font-semibold text-neutral-900">RSVP</div>
-          <span className="flex h-5 w-9 items-center rounded-full bg-primary-600 px-0.5">
-            <span className="ml-auto h-4 w-4 rounded-full bg-white" />
-          </span>
-        </div>
-
-        <button className="w-full rounded-xl bg-primary-600 py-2.5 text-sm font-semibold text-white">
-          Create event
-        </button>
-      </div>
-    </PhoneFrame>
+    <div className="mb-1 text-[11px] font-semibold text-neutral-500">
+      {children}
+    </div>
   );
 }
 
-/** (b) Event card showing date, location, and RSVP buttons with a count. */
+/** A pill toggle (on state) used inside the mock forms. */
+function ToggleOn() {
+  return (
+    <span className="flex h-5 w-9 flex-shrink-0 items-center rounded-full bg-primary-600 px-0.5">
+      <span className="ml-auto h-4 w-4 rounded-full bg-white" />
+    </span>
+  );
+}
+
+/**
+ * (a) Event card — matches the real feed card:
+ * full-width cover with a date badge overlaid top-left, hosting group row,
+ * title, date line, location line, then the RSVP row above a hairline divider.
+ */
 function EventCardMock() {
   const guests = [
     { label: "JD", color: "bg-primary-400" },
@@ -261,45 +283,64 @@ function EventCardMock() {
     { label: "RS", color: "bg-amber-500" },
   ];
   return (
-    <PhoneFrame title="Event">
+    <PhoneFrame title="Events">
       <div className="bg-neutral-50 p-3">
-        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
-          <div className="flex h-20 items-center justify-center bg-gradient-to-br from-primary-200 to-primary-400 text-2xl">
+        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+          {/* Cover with date badge overlaid top-left. */}
+          <div className="relative flex h-[140px] items-center justify-center bg-gradient-to-br from-primary-300 to-primary-500 text-3xl">
             🍽️
-          </div>
-          <div className="space-y-3 p-3">
-            <div>
-              <div className="text-sm font-bold text-neutral-900">
-                Tuesday Dinner &amp; Study
+            <div className="absolute left-3 top-3 rounded-xl bg-white px-2.5 py-1 text-center shadow-sm">
+              <div className="text-[10px] font-bold uppercase leading-none text-primary-600">
+                Jun
               </div>
-              <div className="mt-1 text-[11px] text-neutral-500">
-                Tue, Jun 16 · 7:00 PM
-              </div>
-              <div className="text-[11px] text-neutral-500">
-                114 Grace Ave · Apt 3
+              <div className="text-base font-bold leading-tight text-neutral-900">
+                12
               </div>
             </div>
+          </div>
 
+          <div className="p-3.5">
+            {/* Hosting group row. */}
             <div className="flex items-center gap-2">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary-100 text-[9px] font-semibold text-primary-700">
+                MG
+              </span>
+              <span className="text-[12px] text-neutral-500">Men's Group</span>
+            </div>
+
+            {/* Title. */}
+            <div className="mt-1.5 text-[17px] font-semibold leading-snug text-neutral-900">
+              Tuesday Dinner &amp; Study
+            </div>
+
+            {/* Date line. */}
+            <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">📅</span>
+              <span>Wed, Jun 12 · 7:00 PM</span>
+            </div>
+            {/* Location line. */}
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">📍</span>
+              <span>114 Grace Ave · Apt 3</span>
+            </div>
+
+            {/* RSVP row above a hairline divider. */}
+            <div className="mt-3 flex items-center gap-2 border-t border-neutral-100 pt-3">
               <div className="flex -space-x-2">
                 {guests.map((g) => (
-                  <Avatar key={g.label} label={g.label} color={g.color} />
+                  <span
+                    key={g.label}
+                    className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${g.color} text-[9px] font-semibold text-white ring-2 ring-white`}
+                  >
+                    {g.label}
+                  </span>
                 ))}
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-200 text-[9px] font-semibold text-neutral-600 ring-2 ring-white">
+                  +9
+                </span>
               </div>
-              <span className="text-[11px] font-medium text-neutral-600">
-                12 going
-              </span>
-            </div>
-
-            <div className="flex gap-2">
-              <span className="flex-1 rounded-lg border border-primary-600 bg-primary-600 px-2 py-1.5 text-center text-[12px] font-semibold text-white">
-                Going
-              </span>
-              <span className="flex-1 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-center text-[12px] font-medium text-neutral-600">
-                Maybe
-              </span>
-              <span className="flex-1 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-center text-[12px] font-medium text-neutral-600">
-                Can't Go
+              <span className="text-[12px] font-medium text-neutral-600">
+                12 people going
               </span>
             </div>
           </div>
@@ -309,45 +350,185 @@ function EventCardMock() {
   );
 }
 
-/** (c) Community-wide event form with a group-type selector. */
-function CommunityWideEventMock() {
+/**
+ * (b) Create Event form — a representative subset of the real form:
+ * Hosting Group, the Create / Add to Series switch with its helper, Title with
+ * helper, the poster slot, RSVP Options (toggle + three editable rows + Hide
+ * RSVP count), and the Create Event button. Every label is the real one.
+ */
+function CreateEventMock() {
+  const rsvpRows = ["Going 👍", "Maybe 🤔", "Can't Go 😢"];
   return (
-    <PhoneFrame title="New Event">
-      <div className="space-y-3 bg-white p-3">
-        <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Title
-          </div>
-          <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800">
-            Church-wide Study Night
-          </div>
-        </div>
+    <PhoneFrame title="Create Event">
+      {/* Drag handle. */}
+      <div className="flex justify-center pt-1.5">
+        <span className="h-1 w-9 rounded-full bg-neutral-300" />
+      </div>
 
-        <div className="flex items-center justify-between rounded-xl border border-primary-200 bg-primary-50 p-3">
-          <div className="text-sm font-semibold text-primary-800">
-            Community-wide event
-          </div>
-          <span className="flex h-5 w-9 items-center rounded-full bg-primary-600 px-0.5">
-            <span className="ml-auto h-4 w-4 rounded-full bg-white" />
-          </span>
-        </div>
-
+      <div className="space-y-3.5 bg-white p-3">
+        {/* Hosting Group. */}
         <div>
-          <div className="mb-1 text-[11px] font-medium text-neutral-500">
-            Group type
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-primary-300 bg-white px-3 py-2 text-sm">
-            <span className="font-medium text-neutral-900">Small Groups</span>
+          <FieldLabel>Hosting Group *</FieldLabel>
+          <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm">
+            <span className="text-neutral-900">Men's Group</span>
             <span className="text-neutral-400">▾</span>
           </div>
-          <div className="mt-1.5 rounded-lg bg-accent-400/10 px-3 py-2 text-[11px] font-medium text-neutral-700">
-            This will create meetings for 6 groups.
+        </div>
+
+        {/* Create / Add to Series switch. */}
+        <div className="rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-neutral-900">
+              Create / Add to Series
+            </div>
+            <ToggleOn />
+          </div>
+          <div className="mt-1 text-[11px] text-neutral-500">
+            Select multiple dates to create linked events
+          </div>
+        </div>
+
+        {/* Title. */}
+        <div>
+          <FieldLabel>Title</FieldLabel>
+          <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-800">
+            Tuesday Dinner &amp; Study
+          </div>
+          <div className="mt-1 text-[11px] text-neutral-400">
+            Leave blank to use "Men's Group" as the title
+          </div>
+        </div>
+
+        {/* Poster slot. */}
+        <div>
+          <FieldLabel>Poster</FieldLabel>
+          <div className="flex aspect-square w-full items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 text-[12px] font-medium text-neutral-400">
+            Tap to choose a poster
+          </div>
+        </div>
+
+        {/* RSVP Options. */}
+        <div className="rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-neutral-900">
+              Enable RSVPs
+            </div>
+            <ToggleOn />
+          </div>
+          <div className="mt-2.5 space-y-1.5">
+            {rsvpRows.map((row) => (
+              <div
+                key={row}
+                className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-[12px] text-neutral-800"
+              >
+                {row}
+              </div>
+            ))}
+          </div>
+          <div className="mt-2.5 flex items-center justify-between">
+            <div className="text-[12px] font-medium text-neutral-700">
+              Hide RSVP count
+            </div>
+            <span className="flex h-5 w-9 flex-shrink-0 items-center rounded-full bg-neutral-200 px-0.5">
+              <span className="h-4 w-4 rounded-full bg-white" />
+            </span>
           </div>
         </div>
 
         <button className="w-full rounded-xl bg-primary-600 py-2.5 text-sm font-semibold text-white">
-          Schedule event
+          Create Event
         </button>
+      </div>
+    </PhoneFrame>
+  );
+}
+
+/**
+ * (c) Community-Wide Events admin screen — header + event cards with a
+ * "Scheduled" status badge, date line, group-type and group-count rows (with an
+ * italic orange override note), and outlined Edit / red Cancel actions.
+ */
+function CommunityWideEventMock() {
+  return (
+    <PhoneFrame title="Community-Wide Events">
+      <div className="bg-neutral-50 p-3">
+        <div className="mb-3 px-0.5">
+          <div className="text-[15px] font-bold text-neutral-900">
+            Community-Wide Events
+          </div>
+          <div className="text-[11px] text-neutral-500">2 upcoming, 5 past</div>
+        </div>
+
+        <div className="space-y-2.5">
+          {/* Card 1 — with overrides. */}
+          <div className="rounded-2xl bg-white p-3.5 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[15px] font-semibold leading-snug text-neutral-900">
+                Wednesday Study Night
+              </div>
+              <span className="flex-shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
+                Scheduled
+              </span>
+            </div>
+
+            <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">📅</span>
+              <span>Wed, Jun 18 · 7:00 PM</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">🗂️</span>
+              <span>Small Groups</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">👥</span>
+              <span>12 groups</span>
+              <span className="italic text-orange-500">(2 overridden)</span>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <span className="flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-center text-[12px] font-medium text-neutral-700">
+                Edit
+              </span>
+              <span className="flex-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-center text-[12px] font-medium text-red-600">
+                Cancel
+              </span>
+            </div>
+          </div>
+
+          {/* Card 2 — no overrides. */}
+          <div className="rounded-2xl bg-white p-3.5 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[15px] font-semibold leading-snug text-neutral-900">
+                Community Serve Day
+              </div>
+              <span className="flex-shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
+                Scheduled
+              </span>
+            </div>
+
+            <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">📅</span>
+              <span>Sat, Jun 21 · 9:00 AM</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">🗂️</span>
+              <span>Ministry Teams</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5 text-[12px] text-neutral-600">
+              <span className="text-neutral-400">👥</span>
+              <span>8 groups</span>
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <span className="flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-center text-[12px] font-medium text-neutral-700">
+                Edit
+              </span>
+              <span className="flex-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-center text-[12px] font-medium text-red-600">
+                Cancel
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     </PhoneFrame>
   );

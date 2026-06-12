@@ -11,7 +11,7 @@ import {
   DeepLink,
   Figure,
 } from "../../components/guide/primitives";
-import { PhoneFrame, Avatar } from "../../components/guide/PhoneFrame";
+import { PhoneFrame } from "../../components/guide/PhoneFrame";
 import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
@@ -39,14 +39,16 @@ export function CreateCommunity() {
           church isn't on Togather yet, this is your starting point.
         </P>
         <P>
-          Open the switcher, look past the communities you can already see, and
-          choose <Term>Propose a Community</Term>.
+          Open the switcher, scroll past the communities you can already see,
+          and tap the <Term>Create a Community</Term> button at the bottom of
+          the screen. It opens the <Term>Propose a Community</Term> form in
+          your browser.
         </P>
         <DeepLink href={appLinks.communitySwitcher}>
           Open the community switcher
         </DeepLink>
 
-        <Figure caption="The community switcher: search for an existing community, or propose a new one for your church.">
+        <Figure caption="The Select Community screen: pick a community you belong to, search for another, or create your own.">
           {/* swap-in: <img src="/images/guides/community-switcher.png" /> */}
           <CommunitySwitcherMock />
         </Figure>
@@ -93,8 +95,8 @@ export function CreateCommunity() {
           </Step>
           <Step n={6}>
             <Term>Contact Email</Term> — where we'll send updates about your
-            request. (You'll only see this field if we don't already have an
-            email on file for you.)
+            request. (It appears at the top of the form, and only if we don't
+            already have an email on file for you.)
           </Step>
         </Steps>
         <P>
@@ -117,6 +119,14 @@ export function CreateCommunity() {
           sustainably pay each month. A small congregation and a large one will
           land in very different places, and that's by design.
         </P>
+        <Callout tone="tip" title="Not sure what to propose?">
+          Add up what you're paying today. Togather replaces several tools at
+          once — Planning Center for service planning and rostering, Slack or
+          GroupMe for team chat, texting tools like Clearstream, and
+          event/RSVP tools. The combined monthly total of whatever you
+          currently pay for those is a fair starting point: you're
+          consolidating, not adding a line item.
+        </Callout>
         <P>
           Every request is reviewed by hand. Our admins look at your proposal
           and decide whether we can responsibly support a congregation of your
@@ -202,113 +212,184 @@ function LiveCommunitySwitcherDemo() {
 
 function CommunitySwitcherMock() {
   return (
-    <PhoneFrame title="Select Community">
-      <div className="p-4 space-y-4">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">
+    <PhoneFrame>
+      <div className="p-4 pb-2 bg-white min-h-full flex flex-col">
+        <div className="text-center text-xl font-bold text-neutral-900 mt-3 mb-1">
+          Select Community
+        </div>
+        <div className="text-center text-xs text-neutral-500 mb-5 px-2 leading-snug">
+          Choose a community to continue or search for a new one
+        </div>
+
+        <div className="mb-5">
+          <div className="text-sm font-semibold text-neutral-900 mb-2">
             Your Communities
           </div>
-          <div className="space-y-2">
-            <CommunityRow label="GP" name="Grace Park Fellowship" sub="Member" />
-            <CommunityRow label="HC" name="Hope City Church" sub="Member" color="bg-accent-500" />
+          <CommunityRow initials="GP" name="Grace Park Fellowship" slug="gracepark" />
+          <CommunityRow
+            initials="HC"
+            name="Hope City Church"
+            slug="hopecity"
+            color="bg-accent-500"
+          />
+        </div>
+
+        <div className="mb-5">
+          <div className="text-sm font-semibold text-neutral-900 mb-2">
+            Or Join Another
+          </div>
+          <div className="flex items-center gap-2 rounded-xl bg-neutral-100 px-3 py-2.5">
+            <SearchIcon />
+            <span className="text-sm text-neutral-400">
+              Search communities...
+            </span>
           </div>
         </div>
 
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">
-            Find a community
+        <div className="mt-auto border-t border-neutral-100 pt-4 space-y-3">
+          <div className="text-center text-[11px] text-neutral-500">
+            Can't find your community?{" "}
+            <span className="font-medium text-primary-700">Contact support</span>
           </div>
-          <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
-            <span className="w-3.5 h-3.5 rounded-full border-2 border-neutral-400" />
-            <span className="text-sm text-neutral-400">Search communities…</span>
+          <button className="w-full rounded-xl bg-neutral-100 px-4 py-3 text-center text-sm font-semibold text-neutral-900">
+            Create a Community
+          </button>
+          <div className="text-center text-xs text-neutral-400 underline pb-1">
+            Continue without community
           </div>
         </div>
-
-        <button className="w-full rounded-xl border border-dashed border-primary-300 bg-primary-50 px-4 py-3 text-left">
-          <div className="text-sm font-semibold text-primary-800">
-            + Propose a Community
-          </div>
-          <div className="text-xs text-primary-700/80 mt-0.5">
-            Request a new community for your church
-          </div>
-        </button>
       </div>
     </PhoneFrame>
   );
 }
 
 function CommunityRow({
-  label,
+  initials,
   name,
-  sub,
-  color,
+  slug,
+  color = "bg-primary-400",
 }: {
-  label: string;
+  initials: string;
   name: string;
-  sub: string;
+  slug: string;
   color?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-      <Avatar label={label} color={color} />
-      <div className="min-w-0">
+    <div className="flex items-center gap-3 rounded-2xl bg-white p-3.5 mb-2 shadow-[0_1px_4px_rgba(0,0,0,0.08)]">
+      <span
+        className={`inline-flex items-center justify-center w-11 h-11 rounded-full ${color} text-white text-sm font-semibold flex-shrink-0`}
+      >
+        {initials}
+      </span>
+      <div className="min-w-0 flex-1">
         <div className="text-sm font-semibold text-neutral-900 truncate">
           {name}
         </div>
-        <div className="text-xs text-neutral-500">{sub}</div>
+        <div className="text-xs text-neutral-500 truncate">{slug}</div>
       </div>
+      <span className="text-neutral-300 text-lg leading-none">›</span>
     </div>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="w-4 h-4 text-neutral-400 flex-shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
   );
 }
 
 function RequestFormMock() {
   return (
-    <PhoneFrame title="Propose a Community">
-      <div className="p-4 space-y-3.5">
-        <MockField label="Community Name" value="Grace Church NYC" />
-        <MockField label="Estimated Number of People" value="150" />
-
-        <div>
-          <div className="text-xs font-semibold text-neutral-700 mb-1">
-            Proposed Monthly Price
-          </div>
-          <div className="flex items-center rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
-            <span className="text-sm text-neutral-500 mr-1">$</span>
-            <span className="text-sm text-neutral-900">200</span>
-          </div>
+    <PhoneFrame>
+      <div className="p-4 bg-neutral-100 min-h-full">
+        <div className="text-base font-bold tracking-tight text-neutral-900 mb-3">
+          togather
+        </div>
+        <div className="text-lg font-bold text-neutral-900 mb-1">
+          Propose a Community
+        </div>
+        <div className="text-xs text-neutral-500 leading-snug mb-4">
+          Tell us about your community and we'll get you set up on Togather.
         </div>
 
-        <div className="flex items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 py-2.5">
-          <span className="text-sm font-semibold text-neutral-700">
-            Need Help Migrating?
-          </span>
-          <span className="inline-flex h-5 w-9 items-center rounded-full bg-neutral-200 p-0.5">
-            <span className="h-4 w-4 rounded-full bg-white shadow" />
-          </span>
-        </div>
+        <div className="rounded-2xl bg-white p-4 space-y-3.5 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
+          <MockField label="Community Name" required value="Grace Church NYC" />
+          <MockField
+            label="Estimated Number of People"
+            required
+            value="150"
+          />
 
-        <div>
-          <div className="text-xs font-semibold text-neutral-700 mb-1">
-            Additional Notes{" "}
-            <span className="font-normal text-neutral-400">(optional)</span>
+          <div>
+            <div className="text-xs font-semibold text-neutral-900 mb-1">
+              Proposed Monthly Price <span className="text-red-500">*</span>
+            </div>
+            <div className="flex items-center rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
+              <span className="text-sm font-medium text-neutral-500 mr-1">
+                $
+              </span>
+              <span className="text-sm text-neutral-900">200</span>
+            </div>
           </div>
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-400 leading-snug min-h-[3rem]">
-            Anything else you'd like us to know…
-          </div>
-        </div>
 
-        <button className="w-full rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white">
-          Submit Proposal
-        </button>
+          <div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-neutral-900">
+                Need Help Migrating?
+              </span>
+              <span className="inline-flex h-5 w-9 items-center justify-end rounded-full bg-primary-600 p-0.5">
+                <span className="h-4 w-4 rounded-full bg-white shadow" />
+              </span>
+            </div>
+            <div className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-800">
+              <span className="font-semibold">ⓘ</span>
+              <span>Migration assistance is a one-time $500 flat fee.</span>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold text-neutral-900 mb-1">
+              Additional Notes{" "}
+              <span className="font-normal text-neutral-400">(optional)</span>
+            </div>
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-400 leading-snug min-h-[4rem]">
+              Anything else you'd like us to know about your community...
+            </div>
+          </div>
+
+          <button className="w-full rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white">
+            Submit Proposal
+          </button>
+        </div>
       </div>
     </PhoneFrame>
   );
 }
 
-function MockField({ label, value }: { label: string; value: string }) {
+function MockField({
+  label,
+  value,
+  required,
+}: {
+  label: string;
+  value: string;
+  required?: boolean;
+}) {
   return (
     <div>
-      <div className="text-xs font-semibold text-neutral-700 mb-1">{label}</div>
+      <div className="text-xs font-semibold text-neutral-900 mb-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </div>
       <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-900">
         {value}
       </div>

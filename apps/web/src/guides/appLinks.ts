@@ -11,7 +11,11 @@
  * route changes in the app, update it here and every guide picks up the value.
  */
 export const APP_BASE =
-  (import.meta.env.VITE_APP_BASE_URL as string | undefined) ?? "https://app.togather.nyc";
+  (import.meta.env.VITE_APP_BASE_URL as string | undefined) ??
+  // The marketing site and the Expo app share the same domain (the Cloudflare
+  // worker splits traffic), so deep links are same-origin. The string fallback
+  // only applies in non-browser contexts (SSR/build-time evaluation).
+  (typeof window !== "undefined" ? window.location.origin : "https://togather.nyc");
 
 /** Custom URL scheme registered by the mobile apps (apps/mobile/app.json). */
 export const APP_SCHEME = "togather://";
@@ -31,8 +35,13 @@ export const appLinks = {
   groupTypes: `${APP_BASE}/admin`,
   /** Community-wide events (`(user)/admin/community-wide-events`). */
   communityWideEvents: `${APP_BASE}/admin/community-wide-events`,
-  /** Church feature flags incl. prayer (`(user)/admin/features`). */
-  features: `${APP_BASE}/admin/features`,
+  /**
+   * Church features (incl. the prayer toggle) live in the admin Settings tab's
+   * "Church Features" section. Do NOT link to /admin/features — that route is
+   * the staff-only Feature Flags screen and shows "You don't have access" to
+   * community admins.
+   */
+  features: `${APP_BASE}/admin`,
   /** Groups tab (`(tabs)/groups`). */
   groups: `${APP_BASE}/groups`,
 } as const;
