@@ -58,6 +58,46 @@ function glyph(name: string, color: string) {
           <line x1="5" y1="12" x2="19" y2="12" />
         </>
       );
+    case "add-circle-outline":
+      return (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="8" x2="12" y2="16" />
+          <line x1="8" y1="12" x2="16" y2="12" />
+        </>
+      );
+    case "heart":
+      return <path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9z" fill={color} stroke="none" />;
+    case "heart-outline":
+      return <path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9z" />;
+    case "checkmark":
+      return <polyline points="5 12.5 10 17.5 19 7" />;
+    case "ellipsis-horizontal":
+      return (
+        <>
+          <circle cx="5" cy="12" r="1.4" fill={color} stroke="none" />
+          <circle cx="12" cy="12" r="1.4" fill={color} stroke="none" />
+          <circle cx="19" cy="12" r="1.4" fill={color} stroke="none" />
+        </>
+      );
+    case "people-outline":
+      return (
+        <>
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3 20a6 6 0 0 1 12 0" />
+          <path d="M16 5a3 3 0 0 1 0 6" />
+          <path d="M21 20a6 6 0 0 0-3-5.2" />
+        </>
+      );
+    case "flame":
+      return <path d="M12 3c1 3 4 4 4 8a4 4 0 0 1-8 0c0-2 1-3 2-4 0 1 .5 2 1 2 0-2 1-4 1-6z" fill={color} stroke="none" />;
+    case "eye-off-outline":
+      return (
+        <>
+          <path d="M3 3l18 18" />
+          <path d="M10.6 6.1A9 9 0 0 1 21 12a9.5 9.5 0 0 1-3 3.6M6 6.5A9.5 9.5 0 0 0 3 12a9 9 0 0 0 9 5 8.6 8.6 0 0 0 3-.5" />
+        </>
+      );
     default:
       return <rect x="4" y="4" width="16" height="16" rx="3" />;
   }

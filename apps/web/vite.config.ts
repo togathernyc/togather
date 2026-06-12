@@ -55,6 +55,7 @@ export default defineConfig({
       input: {
         main: resolve(here, 'index.html'),
         'demo-community-selection': resolve(here, 'demo/community-selection.html'),
+        'demo-prayer-feed': resolve(here, 'demo/prayer-feed.html'),
       },
     },
   },

@@ -7,7 +7,14 @@ import { createContext, useContext, type ReactNode } from "react";
 
 const defaultAuth = {
   user: { id: "demo-user", firstName: "Alex", lastName: "Rivera", email: "alex@example.com" },
-  community: { id: "fount", name: "FOUNT", logo: null as string | null },
+  community: {
+    id: "fount",
+    name: "FOUNT",
+    logo: null as string | null,
+    primaryColor: "#1E8449",
+    secondaryColor: "#2E86C1",
+    churchFeatures: { prayerEnabled: true },
+  },
   token: "mock-auth-token",
   isAuthenticated: true,
   isLoading: false,
