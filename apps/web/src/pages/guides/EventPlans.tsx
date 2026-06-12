@@ -180,7 +180,9 @@ export function EventPlans() {
           <Term>Publish &amp; send requests</Term> at the bottom of the plan
           editor, everyone rostered into that plan gets both a push notification{" "}
           <em>and</em> a text letting them know they're on the schedule to serve
-          for that day, and asking them to confirm or decline.
+          for that day, and asking them to confirm or decline. Togather then
+          automatically reminds anyone who hasn't responded — 4 days out and
+          again the day before — so you don't have to chase them yourself.
         </P>
 
         <Callout tone="tip" title="Publishing is what notifies people">
@@ -190,10 +192,19 @@ export function EventPlans() {
             day — please confirm or decline.
           </p>
           <p>
-            To nudge anyone who hasn't responded, reopen the plan and tap the
-            bottom bar again — after the first publish it reads{" "}
+            From there, Togather chases the stragglers for you. Anyone who still
+            hasn't confirmed or declined gets an automatic reminder (push{" "}
+            <strong>and</strong> SMS) <strong>4 days before</strong> the event,
+            and again <strong>1 day before</strong>. The moment a volunteer
+            responds — confirm, decline, or you remove them — their reminders
+            stop, so nobody gets nagged after they've answered.
+          </p>
+          <p>
+            You can also nudge people yourself any time: reopen the plan and tap
+            the bottom bar again — after the first publish it reads{" "}
             <Term>Re-send requests</Term>, which sends the confirm-or-decline
-            request once more to volunteers with an open slot.
+            request once more to volunteers with an open slot (handy after
+            you've edited the roster).
           </p>
         </Callout>
 
