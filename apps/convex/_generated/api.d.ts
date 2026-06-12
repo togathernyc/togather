@@ -192,6 +192,7 @@ import type * as lib_pcoServicesApi from "../lib/pcoServicesApi.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_phoneNormalize from "../lib/phoneNormalize.js";
 import type * as lib_posthog from "../lib/posthog.js";
+import type * as lib_r2 from "../lib/r2.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_rsvpGuests from "../lib/rsvpGuests.js";
 import type * as lib_scheduling from "../lib/scheduling.js";
@@ -394,6 +395,7 @@ declare const fullApi: ApiFromModules<{
   "lib/permissions": typeof lib_permissions;
   "lib/phoneNormalize": typeof lib_phoneNormalize;
   "lib/posthog": typeof lib_posthog;
+  "lib/r2": typeof lib_r2;
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/rsvpGuests": typeof lib_rsvpGuests;
   "lib/scheduling": typeof lib_scheduling;

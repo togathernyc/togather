@@ -977,11 +977,254 @@ export const markPublished = internalMutation({
       (a) => a.status === "unconfirmed",
     ).length;
 
+    // Schedule the automatic 4-day / 1-day "still unconfirmed?" nudges.
+    // Only worth scheduling if someone hasn't responded yet.
+    if (requestCount > 0) {
+      await scheduleUnconfirmedReminders(ctx, args.planId);
+    }
+
     // Distinct serving teams touched by this event's assignments — the action
     // reconciles each one after publishing.
     const teamIds = [...new Set(assignments.map((a) => a.teamId))];
 
     return { requestCount, teamIds };
+  },
+});
+
+/** The two reminder lead times, in days before `eventDate`. */
+const REMINDER_KINDS = [
+  { kind: "4d" as const, days: 4 },
+  { kind: "1d" as const, days: 1 },
+];
+
+/**
+ * (Re)schedule the unconfirmed-volunteer reminders for a plan. Cancels any
+ * existing reminder jobs, resets the `*Sent` flags, then schedules a fresh
+ * `sendUnconfirmedReminders` job for each lead time whose fire moment is
+ * still in the future. Shared by publish (`markPublished`) and reschedule
+ * (`events.updateEvent`), so the two paths can't drift.
+ *
+ * No-op-safe: if a stored job already ran or was cancelled, `scheduler.cancel`
+ * is wrapped in try/catch.
+ */
+export async function scheduleUnconfirmedReminders(
+  ctx: MutationCtx,
+  planId: Id<"eventPlans">,
+): Promise<void> {
+  const plan = await ctx.db.get(planId);
+  if (!plan) return;
+
+  for (const jobId of [plan.reminder4dJobId, plan.reminder1dJobId]) {
+    if (jobId) {
+      try {
+        await ctx.scheduler.cancel(jobId);
+      } catch {
+        // Job may have already run or been cancelled — ignore.
+      }
+    }
+  }
+
+  const now = Date.now();
+  const patch: Partial<Doc<"eventPlans">> = {
+    reminder4dJobId: undefined,
+    reminder1dJobId: undefined,
+    reminder4dSent: false,
+    reminder1dSent: false,
+  };
+
+  for (const { kind, days } of REMINDER_KINDS) {
+    const fireAt = plan.eventDate - days * MS_PER_DAY;
+    if (fireAt <= now) continue;
+    const jobId = await ctx.scheduler.runAt(
+      fireAt,
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind },
+    );
+    if (kind === "4d") patch.reminder4dJobId = jobId;
+    else patch.reminder1dJobId = jobId;
+  }
+
+  await ctx.db.patch(planId, patch);
+}
+
+/**
+ * Cancel both reminder jobs for a plan (used on delete). Best-effort —
+ * a job that already ran or was cancelled is ignored.
+ */
+export async function cancelUnconfirmedReminders(
+  ctx: MutationCtx,
+  plan: Doc<"eventPlans">,
+): Promise<void> {
+  for (const jobId of [plan.reminder4dJobId, plan.reminder1dJobId]) {
+    if (jobId) {
+      try {
+        await ctx.scheduler.cancel(jobId);
+      } catch {
+        // Already ran or cancelled — ignore.
+      }
+    }
+  }
+}
+
+/**
+ * Internal: flip the matching `reminder{kind}Sent` flag so the reminder is
+ * idempotent (a re-run of the scheduled job won't re-send).
+ */
+export const markPlanReminderSent = internalMutation({
+  args: {
+    planId: v.id("eventPlans"),
+    kind: v.union(v.literal("4d"), v.literal("1d")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.planId, {
+      [args.kind === "4d" ? "reminder4dSent" : "reminder1dSent"]: true,
+    });
+  },
+});
+
+/**
+ * Internal: fire the automatic "you're still unconfirmed" reminder for a
+ * published event. Re-queries the roster at fire time (via
+ * `getAssignmentRequestTargets`), so a volunteer who has since confirmed,
+ * declined, or been unassigned gets nothing — the reminder auto-stops with
+ * no proactive cancellation needed. Placeholder users are skipped (they have
+ * no app to confirm in yet). Reuses the same push + SMS + inbox path as
+ * `sendAssignmentRequests`, with distinct "reminder" copy.
+ */
+export const sendUnconfirmedReminders = internalAction({
+  args: {
+    planId: v.id("eventPlans"),
+    kind: v.union(v.literal("4d"), v.literal("1d")),
+  },
+  handler: async (ctx, args) => {
+    const plan = await ctx.runQuery(
+      internal.functions.scheduling.assignments.getPlanReminderState,
+      { planId: args.planId },
+    );
+    // Bail if the plan is gone, unpublished, or this reminder already sent.
+    if (!plan || plan.status !== "published") return { pushSent: 0, smsSent: 0 };
+    if (args.kind === "4d" && plan.reminder4dSent) {
+      return { pushSent: 0, smsSent: 0 };
+    }
+    if (args.kind === "1d" && plan.reminder1dSent) {
+      return { pushSent: 0, smsSent: 0 };
+    }
+
+    const targets = await ctx.runQuery(
+      internal.functions.scheduling.assignments.getAssignmentRequestTargets,
+      { planId: args.planId, publisherId: plan.createdById },
+    );
+
+    // Mark sent up-front so a duplicate run (or an empty roster) doesn't
+    // re-fire. The whole point of the flag is idempotency.
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.markPlanReminderSent,
+      { planId: args.planId, kind: args.kind },
+    );
+
+    if (!targets) return { pushSent: 0, smsSent: 0 };
+
+    // Reminders only go to real users who can actually confirm/decline.
+    const recipients = targets.recipients.filter((r) => !r.isPlaceholder);
+    if (recipients.length === 0) return { pushSent: 0, smsSent: 0 };
+
+    const eventDate = new Date(targets.eventDate).toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const linkFor = (assignmentId: string) =>
+      `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
+
+    // --- Push -------------------------------------------------------------
+    const tokenResults: Array<{ userId: string; tokens: string[] }> =
+      await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: recipients.map((r) => r.userId) },
+      );
+    const tokensByUser = new Map(tokenResults.map((r) => [r.userId, r.tokens]));
+
+    const pushNotifications = recipients.flatMap((recipient) => {
+      const tokens = tokensByUser.get(recipient.userId) ?? [];
+      const title = `Reminder: you're scheduled for ${targets.title}`;
+      const body = `${recipient.roleName} on ${eventDate} — please confirm or decline.`;
+      const url = linkFor(recipient.assignmentId);
+      return tokens.map((token) => ({
+        token,
+        title,
+        body,
+        data: {
+          type: "scheduling_assignment_request",
+          assignmentId: recipient.assignmentId,
+          planId: args.planId,
+          url,
+        },
+      }));
+    });
+
+    let pushSent = 0;
+    if (pushNotifications.length > 0) {
+      const pushResult = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications: pushNotifications },
+      );
+      pushSent = pushResult.success ? pushNotifications.length : 0;
+    }
+
+    // --- SMS — best-effort ------------------------------------------------
+    let smsSent = 0;
+    for (const recipient of recipients) {
+      if (!recipient.phone) continue;
+      const smsBody =
+        `Reminder — you're scheduled for ${recipient.roleName} at ` +
+        `${targets.title} on ${eventDate}.\n\n` +
+        `Confirm or decline: ${linkFor(recipient.assignmentId)}`;
+      try {
+        await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
+          phone: recipient.phone,
+          message: smsBody,
+        });
+        smsSent += 1;
+      } catch {
+        // Best-effort: a failed SMS should not abort the rest of the fan-out.
+      }
+    }
+
+    // --- In-app inbox records --------------------------------------------
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.recordAssignmentNotifications,
+      {
+        notifications: recipients.map((recipient) => ({
+          userId: recipient.userId,
+          communityId: targets.communityId,
+          groupId: targets.groupId,
+          title: `Reminder: you're scheduled for ${targets.title}`,
+          body: `${recipient.roleName} on ${eventDate} — please confirm or decline.`,
+          url: linkFor(recipient.assignmentId),
+        })),
+      },
+    );
+
+    return { pushSent, smsSent };
+  },
+});
+
+/**
+ * Internal: minimal plan fields the reminder action needs to decide whether
+ * to fire (status + idempotency flags + the original publisher for the
+ * targets query).
+ */
+export const getPlanReminderState = internalQuery({
+  args: { planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return null;
+    return {
+      status: plan.status,
+      createdById: plan.createdById,
+      reminder4dSent: plan.reminder4dSent === true,
+      reminder1dSent: plan.reminder1dSent === true,
+    };
   },
 });
 

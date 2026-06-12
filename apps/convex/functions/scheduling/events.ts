@@ -24,6 +24,10 @@ import {
   requirePlanScheduler,
 } from "./permissions";
 import { hydrateItem } from "./eventItems";
+import {
+  scheduleUnconfirmedReminders,
+  cancelUnconfirmedReminders,
+} from "./assignments";
 
 /** Statuses that consume a slot in fill-summary math (ADR-023). */
 const FILLED_STATUSES = new Set(["confirmed", "unconfirmed"]);
@@ -230,6 +234,8 @@ export const updateEvent = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requirePlanScheduler(ctx, args.planId, userId);
 
+    const existing = await ctx.db.get(args.planId);
+
     const patch: Partial<Doc<"eventPlans">> = { updatedAt: Date.now() };
     if (args.title !== undefined) {
       const title = args.title.trim();
@@ -275,6 +281,16 @@ export const updateEvent = mutation({
           { sourceTeamId: teamId },
         );
       }
+
+      // A published event that moves dates needs its unconfirmed-reminder
+      // jobs cancelled and re-scheduled against the new date (and the
+      // already-fired flags reset). The helper reads the freshly-patched
+      // plan, so it picks up the new `eventDate`. Drafts have no jobs yet.
+      const dateChanged =
+        existing && existing.eventDate !== args.eventDate;
+      if (existing?.status === "published" && dateChanged) {
+        await scheduleUnconfirmedReminders(ctx, args.planId);
+      }
     }
 
     return { planId: args.planId };
@@ -315,6 +331,13 @@ export const deleteEvent = mutation({
     // Distinct serving teams touched by this event's assignments — captured
     // before the deletes so we can reconcile them afterwards.
     const teamIds = [...new Set(assignments.map((a) => a.teamId))];
+
+    // Cancel any pending unconfirmed-reminder jobs before the plan goes away,
+    // so they don't fire against a deleted event.
+    const plan = await ctx.db.get(args.planId);
+    if (plan) {
+      await cancelUnconfirmedReminders(ctx, plan);
+    }
 
     await Promise.all([
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
