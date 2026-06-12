@@ -50,6 +50,15 @@ export function CreateCommunity() {
           {/* swap-in: <img src="/images/guides/community-switcher.png" /> */}
           <CommunitySwitcherMock />
         </Figure>
+
+        <Callout tone="note" title="Live preview">
+          The phone below isn't a mockup — it's the real{" "}
+          <Term>CommunitySelector</Term> component from the Togather app,
+          running here with sample data and no backend.
+        </Callout>
+        <Figure caption="The actual app component rendered on the web (react-native-web), using the app's own theme.">
+          <LiveCommunitySwitcherDemo />
+        </Figure>
       </Section>
 
       <Section id="request" title="Request your community">
@@ -173,6 +182,23 @@ export function CreateCommunity() {
 /* -------------------------------------------------------------------------- */
 /* Page-local UI mocks                                                        */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Live demo: embeds the real app screen (built as a separate react-native-web
+ * page under /demo) inside a phone frame via an iframe. Proof-of-concept for
+ * rendering actual app components with mock data instead of hand-built mockups.
+ */
+function LiveCommunitySwitcherDemo() {
+  return (
+    <PhoneFrame title="Select Community">
+      <iframe
+        src="/demo/community-selector.html"
+        title="Live Togather community switcher demo"
+        className="w-full h-full block border-0"
+      />
+    </PhoneFrame>
+  );
+}
 
 function CommunitySwitcherMock() {
   return (
