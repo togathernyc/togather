@@ -1126,18 +1126,19 @@ export const sendUnconfirmedReminders = internalAction({
       },
     );
 
-    // Mark sent up-front so a duplicate run (or an empty roster) doesn't
-    // re-fire. The whole point of the flag is idempotency.
-    await ctx.runMutation(
-      internal.functions.scheduling.assignments.markPlanReminderSent,
-      { planId: args.planId, kind: args.kind },
-    );
-
     if (!targets) return { pushSent: 0, smsSent: 0 };
 
     // Reminders only go to real users who can actually confirm/decline.
     const recipients = targets.recipients.filter((r) => !r.isPlaceholder);
-    if (recipients.length === 0) return { pushSent: 0, smsSent: 0 };
+    if (recipients.length === 0) {
+      // Nothing to deliver, but mark sent so an empty roster doesn't keep
+      // re-firing on every cron pass.
+      await ctx.runMutation(
+        internal.functions.scheduling.assignments.markPlanReminderSent,
+        { planId: args.planId, kind: args.kind },
+      );
+      return { pushSent: 0, smsSent: 0 };
+    }
 
     const eventDate = new Date(targets.eventDate).toLocaleDateString("en-US", {
       weekday: "short",
@@ -1236,6 +1237,17 @@ export const sendUnconfirmedReminders = internalAction({
           };
         }),
       },
+    );
+
+    // Mark sent only AFTER deliveries land. Push/SMS are best-effort
+    // (swallowed), so a hard failure here is the inbox mutation throwing — in
+    // which case the flag stays unset and the next cron pass retries rather
+    // than silently dropping the reminder. The top-of-action guard prevents a
+    // double-send if a prior run already succeeded. Mirrors the meetings
+    // precedent (scheduledJobs.ts sends, then markMeetingReminderSent).
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.markPlanReminderSent,
+      { planId: args.planId, kind: args.kind },
     );
 
     return { pushSent, smsSent };
