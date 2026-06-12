@@ -53,10 +53,10 @@ export function CreateCommunity() {
 
         <Callout tone="note" title="Live preview">
           The phone below isn't a mockup — it's the real{" "}
-          <Term>CommunitySelector</Term> component from the Togather app,
-          running here with sample data and no backend.
+          <Term>Select Community</Term> screen from the Togather app, running
+          here with sample data and no backend.
         </Callout>
-        <Figure caption="The actual app component rendered on the web (react-native-web), using the app's own theme.">
+        <Figure caption="The actual app screen rendered on the web (react-native-web), in dark mode with the app's own theme.">
           <LiveCommunitySwitcherDemo />
         </Figure>
       </Section>
@@ -190,9 +190,9 @@ export function CreateCommunity() {
  */
 function LiveCommunitySwitcherDemo() {
   return (
-    <PhoneFrame title="Select Community">
+    <PhoneFrame>
       <iframe
-        src="/demo/community-selector.html"
+        src="/demo/community-selection.html"
         title="Live Togather community switcher demo"
         className="w-full h-full block border-0"
       />

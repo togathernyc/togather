@@ -20,4 +20,13 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // The demo harness holds mock modules (Convex/router/native stubs) that
+    // intentionally export non-component values; they aren't HMR component
+    // files, so the react-refresh constraint doesn't apply.
+    files: ['demo/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])
