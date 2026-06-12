@@ -577,7 +577,12 @@ function ColorPreviewWidget() {
   const [color, setColor] = useState(APP_DEFAULT_PRIMARY);
   const [hexInput, setHexInput] = useState(APP_DEFAULT_PRIMARY);
 
-  const valid = useMemo(() => HEX_RE.test(color), [color]);
+  // Validity tracks what's typed, not the last-applied color, so invalid
+  // entries surface the warning instead of silently keeping the old preview.
+  const valid = useMemo(() => {
+    const normalized = hexInput.startsWith("#") ? hexInput : `#${hexInput}`;
+    return HEX_RE.test(normalized);
+  }, [hexInput]);
 
   function applyHex(next: string) {
     setHexInput(next);
@@ -600,7 +605,7 @@ function ColorPreviewWidget() {
           </span>
           <input
             type="color"
-            value={valid ? color : APP_DEFAULT_PRIMARY}
+            value={color}
             onChange={(e) => pickColor(e.target.value)}
             className="h-9 w-9 cursor-pointer rounded-lg border border-neutral-200 bg-white p-0.5"
             aria-label="Pick brand color"
