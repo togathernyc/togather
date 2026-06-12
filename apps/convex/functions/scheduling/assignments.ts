@@ -977,6 +977,12 @@ export const markPublished = internalMutation({
       (a) => a.status === "unconfirmed",
     ).length;
 
+    // Schedule the automatic 4-day / 1-day "still unconfirmed?" nudges.
+    // Only worth scheduling if someone hasn't responded yet.
+    if (requestCount > 0) {
+      await scheduleUnconfirmedReminders(ctx, args.planId);
+    }
+
     // Distinct serving teams touched by this event's assignments — the action
     // reconciles each one after publishing.
     const teamIds = [...new Set(assignments.map((a) => a.teamId))];
@@ -985,14 +991,303 @@ export const markPublished = internalMutation({
   },
 });
 
+/** The two reminder lead times, in days before `eventDate`. */
+const REMINDER_KINDS = [
+  { kind: "4d" as const, days: 4 },
+  { kind: "1d" as const, days: 1 },
+];
+
+/**
+ * (Re)schedule the unconfirmed-volunteer reminders for a plan. Cancels any
+ * existing reminder jobs, resets the `*Sent` flags, then schedules a fresh
+ * `sendUnconfirmedReminders` job for each lead time whose fire moment is
+ * still in the future. Shared by publish (`markPublished`) and reschedule
+ * (`events.updateEvent`), so the two paths can't drift.
+ *
+ * No-op-safe: if a stored job already ran or was cancelled, `scheduler.cancel`
+ * is wrapped in try/catch.
+ */
+export async function scheduleUnconfirmedReminders(
+  ctx: MutationCtx,
+  planId: Id<"eventPlans">,
+): Promise<void> {
+  const plan = await ctx.db.get(planId);
+  if (!plan) return;
+
+  for (const jobId of [plan.reminder4dJobId, plan.reminder1dJobId]) {
+    if (jobId) {
+      try {
+        await ctx.scheduler.cancel(jobId);
+      } catch {
+        // Job may have already run or been cancelled — ignore.
+      }
+    }
+  }
+
+  const now = Date.now();
+  const patch: Partial<Doc<"eventPlans">> = {
+    reminder4dJobId: undefined,
+    reminder1dJobId: undefined,
+    reminder4dSent: false,
+    reminder1dSent: false,
+  };
+
+  for (const { kind, days } of REMINDER_KINDS) {
+    const fireAt = plan.eventDate - days * MS_PER_DAY;
+    if (fireAt <= now) continue;
+    const jobId = await ctx.scheduler.runAt(
+      fireAt,
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind },
+    );
+    if (kind === "4d") patch.reminder4dJobId = jobId;
+    else patch.reminder1dJobId = jobId;
+  }
+
+  await ctx.db.patch(planId, patch);
+}
+
+/**
+ * Cancel both reminder jobs for a plan (used on delete). Best-effort —
+ * a job that already ran or was cancelled is ignored.
+ */
+export async function cancelUnconfirmedReminders(
+  ctx: MutationCtx,
+  plan: Doc<"eventPlans">,
+): Promise<void> {
+  for (const jobId of [plan.reminder4dJobId, plan.reminder1dJobId]) {
+    if (jobId) {
+      try {
+        await ctx.scheduler.cancel(jobId);
+      } catch {
+        // Already ran or cancelled — ignore.
+      }
+    }
+  }
+}
+
+/**
+ * Internal: flip the matching `reminder{kind}Sent` flag so the reminder is
+ * idempotent (a re-run of the scheduled job won't re-send).
+ */
+export const markPlanReminderSent = internalMutation({
+  args: {
+    planId: v.id("eventPlans"),
+    kind: v.union(v.literal("4d"), v.literal("1d")),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.planId, {
+      [args.kind === "4d" ? "reminder4dSent" : "reminder1dSent"]: true,
+    });
+  },
+});
+
+/**
+ * Internal: fire the automatic reminder for a published event. Re-queries the
+ * roster at fire time (via `getAssignmentRequestTargets`), so a volunteer who
+ * has since declined or been unassigned gets nothing — the reminder auto-stops
+ * with no proactive cancellation needed. Placeholder users are skipped (they
+ * have no app to confirm in yet). Reuses the same push + SMS + inbox path as
+ * `sendAssignmentRequests`, with distinct "reminder" copy.
+ *
+ * Audience by kind:
+ *   - "4d" → only volunteers still `unconfirmed` ("please confirm or decline").
+ *   - "1d" → everyone still rostered. Those still `unconfirmed` get the same
+ *     confirm/decline nudge; those already `confirmed` get a "serving tomorrow"
+ *     heads-up with no confirm/decline ask. Declined/removed get nothing.
+ */
+export const sendUnconfirmedReminders = internalAction({
+  args: {
+    planId: v.id("eventPlans"),
+    kind: v.union(v.literal("4d"), v.literal("1d")),
+  },
+  handler: async (ctx, args) => {
+    const plan = await ctx.runQuery(
+      internal.functions.scheduling.assignments.getPlanReminderState,
+      { planId: args.planId },
+    );
+    // Bail if the plan is gone, unpublished, or this reminder already sent.
+    if (!plan || plan.status !== "published") return { pushSent: 0, smsSent: 0 };
+    if (args.kind === "4d" && plan.reminder4dSent) {
+      return { pushSent: 0, smsSent: 0 };
+    }
+    if (args.kind === "1d" && plan.reminder1dSent) {
+      return { pushSent: 0, smsSent: 0 };
+    }
+
+    // 1-day reminders also go to confirmed volunteers (serving-tomorrow
+    // heads-up); the 4-day pass stays unconfirmed-only.
+    const targets = await ctx.runQuery(
+      internal.functions.scheduling.assignments.getAssignmentRequestTargets,
+      {
+        planId: args.planId,
+        publisherId: plan.createdById,
+        includeConfirmed: args.kind === "1d",
+      },
+    );
+
+    if (!targets) return { pushSent: 0, smsSent: 0 };
+
+    // Reminders only go to real users who can actually confirm/decline.
+    const recipients = targets.recipients.filter((r) => !r.isPlaceholder);
+    if (recipients.length === 0) {
+      // Nothing to deliver, but mark sent so an empty roster doesn't keep
+      // re-firing on every cron pass.
+      await ctx.runMutation(
+        internal.functions.scheduling.assignments.markPlanReminderSent,
+        { planId: args.planId, kind: args.kind },
+      );
+      return { pushSent: 0, smsSent: 0 };
+    }
+
+    const eventDate = new Date(targets.eventDate).toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const linkFor = (assignmentId: string) =>
+      `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
+
+    // Copy branches on the recipient's current status. A `confirmed`
+    // volunteer (only present in the 1-day pass) gets a no-ask heads-up;
+    // an `unconfirmed` one still gets the confirm/decline nudge.
+    const copyFor = (recipient: (typeof recipients)[number]) => {
+      if (recipient.status === "confirmed") {
+        return {
+          title: `Serving tomorrow: ${targets.title}`,
+          body: `You're on for ${recipient.roleName} on ${eventDate}.`,
+          sms:
+            `Reminder — you're serving ${recipient.roleName} at ` +
+            `${targets.title} on ${eventDate}. See you there!\n\n` +
+            `Details: ${linkFor(recipient.assignmentId)}`,
+        };
+      }
+      return {
+        title: `Reminder: you're scheduled for ${targets.title}`,
+        body: `${recipient.roleName} on ${eventDate} — please confirm or decline.`,
+        sms:
+          `Reminder — you're scheduled for ${recipient.roleName} at ` +
+          `${targets.title} on ${eventDate}.\n\n` +
+          `Confirm or decline: ${linkFor(recipient.assignmentId)}`,
+      };
+    };
+
+    // --- Push -------------------------------------------------------------
+    const tokenResults: Array<{ userId: string; tokens: string[] }> =
+      await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: recipients.map((r) => r.userId) },
+      );
+    const tokensByUser = new Map(tokenResults.map((r) => [r.userId, r.tokens]));
+
+    const pushNotifications = recipients.flatMap((recipient) => {
+      const tokens = tokensByUser.get(recipient.userId) ?? [];
+      const { title, body } = copyFor(recipient);
+      const url = linkFor(recipient.assignmentId);
+      return tokens.map((token) => ({
+        token,
+        title,
+        body,
+        data: {
+          type: "scheduling_assignment_request",
+          assignmentId: recipient.assignmentId,
+          planId: args.planId,
+          url,
+        },
+      }));
+    });
+
+    let pushSent = 0;
+    if (pushNotifications.length > 0) {
+      const pushResult = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications: pushNotifications },
+      );
+      pushSent = pushResult.success ? pushNotifications.length : 0;
+    }
+
+    // --- SMS — best-effort ------------------------------------------------
+    let smsSent = 0;
+    for (const recipient of recipients) {
+      if (!recipient.phone) continue;
+      try {
+        await ctx.runAction(internal.functions.auth.phoneOtp.sendSMS, {
+          phone: recipient.phone,
+          message: copyFor(recipient).sms,
+        });
+        smsSent += 1;
+      } catch {
+        // Best-effort: a failed SMS should not abort the rest of the fan-out.
+      }
+    }
+
+    // --- In-app inbox records --------------------------------------------
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.recordAssignmentNotifications,
+      {
+        notifications: recipients.map((recipient) => {
+          const { title, body } = copyFor(recipient);
+          return {
+            userId: recipient.userId,
+            communityId: targets.communityId,
+            groupId: targets.groupId,
+            title,
+            body,
+            url: linkFor(recipient.assignmentId),
+          };
+        }),
+      },
+    );
+
+    // Mark sent only AFTER deliveries land. Push/SMS are best-effort
+    // (swallowed), so a hard failure here is the inbox mutation throwing — in
+    // which case the flag stays unset and the next cron pass retries rather
+    // than silently dropping the reminder. The top-of-action guard prevents a
+    // double-send if a prior run already succeeded. Mirrors the meetings
+    // precedent (scheduledJobs.ts sends, then markMeetingReminderSent).
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.markPlanReminderSent,
+      { planId: args.planId, kind: args.kind },
+    );
+
+    return { pushSent, smsSent };
+  },
+});
+
+/**
+ * Internal: minimal plan fields the reminder action needs to decide whether
+ * to fire (status + idempotency flags + the original publisher for the
+ * targets query).
+ */
+export const getPlanReminderState = internalQuery({
+  args: { planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return null;
+    return {
+      status: plan.status,
+      createdById: plan.createdById,
+      reminder4dSent: plan.reminder4dSent === true,
+      reminder1dSent: plan.reminder1dSent === true,
+    };
+  },
+});
+
 /**
  * Internal: gather everything `sendAssignmentRequests` needs — event display
- * info plus, per unconfirmed-assignment volunteer, their phone number.
+ * info plus, per assignment volunteer, their phone number and status.
+ *
+ * By default only `unconfirmed` assignments are returned (the publish + 4-day
+ * reminder audience). Pass `includeConfirmed: true` for the 1-day reminder,
+ * which goes to everyone still rostered — both `confirmed` and `unconfirmed`,
+ * never `declined`. Each recipient carries its `status` so callers can branch
+ * the copy (a "serving tomorrow" heads-up vs the confirm/decline nudge).
  */
 export const getAssignmentRequestTargets = internalQuery({
   args: {
     planId: v.id("eventPlans"),
     publisherId: v.id("users"),
+    includeConfirmed: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const plan = await ctx.db.get(args.planId);
@@ -1002,7 +1297,14 @@ export const getAssignmentRequestTargets = internalQuery({
       .query("roleAssignments")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
-    const unconfirmed = assignments.filter((a) => a.status === "unconfirmed");
+    // Always nudge the unconfirmed; for the 1-day pass also include those
+    // who've already confirmed (a serving-tomorrow heads-up). Declined and
+    // removed assignments are never notified.
+    const targeted = assignments.filter((a) =>
+      args.includeConfirmed
+        ? a.status === "unconfirmed" || a.status === "confirmed"
+        : a.status === "unconfirmed",
+    );
 
     const [community, publisher] = await Promise.all([
       ctx.db.get(plan.communityId),
@@ -1010,7 +1312,7 @@ export const getAssignmentRequestTargets = internalQuery({
     ]);
 
     const recipients = await Promise.all(
-      unconfirmed.map(async (assignment) => {
+      targeted.map(async (assignment) => {
         const [user, role, team] = await Promise.all([
           ctx.db.get(assignment.userId),
           ctx.db.get(assignment.roleId),
@@ -1019,6 +1321,7 @@ export const getAssignmentRequestTargets = internalQuery({
         return {
           assignmentId: assignment._id,
           userId: assignment.userId,
+          status: assignment.status,
           phone: user?.phone ?? null,
           roleName: role?.name ?? "a role",
           // Placeholder context — these recipients get the join-the-app SMS

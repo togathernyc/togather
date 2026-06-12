@@ -69,7 +69,11 @@ export function Prayer() {
           <ChurchFeaturesMock />
         </Figure>
 
-        <DeepLink href={appLinks.features}>Open admin settings</DeepLink>
+        <P>
+          Ready to switch it on? This opens your own live community, signed in
+          as you.
+        </P>
+        <DeepLink href={appLinks.features}>Open your admin settings</DeepLink>
       </Section>
 
       <Section id="use" title="How members use it">
@@ -93,14 +97,6 @@ export function Prayer() {
         <Figure caption="The prayer feed — each request shows a pray count and a Pray button.">
           {/* swap-in: <img src="/images/guides/prayer-feed.png" /> */}
           <PrayerFeedMock />
-        </Figure>
-
-        <Callout tone="note" title="Live preview">
-          The phone below is the real <Term>Prayer</Term> screen from the
-          Togather app, running here with sample requests and no backend.
-        </Callout>
-        <Figure caption="The actual prayer feed rendered on the web, in dark mode with the app's own theme.">
-          <LivePrayerDemo />
         </Figure>
       </Section>
 
@@ -163,19 +159,6 @@ export function Prayer() {
 /* ------------------------------------------------------------------ */
 /* Page-local UI mockups                                              */
 /* ------------------------------------------------------------------ */
-
-/** Live demo: the real PrayerScreen rendered via react-native-web (see /demo). */
-function LivePrayerDemo() {
-  return (
-    <PhoneFrame>
-      <iframe
-        src="/demo/prayer-feed.html"
-        title="Live Togather prayer feed demo"
-        className="w-full h-full block border-0"
-      />
-    </PhoneFrame>
-  );
-}
 
 /** (a) Admin → Settings → "Church Features" card with the Prayer Requests row. */
 function ChurchFeaturesMock() {

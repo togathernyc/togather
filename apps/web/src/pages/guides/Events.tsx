@@ -155,16 +155,6 @@ export function Events() {
           {/* swap-in: <img src="/images/guides/events-card.png" /> */}
           <EventCardMock />
         </Figure>
-
-        <Callout tone="note" title="Live preview">
-          This is the real in-app events list running right here in your browser
-          — the same component members see on their phones, grouped by Today,
-          Tomorrow, and the week ahead with live RSVP counts.
-        </Callout>
-
-        <Figure caption="The live events list: upcoming gatherings with dates, hosting group, and a running going count.">
-          <EventsLiveDemo />
-        </Figure>
       </Section>
 
       <Section id="series" title="Series: bundle the dates">
@@ -208,6 +198,10 @@ export function Events() {
           <CommunityWideEventMock />
         </Figure>
 
+        <P>
+          Ready to schedule one? This opens your own live community, signed in
+          as you.
+        </P>
         <DeepLink href={appLinks.communityWideEvents}>
           Open community-wide events
         </DeepLink>
@@ -236,22 +230,6 @@ export function Events() {
 /* ------------------------------------------------------------------ */
 /* Page-local UI mockups                                              */
 /* ------------------------------------------------------------------ */
-
-/**
- * Live preview: embeds the REAL mobile events list (rendered via
- * react-native-web with mock data) from /demo/events.html inside a phone frame.
- */
-function EventsLiveDemo() {
-  return (
-    <PhoneFrame title="Events">
-      <iframe
-        src="/demo/events.html"
-        title="Live events list preview"
-        className="w-full h-full block border-0"
-      />
-    </PhoneFrame>
-  );
-}
 
 /** A small UI label / field heading used inside the mock forms. */
 function FieldLabel({ children }: { children: React.ReactNode }) {

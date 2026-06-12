@@ -52,7 +52,13 @@ export function Branding() {
           <Term>Branding Colors</Term> — lives in the cards on that screen.
         </P>
         <P>
-          <DeepLink href={appLinks.branding}>Open admin settings</DeepLink>
+          Ready to set this up? This opens your own live community, signed in as
+          you.
+        </P>
+        <P>
+          <DeepLink href={appLinks.branding}>
+            Open your branding settings
+          </DeepLink>
         </P>
         <Figure caption="Admin → Settings. The Basic Information card holds your name, logo, and link.">
           <BasicInfoMock />
@@ -146,16 +152,6 @@ export function Branding() {
         <Figure caption="The Branding Colors card — focus on Primary Color. Save Changes applies it everywhere.">
           <BrandingColorsMock />
         </Figure>
-
-        <Callout tone="note" title="Live preview">
-          This is the real admin settings screen running in your browser with
-          sample data. Scroll to <Term>Basic Information</Term> for the name,
-          logo, and link, then to <Term>Branding Colors</Term> to edit your
-          colors.
-        </Callout>
-        <Figure caption="The live admin settings screen — branding fields running on mock data.">
-          <SettingsLiveDemo />
-        </Figure>
       </Section>
     </GuideLayout>
   );
@@ -165,23 +161,6 @@ export function Branding() {
 /* Page-local UI mockups — reconstructions of the in-app screens.      */
 /* Match apps/mobile/features/admin/components/SettingsContent.tsx.     */
 /* ------------------------------------------------------------------ */
-
-/**
- * Live demo: the REAL admin SettingsContent screen rendered via
- * react-native-web with mock data (see apps/web/demo/settings.tsx). Embedded in
- * a phone frame so it reads as the in-app screen.
- */
-function SettingsLiveDemo() {
-  return (
-    <PhoneFrame title="Settings">
-      <iframe
-        src="/demo/settings.html"
-        title="Live admin settings — Branding"
-        className="w-full h-full block border-0"
-      />
-    </PhoneFrame>
-  );
-}
 
 /** App default green — matches the in-app primary color default. */
 const APP_DEFAULT_PRIMARY = "#1E8449";

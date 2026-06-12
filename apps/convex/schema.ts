@@ -2571,6 +2571,17 @@ export default defineSchema({
     meetingIds: v.optional(v.array(v.id("meetings"))),
     /** Set when imported from a Planning Center plan (migration linkage). */
     pcoPlanId: v.optional(v.string()),
+    /**
+     * Scheduled-job IDs for the automatic "you're still unconfirmed" nudges
+     * fired 4 days and 1 day before `eventDate`. Set on publish (only for
+     * fire times still in the future); cancelled + re-scheduled when the
+     * event date changes, and cancelled on delete. The matching `*Sent`
+     * flags make each reminder idempotent.
+     */
+    reminder4dJobId: v.optional(v.id("_scheduled_functions")),
+    reminder1dJobId: v.optional(v.id("_scheduled_functions")),
+    reminder4dSent: v.optional(v.boolean()),
+    reminder1dSent: v.optional(v.boolean()),
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
