@@ -63,12 +63,30 @@ export const guides: Guide[] = [
   },
   {
     slug: "events",
-    title: "Create event plans & community-wide events",
+    title: "Events, series & community-wide events",
     summary:
-      "Schedule events for a single group, or roll out a community-wide event that spawns a meeting for every group of a type at once.",
+      "Schedule events with invitations and RSVPs, repeat them as a series, or roll out a community-wide event that spawns a meeting for every group of a type at once.",
     series: CHURCH_ONBOARDING_SERIES,
     readMinutes: 7,
     emoji: "📅",
+  },
+  {
+    slug: "event-plans",
+    title: "Event plans: teams, rostering & run sheets",
+    summary:
+      "Plan services the way you would in Planning Center: define teams and roles, collect availability, schedule volunteers in a roster grid, and run the day from a shared run sheet.",
+    series: CHURCH_ONBOARDING_SERIES,
+    readMinutes: 9,
+    emoji: "📋",
+  },
+  {
+    slug: "check-in",
+    title: "Check-ins & follow-up",
+    summary:
+      "Make sure every member gets cared for: follow-up scores that surface who needs attention, assigning people to leaders, and logging every reach-out.",
+    series: CHURCH_ONBOARDING_SERIES,
+    readMinutes: 6,
+    emoji: "🤝",
   },
   {
     slug: "prayer",

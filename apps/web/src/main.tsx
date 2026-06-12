@@ -15,6 +15,8 @@ import { Branding } from './pages/guides/Branding.tsx'
 import { GroupTypes } from './pages/guides/GroupTypes.tsx'
 import { GroupsAndChannels } from './pages/guides/GroupsAndChannels.tsx'
 import { Events } from './pages/guides/Events.tsx'
+import { EventPlans } from './pages/guides/EventPlans.tsx'
+import { CheckIn } from './pages/guides/CheckIn.tsx'
 import { Prayer } from './pages/guides/Prayer.tsx'
 import { ScrollToTop } from './components/ScrollToTop.tsx'
 // Onboarding, billing, admin, and sign-in pages have been moved to the Expo web app.
@@ -35,6 +37,8 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/guides/group-types" element={<GroupTypes />} />
         <Route path="/guides/groups-and-channels" element={<GroupsAndChannels />} />
         <Route path="/guides/events" element={<Events />} />
+        <Route path="/guides/event-plans" element={<EventPlans />} />
+        <Route path="/guides/check-in" element={<CheckIn />} />
         <Route path="/guides/prayer" element={<Prayer />} />
         <Route path="/legal/privacy" element={<PrivacyPolicy />} />
         <Route path="/legal/terms" element={<TermsOfService />} />

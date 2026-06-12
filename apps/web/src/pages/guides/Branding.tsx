@@ -1,16 +1,15 @@
+import { useMemo, useState } from "react";
 import { GuideLayout, type TocItem } from "../../components/guide/GuideLayout";
 import {
   Lead,
   Section,
   P,
   Callout,
-  Steps,
-  Step,
   Term,
   DeepLink,
   Figure,
 } from "../../components/guide/primitives";
-import { PhoneFrame, Avatar } from "../../components/guide/PhoneFrame";
+import { PhoneFrame } from "../../components/guide/PhoneFrame";
 import { appLinks } from "../../guides/appLinks";
 
 /**
@@ -21,14 +20,18 @@ import { appLinks } from "../../guides/appLinks";
  * (apps/mobile/features/admin/components/SettingsContent.tsx) and the
  * `updateCommunitySettings` mutation (apps/convex/functions/admin/settings.ts):
  * Community Name, Logo, Subdomain, Primary Color, Secondary Color.
+ *
+ * The "Subdomain" field is labeled that way in the app, but it really sets the
+ * community's path-based link (togather.nyc/your-church) that leads to the
+ * public landing page. We're honest about the label while explaining what it
+ * does.
  */
 
 const toc: TocItem[] = [
   { id: "where", label: "Where to find branding" },
-  { id: "name", label: "Name & subdomain" },
-  { id: "logo", label: "Logo & app icon" },
-  { id: "colors", label: "Brand colors" },
-  { id: "preview", label: "Preview & save" },
+  { id: "name", label: "Name & your link" },
+  { id: "logo", label: "Logo" },
+  { id: "color", label: "Brand color" },
 ];
 
 export function Branding() {
@@ -36,148 +39,122 @@ export function Branding() {
     <GuideLayout slug="branding" toc={toc}>
       <Lead>
         A few minutes in your settings is all it takes to make Togather feel like
-        home for your congregation. Add your church's name, drop in your logo,
-        and pick your colors — so the moment someone opens the app, they know
-        they're in the right place.
+        home for your congregation. Set your community's name, give out a link
+        people can remember, add your logo, and pick a brand color — so the
+        moment someone opens the app, they know they're in the right place.
       </Lead>
 
       <Section id="where" title="Where to find branding">
         <P>
-          Branding lives in your admin settings. Open the{" "}
-          <Term>Settings</Term> area for your community and look for the section
-          that controls how the app looks — your name, logo, and{" "}
-          <Term>Branding Colors</Term> all live together here.
+          Branding lives in your admin settings. Open <Term>Admin</Term>, then
+          tap the <Term>Settings</Term> tab. Everything that controls how your
+          community looks — name, logo, link, and{" "}
+          <Term>Branding Colors</Term> — lives in the cards on that screen.
         </P>
         <P>
-          <DeepLink href={appLinks.branding}>Open branding settings</DeepLink>
+          <DeepLink href={appLinks.branding}>Open admin settings</DeepLink>
         </P>
-        <Figure caption="The admin settings menu — branding and appearance are grouped together.">
-          {/* swap-in: <img src="/images/guides/branding-settings.png" /> */}
-          <SettingsMenuMock />
+        <Figure caption="Admin → Settings. The Basic Information card holds your name, logo, and link.">
+          <BasicInfoMock />
         </Figure>
       </Section>
 
-      <Section id="name" title="Name & subdomain">
+      <Section id="name" title="Name & your link">
         <P>
-          Two fields set your church's identity. <Term>Community Name</Term> is
-          the friendly display name your members see throughout the app — for
-          example, "Grace Community Church." Set it to whatever your congregation
-          calls you.
+          The <Term>Basic Information</Term> card sets your community's identity.{" "}
+          <Term>Community Name</Term> is the friendly display name members see
+          throughout the app — for example, "Grace Community Church." Set it to
+          whatever your congregation calls you.
         </P>
         <P>
-          <Term>Subdomain</Term> is your short, unique web address — the handle
-          in your community's link (think <Term>your-church</Term> in{" "}
-          <Term>your-church.togather.nyc</Term>). Keep it short, lowercase, and
-          easy to share on a bulletin or text message.
+          The field labeled <Term>Subdomain</Term> is more important than its
+          name suggests. Whatever you type here becomes your community's link:{" "}
+          <Term>togather.nyc/your-church</Term>. That link is the front door —
+          it opens your <strong>landing page</strong>, the first thing a
+          newcomer sees.
         </P>
-        <Callout tone="warn" title="Subdomains are one-of-a-kind">
+        <P>
+          Your landing page is a simple welcome form. A visitor enters their
+          first name, last name, and phone number (you can also turn on email
+          and add your own custom fields), and each person who fills it out
+          becomes a row in your community's <Term>People</Term>. It's the
+          easiest way to capture someone the moment they're interested, before
+          they've even downloaded anything.
+        </P>
+        <Callout tone="warn" title="Your link has to be one-of-a-kind">
           <P>
-            Every church needs its own subdomain, so yours has to be unique. If
-            you see a message that it's already in use, try a small variation
-            until it's available.
+            Every community needs its own link, so yours must be unique. A
+            handful of names are also reserved because the app already uses them
+            as web addresses — words like <Term>admin</Term>, <Term>chat</Term>,{" "}
+            <Term>groups</Term>, <Term>search</Term>, and <Term>signup</Term>{" "}
+            can't be used. If a name is taken or reserved, just try a small
+            variation. Lowercase letters, numbers, and hyphens only.
           </P>
         </Callout>
-        <Figure caption="Your display name and subdomain — the two fields that name your church.">
-          {/* swap-in: <img src="/images/guides/branding-name.png" /> */}
-          <NameFieldsMock />
+        <Callout tone="tip" title="Customize the landing page">
+          <P>
+            Want to change the welcome message, the form fields, or the look of
+            your landing page? In <Term>Admin Settings</Term>, open{" "}
+            <Term>Quick Links</Term> and choose <Term>Landing Page</Term>.
+          </P>
+        </Callout>
+        <Figure caption="The Subdomain field becomes your link, togather.nyc/your-church — the door to your landing page.">
+          <NameLinkMock />
         </Figure>
       </Section>
 
-      <Section id="logo" title="Logo & app icon">
+      <Section id="logo" title="Logo">
         <P>
           Your <Term>Logo</Term> appears in headers across the app, so it's the
-          first visual cue members recognize. You can also set an app icon — the
-          little rounded square members tap to open Togather on their phone. A
-          few simple choices make both look sharp.
+          first visual cue members recognize. Tap <Term>Select Logo</Term> and
+          pick an image from your device.
         </P>
-        <Steps>
-          <Step n={1}>
-            In the branding settings, tap <Term>Select Logo</Term> and choose an
-            image from your device.
-          </Step>
-          <Step n={2}>
-            Use a <strong>square</strong> image so nothing gets cropped or
-            stretched.
-          </Step>
-          <Step n={3}>
-            Prefer a <strong>transparent PNG</strong> so your logo sits cleanly
-            on any background, light or dark.
-          </Step>
-          <Step n={4}>
-            Keep it <strong>simple and readable when small</strong> — fine print
-            and thin lines disappear at icon size. A clean mark or your initials
-            works best.
-          </Step>
-        </Steps>
-        <Callout tone="tip">
-          <P>
-            If you only have one image, your full logo can double as both the
-            header logo and the app icon — just make sure it still reads clearly
-            shrunk down to a thumbnail.
-          </P>
-        </Callout>
+        <P>
+          Two quick tips: a <strong>square</strong> image works best so nothing
+          gets cropped, and a logo with a <strong>transparent background</strong>{" "}
+          sits cleanly on both light and dark screens.
+        </P>
       </Section>
 
-      <Section id="colors" title="Brand colors">
+      <Section id="color" title="Brand color">
         <P>
-          Colors are what make the app feel like yours. You'll set two:{" "}
-          <Term>Primary Color</Term> and <Term>Secondary Color</Term>. As the
-          app describes it, these are your community's accent colors, used for
-          buttons, links, and other interactive elements.
+          The <Term>Branding Colors</Term> card has pickers for a primary and a
+          secondary color, but in practice only one matters: your{" "}
+          <strong>primary color</strong>. It's the accent the live app actually
+          uses — for buttons, active tabs, links, and highlights. Don't worry
+          about the secondary color; you can leave it as-is.
         </P>
         <P>
-          <strong>Primary</strong> is your main accent — it shows up on buttons
-          and highlights all over the app, so pick the color your church is most
-          known for. <strong>Secondary</strong> is a supporting color that pairs
-          with it for accents and details.
+          The one thing to get right: pick a color that looks good in{" "}
+          <strong>both light mode and dark mode</strong>. Togather renders both,
+          and members choose whichever they prefer, so your color needs to read
+          well on a white screen and a near-black one. Very pale colors wash out
+          on white; very dark colors disappear on black. Aim for the middle.
         </P>
         <P>
-          Each color is entered as a <Term>hex</Term> value (a code like{" "}
-          <Term>#6B4423</Term>). If you have a brand kit, use the exact codes
-          from there; otherwise the color picker lets you choose visually.
+          Try it below — pick a color and see exactly where it shows up, side by
+          side in both modes.
         </P>
-        <Callout tone="tip" title="Choose colors people can read">
-          <P>
-            Your primary color often sits behind white text on buttons, so go
-            for a deeper, richer shade rather than a pale one — light colors make
-            white text hard to read. When in doubt, pick a color with enough
-            contrast that text stays crisp and legible for everyone.
-          </P>
-        </Callout>
-        <Figure caption="Set your primary and secondary colors and see them update live.">
-          {/* swap-in: <img src="/images/guides/branding-colors.png" /> */}
-          <ColorFormMock />
+
+        <ColorPreviewWidget />
+
+        <P>
+          When you make a change, a <Term>Save Changes</Term> bar slides up
+          pinned to the bottom of the screen. Tap it and your branding applies
+          to your whole community immediately.
+        </P>
+        <Figure caption="The Branding Colors card — focus on Primary Color. Save Changes applies it everywhere.">
+          <BrandingColorsMock />
         </Figure>
 
         <Callout tone="note" title="Live preview">
           This is the real admin settings screen running in your browser with
           sample data. Scroll to <Term>Basic Information</Term> for the name,
-          logo, and subdomain, then to <Term>Branding Colors</Term> to edit your
-          primary and secondary colors.
+          logo, and link, then to <Term>Branding Colors</Term> to edit your
+          colors.
         </Callout>
         <Figure caption="The live admin settings screen — branding fields running on mock data.">
           <SettingsLiveDemo />
-        </Figure>
-      </Section>
-
-      <Section id="preview" title="Preview & save">
-        <P>
-          Before you finish, take a quick look at the live preview to see how
-          your name, logo, and colors come together. Adjust anything that feels
-          off, then save — your changes apply across your whole community at
-          once.
-        </P>
-        <Callout tone="note">
-          <P>
-            Saving updates the app for everyone in your church, so what you see
-            in the preview is what your members will see. You can come back and
-            tweak your branding any time as your church grows or refreshes its
-            look.
-          </P>
-        </Callout>
-        <Figure caption="A live preview of your branding before you save.">
-          {/* swap-in: <img src="/images/guides/branding-preview.png" /> */}
-          <PreviewMock />
         </Figure>
       </Section>
     </GuideLayout>
@@ -186,7 +163,7 @@ export function Branding() {
 
 /* ------------------------------------------------------------------ */
 /* Page-local UI mockups — reconstructions of the in-app screens.      */
-/* These are swapped for real screenshots via <Figure src=...>.        */
+/* Match apps/mobile/features/admin/components/SettingsContent.tsx.     */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -206,180 +183,476 @@ function SettingsLiveDemo() {
   );
 }
 
-/** Settings menu with the Branding / Appearance row highlighted. */
-function SettingsMenuMock() {
-  const rows = [
-    { icon: "🎨", label: "Branding & Appearance", active: true },
-    { icon: "📍", label: "Address & location" },
-    { icon: "🔭", label: "Explore page settings" },
-    { icon: "🧩", label: "Group types" },
-  ];
+/** App default green — matches the in-app primary color default. */
+const APP_DEFAULT_PRIMARY = "#1E8449";
+
+/** Real theme tokens from the app, used by the color preview widget. */
+const LIGHT_THEME = {
+  surface: "#ffffff",
+  secondarySurface: "#f5f5f5",
+  text: "#1a1a1a",
+  secondaryText: "#666666",
+} as const;
+
+const DARK_THEME = {
+  background: "#0b141a",
+  surface: "#1f2c34",
+  secondarySurface: "#1a2730",
+  text: "#e9edef",
+  secondaryText: "#8696a0",
+} as const;
+
+/**
+ * The iOS-style segmented control header at the top of the Admin screen.
+ * Active segment is a white pill with a subtle shadow.
+ */
+function AdminHeaderMock() {
+  const tabs = ["Requests", "People", "Stats", "Notify", "Settings"];
+  const active = "Settings";
   return (
-    <PhoneFrame title="Settings">
-      <div className="p-4 space-y-2.5 bg-neutral-50">
-        {rows.map((row) => (
-          <div
-            key={row.label}
-            className={`flex items-center gap-3 rounded-xl border p-3 ${
-              row.active
-                ? "border-primary-300 bg-primary-50 ring-2 ring-primary-200"
-                : "border-neutral-200 bg-white"
+    <div className="bg-[#f5f5f5] px-4 pt-3 pb-2">
+      <p className="text-xl font-bold text-[#1a1a1a] mb-3">Admin</p>
+      <div className="flex rounded-lg bg-neutral-200/80 p-0.5">
+        {tabs.map((t) => (
+          <span
+            key={t}
+            className={`flex-1 text-center text-[10px] font-medium rounded-md py-1 ${
+              t === active
+                ? "bg-white text-[#1a1a1a] shadow-sm"
+                : "text-neutral-500"
             }`}
           >
-            <span className="text-lg" aria-hidden>
-              {row.icon}
-            </span>
-            <span
-              className={`text-sm font-medium ${
-                row.active ? "text-primary-800" : "text-neutral-700"
-              }`}
-            >
-              {row.label}
-            </span>
-            <span className="ml-auto text-neutral-300">›</span>
-          </div>
+            {t}
+          </span>
         ))}
-      </div>
-    </PhoneFrame>
-  );
-}
-
-/** Name + subdomain text fields. */
-function NameFieldsMock() {
-  return (
-    <PhoneFrame title="Branding">
-      <div className="p-4 space-y-4 bg-neutral-50">
-        <Field label="Community Name" value="Grace Community Church" />
-        <div>
-          <FieldLabel>Subdomain</FieldLabel>
-          <div className="flex items-stretch rounded-xl border border-neutral-200 bg-white overflow-hidden">
-            <span className="px-3 py-2.5 text-sm text-neutral-800 font-medium">
-              grace-community
-            </span>
-            <span className="ml-auto flex items-center px-3 bg-neutral-100 text-xs text-neutral-400 border-l border-neutral-200">
-              .togather.nyc
-            </span>
-          </div>
-          <p className="mt-1.5 text-[11px] text-neutral-400">
-            Must be unique. Lowercase letters, numbers and hyphens.
-          </p>
-        </div>
-      </div>
-    </PhoneFrame>
-  );
-}
-
-/** Brand color form with two swatches, hex inputs, and a live preview chip. */
-function ColorFormMock() {
-  return (
-    <PhoneFrame title="Branding Colors">
-      <div className="p-4 space-y-4 bg-neutral-50">
-        <p className="text-[11px] leading-snug text-neutral-500">
-          Customize your community's accent colors. Used for buttons, links, and
-          other interactive elements.
-        </p>
-
-        <ColorRow label="Primary Color" hex="#6B4423" swatch="bg-primary-700" />
-        <ColorRow label="Secondary Color" hex="#C2884E" swatch="bg-accent-500" />
-
-        {/* Live preview chip */}
-        <div className="rounded-xl border border-neutral-200 bg-white p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">
-            Live preview
-          </p>
-          <div className="flex items-center gap-2">
-            <button className="rounded-lg bg-primary-700 px-3 py-1.5 text-xs font-semibold text-white">
-              Join group
-            </button>
-            <span className="rounded-lg border border-accent-500 px-3 py-1.5 text-xs font-semibold text-accent-600">
-              Learn more
-            </span>
-          </div>
-        </div>
-      </div>
-    </PhoneFrame>
-  );
-}
-
-/** Final preview: logo, name, and a themed action button. */
-function PreviewMock() {
-  return (
-    <PhoneFrame title="Preview">
-      <div className="bg-neutral-50">
-        {/* Themed header */}
-        <div className="bg-primary-700 px-4 py-4 flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/90 text-primary-800 text-sm font-bold">
-            GC
-          </span>
-          <span className="text-sm font-semibold text-white">
-            Grace Community Church
-          </span>
-        </div>
-        <div className="p-4 space-y-3">
-          <div className="rounded-xl border border-neutral-200 bg-white p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Avatar label="AM" />
-              <div className="text-xs">
-                <p className="font-semibold text-neutral-800">
-                  Young Adults Group
-                </p>
-                <p className="text-neutral-400">Wednesdays · 7:00 PM</p>
-              </div>
-            </div>
-            <button className="w-full rounded-lg bg-primary-700 py-2 text-xs font-semibold text-white">
-              RSVP
-            </button>
-          </div>
-          <p className="text-center text-[11px] text-neutral-400">
-            Looks good? Save to apply across your community.
-          </p>
-        </div>
-      </div>
-    </PhoneFrame>
-  );
-}
-
-/* --- tiny shared field helpers for the mocks --- */
-
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <label className="mb-1 block text-xs font-medium text-neutral-500">
-      {children}
-    </label>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <FieldLabel>{label}</FieldLabel>
-      <div className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-800">
-        {value}
       </div>
     </div>
   );
 }
 
-function ColorRow({
+/** A settings card: white, radius 12, padding 16, 18px/600 title. */
+function SettingsCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl bg-white p-4">
+      <p className="text-[18px] font-semibold text-[#1a1a1a] mb-3">{title}</p>
+      <div className="space-y-3.5">{children}</div>
+    </div>
+  );
+}
+
+/** 14px/500 gray label above an input. */
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="mb-1.5 block text-[14px] font-medium text-[#666666]">
+      {children}
+    </label>
+  );
+}
+
+/** Rounded-8, 1px #ecedf0 border, white bg text input mock. */
+function TextField({
   label,
-  hex,
-  swatch,
+  value,
+  placeholder,
+  helper,
 }: {
   label: string;
-  hex: string;
-  swatch: string;
+  value?: string;
+  placeholder?: string;
+  helper?: string;
 }) {
   return (
     <div>
       <FieldLabel>{label}</FieldLabel>
-      <div className="flex items-center gap-2">
+      <div className="rounded-lg border border-[#ecedf0] bg-white px-3 py-2.5 text-sm">
+        {value ? (
+          <span className="text-[#1a1a1a]">{value}</span>
+        ) : (
+          <span className="text-neutral-400">{placeholder}</span>
+        )}
+      </div>
+      {helper && <p className="mt-1.5 text-[11px] text-[#666666]">{helper}</p>}
+    </div>
+  );
+}
+
+/** The Logo field empty state: dashed button, image icon, primary-tinted text. */
+function LogoField() {
+  return (
+    <div>
+      <FieldLabel>Logo</FieldLabel>
+      <div
+        className="flex items-center justify-center gap-2 rounded-lg border-2 border-dashed py-4"
+        style={{ borderColor: APP_DEFAULT_PRIMARY }}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={APP_DEFAULT_PRIMARY}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+          <circle cx="8.5" cy="8.5" r="1.5" />
+          <polyline points="21 15 16 10 5 21" />
+        </svg>
         <span
-          className={`h-9 w-9 flex-shrink-0 rounded-lg border border-neutral-200 ${swatch}`}
-        />
-        <div className="flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm font-mono text-neutral-700">
-          {hex}
+          className="text-sm font-medium"
+          style={{ color: APP_DEFAULT_PRIMARY }}
+        >
+          Select Logo
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** The Basic Information card mock (name + logo + subdomain). */
+function BasicInfoMock() {
+  return (
+    <PhoneFrame title="Settings">
+      <div className="min-h-full bg-[#f5f5f5]">
+        <AdminHeaderMock />
+        <div className="p-4">
+          <SettingsCard title="Basic Information">
+            <TextField
+              label="Community Name"
+              placeholder="Enter community name"
+            />
+            <LogoField />
+            <TextField
+              label="Subdomain"
+              placeholder="your-community"
+              helper="Lowercase letters, numbers, and hyphens only"
+            />
+          </SettingsCard>
         </div>
       </div>
+    </PhoneFrame>
+  );
+}
+
+/** Focused on the Subdomain field with a filled value to show the link. */
+function NameLinkMock() {
+  return (
+    <PhoneFrame title="Settings">
+      <div className="min-h-full bg-[#f5f5f5]">
+        <AdminHeaderMock />
+        <div className="p-4 space-y-3">
+          <SettingsCard title="Basic Information">
+            <TextField
+              label="Community Name"
+              value="Grace Community Church"
+            />
+            <TextField
+              label="Subdomain"
+              value="grace-community"
+              helper="Lowercase letters, numbers, and hyphens only"
+            />
+          </SettingsCard>
+          <div className="rounded-xl border border-[#ecedf0] bg-white p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#666666] mb-1">
+              Your link
+            </p>
+            <p className="text-sm font-medium text-[#1a1a1a]">
+              togather.nyc/<span style={{ color: APP_DEFAULT_PRIMARY }}>grace-community</span>
+            </p>
+            <p className="mt-1 text-[11px] text-[#666666]">
+              Opens your landing page — the welcome form newcomers fill out.
+            </p>
+          </div>
+        </div>
+      </div>
+    </PhoneFrame>
+  );
+}
+
+/** A color row: bordered, 32×32 rounded-6 swatch, monospace hex, chevron. */
+function ColorRow({ label, hex }: { label: string; hex: string }) {
+  return (
+    <div>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="flex items-center gap-2.5 rounded-lg border border-[#ecedf0] bg-white px-3 py-2.5">
+        <span
+          className="h-8 w-8 flex-shrink-0 rounded-md"
+          style={{ backgroundColor: hex }}
+        />
+        <span className="flex-1 text-sm font-mono text-[#1a1a1a]">{hex}</span>
+        <span className="text-neutral-300">›</span>
+      </div>
+    </div>
+  );
+}
+
+/** The Branding Colors card mock with a pinned Save Changes bar. */
+function BrandingColorsMock() {
+  return (
+    <PhoneFrame title="Settings">
+      <div className="relative flex min-h-full flex-col bg-[#f5f5f5]">
+        <AdminHeaderMock />
+        <div className="flex-1 p-4">
+          <SettingsCard title="Branding Colors">
+            <p className="text-[12px] leading-snug text-[#666666]">
+              Customize your community's accent colors. These colors will be used
+              for buttons, links, and other interactive elements.
+            </p>
+            <ColorRow label="Primary Color" hex={APP_DEFAULT_PRIMARY} />
+            <ColorRow label="Secondary Color" hex="#34495E" />
+            <div className="rounded-lg border border-[#ecedf0] bg-white p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[#666666] mb-2">
+                Preview
+              </p>
+              <button
+                className="w-full rounded-lg py-2 text-xs font-semibold text-white"
+                style={{ backgroundColor: APP_DEFAULT_PRIMARY }}
+              >
+                Example button
+              </button>
+            </div>
+          </SettingsCard>
+        </div>
+        {/* Pinned Save Changes bar */}
+        <div className="border-t border-[#ecedf0] bg-white p-3">
+          <button
+            className="w-full rounded-lg py-2.5 text-sm font-semibold text-white"
+            style={{ backgroundColor: APP_DEFAULT_PRIMARY }}
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </PhoneFrame>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Interactive color preview widget.                                   */
+/* Shows where the primary color appears in both light and dark mode.  */
+/* ------------------------------------------------------------------ */
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/** Mix a hex color with a base color at the given alpha (0–1). */
+function tint(hex: string, baseHex: string, alpha: number): string {
+  const c = parseHex(hex);
+  const b = parseHex(baseHex);
+  if (!c || !b) return hex;
+  const mix = (x: number, y: number) => Math.round(x * alpha + y * (1 - alpha));
+  return `rgb(${mix(c.r, b.r)}, ${mix(c.g, b.g)}, ${mix(c.b, b.b)})`;
+}
+
+function parseHex(hex: string): { r: number; g: number; b: number } | null {
+  if (!HEX_RE.test(hex)) return null;
+  return {
+    r: parseInt(hex.slice(1, 3), 16),
+    g: parseInt(hex.slice(3, 5), 16),
+    b: parseInt(hex.slice(5, 7), 16),
+  };
+}
+
+/** One mini phone-surface preview (light or dark) using real theme tokens. */
+function ModePreview({
+  mode,
+  color,
+}: {
+  mode: "light" | "dark";
+  color: string;
+}) {
+  const isDark = mode === "dark";
+  const bg = isDark ? DARK_THEME.background : LIGHT_THEME.surface;
+  const surface = isDark ? DARK_THEME.surface : LIGHT_THEME.secondarySurface;
+  const text = isDark ? DARK_THEME.text : LIGHT_THEME.text;
+  const subText = isDark ? DARK_THEME.secondaryText : LIGHT_THEME.secondaryText;
+  // Accent chip: color at ~10% over the surface, color as foreground.
+  const chipBg = tint(color, surface, 0.12);
+
+  return (
+    <div className="flex-1">
+      <p className="mb-1.5 text-center text-[11px] font-medium text-neutral-500">
+        {isDark ? "Dark mode" : "Light mode"}
+      </p>
+      <div
+        className="overflow-hidden rounded-xl border"
+        style={{
+          backgroundColor: bg,
+          borderColor: isDark ? "#0b141a" : "#e5e5e5",
+        }}
+      >
+        <div className="p-3 space-y-3">
+          {/* Accent chip */}
+          <div
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+            style={{ backgroundColor: chipBg, color }}
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: color }}
+            />
+            New
+          </div>
+
+          {/* A small card */}
+          <div className="rounded-lg p-2.5" style={{ backgroundColor: surface }}>
+            <p className="text-[12px] font-semibold" style={{ color: text }}>
+              Young Adults
+            </p>
+            <p className="text-[10px]" style={{ color: subText }}>
+              Wednesdays · 7:00 PM
+            </p>
+          </div>
+
+          {/* Filled primary button */}
+          <button
+            className="w-full rounded-lg py-2 text-[12px] font-semibold text-white"
+            style={{ backgroundColor: color }}
+          >
+            Save Changes
+          </button>
+        </div>
+
+        {/* Tab bar with an active (tinted) tab */}
+        <div
+          className="flex items-center justify-around border-t px-2 py-2"
+          style={{
+            backgroundColor: surface,
+            borderColor: isDark
+              ? DARK_THEME.secondarySurface
+              : LIGHT_THEME.surface,
+          }}
+        >
+          <TabItem label="Home" color={color} active />
+          <TabItem label="Groups" color={subText} />
+          <TabItem label="Chat" color={subText} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A single tab-bar item (icon dot + label) tinted with the given color. */
+function TabItem({
+  label,
+  color,
+  active = false,
+}: {
+  label: string;
+  color: string;
+  active?: boolean;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <span
+        className="h-3.5 w-3.5 rounded-md"
+        style={{ backgroundColor: color, opacity: active ? 1 : 0.7 }}
+      />
+      <span
+        className="text-[8px]"
+        style={{ color, fontWeight: active ? 600 : 400 }}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+const EXAMPLE_SWATCHES = [
+  { hex: "#1E8449", name: "Green" },
+  { hex: "#2563EB", name: "Blue" },
+  { hex: "#9333EA", name: "Purple" },
+  { hex: "#D97706", name: "Amber" },
+];
+
+/** Interactive widget: pick a color, preview it live in light + dark mode. */
+function ColorPreviewWidget() {
+  const [color, setColor] = useState(APP_DEFAULT_PRIMARY);
+  const [hexInput, setHexInput] = useState(APP_DEFAULT_PRIMARY);
+
+  const valid = useMemo(() => HEX_RE.test(color), [color]);
+
+  function applyHex(next: string) {
+    setHexInput(next);
+    const normalized = next.startsWith("#") ? next : `#${next}`;
+    if (HEX_RE.test(normalized)) setColor(normalized);
+  }
+
+  function pickColor(next: string) {
+    setColor(next);
+    setHexInput(next);
+  }
+
+  return (
+    <div className="my-8 rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
+      {/* Picker row */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2">
+          <span className="text-sm font-medium text-neutral-700">
+            Your color
+          </span>
+          <input
+            type="color"
+            value={valid ? color : APP_DEFAULT_PRIMARY}
+            onChange={(e) => pickColor(e.target.value)}
+            className="h-9 w-9 cursor-pointer rounded-lg border border-neutral-200 bg-white p-0.5"
+            aria-label="Pick brand color"
+          />
+        </label>
+        <input
+          type="text"
+          value={hexInput}
+          onChange={(e) => applyHex(e.target.value.trim())}
+          spellCheck={false}
+          className="w-28 rounded-lg border border-neutral-200 bg-white px-3 py-2 font-mono text-sm text-neutral-800 focus:border-primary-400 focus:outline-none"
+          aria-label="Hex color value"
+        />
+        {!valid && (
+          <span className="text-xs text-amber-600">
+            Enter a 6-digit hex, e.g. #1E8449
+          </span>
+        )}
+      </div>
+
+      {/* Example swatches */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-neutral-500">Looks good in both:</span>
+        {EXAMPLE_SWATCHES.map((s) => (
+          <button
+            key={s.hex}
+            type="button"
+            onClick={() => pickColor(s.hex)}
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+              color.toLowerCase() === s.hex.toLowerCase()
+                ? "border-neutral-400 bg-neutral-50"
+                : "border-neutral-200 hover:bg-neutral-50"
+            }`}
+          >
+            <span
+              className="h-3 w-3 rounded-full"
+              style={{ backgroundColor: s.hex }}
+            />
+            {s.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Side-by-side previews */}
+      <div className="mt-5 flex gap-4">
+        <ModePreview mode="light" color={valid ? color : APP_DEFAULT_PRIMARY} />
+        <ModePreview mode="dark" color={valid ? color : APP_DEFAULT_PRIMARY} />
+      </div>
+      <p className="mt-3 text-center text-xs text-neutral-500">
+        Your primary color appears on the active tab, filled buttons, and accent
+        chips — in both modes.
+      </p>
     </div>
   );
 }

@@ -41,8 +41,9 @@ export function Prayer() {
 
       <Section id="enable" title="Turn on prayer">
         <P>
-          Prayer is off until an admin turns it on. You'll find it in your
-          community's church-features settings — flip the{" "}
+          Prayer is off until an admin turns it on. You'll find it in{" "}
+          <Term>Admin → Settings</Term>, under the{" "}
+          <Term>Church Features</Term> card — flip the{" "}
           <Term>Prayer Requests</Term> toggle and a Prayer tab appears for your
           members. Nothing changes for anyone until you do this, so you're free
           to turn it on whenever your church is ready.
@@ -50,25 +51,25 @@ export function Prayer() {
 
         <Steps>
           <Step n={1}>
-            Open your community's <Term>Church features</Term> settings from the
-            admin area.
+            Open <Term>Admin</Term> and go to the <Term>Settings</Term> tab.
           </Step>
           <Step n={2}>
-            Find <Term>Prayer Requests</Term> and switch the toggle on. This
-            adds a Prayer tab where members post and pray.
+            Scroll to the <Term>Church Features</Term> card ("Opt-in features
+            for religious communities. Off by default.").
           </Step>
           <Step n={3}>
-            That's it — prayer is live for your community. Toggle it back off any
-            time and the tab goes away.
+            Find <Term>Prayer Requests</Term> and switch the toggle on. This
+            adds a Prayer tab where members post and pray. Toggle it back off
+            any time and the tab goes away.
           </Step>
         </Steps>
 
-        <Figure caption="Church features settings — flip Prayer Requests on.">
+        <Figure caption="Admin → Settings → Church Features — flip Prayer Requests on.">
           {/* swap-in: <img src="/images/guides/prayer-settings.png" /> */}
           <ChurchFeaturesMock />
         </Figure>
 
-        <DeepLink href={appLinks.features}>Open church features</DeepLink>
+        <DeepLink href={appLinks.features}>Open admin settings</DeepLink>
       </Section>
 
       <Section id="use" title="How members use it">
@@ -176,44 +177,35 @@ function LivePrayerDemo() {
   );
 }
 
-/** (a) Church-features settings with the Prayer Requests toggle on. */
+/** (a) Admin → Settings → "Church Features" card with the Prayer Requests row. */
 function ChurchFeaturesMock() {
   return (
-    <PhoneFrame title="Church features">
-      <div className="space-y-3 bg-neutral-50 p-3">
-        <div className="flex items-start gap-3 rounded-xl border border-neutral-200 bg-white p-3">
-          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50 text-base">
-            🙏
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-neutral-900">
-              Prayer Requests
-            </div>
-            <div className="text-[11px] leading-snug text-neutral-500">
-              Members can post prayer requests and pray for each other. Adds a
-              Prayer tab.
-            </div>
-          </div>
-          {/* On toggle */}
-          <span className="mt-0.5 flex h-5 w-9 flex-shrink-0 items-center rounded-full bg-accent-500 px-0.5">
-            <span className="ml-auto h-4 w-4 rounded-full bg-white" />
-          </span>
-        </div>
-
+    <PhoneFrame title="Settings">
+      <div className="bg-neutral-50 p-3">
         <div className="rounded-xl border border-neutral-200 bg-white p-3">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50 text-base">
-              ✅
-            </span>
+          {/* Card header */}
+          <div className="mb-1 text-sm font-semibold text-neutral-900">
+            Church Features
+          </div>
+          <div className="mb-3 text-[11px] leading-snug text-neutral-500">
+            Opt-in features for religious communities. Off by default.
+          </div>
+
+          {/* Prayer Requests row */}
+          <div className="flex items-start gap-3 border-t border-neutral-100 pt-3">
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold text-neutral-900">
-                Prayer Reviews
+                Prayer Requests
               </div>
-              <div className="text-[11px] text-neutral-500">
-                Approve or reject held prayers
+              <div className="text-[11px] leading-snug text-neutral-500">
+                Members can post prayer requests and pray for each other. Adds a
+                Prayer tab.
               </div>
             </div>
-            <span className="text-neutral-300">›</span>
+            {/* On switch */}
+            <span className="mt-0.5 flex h-5 w-9 flex-shrink-0 items-center rounded-full bg-accent-500 px-0.5">
+              <span className="ml-auto h-4 w-4 rounded-full bg-white" />
+            </span>
           </div>
         </div>
       </div>
@@ -221,57 +213,72 @@ function ChurchFeaturesMock() {
   );
 }
 
-/** (b) The prayer feed — cards with a request, a pray count, and a Pray button. */
+/**
+ * (b) The prayer screen — one request at a time (NOT a scrolling feed).
+ * Matches apps/mobile/features/prayer/components/PrayerScreen.tsx: a heading,
+ * add + "My prayers" actions, a "Prayer N of 3" progress row with dots, and a
+ * single hero card (initials avatar, author, time · others prayed, an oversized
+ * quote mark in the community color, the request, and a solid Pray button).
+ */
 function PrayerFeedMock() {
-  const prayers = [
-    {
-      author: "Anonymous",
-      anon: true,
-      body: "Please pray for my mom's surgery on Thursday.",
-      count: "Be the first to pray",
-      initials: "",
-    },
-    {
-      author: "Sarah M.",
-      anon: false,
-      body: "Wisdom for a big decision at work this week.",
-      count: "3 people prayed",
-      initials: "SM",
-    },
-    {
-      author: "David L.",
-      anon: false,
-      body: "Strength for our family in a hard season.",
-      count: "8 people prayed",
-      initials: "DL",
-    },
-  ];
   return (
     <PhoneFrame title="Prayer">
-      <div className="space-y-2.5 bg-neutral-50 p-3">
-        {prayers.map((p) => (
-          <div
-            key={p.body}
-            className="rounded-xl border border-neutral-200 bg-white p-3"
-          >
-            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-neutral-400">
-              <span>{p.anon ? "🙈" : "👤"}</span>
-              <span>{p.author}</span>
-            </div>
-            <div className="mb-3 text-sm leading-snug text-neutral-800">
-              {p.body}
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-[11px] text-neutral-400">
-                <span>👥</span>
-                <span>{p.count}</span>
-              </div>
-              <button className="flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-semibold text-white">
-                <span>♥</span> Pray
-              </button>
-            </div>
+      <div className="bg-neutral-50 px-4 pb-4 pt-3">
+        {/* Top bar: heading + add / my prayers */}
+        <div className="mb-3 flex items-center justify-between">
+          <div className="text-base font-bold text-neutral-900">
+            Pray for your community
           </div>
-        ))}
+          <div className="flex items-center gap-3 text-primary-600">
+            <span className="text-lg leading-none">+</span>
+            <span className="text-[12px] font-semibold">My prayers</span>
+          </div>
+        </div>
+
+        {/* Progress row: "Prayer 1 of 3" + three dots */}
+        <div className="mb-5 flex items-center gap-2.5">
+          <span className="text-[12px] font-semibold tracking-wide text-neutral-500">
+            Prayer 1 of 3
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-neutral-300" />
+            <span className="h-2 w-2 rounded-full bg-neutral-300" />
+            <span className="h-2 w-2 rounded-full bg-neutral-300" />
+          </span>
+        </div>
+
+        {/* Single hero prayer card */}
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-3">
+            {/* Initials avatar on a pastel background — never a photo. */}
+            <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-[#A0C4FF] text-sm font-bold text-[#3A3A3F]">
+              SM
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-bold text-neutral-900">
+                Sarah M.
+              </div>
+              <div className="text-[12px] text-neutral-400">
+                2h ago · 3 others prayed
+              </div>
+            </div>
+            <span className="text-neutral-400">⋯</span>
+          </div>
+
+          {/* Body with oversized decorative opening quote */}
+          <div className="relative mb-5 pl-6 pr-1 pt-2">
+            <span className="absolute -left-0.5 -top-3 select-none text-6xl font-bold leading-none text-primary-600 opacity-35">
+              “
+            </span>
+            <p className="text-[18px] font-medium leading-7 text-neutral-900">
+              Wisdom for a big decision at work this week.
+            </p>
+          </div>
+
+          <button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 py-3.5 text-[15px] font-bold text-white">
+            <span>♥</span> Pray
+          </button>
+        </div>
       </div>
     </PhoneFrame>
   );
