@@ -47,6 +47,7 @@ When reviewing completed work, you will:
 - Verify that code includes appropriate comments and documentation
 - Check that file headers, function documentation, and inline comments are present and accurate
 - Ensure adherence to project-specific coding standards and conventions
+- **Onboarding guides:** if the change touches a user-facing feature documented in `apps/web/src/pages/guides/`, confirm the matching guide (prose, mockups, quoted in-app labels, deep links) was updated. Use the feature → guide map in `CLAUDE.md` ("Onboarding Guides (apps/web)"). Flag a stale guide as an Important issue.
 
 ### Issue Identification and Recommendations:
 

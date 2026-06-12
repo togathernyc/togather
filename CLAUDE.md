@@ -200,6 +200,39 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - If you refactor a feature, update its ARCHITECTURE.md
 - If docs are wrong, fix them - don't just work around them
 
+### Onboarding Guides (apps/web)
+
+The public church onboarding guides live in `apps/web/src/pages/guides/` and are
+registered in `apps/web/src/guides/registry.ts`. They describe **user-facing app
+behavior** (UI labels, flows, and screens), so they go stale whenever a
+documented feature changes.
+
+**When a PR changes a documented feature, update its guide in the same PR.** Use
+this map to find the guide that covers what you touched:
+
+| If your change touches…                                                                                     | Update this guide                                  |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Community creation / proposals (`apps/convex/functions/ee/proposals.ts`, community switcher / selection)    | `apps/web/src/pages/guides/CreateCommunity.tsx`    |
+| Community branding & settings (name, logo, subdomain, primary/secondary color) (`admin/settings.ts`)        | `apps/web/src/pages/guides/Branding.tsx`           |
+| Group types (`functions/seed.ts` defaults, `createGroupType`, Explore filtering)                            | `apps/web/src/pages/guides/GroupTypes.tsx`         |
+| Groups, channels (general/leaders/announcements), member roles / leaders (`groups/mutations.ts`)            | `apps/web/src/pages/guides/GroupsAndChannels.tsx`  |
+| Events & community-wide events (`communityWideEvents.ts`, `meetings/events.ts`, RSVP)                        | `apps/web/src/pages/guides/Events.tsx`             |
+| Prayer feature (`functions/prayers.ts`, `churchFeatures.prayerEnabled`)                                     | `apps/web/src/pages/guides/Prayer.tsx`             |
+
+What to update when a guide is affected:
+
+- **Prose & steps** — if a flow, label, or behavior changed.
+- **UI mockups** — the in-page mock components (and any quoted in-app strings)
+  must match the real screens. If a `<Figure>` uses a real screenshot (`src`),
+  recapture it.
+- **Deep links** — keep `apps/web/src/guides/appLinks.ts` paths valid.
+- **New onboarding-relevant feature?** Add a guide: append an entry to
+  `registry.ts`, add a page under `pages/guides/`, and register the route in
+  `apps/web/src/main.tsx`.
+
+If you're unsure whether a change is "user-facing enough" to need a guide
+update, it probably is — err on the side of updating.
+
 ## File and Project Hygiene
 
 ### Keep the Codebase Clean

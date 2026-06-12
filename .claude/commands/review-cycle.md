@@ -430,6 +430,66 @@ If a comment is a false positive or not actionable:
 
 ---
 
+## Phase 4.7: Onboarding Docs Sync Check
+
+User-facing features are documented in the public onboarding guides
+(`apps/web/src/pages/guides/`). When a PR changes a documented feature without
+updating its guide, the docs go stale. Catch this every cycle.
+
+### 4.7.1 Get the PR's Changed Files
+
+```bash
+gh pr view <PR_NUMBER> --json files --jq '.files[].path'
+```
+
+### 4.7.2 Map Changed Files to Guides
+
+Use the **feature → guide map** in `CLAUDE.md` (section "Onboarding Guides
+(apps/web)") as the source of truth. The key mappings:
+
+| Changed path matches…                                                       | Guide that must stay in sync                       |
+| --------------------------------------------------------------------------- | -------------------------------------------------- |
+| `functions/ee/proposals.ts`, community switcher / selection screens         | `apps/web/src/pages/guides/CreateCommunity.tsx`    |
+| `admin/settings.ts` branding (name/logo/subdomain/colors)                   | `apps/web/src/pages/guides/Branding.tsx`           |
+| `functions/seed.ts` group types, `createGroupType`, Explore filtering       | `apps/web/src/pages/guides/GroupTypes.tsx`         |
+| `groups/mutations.ts`, channels (general/leaders/announcements), roles      | `apps/web/src/pages/guides/GroupsAndChannels.tsx`  |
+| `communityWideEvents.ts`, `meetings/events.ts`, RSVP                        | `apps/web/src/pages/guides/Events.tsx`             |
+| `functions/prayers.ts`, `churchFeatures.prayerEnabled`                      | `apps/web/src/pages/guides/Prayer.tsx`             |
+
+For each mapping where a changed file matches the left column, check whether the
+corresponding guide is **also** in the PR's changed files.
+
+### 4.7.3 Decide and Act
+
+For each documented feature touched **without** its guide being updated:
+
+1. **Inspect the change** — does it alter a user-facing label, flow, or screen
+   shown in the guide (e.g. a renamed button, a new/removed field, a changed
+   default)? Internal-only refactors (no user-facing change) need **no** guide
+   update — skip them.
+2. **If the docs impact is clear and contained** (e.g. a label the guide quotes
+   verbatim changed): update the guide prose and the affected mockup/quoted
+   strings in the same branch, then commit:
+   ```bash
+   git add apps/web/src/pages/guides/<Guide>.tsx
+   git commit -m "docs(guides): sync <feature> guide with PR changes
+
+   Co-Authored-By: Claude <noreply@anthropic.com>"
+   ```
+   Run `pnpm --filter @togather/web type-check` before pushing.
+3. **If the docs impact is ambiguous or large** (flow reworked, screen
+   redesigned): do **not** guess. Post a single PR comment flagging it and let
+   the author decide:
+   ```bash
+   gh pr comment <PR_NUMBER> --body "📝 Heads up: this PR changes \`<feature>\` but doesn't update its onboarding guide (\`apps/web/src/pages/guides/<Guide>.tsx\`). If the user-facing flow/labels changed, please update the guide (prose + mockups). See the feature→guide map in CLAUDE.md."
+   ```
+
+This check is **advisory** — a missing guide update does not by itself block
+merge, but it must be surfaced (comment) or fixed (commit) every cycle, never
+silently ignored.
+
+---
+
 ## Phase 5: Push and Wait for Re-Review
 
 ### 5.1 Pull Before Push (Bot Autofix Safety)
@@ -689,6 +749,7 @@ The issue persists. Please investigate manually.
 - [x] No merge conflicts
 - [x] All PR CI checks passing
 - [x] All review threads resolved
+- [x] Onboarding guides synced or flagged (Phase 4.7)
 - [x] PR merged to main
 - [x] Main branch CI passing
 - [x] Regression tests added (if CI was fixed)
@@ -769,4 +830,5 @@ Report the specific blocker for manual intervention.
 10. **Push after each batch of fixes** - Let CI and bots re-check
 11. **Cap bot review rounds at 3** - After 3 rounds, resolve Low severity threads without fixing to prevent infinite loops
 12. **Always get a bot review** - If reviews aren't triggered automatically, explicitly request one from `cursor` or another available bot
-12. **Log everything** - Track what was fixed for the report
+13. **Keep onboarding guides in sync** - Run the Phase 4.7 docs-sync check every cycle; if a PR changes a documented feature, update its guide or flag it (never ignore)
+14. **Log everything** - Track what was fixed for the report
