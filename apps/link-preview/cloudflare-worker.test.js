@@ -282,6 +282,8 @@ test("/.well-known/apple-app-site-association returns correct JSON for productio
   assert.ok(components.some(c => c["/"] === "*" && !c.exclude), "should include wildcard match for app routes");
   assert.ok(components.some(c => c["/"] === "/" && c.exclude === true), "should exclude root landing page");
   assert.ok(components.some(c => c["/"] === "/android" && c.exclude === true), "should exclude Android download page");
+  assert.ok(components.some(c => c["/"] === "/guides" && c.exclude === true), "should exclude guides hub");
+  assert.ok(components.some(c => c["/"] === "/guides/*" && c.exclude === true), "should exclude guides sub-pages");
 });
 
 test("/.well-known/apple-app-site-association returns correct JSON for staging domain", async () => {
@@ -486,6 +488,65 @@ test("/legal/terms passes through to landing page", async () => {
     assert.equal(res.status, 200);
 
     // Should pass through to landing page (not app)
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(LANDING_PAGE_URL),
+      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// The guides hub and its sub-pages are served by the Vite landing site, not the
+// Expo app. Without this, /guides would be treated as a community slug and
+// redirect to /c/guides ("Community Not Found").
+test("/guides passes through to landing page", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("guides hub", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/guides", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+    });
+
+    const res = await worker.fetch(req, {});
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(LANDING_PAGE_URL),
+      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("/guides/:slug sub-pages pass through to landing page", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("branding guide", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/guides/branding", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+    });
+
+    const res = await worker.fetch(req, {});
+
+    assert.equal(res.status, 200);
     assert.equal(calls.length, 1);
     assert.ok(
       calls[0].url.startsWith(LANDING_PAGE_URL),
