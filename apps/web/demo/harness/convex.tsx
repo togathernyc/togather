@@ -22,13 +22,20 @@ function makeApi(path: string[] = []): unknown {
 export const api = makeApi() as never;
 export const internal = makeApi() as never;
 
+// Per-screen demo entries register their own fixtures here (so they don't all
+// have to edit the shared fixtures file). Keyed by dotted api path.
+const registry: Record<string, unknown | ((args: unknown) => unknown)> = { ...fixtures };
+export function registerFixtures(more: Record<string, unknown | ((args: unknown) => unknown)>) {
+  Object.assign(registry, more);
+}
+
 function pathOf(fn: unknown): string {
   const p = (fn as { __path?: string } | null)?.__path;
   return p ?? String(fn);
 }
 
 function resolveData(fn: unknown, args?: unknown): unknown {
-  const entry = fixtures[pathOf(fn)];
+  const entry = registry[pathOf(fn)];
   return typeof entry === "function" ? (entry as (a: unknown) => unknown)(args) : entry;
 }
 
@@ -77,6 +84,25 @@ export const useConvexConnectionState = () => ({
   connectionCount: 1,
   failedConnectionCount: 0,
 });
+
+export const useConvexAuth = () => ({ isLoading: false, isAuthenticated: true });
+
+// Some app modules import these directly from `convex/react` / `convex/browser`
+// (aliased to this file), so provide the class shapes they expect.
+export class ConvexReactClient {
+  query = client.query;
+  mutation = client.mutation;
+  action = client.action;
+  setAuth() {}
+  clearAuth() {}
+  watchQuery() {
+    return { localQueryResult: () => undefined, onUpdate: () => () => {} };
+  }
+  close() {
+    return Promise.resolve();
+  }
+}
+export const ConvexHttpClient = ConvexReactClient;
 
 // `Id` is used only in type positions in app code; a runtime value isn't needed.
 export const Id = undefined as never;

@@ -5,4 +5,13 @@ export const DOMAIN_CONFIG = {
   baseDomain: "togather.nyc",
 };
 
-export default { DOMAIN_CONFIG };
+/** Format a ms timestamp as a local time string (demo approximation). */
+export function formatTimeWithTimezone(timestamp: number): string {
+  try {
+    return new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+export default { DOMAIN_CONFIG, formatTimeWithTimezone };

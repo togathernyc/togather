@@ -85,6 +85,20 @@ function ChannelListMock() {
   );
 }
 
+/** Live preview: the REAL ChannelsSection app screen rendered via the demo
+ *  harness (react-native-web + mock data, no backend). */
+function LiveChannelList() {
+  return (
+    <PhoneFrame title="Worship Team">
+      <iframe
+        src="/demo/group-channels.html"
+        title="Live preview of a group's channel list"
+        className="w-full h-full block border-0"
+      />
+    </PhoneFrame>
+  );
+}
+
 /** A single member row with role pill. */
 function MemberRow({
   label,
@@ -293,6 +307,16 @@ export function GroupsAndChannels() {
           group.&rdquo; If a member doesn&rsquo;t see it, that&rsquo;s working as
           intended — it&rsquo;s private on purpose.
         </Callout>
+
+        <Callout tone="note" title="Live preview">
+          The screen below is the real Togather channel list, running right here
+          in your browser with sample data — the same component members see in
+          the app.
+        </Callout>
+
+        <Figure caption="Live render of the app's CHANNELS card: General, the private Leaders channel, Announcements, and more.">
+          <LiveChannelList />
+        </Figure>
       </Section>
 
       <Section id="leaders" title="Making someone a leader">

@@ -148,6 +148,16 @@ export function Branding() {
           {/* swap-in: <img src="/images/guides/branding-colors.png" /> */}
           <ColorFormMock />
         </Figure>
+
+        <Callout tone="note" title="Live preview">
+          This is the real admin settings screen running in your browser with
+          sample data. Scroll to <Term>Basic Information</Term> for the name,
+          logo, and subdomain, then to <Term>Branding Colors</Term> to edit your
+          primary and secondary colors.
+        </Callout>
+        <Figure caption="The live admin settings screen — branding fields running on mock data.">
+          <SettingsLiveDemo />
+        </Figure>
       </Section>
 
       <Section id="preview" title="Preview & save">
@@ -178,6 +188,23 @@ export function Branding() {
 /* Page-local UI mockups — reconstructions of the in-app screens.      */
 /* These are swapped for real screenshots via <Figure src=...>.        */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Live demo: the REAL admin SettingsContent screen rendered via
+ * react-native-web with mock data (see apps/web/demo/settings.tsx). Embedded in
+ * a phone frame so it reads as the in-app screen.
+ */
+function SettingsLiveDemo() {
+  return (
+    <PhoneFrame title="Settings">
+      <iframe
+        src="/demo/settings.html"
+        title="Live admin settings — Branding"
+        className="w-full h-full block border-0"
+      />
+    </PhoneFrame>
+  );
+}
 
 /** Settings menu with the Branding / Appearance row highlighted. */
 function SettingsMenuMock() {

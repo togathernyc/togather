@@ -6,7 +6,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 const defaultAuth = {
-  user: { id: "demo-user", firstName: "Alex", lastName: "Rivera", email: "alex@example.com" },
+  user: { id: "demo-user", firstName: "Alex", lastName: "Rivera", email: "alex@example.com", is_admin: true },
   community: {
     id: "fount",
     name: "FOUNT",
