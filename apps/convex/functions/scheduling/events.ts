@@ -715,7 +715,13 @@ export const groupHasRunSheet = query({
       .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
       .collect();
 
+    // Only count upcoming plans: the native run-sheet tool renders
+    // `listEvents` (upcoming-only), so a group whose only run-sheet items live
+    // on past plans would otherwise show the tool but open to an empty
+    // "No upcoming event plans" state. Match that cutoff here.
+    const cutoff = startOfTodayMs();
     for (const plan of plans) {
+      if (plan.eventDate < cutoff) continue;
       const firstItem = await ctx.db
         .query("eventItems")
         .withIndex("by_plan", (q) => q.eq("planId", plan._id))

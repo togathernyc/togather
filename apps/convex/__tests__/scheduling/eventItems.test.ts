@@ -724,6 +724,30 @@ describe("groupHasRunSheet", () => {
     expect(result).toBe(true);
   });
 
+  it("returns false when the only plan with items is in the past", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await createPlan(t, token, world.groupId);
+    await t.mutation(api.functions.scheduling.eventItems.createItem, {
+      token,
+      planId,
+      type: "item",
+      title: "Welcome",
+    });
+
+    // Move the plan into the past — the native run-sheet tool only shows
+    // upcoming plans, so groupHasRunSheet must not report it as having a sheet.
+    await t.run((ctx) =>
+      ctx.db.patch(planId, { eventDate: Date.now() - 7 * DAY }),
+    );
+
+    const result = await t.query(
+      api.functions.scheduling.events.groupHasRunSheet,
+      { token, groupId: world.groupId },
+    );
+    expect(result).toBe(false);
+  });
+
   it("returns false for a non-member token (no throw)", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;

@@ -56,11 +56,13 @@ export function RunSheetToolScreen() {
     );
   }
 
-  // Explicit "native" always wins; otherwise fall back to native when the
-  // group has a native run sheet and no PCO channels (no explicit source set).
+  // Explicit "native" always wins. An explicitly saved "pco" is honored too —
+  // the native fallback only kicks in when no source was saved (undefined) and
+  // the group has a native run sheet with no PCO channels.
+  const savedSource = groupData?.runSheetSource;
   const resolveToNative =
-    groupData?.runSheetSource === "native" ||
-    (hasNativeRunSheet && !hasPcoChannels);
+    savedSource === "native" ||
+    (savedSource == null && hasNativeRunSheet && !hasPcoChannels);
 
   if (resolveToNative) {
     return (

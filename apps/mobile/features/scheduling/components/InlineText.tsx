@@ -66,16 +66,23 @@ export function InlineText({
         timer.current = null;
       }
       const next = pending.current;
-      pending.current = null;
-      if (next == null || next === value) return;
-      if (required && next.trim() === "") {
-        // Never persist an empty required cell. On blur/unmount, snap the
-        // field back to the last saved value so the row keeps its title;
-        // during typing (debounced flush) just skip the save and let the
-        // user keep editing.
-        if (revertIfEmpty) setDraft(value);
+      if (next == null || next === value) {
+        pending.current = null;
         return;
       }
+      if (required && next.trim() === "") {
+        // Never persist an empty required cell. On blur/unmount, snap the
+        // field back to the last saved value so the row keeps its title.
+        // During typing (debounced flush) keep the empty edit *pending* — if
+        // we cleared it here, a later blur would see nothing to revert and
+        // leave the field showing an unsaved blank.
+        if (revertIfEmpty) {
+          pending.current = null;
+          setDraft(value);
+        }
+        return;
+      }
+      pending.current = null;
       void onSave(next);
     },
     [onSave, value, required],
