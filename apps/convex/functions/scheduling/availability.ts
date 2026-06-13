@@ -19,8 +19,10 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "../../_generated/server";
+import { mutation, query, internalMutation } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { requireGroupMember, requireGroupScheduler } from "./permissions";
@@ -28,6 +30,83 @@ import { requireGroupMember, requireGroupScheduler } from "./permissions";
 /** Valid availability states a member can report. */
 const AVAILABILITY_STATUSES = new Set(["available", "unavailable"]);
 const MAX_NOTE_LENGTH = 280;
+
+/**
+ * Rolling debounce window for the "member updated availability" leader
+ * notification. Each availability write reschedules the notify job to fire
+ * this long after the *last* change, so a member clicking through several
+ * events produces one notification instead of one per tap.
+ */
+const AVAILABILITY_NOTIFY_DEBOUNCE_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Schedule (or reschedule) the debounced leader notification for one member's
+ * availability changes in a group. Cancels any pending job for the
+ * (group, member) pair and queues a fresh one — a trailing debounce that
+ * collapses a burst of edits into a single notification.
+ */
+export async function queueAvailabilityLeaderNotice(
+  ctx: MutationCtx,
+  args: {
+    groupId: Id<"groups">;
+    userId: Id<"users">;
+    communityId: Id<"communities">;
+  },
+): Promise<void> {
+  const existing = await ctx.db
+    .query("availabilityNotifyDebounce")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", args.groupId).eq("userId", args.userId),
+    )
+    .first();
+
+  if (existing) {
+    try {
+      await ctx.scheduler.cancel(existing.jobId);
+    } catch {
+      // Job may have already fired or been cancelled — ignore.
+    }
+  }
+
+  const jobId = await ctx.scheduler.runAfter(
+    AVAILABILITY_NOTIFY_DEBOUNCE_MS,
+    internal.functions.notifications.senders.notifyAvailabilityUpdated,
+    { groupId: args.groupId, userId: args.userId },
+  );
+
+  const now = Date.now();
+  if (existing) {
+    await ctx.db.patch(existing._id, { jobId, scheduledAt: now });
+  } else {
+    await ctx.db.insert("availabilityNotifyDebounce", {
+      groupId: args.groupId,
+      userId: args.userId,
+      communityId: args.communityId,
+      jobId,
+      scheduledAt: now,
+    });
+  }
+}
+
+/**
+ * Drop the debounce row for a (group, member) pair. Called by the notify job
+ * when it fires so the next change starts a clean window.
+ */
+export const clearAvailabilityDebounce = internalMutation({
+  args: { groupId: v.id("groups"), userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("availabilityNotifyDebounce")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", args.userId),
+      )
+      .first();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+    return null;
+  },
+});
 
 /** Midnight (local server time) at the start of today, in ms. */
 function startOfTodayMs(): number {
@@ -87,15 +166,27 @@ export const setMyAvailability = mutation({
       .first();
 
     if (existing) {
+      // Only notify leaders when the response actually changes — a redundant
+      // re-tap of the current state shouldn't (re)start the debounce window.
+      const changed =
+        existing.status !== args.status ||
+        (existing.note || undefined) !== (note || undefined);
       await ctx.db.patch(existing._id, {
         status: args.status,
         note: note || undefined,
         updatedAt: now,
       });
+      if (changed) {
+        await queueAvailabilityLeaderNotice(ctx, {
+          groupId: plan.groupId,
+          userId,
+          communityId: plan.communityId,
+        });
+      }
       return existing._id;
     }
 
-    return ctx.db.insert("eventAvailability", {
+    const newId = await ctx.db.insert("eventAvailability", {
       planId: args.planId,
       groupId: plan.groupId,
       communityId: plan.communityId,
@@ -105,6 +196,12 @@ export const setMyAvailability = mutation({
       respondedAt: now,
       updatedAt: now,
     });
+    await queueAvailabilityLeaderNotice(ctx, {
+      groupId: plan.groupId,
+      userId,
+      communityId: plan.communityId,
+    });
+    return newId;
   },
 });
 

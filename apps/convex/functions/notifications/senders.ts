@@ -10,7 +10,7 @@ import { internalAction } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { joinRequestApprovedEmail } from "../../lib/notifications/emailTemplates";
-import { eventCreatedByMember, eventRsvpReceived } from "../../lib/notifications/definitions";
+import { availabilityUpdated, eventCreatedByMember, eventRsvpReceived } from "../../lib/notifications/definitions";
 import type { ExtractNotificationData, FormatterContext } from "../../lib/notifications/types";
 
 type NotificationGroupInfo = {
@@ -513,6 +513,126 @@ export const notifyRsvpReceived = internalAction({
       return { success: result.success, sent: notifications.length };
     } catch (error) {
       console.error("[NotifyRsvpReceived] Error:", error);
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// ============================================================================
+// Notification Action for Availability Updates (debounced)
+// ============================================================================
+
+/**
+ * Notify a group's leaders that a member filled out or updated their serving
+ * availability. Fired by the debounced scheduler in scheduling/availability.ts
+ * (`queueAvailabilityLeaderNotice`), so this runs ~5 min after the member's
+ * last change — one notification per burst, not per tap. Clears the debounce
+ * row when done so the next change starts a fresh window.
+ */
+export const notifyAvailabilityUpdated = internalAction({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
+    try {
+      // Always clear the debounce row first so a change that lands after this
+      // job starts schedules a fresh notification rather than being swallowed.
+      await ctx.runMutation(
+        internal.functions.scheduling.availability.clearAvailabilityDebounce,
+        { groupId: args.groupId, userId: args.userId },
+      );
+
+      const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupInfo,
+        { groupId: args.groupId },
+      );
+      if (!groupInfo) {
+        return { success: false, error: "Group not found" };
+      }
+
+      const memberName: string = await ctx.runQuery(
+        internal.functions.notifications.internal.getUserDisplayName,
+        { userId: args.userId },
+      );
+
+      const leaderIds: Id<"users">[] = await ctx.runQuery(
+        internal.functions.notifications.internal.getGroupMembersForNotification,
+        { groupId: args.groupId, filter: "leaders" },
+      );
+      const recipientSet = new Set<string>(leaderIds.map((id) => String(id)));
+      // Never notify the member about their own update.
+      recipientSet.delete(String(args.userId));
+      const recipientIds = [...recipientSet] as Id<"users">[];
+      if (recipientIds.length === 0) {
+        return { success: true, sent: 0 };
+      }
+
+      const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: recipientIds },
+      );
+
+      const pushFormatter = availabilityUpdated.formatters.push;
+      if (!pushFormatter) {
+        return { success: false, error: "Missing push formatter" };
+      }
+      type AvailabilityPushData = ExtractNotificationData<typeof availabilityUpdated>;
+      const formatterCtx: FormatterContext<AvailabilityPushData> = {
+        data: {
+          memberName,
+          groupName: groupInfo.name,
+          groupId: args.groupId,
+          communityId: groupInfo.communityId,
+        },
+        userId: args.userId,
+      };
+      const { title, body, data: pushData } = pushFormatter(formatterCtx);
+
+      const notificationImageUrl = getSenderNotificationImage(groupInfo);
+      const notifications = tokenResults.flatMap((result) =>
+        result.tokens.map((token) => ({
+          token,
+          title,
+          body,
+          data: { ...pushData, groupAvatarUrl: notificationImageUrl },
+          imageUrl: notificationImageUrl,
+        })),
+      );
+
+      let success = true;
+      if (notifications.length > 0) {
+        const result = await ctx.runAction(
+          internal.functions.notifications.internal.sendBatchPushNotifications,
+          { notifications },
+        );
+        success = result.success;
+      }
+
+      // In-app inbox records for every leader (even those without a push token).
+      const notificationRecords = recipientIds.map((leaderId) => ({
+        userId: leaderId,
+        communityId: groupInfo.communityId as Id<"communities">,
+        groupId: args.groupId,
+        notificationType: "availability_updated",
+        title,
+        body,
+        data: {
+          groupId: args.groupId,
+          communityId: groupInfo.communityId,
+          url: `/rostering/${args.groupId}/grid`,
+          groupAvatarUrl: notificationImageUrl,
+        },
+        status: success ? "sent" : "failed",
+      }));
+      await ctx.runMutation(
+        internal.functions.notifications.mutations.createNotificationsBatch,
+        { notifications: notificationRecords },
+      );
+
+      return { success, sent: notifications.length };
+    } catch (error) {
+      console.error("[NotifyAvailabilityUpdated] Error:", error);
       return { success: false, error: String(error) };
     }
   },

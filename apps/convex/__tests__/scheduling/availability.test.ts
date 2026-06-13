@@ -475,3 +475,111 @@ describe("public availability link (app-optional, OTP-verified)", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("availability leader notification (debounced)", () => {
+  /** Read the single debounce row for a (group, member), or null. */
+  async function debounceRow(
+    t: ReturnType<typeof convexTest>,
+    groupId: Id<"groups">,
+    userId: Id<"users">,
+  ) {
+    return t.run((ctx) =>
+      ctx.db
+        .query("availabilityNotifyDebounce")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", groupId).eq("userId", userId),
+        )
+        .first(),
+    );
+  }
+
+  it("schedules a debounced leader notification on the first response", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Sunday",
+      Date.now() + 7 * DAY,
+    );
+
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "available",
+    });
+
+    const row = await debounceRow(t, world.groupId, world.channelMemberId);
+    expect(row).not.toBeNull();
+    expect(row?.jobId).toBeTruthy();
+  });
+
+  it("debounces a burst into one pending notification (reschedules)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Sunday",
+      Date.now() + 7 * DAY,
+    );
+
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "available",
+    });
+    const first = await debounceRow(t, world.groupId, world.channelMemberId);
+
+    // A real change reschedules: still exactly one row, with a fresh job id.
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "unavailable",
+    });
+    const all = await t.run((ctx) =>
+      ctx.db
+        .query("availabilityNotifyDebounce")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.channelMemberId),
+        )
+        .collect(),
+    );
+    expect(all).toHaveLength(1);
+    expect(all[0].jobId).not.toBe(first?.jobId);
+  });
+
+  it("does not reschedule on a no-op re-tap of the same status", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await createPlan(
+      t,
+      leaderToken,
+      world.groupId,
+      "Sunday",
+      Date.now() + 7 * DAY,
+    );
+
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "available",
+    });
+    const first = await debounceRow(t, world.groupId, world.channelMemberId);
+
+    // Re-tapping the already-selected option is a no-op — the pending job id
+    // must not change (no new notification window).
+    await t.mutation(api.functions.scheduling.availability.setMyAvailability, {
+      token: memberToken,
+      planId,
+      status: "available",
+    });
+    const second = await debounceRow(t, world.groupId, world.channelMemberId);
+    expect(second?.jobId).toBe(first?.jobId);
+  });
+});

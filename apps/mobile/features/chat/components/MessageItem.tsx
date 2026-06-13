@@ -1027,7 +1027,7 @@ function MessageItemInner({
           )}
 
           {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "poll" && (
+          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
