@@ -858,12 +858,34 @@ function PublishBarMock() {
 /** Native availability card rendered inside a chat thread. */
 function AvailabilityCardMock() {
   const events = [
-    { title: "Sunday Service", date: "Sun, Jun 15 · 9:00 AM", state: "available" as const },
-    { title: "Sunday Service", date: "Sun, Jun 22 · 9:00 AM", state: "none" as const },
-    { title: "Midweek", date: "Wed, Jun 25 · 7:00 PM", state: "cant" as const },
+    {
+      title: "MH Service 7/5",
+      date: "Sat, Jul 5 · 10:00 AM, 12:00 PM",
+      state: "available" as const,
+    },
+    {
+      title: "MH Service 7/12",
+      date: "Sat, Jul 12 · 10:00 AM, 12:00 PM",
+      state: "available" as const,
+    },
+    {
+      title: "MH Service 7/19",
+      date: "Sat, Jul 19 · 10:00 AM, 12:00 PM",
+      state: "none" as const,
+    },
+    {
+      title: "MH Service 7/26 with extended rehearsal and sound check",
+      date: "Sat, Jul 26 · 10:00 AM, 12:00 PM, 2:00 PM",
+      state: "none" as const,
+    },
+    {
+      title: "MH Service 8/2",
+      date: "Sat, Aug 2 · 10:00 AM, 12:00 PM",
+      state: "cant" as const,
+    },
   ];
   return (
-    <PhoneFrame title="Worship Team">
+    <PhoneFrame title="Fount Production">
       <div className="space-y-3 bg-neutral-50 p-3">
         {/* A normal message above the card */}
         <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[12px] text-neutral-700 shadow-sm">
@@ -882,7 +904,7 @@ function AvailabilityCardMock() {
             Let us know when you can serve this month 🙏
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
-            Tap a date to share your availability
+            You're available for 3 of 5
           </div>
 
           <div className="mt-3 space-y-2.5">
