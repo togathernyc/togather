@@ -16,7 +16,7 @@ import type { Id } from '@services/api/convex';
 import { useRouter } from 'expo-router';
 import { ImageViewerManager } from '@/providers/ImageViewerProvider';
 import type { RsvpOption } from '../types';
-import { handleImageLongPress, handleEventLongPress } from '../utils/imageActions';
+import { handleImageLongPress, handleEventLongPress, copyEventLink } from '../utils/imageActions';
 import { getRsvpStatsForOption, hasPrefetchedRsvpOptions } from '../utils/rsvpStats';
 import { DEFAULT_PRIMARY_COLOR } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
@@ -255,6 +255,18 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
     }
   };
 
+  const [linkCopied, setLinkCopied] = useState(false);
+  const handleCopyLink = async () => {
+    const eventShortId = event?.shortId || shortId;
+    if (!eventShortId) {
+      Alert.alert('Error', 'This event is missing a share link.');
+      return;
+    }
+    await copyEventLink(eventShortId);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
   // Format date
   const formatEventDate = (dateString: string | undefined): string => {
     if (!dateString) return '';
@@ -468,13 +480,26 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
             <Text style={styles.accessPromptText}>{event.accessPrompt.message}</Text>
           </View>
 
-          {/* View Details Button */}
-          <TouchableOpacity
-            style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
-            onPress={handleViewDetails}
-          >
-            <Text style={styles.viewDetailsText}>View Details</Text>
-          </TouchableOpacity>
+          {/* Footer: Copy link + View Details */}
+          <View style={[styles.footerRow, { borderTopColor: colors.borderLight }]}>
+            <TouchableOpacity
+              style={styles.copyLinkButton}
+              onPress={handleCopyLink}
+              hitSlop={8}
+            >
+              <Ionicons
+                name={linkCopied ? 'checkmark' : 'link-outline'}
+                size={16}
+                color={DEFAULT_PRIMARY_COLOR}
+              />
+              <Text style={styles.viewDetailsText}>
+                {linkCopied ? 'Copied' : 'Copy link'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleViewDetails} hitSlop={8}>
+              <Text style={styles.viewDetailsText}>View Details</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Pressable>
     );
@@ -590,13 +615,26 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
           </View>
         )}
 
-        {/* View Details Button */}
-        <TouchableOpacity
-          style={[styles.viewDetailsButton, { borderTopColor: colors.borderLight }]}
-          onPress={handleViewDetails}
-        >
-          <Text style={styles.viewDetailsText}>View Details</Text>
-        </TouchableOpacity>
+        {/* Footer: Copy link + View Details */}
+        <View style={[styles.footerRow, { borderTopColor: colors.borderLight }]}>
+          <TouchableOpacity
+            style={styles.copyLinkButton}
+            onPress={handleCopyLink}
+            hitSlop={8}
+          >
+            <Ionicons
+              name={linkCopied ? 'checkmark' : 'link-outline'}
+              size={16}
+              color={DEFAULT_PRIMARY_COLOR}
+            />
+            <Text style={styles.viewDetailsText}>
+              {linkCopied ? 'Copied' : 'Copy link'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleViewDetails} hitSlop={8}>
+            <Text style={styles.viewDetailsText}>View Details</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Cancelled Overlay */}
         {isCancelled && <CancelledOverlay />}
@@ -795,10 +833,18 @@ const styles = StyleSheet.create({
     backgroundColor: DEFAULT_PRIMARY_COLOR,
     borderRadius: 3,
   },
-  viewDetailsButton: {
-    padding: 16,
-    borderTopWidth: 1,
+  footerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+  },
+  copyLinkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   viewDetailsText: {
     fontSize: 15,

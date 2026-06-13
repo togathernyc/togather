@@ -20,6 +20,7 @@ import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { generateShortId } from "../../lib/utils";
 import { requireGroupScheduler } from "./permissions";
+import { queueAvailabilityLeaderNotice } from "./availability";
 
 const MAX_MESSAGE_LENGTH = 280;
 const MAX_EVENTS = 12;
@@ -233,6 +234,7 @@ export const submitAvailabilityForRequest = mutation({
     // Only events this request asked about are writable.
     const allowed = new Set(request.planIds.map((id) => id as string));
     let savedCount = 0;
+    let changed = false;
     for (const r of args.responses) {
       if (!allowed.has(r.planId as string)) continue;
       const prior = await ctx.db
@@ -242,8 +244,10 @@ export const submitAvailabilityForRequest = mutation({
         )
         .first();
       if (prior) {
+        if (prior.status !== r.status) changed = true;
         await ctx.db.patch(prior._id, { status: r.status, updatedAt: now });
       } else {
+        changed = true;
         await ctx.db.insert("eventAvailability", {
           planId: r.planId,
           groupId: request.groupId,
@@ -255,6 +259,16 @@ export const submitAvailabilityForRequest = mutation({
         });
       }
       savedCount += 1;
+    }
+
+    // One debounced notification to the group's leaders for the whole batch —
+    // submitting the public link writes many plans at once.
+    if (changed) {
+      await queueAvailabilityLeaderNotice(ctx, {
+        groupId: request.groupId,
+        userId,
+        communityId: request.communityId,
+      });
     }
 
     return { savedCount };

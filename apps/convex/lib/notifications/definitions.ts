@@ -557,6 +557,36 @@ export const eventCreatedByMember: NotificationDefinition<EventCreatedByMemberDa
   defaultChannels: ['push'],
 };
 
+// Sent to group leaders when a member fills out or updates their serving
+// availability. Debounced (~5 min) so a member clicking through several
+// events produces a single notification, not one per tap. See
+// `queueAvailabilityLeaderNotice` in scheduling/availability.ts.
+interface AvailabilityUpdatedData {
+  memberName: string;
+  groupName: string;
+  groupId: string;
+  communityId?: string;
+}
+
+export const availabilityUpdated: NotificationDefinition<AvailabilityUpdatedData> = {
+  type: 'availability_updated',
+  description:
+    'Sent to group leaders when a member updates their serving availability',
+  formatters: {
+    push: (ctx) => ({
+      title: 'Availability updated',
+      body: `${ctx.data.memberName} updated their availability in ${ctx.data.groupName}`,
+      data: {
+        type: 'availability_updated',
+        groupId: ctx.data.groupId,
+        communityId: ctx.data.communityId,
+        url: `/rostering/${ctx.data.groupId}/grid`,
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
 // ============================================================================
 // Admin Definitions
 // ============================================================================

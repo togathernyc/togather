@@ -2768,6 +2768,26 @@ export default defineSchema({
     .index("by_group_user", ["groupId", "userId"]),
 
   /**
+   * Debounce bookkeeping for the "member updated their availability" leader
+   * notification. One row per (group, member) holds the pending scheduled
+   * notify job; each availability write cancels and reschedules it, so a burst
+   * of clicks collapses into a single notification that fires once the member
+   * stops (a rolling trailing debounce). Cleared when the job fires.
+   */
+  availabilityNotifyDebounce: defineTable({
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+    communityId: v.id("communities"),
+    jobId: v.id("_scheduled_functions"),
+    // Identity of the currently-scheduled job. The notify job only sends/clears
+    // when its nonce still matches this row, so a stale job that couldn't be
+    // cancelled can't delete a newer replacement row or fire an early/extra
+    // notification.
+    nonce: v.string(),
+    scheduledAt: v.number(),
+  }).index("by_group_user", ["groupId", "userId"]),
+
+  /**
    * An availability request. Two flavors share this table:
    *  - **In-chat**: posted into a channel, backed by a `chatMessages` row with
    *    `contentType: "availability_request"` and `availabilityRequestId`
