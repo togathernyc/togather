@@ -20,9 +20,12 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
+  Share,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -72,7 +75,49 @@ export function RosteringSection({ groupId }: Props) {
   const createEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.createEvent,
   );
+  const createAvailabilityLink = useAuthenticatedMutation(
+    api.functions.scheduling.publicAvailability.createAvailabilityLink,
+  );
   const [creating, setCreating] = useState(false);
+  const [sharingLink, setSharingLink] = useState(false);
+
+  const goToRostering = useCallback(() => {
+    router.push(`/rostering/${groupId}` as any);
+  }, [router, groupId]);
+
+  const goToAvailability = useCallback(() => {
+    router.push(`/rostering/${groupId}/availability` as any);
+  }, [router, groupId]);
+
+  const goToRosterGrid = useCallback(() => {
+    router.push(`/rostering/${groupId}/grid` as any);
+  }, [router, groupId]);
+
+  // Generate a public, app-optional availability link and hand it to the OS
+  // share sheet — people can respond in a browser without the app.
+  const handleShareLink = useCallback(async () => {
+    if (sharingLink) return;
+    setSharingLink(true);
+    try {
+      const { publicToken } = await createAvailabilityLink({
+        groupId: groupId as Id<"groups">,
+      });
+      const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
+      await Share.share({
+        message: `Let us know when you can serve: ${url}`,
+      });
+    } catch (e) {
+      const err = e as { data?: { message?: string }; message?: string };
+      Alert.alert(
+        "Couldn't create link",
+        err?.data?.message ??
+          err?.message ??
+          "Add an upcoming event plan first, then try again.",
+      );
+    } finally {
+      setSharingLink(false);
+    }
+  }, [sharingLink, createAvailabilityLink, groupId]);
 
   const handleNewEvent = useCallback(async () => {
     if (creating) return;
@@ -225,7 +270,74 @@ export function RosteringSection({ groupId }: Props) {
           </Text>
         </Pressable>
       </ScrollView>
+
+      {/* Quick actions into the rest of the rostering surface. */}
+      <View style={styles.actions}>
+        <ActionButton
+          icon="options-outline"
+          label="Rostering settings"
+          color={colors.text}
+          borderColor={colors.border}
+          onPress={goToRostering}
+        />
+        <ActionButton
+          icon="share-outline"
+          label={sharingLink ? "Sharing…" : "Share availability link"}
+          color={colors.text}
+          borderColor={colors.border}
+          onPress={handleShareLink}
+          disabled={sharingLink}
+        />
+        <ActionButton
+          icon="calendar-outline"
+          label="Availability"
+          color={colors.text}
+          borderColor={colors.border}
+          onPress={goToAvailability}
+        />
+        <ActionButton
+          icon="grid-outline"
+          label="Roster grid"
+          color={colors.text}
+          borderColor={colors.border}
+          onPress={goToRosterGrid}
+        />
+      </View>
     </View>
+  );
+}
+
+function ActionButton({
+  icon,
+  label,
+  color,
+  borderColor,
+  onPress,
+  disabled,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  color: string;
+  borderColor: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.actionBtn,
+        { borderColor },
+        pressed && { opacity: 0.7 },
+        disabled && { opacity: 0.5 },
+      ]}
+    >
+      <Ionicons name={icon} size={16} color={color} />
+      <Text style={[styles.actionLabel, { color }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -299,5 +411,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     textAlign: "center",
+  },
+  actions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  actionLabel: {
+    fontSize: 13,
+    fontWeight: "600",
   },
 });
