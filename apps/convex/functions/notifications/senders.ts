@@ -533,15 +533,20 @@ export const notifyAvailabilityUpdated = internalAction({
   args: {
     groupId: v.id("groups"),
     userId: v.id("users"),
+    nonce: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
-      // Always clear the debounce row first so a change that lands after this
-      // job starts schedules a fresh notification rather than being swallowed.
-      await ctx.runMutation(
-        internal.functions.scheduling.availability.clearAvailabilityDebounce,
-        { groupId: args.groupId, userId: args.userId },
+      // Claim the debounce row by nonce. If this job was superseded by a later
+      // edit (the row was rescheduled), the claim fails and we bail without
+      // sending — the newer job will fire and notify once the window settles.
+      const claimed: boolean = await ctx.runMutation(
+        internal.functions.scheduling.availability.claimAvailabilityDebounce,
+        { groupId: args.groupId, userId: args.userId, nonce: args.nonce },
       );
+      if (!claimed) {
+        return { success: true, sent: 0 };
+      }
 
       const groupInfo: NotificationGroupInfo | null = await ctx.runQuery(
         internal.functions.notifications.internal.getGroupInfo,

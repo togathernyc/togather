@@ -68,43 +68,51 @@ export async function queueAvailabilityLeaderNotice(
     }
   }
 
+  // A fresh nonce ties this row to exactly the job we're about to schedule, so
+  // a stale job (one whose cancel didn't take) can't clear a newer row or send.
+  const nonce = crypto.randomUUID();
   const jobId = await ctx.scheduler.runAfter(
     AVAILABILITY_NOTIFY_DEBOUNCE_MS,
     internal.functions.notifications.senders.notifyAvailabilityUpdated,
-    { groupId: args.groupId, userId: args.userId },
+    { groupId: args.groupId, userId: args.userId, nonce },
   );
 
   const now = Date.now();
   if (existing) {
-    await ctx.db.patch(existing._id, { jobId, scheduledAt: now });
+    await ctx.db.patch(existing._id, { jobId, nonce, scheduledAt: now });
   } else {
     await ctx.db.insert("availabilityNotifyDebounce", {
       groupId: args.groupId,
       userId: args.userId,
       communityId: args.communityId,
       jobId,
+      nonce,
       scheduledAt: now,
     });
   }
 }
 
 /**
- * Drop the debounce row for a (group, member) pair. Called by the notify job
- * when it fires so the next change starts a clean window.
+ * Atomically claim the debounce row for a (group, member) pair on behalf of the
+ * firing notify job, identified by `nonce`. Returns true and deletes the row
+ * only when the row still belongs to this job; returns false if the row is
+ * missing or was already rescheduled (a newer job owns it now), so a stale job
+ * neither sends nor removes the replacement row.
  */
-export const clearAvailabilityDebounce = internalMutation({
-  args: { groupId: v.id("groups"), userId: v.id("users") },
-  handler: async (ctx, args) => {
+export const claimAvailabilityDebounce = internalMutation({
+  args: { groupId: v.id("groups"), userId: v.id("users"), nonce: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
     const existing = await ctx.db
       .query("availabilityNotifyDebounce")
       .withIndex("by_group_user", (q) =>
         q.eq("groupId", args.groupId).eq("userId", args.userId),
       )
       .first();
-    if (existing) {
-      await ctx.db.delete(existing._id);
+    if (!existing || existing.nonce !== args.nonce) {
+      return false;
     }
-    return null;
+    await ctx.db.delete(existing._id);
+    return true;
   },
 });
 

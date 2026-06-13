@@ -2779,6 +2779,11 @@ export default defineSchema({
     userId: v.id("users"),
     communityId: v.id("communities"),
     jobId: v.id("_scheduled_functions"),
+    // Identity of the currently-scheduled job. The notify job only sends/clears
+    // when its nonce still matches this row, so a stale job that couldn't be
+    // cancelled can't delete a newer replacement row or fire an early/extra
+    // notification.
+    nonce: v.string(),
     scheduledAt: v.number(),
   }).index("by_group_user", ["groupId", "userId"]),
 
