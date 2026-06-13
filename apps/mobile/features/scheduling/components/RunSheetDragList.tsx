@@ -1,30 +1,41 @@
 /**
  * RunSheetDragList
  *
- * A cross-platform drag-to-reorder list for the run sheet (ADR-026). Reordering
- * is grab-and-drag from a handle, on web AND native, with an insertion line
- * marking the drop target — no up/down arrows.
+ * A cross-platform drag-to-reorder list for the run sheet (ADR-026). It owns the
+ * scroll container so the list, its header (title/date) and footer (add
+ * controls) scroll together. Reordering is grab-and-drag from a grip handle on
+ * web AND native.
  *
- * - **Web:** HTML5 drag. The handle and the row container are real DOM nodes
- *   created with `React.createElement` because RN-Web strips `draggable` /
- *   `onDrop` from `View` (same trick as `FollowupDesktopTable`). Only the
- *   handle starts a drag, so inputs in the row stay editable; the row element
- *   is the drag image and the drop target.
- * - **Native:** a `react-native-gesture-handler` Pan on the handle lifts the
- *   active row (`react-native-reanimated` finger-follow) while an insertion
- *   line tracks the drop target. Both libs are already `core` deps (ADR-013).
+ * - **Native:** `react-native-reorderable-list` (`ReorderableList`, sits on
+ *   `react-native-gesture-handler` + `react-native-reanimated` — both `core`
+ *   deps, ADR-013). It handles the finger-follow, autoscroll, and winning the
+ *   gesture over the scroll, which a hand-rolled Pan could not do reliably on
+ *   the New Architecture. Drag starts from a grip via the `useReorderableDrag`
+ *   hook, so the row's TextInputs stay editable.
+ * - **Web:** HTML5 drag inside a ScrollView. The handle and the row container
+ *   are real DOM nodes created with `React.createElement` because RN-Web strips
+ *   `draggable` / `onDrop` from `View` (same trick as `FollowupDesktopTable`).
+ *   Only the handle starts a drag, so inputs in the row stay editable; the row
+ *   element is the drag image and the drop target.
  *
- * Reorder math (`moveKey`) is shared; the platforms only differ in how a drag
- * is driven and how the drop target is detected.
+ * Both platforms expose the same API: `renderRow` receives a `Handle` component
+ * to wrap the grip, and `onReorder` is called with the full reordered key list.
  */
 import React, { useCallback, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, Platform } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  runOnJS,
-} from "react-native-reanimated";
+import {
+  View,
+  ScrollView,
+  StyleSheet,
+  Platform,
+  Pressable,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
+import ReorderableList, {
+  useReorderableDrag,
+  reorderItems,
+  type ReorderableListReorderEvent,
+} from "react-native-reorderable-list";
 import { useTheme } from "@hooks/useTheme";
 
 /** A handle component the row renderer wraps around its grip icon. */
@@ -37,6 +48,88 @@ type RenderRow<T> = (info: {
   isActive: boolean;
 }) => React.ReactNode;
 
+interface Props<T> {
+  data: T[];
+  keyExtractor: (item: T) => string;
+  /** Called with the full reordered key list when a drag completes. */
+  onReorder: (orderedKeys: string[]) => void;
+  renderRow: RenderRow<T>;
+  /** Scrolls above the list (e.g. plan title / date). */
+  ListHeaderComponent?: React.ReactElement | null;
+  /** Scrolls below the list (e.g. add controls). */
+  ListFooterComponent?: React.ReactElement | null;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+}
+
+/** Platform switch — Platform.OS is constant, so the branch never flips. */
+export function RunSheetDragList<T>(props: Props<T>) {
+  return Platform.OS === "web" ? (
+    <WebDragList {...props} />
+  ) : (
+    <NativeDragList {...props} />
+  );
+}
+
+/* ------------------------------------------------------------------ native */
+
+/** Grip wrapper: long-pressing it starts the row's drag (TextInputs stay tappable). */
+function NativeHandle({ children }: { children: React.ReactNode }) {
+  const drag = useReorderableDrag();
+  return (
+    <Pressable onLongPress={drag} delayLongPress={150} hitSlop={10}>
+      {children}
+    </Pressable>
+  );
+}
+
+function NativeDragList<T>({
+  data,
+  keyExtractor,
+  onReorder,
+  renderRow,
+  ListHeaderComponent,
+  ListFooterComponent,
+  contentContainerStyle,
+}: Props<T>) {
+  // Keep the latest key order so onReorder can translate the library's
+  // {from, to} indices into the full reordered key list our parent expects.
+  const keysRef = useRef<string[]>([]);
+  keysRef.current = data.map(keyExtractor);
+
+  const handleReorder = useCallback(
+    ({ from, to }: ReorderableListReorderEvent) => {
+      onReorder(reorderItems(keysRef.current, from, to));
+    },
+    [onReorder],
+  );
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: T; index: number }) =>
+      renderRow({
+        item,
+        index,
+        Handle: NativeHandle,
+        isActive: false,
+      }) as React.ReactElement,
+    [renderRow],
+  );
+
+  return (
+    <ReorderableList
+      data={data}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      onReorder={handleReorder}
+      ListHeaderComponent={ListHeaderComponent ?? undefined}
+      ListFooterComponent={ListFooterComponent ?? undefined}
+      contentContainerStyle={contentContainerStyle}
+      keyboardShouldPersistTaps="handled"
+    />
+  );
+}
+
+/* --------------------------------------------------------------------- web */
+
 /** Move `key` so it lands at insertion slot `toSlot` (0..length). */
 function moveKey(keys: string[], key: string, toSlot: number): string[] {
   const from = keys.indexOf(key);
@@ -48,18 +141,15 @@ function moveKey(keys: string[], key: string, toSlot: number): string[] {
   return next;
 }
 
-export function RunSheetDragList<T>({
+function WebDragList<T>({
   data,
   keyExtractor,
   onReorder,
   renderRow,
-}: {
-  data: T[];
-  keyExtractor: (item: T) => string;
-  /** Called with the full reordered key list when a drag completes. */
-  onReorder: (orderedKeys: string[]) => void;
-  renderRow: RenderRow<T>;
-}) {
+  ListHeaderComponent,
+  ListFooterComponent,
+  contentContainerStyle,
+}: Props<T>) {
   const { colors } = useTheme();
   const keys = data.map(keyExtractor);
   const keysSignature = keys.join("|");
@@ -67,8 +157,6 @@ export function RunSheetDragList<T>({
   const [activeKey, setActiveKey] = useState<string | null>(null);
   // Insertion slot the dragged row would drop into (0..length), or null.
   const [overSlot, setOverSlot] = useState<number | null>(null);
-  // Measured row heights (native offset math only).
-  const heights = useRef<Record<string, number>>({});
 
   // Latest key order in a ref so `commit` (and the Handles built from it) can
   // stay identity-stable across renders. If they were rebuilt every render, the
@@ -100,53 +188,43 @@ export function RunSheetDragList<T>({
   // dragged element is not remounted while the user is dragging it.
   const handlesByKey = useMemo(() => {
     const map: Record<string, HandleComponent> = {};
-    keysRef.current.forEach((k, i) => {
-      map[k] =
-        Platform.OS === "web"
-          ? ({ children }) => (
-              <WebHandle dragKey={k} setActiveKey={setActiveKey} reset={reset}>
-                {children}
-              </WebHandle>
-            )
-          : ({ children }) => (
-              <NativeHandle
-                dragKey={k}
-                index={i}
-                keys={keysRef.current}
-                heights={heights}
-                setActiveKey={setActiveKey}
-                setOverSlot={setOverSlot}
-                commit={commit}
-                reset={reset}
-              >
-                {children}
-              </NativeHandle>
-            );
+    keysRef.current.forEach((k) => {
+      map[k] = ({ children }) => (
+        <WebHandle dragKey={k} setActiveKey={setActiveKey} reset={reset}>
+          {children}
+        </WebHandle>
+      );
     });
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keysSignature, commit, reset]);
+  }, [keysSignature, reset]);
 
   const line = (
     <View style={[styles.insertLine, { backgroundColor: colors.buttonPrimary }]} />
   );
 
   return (
-    <View>
-      {data.map((item, index) => {
-        const key = keyExtractor(item);
-        const isActive = key === activeKey;
-        const Handle = handlesByKey[key];
+    <ScrollView
+      contentContainerStyle={contentContainerStyle}
+      keyboardShouldPersistTaps="handled"
+    >
+      {ListHeaderComponent}
+      <View>
+        {data.map((item, index) => {
+          const key = keyExtractor(item);
+          const isActive = key === activeKey;
+          const Handle = handlesByKey[key];
 
-        const rowBody = (
-          <>
-            {overSlot === index ? line : null}
-            {renderRow({ item, index, Handle, isActive })}
-            {overSlot === data.length && index === data.length - 1 ? line : null}
-          </>
-        );
+          const rowBody = (
+            <>
+              {overSlot === index ? line : null}
+              {renderRow({ item, index, Handle, isActive })}
+              {overSlot === data.length && index === data.length - 1
+                ? line
+                : null}
+            </>
+          );
 
-        if (Platform.OS === "web") {
           return React.createElement(
             "div",
             {
@@ -161,35 +239,24 @@ export function RunSheetDragList<T>({
                 // second attempt.
                 e.preventDefault();
                 const rect = e.currentTarget?.getBoundingClientRect?.();
-                const after =
-                  rect ? e.clientY > rect.top + rect.height / 2 : false;
+                const after = rect ? e.clientY > rect.top + rect.height / 2 : false;
                 setOverSlot(after ? index + 1 : index);
               },
               onDrop: (e: any) => {
                 e.preventDefault();
-                const dragged = e.dataTransfer?.getData?.("text/plain") || activeKey;
+                const dragged =
+                  e.dataTransfer?.getData?.("text/plain") || activeKey;
                 const rect = e.currentTarget?.getBoundingClientRect?.();
-                const after =
-                  rect ? e.clientY > rect.top + rect.height / 2 : false;
+                const after = rect ? e.clientY > rect.top + rect.height / 2 : false;
                 if (dragged) commit(dragged, after ? index + 1 : index);
               },
             },
             rowBody,
           );
-        }
-
-        return (
-          <View
-            key={key}
-            onLayout={(e) => {
-              heights.current[key] = e.nativeEvent.layout.height;
-            }}
-          >
-            {rowBody}
-          </View>
-        );
-      })}
-    </View>
+        })}
+      </View>
+      {ListFooterComponent}
+    </ScrollView>
   );
 }
 
@@ -225,94 +292,6 @@ function WebHandle({
       onDragEnd: () => reset(),
     },
     children,
-  );
-}
-
-/** Native drag grip: a long-press Pan that finger-follows the active row. */
-function NativeHandle({
-  dragKey,
-  index,
-  keys,
-  heights,
-  setActiveKey,
-  setOverSlot,
-  commit,
-  reset,
-  children,
-}: {
-  dragKey: string;
-  index: number;
-  keys: string[];
-  heights: React.MutableRefObject<Record<string, number>>;
-  setActiveKey: (k: string | null) => void;
-  setOverSlot: (i: number | null) => void;
-  commit: (key: string, toSlot: number) => void;
-  reset: () => void;
-  children: React.ReactNode;
-}) {
-  const translateY = useSharedValue(0);
-
-  const slotFor = useCallback(
-    (ty: number) => {
-      // Cumulative tops from measured heights (fallback 56px).
-      const tops: number[] = [];
-      let acc = 0;
-      for (const k of keys) {
-        tops.push(acc);
-        acc += heights.current[k] ?? 56;
-      }
-      const rowTop = tops[index] ?? 0;
-      const rowH = heights.current[dragKey] ?? 56;
-      const center = rowTop + rowH / 2 + ty;
-      let slot = 0;
-      for (let i = 0; i < tops.length; i++) {
-        const h = heights.current[keys[i]] ?? 56;
-        if (center > tops[i] + h / 2) slot = i + 1;
-      }
-      return slot;
-    },
-    [keys, heights, index, dragKey],
-  );
-
-  const onMove = useCallback(
-    (ty: number) => setOverSlot(slotFor(ty)),
-    [setOverSlot, slotFor],
-  );
-  const onDrop = useCallback(
-    (ty: number) => commit(dragKey, slotFor(ty)),
-    [commit, dragKey, slotFor],
-  );
-
-  const pan = Gesture.Pan()
-    .activateAfterLongPress(150)
-    // Mark the row active only once the drag actually starts (after the
-    // long-press activates) — not on mere touch-down — so a quick tap/flick
-    // doesn't leave it "lifted".
-    .onStart(() => runOnJS(setActiveKey)(dragKey))
-    .onUpdate((e) => {
-      translateY.value = e.translationY;
-      runOnJS(onMove)(e.translationY);
-    })
-    .onEnd((e) => {
-      runOnJS(onDrop)(e.translationY);
-      translateY.value = 0;
-    })
-    // Always runs (commit or cancel): drop the lift and clear active/insert
-    // state so the next drag starts clean.
-    .onFinalize(() => {
-      translateY.value = 0;
-      runOnJS(reset)();
-    });
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-    zIndex: translateY.value !== 0 ? 10 : 0,
-  }));
-
-  return (
-    <GestureDetector gesture={pan}>
-      <Animated.View style={animatedStyle}>{children}</Animated.View>
-    </GestureDetector>
   );
 }
 

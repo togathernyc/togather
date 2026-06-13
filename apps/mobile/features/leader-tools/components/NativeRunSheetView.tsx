@@ -83,6 +83,15 @@ export function NativeRunSheetView({
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
 
+  // This tool renders inside the `(user)` route group, which is presented as
+  // a modal (see app/_layout.tsx). Pushing a `/rostering/...` card from inside
+  // the modal lands it *behind* the modal on iOS, so dismiss the modal stack
+  // first, then navigate — same pattern as useStartDirectMessage.
+  const navigateToRostering = (path: string) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push(path as never);
+  };
+
   const plans = useAuthenticatedQuery(
     api.functions.scheduling.events.listEvents,
     { groupId },
@@ -93,7 +102,7 @@ export function NativeRunSheetView({
 
   if (plans === undefined) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="small" color={colors.text} />
       </View>
     );
@@ -101,7 +110,7 @@ export function NativeRunSheetView({
 
   if (plans.length === 0) {
     return (
-      <View style={styles.centered}>
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
           No upcoming event plans. Create one in Rostering to build its run
@@ -112,7 +121,7 @@ export function NativeRunSheetView({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Upcoming-plan tabs (only when there's more than one) */}
       {plans.length > 1 ? (
         <ScrollView
@@ -159,16 +168,12 @@ export function NativeRunSheetView({
           planId={activePlanId}
           groupId={groupId}
           canEdit={canEdit}
-          onEdit={() =>
-            router.push(
-              `/rostering/${groupId}/run-sheet/${activePlanId}` as never,
-            )
-          }
-          onRehearse={() =>
-            router.push(
-              `/rostering/${groupId}/run-sheet/rehearse/${activePlanId}` as never,
-            )
-          }
+          onEdit={() => navigateToRostering(
+            `/rostering/${groupId}/run-sheet/${activePlanId}`,
+          )}
+          onRehearse={() => navigateToRostering(
+            `/rostering/${groupId}/run-sheet/rehearse/${activePlanId}`,
+          )}
         />
       ) : null}
     </View>

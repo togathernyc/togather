@@ -371,114 +371,133 @@ export function RunSheetScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView
-          contentContainerStyle={[
+        (() => {
+          const listHeader = (
+            <View>
+              <Text style={[styles.planTitle, { color: colors.text }]}>
+                {event.title}
+              </Text>
+              <Text style={[styles.planDate, { color: colors.textSecondary }]}>
+                {formatEventDateLong(event.eventDate)}
+              </Text>
+              {/* The "during" phase is the event window; before/after bracket it. */}
+              {times.length > 0 ? (
+                <Text style={[styles.ranges, { color: colors.text }]}>
+                  {formatServiceRanges(times, duringTotalSec)}
+                </Text>
+              ) : null}
+            </View>
+          );
+
+          const listFooter = (
+            <View>
+              {/* Add controls — choose the phase, then add. */}
+              <View style={styles.addToRow}>
+                <Text style={[styles.addToLabel, { color: colors.textSecondary }]}>
+                  Add to:
+                </Text>
+                {SEGMENT_OPTIONS.map((seg) => {
+                  const active = addSegment === seg.key;
+                  return (
+                    <Pressable
+                      key={seg.key}
+                      onPress={() => setAddSegment(seg.key)}
+                      style={styles.addToChipPressable}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                    >
+                      <View
+                        style={[
+                          styles.addToChip,
+                          {
+                            borderColor: active ? primaryColor : colors.border,
+                            backgroundColor: active
+                              ? primaryColor + "18"
+                              : "transparent",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.addToChipText,
+                            { color: active ? primaryColor : colors.textSecondary },
+                          ]}
+                        >
+                          {seg.label}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.addBar}>
+                <AddButton label="Add item" icon="add" onPress={() => handleAdd("item")} primaryColor={primaryColor} colors={colors} />
+                <AddButton label="Song" icon="musical-notes" onPress={() => handleAdd("song")} primaryColor={primaryColor} colors={colors} />
+                <AddButton label="Header" icon="bookmark" onPress={() => handleAdd("header")} primaryColor={primaryColor} colors={colors} />
+              </View>
+            </View>
+          );
+
+          const contentStyle = [
             styles.scrollContent,
             { paddingBottom: insets.bottom + 96 },
-          ]}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text style={[styles.planTitle, { color: colors.text }]}>
-            {event.title}
-          </Text>
-          <Text style={[styles.planDate, { color: colors.textSecondary }]}>
-            {formatEventDateLong(event.eventDate)}
-          </Text>
-          {/* The "during" phase is the event window; before/after bracket it. */}
-          {times.length > 0 ? (
-            <Text style={[styles.ranges, { color: colors.text }]}>
-              {formatServiceRanges(times, duringTotalSec)}
-            </Text>
-          ) : null}
+          ];
 
-          {items.length === 0 ? (
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No items yet. Pick a phase under "Add to" below, then add songs,
-              headers, and other moments. Drag the grip to reorder — drag across
-              a phase heading to move an item before, during, or after the event.
-            </Text>
-          ) : (
-            <View style={styles.list}>
-              {/* One drag list over all phases. Phase headings are drop zones:
-                  drag an item past one to change its phase. */}
-              <RunSheetDragList
-                data={rows}
-                keyExtractor={(r) => r.key}
-                onReorder={handleReorder}
-                renderRow={({ item: row, Handle, isActive }) =>
-                  row.kind === "header" ? (
-                    <Text
-                      style={[
-                        styles.segmentLabel,
-                        { color: colors.textSecondary },
-                      ]}
-                    >
-                      {SEGMENT_OPTIONS.find((s) => s.key === row.segment)?.label.toUpperCase()}
-                    </Text>
-                  ) : (
-                    <EditableRow
-                      item={row.item}
-                      clockMs={clockTimes[row.item._id]}
-                      communityId={communityId}
-                      groupId={group_id ?? ""}
-                      roleOptions={roleOptions}
-                      peopleByRole={peopleByRole}
-                      autoFocus={focusId === (row.item._id as string)}
-                      isActive={isActive}
-                      Handle={Handle}
-                      onPatch={(patch) => patchItem(row.item._id, patch)}
-                      onDuplicate={() => handleDuplicate(row.item._id)}
-                      onDelete={() => handleDelete(row.item)}
-                    />
-                  )
-                }
-              />
-            </View>
-          )}
+          if (items.length === 0) {
+            return (
+              <ScrollView
+                contentContainerStyle={contentStyle}
+                keyboardShouldPersistTaps="handled"
+              >
+                {listHeader}
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  No items yet. Pick a phase under "Add to" below, then add songs,
+                  headers, and other moments. Drag the grip to reorder — drag
+                  across a phase heading to move an item before, during, or after
+                  the event.
+                </Text>
+                {listFooter}
+              </ScrollView>
+            );
+          }
 
-          {/* Add controls — choose the phase, then add. */}
-          <View style={styles.addToRow}>
-            <Text style={[styles.addToLabel, { color: colors.textSecondary }]}>
-              Add to:
-            </Text>
-            {SEGMENT_OPTIONS.map((seg) => {
-              const active = addSegment === seg.key;
-              return (
-                <Pressable
-                  key={seg.key}
-                  onPress={() => setAddSegment(seg.key)}
-                  style={styles.addToChipPressable}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                >
-                  <View
-                    style={[
-                      styles.addToChip,
-                      {
-                        borderColor: active ? primaryColor : colors.border,
-                        backgroundColor: active ? primaryColor + "18" : "transparent",
-                      },
-                    ]}
+          // One drag list over all phases. Phase headings are drop zones: drag
+          // an item past one to change its phase.
+          return (
+            <RunSheetDragList
+              data={rows}
+              keyExtractor={(r) => r.key}
+              onReorder={handleReorder}
+              ListHeaderComponent={listHeader}
+              ListFooterComponent={listFooter}
+              contentContainerStyle={contentStyle}
+              renderRow={({ item: row, Handle, isActive }) =>
+                row.kind === "header" ? (
+                  <Text
+                    style={[styles.segmentLabel, { color: colors.textSecondary }]}
                   >
-                    <Text
-                      style={[
-                        styles.addToChipText,
-                        { color: active ? primaryColor : colors.textSecondary },
-                      ]}
-                    >
-                      {seg.label}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-          <View style={styles.addBar}>
-            <AddButton label="Add item" icon="add" onPress={() => handleAdd("item")} primaryColor={primaryColor} colors={colors} />
-            <AddButton label="Song" icon="musical-notes" onPress={() => handleAdd("song")} primaryColor={primaryColor} colors={colors} />
-            <AddButton label="Header" icon="bookmark" onPress={() => handleAdd("header")} primaryColor={primaryColor} colors={colors} />
-          </View>
-        </ScrollView>
+                    {SEGMENT_OPTIONS.find((s) => s.key === row.segment)?.label.toUpperCase()}
+                  </Text>
+                ) : (
+                  <EditableRow
+                    item={row.item}
+                    clockMs={clockTimes[row.item._id]}
+                    communityId={communityId}
+                    groupId={group_id ?? ""}
+                    roleOptions={roleOptions}
+                    peopleByRole={peopleByRole}
+                    autoFocus={focusId === (row.item._id as string)}
+                    isActive={isActive}
+                    Handle={Handle}
+                    onPatch={(patch) => patchItem(row.item._id, patch)}
+                    onDuplicate={() => handleDuplicate(row.item._id)}
+                    onDelete={() => handleDelete(row.item)}
+                  />
+                )
+              }
+            />
+          );
+        })()
       )}
     </View>
   );
@@ -578,7 +597,11 @@ function EditableRow({
       <View style={styles.rowTop}>
         {/* Drag grip */}
         <Handle>
-          <View style={styles.grip} accessibilityLabel="Drag to reorder">
+          <View
+            style={styles.grip}
+            accessibilityLabel="Drag to reorder"
+            hitSlop={10}
+          >
             <Ionicons name="reorder-three" size={20} color={colors.textTertiary} />
           </View>
         </Handle>
@@ -598,6 +621,7 @@ function EditableRow({
             placeholder={isHeader ? "Section name" : "Item title"}
             autoFocus={autoFocus}
             maxLength={120}
+            required
             accessibilityLabel="Item title"
             style={[
               styles.titleInput,

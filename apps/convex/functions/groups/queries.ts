@@ -136,7 +136,10 @@ export const getById = query({
       // Which run sheet the group's Run Sheet tool shows (ADR-026). Exposed
       // outside the sensitive block so members viewing the tool resolve the
       // right source; the rest of runSheetConfig stays leader-only below.
-      runSheetSource: group.runSheetConfig?.source ?? "pco",
+      // Left undefined when no source was explicitly saved so the tool can
+      // tell an unset source from a deliberate "pco" choice (the native
+      // fallback only applies to the unset case).
+      runSheetSource: group.runSheetConfig?.source,
     };
 
     // Add sensitive fields only for authorized users

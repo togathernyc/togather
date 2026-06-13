@@ -6,6 +6,7 @@
     "react-native-keyboard-controller",
     "react-native-maps",
     "react-native-reanimated",
+    "react-native-reorderable-list",
     "react-native-safe-area-context",
     "react-native-screens",
     "react-native-web",
