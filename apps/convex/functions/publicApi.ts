@@ -7,7 +7,7 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery, internalMutation } from "../_generated/server";
+import { internalQuery, internalMutation, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
 
@@ -51,6 +51,141 @@ export const verifyApiKey = internalMutation({
   },
 });
 
+// ============================================================================
+// Shared helpers
+// ============================================================================
+
+interface MeetingCounts {
+  attended: number;
+  guests: number;
+  going: number;
+  notGoing: number;
+  maybe: number;
+  guestsExpected: number;
+}
+
+/**
+ * Count attendance, guests, and RSVPs for a single meeting.
+ * Shared by the per-event and summary aggregations.
+ */
+async function countMeeting(
+  ctx: QueryCtx,
+  meetingId: Id<"meetings">
+): Promise<MeetingCounts> {
+  const [attendances, guests, rsvps] = await Promise.all([
+    ctx.db
+      .query("meetingAttendances")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", meetingId))
+      .collect(),
+    ctx.db
+      .query("meetingGuests")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", meetingId))
+      .collect(),
+    ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", meetingId))
+      .collect(),
+  ]);
+
+  const attended = attendances.filter((a) => a.status === ATTENDED_STATUS).length;
+
+  let going = 0;
+  let notGoing = 0;
+  let maybe = 0;
+  let guestsExpected = 0;
+  for (const rsvp of rsvps) {
+    if (rsvp.rsvpOptionId === RSVP_GOING) {
+      going++;
+      guestsExpected += rsvp.guestCount ?? 0;
+    } else if (rsvp.rsvpOptionId === RSVP_NOT_GOING) {
+      notGoing++;
+    } else if (rsvp.rsvpOptionId === RSVP_MAYBE) {
+      maybe++;
+    }
+  }
+
+  return { attended, guests: guests.length, going, notGoing, maybe, guestsExpected };
+}
+
+/** Pre-fetch a community's groups and group types into lookup maps. */
+async function loadCommunityGroups(ctx: QueryCtx, communityId: Id<"communities">) {
+  const [groups, groupTypes] = await Promise.all([
+    ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .collect(),
+    ctx.db
+      .query("groupTypes")
+      .withIndex("by_community", (q) => q.eq("communityId", communityId))
+      .collect(),
+  ]);
+  return {
+    groupTypes,
+    groupMap: new Map<Id<"groups">, Doc<"groups">>(groups.map((g) => [g._id, g])),
+    groupTypeMap: new Map<Id<"groupTypes">, Doc<"groupTypes">>(
+      groupTypes.map((gt) => [gt._id, gt])
+    ),
+  };
+}
+
+/** A community's meetings ordered newest-first, optionally bounded by date. */
+function meetingsByCommunityDesc(
+  ctx: QueryCtx,
+  communityId: Id<"communities">,
+  since?: number,
+  until?: number
+) {
+  return ctx.db
+    .query("meetings")
+    .withIndex("by_community_scheduledAt", (q) => {
+      const base = q.eq("communityId", communityId);
+      if (since !== undefined && until !== undefined) {
+        return base.gte("scheduledAt", since).lte("scheduledAt", until);
+      }
+      if (since !== undefined) {
+        return base.gte("scheduledAt", since);
+      }
+      if (until !== undefined) {
+        return base.lte("scheduledAt", until);
+      }
+      return base;
+    })
+    .order("desc");
+}
+
+/** Validate an IANA time zone, falling back to UTC if unsupported/missing. */
+function resolveTimeZone(tz: string | undefined): string {
+  if (!tz) return "UTC";
+  try {
+    // Throws RangeError for an invalid/unsupported zone.
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * Format a timestamp as a YYYY-MM-DD calendar date in the given (already
+ * validated) time zone. en-CA's locale formats as YYYY-MM-DD.
+ */
+function localDateString(ts: number, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ts));
+}
+
+function communityRef(community: Doc<"communities">) {
+  return {
+    id: community._id,
+    name: community.name ?? null,
+    subdomain: community.subdomain ?? null,
+  };
+}
+
 /**
  * Aggregate attendance for every group in a community.
  *
@@ -80,23 +215,9 @@ export const getCommunityAttendanceAggregate = internalQuery({
 
     const limit = Math.min(Math.max(args.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
-    // Pre-fetch groups and group types so each event can be labeled and
-    // filtered without per-meeting lookups.
-    const [groups, groupTypes] = await Promise.all([
-      ctx.db
-        .query("groups")
-        .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-        .collect(),
-      ctx.db
-        .query("groupTypes")
-        .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-        .collect(),
-    ]);
-    const groupMap = new Map<Id<"groups">, Doc<"groups">>(
-      groups.map((g) => [g._id, g])
-    );
-    const groupTypeMap = new Map<Id<"groupTypes">, Doc<"groupTypes">>(
-      groupTypes.map((gt) => [gt._id, gt])
+    const { groupTypes, groupMap, groupTypeMap } = await loadCommunityGroups(
+      ctx,
+      args.communityId
     );
 
     // Resolve the optional group-type filter to an id up front.
@@ -105,34 +226,28 @@ export const getCommunityAttendanceAggregate = internalQuery({
       const match = groupTypes.find((gt) => gt.slug === args.groupTypeSlug);
       if (!match) {
         // Unknown type -> no events match.
-        return buildResponse(community, [], limit, false);
+        return {
+          community: communityRef(community),
+          generatedAt: new Date(now()).toISOString(),
+          limit,
+          hasMore: false,
+          events: [],
+        };
       }
       filterGroupTypeId = match._id;
     }
 
-    // Walk meetings newest-first via the community/scheduledAt index, stopping
-    // once we've collected `limit` matches or scanned the safety cap.
+    // Walk meetings newest-first, stopping once we've collected `limit` matches
+    // or scanned the safety cap.
     const matched: Doc<"meetings">[] = [];
     let scanned = 0;
     let hitScanCap = false;
-    const iterator = ctx.db
-      .query("meetings")
-      .withIndex("by_community_scheduledAt", (q) => {
-        const base = q.eq("communityId", args.communityId);
-        if (args.since !== undefined && args.until !== undefined) {
-          return base.gte("scheduledAt", args.since).lte("scheduledAt", args.until);
-        }
-        if (args.since !== undefined) {
-          return base.gte("scheduledAt", args.since);
-        }
-        if (args.until !== undefined) {
-          return base.lte("scheduledAt", args.until);
-        }
-        return base;
-      })
-      .order("desc");
-
-    for await (const meeting of iterator) {
+    for await (const meeting of meetingsByCommunityDesc(
+      ctx,
+      args.communityId,
+      args.since,
+      args.until
+    )) {
       if (scanned >= MAX_SCAN) {
         hitScanCap = true;
         break;
@@ -161,43 +276,9 @@ export const getCommunityAttendanceAggregate = internalQuery({
     // Callers page by narrowing the since/until window.
     const hasMore = matched.length >= limit || hitScanCap;
 
-    // Aggregate counts per matched event.
     const events = await Promise.all(
       matched.map(async (meeting) => {
-        const [attendances, guests, rsvps] = await Promise.all([
-          ctx.db
-            .query("meetingAttendances")
-            .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-            .collect(),
-          ctx.db
-            .query("meetingGuests")
-            .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-            .collect(),
-          ctx.db
-            .query("meetingRsvps")
-            .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-            .collect(),
-        ]);
-
-        const attended = attendances.filter(
-          (a) => a.status === ATTENDED_STATUS
-        ).length;
-
-        let going = 0;
-        let notGoing = 0;
-        let maybe = 0;
-        let goingGuests = 0;
-        for (const rsvp of rsvps) {
-          if (rsvp.rsvpOptionId === RSVP_GOING) {
-            going++;
-            goingGuests += rsvp.guestCount ?? 0;
-          } else if (rsvp.rsvpOptionId === RSVP_NOT_GOING) {
-            notGoing++;
-          } else if (rsvp.rsvpOptionId === RSVP_MAYBE) {
-            maybe++;
-          }
-        }
-
+        const counts = await countMeeting(ctx, meeting._id);
         const group = groupMap.get(meeting.groupId);
         const groupType = group?.groupTypeId
           ? groupTypeMap.get(group.groupTypeId)
@@ -215,38 +296,172 @@ export const getCommunityAttendanceAggregate = internalQuery({
             groupTypeSlug: groupType?.slug ?? null,
           },
           attendance: {
-            attended,
-            guests: guests.length,
+            attended: counts.attended,
+            guests: counts.guests,
             rsvps: {
-              going,
-              notGoing,
-              maybe,
-              guestsExpected: goingGuests,
+              going: counts.going,
+              notGoing: counts.notGoing,
+              maybe: counts.maybe,
+              guestsExpected: counts.guestsExpected,
             },
           },
         };
       })
     );
 
-    return buildResponse(community, events, limit, hasMore);
+    return {
+      community: communityRef(community),
+      generatedAt: new Date(now()).toISOString(),
+      limit,
+      hasMore,
+      events,
+    };
   },
 });
 
-function buildResponse(
-  community: Doc<"communities">,
-  events: unknown[],
-  limit: number,
-  hasMore: boolean
-) {
-  return {
-    community: {
-      id: community._id,
-      name: community.name ?? null,
-      subdomain: community.subdomain ?? null,
-    },
-    generatedAt: new Date(now()).toISOString(),
-    limit,
-    hasMore,
-    events,
-  };
-}
+/**
+ * Per-group, per-day attendance rollup for a community.
+ *
+ * A lighter-weight companion to getCommunityAttendanceAggregate: instead of one
+ * row per event, it returns one row per (group, calendar day) with summed
+ * counts — ideal for dashboards/charts that don't need event-level detail.
+ *
+ * Dates are bucketed by the community's time zone (falling back to UTC), so an
+ * evening event lands on its local calendar date. Rows are newest-day-first.
+ *
+ * Filters mirror the detailed endpoint (since/until/groupTypeSlug/status).
+ * There is no `limit`: response size is bounded by the date window and the
+ * number of groups. `truncated` is true if the internal scan cap was hit before
+ * the timeline was exhausted (narrow the window to get complete buckets).
+ */
+export const getCommunityAttendanceSummary = internalQuery({
+  args: {
+    communityId: v.id("communities"),
+    since: v.optional(v.number()),
+    until: v.optional(v.number()),
+    groupTypeSlug: v.optional(v.string()),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const community = await ctx.db.get(args.communityId);
+    if (!community) {
+      throw new Error("Community not found");
+    }
+
+    const timeZone = resolveTimeZone(community.timezone);
+    const { groupTypes, groupMap, groupTypeMap } = await loadCommunityGroups(
+      ctx,
+      args.communityId
+    );
+
+    let filterGroupTypeId: Id<"groupTypes"> | undefined;
+    if (args.groupTypeSlug) {
+      const match = groupTypes.find((gt) => gt.slug === args.groupTypeSlug);
+      if (!match) {
+        return {
+          community: communityRef(community),
+          generatedAt: new Date(now()).toISOString(),
+          timezone: timeZone,
+          bucket: "day" as const,
+          truncated: false,
+          summary: [],
+        };
+      }
+      filterGroupTypeId = match._id;
+    }
+
+    // Collect matching meetings (bounded by the scan cap), then count in
+    // parallel — same read pattern as the detailed endpoint.
+    const matched: Doc<"meetings">[] = [];
+    let scanned = 0;
+    let truncated = false;
+    for await (const meeting of meetingsByCommunityDesc(
+      ctx,
+      args.communityId,
+      args.since,
+      args.until
+    )) {
+      if (scanned >= MAX_SCAN) {
+        truncated = true;
+        break;
+      }
+      scanned++;
+
+      if (args.status && meeting.status !== args.status) continue;
+
+      const group = groupMap.get(meeting.groupId);
+      if (filterGroupTypeId && group?.groupTypeId !== filterGroupTypeId) {
+        continue;
+      }
+
+      matched.push(meeting);
+    }
+
+    const counts = await Promise.all(
+      matched.map((meeting) => countMeeting(ctx, meeting._id))
+    );
+
+    // Roll up into one bucket per (group, local calendar day).
+    interface SummaryRow {
+      groupId: Id<"groups">;
+      groupName: string | null;
+      groupType: string | null;
+      groupTypeSlug: string | null;
+      date: string;
+      events: number;
+      attended: number;
+      guests: number;
+      rsvps: { going: number; notGoing: number; maybe: number; guestsExpected: number };
+    }
+    const buckets = new Map<string, SummaryRow>();
+
+    matched.forEach((meeting, i) => {
+      const c = counts[i];
+      const date = localDateString(meeting.scheduledAt, timeZone);
+      const key = `${meeting.groupId}|${date}`;
+
+      let row = buckets.get(key);
+      if (!row) {
+        const group = groupMap.get(meeting.groupId);
+        const groupType = group?.groupTypeId
+          ? groupTypeMap.get(group.groupTypeId)
+          : undefined;
+        row = {
+          groupId: meeting.groupId,
+          groupName: group?.name ?? null,
+          groupType: groupType?.name ?? null,
+          groupTypeSlug: groupType?.slug ?? null,
+          date,
+          events: 0,
+          attended: 0,
+          guests: 0,
+          rsvps: { going: 0, notGoing: 0, maybe: 0, guestsExpected: 0 },
+        };
+        buckets.set(key, row);
+      }
+
+      row.events += 1;
+      row.attended += c.attended;
+      row.guests += c.guests;
+      row.rsvps.going += c.going;
+      row.rsvps.notGoing += c.notGoing;
+      row.rsvps.maybe += c.maybe;
+      row.rsvps.guestsExpected += c.guestsExpected;
+    });
+
+    // Newest day first, then group name.
+    const summary = [...buckets.values()].sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return (a.groupName ?? "").localeCompare(b.groupName ?? "");
+    });
+
+    return {
+      community: communityRef(community),
+      generatedAt: new Date(now()).toISOString(),
+      timezone: timeZone,
+      bucket: "day" as const,
+      truncated,
+      summary,
+    };
+  },
+});
