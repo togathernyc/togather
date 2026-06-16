@@ -55,6 +55,8 @@ export function generateMembersCsv(
 // Types for group type attendance data
 interface GroupTypeAttendanceData {
   totalAttended: number;
+  totalGuests: number;
+  totalPresent: number;
   totalRecords: number;
   totalMeetings: number;
   overallRate: number;
@@ -64,6 +66,8 @@ interface GroupTypeAttendanceData {
     groupId: string;
     groupName: string;
     attended: number;
+    guestCount: number;
+    totalPresent: number;
     total: number;
     meetingCount: number;
     rate: number;
@@ -77,12 +81,21 @@ export function generateGroupTypeAttendanceCsv(
   data: GroupTypeAttendanceData,
   groupTypeName: string
 ): string {
-  const headers = ["Group Name", "Meetings", "Members Present", "Attendance Rate"];
+  const headers = [
+    "Group Name",
+    "Meetings",
+    "Members Present",
+    "Guests",
+    "Total Present",
+    "Attendance Rate",
+  ];
 
   const rows = data.groupBreakdown.map((group) => [
     group.groupName,
     group.meetingCount,
     group.attended,
+    group.guestCount,
+    group.totalPresent,
     `${group.rate}%`,
   ]);
 
@@ -91,6 +104,8 @@ export function generateGroupTypeAttendanceCsv(
     `TOTAL (${groupTypeName})`,
     data.totalMeetings,
     data.totalAttended,
+    data.totalGuests,
+    data.totalPresent,
     `${data.overallRate}%`,
   ]);
 
@@ -176,10 +191,15 @@ export function generateDateRangeAttendanceCsv(data: DateRangeAttendanceData): s
 }
 
 /**
- * Format a date for use in filenames (no special characters)
+ * Format a date for use in filenames (no special characters).
+ *
+ * Accepts the bare "YYYY-MM-DD" day strings the attendance screens now pass.
+ * Parsing by calendar components (rather than `new Date(dateStr)`, which is
+ * UTC) keeps the filename on the day the admin picked in US time zones.
  */
 function formatDateForFilename(dateStr: string): string {
-  const date = new Date(dateStr);
+  const [y, m, d] = dateStr.slice(0, 10).split("-").map(Number);
+  const date = new Date(y, (m ?? 1) - 1, d ?? 1);
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
