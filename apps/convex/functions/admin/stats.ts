@@ -112,6 +112,33 @@ function resolveTimeZone(tz: string | undefined): string {
   }
 }
 
+/**
+ * Convert an inclusive [startDay, endDay] pair of calendar days into a
+ * half-open `[startMs, endMs)` UTC window that covers those whole days in
+ * `timeZone`.
+ *
+ * Inputs may be bare "YYYY-MM-DD" day strings or full ISO timestamps — only
+ * the leading date portion is read, so the window is anchored to the picked
+ * calendar day rather than a UTC instant. This fixes the bug where a
+ * "Single Date" selection collapsed to a zero-width window (start === end)
+ * and a community-local evening meeting (e.g. 7pm ET = 23:00 UTC) fell on the
+ * wrong side of a naive UTC boundary.
+ */
+function dayRangeToWindow(
+  startDay: string,
+  endDay: string,
+  timeZone: string
+): { startMs: number; endMs: number } {
+  const parse = (s: string) => s.slice(0, 10).split("-").map(Number);
+  const [sy, sm, sd] = parse(startDay);
+  const [ey, em, ed] = parse(endDay);
+  return {
+    // tzMidnightUtc normalizes day overflow (ed + 1) via Date.UTC.
+    startMs: tzMidnightUtc(sy, sm, sd, timeZone),
+    endMs: tzMidnightUtc(ey, em, ed + 1, timeZone), // exclusive end-of-day
+  };
+}
+
 function nextBucketStart(timestamp: number, granularity: SuperAdminGranularity): number {
   const d = new Date(timestamp);
   if (granularity === "month") {
@@ -546,8 +573,12 @@ export const getAttendanceByGroupType = query({
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
 
-    const startDate = new Date(args.startDate).getTime();
-    const endDate = new Date(args.endDate).getTime();
+    // Bucket meetings by the community's calendar day, not a raw UTC instant,
+    // so an evening meeting (e.g. 7pm ET = 23:00 UTC) lands on the day it was
+    // actually held. Falls back to America/New_York if the community has no tz.
+    const community = await ctx.db.get(args.communityId);
+    const tz = resolveTimeZone(community?.timezone);
+    const { startMs, endMs } = dayRangeToWindow(args.startDate, args.endDate, tz);
 
     // Get group type by Convex ID
     const groupType = await ctx.db.get(args.groupTypeId);
@@ -555,6 +586,8 @@ export const getAttendanceByGroupType = query({
     if (!groupType || groupType.communityId !== args.communityId) {
       return {
         totalAttended: 0,
+        totalGuests: 0,
+        totalPresent: 0,
         totalRecords: 0,
         totalMeetings: 0,
         overallRate: 0,
@@ -581,21 +614,30 @@ export const getAttendanceByGroupType = query({
       const groupMeetings = await ctx.db
         .query("meetings")
         .withIndex("by_group_scheduledAt", (q) =>
-          q.eq("groupId", group._id).gte("scheduledAt", startDate).lte("scheduledAt", endDate)
+          q.eq("groupId", group._id).gte("scheduledAt", startMs).lt("scheduledAt", endMs)
         )
         .collect();
       meetings.push(...groupMeetings);
     }
 
-    // Query attendance per meeting using index (not full table scan!)
+    // Query attendance + guests per meeting using indexes (not full table scan!)
     type AttendanceRecord = { meetingId: Id<"meetings">; status: number | null };
     const attendancesByMeeting = new Map<Id<"meetings">, AttendanceRecord[]>();
+    const guestCountByMeeting = new Map<Id<"meetings">, number>();
     for (const meeting of meetings) {
       const meetingAttendances = await ctx.db
         .query("meetingAttendances")
         .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
         .collect();
       attendancesByMeeting.set(meeting._id, meetingAttendances);
+
+      // Walk-in guests recorded by leaders. Each row is one person who
+      // attended, so the row count is the guest headcount for the meeting.
+      const guests = await ctx.db
+        .query("meetingGuests")
+        .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
+        .collect();
+      guestCountByMeeting.set(meeting._id, guests.length);
     }
 
     // Flatten for counting
@@ -604,23 +646,25 @@ export const getAttendanceByGroupType = query({
     // Calculate per-group stats
     const groupStats = new Map<
       Id<"groups">,
-      { name: string; attended: number; total: number; meetingCount: number }
+      { name: string; attended: number; guestCount: number; total: number; meetingCount: number }
     >();
 
     for (const group of communityGroups) {
       groupStats.set(group._id, {
         name: group.name,
         attended: 0,
+        guestCount: 0,
         total: 0,
         meetingCount: 0,
       });
     }
 
-    // Count meetings per group
+    // Count meetings + guests per group
     for (const meeting of meetings) {
       const stats = groupStats.get(meeting.groupId);
       if (stats) {
         stats.meetingCount++;
+        stats.guestCount += guestCountByMeeting.get(meeting._id) ?? 0;
       }
     }
 
@@ -640,29 +684,39 @@ export const getAttendanceByGroupType = query({
 
     // Calculate totals
     let totalAttended = 0;
+    let totalGuests = 0;
     let totalRecords = 0;
     let totalMeetings = 0;
 
     const groupBreakdown = Array.from(groupStats.entries()).map(([groupId, data]) => {
       totalAttended += data.attended;
+      totalGuests += data.guestCount;
       totalRecords += data.total;
       totalMeetings += data.meetingCount;
 
       return {
         groupId: groupId,
         groupName: data.name,
+        // `attended` = registered members present (drives the % rate).
         attended: data.attended,
+        // `guestCount` = walk-in guests; `totalPresent` = everyone who showed up.
+        guestCount: data.guestCount,
+        totalPresent: data.attended + data.guestCount,
         total: data.total,
         meetingCount: data.meetingCount,
+        // Rate stays member-based (present members / recorded members) so it
+        // can't exceed 100% when walk-in guests outnumber the roster.
         rate: data.total > 0 ? Math.round((data.attended / data.total) * 100) : 0,
       };
     });
 
-    // Sort by attendance count descending
-    groupBreakdown.sort((a, b) => b.attended - a.attended);
+    // Sort by total people present descending
+    groupBreakdown.sort((a, b) => b.totalPresent - a.totalPresent);
 
     return {
       totalAttended,
+      totalGuests,
+      totalPresent: totalAttended + totalGuests,
       totalRecords,
       totalMeetings,
       overallRate: totalRecords > 0 ? Math.round((totalAttended / totalRecords) * 100) : 0,
@@ -890,8 +944,11 @@ export const getGroupAttendanceDetails = query({
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
 
-    const startDate = new Date(args.startDate).getTime();
-    const endDate = new Date(args.endDate).getTime();
+    // Bucket meetings by the community's calendar day (see
+    // getAttendanceByGroupType for why). Falls back to America/New_York.
+    const community = await ctx.db.get(args.communityId);
+    const tz = resolveTimeZone(community?.timezone);
+    const { startMs, endMs } = dayRangeToWindow(args.startDate, args.endDate, tz);
 
     // Get group by Convex ID
     const group = await ctx.db.get(args.groupId);
@@ -900,10 +957,8 @@ export const getGroupAttendanceDetails = query({
       throw new Error("Group not found");
     }
 
-    // Check if this is a single day
-    const startDateStr = new Date(args.startDate).toDateString();
-    const endDateStr = new Date(args.endDate).toDateString();
-    const isSingleDay = startDateStr === endDateStr;
+    // Single day when the picked start/end calendar days match.
+    const isSingleDay = args.startDate.slice(0, 10) === args.endDate.slice(0, 10);
 
     // Get meetings in date range
     const allMeetings = await ctx.db
@@ -911,8 +966,8 @@ export const getGroupAttendanceDetails = query({
       .withIndex("by_group_scheduledAt", (q) => q.eq("groupId", group._id))
       .filter((q) =>
         q.and(
-          q.gte(q.field("scheduledAt"), startDate),
-          q.lte(q.field("scheduledAt"), endDate)
+          q.gte(q.field("scheduledAt"), startMs),
+          q.lt(q.field("scheduledAt"), endMs)
         )
       )
       .collect();
@@ -962,12 +1017,20 @@ export const getGroupAttendanceDetails = query({
       // Single day mode
       const meeting = allMeetings[0];
 
-      const memberAttendance = memberDetails.map((member) => {
+      const memberAttendance: Array<{
+        userId: string;
+        firstName: string;
+        lastName: string;
+        profilePhoto: string | undefined;
+        status: number | null;
+        statusLabel: string;
+        isGuest?: boolean;
+      }> = memberDetails.map((member) => {
         const attendanceMap = meeting ? meetingAttendances.get(meeting._id) : undefined;
         const status = attendanceMap?.get(member.userId) ?? null;
 
         return {
-          userId: member.userId,
+          userId: member.userId as string,
           firstName: member.firstName,
           lastName: member.lastName,
           profilePhoto: member.profilePhoto,
@@ -986,6 +1049,28 @@ export const getGroupAttendanceDetails = query({
         return 0;
       });
 
+      const memberPresentCount = memberAttendance.filter((m) => m.status === 1).length;
+      const absentCount = memberAttendance.filter((m) => m.status === 0).length;
+      const notRecordedCount = memberAttendance.filter((m) => m.status === null).length;
+
+      // Walk-in guests recorded by leaders, listed alongside present members
+      // so the headcount reconciles with the Stats summary.
+      const guestDocs = meeting
+        ? await ctx.db
+            .query("meetingGuests")
+            .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
+            .collect()
+        : [];
+      const guestRows = guestDocs.map((g, i) => ({
+        userId: `guest-${g._id ?? i}`,
+        firstName: g.firstName ?? "Guest",
+        lastName: g.lastName ?? "",
+        profilePhoto: undefined,
+        status: 1 as number | null,
+        statusLabel: "Guest",
+        isGuest: true,
+      }));
+
       return {
         groupId: args.groupId,
         groupName: group.name,
@@ -993,10 +1078,12 @@ export const getGroupAttendanceDetails = query({
         date: args.startDate,
         meetingId: meeting?._id || null,
         meetingTitle: meeting?.title || null,
-        memberAttendance,
-        presentCount: memberAttendance.filter((m) => m.status === 1).length,
-        absentCount: memberAttendance.filter((m) => m.status === 0).length,
-        notRecordedCount: memberAttendance.filter((m) => m.status === null).length,
+        // Guests appear after present members; counted as present people.
+        memberAttendance: [...memberAttendance, ...guestRows],
+        presentCount: memberPresentCount + guestRows.length,
+        guestCount: guestRows.length,
+        absentCount,
+        notRecordedCount,
       };
     } else {
       // Date range mode
@@ -1067,20 +1154,22 @@ export const getGroupAttendanceForExport = internalQuery({
   args: {
     groupId: v.id("groups"),
     groupName: v.string(),
-    startDate: v.number(),
-    endDate: v.number(),
+    // Half-open [startMs, endMs) UTC window precomputed by the caller.
+    startMs: v.number(),
+    endMs: v.number(),
   },
   handler: async (ctx, args) => {
     // Query meetings for this specific group in date range
     const meetings = await ctx.db
       .query("meetings")
       .withIndex("by_group_scheduledAt", (q) =>
-        q.eq("groupId", args.groupId).gte("scheduledAt", args.startDate).lte("scheduledAt", args.endDate)
+        q.eq("groupId", args.groupId).gte("scheduledAt", args.startMs).lt("scheduledAt", args.endMs)
       )
       .collect();
 
-    // Query attendance for each meeting
+    // Query attendance + guests for each meeting
     let attended = 0;
+    let guestCount = 0;
     let total = 0;
 
     for (const meeting of meetings) {
@@ -1095,6 +1184,12 @@ export const getGroupAttendanceForExport = internalQuery({
           attended++;
         }
       }
+
+      const guests = await ctx.db
+        .query("meetingGuests")
+        .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
+        .collect();
+      guestCount += guests.length;
     }
 
     return {
@@ -1102,6 +1197,8 @@ export const getGroupAttendanceForExport = internalQuery({
       groupName: args.groupName,
       meetingCount: meetings.length,
       attended,
+      guestCount,
+      totalPresent: attended + guestCount,
       total,
       rate: total > 0 ? Math.round((attended / total) * 100) : 0,
     };
@@ -1114,6 +1211,8 @@ type GroupAttendanceResult = {
   groupName: string;
   meetingCount: number;
   attended: number;
+  guestCount: number;
+  totalPresent: number;
   total: number;
   rate: number;
 };
@@ -1122,6 +1221,7 @@ type GroupAttendanceResult = {
 type ExportSetupData = {
   authorized: boolean;
   groups: Array<{ id: string; name: string }>;
+  timeZone: string;
 };
 
 /**
@@ -1140,6 +1240,8 @@ export const exportAttendanceByGroupType = action({
   },
   handler: async (ctx, args): Promise<{
     totalAttended: number;
+    totalGuests: number;
+    totalPresent: number;
     totalRecords: number;
     totalMeetings: number;
     overallRate: number;
@@ -1147,7 +1249,7 @@ export const exportAttendanceByGroupType = action({
     endDate: string;
     groupBreakdown: GroupAttendanceResult[];
   }> => {
-    // Verify auth and get groups (lightweight query)
+    // Verify auth and get groups + community timezone (lightweight query)
     const setupData: ExportSetupData = await ctx.runQuery(internal.functions.admin.stats.getExportSetupData, {
       token: args.token,
       communityId: args.communityId,
@@ -1158,8 +1260,8 @@ export const exportAttendanceByGroupType = action({
       throw new Error("Unauthorized");
     }
 
-    const startDate = new Date(args.startDate).getTime();
-    const endDate = new Date(args.endDate).getTime();
+    // Same community-day bucketing as getAttendanceByGroupType.
+    const { startMs, endMs } = dayRangeToWindow(args.startDate, args.endDate, setupData.timeZone);
 
     // Process each group in a separate transaction
     const groupResults: GroupAttendanceResult[] = await Promise.all(
@@ -1167,29 +1269,33 @@ export const exportAttendanceByGroupType = action({
         ctx.runQuery(internal.functions.admin.stats.getGroupAttendanceForExport, {
           groupId: group.id as Id<"groups">,
           groupName: group.name,
-          startDate,
-          endDate,
+          startMs,
+          endMs,
         })
       )
     );
 
     // Aggregate results
     let totalAttended = 0;
+    let totalGuests = 0;
     let totalRecords = 0;
     let totalMeetings = 0;
 
     const groupBreakdown = groupResults.map((result: GroupAttendanceResult) => {
       totalAttended += result.attended;
+      totalGuests += result.guestCount;
       totalRecords += result.total;
       totalMeetings += result.meetingCount;
       return result;
     });
 
-    // Sort by attendance count descending
-    groupBreakdown.sort((a: GroupAttendanceResult, b: GroupAttendanceResult) => b.attended - a.attended);
+    // Sort by total people present descending
+    groupBreakdown.sort((a: GroupAttendanceResult, b: GroupAttendanceResult) => b.totalPresent - a.totalPresent);
 
     return {
       totalAttended,
+      totalGuests,
+      totalPresent: totalAttended + totalGuests,
       totalRecords,
       totalMeetings,
       overallRate: totalRecords > 0 ? Math.round((totalAttended / totalRecords) * 100) : 0,
@@ -1213,13 +1319,16 @@ export const getExportSetupData = internalQuery({
     const userId = await requireAuth(ctx, args.token);
     const isAdmin = await checkCommunityAdmin(ctx, args.communityId, userId);
 
+    const community = await ctx.db.get(args.communityId);
+    const timeZone = resolveTimeZone(community?.timezone);
+
     if (!isAdmin) {
-      return { authorized: false, groups: [] };
+      return { authorized: false, groups: [], timeZone };
     }
 
     const groupType = await ctx.db.get(args.groupTypeId);
     if (!groupType || groupType.communityId !== args.communityId) {
-      return { authorized: true, groups: [] };
+      return { authorized: true, groups: [], timeZone };
     }
 
     const groups = await ctx.db
@@ -1232,7 +1341,7 @@ export const getExportSetupData = internalQuery({
       .filter((g) => g.communityId === args.communityId)
       .map((g) => ({ id: g._id, name: g.name }));
 
-    return { authorized: true, groups: communityGroups };
+    return { authorized: true, groups: communityGroups, timeZone };
   },
 });
 

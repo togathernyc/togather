@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { DatePicker } from "@components/ui";
@@ -34,6 +35,26 @@ import { generateGroupTypeAttendanceCsv, generateFilename } from "../utils/csvEx
 type DateMode = "single" | "range";
 
 type MemberModalType = "active" | "new" | null;
+
+/**
+ * Format a picked Date as a "YYYY-MM-DD" calendar-day string for the
+ * attendance queries. The backend buckets these days in the community's
+ * timezone, so we must send the day the user actually picked.
+ *
+ * On web the DatePicker stores the value as UTC-midnight of the picked day
+ * (its `<input type="date">` round-trips through `toISOString().slice(0,10)`),
+ * so the UTC date is the picked day. On native the Date is in local time, so
+ * we read local calendar components instead.
+ */
+function toDayString(date: Date): string {
+  if (Platform.OS === "web") {
+    return date.toISOString().slice(0, 10);
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 export function StatsContent() {
   const { primaryColor } = useCommunityTheme();
@@ -89,8 +110,8 @@ export function StatsContent() {
           token,
           communityId: community.id as Id<"communities">,
           groupTypeId: selectedGroupTypeId as Id<"groupTypes">,
-          startDate: dateMode === "single" ? startDate.toISOString() : startDate.toISOString(),
-          endDate: dateMode === "single" ? startDate.toISOString() : endDate.toISOString(),
+          startDate: toDayString(startDate),
+          endDate: toDayString(dateMode === "single" ? startDate : endDate),
         }
       : "skip"
   );
@@ -113,8 +134,8 @@ export function StatsContent() {
 
   // CSV filename for export
   const csvFilename = useMemo(() => {
-    const effectiveStartDate = dateMode === "single" ? startDate.toISOString() : startDate.toISOString();
-    const effectiveEndDate = dateMode === "single" ? startDate.toISOString() : endDate.toISOString();
+    const effectiveStartDate = toDayString(startDate);
+    const effectiveEndDate = toDayString(dateMode === "single" ? startDate : endDate);
 
     return generateFilename("attendance", community?.name || "community", {
       groupTypeName: selectedGroupType?.name,
@@ -129,8 +150,8 @@ export function StatsContent() {
 
     setIsExporting(true);
     try {
-      const effectiveStartDate = dateMode === "single" ? startDate.toISOString() : startDate.toISOString();
-      const effectiveEndDate = dateMode === "single" ? startDate.toISOString() : endDate.toISOString();
+      const effectiveStartDate = toDayString(startDate);
+      const effectiveEndDate = toDayString(dateMode === "single" ? startDate : endDate);
 
       // Call the action to fetch data (handles large date ranges)
       const exportData = await exportAttendance({
@@ -166,8 +187,8 @@ export function StatsContent() {
     return (
       <GroupAttendanceDetails
         groupId={selectedGroupId}
-        startDate={dateMode === "single" ? startDate.toISOString() : startDate.toISOString()}
-        endDate={dateMode === "single" ? startDate.toISOString() : endDate.toISOString()}
+        startDate={toDayString(startDate)}
+        endDate={toDayString(dateMode === "single" ? startDate : endDate)}
         onBack={() => setSelectedGroupId(null)}
       />
     );
@@ -340,9 +361,14 @@ export function StatsContent() {
                     <View style={styles.summaryRow}>
                       <View style={styles.summaryItem}>
                         <Text style={[styles.summaryValue, { color: colors.text }]}>
-                          {attendanceData.totalAttended}
+                          {attendanceData.totalPresent}
                         </Text>
                         <Text style={[styles.summaryLabel, { color: colors.textSecondary }]}>Total Present</Text>
+                        {attendanceData.totalGuests > 0 && (
+                          <Text style={[styles.summarySubLabel, { color: colors.textTertiary }]}>
+                            incl. {attendanceData.totalGuests} guest{attendanceData.totalGuests !== 1 ? "s" : ""}
+                          </Text>
+                        )}
                       </View>
                       <View style={styles.summaryItem}>
                         <Text style={[styles.summaryValue, { color: colors.text }]}>
@@ -391,7 +417,9 @@ export function StatsContent() {
                           <View style={styles.groupInfo}>
                             <Text style={[styles.groupName, { color: colors.text }]}>{group.groupName}</Text>
                             <Text style={[styles.groupStats, { color: colors.textSecondary }]}>
-                              {group.attended} present • {group.meetingCount} meetings
+                              {group.totalPresent} present
+                              {group.guestCount > 0 ? ` (${group.guestCount} guest${group.guestCount !== 1 ? "s" : ""})` : ""}
+                              {" • "}{group.meetingCount} meetings
                             </Text>
                           </View>
                           <View style={styles.groupRateContainer}>
@@ -639,6 +667,10 @@ const styles = StyleSheet.create({
   summaryLabel: {
     fontSize: 12,
     marginTop: 4,
+  },
+  summarySubLabel: {
+    fontSize: 10,
+    marginTop: 2,
   },
   breakdownHeader: {
     flexDirection: "row",

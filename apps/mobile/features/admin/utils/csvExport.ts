@@ -55,6 +55,8 @@ export function generateMembersCsv(
 // Types for group type attendance data
 interface GroupTypeAttendanceData {
   totalAttended: number;
+  totalGuests: number;
+  totalPresent: number;
   totalRecords: number;
   totalMeetings: number;
   overallRate: number;
@@ -64,6 +66,8 @@ interface GroupTypeAttendanceData {
     groupId: string;
     groupName: string;
     attended: number;
+    guestCount: number;
+    totalPresent: number;
     total: number;
     meetingCount: number;
     rate: number;
@@ -77,12 +81,21 @@ export function generateGroupTypeAttendanceCsv(
   data: GroupTypeAttendanceData,
   groupTypeName: string
 ): string {
-  const headers = ["Group Name", "Meetings", "Members Present", "Attendance Rate"];
+  const headers = [
+    "Group Name",
+    "Meetings",
+    "Members Present",
+    "Guests",
+    "Total Present",
+    "Attendance Rate",
+  ];
 
   const rows = data.groupBreakdown.map((group) => [
     group.groupName,
     group.meetingCount,
     group.attended,
+    group.guestCount,
+    group.totalPresent,
     `${group.rate}%`,
   ]);
 
@@ -91,6 +104,8 @@ export function generateGroupTypeAttendanceCsv(
     `TOTAL (${groupTypeName})`,
     data.totalMeetings,
     data.totalAttended,
+    data.totalGuests,
+    data.totalPresent,
     `${data.overallRate}%`,
   ]);
 
