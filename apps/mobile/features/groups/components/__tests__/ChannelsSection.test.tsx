@@ -373,4 +373,80 @@ describe("ChannelsSection (redesigned)", () => {
       expect(getByText("Disabled")).toBeTruthy();
     });
   });
+
+  describe("Archived channels fold into one collapsible section", () => {
+    const disabledCustomChannel = {
+      _id: "channel-custom-archived",
+      slug: "old-team",
+      channelType: "custom",
+      name: "Old Team",
+      memberCount: 0,
+      isArchived: false,
+      isMember: false,
+      unreadCount: 0,
+      isPinned: false,
+      isEnabled: false, // leader hid it → "Hidden — visible to leaders"
+    };
+
+    it("hides archived/disabled channels behind a single 'Archived' toggle for leaders", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        mockLeadersChannel,
+        ...mockCustomChannels,
+        disabledCustomChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      // The disabled channel is folded away — not shown directly…
+      expect(queryByText("Old Team")).toBeNull();
+      // …but a single Archived toggle summarizes it.
+      expect(getByText("Archived")).toBeTruthy();
+      expect(getByText(/1 channel/)).toBeTruthy();
+    });
+
+    it("expands the archived channel when the toggle is pressed", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        mockLeadersChannel,
+        disabledCustomChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("Old Team")).toBeNull();
+
+      act(() => {
+        fireEvent.press(getByText("Archived").parent!.parent!);
+      });
+
+      expect(getByText("Old Team")).toBeTruthy();
+    });
+
+    it("does not show an Archived toggle when there are no archived channels", () => {
+      mockChannelsData = [mockMainChannel, mockLeadersChannel];
+
+      const { queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("Archived")).toBeNull();
+    });
+
+    it("does not show an Archived toggle to members (they never receive disabled channels)", () => {
+      // Members are filtered to enabled channels before rows are built, so
+      // there is nothing to fold and no toggle appears.
+      mockChannelsData = [mockMainChannel, ...mockCustomChannels];
+
+      const { queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      expect(queryByText("Archived")).toBeNull();
+    });
+  });
 });
