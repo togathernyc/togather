@@ -284,6 +284,8 @@ test("/.well-known/apple-app-site-association returns correct JSON for productio
   assert.ok(components.some(c => c["/"] === "/android" && c.exclude === true), "should exclude Android download page");
   assert.ok(components.some(c => c["/"] === "/guides" && c.exclude === true), "should exclude guides hub");
   assert.ok(components.some(c => c["/"] === "/guides/*" && c.exclude === true), "should exclude guides sub-pages");
+  assert.ok(components.some(c => c["/"] === "/developers" && c.exclude === true), "should exclude developer docs");
+  assert.ok(components.some(c => c["/"] === "/developers/*" && c.exclude === true), "should exclude developer docs sub-pages");
 });
 
 test("/.well-known/apple-app-site-association returns correct JSON for staging domain", async () => {
@@ -541,6 +543,37 @@ test("/guides/:slug sub-pages pass through to landing page", async () => {
 
   try {
     const req = new Request("https://togather.nyc/guides/branding", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+    });
+
+    const res = await worker.fetch(req, {});
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(LANDING_PAGE_URL),
+      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// The developer docs page is browser-only: it must be served by the Vite
+// landing site, not treated as a community slug (which would redirect to
+// /c/developers, "Community Not Found") or opened in the app.
+test("/developers passes through to landing page", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("developers", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/developers", {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
     });
 

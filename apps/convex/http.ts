@@ -14,6 +14,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
+import { hashApiKey } from "./lib/apiKeys";
 
 const http = httpRouter();
 
@@ -735,6 +736,149 @@ http.route({
       console.error("[StripeWebhook] Error processing event:", error);
       return new Response("Webhook processing failed", { status: 500 });
     }
+  }),
+});
+
+// ============================================================================
+// Public Attendance API (external integrations)
+// ============================================================================
+
+/**
+ * CORS headers for the authenticated API. Unlike the link-preview endpoints,
+ * this one accepts an Authorization / x-api-key header, so those must be listed
+ * as allowed request headers for browser-based clients.
+ */
+const apiCorsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, x-api-key",
+};
+
+/** JSON response using the API CORS headers. */
+function apiJsonResponse(data: unknown, status: number = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...apiCorsHeaders },
+  });
+}
+
+/**
+ * Extract the API key from a request.
+ * Accepts either `Authorization: Bearer <key>` or `x-api-key: <key>`.
+ */
+function extractApiKey(request: Request): string | null {
+  const auth = request.headers.get("authorization");
+  if (auth && auth.toLowerCase().startsWith("bearer ")) {
+    const key = auth.slice(7).trim();
+    if (key) return key;
+  }
+  const headerKey = request.headers.get("x-api-key");
+  if (headerKey && headerKey.trim()) return headerKey.trim();
+  return null;
+}
+
+/**
+ * Parse a timestamp query param that may be Unix milliseconds or an ISO date
+ * string. Returns undefined when absent, or null when present but invalid.
+ */
+function parseTimestampParam(value: string | null): number | undefined | null {
+  if (value === null) return undefined;
+  if (/^\d+$/.test(value)) return Number(value);
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+const VALID_MEETING_STATUSES = ["scheduled", "completed", "cancelled"];
+
+/**
+ * GET /api/v1/attendance
+ *
+ * Returns aggregated attendance for every group in the community that owns the
+ * API key. No personal information is exposed — counts only.
+ *
+ * Auth: `Authorization: Bearer <api-key>` or `x-api-key: <api-key>`.
+ *
+ * Query params (all optional):
+ * - since / until: bound event date (Unix ms or ISO date string).
+ * - groupType: group type slug (e.g. "dinner-parties").
+ * - status: "scheduled" | "completed" | "cancelled".
+ * - limit: max events to return (default 200, max 1000).
+ */
+http.route({
+  path: "/api/v1/attendance",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const apiKey = extractApiKey(request);
+    if (!apiKey) {
+      return apiJsonResponse(
+        { error: "Missing API key. Provide an Authorization: Bearer <key> header." },
+        401
+      );
+    }
+
+    const keyHash = await hashApiKey(apiKey);
+    const verified = await ctx.runMutation(internal.functions.publicApi.verifyApiKey, {
+      keyHash,
+    });
+    if (!verified) {
+      return apiJsonResponse({ error: "Invalid or revoked API key" }, 401);
+    }
+
+    const url = new URL(request.url);
+
+    const since = parseTimestampParam(url.searchParams.get("since"));
+    if (since === null) {
+      return apiJsonResponse({ error: "Invalid 'since' parameter" }, 400);
+    }
+    const until = parseTimestampParam(url.searchParams.get("until"));
+    if (until === null) {
+      return apiJsonResponse({ error: "Invalid 'until' parameter" }, 400);
+    }
+
+    const status = url.searchParams.get("status") || undefined;
+    if (status && !VALID_MEETING_STATUSES.includes(status)) {
+      return apiJsonResponse(
+        { error: `Invalid 'status'. Must be one of: ${VALID_MEETING_STATUSES.join(", ")}` },
+        400
+      );
+    }
+
+    const limitParam = url.searchParams.get("limit");
+    let limit: number | undefined;
+    if (limitParam !== null) {
+      const parsed = Number(limitParam);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        return apiJsonResponse({ error: "Invalid 'limit' parameter" }, 400);
+      }
+      limit = parsed;
+    }
+
+    try {
+      const data = await ctx.runQuery(
+        internal.functions.publicApi.getCommunityAttendanceAggregate,
+        {
+          communityId: verified.communityId,
+          since: since ?? undefined,
+          until: until ?? undefined,
+          groupTypeSlug: url.searchParams.get("groupType") || undefined,
+          status,
+          limit,
+        }
+      );
+      return apiJsonResponse(data);
+    } catch (error) {
+      console.error("[AttendanceAPI] Error building attendance response:", error);
+      return apiJsonResponse({ error: "Failed to fetch attendance data" }, 500);
+    }
+  }),
+});
+
+// Handle CORS preflight for /api/v1/attendance
+http.route({
+  path: "/api/v1/attendance",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: apiCorsHeaders });
   }),
 });
 

@@ -936,6 +936,11 @@ function Footer() {
                     Contribute
                   </Link>
                 </li>
+                <li>
+                  <Link to="/developers" className="hover:text-white">
+                    Developer API
+                  </Link>
+                </li>
               </ul>
             </div>
             <div>

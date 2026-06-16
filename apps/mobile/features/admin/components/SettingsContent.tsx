@@ -775,6 +775,26 @@ export function SettingsContent() {
           )}
         </View>
 
+        {/* Developer Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Developer</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+            Issue API keys so external apps can read this community's data.
+          </Text>
+          <TouchableOpacity
+            style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/admin/developer/api-keys")}
+          >
+            <View style={styles.groupTypeInfo}>
+              <Text style={[styles.groupTypeName, { color: colors.text }]}>API Keys</Text>
+              <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]} numberOfLines={2}>
+                Create and manage API keys for the attendance API.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+
         {/* Billing Section */}
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Billing</Text>
