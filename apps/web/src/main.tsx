@@ -9,6 +9,7 @@ import { AndroidDownload } from './pages/AndroidDownload.tsx'
 import { Contribute } from './pages/Contribute.tsx'
 import { ReportIssue } from './pages/ReportIssue.tsx'
 import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
+import { Developers } from './pages/Developers.tsx'
 import { Guides } from './pages/Guides.tsx'
 import { CreateCommunity } from './pages/guides/CreateCommunity.tsx'
 import { Branding } from './pages/guides/Branding.tsx'
@@ -42,6 +43,8 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/guides/prayer" element={<Prayer />} />
         <Route path="/legal/privacy" element={<PrivacyPolicy />} />
         <Route path="/legal/terms" element={<TermsOfService />} />
+        {/* Browser-only developer docs (excluded from app links — see worker) */}
+        <Route path="/developers" element={<Developers />} />
         {/* Catch-all: redirect /:slug to community landing page */}
         <Route path="/:slug" element={<CommunityRedirect />} />
       </Routes>
