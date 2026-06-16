@@ -43,9 +43,17 @@ The exact base URL for a community is shown on the API Keys screen in the app.
 | `status`    | string           | `scheduled`, `completed`, or `cancelled`.                          |
 | `limit`     | integer          | Max events to return. Default `200`, max `1000`.                   |
 
-Events are returned newest-first. To page through history, use `since`/`until`
-(e.g. pass your last-synced timestamp as `since`). `hasMore: true` means more
-matching events exist beyond `limit`.
+Events are returned newest-first. `since`/`until` filter on each event's
+**scheduled date** — not on when attendance was recorded — so they form a date
+window, not a change cursor. There is no "updated since" cursor: to keep a
+dashboard current (including attendance edited after an event), re-pull a
+trailing window each poll (e.g. the last 90 days) and upsert, rather than
+advancing a cursor to "now."
+
+`hasMore: true` means more matching events exist than were returned — either the
+page `limit` was reached, or an internal scan cap was hit before the timeline
+was exhausted (possible with selective `status`/`groupType` filters). Narrow the
+`since`/`until` window to page through the rest.
 
 ### Example
 

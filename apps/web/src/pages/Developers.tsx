@@ -127,11 +127,15 @@ export function Developers() {
             ]}
           />
           <Callout>
-            Events come back newest-first. To sync incrementally, store the
-            timestamp of your last successful pull and pass it as{" "}
-            <Code>since</Code> next time. When <Code>hasMore</Code> is{" "}
-            <Code>true</Code>, more matching events exist beyond{" "}
-            <Code>limit</Code> &mdash; narrow the date range to page through them.
+            Events come back newest-first. <Code>since</Code> and{" "}
+            <Code>until</Code> filter on each event&rsquo;s scheduled date &mdash;
+            not on when attendance was recorded &mdash; so they are a date
+            window, not a change cursor. To keep a dashboard current (including
+            attendance edited <em>after</em> an event happened), re-pull a
+            trailing window each poll (e.g. the last 90 days) rather than
+            advancing a cursor to &ldquo;now.&rdquo; When <Code>hasMore</Code> is{" "}
+            <Code>true</Code>, more matching events exist than were returned
+            &mdash; narrow the window to page through them.
           </Callout>
         </Section>
 
@@ -189,7 +193,7 @@ export function Developers() {
             <li>Pull attendance, guest, and RSVP counts for every event in the community.</li>
             <li>Filter by date range, group type, and event status.</li>
             <li>Build dashboards and charts of attendance over time (e.g. dinner-party turnout per week).</li>
-            <li>Sync incrementally with <Code>since</Code> for near-real-time reporting (poll on your own schedule).</li>
+            <li>Keep a dashboard current by re-pulling a trailing date window on your own schedule &mdash; counts update as attendance is recorded.</li>
             <li>Compare turnout across groups of the same type using the per-event group labels.</li>
           </ul>
         </Section>
@@ -240,12 +244,20 @@ export function Developers() {
           <CodeBlock>{`curl -H "Authorization: Bearer $TOGATHER_API_KEY" \\
   "https://<deployment>.convex.site/api/v1/attendance?groupType=dinner-parties&status=completed&since=2026-01-01"`}</CodeBlock>
 
-          <P>An incremental sync in JavaScript:</P>
+          <P>
+            Refreshing a trailing window on each poll (re-upsert so attendance
+            recorded after an event is picked up):
+          </P>
           <CodeBlock>{`const BASE = "https://<deployment>.convex.site/api/v1/attendance";
 
-async function pullSince(lastSyncedIso) {
+// 'since'/'until' filter on the EVENT date, not on when attendance changed.
+// There is no "updated since" cursor, so re-pull a trailing window each run
+// and upsert — that way late attendance edits to recently-scheduled events
+// are always reflected.
+async function refreshWindow(daysBack = 90) {
+  const since = new Date(Date.now() - daysBack * 864e5).toISOString();
   const url = new URL(BASE);
-  if (lastSyncedIso) url.searchParams.set("since", lastSyncedIso);
+  url.searchParams.set("since", since);
   url.searchParams.set("limit", "1000");
 
   const res = await fetch(url, {
@@ -256,10 +268,10 @@ async function pullSince(lastSyncedIso) {
   const data = await res.json();
   for (const event of data.events) {
     // event.attendance.attended, event.attendance.rsvps.going, ...
-    upsertIntoDashboard(event);
+    upsertIntoDashboard(event); // keyed by event.id
   }
-  // Persist data.generatedAt and pass it back as 'since' next run.
-  return data.generatedAt;
+  // If data.hasMore is true, widen the window or page with an older 'until'.
+  return data.hasMore;
 }`}</CodeBlock>
         </Section>
 
@@ -273,6 +285,7 @@ async function pullSince(lastSyncedIso) {
               global constants.
             </li>
             <li>Timestamps in responses are ISO 8601 UTC strings; request filters accept ISO strings or Unix milliseconds.</li>
+            <li><Code>since</Code>/<Code>until</Code> filter on each event&rsquo;s scheduled date, not on when attendance was recorded. There is no &ldquo;updated since&rdquo; change cursor &mdash; to capture late attendance edits, re-pull a trailing date window rather than advancing a cursor.</li>
             <li>Treat the response as additive &mdash; new fields may appear over time; do not assume a fixed key set.</li>
             <li>There is exactly one resource; pagination is by date range, not cursors or offsets.</li>
           </ul>

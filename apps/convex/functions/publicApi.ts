@@ -114,6 +114,7 @@ export const getCommunityAttendanceAggregate = internalQuery({
     // once we've collected `limit` matches or scanned the safety cap.
     const matched: Doc<"meetings">[] = [];
     let scanned = 0;
+    let hitScanCap = false;
     const iterator = ctx.db
       .query("meetings")
       .withIndex("by_community_scheduledAt", (q) => {
@@ -132,7 +133,10 @@ export const getCommunityAttendanceAggregate = internalQuery({
       .order("desc");
 
     for await (const meeting of iterator) {
-      if (scanned >= MAX_SCAN) break;
+      if (scanned >= MAX_SCAN) {
+        hitScanCap = true;
+        break;
+      }
       scanned++;
 
       if (args.status && meeting.status !== args.status) continue;
@@ -146,9 +150,16 @@ export const getCommunityAttendanceAggregate = internalQuery({
       if (matched.length >= limit) break;
     }
 
-    // hasMore is true if there could be additional matching events beyond what
-    // we returned (i.e. we stopped because we hit the limit, not exhaustion).
-    const hasMore = matched.length >= limit;
+    // hasMore tells the caller more matching events may exist than were returned.
+    // Two cases trigger it:
+    // - we filled the page (matched.length >= limit), or
+    // - we stopped at the scan cap before exhausting the timeline. The cap
+    //   matters with selective status/groupType filters: many newer
+    //   non-matching events can use up the scan budget before `limit` matches
+    //   accumulate, leaving older matching events unseen. Without this, a
+    //   filtered export could return partial/empty results with hasMore:false.
+    // Callers page by narrowing the since/until window.
+    const hasMore = matched.length >= limit || hitScanCap;
 
     // Aggregate counts per matched event.
     const events = await Promise.all(
