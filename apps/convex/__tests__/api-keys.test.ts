@@ -548,3 +548,120 @@ describe("getCommunityAttendanceAggregate", () => {
     expect(all.hasMore).toBe(false);
   });
 });
+
+// ============================================================================
+// getCommunityAttendanceSummary (internal)
+// ============================================================================
+
+describe("getCommunityAttendanceSummary", () => {
+  test("rolls up multiple events for the same group+day into one row", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // Two dinner events on the same local day (2026-06-10, America/New_York).
+    const morning = Date.UTC(2026, 5, 10, 18, 0, 0); // 14:00 ET
+    const evening = Date.UTC(2026, 5, 10, 23, 0, 0); // 19:00 ET (same ET day)
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.dinnerGroupId,
+      scheduledAt: morning,
+      attendedUserIds: [s.adminId],
+      guestCount: 1,
+      rsvps: { going: 2 },
+    });
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.dinnerGroupId,
+      scheduledAt: evening,
+      attendedUserIds: [s.memberId],
+      rsvps: { going: 1, maybe: 1 },
+    });
+    // A small-group event on a different day.
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.smallGroupId,
+      scheduledAt: Date.UTC(2026, 5, 12, 18, 0, 0),
+      attendedUserIds: [s.adminId],
+    });
+
+    const result = await t.query(
+      internal.functions.publicApi.getCommunityAttendanceSummary,
+      { communityId: s.communityId }
+    );
+
+    expect(result.timezone).toBe("America/New_York");
+    expect(result.bucket).toBe("day");
+    expect(result.truncated).toBe(false);
+    expect(result.summary).toHaveLength(2);
+
+    const dinnerRow = result.summary.find(
+      (r: any) => r.groupTypeSlug === "dinner-parties"
+    ) as any;
+    expect(dinnerRow.date).toBe("2026-06-10");
+    expect(dinnerRow.events).toBe(2);
+    expect(dinnerRow.attended).toBe(2);
+    expect(dinnerRow.guests).toBe(1);
+    expect(dinnerRow.rsvps).toEqual({
+      going: 3,
+      notGoing: 0,
+      maybe: 1,
+      guestsExpected: 0,
+    });
+
+    // Newest day first.
+    expect((result.summary[0] as any).date).toBe("2026-06-12");
+  });
+
+  test("buckets by the community's local date, not UTC", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    // 2026-06-11 01:00 UTC == 2026-06-10 21:00 in America/New_York.
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.dinnerGroupId,
+      scheduledAt: Date.UTC(2026, 5, 11, 1, 0, 0),
+      attendedUserIds: [s.adminId],
+    });
+
+    const result = await t.query(
+      internal.functions.publicApi.getCommunityAttendanceSummary,
+      { communityId: s.communityId }
+    );
+
+    expect(result.summary).toHaveLength(1);
+    // Local ET date, not the UTC date (which would be 2026-06-11).
+    expect((result.summary[0] as any).date).toBe("2026-06-10");
+  });
+
+  test("filters by group type", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.dinnerGroupId,
+      scheduledAt: Date.UTC(2026, 5, 10, 18, 0, 0),
+      attendedUserIds: [s.adminId],
+    });
+    await seedMeeting(t, {
+      communityId: s.communityId,
+      groupId: s.smallGroupId,
+      scheduledAt: Date.UTC(2026, 5, 10, 18, 0, 0),
+      attendedUserIds: [s.memberId],
+    });
+
+    const dinners = await t.query(
+      internal.functions.publicApi.getCommunityAttendanceSummary,
+      { communityId: s.communityId, groupTypeSlug: "dinner-parties" }
+    );
+    expect(dinners.summary).toHaveLength(1);
+    expect((dinners.summary[0] as any).groupTypeSlug).toBe("dinner-parties");
+
+    const unknown = await t.query(
+      internal.functions.publicApi.getCommunityAttendanceSummary,
+      { communityId: s.communityId, groupTypeSlug: "nope" }
+    );
+    expect(unknown.summary).toHaveLength(0);
+  });
+});
