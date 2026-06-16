@@ -39,6 +39,27 @@ export default defineSchema({
   }).index("by_userId", ["userId"]),
 
   // =============================================================================
+  // API KEYS (external integrations)
+  // =============================================================================
+  // Community-scoped API keys that let external apps (e.g. an attendance
+  // dashboard) call the public HTTP API. The raw key is shown to the admin
+  // exactly once at creation time; only a SHA-256 hash is persisted, so a
+  // leaked database row can't be used to reconstruct a working key.
+  apiKeys: defineTable({
+    communityId: v.id("communities"),
+    name: v.string(), // Human label, e.g. "Fount Attendance Dashboard"
+    keyHash: v.string(), // SHA-256 hex of the raw key (never store the raw key)
+    keyPrefix: v.string(), // First chars of the raw key, for display only (e.g. "tgk_a1b2c3d4")
+    createdById: v.id("users"),
+    createdAt: v.number(), // Unix timestamp ms
+    lastUsedAt: v.optional(v.number()), // Unix timestamp ms; updated on each authenticated call
+    revokedAt: v.optional(v.number()), // Unix timestamp ms; set when revoked (key stops working)
+    revokedById: v.optional(v.id("users")),
+  })
+    .index("by_community", ["communityId"])
+    .index("by_keyHash", ["keyHash"]),
+
+  // =============================================================================
   // COMMUNITIES
   // =============================================================================
 

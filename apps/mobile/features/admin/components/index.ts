@@ -2,6 +2,7 @@
 export { AdminDashboardScreen } from "./AdminDashboardScreen";
 export { AdminScreen } from "./AdminScreen";
 export { CommunityWideEventsScreen } from "./CommunityWideEventsScreen";
+export { DeveloperApiKeysScreen } from "./DeveloperApiKeysScreen";
 export { DuplicateAccountsScreen } from "./DuplicateAccountsScreen";
 export { ExportBottomSheet } from "./ExportBottomSheet";
 export { FeatureFlagsContent } from "./FeatureFlagsContent";
