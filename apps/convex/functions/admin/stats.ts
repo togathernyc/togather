@@ -1014,8 +1014,21 @@ export const getGroupAttendanceDetails = query({
     );
 
     if (isSingleDay) {
-      // Single day mode
+      // A calendar day can hold more than one meeting for a group, so merge
+      // attendance + guests across every meeting in the day window (present
+      // beats absent beats not-recorded) rather than only the first — the
+      // Stats summary and export count all same-day meetings.
       const meeting = allMeetings[0];
+
+      const mergedStatus = new Map<Id<"users">, number>();
+      for (const m of allMeetings) {
+        const attMap = meetingAttendances.get(m._id);
+        if (!attMap) continue;
+        for (const [uid, s] of attMap) {
+          if (s === 1) mergedStatus.set(uid, 1);
+          else if (s === 0 && mergedStatus.get(uid) !== 1) mergedStatus.set(uid, 0);
+        }
+      }
 
       const memberAttendance: Array<{
         userId: string;
@@ -1026,8 +1039,9 @@ export const getGroupAttendanceDetails = query({
         statusLabel: string;
         isGuest?: boolean;
       }> = memberDetails.map((member) => {
-        const attendanceMap = meeting ? meetingAttendances.get(meeting._id) : undefined;
-        const status = attendanceMap?.get(member.userId) ?? null;
+        const status: number | null = mergedStatus.has(member.userId)
+          ? mergedStatus.get(member.userId)!
+          : null;
 
         return {
           userId: member.userId as string,
@@ -1053,23 +1067,34 @@ export const getGroupAttendanceDetails = query({
       const absentCount = memberAttendance.filter((m) => m.status === 0).length;
       const notRecordedCount = memberAttendance.filter((m) => m.status === null).length;
 
-      // Walk-in guests recorded by leaders, listed alongside present members
-      // so the headcount reconciles with the Stats summary.
-      const guestDocs = meeting
-        ? await ctx.db
-            .query("meetingGuests")
-            .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
-            .collect()
-        : [];
-      const guestRows = guestDocs.map((g, i) => ({
-        userId: `guest-${g._id ?? i}`,
-        firstName: g.firstName ?? "Guest",
-        lastName: g.lastName ?? "",
-        profilePhoto: undefined,
-        status: 1 as number | null,
-        statusLabel: "Guest",
-        isGuest: true,
-      }));
+      // Walk-in guests across all same-day meetings, listed alongside present
+      // members so the headcount reconciles with the Stats summary.
+      const guestRows: Array<{
+        userId: string;
+        firstName: string;
+        lastName: string;
+        profilePhoto: string | undefined;
+        status: number | null;
+        statusLabel: string;
+        isGuest: boolean;
+      }> = [];
+      for (const m of allMeetings) {
+        const guestDocs = await ctx.db
+          .query("meetingGuests")
+          .withIndex("by_meeting", (q) => q.eq("meetingId", m._id))
+          .collect();
+        for (const g of guestDocs) {
+          guestRows.push({
+            userId: `guest-${g._id}`,
+            firstName: g.firstName ?? "Guest",
+            lastName: g.lastName ?? "",
+            profilePhoto: undefined,
+            status: 1,
+            statusLabel: "Guest",
+            isGuest: true,
+          });
+        }
+      }
 
       return {
         groupId: args.groupId,
