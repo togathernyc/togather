@@ -191,10 +191,15 @@ export function generateDateRangeAttendanceCsv(data: DateRangeAttendanceData): s
 }
 
 /**
- * Format a date for use in filenames (no special characters)
+ * Format a date for use in filenames (no special characters).
+ *
+ * Accepts the bare "YYYY-MM-DD" day strings the attendance screens now pass.
+ * Parsing by calendar components (rather than `new Date(dateStr)`, which is
+ * UTC) keeps the filename on the day the admin picked in US time zones.
  */
 function formatDateForFilename(dateStr: string): string {
-  const date = new Date(dateStr);
+  const [y, m, d] = dateStr.slice(0, 10).split("-").map(Number);
+  const date = new Date(y, (m ?? 1) - 1, d ?? 1);
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
