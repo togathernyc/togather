@@ -64,14 +64,18 @@ interface TestSetup {
   otherCommunityId: Id<"communities">;
   groupTypeId: Id<"groupTypes">;
   groupId: Id<"groups">;
+  secondGroupId: Id<"groups">;
   communityMemberId: Id<"users">;
   groupMemberId: Id<"users">;
+  secondGroupMemberId: Id<"users">;
   nonMemberId: Id<"users">;
   publicMeetingId: Id<"meetings">;
   communityMeetingId: Id<"meetings">;
   groupMeetingId: Id<"meetings">;
+  specificGroupsMeetingId: Id<"meetings">;
   communityMemberToken: string;
   groupMemberToken: string;
+  secondGroupMemberToken: string;
   nonMemberToken: string;
 }
 
@@ -146,6 +150,18 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestSetu
       updatedAt: timestamp,
     });
 
+    // Member of a second group (used for "specific groups" visibility tests).
+    const secondGroupMemberId = await ctx.db.insert("users", {
+      firstName: "Second",
+      lastName: "Group",
+      email: "secondgroup@test.com",
+      phone: "+12025551004",
+      phoneVerified: true,
+      isActive: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
     // Create a group
     const groupId = await ctx.db.insert("groups", {
       communityId,
@@ -187,6 +203,36 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestSetu
       notificationsEnabled: true,
     });
 
+    // Create a second group + member in the same community, shared with via
+    // the "specific groups" visibility level.
+    const secondGroupId = await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Second Group",
+      description: "Another test group",
+      isArchived: false,
+      isPublic: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await ctx.db.insert("userCommunities", {
+      userId: secondGroupMemberId,
+      communityId,
+      roles: 1,
+      status: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await ctx.db.insert("groupMembers", {
+      groupId: secondGroupId,
+      userId: secondGroupMemberId,
+      role: "member",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+
     // Create meetings with different visibility levels
     const publicMeetingId = await ctx.db.insert("meetings", {
       groupId,
@@ -221,19 +267,36 @@ async function setupTestData(t: ReturnType<typeof convexTest>): Promise<TestSetu
       createdAt: timestamp,
     });
 
+    // Hosted by `groupId`, explicitly shared with `secondGroupId`.
+    const specificGroupsMeetingId = await ctx.db.insert("meetings", {
+      groupId,
+      title: "Specific Groups Event",
+      scheduledAt: futureTime + 3000,
+      meetingType: 1,
+      status: "scheduled",
+      visibility: "groups",
+      visibleGroupIds: [secondGroupId],
+      createdById: groupMemberId,
+      createdAt: timestamp,
+    });
+
     return {
       communityId,
       otherCommunityId,
       groupTypeId,
       groupId,
+      secondGroupId,
       communityMemberId,
       groupMemberId,
+      secondGroupMemberId,
       nonMemberId,
       publicMeetingId,
       communityMeetingId,
       groupMeetingId,
+      specificGroupsMeetingId,
       communityMemberToken: `test-token-${communityMemberId}`,
       groupMemberToken: `test-token-${groupMemberId}`,
+      secondGroupMemberToken: `test-token-${secondGroupMemberId}`,
       nonMemberToken: `test-token-${nonMemberId}`,
     };
   });
@@ -415,6 +478,69 @@ describe("Group events visibility", () => {
 });
 
 // ============================================================================
+// Specific Groups Event Visibility Tests
+// ============================================================================
+
+describe("Specific groups events visibility", () => {
+  test("Specific-groups events are NOT visible to unauthenticated users", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupTestData(t);
+
+    const result = await t.query(api.functions.meetings.index.communityEvents, {
+      communityId: setup.communityId,
+      includePast: true,
+    });
+
+    const event = result.events.find((e) => e.id === setup.specificGroupsMeetingId);
+    expect(event).toBeUndefined();
+  });
+
+  test("Specific-groups events are NOT visible to community members outside the shared groups", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupTestData(t);
+
+    const result = await t.query(api.functions.meetings.index.communityEvents, {
+      token: setup.communityMemberToken,
+      communityId: setup.communityId,
+      includePast: true,
+    });
+
+    const event = result.events.find((e) => e.id === setup.specificGroupsMeetingId);
+    expect(event).toBeUndefined();
+  });
+
+  test("Specific-groups events ARE visible to hosting group members", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupTestData(t);
+
+    const result = await t.query(api.functions.meetings.index.communityEvents, {
+      token: setup.groupMemberToken,
+      communityId: setup.communityId,
+      includePast: true,
+    });
+
+    const event = result.events.find((e) => e.id === setup.specificGroupsMeetingId);
+    expect(event).toBeDefined();
+    expect(event?.title).toBe("Specific Groups Event");
+  });
+
+  test("Specific-groups events ARE visible to members of a shared-with group", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await setupTestData(t);
+
+    const result = await t.query(api.functions.meetings.index.communityEvents, {
+      token: setup.secondGroupMemberToken,
+      communityId: setup.communityId,
+      includePast: true,
+    });
+
+    const event = result.events.find((e) => e.id === setup.specificGroupsMeetingId);
+    expect(event).toBeDefined();
+    expect(event?.title).toBe("Specific Groups Event");
+  });
+});
+
+// ============================================================================
 // Filtering by Hosting Group Tests
 // ============================================================================
 
@@ -431,12 +557,14 @@ describe("Events filtered by hosting group", () => {
       includePast: true,
     });
 
-    // Should see all 3 events (public, community, group)
-    expect(result.events).toHaveLength(3);
+    // Should see all 4 events (public, community, group, specific-groups —
+    // the group member hosts the specific-groups event's group)
+    expect(result.events).toHaveLength(4);
     const titles = result.events.map((e) => e.title);
     expect(titles).toContain("Public Event");
     expect(titles).toContain("Community Event");
     expect(titles).toContain("Group Event");
+    expect(titles).toContain("Specific Groups Event");
   });
 
   test("Community member filtering by group only sees public and community events", async () => {
@@ -524,6 +652,7 @@ describe("Visibility Summary", () => {
     expect(unauthResult.events.length).toBe(1); // Only public
     expect(nonMemberResult.events.length).toBe(1); // Only public
     expect(communityMemberResult.events.length).toBe(2); // Public + Community
-    expect(groupMemberResult.events.length).toBe(3); // Public + Community + Group
+    // Public + Community + Group + Specific Groups (host group member)
+    expect(groupMemberResult.events.length).toBe(4);
   });
 });

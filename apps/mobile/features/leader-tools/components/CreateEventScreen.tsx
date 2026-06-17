@@ -31,6 +31,7 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "./RsvpOptionsEditor";
 import { VisibilitySelector, VisibilityLevel } from "./VisibilitySelector";
+import { VisibleGroupsSelector } from "./VisibleGroupsSelector";
 import { useCreatableGroups } from "@features/events/hooks/useCommunityEvents";
 import { useMyHostedEvents } from "@features/events/hooks/useMyEvents";
 import { useAnalytics } from "@services/analytics";
@@ -64,6 +65,9 @@ interface CreateMeetingInput {
   rsvpOptions?: RsvpOption[];
   hideRsvpCount?: boolean;
   visibility?: VisibilityLevel;
+  // Groups (beyond the hosting group) whose members can see and RSVP. Only
+  // meaningful when visibility is "groups".
+  visibleGroupIds?: string[];
   hostUserIds?: Id<"users">[];
 }
 
@@ -170,6 +174,8 @@ export function CreateEventScreen() {
   // separately from the meeting update mutation below.
   const [eventChatEnabled, setEventChatEnabled] = useState(true);
   const [visibility, setVisibility] = useState<VisibilityLevel>("public");
+  // Groups the event is explicitly shared with (used when visibility is "groups").
+  const [visibleGroupIds, setVisibleGroupIds] = useState<string[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
 
@@ -296,6 +302,25 @@ export function CreateEventScreen() {
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
 
+  // True when this form targets a community-wide event — either creating one
+  // (the toggle) or editing an existing CWE child. "Specific Groups" can't
+  // carry a hand-picked audience through a group-type fan-out, so it's hidden
+  // in both cases. The edit case matters because the create toggle stays false
+  // when editing; saving a "groups" CWE edit cross-scope would route through
+  // communityWideEvents.update with no visibleGroupIds and silently turn every
+  // child host-group-only.
+  const isCommunityWideContext =
+    isCommunityWideEnabled || (isEditMode && !!meeting?.communityWideEventId);
+
+  // Guard against a stale "groups" selection once we're in a community-wide
+  // context (e.g. host enables the toggle, or a CWE child loads). Falls back to
+  // "community" so we never persist a "groups" event with a dropped audience.
+  useEffect(() => {
+    if (isCommunityWideContext && visibility === "groups") {
+      setVisibility("community");
+    }
+  }, [isCommunityWideContext, visibility]);
+
   // Admin CWE edit: prefill from the parent CWE, not the opened child. The
   // admin screen has to pick *some* child to route through because the edit
   // form lives under the leader-tools meeting route — but if that child has
@@ -357,6 +382,9 @@ export function CreateEventScreen() {
       setHideRsvpCount((meeting as any).hideRsvpCount === true);
       if (meeting.visibility) {
         setVisibility(meeting.visibility as VisibilityLevel);
+      }
+      if (Array.isArray((meeting as any).visibleGroupIds)) {
+        setVisibleGroupIds((meeting as any).visibleGroupIds as string[]);
       }
       // Hosts: honor the stored value (including an explicit empty array,
       // which means "delegated to leaders"). Undefined on legacy rows maps
@@ -458,7 +486,7 @@ export function CreateEventScreen() {
   // Wrapper for create mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const createMeeting = {
-    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; hostUserIds?: Id<"users">[] }) => {
+    mutate: async (data: { groupId: string; scheduledAt: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; visibleGroupIds?: string[]; hostUserIds?: Id<"users">[] }) => {
       setIsCreating(true);
       try {
         const newMeetingId = await createMeetingMutation({
@@ -479,6 +507,7 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          visibleGroupIds: data.visibleGroupIds as Id<"groups">[] | undefined,
           hostUserIds: data.hostUserIds,
         });
         // ADR-022 analytics: only fire for non-leader creators so the funnel
@@ -505,7 +534,7 @@ export function CreateEventScreen() {
   // Wrapper for update mutation with state tracking
   // Note: useAuthenticatedMutation auto-injects the token
   const updateMeeting = {
-    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; notifyGuests?: boolean; hostUserIds?: Id<"users">[] }) => {
+    mutate: async (data: { meetingId: string; scheduledAt?: string; title?: string; meetingType?: number; meetingLink?: string; locationOverride?: string; locationMode?: "address" | "online" | "tbd"; note?: string; coverImage?: string; posterId?: Id<"posters"> | null; rsvpEnabled?: boolean; rsvpOptions?: RsvpOption[]; hideRsvpCount?: boolean; visibility?: VisibilityLevel; visibleGroupIds?: string[]; notifyGuests?: boolean; hostUserIds?: Id<"users">[] }) => {
       setIsUpdating(true);
       try {
         await updateMeetingMutation({
@@ -523,6 +552,7 @@ export function CreateEventScreen() {
           rsvpOptions: data.rsvpOptions,
           hideRsvpCount: data.hideRsvpCount,
           visibility: data.visibility,
+          visibleGroupIds: data.visibleGroupIds as Id<"groups">[] | undefined,
           hostUserIds: data.hostUserIds,
         });
         // Convex automatically updates queries
@@ -805,6 +835,9 @@ export function CreateEventScreen() {
         rsvpOptions: rsvpOptions.filter((opt) => opt.enabled),
         hideRsvpCount: hideRsvpCount,
         visibility: visibility,
+        // Only carry shared-with groups when that's the chosen visibility; an
+        // empty array on edit clears any previously shared-with groups.
+        visibleGroupIds: visibility === "groups" ? visibleGroupIds : [],
         hostUserIds: hostUserIds,
       };
 
@@ -980,6 +1013,7 @@ export function CreateEventScreen() {
             rsvpOptions: data.rsvpOptions,
             hideRsvpCount: data.hideRsvpCount,
             visibility: data.visibility,
+            visibleGroupIds: data.visibleGroupIds as Id<"groups">[] | undefined,
           });
           Alert.alert(
             "Series Created",
@@ -1778,7 +1812,19 @@ export function CreateEventScreen() {
           {/* Visibility */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Visibility</Text>
-            <VisibilitySelector value={visibility} onChange={setVisibility} />
+            <VisibilitySelector
+              value={visibility}
+              onChange={setVisibility}
+              allowSpecificGroups={!isCommunityWideContext}
+            />
+            {visibility === "groups" && !isCommunityWideContext && community?.id && (
+              <VisibleGroupsSelector
+                communityId={community.id}
+                hostGroupId={effectiveGroupId ?? undefined}
+                value={visibleGroupIds}
+                onChange={setVisibleGroupIds}
+              />
+            )}
           </View>
 
           {/* Event Series - only in edit mode */}

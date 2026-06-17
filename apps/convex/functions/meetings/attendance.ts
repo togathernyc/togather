@@ -373,21 +373,34 @@ export const selfReportAttendance = mutation({
     // Check visibility-based membership
     const visibility = meeting.visibility || "group";
 
-    if (visibility === "group") {
-      // For group-only events, user must be an active member of the group
-      const groupMembership = await ctx.db
-        .query("groupMembers")
-        .withIndex("by_group_user", (q) =>
-          q.eq("groupId", meeting.groupId).eq("userId", userId)
-        )
-        .first();
+    if (visibility === "group" || visibility === "groups") {
+      // For group-scoped events, user must be an active member of the hosting
+      // group — or, for "groups" visibility, of one of the shared-with groups.
+      const isActiveMember = async (groupId: typeof meeting.groupId) => {
+        const membership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", groupId).eq("userId", userId)
+          )
+          .first();
+        return (
+          !!membership &&
+          !membership.leftAt &&
+          (!membership.requestStatus ||
+            membership.requestStatus === "accepted")
+        );
+      };
 
-      if (
-        !groupMembership ||
-        groupMembership.leftAt ||
-        (groupMembership.requestStatus &&
-          groupMembership.requestStatus !== "accepted")
-      ) {
+      let allowed = await isActiveMember(meeting.groupId);
+      if (!allowed && visibility === "groups") {
+        for (const sharedGroupId of meeting.visibleGroupIds ?? []) {
+          if (await isActiveMember(sharedGroupId)) {
+            allowed = true;
+            break;
+          }
+        }
+      }
+      if (!allowed) {
         throw new Error("You must be a group member to attend this event");
       }
     } else if (visibility === "community") {
