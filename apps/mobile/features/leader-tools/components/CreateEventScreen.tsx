@@ -176,6 +176,16 @@ export function CreateEventScreen() {
   const [visibility, setVisibility] = useState<VisibilityLevel>("public");
   // Groups the event is explicitly shared with (used when visibility is "groups").
   const [visibleGroupIds, setVisibleGroupIds] = useState<string[]>([]);
+
+  // "Specific Groups" can't carry through a community-wide (group-type) fan-out,
+  // so it's hidden in that mode. If the host had it selected and then enables
+  // community-wide, fall back to "community" so we never persist a "groups"
+  // event with a dropped audience.
+  useEffect(() => {
+    if (isCommunityWideEnabled && visibility === "groups") {
+      setVisibility("community");
+    }
+  }, [isCommunityWideEnabled, visibility]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
 
@@ -1793,8 +1803,12 @@ export function CreateEventScreen() {
           {/* Visibility */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Event Visibility</Text>
-            <VisibilitySelector value={visibility} onChange={setVisibility} />
-            {visibility === "groups" && community?.id && (
+            <VisibilitySelector
+              value={visibility}
+              onChange={setVisibility}
+              allowSpecificGroups={!isCommunityWideEnabled}
+            />
+            {visibility === "groups" && !isCommunityWideEnabled && community?.id && (
               <VisibleGroupsSelector
                 communityId={community.id}
                 hostGroupId={effectiveGroupId ?? undefined}

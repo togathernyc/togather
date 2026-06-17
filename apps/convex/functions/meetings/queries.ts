@@ -188,7 +188,11 @@ export const getByShortId = query({
       note: hasAccess ? meeting.note : null,
       coverImage: getMediaUrl(effectiveCoverImage ?? undefined),
       visibility: meeting.visibility || "group",
-      visibleGroupIds: meeting.visibleGroupIds ?? [],
+      // Only expose the shared-with audience to viewers who can access the
+      // event. Otherwise this public share endpoint would leak the intended
+      // private audience to outsiders — matching how meetingLink/note are
+      // redacted above.
+      visibleGroupIds: hasAccess ? meeting.visibleGroupIds ?? [] : [],
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
       rsvpCounts,

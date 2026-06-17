@@ -10,6 +10,12 @@ export type VisibilityLevel = "group" | "groups" | "community" | "public";
 interface VisibilitySelectorProps {
   value: VisibilityLevel;
   onChange: (value: VisibilityLevel) => void;
+  /**
+   * When false, the "Specific Groups" option is hidden. Used by community-wide
+   * flows, where the event fans out across a group type and a hand-picked
+   * audience can't be carried through to each child meeting.
+   */
+  allowSpecificGroups?: boolean;
 }
 
 interface VisibilityOption {
@@ -46,13 +52,21 @@ const VISIBILITY_OPTIONS: VisibilityOption[] = [
   },
 ];
 
-export function VisibilitySelector({ value, onChange }: VisibilitySelectorProps) {
+export function VisibilitySelector({
+  value,
+  onChange,
+  allowSpecificGroups = true,
+}: VisibilitySelectorProps) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
+  const options = allowSpecificGroups
+    ? VISIBILITY_OPTIONS
+    : VISIBILITY_OPTIONS.filter((o) => o.value !== "groups");
+
   return (
     <View style={styles.container}>
-      {VISIBILITY_OPTIONS.map((option) => {
+      {options.map((option) => {
         const isSelected = value === option.value;
         return (
           <TouchableOpacity
