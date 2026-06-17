@@ -463,11 +463,13 @@ describe("shouldFireMonthlyOnDate", () => {
   });
 
   test("Nth occurrence respects 7-day windows", () => {
-    // Days 1-7 => 1st, 8-14 => 2nd, 15-21 => 3rd, 22-28 => 4th, 29-31 => 5th.
+    // Days 1-7 => 1st, 8-14 => 2nd, 15-21 => 3rd, 22-28 => 4th.
     expect(shouldFireMonthlyOnDate("2026-06-07", 1)).toBe(true);
     expect(shouldFireMonthlyOnDate("2026-06-14", 2)).toBe(true);
-    expect(shouldFireMonthlyOnDate("2026-06-29", 5)).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-06-22", 4)).toBe(true);
+    // June 29 is a 5th Monday: not the 4th, so only "last" catches it.
     expect(shouldFireMonthlyOnDate("2026-06-29", 4)).toBe(false);
+    expect(shouldFireMonthlyOnDate("2026-06-29", "last")).toBe(true);
   });
 
   test("returns false for a malformed date key", () => {

@@ -1019,7 +1019,8 @@ type TaskReminderDeliveryMode = "task_only" | "task_and_channel_post";
 type TaskReminderFrequency = "weekly" | "monthly";
 
 // Which occurrence of a weekday within the month a monthly reminder targets:
-// 1-5 for the Nth occurrence, or "last" for the final one in the month.
+// 1-4 for the Nth occurrence (1st–4th), or "last" for the final one in the
+// month. "last" is how the final occurrence is targeted, so there is no 5th.
 type TaskReminderWeekOfMonth = number | "last";
 
 type TaskReminderConfigData = {
@@ -1046,7 +1047,7 @@ type TaskReminderConfigData = {
  * the Nth one, or the last one in the month.
  *
  * @param dateKey "YYYY-MM-DD" for today in the community's timezone.
- * @param weekOfMonth 1-5 for the Nth occurrence, or "last" for the final one.
+ * @param weekOfMonth 1-4 for the Nth occurrence, or "last" for the final one.
  */
 export function shouldFireMonthlyOnDate(
   dateKey: string,

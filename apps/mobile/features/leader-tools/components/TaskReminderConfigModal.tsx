@@ -48,7 +48,8 @@ type Schedule = Record<DayOfWeek, Task[]>;
 type Frequency = "weekly" | "monthly";
 
 // Which occurrence of a weekday a monthly reminder targets:
-// 1-5 for the Nth occurrence, or "last" for the final one in the month.
+// 1-4 for the Nth occurrence (1st–4th), or "last" for the final one. There is
+// no 5th option — "last" targets the final occurrence in the month.
 type WeekOfMonth = number | "last";
 
 type TaskReminderConfig = {

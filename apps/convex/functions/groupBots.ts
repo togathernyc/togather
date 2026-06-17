@@ -232,12 +232,15 @@ function normalizeTaskReminderConfig(rawConfig: Record<string, unknown>) {
 
   const frequency = rawConfig.frequency === "monthly" ? "monthly" : "weekly";
   const rawWeekOfMonth = rawConfig.weekOfMonth;
+  // Accept the 1st–4th occurrence or "last". We deliberately omit a "5th"
+  // option: a 5th occurrence exists in only some months, so "last" is the
+  // intuitive (and UI-exposed) way to target the final occurrence.
   const weekOfMonth =
     rawWeekOfMonth === "last"
       ? "last"
       : typeof rawWeekOfMonth === "number" &&
           rawWeekOfMonth >= 1 &&
-          rawWeekOfMonth <= 5
+          rawWeekOfMonth <= 4
         ? rawWeekOfMonth
         : 1;
 
