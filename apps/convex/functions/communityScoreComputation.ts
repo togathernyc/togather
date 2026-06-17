@@ -491,18 +491,16 @@ export const computeCommunityScoresBatch = internalQuery({
         // rostered to serve, which counts as activity for archiving. Not
         // community-scoped: serving anywhere keeps the person active, and this
         // only ever prevents archiving (never hides someone), so it's safe.
-        const rosterAssignments = await ctx.db
+        // Read newest-event-first via the by_user_eventDate index so the most
+        // recent serving date is found regardless of assignment creation order.
+        const recentAssignments = await ctx.db
           .query("roleAssignments")
-          .withIndex("by_user", (q) => q.eq("userId", member.userId))
+          .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
           .order("desc")
-          .take(50);
-        let lastRosteredAt: number | undefined;
-        for (const a of rosterAssignments) {
-          if (a.status === "declined") continue;
-          if (lastRosteredAt == null || a.eventDate > lastRosteredAt) {
-            lastRosteredAt = a.eventDate;
-          }
-        }
+          .take(100);
+        const lastRosteredAt = recentAssignments.find(
+          (a) => a.status !== "declined",
+        )?.eventDate;
         const lastServedAt = mostRecentTimestamp(
           pcoLastServedMap.get(member.userId.toString()),
           lastRosteredAt,
@@ -619,6 +617,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
         lastFollowupAt: member.lastFollowupAt,
         lastActiveAt: member.lastActiveAt,
         lastAttendedAt: member.lastAttendedAt,
+        lastServedAt: member.lastServedAt,
         addedAt: member.addedAt,
         addedAtInv: member.addedAt ? Number.MAX_SAFE_INTEGER - member.addedAt : undefined,
         latestNote: member.latestNote,
@@ -1189,6 +1188,7 @@ export const getScoredDataForUsers = internalQuery({
           lastFollowupAt: existing.lastFollowupAt,
           lastActiveAt: existing.lastActiveAt,
           lastAttendedAt: existing.lastAttendedAt,
+          lastServedAt: existing.lastServedAt,
           addedAt: existing.addedAt,
           addedAtInv: existing.addedAt ? Number.MAX_SAFE_INTEGER - existing.addedAt : undefined,
         });
