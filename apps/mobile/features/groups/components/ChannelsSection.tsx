@@ -73,6 +73,12 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
+  // Archived/disabled channels are folded away under a single collapsible
+  // "Archived" row so a long tail of turned-off channels doesn't clutter the
+  // list. Collapsed by default; only leaders ever have archived rows since
+  // members never receive disabled channels from the query.
+  const [archivedExpanded, setArchivedExpanded] = useState(false);
+
   // The legacy `groupMembers.role === "admin"` enum is no longer assigned
   // by the backend (only "member" / "leader" exist). The defensive `||
   // "admin"` checks scattered through the app are dead — drop them as we
@@ -106,9 +112,16 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
-  const leadersEnabled = !!leadersChannel && !leadersChannel.isArchived;
-  const mainEnabled = !!mainChannel && !mainChannel.isArchived;
-  const reachOutEnabled = !!reachOutChannel && !reachOutChannel.isArchived;
+  // A channel is inactive if it's archived OR a leader hid it (isEnabled ===
+  // false) — the backend active-state checks treat either flag as inactive,
+  // so both must fold under Archived and read as "Disabled". Undefined
+  // isEnabled means enabled (memberships intact).
+  const leadersEnabled =
+    !!leadersChannel && !leadersChannel.isArchived && leadersChannel.isEnabled !== false;
+  const mainEnabled =
+    !!mainChannel && !mainChannel.isArchived && mainChannel.isEnabled !== false;
+  const reachOutEnabled =
+    !!reachOutChannel && !reachOutChannel.isArchived && reachOutChannel.isEnabled !== false;
   const announcementsEnabled =
     !!announcementsChannel &&
     !announcementsChannel.isArchived &&
@@ -177,6 +190,10 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     onPress?: () => void;
     unreadCount?: number;
     pinned?: boolean;
+    /** True when this row is backed by a real channel record that is
+     *  disabled/archived. Such rows fold into the collapsible "Archived"
+     *  section. Placeholder/CTA rows (no record yet) are never archived. */
+    archived?: boolean;
   };
 
   const rows: Row[] = [];
@@ -195,6 +212,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       onPress: () => navigateToChannelInfo(mainChannel.slug),
       unreadCount: mainChannel.unreadCount,
       pinned: mainChannel.isPinned,
+      archived: !mainEnabled,
     });
   }
 
@@ -216,6 +234,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         : undefined,
       unreadCount: leadersChannel?.unreadCount,
       pinned: leadersChannel?.isPinned,
+      // Fold only a real, disabled Leaders channel — never the "create"
+      // placeholder shown to leaders before the record exists.
+      archived: !!leadersChannel && !leadersEnabled,
     });
   }
 
@@ -247,6 +268,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
           : undefined,
       unreadCount: announcementsChannel?.unreadCount,
       pinned: announcementsChannel?.isPinned,
+      // Keep the "Tap to enable" CTA (no record) in the main list; fold only
+      // an existing-but-disabled Announcements channel.
+      archived: !!announcementsChannel && !announcementsEnabled,
     });
   }
 
@@ -268,6 +292,10 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         : undefined,
       unreadCount: reachOutChannel?.unreadCount,
       pinned: reachOutChannel?.isPinned,
+      // Fold a real, disabled Reach Out channel. The "Requires Leaders
+      // channel" / create-placeholder states (no record) stay in the main
+      // list as actionable affordances.
+      archived: !!reachOutChannel && !reachOutEnabled,
     });
   }
 
@@ -286,6 +314,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       onPress: () => navigateToChannelInfo(channel.slug),
       unreadCount: channel.unreadCount,
       pinned: channel.isPinned,
+      archived: !enabled,
     });
   });
 
@@ -304,82 +333,138 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
       onPress: () => navigateToChannelInfo(channel.slug),
       unreadCount: channel.unreadCount,
       pinned: channel.isPinned,
+      archived: !enabled,
     });
   });
+
+  const activeRows = rows.filter((r) => !r.archived);
+  const archivedRows = rows.filter((r) => r.archived);
+
+  const renderRow = (row: Row, idx: number) => {
+    const isFirst = idx === 0;
+    const dimmed = !row.enabled;
+    // Disabled channels stay tappable so a leader can re-enable from the info
+    // screen's Active state. Placeholder rows with no onPress fall through to
+    // disabled.
+    const tappable = !!row.onPress;
+    return (
+      <TouchableOpacity
+        key={row.key}
+        activeOpacity={0.7}
+        onPress={row.onPress}
+        disabled={!tappable}
+        style={[
+          styles.row,
+          !isFirst && {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+          },
+        ]}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: row.iconBg }]}>
+          <Ionicons name={row.icon} size={20} color={row.iconColor} />
+        </View>
+        <View style={styles.rowInfo}>
+          <View style={styles.rowNameLine}>
+            <Text
+              style={[
+                styles.rowName,
+                { color: dimmed ? colors.textTertiary : colors.text },
+              ]}
+              numberOfLines={1}
+            >
+              {row.name}
+            </Text>
+            {row.pinned && (
+              <Ionicons
+                name="pin"
+                size={13}
+                color={colors.iconSecondary}
+                style={styles.pinIcon}
+              />
+            )}
+          </View>
+          <Text
+            style={[styles.rowSubtitle, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {row.subtitle}
+          </Text>
+        </View>
+        {row.enabled && row.unreadCount && row.unreadCount > 0 ? (
+          <View style={[styles.unreadBadge, { backgroundColor: row.iconColor }]}>
+            <Text style={styles.unreadText}>
+              {row.unreadCount > 99 ? "99+" : row.unreadCount}
+            </Text>
+          </View>
+        ) : null}
+        {tappable && (
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color={colors.textTertiary}
+          />
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
-      <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-        {rows.map((row, idx) => {
-          const isFirst = idx === 0;
-          const dimmed = !row.enabled;
-          // Disabled channels stay tappable so a leader can re-enable from
-          // the info screen's Active state. Placeholder rows with no
-          // onPress fall through to disabled.
-          const tappable = !!row.onPress;
-          return (
-            <TouchableOpacity
-              key={row.key}
-              activeOpacity={0.7}
-              onPress={row.onPress}
-              disabled={!tappable}
+      {activeRows.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
+          {activeRows.map((row, idx) => renderRow(row, idx))}
+        </View>
+      )}
+
+      {/* Archived/disabled channels fold into one collapsible group so they
+          don't clutter the active list. Leaders only — members never receive
+          disabled channels, so archivedRows is empty for them. */}
+      {archivedRows.length > 0 && (
+        <>
+          <TouchableOpacity
+            style={[styles.archivedToggle, { backgroundColor: colors.surfaceSecondary }]}
+            onPress={() => setArchivedExpanded((v) => !v)}
+            activeOpacity={0.7}
+          >
+            <View
               style={[
-                styles.row,
-                !isFirst && {
-                  borderTopWidth: StyleSheet.hairlineWidth,
-                  borderTopColor: colors.border,
-                },
+                styles.iconContainer,
+                { backgroundColor: colors.textTertiary + "15" },
               ]}
             >
-              <View style={[styles.iconContainer, { backgroundColor: row.iconBg }]}>
-                <Ionicons name={row.icon} size={20} color={row.iconColor} />
-              </View>
-              <View style={styles.rowInfo}>
-                <View style={styles.rowNameLine}>
-                  <Text
-                    style={[
-                      styles.rowName,
-                      { color: dimmed ? colors.textTertiary : colors.text },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {row.name}
-                  </Text>
-                  {row.pinned && (
-                    <Ionicons
-                      name="pin"
-                      size={13}
-                      color={colors.iconSecondary}
-                      style={styles.pinIcon}
-                    />
-                  )}
-                </View>
-                <Text
-                  style={[styles.rowSubtitle, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {row.subtitle}
-                </Text>
-              </View>
-              {row.enabled && row.unreadCount && row.unreadCount > 0 ? (
-                <View style={[styles.unreadBadge, { backgroundColor: row.iconColor }]}>
-                  <Text style={styles.unreadText}>
-                    {row.unreadCount > 99 ? "99+" : row.unreadCount}
-                  </Text>
-                </View>
-              ) : null}
-              {tappable && (
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={colors.textTertiary}
-                />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+              <Ionicons name="archive-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <View style={styles.rowInfo}>
+              <Text style={[styles.rowName, { color: colors.text }]}>Archived</Text>
+              <Text
+                style={[styles.rowSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {archivedRows.length} channel{archivedRows.length !== 1 ? "s" : ""} ·
+                hidden from members
+              </Text>
+            </View>
+            <Ionicons
+              name={archivedExpanded ? "chevron-up" : "chevron-down"}
+              size={18}
+              color={colors.textTertiary}
+            />
+          </TouchableOpacity>
+          {archivedExpanded && (
+            <View
+              style={[
+                styles.card,
+                styles.archivedCard,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {archivedRows.map((row, idx) => renderRow(row, idx))}
+            </View>
+          )}
+        </>
+      )}
 
       {/* Solid Create Channel affordance — matches the DM "Add people"
           card. Replaces the dashed-border button. */}
@@ -550,6 +635,19 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
     minHeight: 48,
+  },
+  archivedToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    minHeight: 56,
+  },
+  archivedCard: {
+    marginTop: 8,
   },
   createIcon: {
     width: 32,
