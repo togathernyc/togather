@@ -113,8 +113,13 @@ export function Events() {
           </Step>
           <Step n={5}>
             <strong>Visibility.</strong> Choose <Term>Group Only</Term>,{" "}
-            <Term>Community</Term>, or <Term>Public</Term>. Public means anyone
-            with the link can view the event; RSVPing still requires login.
+            <Term>Specific Groups</Term>, <Term>Community</Term>, or{" "}
+            <Term>Public</Term>. <Term>Specific Groups</Term> lets you pick a
+            handful of groups whose members can see and RSVP alongside the
+            hosting group — handy for an event aimed at a few teams (say, a
+            leaders' dinner across several locations) without opening it to the
+            whole community. Public means anyone with the link can view the
+            event; RSVPing still requires login.
           </Step>
         </Steps>
 

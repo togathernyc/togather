@@ -669,7 +669,10 @@ export default defineSchema({
     hideRsvpCount: v.optional(v.boolean()),
 
     // Visibility
-    visibility: v.optional(v.string()), // 'group' | 'community' | 'public'
+    visibility: v.optional(v.string()), // 'group' | 'community' | 'public' | 'groups'
+    // When visibility is 'groups', members of these groups can also see and
+    // RSVP, in addition to the hosting group. Ignored for other visibilities.
+    visibleGroupIds: v.optional(v.array(v.id("groups"))),
 
     // Public sharing
     publicSlug: v.optional(v.string()),

@@ -5,7 +5,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
-export type VisibilityLevel = "group" | "community" | "public";
+export type VisibilityLevel = "group" | "groups" | "community" | "public";
 
 interface VisibilitySelectorProps {
   value: VisibilityLevel;
@@ -25,6 +25,12 @@ const VISIBILITY_OPTIONS: VisibilityOption[] = [
     label: "Group Only",
     icon: "people",
     description: "Only group members can see and RSVP",
+  },
+  {
+    value: "groups",
+    label: "Specific Groups",
+    icon: "people-circle",
+    description: "Members of the groups you choose can see and RSVP",
   },
   {
     value: "community",

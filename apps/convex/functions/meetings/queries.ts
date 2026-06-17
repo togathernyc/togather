@@ -96,6 +96,30 @@ export const getByShortId = query({
       hasAccess = !!communityMembership;
     } else if (groupMembership) {
       hasAccess = true;
+    } else if (visibility === "groups" && userId) {
+      // Shared with specific groups: grant access to active members of any of
+      // the shared-with groups (the hosting group is already covered above).
+      for (const sharedGroupId of meeting.visibleGroupIds ?? []) {
+        const sharedMembership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", sharedGroupId).eq("userId", userId)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("leftAt"), undefined),
+              q.or(
+                q.eq(q.field("requestStatus"), undefined),
+                q.eq(q.field("requestStatus"), "accepted")
+              )
+            )
+          )
+          .first();
+        if (sharedMembership) {
+          hasAccess = true;
+          break;
+        }
+      }
     }
 
     // Get group type name
@@ -164,6 +188,7 @@ export const getByShortId = query({
       note: hasAccess ? meeting.note : null,
       coverImage: getMediaUrl(effectiveCoverImage ?? undefined),
       visibility: meeting.visibility || "group",
+      visibleGroupIds: meeting.visibleGroupIds ?? [],
       rsvpEnabled: meeting.rsvpEnabled ?? true,
       rsvpOptions: meeting.rsvpOptions || [],
       rsvpCounts,
