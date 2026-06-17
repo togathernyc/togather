@@ -12,6 +12,7 @@ import { expect, test, describe, vi, afterEach } from "vitest";
 import schema from "../schema";
 import { internal } from "../_generated/api";
 import { modules } from "../test.setup";
+import { shouldFireMonthlyOnDate } from "../functions/scheduledJobs";
 
 import type { Id } from "../_generated/dataModel";
 
@@ -424,6 +425,53 @@ describe("getGroupById", () => {
     );
 
     expect(result).toBeNull();
+  });
+});
+
+// ============================================================================
+// shouldFireMonthlyOnDate Tests (monthly task reminder gating)
+// ============================================================================
+
+describe("shouldFireMonthlyOnDate", () => {
+  // June 2026 has Mondays on the 1st, 8th, 15th, 22nd, and 29th.
+  test("matches the Nth occurrence of a weekday", () => {
+    expect(shouldFireMonthlyOnDate("2026-06-01", 1)).toBe(true); // 1st Monday
+    expect(shouldFireMonthlyOnDate("2026-06-08", 2)).toBe(true); // 2nd Monday
+    expect(shouldFireMonthlyOnDate("2026-06-15", 3)).toBe(true); // 3rd Monday
+    expect(shouldFireMonthlyOnDate("2026-06-22", 4)).toBe(true); // 4th Monday
+  });
+
+  test("does not match other occurrences", () => {
+    expect(shouldFireMonthlyOnDate("2026-06-08", 1)).toBe(false); // 2nd, want 1st
+    expect(shouldFireMonthlyOnDate("2026-06-01", 2)).toBe(false); // 1st, want 2nd
+    expect(shouldFireMonthlyOnDate("2026-06-22", 1)).toBe(false); // 4th, want 1st
+  });
+
+  test("'last' matches the final occurrence of the weekday in the month", () => {
+    // Last Monday of June 2026 is the 29th.
+    expect(shouldFireMonthlyOnDate("2026-06-29", "last")).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-06-22", "last")).toBe(false);
+  });
+
+  test("'last' handles a 5th occurrence and a short final month", () => {
+    // March 2026: 31 days. Last Tuesday is the 31st (also the 5th Tuesday).
+    expect(shouldFireMonthlyOnDate("2026-03-31", "last")).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-03-24", "last")).toBe(false);
+    // February 2026 (28 days): last day is the 28th.
+    expect(shouldFireMonthlyOnDate("2026-02-28", "last")).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-02-21", "last")).toBe(false);
+  });
+
+  test("Nth occurrence respects 7-day windows", () => {
+    // Days 1-7 => 1st, 8-14 => 2nd, 15-21 => 3rd, 22-28 => 4th, 29-31 => 5th.
+    expect(shouldFireMonthlyOnDate("2026-06-07", 1)).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-06-14", 2)).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-06-29", 5)).toBe(true);
+    expect(shouldFireMonthlyOnDate("2026-06-29", 4)).toBe(false);
+  });
+
+  test("returns false for a malformed date key", () => {
+    expect(shouldFireMonthlyOnDate("not-a-date", 1)).toBe(false);
   });
 });
 

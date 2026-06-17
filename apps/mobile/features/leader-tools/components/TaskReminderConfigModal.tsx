@@ -45,9 +45,17 @@ type Task = {
 
 type Schedule = Record<DayOfWeek, Task[]>;
 
+type Frequency = "weekly" | "monthly";
+
+// Which occurrence of a weekday a monthly reminder targets:
+// 1-5 for the Nth occurrence, or "last" for the final one in the month.
+type WeekOfMonth = number | "last";
+
 type TaskReminderConfig = {
   roles: Role[];
   schedule: Schedule;
+  frequency: Frequency;
+  weekOfMonth: WeekOfMonth;
   deliveryMode: "task_only" | "task_and_channel_post";
   targetChannelSlugs: string[];
 };
@@ -73,6 +81,19 @@ const DELIVERY_MODE_OPTIONS = [
   { value: "task_and_channel_post", label: "Create tasks + post task cards to channels" },
 ] as const;
 
+const FREQUENCY_OPTIONS: { value: Frequency; label: string }[] = [
+  { value: "weekly", label: "Weekly" },
+  { value: "monthly", label: "Monthly" },
+];
+
+const WEEK_OF_MONTH_OPTIONS: { value: WeekOfMonth; label: string; ordinal: string }[] = [
+  { value: 1, label: "1st", ordinal: "first" },
+  { value: 2, label: "2nd", ordinal: "second" },
+  { value: 3, label: "3rd", ordinal: "third" },
+  { value: 4, label: "4th", ordinal: "fourth" },
+  { value: "last", label: "Last", ordinal: "last" },
+];
+
 const DEFAULT_CONFIG: TaskReminderConfig = {
   roles: [],
   schedule: {
@@ -84,6 +105,8 @@ const DEFAULT_CONFIG: TaskReminderConfig = {
     saturday: [],
     sunday: [],
   },
+  frequency: "weekly",
+  weekOfMonth: 1,
   deliveryMode: "task_and_channel_post",
   targetChannelSlugs: [],
 };
@@ -210,9 +233,19 @@ export function TaskReminderConfigModal({
         : loadedConfig.targetChannelSlug
           ? [loadedConfig.targetChannelSlug]
           : [];
+      const frequency: Frequency =
+        loadedConfig.frequency === "monthly" ? "monthly" : "weekly";
+      const weekOfMonth: WeekOfMonth =
+        loadedConfig.weekOfMonth === "last"
+          ? "last"
+          : typeof loadedConfig.weekOfMonth === "number"
+            ? loadedConfig.weekOfMonth
+            : 1;
       setConfig({
         roles: loadedConfig.roles || [],
         schedule: loadedConfig.schedule || DEFAULT_CONFIG.schedule,
+        frequency,
+        weekOfMonth,
         deliveryMode,
         targetChannelSlugs,
       });
@@ -389,6 +422,11 @@ export function TaskReminderConfigModal({
       .map((id) => config.roles.find((r) => r.id === id)?.name || "Unknown")
       .join(", ");
   };
+
+  // Human-readable ordinal for the selected week of month ("first", "last", …)
+  const selectedWeekOfMonthOrdinal =
+    WEEK_OF_MONTH_OPTIONS.find((o) => o.value === config.weekOfMonth)?.ordinal ??
+    "first";
 
   // Render role item
   const renderRoleItem = (role: Role) => {
@@ -811,9 +849,93 @@ export function TaskReminderConfigModal({
                 ) : null}
               </View>
 
-              {/* Weekly Schedule Section */}
+              {/* Frequency Section */}
               <View style={styles.section}>
-                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>WEEKLY SCHEDULE</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>FREQUENCY</Text>
+                <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+                  Weekly fires the schedule every week. Monthly fires it once a
+                  month, on the chosen occurrence of each weekday.
+                </Text>
+
+                <View style={styles.deliveryOptions}>
+                  {FREQUENCY_OPTIONS.map((option) => {
+                    const isSelected = config.frequency === option.value;
+                    return (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.deliveryOption,
+                          { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                          isSelected && [styles.deliveryOptionSelected, { backgroundColor: primaryColor, borderColor: primaryColor }],
+                        ]}
+                        onPress={() => {
+                          setConfig((prev) => ({ ...prev, frequency: option.value }));
+                          setIsDirty(true);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.deliveryOptionText,
+                            { color: colors.text },
+                            isSelected && styles.deliveryOptionTextSelected,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                {config.frequency === "monthly" ? (
+                  <>
+                    <Text style={[styles.sectionTitle, { marginTop: 16, color: colors.textSecondary }]}>
+                      WEEK OF MONTH
+                    </Text>
+                    <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+                      Tasks run on the {selectedWeekOfMonthOrdinal}{" "}
+                      occurrence of each weekday (e.g. the {selectedWeekOfMonthOrdinal}{" "}
+                      {DAYS.find((d) => d.key === selectedDay)?.label}).
+                    </Text>
+
+                    <View style={styles.deliveryOptions}>
+                      {WEEK_OF_MONTH_OPTIONS.map((option) => {
+                        const isSelected = config.weekOfMonth === option.value;
+                        return (
+                          <TouchableOpacity
+                            key={String(option.value)}
+                            style={[
+                              styles.deliveryOption,
+                              { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                              isSelected && [styles.deliveryOptionSelected, { backgroundColor: primaryColor, borderColor: primaryColor }],
+                            ]}
+                            onPress={() => {
+                              setConfig((prev) => ({ ...prev, weekOfMonth: option.value }));
+                              setIsDirty(true);
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.deliveryOptionText,
+                                { color: colors.text },
+                                isSelected && styles.deliveryOptionTextSelected,
+                              ]}
+                            >
+                              {option.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </>
+                ) : null}
+              </View>
+
+              {/* Schedule Section */}
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                  {config.frequency === "monthly" ? "MONTHLY SCHEDULE" : "WEEKLY SCHEDULE"}
+                </Text>
 
                 {/* Day tabs */}
                 <ScrollView

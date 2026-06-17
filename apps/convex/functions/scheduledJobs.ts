@@ -1016,15 +1016,63 @@ type TaskReminderSchedule = Record<string, TaskReminderTask[]>;
 
 type TaskReminderDeliveryMode = "task_only" | "task_and_channel_post";
 
+type TaskReminderFrequency = "weekly" | "monthly";
+
+// Which occurrence of a weekday within the month a monthly reminder targets:
+// 1-5 for the Nth occurrence, or "last" for the final one in the month.
+type TaskReminderWeekOfMonth = number | "last";
+
 type TaskReminderConfigData = {
   roles: TaskReminderRole[];
   schedule: TaskReminderSchedule;
   deliveryMode?: TaskReminderDeliveryMode;
   targetChannelSlugs?: string[];
+  // Monthly reminders reuse the weekday schedule but only fire on the
+  // configured weekday occurrence within the month (e.g. the first Monday).
+  frequency?: TaskReminderFrequency;
+  weekOfMonth?: TaskReminderWeekOfMonth;
   // Legacy fields kept for backwards compatibility with existing configs.
   delivery?: "chat" | "notification" | "both";
   targetChannelSlug?: string;
 };
+
+/**
+ * Decide whether a monthly task reminder should fire on a given date.
+ *
+ * Monthly reminders reuse the weekday schedule but only fire on a single
+ * occurrence of each weekday within the month. The weekday is already
+ * implied by which schedule list runs (e.g. Monday's tasks run on Mondays),
+ * so this only needs to confirm that today is the configured occurrence —
+ * the Nth one, or the last one in the month.
+ *
+ * @param dateKey "YYYY-MM-DD" for today in the community's timezone.
+ * @param weekOfMonth 1-5 for the Nth occurrence, or "last" for the final one.
+ */
+export function shouldFireMonthlyOnDate(
+  dateKey: string,
+  weekOfMonth: TaskReminderWeekOfMonth,
+): boolean {
+  const [yearStr, monthStr, dayStr] = dateKey.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10); // 1-based
+  const day = parseInt(dayStr, 10);
+
+  if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    return false;
+  }
+
+  if (weekOfMonth === "last") {
+    // Day 0 of the next month is the last day of this month.
+    const daysInMonth = new Date(year, month, 0).getDate();
+    // The last occurrence of a weekday is whenever adding 7 days would
+    // overflow into the next month.
+    return day + 7 > daysInMonth;
+  }
+
+  // The Nth occurrence of a weekday falls in day ranges 1-7, 8-14, etc.
+  const occurrence = Math.ceil(day / 7);
+  return occurrence === weekOfMonth;
+}
 
 /**
  * Helper query to get group by ID.
@@ -1125,6 +1173,24 @@ export const runTaskReminderBot = internalAction({
     );
     const todayName: string = dayFormatter.format(nowDate).toLowerCase();
     const todayDateKey: string = dateFormatter.format(nowDate);
+
+    // Monthly reminders reuse the weekday schedule but only fire on the
+    // configured weekday occurrence within the month (e.g. the first Monday).
+    // The bucket cron still wakes this bot daily at 9 AM, so we filter here.
+    const frequency: TaskReminderFrequency = configData.frequency ?? "weekly";
+    if (
+      frequency === "monthly" &&
+      !shouldFireMonthlyOnDate(todayDateKey, configData.weekOfMonth ?? 1)
+    ) {
+      console.log(
+        `[TaskReminder] Monthly schedule not due today (${todayDateKey}) for group ${groupId}`,
+      );
+      return {
+        skipped: true,
+        reason: "not_scheduled_week_of_month",
+        day: todayName,
+      };
+    }
 
     const todayTasks: TaskReminderTask[] = schedule[todayName] || [];
 
