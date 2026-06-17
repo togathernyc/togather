@@ -25,6 +25,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  ScrollView,
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -312,16 +313,27 @@ export function PrayerScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.bodyWrap}>
-            <Text
-              style={[styles.quoteMark, { color: primaryColor }]}
-              accessibilityElementsHidden
-              importantForAccessibility="no"
-            >
-              “
-            </Text>
-            <Text style={[styles.body, { color: colors.text }]}>{current.bodyText}</Text>
-          </View>
+          {/*
+           * Body scrolls *inside* the card so a long request can't push the
+           * Pray button off the bottom and out from under the prayed-for rail.
+           * The button stays pinned and tappable no matter how long the text.
+           */}
+          <ScrollView
+            style={styles.bodyScroll}
+            contentContainerStyle={styles.bodyContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.bodyWrap}>
+              <Text
+                style={[styles.quoteMark, { color: primaryColor }]}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+              >
+                “
+              </Text>
+              <Text style={[styles.body, { color: colors.text }]}>{current.bodyText}</Text>
+            </View>
+          </ScrollView>
 
           <TouchableOpacity
             style={[styles.prayButton, { backgroundColor: primaryColor }]}
@@ -529,10 +541,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 36,
   },
   cardWrap: {
+    flex: 1,
     paddingHorizontal: 16,
     paddingTop: 4,
+    paddingBottom: 4,
   },
   card: {
+    // flexShrink lets the card cap at the available height for long prayers
+    // (so the body scrolls) while still sizing to content for short ones.
+    flexShrink: 1,
     borderRadius: 20,
     padding: 22,
     borderWidth: StyleSheet.hairlineWidth,
@@ -545,7 +562,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 18,
+    marginBottom: 12,
+  },
+  bodyScroll: {
+    flexShrink: 1,
+  },
+  bodyContent: {
+    // Headroom so the negative-offset quote mark isn't clipped at the
+    // scroll viewport's top edge.
+    paddingTop: 8,
   },
   avatar: {
     width: 44,
