@@ -176,16 +176,6 @@ export function CreateEventScreen() {
   const [visibility, setVisibility] = useState<VisibilityLevel>("public");
   // Groups the event is explicitly shared with (used when visibility is "groups").
   const [visibleGroupIds, setVisibleGroupIds] = useState<string[]>([]);
-
-  // "Specific Groups" can't carry through a community-wide (group-type) fan-out,
-  // so it's hidden in that mode. If the host had it selected and then enables
-  // community-wide, fall back to "community" so we never persist a "groups"
-  // event with a dropped audience.
-  useEffect(() => {
-    if (isCommunityWideEnabled && visibility === "groups") {
-      setVisibility("community");
-    }
-  }, [isCommunityWideEnabled, visibility]);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(hostingGroupId || null);
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
 
@@ -311,6 +301,25 @@ export function CreateEventScreen() {
   );
   const meeting = meetingData ?? undefined;
   const isLoadingMeeting = isEditMode && !!meetingId && meetingData === undefined;
+
+  // True when this form targets a community-wide event — either creating one
+  // (the toggle) or editing an existing CWE child. "Specific Groups" can't
+  // carry a hand-picked audience through a group-type fan-out, so it's hidden
+  // in both cases. The edit case matters because the create toggle stays false
+  // when editing; saving a "groups" CWE edit cross-scope would route through
+  // communityWideEvents.update with no visibleGroupIds and silently turn every
+  // child host-group-only.
+  const isCommunityWideContext =
+    isCommunityWideEnabled || (isEditMode && !!meeting?.communityWideEventId);
+
+  // Guard against a stale "groups" selection once we're in a community-wide
+  // context (e.g. host enables the toggle, or a CWE child loads). Falls back to
+  // "community" so we never persist a "groups" event with a dropped audience.
+  useEffect(() => {
+    if (isCommunityWideContext && visibility === "groups") {
+      setVisibility("community");
+    }
+  }, [isCommunityWideContext, visibility]);
 
   // Admin CWE edit: prefill from the parent CWE, not the opened child. The
   // admin screen has to pick *some* child to route through because the edit
@@ -1806,9 +1815,9 @@ export function CreateEventScreen() {
             <VisibilitySelector
               value={visibility}
               onChange={setVisibility}
-              allowSpecificGroups={!isCommunityWideEnabled}
+              allowSpecificGroups={!isCommunityWideContext}
             />
-            {visibility === "groups" && !isCommunityWideEnabled && community?.id && (
+            {visibility === "groups" && !isCommunityWideContext && community?.id && (
               <VisibleGroupsSelector
                 communityId={community.id}
                 hostGroupId={effectiveGroupId ?? undefined}
