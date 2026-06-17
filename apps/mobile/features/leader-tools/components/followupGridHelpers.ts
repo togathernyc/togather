@@ -12,6 +12,9 @@ export type LeaderInfo = {
 export type ParsedFollowupFilters = {
   searchText: string;
   statusFilter?: string;
+  // Archived (inactive) people are hidden by default. "include" shows them
+  // alongside active people; "only" shows just archived people.
+  archivedFilter?: "include" | "only";
   assigneeFilter?: string;
   excludedAssigneeFilters: string[];
   scoreField?: string;
@@ -114,6 +117,12 @@ export function parseFollowupQuerySyntax(
 
   freeText = freeText.replace(/status:(\w+)/gi, (_, v) => {
     filters.statusFilter = v.toLowerCase();
+    return "";
+  });
+
+  // archived:true / archived:only — reveal archived (inactive) people.
+  freeText = freeText.replace(/archived:(\w+)/gi, (_, v) => {
+    filters.archivedFilter = v.toLowerCase() === "only" ? "only" : "include";
     return "";
   });
 
@@ -283,6 +292,18 @@ export function getFollowupSearchSuggestions(
       insertText: "date added:>",
       helperText: "Members added after a date",
     },
+    {
+      id: "archived",
+      label: "archived:true",
+      insertText: "archived:true",
+      helperText: "Include archived (inactive) people",
+    },
+    {
+      id: "archived-only",
+      label: "archived:only",
+      insertText: "archived:only",
+      helperText: "Show only archived (inactive) people",
+    },
   ];
 
   let scoreSuggestions: FollowupSearchSuggestion[];
@@ -397,6 +418,9 @@ export function getFollowupQueryHelperText(
   }
   if (lower.includes("status:") || fragment.startsWith("status")) {
     return "Status filters: status:green, status:orange, status:red.";
+  }
+  if (lower.includes("archived:") || fragment.startsWith("archiv")) {
+    return "Archived people are hidden by default. Use archived:true to include them, or archived:only to see just archived people.";
   }
 
   const scoreNames = useSystemScores

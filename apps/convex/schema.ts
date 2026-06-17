@@ -2349,6 +2349,16 @@ export default defineSchema({
     isSnoozed: v.optional(v.boolean()),
     snoozedUntil: v.optional(v.number()),
 
+    // Active/archived state.
+    // `isActive === false` means the person is archived/inactive and is hidden
+    // from the people table by default. `undefined`/`true` = active.
+    // `archivedAt` records when they were last set inactive (manual or auto) and
+    // is used by the daily score job to detect app activity that occurred AFTER
+    // archiving (so a returning user is reactivated, but a manual archive otherwise
+    // sticks). See computePersonActiveState in communityScoreComputation.ts.
+    isActive: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()),
+
     // Custom field slots (5 text + 5 number + 5 boolean)
     customText1: v.optional(v.string()),
     customText2: v.optional(v.string()),

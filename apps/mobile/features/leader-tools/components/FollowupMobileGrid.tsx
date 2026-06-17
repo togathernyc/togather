@@ -421,7 +421,8 @@ export function FollowupMobileGrid({
     parsedQuery.scoreMax !== undefined ||
     parsedQuery.scoreMin !== undefined ||
     parsedQuery.excludedAssigneeFilters.length > 0 ||
-    !!parsedQuery.dateAddedFilter;
+    !!parsedQuery.dateAddedFilter ||
+    !!parsedQuery.archivedFilter;
   const searchSuggestions = useMemo(
     () => getFollowupSearchSuggestions(searchQuery, scoreConfig, true),
     [searchQuery, scoreConfig],
@@ -464,6 +465,8 @@ export function FollowupMobileGrid({
       filters.addedAtMin = dateRangeArgs.addedAtMin;
     if (dateRangeArgs.addedAtMax !== undefined)
       filters.addedAtMax = dateRangeArgs.addedAtMax;
+    if (parsedQuery.archivedFilter)
+      filters.archived = parsedQuery.archivedFilter;
     return filters;
   }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
@@ -504,6 +507,9 @@ export function FollowupMobileGrid({
           ...(enforcedAssigneeUserId
             ? { requireSelfAssignee: true as const }
             : {}),
+          ...(parsedQuery.archivedFilter
+            ? { archived: parsedQuery.archivedFilter }
+            : {}),
         }
       : "skip",
   );
@@ -518,7 +524,12 @@ export function FollowupMobileGrid({
   const totalCount = useAuthenticatedQuery(
     api.functions.communityPeople.count,
     groupId
-      ? { groupId: groupId as Id<"groups"> }
+      ? {
+          groupId: groupId as Id<"groups">,
+          ...(parsedQuery.archivedFilter
+            ? { archived: parsedQuery.archivedFilter }
+            : {}),
+        }
       : "skip",
   );
   const setAssigneeMut = useAuthenticatedMutation(

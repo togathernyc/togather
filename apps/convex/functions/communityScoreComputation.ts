@@ -47,6 +47,53 @@ const STAGGER_INTERVAL_MS = 3000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** A person is auto-archived after this long with no activity. */
+export const INACTIVITY_THRESHOLD_MS = 60 * DAY_MS;
+
+/**
+ * Decide a person's active/archived state during the daily score refresh.
+ *
+ * Rules (see the `isActive`/`archivedAt` fields in schema.ts):
+ * - A manual or automatic archive sticks. The daily job never resurrects an
+ *   archived person on its own.
+ * - The ONE thing that reactivates an archived person is opening the app again:
+ *   if `lastActiveAt` is newer than the moment they were archived, clear the flag.
+ *   (For records archived before `archivedAt` was tracked, fall back to "opened
+ *   the app within the inactivity window".)
+ * - An active person is auto-archived once they go quiet for the threshold.
+ *   Activity is measured by `lastActiveAt` (last app open). People who have never
+ *   opened the app have no `lastActiveAt`, so we fall back to `addedAt` (date added).
+ */
+export function computePersonActiveState(params: {
+  nowTs: number;
+  lastActiveAt?: number;
+  addedAt?: number;
+  currentIsActive?: boolean;
+  currentArchivedAt?: number;
+}): { isActive: boolean; archivedAt: number | undefined } {
+  const { nowTs, lastActiveAt, addedAt, currentIsActive, currentArchivedAt } =
+    params;
+
+  if (currentIsActive === false) {
+    // Archived. Only an app open that happened AFTER archiving brings them back.
+    const openedSinceArchive =
+      lastActiveAt != null &&
+      (currentArchivedAt != null
+        ? lastActiveAt > currentArchivedAt
+        : nowTs - lastActiveAt <= INACTIVITY_THRESHOLD_MS);
+    return openedSinceArchive
+      ? { isActive: true, archivedAt: undefined }
+      : { isActive: false, archivedAt: currentArchivedAt };
+  }
+
+  // Active (or brand new). Auto-archive once activity goes stale.
+  const activityTs = lastActiveAt ?? addedAt;
+  if (activityTs != null && nowTs - activityTs > INACTIVITY_THRESHOLD_MS) {
+    return { isActive: false, archivedAt: nowTs };
+  }
+  return { isActive: true, archivedAt: undefined };
+}
+
 // ============================================================================
 // Internal Queries
 // ============================================================================
@@ -532,7 +579,19 @@ export const upsertCommunityPeopleBatch = internalMutation({
         // Patch preserves custom fields, status, assigneeIds, connectionPoint (not in scoreDoc)
         // Keep assigneeId in sync with assigneeIds for indexing
         const assigneeId = (existing as any).assigneeIds?.[0];
-        await ctx.db.patch(existing._id, { ...scoreDoc, assigneeId });
+        const activeState = computePersonActiveState({
+          nowTs,
+          lastActiveAt: member.lastActiveAt,
+          addedAt: member.addedAt,
+          currentIsActive: (existing as any).isActive,
+          currentArchivedAt: (existing as any).archivedAt,
+        });
+        await ctx.db.patch(existing._id, {
+          ...scoreDoc,
+          assigneeId,
+          isActive: activeState.isActive,
+          archivedAt: activeState.archivedAt,
+        });
       } else {
         // Check if user has a record in another group — copy leader-set fields
         const siblingRecord = await ctx.db
@@ -543,8 +602,25 @@ export const upsertCommunityPeopleBatch = internalMutation({
           .first();
 
         const siblingAssigneeId = (siblingRecord as any)?.assigneeIds?.[0];
+        // Inherit archive state from a sibling record (archiving applies to the
+        // person across all their groups); otherwise derive it from activity.
+        const activeState =
+          siblingRecord && (siblingRecord as any).isActive === false
+            ? {
+                isActive: false,
+                archivedAt: (siblingRecord as any).archivedAt ?? nowTs,
+              }
+            : computePersonActiveState({
+                nowTs,
+                lastActiveAt: member.lastActiveAt,
+                addedAt: member.addedAt,
+                currentIsActive: (siblingRecord as any)?.isActive,
+                currentArchivedAt: (siblingRecord as any)?.archivedAt,
+              });
         const cpId = await ctx.db.insert("communityPeople", {
           ...scoreDoc,
+          isActive: activeState.isActive,
+          archivedAt: activeState.archivedAt,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,
