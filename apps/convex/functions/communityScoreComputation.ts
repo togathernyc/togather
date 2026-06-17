@@ -50,44 +50,59 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** A person is auto-archived after this long with no activity. */
 export const INACTIVITY_THRESHOLD_MS = 60 * DAY_MS;
 
+/** Largest of the given timestamps, ignoring undefined. */
+export function mostRecentTimestamp(
+  ...timestamps: Array<number | undefined>
+): number | undefined {
+  let max: number | undefined;
+  for (const ts of timestamps) {
+    if (ts != null && (max == null || ts > max)) max = ts;
+  }
+  return max;
+}
+
 /**
  * Decide a person's active/archived state during the daily score refresh.
+ *
+ * `lastActivityTs` is the most recent of a person's real activity signals —
+ * opening the app, attending a meeting, or serving (see the call site). Leader
+ * actions (followups) are NOT counted; this is the person's own engagement.
  *
  * Rules (see the `isActive`/`archivedAt` fields in schema.ts):
  * - A manual or automatic archive sticks. The daily job never resurrects an
  *   archived person on its own.
- * - The ONE thing that reactivates an archived person is opening the app again:
- *   if `lastActiveAt` is newer than the moment they were archived, clear the flag.
- *   (For records archived before `archivedAt` was tracked, fall back to "opened
- *   the app within the inactivity window".)
+ * - The ONE thing that reactivates an archived person is fresh activity after
+ *   the archive: if `lastActivityTs` is newer than the moment they were archived,
+ *   clear the flag. (For records archived before `archivedAt` was tracked, fall
+ *   back to "active within the inactivity window".)
  * - An active person is auto-archived once they go quiet for the threshold.
- *   Activity is measured by `lastActiveAt` (last app open). People who have never
- *   opened the app have no `lastActiveAt`, so we fall back to `addedAt` (date added).
+ *   People with no recorded activity have no `lastActivityTs`, so we fall back to
+ *   `addedAt` (date added).
  */
 export function computePersonActiveState(params: {
   nowTs: number;
-  lastActiveAt?: number;
+  lastActivityTs?: number;
   addedAt?: number;
   currentIsActive?: boolean;
   currentArchivedAt?: number;
 }): { isActive: boolean; archivedAt: number | undefined } {
-  const { nowTs, lastActiveAt, addedAt, currentIsActive, currentArchivedAt } =
+  const { nowTs, lastActivityTs, addedAt, currentIsActive, currentArchivedAt } =
     params;
 
   if (currentIsActive === false) {
-    // Archived. Only an app open that happened AFTER archiving brings them back.
-    const openedSinceArchive =
-      lastActiveAt != null &&
+    // Archived. Only activity that happened AFTER archiving brings them back.
+    const activeSinceArchive =
+      lastActivityTs != null &&
       (currentArchivedAt != null
-        ? lastActiveAt > currentArchivedAt
-        : nowTs - lastActiveAt <= INACTIVITY_THRESHOLD_MS);
-    return openedSinceArchive
+        ? lastActivityTs > currentArchivedAt
+        : nowTs - lastActivityTs <= INACTIVITY_THRESHOLD_MS);
+    return activeSinceArchive
       ? { isActive: true, archivedAt: undefined }
       : { isActive: false, archivedAt: currentArchivedAt };
   }
 
   // Active (or brand new). Auto-archive once activity goes stale.
-  const activityTs = lastActiveAt ?? addedAt;
+  const activityTs = lastActivityTs ?? addedAt;
   if (activityTs != null && nowTs - activityTs > INACTIVITY_THRESHOLD_MS) {
     return { isActive: false, archivedAt: nowTs };
   }
@@ -246,6 +261,19 @@ export const computeCommunityScoresBatch = internalQuery({
       for (const { userId, count } of announcementGroup.pcoServingCounts
         .counts) {
         pcoServingMap.set(userId.toString(), count);
+      }
+    }
+
+    // Most recent serving date per user (counts as activity for archiving).
+    const pcoLastServedMap = new Map<string, number>();
+    if (announcementGroup?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of announcementGroup.pcoServingCounts
+        .servingDetails) {
+        const ts = Date.parse(date);
+        if (!Number.isFinite(ts)) continue;
+        const key = userId.toString();
+        const prev = pcoLastServedMap.get(key);
+        if (prev == null || ts > prev) pcoLastServedMap.set(key, ts);
       }
     }
 
@@ -458,6 +486,28 @@ export const computeCommunityScoresBatch = internalQuery({
         // PCO serving count
         const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
 
+        // Serving activity = most recent of PCO serving and native rostering
+        // (roleAssignments). A non-declined assignment means the person is
+        // rostered to serve, which counts as activity for archiving. Not
+        // community-scoped: serving anywhere keeps the person active, and this
+        // only ever prevents archiving (never hides someone), so it's safe.
+        const rosterAssignments = await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_user", (q) => q.eq("userId", member.userId))
+          .order("desc")
+          .take(50);
+        let lastRosteredAt: number | undefined;
+        for (const a of rosterAssignments) {
+          if (a.status === "declined") continue;
+          if (lastRosteredAt == null || a.eventDate > lastRosteredAt) {
+            lastRosteredAt = a.eventDate;
+          }
+        }
+        const lastServedAt = mostRecentTimestamp(
+          pcoLastServedMap.get(member.userId.toString()),
+          lastRosteredAt,
+        );
+
         // Extract system raw values
         const rawValues = extractSystemRawValues({
           crossGroupAttendancePct: crossGroupPct,
@@ -506,6 +556,7 @@ export const computeCommunityScoresBatch = internalQuery({
           lastFollowupAt: lastTouchAt,
           lastActiveAt: member.lastActiveAt,
           lastAttendedAt,
+          lastServedAt,
           addedAt: member.joinedAt,
           addedAtInv: Number.MAX_SAFE_INTEGER - member.joinedAt,
           latestNote,
@@ -581,7 +632,11 @@ export const upsertCommunityPeopleBatch = internalMutation({
         const assigneeId = (existing as any).assigneeIds?.[0];
         const activeState = computePersonActiveState({
           nowTs,
-          lastActiveAt: member.lastActiveAt,
+          lastActivityTs: mostRecentTimestamp(
+            member.lastActiveAt,
+            member.lastAttendedAt,
+            member.lastServedAt,
+          ),
           addedAt: member.addedAt,
           currentIsActive: (existing as any).isActive,
           currentArchivedAt: (existing as any).archivedAt,
@@ -612,7 +667,11 @@ export const upsertCommunityPeopleBatch = internalMutation({
               }
             : computePersonActiveState({
                 nowTs,
-                lastActiveAt: member.lastActiveAt,
+                lastActivityTs: mostRecentTimestamp(
+                  member.lastActiveAt,
+                  member.lastAttendedAt,
+                  member.lastServedAt,
+                ),
                 addedAt: member.addedAt,
                 currentIsActive: (siblingRecord as any)?.isActive,
                 currentArchivedAt: (siblingRecord as any)?.archivedAt,
