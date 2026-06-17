@@ -437,6 +437,29 @@ describe("ChannelsSection (redesigned)", () => {
       expect(queryByText("Archived")).toBeNull();
     });
 
+    it("folds a General channel hidden via isEnabled=false (not just isArchived)", () => {
+      // Regression: a disabled General (isEnabled: false, isArchived: false)
+      // must read as Disabled and fold under Archived, not show as active
+      // "All members".
+      mockChannelsData = [
+        { ...mockMainChannel, isEnabled: false, isArchived: false },
+        mockLeadersChannel,
+      ];
+
+      const { getByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(queryByText("All members")).toBeNull();
+      expect(getByText("Archived")).toBeTruthy();
+
+      act(() => {
+        fireEvent.press(getByText("Archived").parent!.parent!);
+      });
+
+      expect(getByText("General")).toBeTruthy();
+    });
+
     it("does not show an Archived toggle to members (they never receive disabled channels)", () => {
       // Members are filtered to enabled channels before rows are built, so
       // there is nothing to fold and no toggle appears.

@@ -112,9 +112,16 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
-  const leadersEnabled = !!leadersChannel && !leadersChannel.isArchived;
-  const mainEnabled = !!mainChannel && !mainChannel.isArchived;
-  const reachOutEnabled = !!reachOutChannel && !reachOutChannel.isArchived;
+  // A channel is inactive if it's archived OR a leader hid it (isEnabled ===
+  // false) — the backend active-state checks treat either flag as inactive,
+  // so both must fold under Archived and read as "Disabled". Undefined
+  // isEnabled means enabled (memberships intact).
+  const leadersEnabled =
+    !!leadersChannel && !leadersChannel.isArchived && leadersChannel.isEnabled !== false;
+  const mainEnabled =
+    !!mainChannel && !mainChannel.isArchived && mainChannel.isEnabled !== false;
+  const reachOutEnabled =
+    !!reachOutChannel && !reachOutChannel.isArchived && reachOutChannel.isEnabled !== false;
   const announcementsEnabled =
     !!announcementsChannel &&
     !announcementsChannel.isArchived &&
