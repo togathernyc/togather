@@ -882,6 +882,86 @@ http.route({
   }),
 });
 
+/**
+ * GET /api/v1/attendance/summary
+ *
+ * A lighter, rolled-up companion to /api/v1/attendance: returns one row per
+ * (group, calendar day) with summed attendance/guest/RSVP counts instead of one
+ * row per event. Dates are bucketed in the community's time zone. No personal
+ * information is exposed.
+ *
+ * Auth and `since`/`until`/`groupType`/`status` filters match /api/v1/attendance.
+ * There is no `limit` — response size is bounded by the date window and the
+ * number of groups; `truncated: true` means the internal scan cap was hit
+ * (narrow the window for complete buckets).
+ */
+http.route({
+  path: "/api/v1/attendance/summary",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const apiKey = extractApiKey(request);
+    if (!apiKey) {
+      return apiJsonResponse(
+        { error: "Missing API key. Provide an Authorization: Bearer <key> header." },
+        401
+      );
+    }
+
+    const keyHash = await hashApiKey(apiKey);
+    const verified = await ctx.runMutation(internal.functions.publicApi.verifyApiKey, {
+      keyHash,
+    });
+    if (!verified) {
+      return apiJsonResponse({ error: "Invalid or revoked API key" }, 401);
+    }
+
+    const url = new URL(request.url);
+
+    const since = parseTimestampParam(url.searchParams.get("since"));
+    if (since === null) {
+      return apiJsonResponse({ error: "Invalid 'since' parameter" }, 400);
+    }
+    const until = parseTimestampParam(url.searchParams.get("until"));
+    if (until === null) {
+      return apiJsonResponse({ error: "Invalid 'until' parameter" }, 400);
+    }
+
+    const status = url.searchParams.get("status") || undefined;
+    if (status && !VALID_MEETING_STATUSES.includes(status)) {
+      return apiJsonResponse(
+        { error: `Invalid 'status'. Must be one of: ${VALID_MEETING_STATUSES.join(", ")}` },
+        400
+      );
+    }
+
+    try {
+      const data = await ctx.runQuery(
+        internal.functions.publicApi.getCommunityAttendanceSummary,
+        {
+          communityId: verified.communityId,
+          since: since ?? undefined,
+          until: until ?? undefined,
+          groupTypeSlug: url.searchParams.get("groupType") || undefined,
+          status,
+        }
+      );
+      return apiJsonResponse(data);
+    } catch (error) {
+      console.error("[AttendanceAPI] Error building attendance summary:", error);
+      return apiJsonResponse({ error: "Failed to fetch attendance summary" }, 500);
+    }
+  }),
+});
+
+// Handle CORS preflight for /api/v1/attendance/summary
+http.route({
+  path: "/api/v1/attendance/summary",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: apiCorsHeaders });
+  }),
+});
+
 // ============================================================================
 // Health Check
 // ============================================================================

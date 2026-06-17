@@ -188,8 +188,51 @@ export function Developers() {
           />
         </Section>
 
-        <Section title="5. What's possible">
+        <Section title="5. Summary endpoint (rolled up)">
+          <P>
+            For dashboards that only need totals, <Code>/summary</Code> returns
+            one row per group <em>per calendar day</em> instead of one row per
+            event &mdash; smaller responses, no client-side aggregation.
+          </P>
+          <CodeBlock>{`GET https://<your-deployment>.convex.site/api/v1/attendance/summary`}</CodeBlock>
+          <P>
+            Same auth and <Code>since</Code>/<Code>until</Code>/
+            <Code>groupType</Code>/<Code>status</Code> filters as above. There is
+            no <Code>limit</Code> &mdash; response size is bounded by the date
+            window and the number of groups.
+          </P>
+          <CodeBlock>{`{
+  "community": { "id": "...", "name": "Fount", "subdomain": "fount" },
+  "generatedAt": "2026-06-16T14:22:13.000Z",
+  "timezone": "America/New_York",
+  "bucket": "day",
+  "truncated": false,
+  "summary": [
+    {
+      "groupId": "...",
+      "groupName": "Tuesday Dinner",
+      "groupType": "Dinner Parties",
+      "groupTypeSlug": "dinner-parties",
+      "date": "2026-06-10",
+      "events": 2,
+      "attended": 23,
+      "guests": 5,
+      "rsvps": { "going": 27, "notGoing": 2, "maybe": 3, "guestsExpected": 8 }
+    }
+  ]
+}`}</CodeBlock>
+          <Callout>
+            Days are bucketed in the community&rsquo;s time zone (echoed in the{" "}
+            <Code>timezone</Code> field), so an evening event lands on its local
+            date. Rows are newest-day-first. <Code>truncated: true</Code> means
+            the internal scan cap was hit before the window was exhausted &mdash;
+            narrow <Code>since</Code>/<Code>until</Code> for complete buckets.
+          </Callout>
+        </Section>
+
+        <Section title="6. What's possible">
           <ul className="list-disc pl-6 text-neutral-600 space-y-1">
+            <li>Get a lightweight per-group, per-day rollup from <Code>/summary</Code> for dashboards and charts.</li>
             <li>Pull attendance, guest, and RSVP counts for every event in the community.</li>
             <li>Filter by date range, group type, and event status.</li>
             <li>Build dashboards and charts of attendance over time (e.g. dinner-party turnout per week).</li>
@@ -198,7 +241,7 @@ export function Developers() {
           </ul>
         </Section>
 
-        <Section title="6. What's not possible">
+        <Section title="7. What's not possible">
           <ul className="list-disc pl-6 text-neutral-600 space-y-1">
             <li>
               <Strong>No personal data.</Strong> You cannot retrieve who attended
@@ -227,7 +270,7 @@ export function Developers() {
           </ul>
         </Section>
 
-        <Section title="7. Errors">
+        <Section title="8. Errors">
           <Table
             headers={["Status", "Meaning"]}
             rows={[
@@ -239,7 +282,7 @@ export function Developers() {
           <P>All errors return a JSON body of the form <Code>{`{ "error": "..." }`}</Code>.</P>
         </Section>
 
-        <Section title="8. Example integration">
+        <Section title="9. Example integration">
           <P>Fetch completed dinner-party events since the start of the year:</P>
           <CodeBlock>{`curl -H "Authorization: Bearer $TOGATHER_API_KEY" \\
   "https://<deployment>.convex.site/api/v1/attendance?groupType=dinner-parties&status=completed&since=2026-01-01"`}</CodeBlock>
@@ -287,7 +330,7 @@ async function refreshWindow(daysBack = 90) {
             <li>Timestamps in responses are ISO 8601 UTC strings; request filters accept ISO strings or Unix milliseconds.</li>
             <li><Code>since</Code>/<Code>until</Code> filter on each event&rsquo;s scheduled date, not on when attendance was recorded. There is no &ldquo;updated since&rdquo; change cursor &mdash; to capture late attendance edits, re-pull a trailing date window rather than advancing a cursor.</li>
             <li>Treat the response as additive &mdash; new fields may appear over time; do not assume a fixed key set.</li>
-            <li>There is exactly one resource; pagination is by date range, not cursors or offsets.</li>
+            <li>Two read endpoints: <Code>/api/v1/attendance</Code> (one row per event) and <Code>/api/v1/attendance/summary</Code> (one row per group per day). Pagination is by date range, not cursors or offsets.</li>
           </ul>
         </Section>
 

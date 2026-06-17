@@ -98,6 +98,45 @@ Field notes:
 - `guests` — number of guest (non-member) records logged for the event.
 - `rsvps.guestsExpected` — sum of plus-ones declared by "going" RSVPs.
 
+## Summary endpoint (rolled up)
+
+```
+GET https://<deployment>.convex.site/api/v1/attendance/summary
+```
+
+A lighter companion to `/api/v1/attendance`: returns one row per group **per
+calendar day** with summed counts instead of one row per event — for dashboards
+that don't need event-level detail. Same auth and
+`since`/`until`/`groupType`/`status` filters; no `limit`.
+
+Days are bucketed in the community's time zone (echoed in `timezone`, falling
+back to `UTC`), so an evening event lands on its local date. Rows are
+newest-day-first. `truncated: true` means the internal scan cap was hit before
+the window was exhausted — narrow `since`/`until` for complete buckets.
+
+```json
+{
+  "community": { "id": "...", "name": "Fount", "subdomain": "fount" },
+  "generatedAt": "2026-06-16T14:22:13.000Z",
+  "timezone": "America/New_York",
+  "bucket": "day",
+  "truncated": false,
+  "summary": [
+    {
+      "groupId": "...",
+      "groupName": "Tuesday Dinner",
+      "groupType": "Dinner Parties",
+      "groupTypeSlug": "dinner-parties",
+      "date": "2026-06-10",
+      "events": 2,
+      "attended": 23,
+      "guests": 5,
+      "rsvps": { "going": 27, "notGoing": 2, "maybe": 3, "guestsExpected": 8 }
+    }
+  ]
+}
+```
+
 ## Errors
 
 | Status | Meaning                                              |
@@ -108,8 +147,8 @@ Field notes:
 
 ## Implementation
 
-- Route + auth: `apps/convex/http.ts` (`GET /api/v1/attendance`)
-- Key verification + aggregation: `apps/convex/functions/publicApi.ts`
+- Routes + auth: `apps/convex/http.ts` (`GET /api/v1/attendance`, `GET /api/v1/attendance/summary`)
+- Key verification + aggregation/rollup: `apps/convex/functions/publicApi.ts`
 - Key management (admin): `apps/convex/functions/admin/apiKeys.ts`
 - Key generation/hashing: `apps/convex/lib/apiKeys.ts`
 - Schema: `apiKeys` table in `apps/convex/schema.ts`
