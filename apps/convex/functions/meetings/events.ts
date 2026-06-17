@@ -549,6 +549,12 @@ export function isVisible(
   const visibility = m.visibility || "group";
   if (visibility === "public") return true;
   if (visibility === "community") return userId !== null && isCommunityMember;
+  if (visibility === "groups") {
+    // Visible to members of the hosting group OR any of the explicitly
+    // shared-with groups.
+    if (userGroupIds.has(m.groupId)) return true;
+    return (m.visibleGroupIds ?? []).some((id) => userGroupIds.has(id));
+  }
   return userGroupIds.has(m.groupId);
 }
 

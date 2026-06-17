@@ -217,6 +217,11 @@ export const communityEvents = query({
         // User must be authenticated AND a member of this community
         return userId !== null && userCommunityIds.has(args.communityId);
       }
+      if (visibility === "groups") {
+        // Hosting group members, or members of any explicitly shared-with group.
+        if (userGroupIds.has(m.groupId)) return true;
+        return (m.visibleGroupIds ?? []).some((id) => userGroupIds.has(id));
+      }
       if (visibility === "group") {
         return userGroupIds.has(m.groupId);
       }
@@ -604,6 +609,10 @@ export const searchEvents = query({
       const visibility = meeting.visibility ?? "group";
       if (visibility === "public") return true;
       if (visibility === "community") return isCommunityMember;
+      if (visibility === "groups") {
+        if (userGroupIds.has(meeting.groupId)) return true;
+        return (meeting.visibleGroupIds ?? []).some((id) => userGroupIds.has(id));
+      }
       // Default "group" visibility: must be member
       return userGroupIds.has(meeting.groupId);
     });
