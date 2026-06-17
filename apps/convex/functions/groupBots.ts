@@ -140,7 +140,7 @@ const botDefinitions: Record<string, BotDefinition> = {
   "task-reminder": {
     id: "task-reminder",
     name: "Task Reminder Bot",
-    description: "Sends daily reminders to role-assigned members",
+    description: "Sends weekly or monthly reminders to role-assigned members",
     icon: "📋",
     triggerType: "cron",
     customConfigUI: true,
@@ -155,6 +155,10 @@ const botDefinitions: Record<string, BotDefinition> = {
         saturday: [],
         sunday: [],
       },
+      // "weekly" fires the schedule every week; "monthly" fires it only on
+      // the configured weekday occurrence (weekOfMonth) each month.
+      frequency: "weekly",
+      weekOfMonth: 1,
       deliveryMode: "task_and_channel_post",
       targetChannelSlugs: [],
     },
@@ -226,9 +230,25 @@ function normalizeTaskReminderConfig(rawConfig: Record<string, unknown>) {
       ? [rawConfig.targetChannelSlug]
       : [];
 
+  const frequency = rawConfig.frequency === "monthly" ? "monthly" : "weekly";
+  const rawWeekOfMonth = rawConfig.weekOfMonth;
+  // Accept the 1st–4th occurrence or "last". We deliberately omit a "5th"
+  // option: a 5th occurrence exists in only some months, so "last" is the
+  // intuitive (and UI-exposed) way to target the final occurrence.
+  const weekOfMonth =
+    rawWeekOfMonth === "last"
+      ? "last"
+      : typeof rawWeekOfMonth === "number" &&
+          rawWeekOfMonth >= 1 &&
+          rawWeekOfMonth <= 4
+        ? rawWeekOfMonth
+        : 1;
+
   return {
     roles: Array.isArray(rawConfig.roles) ? rawConfig.roles : [],
     schedule,
+    frequency,
+    weekOfMonth,
     deliveryMode,
     targetChannelSlugs: [...new Set([...channelSlugsFromArray, ...channelSlugsFromLegacy])],
   };
