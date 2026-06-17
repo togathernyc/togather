@@ -2341,6 +2341,9 @@ export default defineSchema({
     lastFollowupAt: v.optional(v.number()),
     lastActiveAt: v.optional(v.number()),
     lastAttendedAt: v.optional(v.number()),
+    // Most recent serving date (PCO + native rostering). Persisted so the
+    // per-group fan-out can carry serving activity into the archive computation.
+    lastServedAt: v.optional(v.number()),
     addedAt: v.optional(v.number()),
     latestNote: v.optional(v.string()),
     latestNoteAt: v.optional(v.number()),
@@ -2351,6 +2354,16 @@ export default defineSchema({
     // Snooze
     isSnoozed: v.optional(v.boolean()),
     snoozedUntil: v.optional(v.number()),
+
+    // Active/archived state.
+    // `isActive === false` means the person is archived/inactive and is hidden
+    // from the people table by default. `undefined`/`true` = active.
+    // `archivedAt` records when they were last set inactive (manual or auto) and
+    // is used by the daily score job to detect app activity that occurred AFTER
+    // archiving (so a returning user is reactivated, but a manual archive otherwise
+    // sticks). See computePersonActiveState in communityScoreComputation.ts.
+    isActive: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()),
 
     // Custom field slots (5 text + 5 number + 5 boolean)
     customText1: v.optional(v.string()),
@@ -2645,6 +2658,8 @@ export default defineSchema({
     .index("by_plan", ["planId"])
     .index("by_user", ["userId"])
     .index("by_user_status", ["userId", "status"])
+    // Most-recent serving lookup for archive activity (ordered by event date).
+    .index("by_user_eventDate", ["userId", "eventDate"])
     .index("by_plan_role", ["planId", "roleId"])
     .index("by_role", ["roleId"]) // powers "previously filled by"
     // powers team auto-sync: desired members of a team within a rotation

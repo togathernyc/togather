@@ -278,6 +278,10 @@ export function FollowupDetailContent({
   const convertFollowupTypeMut = useAuthenticatedMutation(
     api.functions.communityPeople.convertFollowupType,
   );
+  const setActiveMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setActive,
+  );
+  const [isTogglingArchive, setIsTogglingArchive] = useState(false);
 
   // Confirmation hook — logs action only after user confirms they completed it
   const { setPendingAction } = useContactConfirmation({
@@ -389,6 +393,47 @@ export function FollowupDetailContent({
     if (!communityPeopleId) return;
     setQuickActionNote("");
     setQuickActionType("followed_up");
+  };
+
+  // Archive (set inactive) hides someone from the people table by default;
+  // unarchive brings them back. Archiving applies across all their groups.
+  const isArchived = historyData?.member?.isActive === false;
+  const handleToggleArchive = () => {
+    if (!communityPeopleId || isTogglingArchive) return;
+    const nextActive = isArchived;
+    const memberName =
+      `${historyData?.member?.firstName ?? ""} ${historyData?.member?.lastName ?? ""}`.trim() ||
+      "this person";
+    Alert.alert(
+      nextActive ? "Unarchive person" : "Archive person",
+      nextActive
+        ? `Bring ${memberName} back into the people table?`
+        : `Archive ${memberName}? They'll be hidden from the people table until they open the app again or you unarchive them.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: nextActive ? "Unarchive" : "Archive",
+          style: nextActive ? "default" : "destructive",
+          onPress: async () => {
+            setIsTogglingArchive(true);
+            try {
+              await setActiveMut({
+                communityPeopleId,
+                isActive: nextActive,
+              });
+            } catch (err: any) {
+              Alert.alert(
+                "Error",
+                err?.message ||
+                  `Failed to ${nextActive ? "unarchive" : "archive"} ${memberName}`,
+              );
+            } finally {
+              setIsTogglingArchive(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleSubmitQuickAction = async () => {
@@ -903,6 +948,21 @@ export function FollowupDetailContent({
             >
               <Ionicons name="time-outline" size={24} color={colors.warning} />
               <Text style={[styles.quickActionText, { color: colors.text }]}>Log past</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={handleToggleArchive}
+              disabled={isTogglingArchive}
+            >
+              <Ionicons
+                name={isArchived ? "archive" : "archive-outline"}
+                size={24}
+                color={isArchived ? colors.success : colors.iconSecondary}
+              />
+              <Text style={[styles.quickActionText, { color: colors.text }]}>
+                {isArchived ? "Unarchive" : "Archive"}
+              </Text>
             </TouchableOpacity>
 
             {/*

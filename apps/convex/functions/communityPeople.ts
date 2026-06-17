@@ -175,6 +175,31 @@ const INDEX_MAP: Record<string, string> = {
 };
 
 // ============================================================================
+// Archived filtering
+// ============================================================================
+
+/**
+ * Controls whether archived (inactive) people appear in a listing:
+ * - omitted  → exclude archived (default; the people table hides them)
+ * - "include" → show active and archived together
+ * - "only"    → show only archived people
+ *
+ * A person is archived when `isActive === false`.
+ */
+export const archivedFilterValidator = v.optional(
+  v.union(v.literal("include"), v.literal("only")),
+);
+
+type ArchivedFilter = "include" | "only" | undefined;
+
+/** In-memory predicate matching the archived filter for a person record. */
+function matchesArchivedFilter(doc: any, archived: ArchivedFilter): boolean {
+  if (archived === "include") return true;
+  if (archived === "only") return doc.isActive === false;
+  return doc.isActive !== false; // default: exclude archived
+}
+
+// ============================================================================
 // Queries
 // ============================================================================
 
@@ -197,6 +222,7 @@ export const list = query({
     assigneeFilter: v.optional(v.string()),
     // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
     requireSelfAssignee: v.optional(v.boolean()),
+    archived: archivedFilterValidator,
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -248,11 +274,16 @@ export const list = query({
       | "score1"
       | "score2"
       | "score3";
+    // Archived people are hidden unless the caller opts in.
+    const excludeArchived = args.archived === undefined;
+    const onlyArchived = args.archived === "only";
     const hasFilters =
       args.statusFilter ||
       assigneeFilter ||
       args.scoreMax !== undefined ||
-      args.scoreMin !== undefined;
+      args.scoreMin !== undefined ||
+      excludeArchived ||
+      onlyArchived;
 
     if (hasFilters) {
       q = q.filter((fq) => {
@@ -265,6 +296,11 @@ export const list = query({
         }
         if (args.scoreMin !== undefined) {
           conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        }
+        if (excludeArchived) {
+          conds.push(fq.neq(fq.field("isActive"), false));
+        } else if (onlyArchived) {
+          conds.push(fq.eq(fq.field("isActive"), false));
         }
         if (conds.length === 0) return true;
         return conds.length === 1
@@ -291,6 +327,7 @@ export const list = query({
 
       // Apply status/score filters (same logic as the .filter() branch above)
       const filtered = validDocs.filter((d) => {
+        if (!matchesArchivedFilter(d, args.archived)) return false;
         if (args.statusFilter && d.status !== args.statusFilter) return false;
         if (
           args.scoreMax !== undefined &&
@@ -378,6 +415,7 @@ const csvExportArgs = {
   scoreMax: v.optional(v.number()),
   assigneeFilter: v.optional(v.string()),
   requireSelfAssignee: v.optional(v.boolean()),
+  archived: archivedFilterValidator,
 };
 
 /**
@@ -425,6 +463,7 @@ export const _csvExportPage = internalQuery({
       );
 
       const filtered = validDocs.filter((d) => {
+        if (!matchesArchivedFilter(d, args.archived)) return false;
         if (args.statusFilter && d.status !== args.statusFilter) return false;
         if (
           args.scoreMax !== undefined &&
@@ -471,10 +510,14 @@ export const _csvExportPage = internalQuery({
       .withIndex(indexName as any, (fq: any) => fq.eq("groupId", args.groupId))
       .order(direction);
 
+    const excludeArchived = args.archived === undefined;
+    const onlyArchived = args.archived === "only";
     const hasFilters =
       args.statusFilter ||
       args.scoreMax !== undefined ||
-      args.scoreMin !== undefined;
+      args.scoreMin !== undefined ||
+      excludeArchived ||
+      onlyArchived;
 
     if (hasFilters) {
       q = q.filter((fq) => {
@@ -487,6 +530,11 @@ export const _csvExportPage = internalQuery({
         }
         if (args.scoreMin !== undefined) {
           conds.push(fq.gt(fq.field(scoreFilterField), args.scoreMin));
+        }
+        if (excludeArchived) {
+          conds.push(fq.neq(fq.field("isActive"), false));
+        } else if (onlyArchived) {
+          conds.push(fq.eq(fq.field("isActive"), false));
         }
         if (conds.length === 0) return true;
         return conds.length === 1
@@ -543,6 +591,7 @@ export const listAllForCsvExport = action({
           scoreMin: args.scoreMin,
           scoreMax: args.scoreMax,
           assigneeFilter: resolvedAssignee,
+          archived: args.archived,
           userId,
           skip,
         },
@@ -576,6 +625,7 @@ export const listAllForCsvExport = action({
           scoreMin: args.scoreMin,
           scoreMax: args.scoreMax,
           assigneeFilter: resolvedAssignee,
+          archived: args.archived,
           userId,
           skip,
         },
@@ -802,6 +852,7 @@ export const search = query({
     addedAtMax: v.optional(v.number()),
     // When true, forces assigneeFilter to the requesting user's ID (server-enforced)
     requireSelfAssignee: v.optional(v.boolean()),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -910,6 +961,10 @@ export const search = query({
           !excludedIdSets.some((set) => set.has(doc._id.toString())),
       );
     }
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((doc: any) =>
+      matchesArchivedFilter(doc, args.archived),
+    );
 
     const sliced = filtered.slice(0, 200);
     return leaderUserIds
@@ -960,6 +1015,8 @@ export const listForMap = query({
       .order("desc")) {
       if (!record.zipCode) break;
       if (results.length >= MAX_RESULTS) break;
+      // Archived people are hidden from the map.
+      if (record.isActive === false) continue;
       results.push({
         _id: record._id,
         firstName: record.firstName ?? "",
@@ -1019,6 +1076,7 @@ export const listAssignedToMe = query({
     addedAtMin: v.optional(v.number()),
     addedAtMax: v.optional(v.number()),
     groupFilter: v.optional(v.id("groups")),
+    archived: archivedFilterValidator,
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
@@ -1059,6 +1117,10 @@ export const listAssignedToMe = query({
           : leaderGroupIdSet.has(doc.groupId.toString())),
     );
 
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((d: any) =>
+      matchesArchivedFilter(d, args.archived),
+    );
     if (args.statusFilter)
       filtered = filtered.filter((d: any) => d.status === args.statusFilter);
     if (args.excludedAssigneeFilters?.length)
@@ -1141,6 +1203,7 @@ export const searchAssignedToMe = query({
     addedAtMin: v.optional(v.number()),
     addedAtMax: v.optional(v.number()),
     groupFilter: v.optional(v.id("groups")),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -1223,6 +1286,10 @@ export const searchAssignedToMe = query({
             args.excludedAssigneeFilters!.includes(id),
           ),
       );
+    // Archived people are hidden unless the caller opts in.
+    filtered = filtered.filter((d: any) =>
+      matchesArchivedFilter(d, args.archived),
+    );
 
     const groupNameCache = new Map<string, string>();
     return Promise.all(
@@ -1481,6 +1548,46 @@ export const setStatus = mutation({
 });
 
 /**
+ * Archive (set inactive) or unarchive (reactivate) a community person.
+ *
+ * Archived people are hidden from the people table by default. A manual archive
+ * sticks — the daily score job won't resurrect it — until the person opens the
+ * app again, at which point they're reactivated. `archivedAt` records when the
+ * archive happened so the job can detect a later app open.
+ */
+export const setActive = mutation({
+  args: {
+    token: v.string(),
+    communityPeopleId: v.id("communityPeople"),
+    isActive: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const cpRecord = await ctx.db.get(args.communityPeopleId);
+    if (!cpRecord) {
+      throw new ConvexError("Community person record not found");
+    }
+
+    await requireCommunityLeader(ctx, cpRecord.communityId, userId);
+
+    const patchFields = {
+      isActive: args.isActive,
+      archivedAt: args.isActive ? undefined : Date.now(),
+    };
+    await ctx.db.patch(args.communityPeopleId, {
+      ...patchFields,
+      updatedAt: Date.now(),
+    });
+
+    // Archiving applies to the person across all their groups in the community.
+    await syncToSiblingRecords(ctx, cpRecord, patchFields);
+
+    return { success: true };
+  },
+});
+
+/**
  * Set or clear the zipCode on a community person.
  * Syncs the value to sibling communityPeople records and to the users table.
  */
@@ -1632,6 +1739,7 @@ export const count = query({
   args: {
     groupId: v.id("groups"),
     token: v.optional(v.string()),
+    archived: archivedFilterValidator,
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token ?? "");
@@ -1642,9 +1750,11 @@ export const count = query({
     await requireCommunityMember(ctx, group.communityId, userId);
 
     let count = 0;
-    for await (const _cp of ctx.db
+    for await (const cp of ctx.db
       .query("communityPeople")
       .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))) {
+      // Match the listing's default: archived people aren't counted unless opted in.
+      if (!matchesArchivedFilter(cp, args.archived)) continue;
       count++;
     }
     return count;
@@ -1955,6 +2065,7 @@ export const history = query({
         phone: u.phone || cpRecord.phone,
         profileImage,
         joinedAt: cpRecord.addedAt,
+        isActive: cpRecord.isActive !== false,
       },
       attendanceHistory:
         crossGroupAttendance.length > 0

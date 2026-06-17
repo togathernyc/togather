@@ -505,7 +505,8 @@ export function FollowupDesktopTable({
     parsedQuery.scoreMin !== undefined ||
     parsedQuery.scoreMax !== undefined ||
     parsedQuery.excludedAssigneeFilters.length > 0 ||
-    !!parsedQuery.dateAddedFilter;
+    !!parsedQuery.dateAddedFilter ||
+    !!parsedQuery.archivedFilter;
   const searchSuggestions = useMemo(
     () => getFollowupSearchSuggestions(searchQuery, scoreConfig),
     [searchQuery, scoreConfig],
@@ -786,6 +787,7 @@ export function FollowupDesktopTable({
       args.scoreMax = parsedQuery.scoreMax;
     if (parsedQuery.scoreMin !== undefined)
       args.scoreMin = parsedQuery.scoreMin;
+    if (parsedQuery.archivedFilter) args.archived = parsedQuery.archivedFilter;
     return args;
   }, [parsedQuery, effectiveAssigneeFilter, enforcedAssigneeUserId]);
 
@@ -841,16 +843,24 @@ export function FollowupDesktopTable({
           ...(parsedQuery.scoreMin !== undefined
             ? { scoreMin: parsedQuery.scoreMin }
             : {}),
+          ...(parsedQuery.archivedFilter
+            ? { archived: parsedQuery.archivedFilter }
+            : {}),
           ...getDateAddedRangeArgs(parsedQuery.dateAddedFilter),
         }
       : "skip",
   );
 
-  // Total member count
+  // Total member count (matches the listing's archived visibility)
   const totalCount = useAuthenticatedQuery(
     api.functions.communityPeople.count,
     groupId
-      ? { groupId: groupId as Id<"groups"> }
+      ? {
+          groupId: groupId as Id<"groups">,
+          ...(parsedQuery.archivedFilter
+            ? { archived: parsedQuery.archivedFilter }
+            : {}),
+        }
       : "skip",
   );
 
