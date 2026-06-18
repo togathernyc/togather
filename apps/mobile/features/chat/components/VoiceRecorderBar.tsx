@@ -298,7 +298,7 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
             </Pressable>
             {/* Send */}
             <Pressable style={[styles.iconButton, styles.sendButton, { backgroundColor: colors.link }]} onPress={handleSend}>
-              <Ionicons name="send" size={20} color="#fff" />
+              <Ionicons name="basketball" size={20} color="#fff" />
             </Pressable>
           </>
         )}
