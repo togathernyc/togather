@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalAction } from "../../_generated/server";
+import { api } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
 import { isLeaderRole } from "../../lib/helpers";
@@ -365,6 +366,29 @@ export const sendEmailNotification = internalAction({
 });
 
 /**
+ * App-wide feature flag (see `functions/admin/featureFlags.ts`) gating whether
+ * chat pushes collapse to one tray card per channel. Default-off: until a
+ * superuser flips it on in /admin/features, chat notifications stack normally.
+ */
+const CHAT_NOTIFICATION_COLLAPSE_FLAG = "chat-notification-collapse";
+
+/**
+ * Read a chat channel id from a notification's `data` payload.
+ *
+ * Chat pushes carry `channelId` at the top level; iOS sometimes nests fields
+ * under `data.data`, so both levels are checked (mirrors the mobile-side
+ * extraction in `resolveNotificationNavigation` and `dismissChannelNotifications`).
+ * Returns undefined for non-chat notifications, which carry no channelId.
+ */
+function extractChannelId(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const record = data as Record<string, unknown>;
+  const nested = record.data as Record<string, unknown> | undefined;
+  const channelId = record.channelId ?? nested?.channelId;
+  return typeof channelId === "string" ? channelId : undefined;
+}
+
+/**
  * Send batch push notifications
  */
 export const sendBatchPushNotifications = internalAction({
@@ -379,10 +403,22 @@ export const sendBatchPushNotifications = internalAction({
       })
     ),
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     if (args.notifications.length === 0) {
       return { success: true, ticketIds: [], errors: [], tickets: [] };
     }
+
+    // Per-channel collapse is gated by an app-wide feature flag. Only chat
+    // pushes carry a channelId, so skip the flag read entirely for non-chat
+    // batches (the common case for most notification types).
+    const hasChannelScopedPush = args.notifications.some((n) =>
+      extractChannelId(n.data)
+    );
+    const collapseChatNotifications = hasChannelScopedPush
+      ? await ctx.runQuery(api.functions.admin.featureFlags.getFeatureFlag, {
+          key: CHAT_NOTIFICATION_COLLAPSE_FLAG,
+        })
+      : false;
 
     try {
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -401,6 +437,8 @@ export const sendBatchPushNotifications = internalAction({
               data: unknown;
               richContent?: { image: string };
               mutableContent?: boolean;
+              collapseId?: string;
+              tag?: string;
             } = {
               to: n.token,
               title: n.title,
@@ -412,6 +450,23 @@ export const sendBatchPushNotifications = internalAction({
             if (n.imageUrl) {
               // Expo maps richContent.image to platform-specific rich media payloads.
               message.richContent = { image: n.imageUrl };
+            }
+
+            // Collapse chat notifications per channel so a new message replaces
+            // that channel's existing tray card instead of stacking a new one.
+            // Only chat-type pushes carry a channelId, so non-chat notifications
+            // are left untouched. Expo's push service has no iOS thread-id field
+            // (grouping needs unreleased native work — see expo/expo#43388), so
+            // collapse/replace is the no-native-dep way to keep the tray tidy.
+            // - collapseId (iOS): replaces the already-displayed notification.
+            // - tag (Android): replaces the already-displayed notification
+            //   (collapseId on Android only coalesces in transit, not on-device).
+            const channelId = collapseChatNotifications
+              ? extractChannelId(n.data)
+              : undefined;
+            if (channelId) {
+              message.collapseId = channelId;
+              message.tag = channelId;
             }
 
             return message;
