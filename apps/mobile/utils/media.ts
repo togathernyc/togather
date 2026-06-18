@@ -61,7 +61,7 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
  *
  * @example
  * getMediaUrlWithTransform('r2:profiles/abc.jpg', { width: 100, height: 100 })
- * // => '{R2_PUBLIC_URL}/cdn-cgi/image/width=100,height=100,fit=cover,format=auto/profiles/abc.jpg'
+ * // => '{R2_PUBLIC_URL}/cdn-cgi/image/width=100,height=100,fit=cover,metadata=keep,format=auto/profiles/abc.jpg'
  */
 export function getMediaUrlWithTransform(
   path: string | null | undefined,
@@ -86,6 +86,13 @@ export function getMediaUrlWithTransform(
   if (options.height) transforms.push(`height=${options.height}`);
   if (options.fit) transforms.push(`fit=${options.fit}`);
   if (options.quality) transforms.push(`quality=${options.quality}`);
+  // Preserve EXIF metadata so the orientation tag survives the transform.
+  // Without this, Cloudflare strips the orientation tag without rotating the
+  // pixels, so photos taken in a rotated orientation render upside-down in
+  // transformed thumbnails (while the untransformed full-size original, which
+  // still carries the tag, displays correctly). Keeping metadata lets the
+  // client apply the rotation just like it does for the original.
+  transforms.push('metadata=keep');
   transforms.push('format=auto'); // Always optimize format (WebP/AVIF)
 
   const transformString = transforms.join(',');
