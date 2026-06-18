@@ -1149,7 +1149,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           {isSending ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Ionicons name="send" size={20} color="#fff" />
+            <Ionicons name="basketball" size={20} color="#fff" />
           )}
         </Pressable>
       </View>
