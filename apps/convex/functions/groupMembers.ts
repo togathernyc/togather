@@ -460,13 +460,20 @@ export const add = mutation({
       throw new Error("User is already a member of this group");
     }
 
-    // If previous membership exists (but inactive), reactivate it
+    // If previous membership exists (but inactive), reactivate it.
+    // Also clear any leftover request state — the row could be a previously
+    // declined or pending join request, and a leader-initiated add bypasses
+    // the request flow entirely, so the row must look like a clean accepted
+    // membership (otherwise `listMyPendingJoinRequests` will still surface
+    // it as pending).
     if (existingMember) {
       await ctx.db.patch(existingMember._id, {
         role: args.role || "member",
         leftAt: undefined,
         joinedAt: timestamp,
         notificationsEnabled: true,
+        requestStatus: undefined,
+        requestedAt: undefined,
       });
 
       // Sync channel memberships (transactional - prevents race conditions)
@@ -1093,11 +1100,17 @@ export const addByPcoPersonId = mutation({
     }
 
     if (existingMember) {
+      // Same reactivation invariants as `add`: clear request-flow state so a
+      // row left over from a prior declined / pending join request doesn't
+      // keep surfacing as pending after the leader has bypassed the request
+      // flow to add the person directly.
       await ctx.db.patch(existingMember._id, {
         role: args.role || "member",
         leftAt: undefined,
         joinedAt: timestamp,
         notificationsEnabled: true,
+        requestStatus: undefined,
+        requestedAt: undefined,
       });
 
       await syncUserChannelMembershipsLogic(ctx, userId, args.groupId);
