@@ -257,7 +257,8 @@ describe("pre-archive candidate detection", () => {
 describe("pre-archive recipient resolution", () => {
   test("includes assignees and group leaders, excluding self and announcement group", async () => {
     const t = convexTest(schema, modules);
-    const { announcementGroupId, dinnerGroupId } = await seedCommunity(t);
+    const { communityId, announcementGroupId, dinnerGroupId } =
+      await seedCommunity(t);
 
     const memberId = await insertUser(t, "Stale");
     const dinnerLeaderId = await insertUser(t, "DinnerLeader");
@@ -274,7 +275,7 @@ describe("pre-archive recipient resolution", () => {
 
     const recipients = await t.query(
       internal.functions.memberArchiveNotice.getPreArchiveRecipients,
-      { userId: memberId, assigneeIds: [assigneeId] },
+      { communityId, userId: memberId, assigneeIds: [assigneeId] },
     );
 
     expect(recipients).toContain(dinnerLeaderId);
@@ -282,6 +283,30 @@ describe("pre-archive recipient resolution", () => {
     expect(recipients).not.toContain(announcementLeaderId);
     expect(recipients).not.toContain(memberId);
     expect(recipients).toHaveLength(2);
+  });
+
+  test("excludes leaders of the member's groups in other communities", async () => {
+    const t = convexTest(schema, modules);
+    const communityA = await seedCommunity(t);
+    const communityB = await seedCommunity(t);
+
+    const memberId = await insertUser(t, "Stale");
+    const leaderA = await insertUser(t, "LeaderA");
+    const leaderB = await insertUser(t, "LeaderB");
+
+    // The same user belongs to a group in each community.
+    await addMember(t, communityA.dinnerGroupId, memberId, "member");
+    await addMember(t, communityA.dinnerGroupId, leaderA, "leader");
+    await addMember(t, communityB.dinnerGroupId, memberId, "member");
+    await addMember(t, communityB.dinnerGroupId, leaderB, "leader");
+
+    // Sweeping community A must not reach community B's leader.
+    const recipients = await t.query(
+      internal.functions.memberArchiveNotice.getPreArchiveRecipients,
+      { communityId: communityA.communityId, userId: memberId, assigneeIds: [] },
+    );
+
+    expect(recipients).toEqual([leaderA]);
   });
 });
 

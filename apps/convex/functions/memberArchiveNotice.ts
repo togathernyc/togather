@@ -148,6 +148,7 @@ export const getPreArchiveCandidatesPage = internalQuery({
  */
 export const getPreArchiveRecipients = internalQuery({
   args: {
+    communityId: v.id("communities"),
     userId: v.id("users"),
     assigneeIds: v.array(v.id("users")),
   },
@@ -167,7 +168,12 @@ export const getPreArchiveRecipients = internalQuery({
       if (membership.leftAt !== undefined) continue;
 
       const group = await ctx.db.get(membership.groupId);
-      if (!group || group.isAnnouncementGroup) continue;
+      // Only notify leaders of the candidate's own community. A user can belong
+      // to groups across communities; without this guard, leaders of an
+      // unrelated community would receive the check-in (leaking the member name
+      // and originating community id).
+      if (!group || group.communityId !== args.communityId) continue;
+      if (group.isAnnouncementGroup) continue;
 
       const groupMembers = await ctx.db
         .query("groupMembers")
@@ -263,7 +269,11 @@ export const sendCommunityPreArchiveNotices = internalAction({
       for (const candidate of page.candidates) {
         const recipients: Id<"users">[] = await ctx.runQuery(
           internal.functions.memberArchiveNotice.getPreArchiveRecipients,
-          { userId: candidate.userId, assigneeIds: candidate.assigneeIds },
+          {
+            communityId: candidate.communityId,
+            userId: candidate.userId,
+            assigneeIds: candidate.assigneeIds,
+          },
         );
 
         // No one to tell — leave the person unmarked so a later-assigned leader
