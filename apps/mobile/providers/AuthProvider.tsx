@@ -402,6 +402,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         location: convexUser.location ?? undefined,
         community_primary_color: convexUser.activeCommunityPrimaryColor ?? undefined,
         community_secondary_color: convexUser.activeCommunitySecondaryColor ?? undefined,
+        // Knicks mode: null/undefined from the server means "default (on)";
+        // only an explicit `false` disables it. Preserve `false` here.
+        community_knicks_mode: convexUser.activeCommunityKnicksMode ?? undefined,
       };
 
       // Derive community from server response (no caching needed)

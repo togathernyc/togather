@@ -50,8 +50,8 @@ export function DesktopSideNav() {
           {
             key: "inbox",
             label: "Inbox",
-            icon: "chatbubbles-outline" as keyof typeof Ionicons.glyphMap,
-            iconFocused: "chatbubbles" as keyof typeof Ionicons.glyphMap,
+            icon: "basketball-outline" as keyof typeof Ionicons.glyphMap,
+            iconFocused: "basketball" as keyof typeof Ionicons.glyphMap,
             href: "/inbox/",
             match: (p: string) =>
               p.startsWith("/inbox") || p.startsWith("/chat"),

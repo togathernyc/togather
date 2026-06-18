@@ -46,6 +46,7 @@ export function useCommunitySettings() {
       country?: string;
       primaryColor?: string;
       secondaryColor?: string;
+      knicksMode?: boolean;
       logo?: string;
       exploreDefaultGroupTypes?: Id<"groupTypes">[];
       exploreDefaultMeetingType?: number;

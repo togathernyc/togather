@@ -21,6 +21,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 // Note: KeyboardProvider from react-native-keyboard-controller was causing conflicts
 // with Stream Chat's overlay system during interactive keyboard dismiss
 import { AuthProvider } from "@providers/AuthProvider";
+import { KnicksModeSync } from "@providers/KnicksModeSync";
 import { EnvironmentProvider, useEnvironment } from "@providers/EnvironmentProvider";
 import { ImageViewerProvider } from "@providers/ImageViewerProvider";
 import { NotificationProvider } from "@providers/NotificationProvider";
@@ -245,6 +246,7 @@ function AppLayout() {
       <ConnectionProvider>
         <QueryClientProvider client={queryClient}>
         <AuthProvider>
+          <KnicksModeSync />
           <PostHogProvider>
             <ImageViewerProvider>
             <ChatPrefetchProvider>

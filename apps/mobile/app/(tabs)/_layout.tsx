@@ -117,7 +117,7 @@ export default function TabsLayout() {
           href: hasCommunity ? '/(tabs)/chat' : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'chatbubbles' : 'chatbubbles-outline'}
+              name={focused ? 'basketball' : 'basketball-outline'}
               size={24}
               color={color}
             />
