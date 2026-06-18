@@ -18,6 +18,7 @@ import {
   isLeaderRole,
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { isConvertibleHeicAttachment } from "../../lib/heicConversion";
 import { isCommunityAdmin } from "../../lib/permissions";
 import {
   getHostUserIds,
@@ -861,6 +862,17 @@ export const sendMessage = mutation({
       // Set lastActivityAt for top-level messages (used for thread bump ordering)
       ...(!args.parentMessageId ? { lastActivityAt: now } : {}),
     });
+
+    // iPhone photos arrive as HEIC, which Cloudflare's image transform serves
+    // flipped. Re-encode to an upright JPEG in the background so the send path
+    // stays fast; the message's thumbnail updates reactively once converted.
+    if (args.attachments?.some(isConvertibleHeicAttachment)) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.imageConversion.convertMessageHeicAttachments,
+        { messageId },
+      );
+    }
 
     // Update channel with last message info (for inbox preview)
     // Generate smart preview based on content type

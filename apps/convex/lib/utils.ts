@@ -211,11 +211,6 @@ export function getMediaUrlWithTransform(
   if (options.height) transforms.push(`height=${options.height}`);
   if (options.fit) transforms.push(`fit=${options.fit}`);
   if (options.quality) transforms.push(`quality=${options.quality}`);
-  // Preserve EXIF metadata so the orientation tag survives the transform.
-  // Without this, Cloudflare strips the orientation tag without rotating the
-  // pixels, so photos taken in a rotated orientation render upside-down in
-  // transformed images while the untransformed original displays correctly.
-  transforms.push("metadata=keep");
   transforms.push("format=auto"); // Always optimize format (WebP/AVIF)
 
   const transformString = transforms.join(",");

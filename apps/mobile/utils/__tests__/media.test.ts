@@ -28,13 +28,6 @@ describe('getMediaUrl', () => {
 });
 
 describe('getMediaUrlWithTransform', () => {
-  test('preserves EXIF metadata so orientation survives the transform', () => {
-    // Regression: without metadata=keep, Cloudflare strips the orientation tag
-    // without rotating the pixels, so rotated photos render upside-down inline.
-    const url = getMediaUrlWithTransform('r2:chat/a.jpg', { width: 400 });
-    expect(url).toContain('metadata=keep');
-  });
-
   test('builds a same-zone cdn-cgi transform URL with the expected options', () => {
     const url = getMediaUrlWithTransform('r2:chat/a.jpg', {
       width: 400,
@@ -43,7 +36,7 @@ describe('getMediaUrlWithTransform', () => {
       quality: 85,
     });
     expect(url).toBe(
-      `${CDN}/cdn-cgi/image/width=400,height=300,fit=cover,quality=85,metadata=keep,format=auto/chat/a.jpg`
+      `${CDN}/cdn-cgi/image/width=400,height=300,fit=cover,quality=85,format=auto/chat/a.jpg`
     );
   });
 
