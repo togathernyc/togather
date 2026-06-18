@@ -432,10 +432,32 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   // Announcements channels: only group leaders may post. Everyone else falls
   // through to the read-only banner.
+  //
+  // Look up by activeChannelId AS WELL AS activeSlug: when the screen is
+  // opened from a notification or deep link with only `channelId` in the
+  // URL, `activeSlug` defaults to "general" while `activeChannelId` points
+  // at the announcements channel. A slug-only check would resolve to the
+  // General tab and incorrectly enable the composer for non-leaders. We
+  // also fall back to `channelData.channelType` (returned by `getChannel`
+  // for the deep-link case where `effectiveGroupChannels` hasn't loaded
+  // yet) so the gate is correct on first paint.
   const isAnnouncementsChannel = useMemo(() => {
+    if (activeChannelId) {
+      const byId = effectiveGroupChannels?.find(
+        (c: any) => c._id === activeChannelId
+      );
+      if (byId) return byId.channelType === "announcements";
+    }
+    if (channelData?.channelType === "announcements") return true;
     const activeTab = channelTabs.find((t) => t.slug === activeSlug);
     return activeTab?.channelType === "announcements";
-  }, [channelTabs, activeSlug]);
+  }, [
+    channelTabs,
+    activeSlug,
+    activeChannelId,
+    effectiveGroupChannels,
+    channelData,
+  ]);
 
   // Leaders-only posting is now carried solely by the "announcements" channel
   // (server-enforced in sendMessage), for every group including the
