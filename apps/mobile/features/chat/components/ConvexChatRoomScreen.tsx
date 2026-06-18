@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useAuth } from "@providers/AuthProvider";
 import { useNotifications } from "@providers/NotificationProvider";
+import { dismissChannelNotifications } from "@features/notifications/utils/dismissChannelNotifications";
 import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -490,6 +491,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   useEffect(() => {
     if (activeChannelId && currentUserId) {
       markAsRead();
+      // Clear this channel's stacked OS push notifications from the tray —
+      // expo-notifications only auto-clears the single tapped notification, so
+      // siblings linger until we sweep them here.
+      dismissChannelNotifications(activeChannelId);
     }
   }, [activeChannelId, currentUserId, markAsRead]);
 

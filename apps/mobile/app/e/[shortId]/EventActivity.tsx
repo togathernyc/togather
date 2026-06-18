@@ -33,6 +33,7 @@ import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { ReactionsProvider } from "@/features/chat/context/ReactionsContext";
 import { useReadState } from "@/features/chat/hooks/useReadState";
+import { dismissChannelNotifications } from "@features/notifications/utils/dismissChannelNotifications";
 import { Ionicons } from "@expo/vector-icons";
 import { EventComment } from "./EventComment";
 import { EventCommentSheet } from "./EventCommentSheet";
@@ -170,6 +171,10 @@ export function EventActivity({
       // Silently swallow — markAsRead also no-ops for ad-hoc channels with
       // missing profile photo. We don't want a toast here.
     });
+    // Sweep this channel's stacked OS push notifications from the tray (same
+    // rationale as ConvexChatRoomScreen — expo-notifications only auto-clears
+    // the single tapped notification).
+    dismissChannelNotifications(channelId);
   }, [channelId, canAccess, latestMessageId, markAsRead]);
 
   const handleLoadOlder = useCallback(() => {
