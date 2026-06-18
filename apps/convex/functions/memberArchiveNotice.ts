@@ -11,9 +11,12 @@
  *   - the leaders/admins explicitly assigned to the person (assigneeIds), and
  *   - the leaders of the person's groups (e.g. their Dinner Party).
  *
- * A daily cron fans out per-community; each community scans its announcement-
- * group communityPeople rows (the canonical per-person record) for people in
- * the pre-archive window and notifies once per inactivity spell.
+ * It piggybacks on the daily community-score pipeline rather than a separate
+ * cron: computeCommunityScores schedules sendCommunityPreArchiveNotices per
+ * community right after it refreshes each person's active/archived state. The
+ * sweep scans the announcement-group communityPeople rows (the canonical
+ * per-person record) for people in the pre-archive window and notifies once per
+ * inactivity spell.
  */
 
 import { v } from "convex/values";
@@ -43,9 +46,6 @@ export const PRE_ARCHIVE_NOTICE_LEAD_MS = 7 * DAY_MS;
 
 /** communityPeople rows scanned per page during the per-community sweep. */
 const CANDIDATE_PAGE_SIZE = 100;
-
-/** Millisecond interval between staggered per-community jobs. */
-const STAGGER_INTERVAL_MS = 3000;
 
 // ============================================================================
 // Pure decision logic (unit-tested)
@@ -223,6 +223,9 @@ export const markPreArchiveNoticeSent = internalMutation({
  * Scan one community for people approaching auto-archive and notify their
  * leaders/assignees. Marks each person as notified so the nudge is one-shot
  * per inactivity spell.
+ *
+ * Scheduled by computeCommunityScores once that community's daily score refresh
+ * has committed fresh active/archived state — no separate cron of its own.
  */
 export const sendCommunityPreArchiveNotices = internalAction({
   args: { communityId: v.id("communities") },
@@ -303,31 +306,5 @@ export const sendCommunityPreArchiveNotices = internalAction({
         `[pre-archive-notice] Sent ${notified} check-in notice(s) for community ${args.communityId}`,
       );
     }
-  },
-});
-
-/**
- * Daily cron entry point: fan out the pre-archive sweep across all communities,
- * staggered to avoid a thundering herd.
- */
-export const dailySendPreArchiveNotices = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    const communityIds: Id<"communities">[] = await ctx.runQuery(
-      internal.functions.communityScoreComputation.getAllCommunityIds,
-      {},
-    );
-
-    for (let i = 0; i < communityIds.length; i++) {
-      await ctx.scheduler.runAfter(
-        i * STAGGER_INTERVAL_MS,
-        internal.functions.memberArchiveNotice.sendCommunityPreArchiveNotices,
-        { communityId: communityIds[i] },
-      );
-    }
-
-    console.log(
-      `[pre-archive-notice] Scheduled ${communityIds.length} communities for pre-archive sweep`,
-    );
   },
 });
