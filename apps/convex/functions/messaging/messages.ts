@@ -17,7 +17,7 @@ import {
   channelEffectiveEnabledForGroup,
   isLeaderRole,
 } from "../../lib/helpers";
-import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { getDisplayName, getMediaUrl, safeSliceForJson } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import {
   getHostUserIds,
@@ -176,7 +176,7 @@ export function generateMessagePreview(message: MessageForPreview): string {
 
     if (imageCount > 0 && content.trim()) {
       // Has both images and text - show text
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return safeSliceForJson(content, MAX_PREVIEW_LENGTH);
     } else if (imageCount > 0) {
       // Only images
       return imageCount === 1 ? "Sent a photo" : `Sent ${imageCount} photos`;
@@ -190,25 +190,25 @@ export function generateMessagePreview(message: MessageForPreview): string {
       // Documents and other files
       return fileCount === 1 ? "Sent a file" : `Sent ${fileCount} files`;
     } else {
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return safeSliceForJson(content, MAX_PREVIEW_LENGTH);
     }
   } else if (DOMAIN_CONFIG.eventLinkRegexSingle().test(content)) {
     // Event link shared
     return content.trim() === content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
       ? "Shared an event"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : safeSliceForJson(content, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(content)) {
     // Tool link shared (Run Sheet, Resource)
     return content.trim() === content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
       ? "Shared a tool"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : safeSliceForJson(content, MAX_PREVIEW_LENGTH);
   } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(content)) {
     // Group link shared
     return content.trim() === content.match(DOMAIN_CONFIG.groupLinkRegexSingle())?.[0]
       ? "Shared a group"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : safeSliceForJson(content, MAX_PREVIEW_LENGTH);
   } else {
-    return content.slice(0, MAX_PREVIEW_LENGTH);
+    return safeSliceForJson(content, MAX_PREVIEW_LENGTH);
   }
 }
 
@@ -1100,7 +1100,7 @@ export const sendSystemMessage = internalMutation({
     // Update channel metadata
     await ctx.db.patch(args.channelId, {
       lastMessageAt: now,
-      lastMessagePreview: args.content.substring(0, MAX_PREVIEW_LENGTH),
+      lastMessagePreview: safeSliceForJson(args.content, MAX_PREVIEW_LENGTH),
       updatedAt: now,
     });
 

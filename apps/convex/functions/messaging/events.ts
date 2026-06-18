@@ -15,6 +15,7 @@ import type { ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { getChannelSlug } from "../../lib/slugs";
+import { safeSliceForJson } from "../../lib/utils";
 import { notifyBatch } from "../../lib/notifications/send";
 import { chatRequestEmail } from "../../lib/notifications/emailTemplates";
 
@@ -47,7 +48,7 @@ export const onMessageSent = internalMutation({
 
     // Generate preview for notifications (but don't update channel - sendMessage already does it
     // with smart previews like "Sent a photo" or "Sent X files")
-    const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);
+    const preview = safeSliceForJson(message.content, MAX_PREVIEW_LENGTH);
 
     // Get all channel members (except sender if there is one)
     // For bot messages (no sender), all non-muted members are included
@@ -404,10 +405,12 @@ export const sendMessageNotifications = internalAction({
 
 /**
  * Truncate a string to `max` chars, suffixing "…" if truncation occurred.
+ * Uses surrogate-safe slicing so emoji at the cut boundary don't leave a
+ * lone surrogate that breaks downstream JSON serialization.
  */
 function truncateForBody(text: string, max: number): string {
   if (text.length <= max) return text;
-  return text.slice(0, Math.max(0, max - 1)) + "…";
+  return safeSliceForJson(text, Math.max(0, max - 1)) + "…";
 }
 
 /**
