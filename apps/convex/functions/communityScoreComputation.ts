@@ -964,6 +964,15 @@ export const computeCommunityScores = internalAction({
       }
     );
 
+    // Step 9: Notify leaders about anyone approaching auto-archive. Runs after
+    // the rows above are committed (fresh isActive/lastActivity), scheduled so
+    // the push-sending action doesn't extend this score job's failure surface.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.memberArchiveNotice.sendCommunityPreArchiveNotices,
+      { communityId: args.communityId }
+    );
+
     console.log(
       `[community-scores] Completed score computation for community ${args.communityId}`
     );

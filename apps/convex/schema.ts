@@ -2368,6 +2368,11 @@ export default defineSchema({
     isActive: v.optional(v.boolean()),
     archivedAt: v.optional(v.number()),
 
+    // When the "approaching auto-archive" check-in notice was last sent to the
+    // person's leaders/assignees. Used to send that notice once per inactivity
+    // spell (see shouldSendPreArchiveNotice in functions/memberArchiveNotice.ts).
+    preArchiveNoticeSentAt: v.optional(v.number()),
+
     // Custom field slots (5 text + 5 number + 5 boolean)
     customText1: v.optional(v.string()),
     customText2: v.optional(v.string()),

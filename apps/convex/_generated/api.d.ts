@@ -76,6 +76,7 @@ import type * as functions_meetings_migrations from "../functions/meetings/migra
 import type * as functions_meetings_myEvents from "../functions/meetings/myEvents.js";
 import type * as functions_meetings_queries from "../functions/meetings/queries.js";
 import type * as functions_meetings_reports from "../functions/meetings/reports.js";
+import type * as functions_memberArchiveNotice from "../functions/memberArchiveNotice.js";
 import type * as functions_memberFollowups from "../functions/memberFollowups.js";
 import type * as functions_messaging_availabilityRequests from "../functions/messaging/availabilityRequests.js";
 import type * as functions_messaging_blocking from "../functions/messaging/blocking.js";
@@ -281,6 +282,7 @@ declare const fullApi: ApiFromModules<{
   "functions/meetings/myEvents": typeof functions_meetings_myEvents;
   "functions/meetings/queries": typeof functions_meetings_queries;
   "functions/meetings/reports": typeof functions_meetings_reports;
+  "functions/memberArchiveNotice": typeof functions_memberArchiveNotice;
   "functions/memberFollowups": typeof functions_memberFollowups;
   "functions/messaging/availabilityRequests": typeof functions_messaging_availabilityRequests;
   "functions/messaging/blocking": typeof functions_messaging_blocking;
