@@ -182,6 +182,20 @@ crons.daily(
 );
 
 // =============================================================================
+// PRE-ARCHIVE CHECK-IN NOTICE
+// =============================================================================
+// Runs daily at 15:00 UTC (~10am ET / 7am PT) — after the morning community
+// score refresh so activity data is fresh. Notifies a member's leaders and
+// assignees ~1 week before they are auto-archived for 60 days of inactivity,
+// so someone can reach out while the person is still surfaced.
+
+crons.daily(
+  "pre-archive-checkin-notice",
+  { hourUTC: 15, minuteUTC: 0 },
+  internal.functions.memberArchiveNotice.dailySendPreArchiveNotices,
+);
+
+// =============================================================================
 // CHAT REQUEST EXPIRY
 // =============================================================================
 // Runs daily at 8:00 UTC to expire pending DM/group_dm chat requests older than

@@ -774,6 +774,35 @@ export const followupAssigned: NotificationDefinition<FollowupAssignedData> = {
 };
 
 // ============================================================================
+// Member Archive Definitions
+// ============================================================================
+
+interface MemberPreArchiveCheckinData {
+  memberName: string;
+  communityId?: string;
+  userId: string;
+}
+
+export const memberPreArchiveCheckin: NotificationDefinition<MemberPreArchiveCheckinData> = {
+  type: 'member.pre_archive_checkin',
+  description:
+    "Sent to a member's leaders/assignees ~1 week before they are auto-archived for inactivity",
+  formatters: {
+    push: (ctx) => ({
+      title: 'Time to check in',
+      body: `${ctx.data.memberName} hasn't been around in almost 2 months. Reach out before they're archived.`,
+      data: {
+        type: 'member.pre_archive_checkin',
+        communityId: ctx.data.communityId,
+        userId: ctx.data.userId,
+        url: '/(tabs)/people',
+      },
+    }),
+  },
+  defaultChannels: ['push'],
+};
+
+// ============================================================================
 // Prayer Definitions
 // ============================================================================
 
