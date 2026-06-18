@@ -84,6 +84,9 @@ export default defineSchema({
     country: v.optional(v.string()),
     primaryColor: v.optional(v.string()), // Hex color e.g. #1E8449
     secondaryColor: v.optional(v.string()), // Hex color e.g. #1E8449
+    // "Knicks mode" — overrides brand colors with Knicks orange/blue app-wide.
+    // Absent / undefined = ON by default; explicit false turns it off.
+    knicksMode: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),

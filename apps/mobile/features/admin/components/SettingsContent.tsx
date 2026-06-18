@@ -111,6 +111,7 @@ export function SettingsContent() {
 
   // Church Features state (opt-in religious features)
   const [isSavingChurchFeatures, setIsSavingChurchFeatures] = useState(false);
+  const [isSavingKnicksMode, setIsSavingKnicksMode] = useState(false);
 
   // Populate form with current settings
   useEffect(() => {
@@ -265,6 +266,17 @@ export function SettingsContent() {
       Alert.alert("Error", formatError(error, "Failed to update church features"));
     } finally {
       setIsSavingChurchFeatures(false);
+    }
+  };
+
+  const handleToggleKnicksMode = async (value: boolean) => {
+    setIsSavingKnicksMode(true);
+    try {
+      await updateSettings({ knicksMode: value });
+    } catch (error: any) {
+      Alert.alert("Error", formatError(error, "Failed to update Knicks mode"));
+    } finally {
+      setIsSavingKnicksMode(false);
     }
   };
 
@@ -661,6 +673,29 @@ export function SettingsContent() {
               <Text style={styles.exploreSaveButtonText}>Save Explore Defaults</Text>
             )}
           </TouchableOpacity>
+        </View>
+
+        {/* Knicks Mode Section */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Knicks Mode</Text>
+          <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+            Themes the whole app in New York Knicks orange & blue. On by default.
+          </Text>
+
+          <View style={styles.churchFeatureRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.churchFeatureName, { color: colors.text }]}>Knicks Mode</Text>
+              <Text style={[styles.churchFeatureHint, { color: colors.textTertiary }]}>
+                Overrides your community brand colors and tints backgrounds,
+                surfaces, and accents orange & blue. Turn off to use your own colors.
+              </Text>
+            </View>
+            <Switch
+              value={settings?.knicksMode ?? true}
+              onValueChange={handleToggleKnicksMode}
+              disabled={isSavingKnicksMode}
+            />
+          </View>
         </View>
 
         {/* Church Features Section */}

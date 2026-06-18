@@ -644,6 +644,9 @@ export const me = query({
     let activeCommunityName: string | null = null;
     let activeCommunityPrimaryColor: string | null = null;
     let activeCommunitySecondaryColor: string | null = null;
+    // Knicks mode is ON by default — null here means "use the default (on)".
+    // Only an explicit `false` in the community row turns it off.
+    let activeCommunityKnicksMode: boolean | null = null;
     let activeCommunityChurchFeatures: { prayerEnabled: boolean } | null = null;
 
     if (user.activeCommunityId) {
@@ -652,6 +655,7 @@ export const me = query({
         activeCommunityName = activeCommunity.name || null;
         activeCommunityPrimaryColor = activeCommunity.primaryColor || null;
         activeCommunitySecondaryColor = activeCommunity.secondaryColor || null;
+        activeCommunityKnicksMode = activeCommunity.knicksMode ?? null;
         activeCommunityChurchFeatures = activeCommunity.churchFeatures ?? null;
       }
     }
@@ -687,6 +691,7 @@ export const me = query({
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
+      activeCommunityKnicksMode,
       activeCommunityChurchFeatures,
       communityMemberships: communityMemberships.filter(Boolean),
     };

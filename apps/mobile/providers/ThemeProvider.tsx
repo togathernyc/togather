@@ -12,7 +12,13 @@
 import React, { createContext, useMemo, useState, useEffect, useCallback } from 'react';
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { lightColors, darkColors, type ThemeColors } from '@/theme/colors';
+import {
+  lightColors,
+  darkColors,
+  knicksLightColors,
+  knicksDarkColors,
+  type ThemeColors,
+} from '@/theme/colors';
 
 export type ColorScheme = 'light' | 'dark';
 export type ThemePreference = 'auto' | 'light' | 'dark';
@@ -27,19 +33,32 @@ export interface ThemeContextValue {
   preference: ThemePreference;
   /** Update the theme preference (persisted to storage) */
   setPreference: (pref: ThemePreference) => void;
+  /** Whether the app-wide Knicks (orange/blue) palette is active. On by default. */
+  knicksMode: boolean;
+  /**
+   * Set Knicks mode. Driven by the active community's `knicksMode` setting,
+   * synced up from the auth tree via <KnicksModeSync /> (ThemeProvider sits
+   * above AuthProvider, so it can't read auth state itself).
+   */
+  setKnicksMode: (enabled: boolean) => void;
 }
 
 export const ThemeContext = createContext<ThemeContextValue>({
-  colors: lightColors,
+  colors: knicksLightColors,
   isDark: false,
   colorScheme: 'light',
   preference: 'auto',
   setPreference: () => {},
+  knicksMode: true,
+  setKnicksMode: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('auto');
+  // Knicks mode is ON by default until the active community's setting says
+  // otherwise (synced in by <KnicksModeSync />).
+  const [knicksMode, setKnicksMode] = useState(true);
 
   // Load saved preference on mount
   useEffect(() => {
@@ -61,14 +80,21 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         ? (systemScheme === 'dark' ? 'dark' : 'light')
         : preference;
 
+    const isDark = effectiveScheme === 'dark';
+    const colors = knicksMode
+      ? (isDark ? knicksDarkColors : knicksLightColors)
+      : (isDark ? darkColors : lightColors);
+
     return {
-      colors: effectiveScheme === 'dark' ? darkColors : lightColors,
-      isDark: effectiveScheme === 'dark',
+      colors,
+      isDark,
       colorScheme: effectiveScheme,
       preference,
       setPreference,
+      knicksMode,
+      setKnicksMode,
     };
-  }, [systemScheme, preference, setPreference]);
+  }, [systemScheme, preference, setPreference, knicksMode]);
 
   return (
     <ThemeContext.Provider value={value}>

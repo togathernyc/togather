@@ -11,6 +11,13 @@ import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
 
+/**
+ * "Knicks mode" — New York Knicks orange + blue. Overrides community brand
+ * colors app-wide. ON by default; turned off per-community in admin settings.
+ */
+export const KNICKS_ORANGE = '#F58426';
+export const KNICKS_BLUE = '#006BB6';
+
 interface CommunityTheme {
   /** Primary accent color (for buttons, links, active states) */
   primaryColor: string;
@@ -22,6 +29,8 @@ interface CommunityTheme {
   primaryColorDark: string;
   /** Whether the theme is using custom community colors vs defaults */
   isCustomTheme: boolean;
+  /** Whether Knicks mode is currently overriding the brand colors */
+  isKnicksMode: boolean;
 }
 
 /**
@@ -55,6 +64,20 @@ export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
 
   return useMemo(() => {
+    // Knicks mode is ON by default — only an explicit `false` disables it.
+    const isKnicksMode = user?.community_knicks_mode !== false;
+
+    if (isKnicksMode) {
+      return {
+        primaryColor: KNICKS_ORANGE,
+        secondaryColor: KNICKS_BLUE,
+        accentLight: hexToRgba(KNICKS_ORANGE, 0.1),
+        primaryColorDark: darkenColor(KNICKS_ORANGE, 0.4),
+        isCustomTheme: true,
+        isKnicksMode: true,
+      };
+    }
+
     const primaryColor = user?.community_primary_color || DEFAULT_PRIMARY_COLOR;
     const secondaryColor = user?.community_secondary_color || DEFAULT_SECONDARY_COLOR;
     const isCustomTheme = !!(user?.community_primary_color || user?.community_secondary_color);
@@ -65,6 +88,11 @@ export function useCommunityTheme(): CommunityTheme {
       accentLight: hexToRgba(primaryColor, 0.1),
       primaryColorDark: darkenColor(primaryColor, 0.4),
       isCustomTheme,
+      isKnicksMode: false,
     };
-  }, [user?.community_primary_color, user?.community_secondary_color]);
+  }, [
+    user?.community_knicks_mode,
+    user?.community_primary_color,
+    user?.community_secondary_color,
+  ]);
 }
