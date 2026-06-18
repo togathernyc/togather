@@ -7,6 +7,7 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalAction } from "../../_generated/server";
+import { api } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
 import { isLeaderRole } from "../../lib/helpers";
@@ -365,6 +366,13 @@ export const sendEmailNotification = internalAction({
 });
 
 /**
+ * App-wide feature flag (see `functions/admin/featureFlags.ts`) gating whether
+ * chat pushes collapse to one tray card per channel. Default-off: until a
+ * superuser flips it on in /admin/features, chat notifications stack normally.
+ */
+const CHAT_NOTIFICATION_COLLAPSE_FLAG = "chat-notification-collapse";
+
+/**
  * Read a chat channel id from a notification's `data` payload.
  *
  * Chat pushes carry `channelId` at the top level; iOS sometimes nests fields
@@ -395,10 +403,22 @@ export const sendBatchPushNotifications = internalAction({
       })
     ),
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     if (args.notifications.length === 0) {
       return { success: true, ticketIds: [], errors: [], tickets: [] };
     }
+
+    // Per-channel collapse is gated by an app-wide feature flag. Only chat
+    // pushes carry a channelId, so skip the flag read entirely for non-chat
+    // batches (the common case for most notification types).
+    const hasChannelScopedPush = args.notifications.some((n) =>
+      extractChannelId(n.data)
+    );
+    const collapseChatNotifications = hasChannelScopedPush
+      ? await ctx.runQuery(api.functions.admin.featureFlags.getFeatureFlag, {
+          key: CHAT_NOTIFICATION_COLLAPSE_FLAG,
+        })
+      : false;
 
     try {
       const response = await fetch("https://exp.host/--/api/v2/push/send", {
@@ -441,7 +461,9 @@ export const sendBatchPushNotifications = internalAction({
             // - collapseId (iOS): replaces the already-displayed notification.
             // - tag (Android): replaces the already-displayed notification
             //   (collapseId on Android only coalesces in transit, not on-device).
-            const channelId = extractChannelId(n.data);
+            const channelId = collapseChatNotifications
+              ? extractChannelId(n.data)
+              : undefined;
             if (channelId) {
               message.collapseId = channelId;
               message.tag = channelId;
