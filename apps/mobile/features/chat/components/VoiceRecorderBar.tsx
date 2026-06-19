@@ -23,6 +23,7 @@ import { WaveformBars } from './WaveformBars';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { isAudioSupported, isAudioVideoSupported } from '../utils/fileTypes';
 import { ThemeContext } from '@/providers/ThemeProvider';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
 
 const DISCLAIMER_TEXT = 'Voice messages delete after 7 days';
 
@@ -40,6 +41,7 @@ interface VoiceRecorderBarProps {
 
 export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
   const { colors } = useContext(ThemeContext);
+  const { isKnicksMode } = useCommunityTheme();
   const {
     state,
     durationMs,
@@ -298,7 +300,7 @@ export function VoiceRecorderBar({ onSend, onCancel }: VoiceRecorderBarProps) {
             </Pressable>
             {/* Send */}
             <Pressable style={[styles.iconButton, styles.sendButton, { backgroundColor: colors.link }]} onPress={handleSend}>
-              <Ionicons name="basketball" size={20} color="#fff" />
+              <Ionicons name={isKnicksMode ? 'basketball' : 'send'} size={20} color="#fff" />
             </Pressable>
           </>
         )}

@@ -22,7 +22,7 @@ type NavItem = {
 export function DesktopSideNav() {
   const pathname = usePathname();
   const { user, community } = useAuth();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, isKnicksMode } = useCommunityTheme();
   const { colors } = useTheme();
 
   const isAdmin = user?.is_admin === true;
@@ -50,8 +50,12 @@ export function DesktopSideNav() {
           {
             key: "inbox",
             label: "Inbox",
-            icon: "basketball-outline" as keyof typeof Ionicons.glyphMap,
-            iconFocused: "basketball" as keyof typeof Ionicons.glyphMap,
+            icon: (isKnicksMode
+              ? "basketball-outline"
+              : "chatbubbles-outline") as keyof typeof Ionicons.glyphMap,
+            iconFocused: (isKnicksMode
+              ? "basketball"
+              : "chatbubbles") as keyof typeof Ionicons.glyphMap,
             href: "/inbox/",
             match: (p: string) =>
               p.startsWith("/inbox") || p.startsWith("/chat"),
