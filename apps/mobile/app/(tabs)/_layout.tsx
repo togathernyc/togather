@@ -9,7 +9,7 @@ import { DesktopSideNav } from '@components/DesktopSideNav';
 
 export default function TabsLayout() {
   const { user, community } = useAuth();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, isKnicksMode } = useCommunityTheme();
   const { colors } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isAdmin = user?.is_admin === true;
@@ -117,7 +117,15 @@ export default function TabsLayout() {
           href: hasCommunity ? '/(tabs)/chat' : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'basketball' : 'basketball-outline'}
+              name={
+                isKnicksMode
+                  ? focused
+                    ? 'basketball'
+                    : 'basketball-outline'
+                  : focused
+                    ? 'chatbubbles'
+                    : 'chatbubbles-outline'
+              }
               size={24}
               color={color}
             />

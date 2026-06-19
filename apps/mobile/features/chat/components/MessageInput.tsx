@@ -44,6 +44,7 @@ import {
   type FileCategory,
 } from '../utils/fileTypes';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
@@ -127,6 +128,7 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
 
 export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false }: MessageInputProps) {
   const { colors: themeColors } = useTheme();
+  const { isKnicksMode } = useCommunityTheme();
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
   const initialDraft = channelId ? getDraft(channelId) : '';
   const [text, setText] = useState(initialDraft);
@@ -1149,7 +1151,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           {isSending ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Ionicons name="basketball" size={20} color="#fff" />
+            <Ionicons name={isKnicksMode ? 'basketball' : 'send'} size={20} color="#fff" />
           )}
         </Pressable>
       </View>
