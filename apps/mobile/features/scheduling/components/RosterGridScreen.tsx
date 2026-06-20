@@ -239,9 +239,17 @@ export function RosterGridScreen() {
     groupId ? { groupId } : "skip",
   ) as Array<{ id: Id<"groups">; name: string }> | undefined;
 
+  // Gate the member-id query on the selection still being present in the loaded
+  // group list. If it goes stale mid-session (the leader left the filter group,
+  // or it was archived), this skips on the SAME render — before
+  // `rosterFilterMemberIds`' `requireGroupMember` gate could throw into the
+  // error boundary — rather than relying on the effect below, which only runs
+  // after render.
   const filterMemberIds = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterFilterMemberIds,
-    filterGroupId ? { groupId: filterGroupId } : "skip",
+    filterGroupId && filterGroups?.some((g) => g.id === filterGroupId)
+      ? { groupId: filterGroupId }
+      : "skip",
   ) as string[] | undefined;
 
   const filterMemberSet = useMemo(
@@ -253,12 +261,12 @@ export function RosterGridScreen() {
     ? filterGroups?.find((g) => g.id === filterGroupId)?.name
     : undefined;
 
-  // Drop a stale selection once the loaded group list no longer contains it —
+  // Reset a stale selection once the loaded group list no longer contains it —
   // the group was archived, the leader left it, or the screen was reused for a
   // different roster group. Without this the filter chip (which only renders
   // while `filterGroups` is non-empty) can vanish with the filter still active,
-  // stranding the People view filtered/empty, and `rosterFilterMemberIds` would
-  // keep querying a group the leader may no longer belong to.
+  // stranding the People view filtered/empty. (The query above is already gated
+  // on the same condition; this clears the lingering UI state.)
   useEffect(() => {
     if (
       filterGroupId &&
