@@ -21,7 +21,7 @@ import { query } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
-import { requireGroupScheduler } from "./permissions";
+import { requireGroupMember, requireGroupScheduler } from "./permissions";
 
 /** Column cap — a leader rosters a horizon of upcoming events. */
 const MAX_EVENTS = 10;
@@ -390,5 +390,95 @@ export const rosterMatrix = query({
         ).length,
       },
     };
+  },
+});
+
+/**
+ * The other groups the current user can use to filter the roster's People
+ * view — every active group membership of theirs in the same community as the
+ * group being rostered, EXCEPT the rostering group itself and announcement
+ * groups (a community-wide broadcast group is not a meaningful cross-reference).
+ *
+ * Backs the "also in group" dropdown on the roster grid: pick one of these and
+ * the grid narrows to people who are also in that group (a leader rostering the
+ * Manhattan team can isolate just their Production folk, say). Returns `[]`
+ * when the leader has no other groups, so the control hides itself.
+ *
+ * Scheduler-gated on the rostering group (same gate as `rosterMatrix`) — the
+ * dropdown only appears for someone already allowed to see the grid.
+ */
+export const rosterFilterGroups = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const rosteringGroup = await requireGroupScheduler(
+      ctx,
+      args.groupId,
+      userId,
+    );
+
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted"),
+          ),
+        ),
+      )
+      .collect();
+
+    const groups = await Promise.all(
+      memberships.map((m) => ctx.db.get(m.groupId)),
+    );
+
+    return groups
+      .filter(
+        (g): g is Doc<"groups"> =>
+          g !== null &&
+          g._id !== args.groupId &&
+          !g.isArchived &&
+          g.isAnnouncementGroup !== true &&
+          g.communityId === rosteringGroup.communityId,
+      )
+      .map((g) => ({ id: g._id, name: g.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+/**
+ * The active member user ids of a group, for the roster "also in group" filter.
+ * The client intersects this set against the roster's People rows client-side
+ * (mirroring how the search / available-only filters already work), so the
+ * roster tallies stay whole while the visible rows narrow.
+ *
+ * Member-gated on the *filter* group: you can only enumerate a group you
+ * belong to — and `rosterFilterGroups` only ever offers the caller their own
+ * groups, so the picker can't be used to peek into a group you're not in.
+ */
+export const rosterFilterMemberIds = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupMember(ctx, args.groupId, userId);
+
+    const rows = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    return rows
+      .filter((m) => !m.requestStatus || m.requestStatus === "accepted")
+      .map((m) => m.userId as string);
   },
 });

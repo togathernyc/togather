@@ -228,6 +228,55 @@ export function RosterGridScreen() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
 
+  // "Also in group" filter — narrows People rows to members who also belong to
+  // another of the leader's groups. `filterGroups` populates the picker;
+  // `filterMemberIds` is the chosen group's member set (skipped until picked).
+  const [filterGroupId, setFilterGroupId] = useState<Id<"groups"> | null>(null);
+  const [groupFilterOpen, setGroupFilterOpen] = useState(false);
+
+  const filterGroups = useAuthenticatedQuery(
+    api.functions.scheduling.roster.rosterFilterGroups,
+    groupId ? { groupId } : "skip",
+  ) as Array<{ id: Id<"groups">; name: string }> | undefined;
+
+  // Gate the member-id query on the selection still being present in the loaded
+  // group list. If it goes stale mid-session (the leader left the filter group,
+  // or it was archived), this skips on the SAME render — before
+  // `rosterFilterMemberIds`' `requireGroupMember` gate could throw into the
+  // error boundary — rather than relying on the effect below, which only runs
+  // after render.
+  const filterMemberIds = useAuthenticatedQuery(
+    api.functions.scheduling.roster.rosterFilterMemberIds,
+    filterGroupId && filterGroups?.some((g) => g.id === filterGroupId)
+      ? { groupId: filterGroupId }
+      : "skip",
+  ) as string[] | undefined;
+
+  const filterMemberSet = useMemo(
+    () => (filterMemberIds ? new Set(filterMemberIds) : null),
+    [filterMemberIds],
+  );
+
+  const filterGroupName = filterGroupId
+    ? filterGroups?.find((g) => g.id === filterGroupId)?.name
+    : undefined;
+
+  // Reset a stale selection once the loaded group list no longer contains it —
+  // the group was archived, the leader left it, or the screen was reused for a
+  // different roster group. Without this the filter chip (which only renders
+  // while `filterGroups` is non-empty) can vanish with the filter still active,
+  // stranding the People view filtered/empty. (The query above is already gated
+  // on the same condition; this clears the lingering UI state.)
+  useEffect(() => {
+    if (
+      filterGroupId &&
+      filterGroups &&
+      !filterGroups.some((g) => g.id === filterGroupId)
+    ) {
+      setFilterGroupId(null);
+    }
+  }, [filterGroups, filterGroupId]);
+
   // --- Synced scroll scaffold (frozen header row + frozen first column) ---
   const headerScrollRef = useRef<ScrollView>(null);
   const frozenScrollRef = useRef<ScrollView>(null);
@@ -368,6 +417,8 @@ export function RosterGridScreen() {
     return data.members.filter((m) => {
       if (q && !m.userName.toLowerCase().includes(q)) return false;
       if (availableOnly && m.availableCount === 0) return false;
+      if (filterMemberSet && !filterMemberSet.has(m.userId as string))
+        return false;
       if (openOnly) {
         // Keep only people with at least one available-and-unassigned cell.
         const hasOpenCell = events.some((ev) => {
@@ -378,7 +429,7 @@ export function RosterGridScreen() {
       }
       return true;
     });
-  }, [data, events, debouncedSearch, availableOnly, openOnly]);
+  }, [data, events, debouncedSearch, availableOnly, openOnly, filterMemberSet]);
 
   /** Open roles for an event, computed client-side (the placement menu). */
   const openRolesForEvent = useCallback(
@@ -496,6 +547,15 @@ export function RosterGridScreen() {
             label="Available only"
             active={availableOnly}
             onPress={() => setAvailableOnly((v) => !v)}
+            colors={colors}
+          />
+        )}
+        {mode === "people" && filterGroups && filterGroups.length > 0 && (
+          <Chip
+            icon="funnel"
+            label={filterGroupName ? `In: ${filterGroupName}` : "Also in group"}
+            active={filterGroupId !== null}
+            onPress={() => setGroupFilterOpen(true)}
             colors={colors}
           />
         )}
@@ -938,6 +998,19 @@ export function RosterGridScreen() {
           onClose={() => setOpenRolesModal(null)}
         />
       )}
+
+      {groupFilterOpen && (
+        <GroupFilterMenu
+          groups={filterGroups ?? []}
+          selectedId={filterGroupId}
+          colors={colors}
+          onPick={(id) => {
+            setFilterGroupId(id);
+            setGroupFilterOpen(false);
+          }}
+          onClose={() => setGroupFilterOpen(false)}
+        />
+      )}
     </View>
   );
 }
@@ -1345,6 +1418,63 @@ function OpenRolesMenu({
           })}
         </ScrollView>
       )}
+    </ModalShell>
+  );
+}
+
+/**
+ * "Also in group" picker — narrows the People view to members who also belong
+ * to one of the leader's other groups. "Everyone" clears the filter.
+ */
+function GroupFilterMenu({
+  groups,
+  selectedId,
+  colors,
+  onPick,
+  onClose,
+}: {
+  groups: Array<{ id: Id<"groups">; name: string }>;
+  selectedId: Id<"groups"> | null;
+  colors: Colors;
+  onPick: (id: Id<"groups"> | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Also in group"
+      subtitle="Show only people who are also in…"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        <Pressable
+          onPress={() => onPick(null)}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Everyone
+          </Text>
+          {selectedId === null && (
+            <Ionicons name="checkmark" size={20} color={colors.link} />
+          )}
+        </Pressable>
+        {groups.map((g) => (
+          <Pressable
+            key={g.id}
+            onPress={() => onPick(g.id)}
+            style={[styles.menuRow, { borderBottomColor: colors.border }]}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+              {g.name}
+            </Text>
+            {selectedId === g.id && (
+              <Ionicons name="checkmark" size={20} color={colors.link} />
+            )}
+          </Pressable>
+        ))}
+      </ScrollView>
     </ModalShell>
   );
 }
