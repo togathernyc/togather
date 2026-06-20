@@ -137,3 +137,123 @@ describe("rosterMatrix", () => {
     ).rejects.toThrow(ConvexError);
   });
 });
+
+describe("roster group filter", () => {
+  /**
+   * Add a second group in the world's community with the given members, and an
+   * announcement group + an archived group the leader is also in — to prove the
+   * filter list excludes those. Returns the "production" group's id and the
+   * member it shares with the rostered group.
+   */
+  async function seedFilterGroups(
+    t: ReturnType<typeof convexTest>,
+    world: Awaited<ReturnType<typeof buildSchedulingWorld>>,
+  ) {
+    return t.run(async (ctx) => {
+      const groupTypeId = await ctx.db.insert("groupTypes", {
+        communityId: world.communityId,
+        name: "Team",
+        slug: "team",
+        isActive: true,
+        createdAt: Date.now(),
+        displayOrder: 2,
+      });
+      const make = async (
+        name: string,
+        extra: Record<string, unknown> = {},
+      ) =>
+        ctx.db.insert("groups", {
+          communityId: world.communityId,
+          groupTypeId,
+          name,
+          isArchived: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          ...extra,
+        });
+
+      const productionId = await make("Production");
+      const announceId = await make("Announcements", {
+        isAnnouncementGroup: true,
+      });
+      const archivedId = await make("Old Group", { isArchived: true });
+
+      // The leader belongs to all three. channelMember also serves Production
+      // (the overlap the filter should surface); channelAdmin does not.
+      for (const groupId of [productionId, announceId, archivedId]) {
+        await ctx.db.insert("groupMembers", {
+          groupId,
+          userId: world.groupLeaderId,
+          role: "leader",
+          joinedAt: Date.now(),
+          notificationsEnabled: true,
+        });
+      }
+      await ctx.db.insert("groupMembers", {
+        groupId: productionId,
+        userId: world.channelMemberId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+
+      return { productionId, announceId, archivedId };
+    });
+  }
+
+  it("lists the leader's other groups, excluding self/announcement/archived", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { productionId } = await seedFilterGroups(t, world);
+
+    const groups = await t.query(
+      api.functions.scheduling.roster.rosterFilterGroups,
+      { token: leader, groupId: world.groupId },
+    );
+
+    // Only the non-announcement, non-archived OTHER group is offered.
+    expect(groups.map((g) => g.name)).toEqual(["Production"]);
+    expect(groups[0].id).toBe(productionId);
+  });
+
+  it("rejects rosterFilterGroups for a non-scheduler", async () => {
+    const { t, world } = await setup();
+    const member = (await generateTokens(world.channelMemberId)).accessToken;
+    await expect(
+      t.query(api.functions.scheduling.roster.rosterFilterGroups, {
+        token: member,
+        groupId: world.groupId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("returns active member ids of a filter group the caller belongs to", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { productionId } = await seedFilterGroups(t, world);
+
+    const ids = await t.query(
+      api.functions.scheduling.roster.rosterFilterMemberIds,
+      { token: leader, groupId: productionId },
+    );
+
+    expect(new Set(ids)).toEqual(
+      new Set([world.groupLeaderId, world.channelMemberId]),
+    );
+  });
+
+  it("rejects rosterFilterMemberIds for a non-member of the filter group", async () => {
+    const { t, world } = await setup();
+    const { productionId } = await seedFilterGroups(t, world);
+    // channelAdmin is in the rostered group but NOT in Production.
+    const outsiderToProduction = (
+      await generateTokens(world.channelAdminId)
+    ).accessToken;
+    await expect(
+      t.query(api.functions.scheduling.roster.rosterFilterMemberIds, {
+        token: outsiderToProduction,
+        groupId: productionId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
