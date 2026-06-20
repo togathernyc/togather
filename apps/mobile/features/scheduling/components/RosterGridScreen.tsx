@@ -253,6 +253,22 @@ export function RosterGridScreen() {
     ? filterGroups?.find((g) => g.id === filterGroupId)?.name
     : undefined;
 
+  // Drop a stale selection once the loaded group list no longer contains it —
+  // the group was archived, the leader left it, or the screen was reused for a
+  // different roster group. Without this the filter chip (which only renders
+  // while `filterGroups` is non-empty) can vanish with the filter still active,
+  // stranding the People view filtered/empty, and `rosterFilterMemberIds` would
+  // keep querying a group the leader may no longer belong to.
+  useEffect(() => {
+    if (
+      filterGroupId &&
+      filterGroups &&
+      !filterGroups.some((g) => g.id === filterGroupId)
+    ) {
+      setFilterGroupId(null);
+    }
+  }, [filterGroups, filterGroupId]);
+
   // --- Synced scroll scaffold (frozen header row + frozen first column) ---
   const headerScrollRef = useRef<ScrollView>(null);
   const frozenScrollRef = useRef<ScrollView>(null);
