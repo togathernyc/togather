@@ -185,6 +185,27 @@ export default {
     },
     android: {
       permissions: ["android.permission.RECORD_AUDIO"],
+      // Strip permissions that get auto-merged in but the app never uses, to
+      // avoid extra Google Play review scrutiny:
+      // - SYSTEM_ALERT_WINDOW leaks in from react-native's debug manifest (dev
+      //   overlay only); we never draw over other apps.
+      // - READ/WRITE_EXTERNAL_STORAGE are legacy perms injected by expo-media-
+      //   library/file-system/image-picker. On targetSdk 35 they're ignored at
+      //   runtime (scoped storage + READ_MEDIA_* supersede them).
+      // - CONTACTS/CALENDAR are injected by the expo-contacts/expo-calendar
+      //   config plugins, but neither module has any runtime usage in the app.
+      //   Shipping sensitive permissions with no backing feature is a known Play
+      //   rejection cause, so we strip them. (If/when these features are built,
+      //   remove the relevant entries here.)
+      blockedPermissions: [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ],
       adaptiveIcon: {
         foregroundImage: getAppIcon(),
         backgroundColor: "#ffffff"
