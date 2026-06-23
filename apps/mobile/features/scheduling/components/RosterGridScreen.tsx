@@ -209,11 +209,15 @@ export function RosterGridScreen() {
   const groupId = group_id as Id<"groups">;
 
   const isWide = width >= 700;
-  const NAME_W = isWide ? 196 : 150;
-  const CELL_W = isWide ? 84 : 76;
+  const NAME_W = isWide ? 220 : 150;
   const ROW_H = 52;
   const SECTION_H = 28;
   const HEADER_H = 70;
+  // Minimum legible column width per platform. On desktop the cells region
+  // grows to fill the viewport (see `CELL_W` below) so a 1–2 date roster reads
+  // as a real table rather than a sliver hugging the left edge.
+  const MIN_CELL_W = isWide ? 150 : 76;
+  const MAX_CELL_W = 280;
 
   const data = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterMatrix,
@@ -298,6 +302,7 @@ export function RosterGridScreen() {
   const headerScrollRef = useRef<ScrollView>(null);
   const frozenScrollRef = useRef<ScrollView>(null);
   const [bodyH, setBodyH] = useState(0);
+  const [bodyW, setBodyW] = useState(0);
 
   const onCellsHScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     headerScrollRef.current?.scrollTo({
@@ -379,6 +384,20 @@ export function RosterGridScreen() {
   // --- Derived filters ---
   const events = data?.events ?? [];
   const roleCells = data?.roleCells ?? {};
+
+  // Column width. On mobile it's the fixed minimum (today's behavior). On
+  // desktop the cells region grows to fill the measured body width: divide the
+  // space left of the frozen column across the date columns, clamped so a
+  // single date doesn't balloon and many dates don't crush. When the table
+  // would overflow the viewport (lots of dates) we fall back to MIN_CELL_W and
+  // let it scroll horizontally as before — frozen-column alignment is preserved
+  // either way since header + body share the same CELL_W.
+  const CELL_W = useMemo(() => {
+    if (!isWide || bodyW === 0 || events.length === 0) return MIN_CELL_W;
+    const avail = bodyW - NAME_W;
+    const fit = Math.floor(avail / events.length);
+    return Math.max(MIN_CELL_W, Math.min(MAX_CELL_W, fit));
+  }, [isWide, bodyW, events.length, NAME_W, MIN_CELL_W]);
 
   // Clear a stale isolated team once it's no longer in the loaded team list
   // (e.g. its roles were removed). Keeps the dropdown label honest.
@@ -590,20 +609,42 @@ export function RosterGridScreen() {
         )}
       </View>
       {groupId && <GridPresenceBar groupId={groupId} />}
-      <View style={styles.segmented}>
-        <SegBtn
-          label="Roles"
-          active={mode === "roles"}
-          onPress={() => setMode("roles")}
-          colors={colors}
-        />
-        <SegBtn
-          label="People"
-          active={mode === "people"}
-          onPress={() => setMode("people")}
-          colors={colors}
-        />
-      </View>
+      {/* On desktop the view toggle moves into the single toolbar row below
+          (renderDesktopToolbar); on mobile it stays here in the header. */}
+      {!isWide && (
+        <View style={styles.segmented}>
+          <SegBtn
+            label="Roles"
+            active={mode === "roles"}
+            onPress={() => setMode("roles")}
+            colors={colors}
+          />
+          <SegBtn
+            label="People"
+            active={mode === "people"}
+            onPress={() => setMode("people")}
+            colors={colors}
+          />
+        </View>
+      )}
+    </View>
+  );
+
+  // The shared view toggle, reused by the header (mobile) and toolbar (desktop).
+  const renderViewToggle = () => (
+    <View style={styles.segmented}>
+      <SegBtn
+        label="Roles"
+        active={mode === "roles"}
+        onPress={() => setMode("roles")}
+        colors={colors}
+      />
+      <SegBtn
+        label="People"
+        active={mode === "people"}
+        onPress={() => setMode("people")}
+        colors={colors}
+      />
     </View>
   );
 
@@ -634,69 +675,108 @@ export function RosterGridScreen() {
   }
 
   // -------------------------------------------------------------------------
-  // Filter bar
+  // Filter controls
+  //
+  // The same set of chips/search render in two containers: a stacked filter bar
+  // on mobile (renderFilterBar) and a single inline toolbar row on desktop
+  // (renderDesktopToolbar, where Publish is right-aligned). The chip builders
+  // below are shared so the two layouts can never drift.
   // -------------------------------------------------------------------------
+
+  // Team scope — single-select dropdown (#477 FR-2). Gates the Roles view only.
+  const teamChip =
+    mode === "roles" && data.teams.length > 0 ? (
+      <Chip
+        icon="people-outline"
+        label={isolatedTeamName ?? "All teams"}
+        trailingIcon="chevron-down"
+        active={isolatedTeamId !== null}
+        onPress={() => setTeamMenuOpen(true)}
+        colors={colors}
+      />
+    ) : null;
+
+  const openOnlyChip = (
+    <Chip
+      icon={openOnly ? "checkbox" : "square-outline"}
+      label="Open only"
+      active={openOnly}
+      onPress={() => setOpenOnly((v) => !v)}
+      colors={colors}
+    />
+  );
+
+  const availableOnlyChip =
+    mode === "people" ? (
+      <Chip
+        icon={availableOnly ? "checkbox" : "square-outline"}
+        label="Available only"
+        active={availableOnly}
+        onPress={() => setAvailableOnly((v) => !v)}
+        colors={colors}
+      />
+    ) : null;
+
+  // "Also in group" is now a GRID-LEVEL scope (#477 FR-4): set once here, it
+  // narrows the People view rows AND seeds the assign sheet's candidate pool.
+  // Shown in both views; hidden when the leader has no other eligible groups.
+  const groupScopeChip =
+    filterGroups && filterGroups.length > 0 ? (
+      <Chip
+        icon="funnel"
+        label={filterGroupName ? `In: ${filterGroupName}` : "Also in group"}
+        trailingIcon="chevron-down"
+        active={filterGroupId !== null}
+        onPress={() => setGroupFilterOpen(true)}
+        colors={colors}
+      />
+    ) : null;
+
+  const renderSearchBox = () =>
+    mode === "people" ? (
+      <View style={[styles.searchBox, { borderColor: colors.border }]}>
+        <Ionicons name="search" size={15} color={colors.textSecondary} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search people…"
+          placeholderTextColor={colors.textSecondary}
+          value={search}
+          onChangeText={setSearch}
+          autoCorrect={false}
+          autoCapitalize="none"
+        />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch("")} hitSlop={8}>
+            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
+      </View>
+    ) : null;
+
   const renderFilterBar = () => (
     <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
       <View style={styles.chipRow}>
-        {/* Team scope — single-select dropdown (#477 FR-2). Picking a team
-            isolates it; "All teams" shows everything. Gates Roles view only,
-            so it's only shown there. */}
-        {mode === "roles" && data.teams.length > 0 && (
-          <Chip
-            icon="people-outline"
-            label={isolatedTeamName ?? "All teams"}
-            trailingIcon="chevron-down"
-            active={isolatedTeamId !== null}
-            onPress={() => setTeamMenuOpen(true)}
-            colors={colors}
-          />
-        )}
-        <Chip
-          icon={openOnly ? "checkbox" : "square-outline"}
-          label="Open only"
-          active={openOnly}
-          onPress={() => setOpenOnly((v) => !v)}
-          colors={colors}
-        />
-        {mode === "people" && (
-          <Chip
-            icon={availableOnly ? "checkbox" : "square-outline"}
-            label="Available only"
-            active={availableOnly}
-            onPress={() => setAvailableOnly((v) => !v)}
-            colors={colors}
-          />
-        )}
-        {mode === "people" && filterGroups && filterGroups.length > 0 && (
-          <Chip
-            icon="funnel"
-            label={filterGroupName ? `In: ${filterGroupName}` : "Also in group"}
-            active={filterGroupId !== null}
-            onPress={() => setGroupFilterOpen(true)}
-            colors={colors}
-          />
-        )}
+        {teamChip}
+        {openOnlyChip}
+        {availableOnlyChip}
+        {groupScopeChip}
       </View>
-      {mode === "people" && (
-        <View style={[styles.searchBox, { borderColor: colors.border }]}>
-          <Ionicons name="search" size={15} color={colors.textSecondary} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search people…"
-            placeholderTextColor={colors.textSecondary}
-            value={search}
-            onChangeText={setSearch}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch("")} hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+      {renderSearchBox()}
+    </View>
+  );
+
+  // Desktop: one horizontal toolbar row — view toggle, filters, then Publish
+  // pinned right. Replaces both the header toggle and the stacked filter bar.
+  const renderDesktopToolbar = () => (
+    <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
+      {renderViewToggle()}
+      {teamChip}
+      {groupScopeChip}
+      {openOnlyChip}
+      {availableOnlyChip}
+      {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
+      <View style={styles.toolbarSpacer} />
+      {renderPublishButton(false)}
     </View>
   );
 
@@ -1027,69 +1107,130 @@ export function RosterGridScreen() {
         ? "Re-send requests"
         : "Publish & send requests";
 
+  /**
+   * The Publish CTA. Rendered two ways: `compact` (desktop toolbar — inline,
+   * auto-width, right-aligned) and full-bleed (mobile sticky bottom bar).
+   * Same action and label both ways. Layout lives on the inner static View so
+   * RN-Web doesn't drop it (Pressable function-style is ignored on web).
+   */
+  const renderPublishButton = (full: boolean) => (
+    <Pressable
+      onPress={handlePublishPress}
+      disabled={publishing}
+      accessibilityRole="button"
+      accessibilityLabel={publishLabel}
+    >
+      <View
+        style={[
+          styles.publishBtn,
+          full ? styles.publishBtnFull : styles.publishBtnCompact,
+          { backgroundColor: primaryColor, opacity: publishing ? 0.7 : 1 },
+        ]}
+      >
+        {publishing ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <View style={styles.publishBtnContent}>
+            {!full && (
+              <Ionicons name="paper-plane" size={15} color="#fff" />
+            )}
+            <Text
+              style={[styles.publishBtnText, full && styles.publishBtnTextFull]}
+              numberOfLines={1}
+            >
+              {publishLabel}
+            </Text>
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
       {renderHeaderBar()}
-      {renderFilterBar()}
+      {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
 
-      {renderHeaderRow(cornerLabel)}
-
-      <View style={styles.matrixBody} onLayout={(e) => setBodyH(e.nativeEvent.layout.height)}>
-        {rows === 0 ? (
-          <View style={styles.centered}>
-            <Text style={{ color: colors.textSecondary }}>
-              {mode === "roles" ? "No roles to show." : "No one to show."}
-            </Text>
+      {/* On desktop the grid and the docked assign panel share a row so the
+          grid stays visible beside the panel; on mobile the grid takes the
+          full width and AssignSheet overlays as a modal (below). */}
+      <View style={isWide ? styles.contentRowWide : styles.contentColumn}>
+        <View style={styles.gridArea}>
+          {renderHeaderRow(cornerLabel)}
+          <View
+            style={styles.matrixBody}
+            onLayout={(e) => {
+              setBodyH(e.nativeEvent.layout.height);
+              setBodyW(e.nativeEvent.layout.width);
+            }}
+          >
+            {rows === 0 ? (
+              <View style={styles.centered}>
+                <Text style={{ color: colors.textSecondary }}>
+                  {mode === "roles" ? "No roles to show." : "No one to show."}
+                </Text>
+              </View>
+            ) : mode === "roles" ? (
+              <>
+                {renderRoleFrozen()}
+                {renderRoleCells()}
+              </>
+            ) : (
+              <>
+                {renderPeopleFrozen()}
+                {renderPeopleCells()}
+              </>
+            )}
           </View>
-        ) : mode === "roles" ? (
-          <>
-            {renderRoleFrozen()}
-            {renderRoleCells()}
-          </>
-        ) : (
-          <>
-            {renderPeopleFrozen()}
-            {renderPeopleCells()}
-          </>
+        </View>
+
+        {/* Desktop: docked right side-panel — stays open after assigning so a
+            leader can fill a whole column. Mobile renders AssignSheet as a
+            modal below instead. */}
+        {isWide && assignTarget && (
+          <AssignSheet
+            visible
+            dockedRight
+            planId={assignTarget.planId}
+            planStatus={assignTarget.planStatus}
+            groupId={groupId}
+            teamId={assignTarget.teamId}
+            roleId={assignTarget.roleId}
+            roleName={assignTarget.roleName}
+            timeLabel={assignTarget.timeLabel}
+            assignedUserIds={assignTarget.assignedUserIds}
+            prioritizeAvailable
+            keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
+            filterMemberIds={filterMemberSet}
+            filterGroupName={filterGroupName}
+            onClose={() => setAssignTarget(null)}
+          />
         )}
       </View>
 
-      {/* Publish bar — present in BOTH views (#477 FR-3). Scoped to a chosen
-          date via the chooser; single-date grids publish that date directly. */}
-      <View
-        style={[
-          styles.publishBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-            paddingBottom: insets.bottom + 12,
-          },
-        ]}
-      >
-        <Pressable
-          onPress={handlePublishPress}
-          disabled={publishing}
-          accessibilityRole="button"
-          accessibilityLabel={publishLabel}
+      {/* Publish bar — MOBILE only (#477 FR-3); desktop hosts Publish in the
+          toolbar (renderDesktopToolbar). Scoped to a chosen date via the
+          chooser; single-date grids publish that date directly. */}
+      {!isWide && (
+        <View
+          style={[
+            styles.publishBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+              paddingBottom: insets.bottom + 12,
+            },
+          ]}
         >
-          <View
-            style={[
-              styles.publishBtn,
-              { backgroundColor: primaryColor, opacity: publishing ? 0.7 : 1 },
-            ]}
-          >
-            {publishing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.publishBtnText}>{publishLabel}</Text>
-            )}
-          </View>
-        </Pressable>
-      </View>
+          {renderPublishButton(true)}
+        </View>
+      )}
 
       {/* ===== Modals ===== */}
-      {assignTarget && (
+      {/* Mobile: AssignSheet as a centered modal overlay. (Desktop docks it in
+          the content row above.) */}
+      {!isWide && assignTarget && (
         <AssignSheet
           visible
           planId={assignTarget.planId}
@@ -1102,6 +1243,8 @@ export function RosterGridScreen() {
           assignedUserIds={assignTarget.assignedUserIds}
           prioritizeAvailable
           keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
+          filterMemberIds={filterMemberSet}
+          filterGroupName={filterGroupName}
           onClose={() => setAssignTarget(null)}
         />
       )}
@@ -1926,6 +2069,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chipRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  toolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexWrap: "wrap",
+  },
+  toolbarSearch: { width: 220 },
+  toolbarSpacer: { flexGrow: 1 },
+  contentColumn: { flex: 1 },
+  contentRowWide: { flex: 1, flexDirection: "row" },
+  gridArea: { flex: 1, minWidth: 0 },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -2081,14 +2238,29 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   publishBtn: {
-    minHeight: 50,
-    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
+  publishBtnFull: {
+    minHeight: 50,
+    borderRadius: 12,
+  },
+  publishBtnCompact: {
+    minHeight: 38,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+  },
+  publishBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
   publishBtnText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
     color: "#fff",
+  },
+  publishBtnTextFull: {
+    fontSize: 16,
   },
 });
