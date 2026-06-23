@@ -119,6 +119,17 @@ pnpm dev
 | `OPENAI_SECRET_KEY` | OpenAI API key (already used by poster keywording). The prayer moderator calls `gpt-4o-mini` in JSON mode. | Moderator fails open — every prayer is accepted without LLM screening. |
 | `OLLAMA_API_KEY` | **Escape hatch only.** Used if you flip `PROVIDER` to `"ollama"` in `apps/convex/lib/moderation/prayer.ts` (e.g. if OpenAI spend gets too high). See https://ollama.com/pricing. | Same fail-open behavior when unset. |
 
+### Dev-Assistant Bot (@Togather pipeline, staff-only)
+
+Gated behind the `dev-assistant-bot` feature flag. Reuses `OPENAI_SECRET_KEY`
+(`gpt-4o` for vision) — no new LLM key. These wire the Claude Code Routine seam:
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `CLAUDE_ROUTINES_TRIGGER_URL` | Outbound POST target. When a bug is marked `READY_FOR_IMPL`, we POST `{ bugId, routineRunId, title, body, repro, screenshotUrls, callbackUrl }` here to kick off the routine. | Dispatch fails; bug stays `IN_PROGRESS` with `lastError`. Use the "Retry dispatch" action once configured. |
+| `CLAUDE_ROUTINES_TOKEN` | Bearer token sent as `Authorization: Bearer <token>` on the outbound POST. | Same as above. |
+| `DEV_ASSISTANT_CALLBACK_SECRET` | HMAC-SHA256 key for inbound callbacks. The routine signs the raw callback body and sends the hex digest in `x-togather-signature`; we recompute and constant-time compare. Callback endpoint: `POST https://<deployment>.convex.site/dev-assistant/callback`. | Callbacks rejected with 401; bug never advances past `IN_PROGRESS`. |
+
 ### Development Settings
 
 | Secret | Description |

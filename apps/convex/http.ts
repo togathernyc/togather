@@ -13,6 +13,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
 import { hashApiKey } from "./lib/apiKeys";
 
@@ -978,6 +979,128 @@ http.route({
     return jsonResponse({
       status: "ok",
       timestamp: new Date().toISOString(),
+    });
+  }),
+});
+
+/**
+ * Verify a dev-assistant routine callback signature.
+ *
+ * The routine signs the raw request body with HMAC-SHA256 using
+ * DEV_ASSISTANT_CALLBACK_SECRET and sends the hex digest in the
+ * `x-togather-signature` header. We recompute and constant-time compare.
+ */
+async function verifyDevAssistantSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBytes = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(payload)
+    );
+    const computedSig = Array.from(new Uint8Array(signatureBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return timingSafeEqual(signature, computedSig);
+  } catch {
+    return false;
+  }
+}
+
+const DEV_ASSISTANT_CALLBACK_STATUSES = [
+  "IN_PROGRESS",
+  "CODE_REVIEW",
+  "READY_TO_MERGE",
+  "MERGED",
+  "REJECTED",
+];
+
+/**
+ * POST /dev-assistant/callback
+ *
+ * Inbound callback from the Claude Code Routine handling a dev-assistant bug.
+ * Verifies the HMAC signature, then hands off to handleRoutineCallback (which
+ * applies the transition + posts a bot message into the thread). Returns 200
+ * fast — chat fanout and idempotency are handled downstream.
+ *
+ * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[], message? }
+ */
+http.route({
+  path: "/dev-assistant/callback",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.text();
+    const signature = request.headers.get("x-togather-signature");
+    if (!signature) {
+      return new Response("Missing x-togather-signature header", { status: 401 });
+    }
+
+    const secret = process.env.DEV_ASSISTANT_CALLBACK_SECRET;
+    if (!secret) {
+      console.error("[DevAssistant] DEV_ASSISTANT_CALLBACK_SECRET not configured");
+      return new Response("Callback not configured", { status: 500 });
+    }
+
+    const isValid = await verifyDevAssistantSignature(body, signature, secret);
+    if (!isValid) {
+      console.error("[DevAssistant] Invalid callback signature");
+      return new Response("Invalid signature", { status: 401 });
+    }
+
+    let payload: {
+      bugId?: string;
+      routineRunId?: string;
+      status?: string;
+      prUrl?: string;
+      screenshots?: string[];
+      message?: string;
+    };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+
+    const { bugId, routineRunId, status, prUrl, screenshots, message } = payload;
+    if (!bugId || !routineRunId || !status) {
+      return new Response("Missing bugId, routineRunId, or status", { status: 400 });
+    }
+    if (!DEV_ASSISTANT_CALLBACK_STATUSES.includes(status)) {
+      return new Response(`Unsupported status: ${status}`, { status: 400 });
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: bugId as Id<"devBugs">,
+        routineRunId,
+        status: status as
+          | "IN_PROGRESS"
+          | "CODE_REVIEW"
+          | "READY_TO_MERGE"
+          | "MERGED"
+          | "REJECTED",
+        prUrl,
+        screenshots,
+        message,
+      }
+    );
+
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
     });
   }),
 });

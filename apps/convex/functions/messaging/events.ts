@@ -45,6 +45,32 @@ export const onMessageSent = internalMutation({
     const message = await ctx.db.get(args.messageId);
     if (!message) return;
 
+    // Dev-assistant bot: if a human @mentioned the @Togather sentinel bot, hand
+    // the thread to the agent. Cheap on the hot path — the username lookup only
+    // runs for messages that actually carry mentions (the vast majority don't),
+    // and the flag/staff gates live inside processThreadMention.
+    if (
+      args.senderId &&
+      message.mentionedUserIds &&
+      message.mentionedUserIds.length > 0
+    ) {
+      const bot = await ctx.db
+        .query("users")
+        .withIndex("by_username", (q) => q.eq("username", "togather_bot"))
+        .first();
+      if (bot && message.mentionedUserIds.includes(bot._id)) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.devAssistant.actions.processThreadMention,
+          {
+            channelId: args.channelId,
+            mentionMessageId: args.messageId,
+            originatorUserId: args.senderId,
+          },
+        );
+      }
+    }
+
     // Generate preview for notifications (but don't update channel - sendMessage already does it
     // with smart previews like "Sent a photo" or "Sent X files")
     const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);

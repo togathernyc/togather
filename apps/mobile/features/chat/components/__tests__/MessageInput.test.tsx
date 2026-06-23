@@ -96,6 +96,24 @@ jest.mock('../GifPicker', () => ({
   GifPicker: () => null,
 }));
 
+// Dev-assistant @Togather mention deps (added to MessageInput). The global
+// convex mock exposes `api: {}`, so provide the devAssistant path used here and
+// stub the auth/flag hooks (the bot mention is gated off in this test).
+jest.mock('@services/api/convex', () => ({
+  useQuery: jest.fn(),
+  api: {
+    functions: { devAssistant: { index: { getBotUserId: 'getBotUserId' } } },
+  },
+}));
+
+jest.mock('@/providers/AuthProvider', () => ({
+  useAuth: () => ({ user: null, token: 'mock-auth-token' }),
+}));
+
+jest.mock('@hooks/useConvexFeatureFlag', () => ({
+  useConvexFeatureFlag: () => ({ enabled: false, loaded: true }),
+}));
+
 jest.mock('@hooks/useTheme', () => ({
   useTheme: () => ({
     colors: {

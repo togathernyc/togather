@@ -44,6 +44,12 @@ import type * as functions_communityLandingPageActions from "../functions/commun
 import type * as functions_communityPeople from "../functions/communityPeople.js";
 import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
+import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
+import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
+import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
+import type * as functions_devAssistant_index from "../functions/devAssistant/index.js";
+import type * as functions_devAssistant_prompts from "../functions/devAssistant/prompts.js";
+import type * as functions_devAssistant_tools from "../functions/devAssistant/tools.js";
 import type * as functions_ee_billing from "../functions/ee/billing.js";
 import type * as functions_ee_notifications_proposalNotifications from "../functions/ee/notifications/proposalNotifications.js";
 import type * as functions_ee_proposals from "../functions/ee/proposals.js";
@@ -250,6 +256,12 @@ declare const fullApi: ApiFromModules<{
   "functions/communityPeople": typeof functions_communityPeople;
   "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
+  "functions/devAssistant/actions": typeof functions_devAssistant_actions;
+  "functions/devAssistant/agent": typeof functions_devAssistant_agent;
+  "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
+  "functions/devAssistant/index": typeof functions_devAssistant_index;
+  "functions/devAssistant/prompts": typeof functions_devAssistant_prompts;
+  "functions/devAssistant/tools": typeof functions_devAssistant_tools;
   "functions/ee/billing": typeof functions_ee_billing;
   "functions/ee/notifications/proposalNotifications": typeof functions_ee_notifications_proposalNotifications;
   "functions/ee/proposals": typeof functions_ee_proposals;

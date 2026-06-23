@@ -324,6 +324,48 @@ export const createUser = internalMutation({
 });
 
 /**
+ * Seed the @Togather dev-assistant sentinel bot user.
+ *
+ * A real users row (looked up by username) means `mentionedUserIds` resolves
+ * and the existing mention plumbing works unchanged. The bot is inactive and
+ * has no push tokens, so it's naturally excluded from notification fanout.
+ */
+export const seedDevAssistantBotUser = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<Id<"users">> => {
+    const timestamp = now();
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", "togather_bot"))
+      .first();
+    if (existing) {
+      console.log("[seed] Dev-assistant bot user already exists");
+      return existing._id;
+    }
+
+    const botId = await ctx.db.insert("users", {
+      username: "togather_bot",
+      firstName: "Togather",
+      lastName: "Bot",
+      searchText: buildSearchText({ firstName: "Togather", lastName: "Bot" }),
+      isActive: false,
+      isStaff: false,
+      isSuperuser: false,
+      pushNotificationsEnabled: false,
+      emailNotificationsEnabled: false,
+      smsNotificationsEnabled: false,
+      timezone: "America/New_York",
+      dateJoined: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    console.log("[seed] Created dev-assistant bot user");
+    return botId;
+  },
+});
+
+/**
  * Create community membership for a user
  */
 export const createCommunityMembership = internalMutation({
@@ -723,6 +765,9 @@ export const seedDemoData = internalAction({
     }
 
     console.log(`[seed] Users ready: ${userIds.length}`);
+
+    // Seed the @Togather dev-assistant sentinel bot user (idempotent).
+    await ctx.runMutation(internal.functions.seed.seedDevAssistantBotUser, {});
 
     // Create community memberships
     for (const userId of userIds) {

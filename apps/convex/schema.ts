@@ -1731,7 +1731,7 @@ export default defineSchema({
     channelId: v.id("chatChannels"),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "poll" | "availability_request"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "bug_card" | "poll" | "availability_request"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1771,6 +1771,8 @@ export default defineSchema({
     reachOutRequestId: v.optional(v.id("reachOutRequests")),
     // Canonical task reference for task-aware chat cards
     taskId: v.optional(v.id("tasks")),
+    // Dev-assistant bug reference for contentType === "bug_card"
+    bugId: v.optional(v.id("devBugs")),
     // Poll reference for contentType === "poll"
     pollId: v.optional(v.id("polls")),
     // Availability-request reference for contentType === "availability_request"
@@ -2040,6 +2042,51 @@ export default defineSchema({
     updatedAt: v.number(), // Unix timestamp ms
     updatedById: v.optional(v.id("users")),
   }).index("by_key", ["key"]),
+
+  // =============================================================================
+  // DEV-ASSISTANT BUGS
+  // =============================================================================
+  // Backs the @Togather in-chat dev-assistant pipeline. The originating chat
+  // thread is the system of record for intent; this row tracks lifecycle state;
+  // the PR tracks code. Each transition posts a bot message into the thread.
+  // Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
+  devBugs: defineTable({
+    communityId: v.id("communities"),
+    channelId: v.id("chatChannels"),
+    // All bot replies/callbacks post into this thread (the root message).
+    threadRootMessageId: v.optional(v.id("chatMessages")),
+    originatorUserId: v.id("users"),
+
+    status: v.union(
+      v.literal("DRAFT"),
+      v.literal("IN_REVIEW"),
+      v.literal("READY_FOR_IMPL"),
+      v.literal("IN_PROGRESS"),
+      v.literal("CODE_REVIEW"),
+      v.literal("READY_TO_MERGE"),
+      v.literal("MERGED"),
+      v.literal("REJECTED"),
+    ),
+
+    title: v.string(),
+    body: v.string(), // clean implementation brief (synthesized)
+    repro: v.optional(v.string()),
+    screenshotUrls: v.optional(v.array(v.string())), // pulled from thread image attachments
+
+    prUrl: v.optional(v.string()),
+    reviewLink: v.optional(v.string()),
+    routineRunId: v.optional(v.string()), // we generate; routine echoes on callbacks
+    dispatchedAt: v.optional(v.number()),
+    lastCallbackAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status", ["status"])
+    .index("by_channel", ["channelId"])
+    .index("by_originator", ["originatorUserId"])
+    .index("by_routineRunId", ["routineRunId"]),
 
   // =============================================================================
 
