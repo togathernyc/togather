@@ -754,22 +754,22 @@ export function AssignSheet({
     return out;
   }, [previousRows, groupRows, communityRows]);
 
-  const renderListItem = useCallback(
-    ({ item }: { item: AssignListItem }) => {
-      if (item.kind === "label") {
-        return (
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-            {item.label}
-          </Text>
-        );
-      }
-      if (item.kind === "group") {
-        return renderGroupRow(item.person, item.prior);
-      }
-      return renderCommunityRow(item.person);
-    },
-    [colors.textSecondary, renderGroupRow, renderCommunityRow],
-  );
+  // Plain function (not memoized): the row renderers it delegates to close over
+  // fresh state each render, so memoizing here would be a no-op. FlashList still
+  // recycles rows by `keyExtractor` + `extraData`.
+  const renderListItem = ({ item }: { item: AssignListItem }) => {
+    if (item.kind === "label") {
+      return (
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+          {item.label}
+        </Text>
+      );
+    }
+    if (item.kind === "group") {
+      return renderGroupRow(item.person, item.prior);
+    }
+    return renderCommunityRow(item.person);
+  };
 
   return (
     <Modal
@@ -812,7 +812,10 @@ export function AssignSheet({
           >
           <FlashList
             data={listData}
-            extraData={`${busyUserId ?? ""}|${invitingSubmit}`}
+            // Re-render rows when these change the per-row affordance (busy
+            // spinner, disabled state, "Assigned" greying as the parent
+            // reactively updates `assignedUserIds`).
+            extraData={`${busyUserId ?? ""}|${invitingSubmit}|${assignedUserIds.size}`}
             keyExtractor={(item) => item.key}
             renderItem={renderListItem}
             contentContainerStyle={styles.scrollContent}
