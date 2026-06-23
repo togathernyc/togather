@@ -57,6 +57,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
 import { Avatar } from "@components/ui/Avatar";
 import { useTheme } from "@hooks/useTheme";
@@ -211,6 +212,12 @@ export function AssignSheet({
   const [invitePhone, setInvitePhone] = useState("");
   const [invitingSubmit, setInvitingSubmit] = useState(false);
 
+  // "Also in group" candidate scope (#477 FR-4). Independent of the People-view
+  // row filter — it's modal-local state that narrows whom the leader is looking
+  // at right now. Reuses the same backend as the People view (PR #474).
+  const [filterGroupId, setFilterGroupId] = useState<Id<"groups"> | null>(null);
+  const [groupFilterOpen, setGroupFilterOpen] = useState(false);
+
   // Reset transient state whenever the sheet closes so a re-open starts
   // clean (the parent unmounts us when assignTarget clears, but be defensive).
   useEffect(() => {
@@ -221,6 +228,8 @@ export function AssignSheet({
       setInviteFirstName("");
       setInvitePhone("");
       setInvitingSubmit(false);
+      setFilterGroupId(null);
+      setGroupFilterOpen(false);
     }
   }, [visible]);
 
@@ -260,6 +269,45 @@ export function AssignSheet({
     [availability],
   );
 
+  // "Also in group" scope (#477 FR-4). `filterGroups` populates the picker
+  // (excludes this group / announcement / archived groups — enforced backend-
+  // side); `filterMemberIds` is the chosen group's membership, intersected
+  // client-side. Gated on the selection still being present in the loaded list
+  // so a stale pick can't throw into the error boundary.
+  const filterGroups = useAuthenticatedQuery(
+    api.functions.scheduling.roster.rosterFilterGroups,
+    visible ? { groupId } : "skip",
+  ) as Array<{ id: Id<"groups">; name: string }> | undefined;
+
+  const filterMemberIds = useAuthenticatedQuery(
+    api.functions.scheduling.roster.rosterFilterMemberIds,
+    visible && filterGroupId && filterGroups?.some((g) => g.id === filterGroupId)
+      ? { groupId: filterGroupId }
+      : "skip",
+  ) as string[] | undefined;
+
+  const filterMemberSet = useMemo(
+    () => (filterMemberIds ? new Set(filterMemberIds) : null),
+    [filterMemberIds],
+  );
+
+  const filterGroupName = filterGroupId
+    ? filterGroups?.find((g) => g.id === filterGroupId)?.name
+    : undefined;
+
+  // Clear a stale selection once the loaded list no longer contains it (left /
+  // archived). The query above is already gated on the same condition; this
+  // drops the lingering UI state. (Mirrors RosterGridScreen's People filter.)
+  useEffect(() => {
+    if (
+      filterGroupId &&
+      filterGroups &&
+      !filterGroups.some((g) => g.id === filterGroupId)
+    ) {
+      setFilterGroupId(null);
+    }
+  }, [filterGroups, filterGroupId]);
+
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
   );
@@ -281,7 +329,12 @@ export function AssignSheet({
   // is hidden — the candidate list IS the result of their query.
   // ---------------------------------------------------------------------------
   const { previousRows, groupRows, communityRows } = useMemo(() => {
-    const list = candidates ?? [];
+    // Apply the "also in group" scope first — it's presentation-only, so it
+    // narrows every section (previous / group / community) uniformly. The
+    // roster's own coverage tallies live elsewhere and stay whole (FR-4.4).
+    const list = (candidates ?? []).filter(
+      (c) => !filterMemberSet || filterMemberSet.has(c.userId as string),
+    );
     const byUser = new Map<string, CommunityPerson>(
       list.map((c) => [c.userId as string, c]),
     );
@@ -320,7 +373,14 @@ export function AssignSheet({
       );
     }
     return { previousRows, groupRows, communityRows };
-  }, [candidates, previous, debouncedSearch, prioritizeAvailable, availabilityByUser]);
+  }, [
+    candidates,
+    previous,
+    debouncedSearch,
+    prioritizeAvailable,
+    availabilityByUser,
+    filterMemberSet,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Mutation handlers
@@ -657,6 +717,60 @@ export function AssignSheet({
     groupRows.length === 0 &&
     communityRows.length === 0;
 
+  // Flatten the three sections into a single list for FlashList. The candidate
+  // pool can now be the FULL group membership (≥500 in big churches — #477
+  // FR-1/FR-9), so the rows must virtualize rather than render all at once.
+  // Section labels are interleaved as their own items; the search box + group
+  // filter live in the list header, the invite form in the footer.
+  type AssignListItem =
+    | { kind: "label"; key: string; label: string }
+    | { kind: "group"; key: string; person: CommunityPerson; prior: boolean }
+    | { kind: "community"; key: string; person: CommunityPerson };
+
+  const listData = useMemo<AssignListItem[]>(() => {
+    const out: AssignListItem[] = [];
+    if (previousRows.length > 0) {
+      out.push({ kind: "label", key: "l-prev", label: "PREVIOUSLY FILLED BY" });
+      for (const p of previousRows) {
+        out.push({ kind: "group", key: `prev-${p.userId}`, person: p, prior: true });
+      }
+    }
+    if (groupRows.length > 0) {
+      out.push({ kind: "label", key: "l-group", label: "GROUP" });
+      for (const p of groupRows) {
+        out.push({ kind: "group", key: `grp-${p.userId}`, person: p, prior: false });
+      }
+    }
+    if (communityRows.length > 0) {
+      out.push({
+        kind: "label",
+        key: "l-comm",
+        label: "COMMUNITY",
+      });
+      for (const p of communityRows) {
+        out.push({ kind: "community", key: `comm-${p.userId}`, person: p });
+      }
+    }
+    return out;
+  }, [previousRows, groupRows, communityRows]);
+
+  const renderListItem = useCallback(
+    ({ item }: { item: AssignListItem }) => {
+      if (item.kind === "label") {
+        return (
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+            {item.label}
+          </Text>
+        );
+      }
+      if (item.kind === "group") {
+        return renderGroupRow(item.person, item.prior);
+      }
+      return renderCommunityRow(item.person);
+    },
+    [colors.textSecondary, renderGroupRow, renderCommunityRow],
+  );
+
   return (
     <Modal
       visible={visible}
@@ -696,235 +810,326 @@ export function AssignSheet({
             style={styles.cardBody}
             behavior={Platform.OS === "ios" ? "padding" : undefined}
           >
-          <ScrollView
-            style={styles.scrollFlex}
+          <FlashList
+            data={listData}
+            extraData={`${busyUserId ?? ""}|${invitingSubmit}`}
+            keyExtractor={(item) => item.key}
+            renderItem={renderListItem}
             contentContainerStyle={styles.scrollContent}
             keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          >
-            <View
-              style={[
-                styles.searchBox,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <Ionicons name="search" size={16} color={colors.textSecondary} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search by name…"
-                placeholderTextColor={colors.textSecondary}
-                value={search}
-                onChangeText={setSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-            </View>
-
-            {loading ? (
-              <View style={styles.centered}>
-                <ActivityIndicator size="small" color={colors.text} />
-              </View>
-            ) : (
-              <>
-                {previousRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      PREVIOUSLY FILLED BY
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {previousRows.map((m) => renderGroupRow(m, true))}
-                    </View>
-                  </>
-                )}
-
-                {groupRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      GROUP
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {groupRows.map((m) => renderGroupRow(m, false))}
-                    </View>
-                  </>
-                )}
-
-                {communityRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      COMMUNITY
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {communityRows.map(renderCommunityRow)}
-                    </View>
-                  </>
-                )}
-
-                {showEmpty && (
-                  <Text
-                    style={[styles.emptyText, { color: colors.textSecondary }]}
-                  >
-                    {debouncedSearch.trim()
-                      ? `No one in this community matches "${debouncedSearch.trim()}".`
-                      : "No assignable people yet — invite someone new below."}
-                  </Text>
-                )}
-              </>
-            )}
-
-            {/* Invite someone new — collapsed by default. */}
-            <Text
-              style={[styles.sectionLabel, { color: colors.textSecondary }]}
-            >
-              INVITE SOMEONE NEW
-            </Text>
-            {inviteOpen ? (
-              <View
-                style={[
-                  styles.inviteCard,
-                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                ]}
-              >
-                <TextInput
+            keyboardDismissMode="on-drag"
+            ListHeaderComponent={
+              <View>
+                <View
                   style={[
-                    styles.inviteInput,
-                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                    styles.searchBox,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
                   ]}
-                  placeholder="Name"
-                  placeholderTextColor={colors.textSecondary}
-                  value={inviteFirstName}
-                  onChangeText={setInviteFirstName}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  editable={!invitingSubmit}
-                />
-                <TextInput
-                  style={[
-                    styles.inviteInput,
-                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
-                  ]}
-                  placeholder="Phone (e.g. (555) 123-4567)"
-                  placeholderTextColor={colors.textSecondary}
-                  value={invitePhone}
-                  onChangeText={setInvitePhone}
-                  keyboardType="phone-pad"
-                  autoCorrect={false}
-                  editable={!invitingSubmit}
-                />
-                <View style={styles.inviteActions}>
+                >
+                  <Ionicons name="search" size={16} color={colors.textSecondary} />
+                  <TextInput
+                    style={[styles.searchInput, { color: colors.text }]}
+                    placeholder="Search by name…"
+                    placeholderTextColor={colors.textSecondary}
+                    value={search}
+                    onChangeText={setSearch}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                </View>
+
+                {/* "Also in group" scope (#477 FR-4). Hidden when the leader
+                    has no other eligible groups. */}
+                {filterGroups && filterGroups.length > 0 && (
                   <Pressable
-                    onPress={() => {
-                      if (invitingSubmit) return;
-                      setInviteOpen(false);
-                      setInviteFirstName("");
-                      setInvitePhone("");
-                    }}
-                    disabled={invitingSubmit}
+                    onPress={() => setGroupFilterOpen(true)}
                     accessibilityRole="button"
-                    accessibilityLabel="Cancel invite"
-                  >
-                    <View style={styles.inviteCancelInner}>
-                      <Text
-                        style={[styles.inviteCancelText, { color: colors.textSecondary }]}
-                      >
-                        Cancel
-                      </Text>
-                    </View>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleInviteSubmit}
-                    disabled={invitingSubmit}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      planStatus === "draft"
-                        ? "Invite and assign"
-                        : "Send invite and assign"
-                    }
+                    accessibilityLabel="Filter by also in group"
                   >
                     <View
                       style={[
-                        styles.inviteSubmitInner,
+                        styles.scopeRow,
                         {
-                          backgroundColor: primaryColor,
-                          opacity: invitingSubmit ? 0.6 : 1,
+                          borderColor: filterGroupId ? primaryColor : colors.border,
+                          backgroundColor: filterGroupId
+                            ? primaryColor + "14"
+                            : colors.surface,
                         },
                       ]}
                     >
-                      {invitingSubmit ? (
-                        <ActivityIndicator size="small" color={colors.surface} />
-                      ) : (
-                        <Text
-                          style={[styles.inviteSubmitText, { color: colors.surface }]}
-                        >
-                          {planStatus === "draft"
-                            ? "Invite & assign"
-                            : "Send invite & assign"}
-                        </Text>
-                      )}
+                      <Ionicons
+                        name="funnel"
+                        size={14}
+                        color={filterGroupId ? primaryColor : colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.scopeText,
+                          {
+                            color: filterGroupId ? primaryColor : colors.textSecondary,
+                          },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {filterGroupName
+                          ? `Also in: ${filterGroupName}`
+                          : "Also in group"}
+                      </Text>
+                      <Ionicons
+                        name="chevron-down"
+                        size={14}
+                        color={filterGroupId ? primaryColor : colors.textSecondary}
+                      />
                     </View>
                   </Pressable>
-                </View>
-                <Text
-                  style={[
-                    styles.inviteHelperText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {planStatus === "draft"
-                    ? `We'll text ${inviteFirstName.trim() || "them"} the invite when you publish this event plan.`
-                    : "An SMS invite will be sent now."}
-                </Text>
+                )}
+
+                {loading && (
+                  <View style={styles.centered}>
+                    <ActivityIndicator size="small" color={colors.text} />
+                  </View>
+                )}
+                {showEmpty && (
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    {debouncedSearch.trim() || filterGroupId
+                      ? "No one matches these filters."
+                      : "No assignable people yet — invite someone new below."}
+                  </Text>
+                )}
               </View>
-            ) : (
-              <Pressable
-                onPress={() => setInviteOpen(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Invite someone new"
-              >
-                <View
-                  style={[
-                    styles.inviteToggle,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                  ]}
-                >
-                  <Ionicons
-                    name="add-circle-outline"
-                    size={18}
-                    color={primaryColor}
-                  />
-                  <Text
+            }
+            ListFooterComponent={
+              <View>
+                {/* Invite someone new — collapsed by default. */}
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  INVITE SOMEONE NEW
+                </Text>
+                {inviteOpen ? (
+                  <View
                     style={[
-                      styles.inviteToggleText,
-                      { color: primaryColor },
+                      styles.inviteCard,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
                     ]}
                   >
-                    Invite someone new
+                    <TextInput
+                      style={[
+                        styles.inviteInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                      placeholder="Name"
+                      placeholderTextColor={colors.textSecondary}
+                      value={inviteFirstName}
+                      onChangeText={setInviteFirstName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      editable={!invitingSubmit}
+                    />
+                    <TextInput
+                      style={[
+                        styles.inviteInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                      placeholder="Phone (e.g. (555) 123-4567)"
+                      placeholderTextColor={colors.textSecondary}
+                      value={invitePhone}
+                      onChangeText={setInvitePhone}
+                      keyboardType="phone-pad"
+                      autoCorrect={false}
+                      editable={!invitingSubmit}
+                    />
+                    <View style={styles.inviteActions}>
+                      <Pressable
+                        onPress={() => {
+                          if (invitingSubmit) return;
+                          setInviteOpen(false);
+                          setInviteFirstName("");
+                          setInvitePhone("");
+                        }}
+                        disabled={invitingSubmit}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel invite"
+                      >
+                        <View style={styles.inviteCancelInner}>
+                          <Text
+                            style={[styles.inviteCancelText, { color: colors.textSecondary }]}
+                          >
+                            Cancel
+                          </Text>
+                        </View>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleInviteSubmit}
+                        disabled={invitingSubmit}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          planStatus === "draft"
+                            ? "Invite and assign"
+                            : "Send invite and assign"
+                        }
+                      >
+                        <View
+                          style={[
+                            styles.inviteSubmitInner,
+                            {
+                              backgroundColor: primaryColor,
+                              opacity: invitingSubmit ? 0.6 : 1,
+                            },
+                          ]}
+                        >
+                          {invitingSubmit ? (
+                            <ActivityIndicator size="small" color={colors.surface} />
+                          ) : (
+                            <Text
+                              style={[styles.inviteSubmitText, { color: colors.surface }]}
+                            >
+                              {planStatus === "draft"
+                                ? "Invite & assign"
+                                : "Send invite & assign"}
+                            </Text>
+                          )}
+                        </View>
+                      </Pressable>
+                    </View>
+                    <Text
+                      style={[styles.inviteHelperText, { color: colors.textSecondary }]}
+                    >
+                      {planStatus === "draft"
+                        ? `We'll text ${inviteFirstName.trim() || "them"} the invite when you publish this event plan.`
+                        : "An SMS invite will be sent now."}
+                    </Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => setInviteOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Invite someone new"
+                  >
+                    <View
+                      style={[
+                        styles.inviteToggle,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                      ]}
+                    >
+                      <Ionicons
+                        name="add-circle-outline"
+                        size={18}
+                        color={primaryColor}
+                      />
+                      <Text
+                        style={[styles.inviteToggleText, { color: primaryColor }]}
+                      >
+                        Invite someone new
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+              </View>
+            }
+          />
+          </KeyboardAvoidingView>
+
+          {groupFilterOpen && (
+            <AssignGroupFilterMenu
+              groups={filterGroups ?? []}
+              selectedId={filterGroupId}
+              colors={colors}
+              onPick={(id) => {
+                setFilterGroupId(id);
+                setGroupFilterOpen(false);
+              }}
+              onClose={() => setGroupFilterOpen(false)}
+            />
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+type ThemeColors = ReturnType<typeof useTheme>["colors"];
+
+/**
+ * "Also in group" picker for the assign sheet (#477 FR-4). A single-select
+ * menu over the leader's other groups; "Everyone" clears the scope. Mirrors the
+ * People-view picker but is independent modal-local state.
+ */
+function AssignGroupFilterMenu({
+  groups,
+  selectedId,
+  colors,
+  onPick,
+  onClose,
+}: {
+  groups: Array<{ id: Id<"groups">; name: string }>;
+  selectedId: Id<"groups"> | null;
+  colors: ThemeColors;
+  onPick: (id: Id<"groups"> | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.menuBackdrop} onPress={onClose}>
+        <Pressable
+          style={[
+            styles.menuCard,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          <View style={[styles.menuHead, { borderBottomColor: colors.border }]}>
+            <View style={styles.menuHeadText}>
+              <Text style={[styles.menuTitle, { color: colors.text }]}>
+                Also in group
+              </Text>
+              <Text style={[styles.menuSub, { color: colors.textSecondary }]}>
+                Show only people who are also in…
+              </Text>
+            </View>
+            <TouchableOpacity onPress={onClose} hitSlop={12}>
+              <Ionicons name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.menuList}>
+            <Pressable
+              onPress={() => onPick(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Everyone"
+            >
+              <View style={[styles.menuRow, { borderBottomColor: colors.border }]}>
+                <Text
+                  style={[styles.menuRowText, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  Everyone
+                </Text>
+                {selectedId === null && (
+                  <Ionicons name="checkmark" size={20} color={colors.link} />
+                )}
+              </View>
+            </Pressable>
+            {groups.map((g) => (
+              <Pressable
+                key={g.id}
+                onPress={() => onPick(g.id)}
+                accessibilityRole="button"
+                accessibilityLabel={g.name}
+              >
+                <View
+                  style={[styles.menuRow, { borderBottomColor: colors.border }]}
+                >
+                  <Text
+                    style={[styles.menuRowText, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {g.name}
                   </Text>
+                  {selectedId === g.id && (
+                    <Ionicons name="checkmark" size={20} color={colors.link} />
+                  )}
                 </View>
               </Pressable>
-            )}
+            ))}
           </ScrollView>
-          </KeyboardAvoidingView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -948,9 +1153,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cardBody: {
-    flexShrink: 1,
-  },
-  scrollFlex: {
     flexShrink: 1,
   },
   header: {
@@ -1005,9 +1207,20 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
-  group: {
-    borderRadius: 12,
-    overflow: "hidden",
+  scopeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  scopeText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
   },
   memberRow: {
     flexDirection: "row",
@@ -1131,4 +1344,37 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 2,
   },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  menuCard: {
+    width: "100%",
+    maxWidth: 380,
+    maxHeight: "70%",
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 16,
+  },
+  menuHead: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    marginBottom: 8,
+  },
+  menuHeadText: { flex: 1, minWidth: 0 },
+  menuTitle: { fontSize: 17, fontWeight: "700" },
+  menuSub: { fontSize: 12, marginTop: 2 },
+  menuList: { flexGrow: 0 },
+  menuRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  menuRowText: { flex: 1, fontSize: 15, fontWeight: "500" },
 });
