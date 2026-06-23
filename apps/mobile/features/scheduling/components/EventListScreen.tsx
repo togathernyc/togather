@@ -30,7 +30,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { EmptyState } from "@components/ui/EmptyState";
 import { Button } from "@components/ui/Button";
 import {
   useAuthenticatedQuery,
@@ -316,11 +315,19 @@ export function EventListScreen() {
     // editor. "New event plan" stays available as the secondary manual path.
     return (
       <View style={[styles.emptyWrap, { backgroundColor: colors.surface }]}>
-        <EmptyState
-          icon="calendar-outline"
-          title="Set up rostering"
-          message="Create a starter team with roles and a first event plan in one tap. You can rename and tune everything afterwards."
+        <Ionicons
+          name="calendar-outline"
+          size={64}
+          color={colors.iconSecondary}
+          style={styles.emptyIcon}
         />
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>
+          Set up rostering
+        </Text>
+        <Text style={[styles.emptyMessage, { color: colors.textSecondary }]}>
+          Create a starter team with roles and a first event plan in one tap.
+          You can rename and tune everything afterwards.
+        </Text>
         <View style={styles.emptyActions}>
           <Button
             onPress={handleSetUpRostering}
@@ -513,14 +520,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 24,
   },
+  emptyIcon: {
+    marginBottom: 24,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  emptyMessage: {
+    fontSize: 16,
+    textAlign: "center",
+    lineHeight: 24,
+    maxWidth: 300,
+  },
   emptyActions: {
     width: "100%",
     maxWidth: 300,
     alignItems: "center",
     gap: 16,
-    // Pull the actions up under the EmptyState message (which reserves a
-    // tall min-height for centering) so the primary CTA sits with the copy.
-    marginTop: -24,
+    marginTop: 24,
   },
   emptyPrimaryButton: {
     width: "100%",
