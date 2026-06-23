@@ -51,7 +51,6 @@ import {
   Pressable,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
   TextInput,
   Alert,
   KeyboardAvoidingView,
@@ -156,6 +155,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 
 export function AssignSheet({
   visible,
+  dockedRight = false,
   planId,
   planStatus,
   groupId,
@@ -166,9 +166,17 @@ export function AssignSheet({
   assignedUserIds,
   prioritizeAvailable = false,
   keepOpenWhileUnfilled = false,
+  filterMemberIds = null,
+  filterGroupName,
   onClose,
 }: {
   visible: boolean;
+  /**
+   * Desktop: render as a docked right side-panel (flush right, full height)
+   * beside the grid instead of a centered modal. The panel never auto-closes
+   * after assigning so a leader can fill a whole column — only the X dismisses.
+   */
+  dockedRight?: boolean;
   planId: Id<"eventPlans">;
   /**
    * Whether the plan is still a draft or already published. Controls whether
@@ -196,6 +204,15 @@ export function AssignSheet({
    * reactively updates `assignedUserIds`, so filled people grey out in place.
    */
   keepOpenWhileUnfilled?: boolean;
+  /**
+   * Grid-level "also in group" scope (#477 FR-4), owned by RosterGridScreen and
+   * passed down — `null` means no scope. When set, the candidate list is
+   * intersected with this member set (presentation-only). The control itself
+   * lives once in the grid toolbar, not in this sheet.
+   */
+  filterMemberIds?: Set<string> | null;
+  /** Name of the scoped group, for the "also in X" hint in the GROUP header. */
+  filterGroupName?: string;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
@@ -212,12 +229,6 @@ export function AssignSheet({
   const [invitePhone, setInvitePhone] = useState("");
   const [invitingSubmit, setInvitingSubmit] = useState(false);
 
-  // "Also in group" candidate scope (#477 FR-4). Independent of the People-view
-  // row filter — it's modal-local state that narrows whom the leader is looking
-  // at right now. Reuses the same backend as the People view (PR #474).
-  const [filterGroupId, setFilterGroupId] = useState<Id<"groups"> | null>(null);
-  const [groupFilterOpen, setGroupFilterOpen] = useState(false);
-
   // Reset transient state whenever the sheet closes so a re-open starts
   // clean (the parent unmounts us when assignTarget clears, but be defensive).
   useEffect(() => {
@@ -228,8 +239,6 @@ export function AssignSheet({
       setInviteFirstName("");
       setInvitePhone("");
       setInvitingSubmit(false);
-      setFilterGroupId(null);
-      setGroupFilterOpen(false);
     }
   }, [visible]);
 
@@ -269,54 +278,11 @@ export function AssignSheet({
     [availability],
   );
 
-  // "Also in group" scope (#477 FR-4). `filterGroups` populates the picker
-  // (excludes this group / announcement / archived groups — enforced backend-
-  // side); `filterMemberIds` is the chosen group's membership, intersected
-  // client-side. Gated on the selection still being present in the loaded list
-  // so a stale pick can't throw into the error boundary.
-  const filterGroups = useAuthenticatedQuery(
-    api.functions.scheduling.roster.rosterFilterGroups,
-    visible ? { groupId } : "skip",
-  ) as Array<{ id: Id<"groups">; name: string }> | undefined;
-
-  const filterMemberIds = useAuthenticatedQuery(
-    api.functions.scheduling.roster.rosterFilterMemberIds,
-    visible && filterGroupId && filterGroups?.some((g) => g.id === filterGroupId)
-      ? { groupId: filterGroupId }
-      : "skip",
-  ) as string[] | undefined;
-
-  const filterMemberSet = useMemo(
-    () => (filterMemberIds ? new Set(filterMemberIds) : null),
-    [filterMemberIds],
-  );
-
-  // A group scope is chosen but its member IDs haven't arrived yet. Until they
-  // do, the sheet must NOT fall back to "unfiltered" — otherwise, on a slow
-  // connection, the active filter chip shows while every candidate stays
-  // tappable, letting a leader assign someone outside the selected group.
-  // We render a loading state and treat the candidate list as empty meanwhile.
-  const filterPending =
-    !!filterGroupId &&
-    !!filterGroups?.some((g) => g.id === filterGroupId) &&
-    !filterMemberSet;
-
-  const filterGroupName = filterGroupId
-    ? filterGroups?.find((g) => g.id === filterGroupId)?.name
-    : undefined;
-
-  // Clear a stale selection once the loaded list no longer contains it (left /
-  // archived). The query above is already gated on the same condition; this
-  // drops the lingering UI state. (Mirrors RosterGridScreen's People filter.)
-  useEffect(() => {
-    if (
-      filterGroupId &&
-      filterGroups &&
-      !filterGroups.some((g) => g.id === filterGroupId)
-    ) {
-      setFilterGroupId(null);
-    }
-  }, [filterGroups, filterGroupId]);
+  // "Also in group" scope (#477 FR-4) is now owned by the grid toolbar and
+  // passed down as a resolved member set — this sheet just applies it. `null`
+  // means no scope. The control + its `rosterFilterGroups` /
+  // `rosterFilterMemberIds` queries live once in RosterGridScreen.
+  const filterMemberSet = filterMemberIds;
 
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
@@ -342,10 +308,8 @@ export function AssignSheet({
     // Apply the "also in group" scope first — it's presentation-only, so it
     // narrows every section (previous / group / community) uniformly. The
     // roster's own coverage tallies live elsewhere and stay whole (FR-4.4).
-    const list = (candidates ?? []).filter((c) =>
-      filterPending
-        ? false
-        : !filterMemberSet || filterMemberSet.has(c.userId as string),
+    const list = (candidates ?? []).filter(
+      (c) => !filterMemberSet || filterMemberSet.has(c.userId as string),
     );
     const byUser = new Map<string, CommunityPerson>(
       list.map((c) => [c.userId as string, c]),
@@ -392,7 +356,6 @@ export function AssignSheet({
     prioritizeAvailable,
     availabilityByUser,
     filterMemberSet,
-    filterPending,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -428,8 +391,10 @@ export function AssignSheet({
         }
         // Multi-person roles (e.g. "Vocals 3") stay open so the leader fills
         // the rest without re-opening; the just-assigned person greys out as
-        // the parent's reactive `assignedUserIds` updates.
-        if (!keepOpenWhileUnfilled) onClose();
+        // the parent's reactive `assignedUserIds` updates. The desktop docked
+        // panel ALWAYS stays open (closes only via its X) so a leader can fill
+        // a whole column.
+        if (!keepOpenWhileUnfilled && !dockedRight) onClose();
       } catch (e) {
         surfaceError("Couldn't assign", e);
       } finally {
@@ -444,6 +409,7 @@ export function AssignSheet({
       roleId,
       timeLabel,
       keepOpenWhileUnfilled,
+      dockedRight,
       onClose,
       surfaceError,
     ],
@@ -468,7 +434,7 @@ export function AssignSheet({
             ? `Added ${firstName} to the group and assigned to ${roleName}.`
             : `Assigned ${firstName} to ${roleName}.`,
         );
-        onClose();
+        if (!dockedRight) onClose();
       } catch (e) {
         surfaceError("Couldn't add & assign", e);
       } finally {
@@ -482,6 +448,7 @@ export function AssignSheet({
       teamId,
       roleId,
       timeLabel,
+      dockedRight,
       onClose,
       roleName,
       surfaceError,
@@ -540,7 +507,15 @@ export function AssignSheet({
           `Couldn't send the SMS, but ${firstName} is created and assigned. You can resend later.`,
         );
       }
-      onClose();
+      if (dockedRight) {
+        // Keep the panel open to fill more of the column; clear the form so the
+        // next invite starts blank.
+        setInviteOpen(false);
+        setInviteFirstName("");
+        setInvitePhone("");
+      } else {
+        onClose();
+      }
     } catch (e) {
       surfaceError("Couldn't invite", e);
     } finally {
@@ -555,6 +530,7 @@ export function AssignSheet({
     roleId,
     timeLabel,
     roleName,
+    dockedRight,
     onClose,
     surfaceError,
   ]);
@@ -721,7 +697,7 @@ export function AssignSheet({
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-  const loading = candidates === undefined || filterPending;
+  const loading = candidates === undefined;
   const teamName = team?.name;
   const subtitle = [roleName, teamName].filter(Boolean).join(" · ");
   const showEmpty =
@@ -749,7 +725,11 @@ export function AssignSheet({
       }
     }
     if (groupRows.length > 0) {
-      out.push({ kind: "label", key: "l-group", label: "GROUP" });
+      out.push({
+        kind: "label",
+        key: "l-group",
+        label: filterGroupName ? `GROUP · ALSO IN ${filterGroupName.toUpperCase()}` : "GROUP",
+      });
       for (const p of groupRows) {
         out.push({ kind: "group", key: `grp-${p.userId}`, person: p, prior: false });
       }
@@ -765,7 +745,7 @@ export function AssignSheet({
       }
     }
     return out;
-  }, [previousRows, groupRows, communityRows]);
+  }, [previousRows, groupRows, communityRows, filterGroupName]);
 
   // Plain function (not memoized): the row renderers it delegates to close over
   // fresh state each render, so memoizing here would be a no-op. FlashList still
@@ -784,45 +764,32 @@ export function AssignSheet({
     return renderCommunityRow(item.person);
   };
 
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      {/* Inline popup: a centered card over a dim backdrop, so the roster grid
-          stays visible behind it instead of a full-screen sheet. */}
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable
-          style={[
-            styles.card,
-            { backgroundColor: colors.surface, borderColor: colors.border },
-          ]}
-          onPress={(e) => e.stopPropagation()}
-        >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <View style={styles.headerTextWrap}>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>
-                Assign someone
-              </Text>
-              <Text
-                style={[styles.headerSub, { color: colors.textSecondary }]}
-                numberOfLines={1}
-              >
-                {subtitle}
-                {timeLabel ? ` · ${timeLabel}` : ""}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <KeyboardAvoidingView
-            style={styles.cardBody}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+  // Header + scrollable body — identical in both presentations (docked panel /
+  // centered modal). Only the container around it changes by breakpoint.
+  const panelContent = (
+    <>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View style={styles.headerTextWrap}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
+            Assign someone
+          </Text>
+          <Text
+            style={[styles.headerSub, { color: colors.textSecondary }]}
+            numberOfLines={1}
           >
+            {subtitle}
+            {timeLabel ? ` · ${timeLabel}` : ""}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
+          <Ionicons name="close" size={24} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
+      <KeyboardAvoidingView
+        style={styles.cardBody}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
           <FlashList
             data={listData}
             // Re-render rows when these change the per-row affordance (busy
@@ -854,50 +821,27 @@ export function AssignSheet({
                   />
                 </View>
 
-                {/* "Also in group" scope (#477 FR-4). Hidden when the leader
-                    has no other eligible groups. */}
-                {filterGroups && filterGroups.length > 0 && (
-                  <Pressable
-                    onPress={() => setGroupFilterOpen(true)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Filter by also in group"
+                {/* "Also in group" scope hint (#477 FR-4). The control now
+                    lives once in the grid toolbar; here we only echo the active
+                    scope so the narrowed list is legible. */}
+                {filterGroupName && (
+                  <View
+                    style={[
+                      styles.scopeRow,
+                      {
+                        borderColor: primaryColor,
+                        backgroundColor: primaryColor + "14",
+                      },
+                    ]}
                   >
-                    <View
-                      style={[
-                        styles.scopeRow,
-                        {
-                          borderColor: filterGroupId ? primaryColor : colors.border,
-                          backgroundColor: filterGroupId
-                            ? primaryColor + "14"
-                            : colors.surface,
-                        },
-                      ]}
+                    <Ionicons name="funnel" size={14} color={primaryColor} />
+                    <Text
+                      style={[styles.scopeText, { color: primaryColor }]}
+                      numberOfLines={1}
                     >
-                      <Ionicons
-                        name="funnel"
-                        size={14}
-                        color={filterGroupId ? primaryColor : colors.textSecondary}
-                      />
-                      <Text
-                        style={[
-                          styles.scopeText,
-                          {
-                            color: filterGroupId ? primaryColor : colors.textSecondary,
-                          },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {filterGroupName
-                          ? `Also in: ${filterGroupName}`
-                          : "Also in group"}
-                      </Text>
-                      <Ionicons
-                        name="chevron-down"
-                        size={14}
-                        color={filterGroupId ? primaryColor : colors.textSecondary}
-                      />
-                    </View>
-                  </Pressable>
+                      Also in: {filterGroupName}
+                    </Text>
+                  </View>
                 )}
 
                 {loading && (
@@ -907,7 +851,7 @@ export function AssignSheet({
                 )}
                 {showEmpty && (
                   <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    {debouncedSearch.trim() || filterGroupId
+                    {debouncedSearch.trim() || filterGroupName
                       ? "No one matches these filters."
                       : "No assignable people yet — invite someone new below."}
                   </Text>
@@ -1042,110 +986,44 @@ export function AssignSheet({
               </View>
             }
           />
-          </KeyboardAvoidingView>
-
-          {groupFilterOpen && (
-            <AssignGroupFilterMenu
-              groups={filterGroups ?? []}
-              selectedId={filterGroupId}
-              colors={colors}
-              onPick={(id) => {
-                setFilterGroupId(id);
-                setGroupFilterOpen(false);
-              }}
-              onClose={() => setGroupFilterOpen(false)}
-            />
-          )}
-        </Pressable>
-      </Pressable>
-    </Modal>
+      </KeyboardAvoidingView>
+    </>
   );
-}
 
-type ThemeColors = ReturnType<typeof useTheme>["colors"];
+  // Desktop: a docked right side-panel flush against the grid (no backdrop, no
+  // Modal), so the grid stays visible and interactive beside it.
+  if (dockedRight) {
+    if (!visible) return null;
+    return (
+      <View
+        style={[
+          styles.dockPanel,
+          { backgroundColor: colors.surface, borderLeftColor: colors.border },
+        ]}
+      >
+        {panelContent}
+      </View>
+    );
+  }
 
-/**
- * "Also in group" picker for the assign sheet (#477 FR-4). A single-select
- * menu over the leader's other groups; "Everyone" clears the scope. Mirrors the
- * People-view picker but is independent modal-local state.
- */
-function AssignGroupFilterMenu({
-  groups,
-  selectedId,
-  colors,
-  onPick,
-  onClose,
-}: {
-  groups: Array<{ id: Id<"groups">; name: string }>;
-  selectedId: Id<"groups"> | null;
-  colors: ThemeColors;
-  onPick: (id: Id<"groups"> | null) => void;
-  onClose: () => void;
-}) {
+  // Mobile: a centered card over a dim backdrop, so the roster grid stays
+  // visible behind it instead of a full-screen sheet.
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.menuBackdrop} onPress={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
           style={[
-            styles.menuCard,
+            styles.card,
             { backgroundColor: colors.surface, borderColor: colors.border },
           ]}
           onPress={(e) => e.stopPropagation()}
         >
-          <View style={[styles.menuHead, { borderBottomColor: colors.border }]}>
-            <View style={styles.menuHeadText}>
-              <Text style={[styles.menuTitle, { color: colors.text }]}>
-                Also in group
-              </Text>
-              <Text style={[styles.menuSub, { color: colors.textSecondary }]}>
-                Show only people who are also in…
-              </Text>
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.menuList}>
-            <Pressable
-              onPress={() => onPick(null)}
-              accessibilityRole="button"
-              accessibilityLabel="Everyone"
-            >
-              <View style={[styles.menuRow, { borderBottomColor: colors.border }]}>
-                <Text
-                  style={[styles.menuRowText, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  Everyone
-                </Text>
-                {selectedId === null && (
-                  <Ionicons name="checkmark" size={20} color={colors.link} />
-                )}
-              </View>
-            </Pressable>
-            {groups.map((g) => (
-              <Pressable
-                key={g.id}
-                onPress={() => onPick(g.id)}
-                accessibilityRole="button"
-                accessibilityLabel={g.name}
-              >
-                <View
-                  style={[styles.menuRow, { borderBottomColor: colors.border }]}
-                >
-                  <Text
-                    style={[styles.menuRowText, { color: colors.text }]}
-                    numberOfLines={1}
-                  >
-                    {g.name}
-                  </Text>
-                  {selectedId === g.id && (
-                    <Ionicons name="checkmark" size={20} color={colors.link} />
-                  )}
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
+          {panelContent}
         </Pressable>
       </Pressable>
     </Modal>
@@ -1166,6 +1044,15 @@ const styles = StyleSheet.create({
     maxHeight: "85%",
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  // Desktop docked panel: fixed-width column flush against the grid's right
+  // edge, full height. No border radius — it reads as a docked inspector.
+  dockPanel: {
+    width: 420,
+    flexShrink: 0,
+    height: "100%",
+    borderLeftWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
   cardBody: {
@@ -1360,37 +1247,4 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     marginTop: 2,
   },
-  menuBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  menuCard: {
-    width: "100%",
-    maxWidth: 380,
-    maxHeight: "70%",
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: 16,
-  },
-  menuHead: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 8,
-  },
-  menuHeadText: { flex: 1, minWidth: 0 },
-  menuTitle: { fontSize: 17, fontWeight: "700" },
-  menuSub: { fontSize: 12, marginTop: 2 },
-  menuList: { flexGrow: 0 },
-  menuRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  menuRowText: { flex: 1, fontSize: 15, fontWeight: "500" },
 });
