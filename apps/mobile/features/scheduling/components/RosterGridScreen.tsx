@@ -53,6 +53,7 @@ import {
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { AssignSheet } from "./AssignSheet";
+import { GridPresenceBar } from "./GridPresenceBar";
 
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
@@ -593,6 +594,7 @@ export function RosterGridScreen() {
           </Text>
         )}
       </View>
+      {groupId && <GridPresenceBar groupId={groupId} />}
       <View style={styles.segmented}>
         <SegBtn
           label="Roles"
