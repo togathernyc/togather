@@ -4,7 +4,8 @@
  * Lists the campus group's first-class serving teams (ADR-025). Each team
  * shows its member count, or — for a channel-less team — a subtle "no chat
  * channel" hint. Tapping a team opens its detail screen; "+ New team" starts
- * the create-team flow. See ADR-024.
+ * the create-team flow. Reached from the roster grid's ⋯ overflow; renders its
+ * own back header (the old hub chrome is gone). See ADR-024.
  *
  * Backend: scheduling.teams.listTeams.
  */
@@ -23,6 +24,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { EmptyState } from "@components/ui/EmptyState";
+import { RosteringBackHeader } from "./RosteringBackHeader";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { CenteredColumn } from "./CenteredColumn";
@@ -55,13 +57,18 @@ export function RosteringTeamsScreen() {
 
   if (teams === undefined) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
-        <ActivityIndicator size="small" color={colors.text} />
+      <View style={[styles.root, { backgroundColor: colors.surface }]}>
+        <RosteringBackHeader title="Teams" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="small" color={colors.text} />
+        </View>
       </View>
     );
   }
 
   return (
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
+      <RosteringBackHeader title="Teams" />
     <ScrollView
       style={{ backgroundColor: colors.surface }}
       contentContainerStyle={[
@@ -133,10 +140,12 @@ export function RosteringTeamsScreen() {
       )}
       </CenteredColumn>
     </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   centered: {
     flex: 1,
     alignItems: "center",

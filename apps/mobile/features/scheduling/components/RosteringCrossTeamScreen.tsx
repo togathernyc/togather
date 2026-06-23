@@ -27,6 +27,7 @@ import { useAuthenticatedQuery } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { listCrossTeamChannelsRef, type CrossTeamChannel } from "../api/crossTeamChannels";
 import { CenteredColumn } from "./CenteredColumn";
+import { RosteringBackHeader } from "./RosteringBackHeader";
 
 export function RosteringCrossTeamScreen() {
   const { colors } = useTheme();
@@ -49,13 +50,18 @@ export function RosteringCrossTeamScreen() {
 
   if (channels === undefined) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
-        <ActivityIndicator size="small" color={colors.text} />
+      <View style={[styles.root, { backgroundColor: colors.surface }]}>
+        <RosteringBackHeader title="Cross-team" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="small" color={colors.text} />
+        </View>
       </View>
     );
   }
 
   return (
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
+      <RosteringBackHeader title="Cross-team" />
     <ScrollView
       style={{ backgroundColor: colors.surface }}
       contentContainerStyle={[
@@ -126,10 +132,12 @@ export function RosteringCrossTeamScreen() {
       )}
       </CenteredColumn>
     </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   centered: {
     flex: 1,
     alignItems: "center",
