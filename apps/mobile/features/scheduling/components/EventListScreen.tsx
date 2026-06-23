@@ -309,28 +309,43 @@ export function EventListScreen() {
         { paddingBottom: insets.bottom + 24 },
       ]}
     >
-      <Pressable
-        onPress={handleNewEvent}
-        disabled={creating}
-        style={[styles.newRow, { borderColor: primaryColor }]}
-        accessibilityRole="button"
-      >
-        {creating ? (
-          <ActivityIndicator size="small" color={primaryColor} />
-        ) : (
-          <Ionicons name="add" size={20} color={primaryColor} />
-        )}
-        <Text style={[styles.newLabel, { color: primaryColor }]}>
-          New event plan
-        </Text>
-      </Pressable>
+      {/* Two primary build actions, side by side: create a plan, or open the
+          roster grid (the matrix where assignment happens). The grid is the
+          main build surface, so it gets the filled, accented treatment. */}
+      <View style={styles.primaryActions}>
+        <Pressable
+          onPress={handleNewEvent}
+          disabled={creating}
+          style={[styles.newRow, { borderColor: primaryColor }]}
+          accessibilityRole="button"
+        >
+          {creating ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <Ionicons name="add" size={20} color={primaryColor} />
+          )}
+          <Text style={[styles.newLabel, { color: primaryColor }]}>
+            New event plan
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => router.push(`/rostering/${groupId}/grid` as never)}
+          style={[styles.gridRow, { backgroundColor: primaryColor }]}
+          accessibilityRole="button"
+          accessibilityLabel="Open the roster grid"
+        >
+          <Ionicons name="git-network-outline" size={20} color="#fff" />
+          <Text style={styles.gridLabel}>Open roster grid</Text>
+        </Pressable>
+      </View>
 
       <Pressable
         onPress={handleShareLink}
         disabled={sharingLink}
         style={styles.shareRow}
         accessibilityRole="button"
-        accessibilityLabel="Share an availability link"
+        accessibilityLabel="Collect availability"
       >
         {sharingLink ? (
           <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -342,23 +357,7 @@ export function EventListScreen() {
           />
         )}
         <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
-          Share availability link
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={() => router.push(`/rostering/${groupId}/grid` as never)}
-        style={styles.shareRow}
-        accessibilityRole="button"
-        accessibilityLabel="Open the roster grid"
-      >
-        <Ionicons
-          name="git-network-outline"
-          size={18}
-          color={colors.textSecondary}
-        />
-        <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
-          Roster grid
+          Collect availability
         </Text>
       </Pressable>
 
@@ -455,7 +454,12 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 12,
   },
+  primaryActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
   newRow: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -468,6 +472,20 @@ const styles = StyleSheet.create({
   newLabel: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  gridRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+  gridLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
   shareRow: {
     flexDirection: "row",
