@@ -342,6 +342,33 @@ export function RosterGridScreen() {
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
+  // Single docked side-panel at a time (desktop). The assign panel and the two
+  // cell-management panels (role / member) all share the grid's right dock
+  // region, so opening one must close the others — otherwise two panels could
+  // render at once. On mobile these are independent overlay modals; clearing
+  // siblings is harmless there too (only one is ever opened at a time).
+  const openAssign = useCallback((target: AssignTarget) => {
+    setRoleCellModal(null);
+    setMemberCellModal(null);
+    setAssignTarget(target);
+  }, []);
+  const openRoleCell = useCallback(
+    (payload: { role: RosterRole; event: RosterEvent }) => {
+      setAssignTarget(null);
+      setMemberCellModal(null);
+      setRoleCellModal(payload);
+    },
+    [],
+  );
+  const openMemberCell = useCallback(
+    (payload: { member: RosterMember; event: RosterEvent }) => {
+      setAssignTarget(null);
+      setRoleCellModal(null);
+      setMemberCellModal(payload);
+    },
+    [],
+  );
+
   const surfaceError = useCallback((title: string, e: unknown) => {
     const err = e as { data?: { message?: string }; message?: string };
     Alert.alert(title, err?.data?.message ?? err?.message ?? "Something went wrong");
@@ -968,7 +995,7 @@ export function RosterGridScreen() {
                     const cell = roleCells[`${r.role.roleId}:${ev._id}`];
                     if (!cell) return;
                     if (cell.occupants.length === 0) {
-                      setAssignTarget({
+                      openAssign({
                         planId: ev._id,
                         planStatus: ev.status,
                         teamId: r.role.teamId,
@@ -979,7 +1006,7 @@ export function RosterGridScreen() {
                         keepOpenWhileUnfilled: cell.needed > 1,
                       });
                     } else {
-                      setRoleCellModal({ role: r.role, event: ev });
+                      openRoleCell({ role: r.role, event: ev });
                     }
                   }}
                 />
@@ -1070,7 +1097,7 @@ export function RosterGridScreen() {
                   colors={colors}
                   onPress={() => {
                     if (cell && cell.assignments.length > 0) {
-                      setMemberCellModal({ member: m, event: ev });
+                      openMemberCell({ member: m, event: ev });
                     } else {
                       setOpenRolesModal({
                         member: m,
@@ -1211,6 +1238,54 @@ export function RosterGridScreen() {
             onClose={() => setAssignTarget(null)}
           />
         )}
+
+        {/* Desktop: filled-cell management docks in the SAME right region as
+            the assign panel (mutually exclusive — only one is ever non-null, see
+            openAssign/openRoleCell/openMemberCell). Mobile renders these as
+            popover modals below. */}
+        {isWide && roleCellModal && (
+          <RoleCellPopover
+            role={roleCellModal.role}
+            event={roleCellModal.event}
+            cell={roleCells[`${roleCellModal.role.roleId}:${roleCellModal.event._id}`]}
+            colors={colors}
+            docked
+            onRemove={handleUnassign}
+            onAddSomeone={(cell) => {
+              const role = roleCellModal.role;
+              const ev = roleCellModal.event;
+              openAssign({
+                planId: ev._id,
+                planStatus: ev.status,
+                teamId: role.teamId,
+                roleId: role.roleId,
+                roleName: role.roleName,
+                timeLabel: singleTimeLabel(ev),
+                assignedUserIds: new Set(cell.occupants.map((o) => o.userId as string)),
+                keepOpenWhileUnfilled: cell.open > 1,
+              });
+            }}
+            onClose={() => setRoleCellModal(null)}
+          />
+        )}
+
+        {isWide && memberCellModal && (
+          <MemberCellPopover
+            member={memberCellModal.member}
+            event={memberCellModal.event}
+            cell={memberCellModal.member.cells[memberCellModal.event._id as string]}
+            colors={colors}
+            docked
+            onRemove={handleUnassign}
+            onAddRole={() => {
+              const m = memberCellModal.member;
+              const ev = memberCellModal.event;
+              setMemberCellModal(null);
+              setOpenRolesModal({ member: m, event: ev });
+            }}
+            onClose={() => setMemberCellModal(null)}
+          />
+        )}
       </View>
 
       {/* Publish bar — MOBILE only (#477 FR-3); desktop hosts Publish in the
@@ -1253,7 +1328,9 @@ export function RosterGridScreen() {
         />
       )}
 
-      {roleCellModal && (
+      {/* Mobile: filled-cell management as popover modals. (Desktop docks them
+          in the content row above.) */}
+      {!isWide && roleCellModal && (
         <RoleCellPopover
           role={roleCellModal.role}
           event={roleCellModal.event}
@@ -1279,7 +1356,7 @@ export function RosterGridScreen() {
         />
       )}
 
-      {memberCellModal && (
+      {!isWide && memberCellModal && (
         <MemberCellPopover
           member={memberCellModal.member}
           event={memberCellModal.event}
@@ -1553,19 +1630,62 @@ function PeopleCellView({
 // ---------------------------------------------------------------------------
 // Popovers / menus
 // ---------------------------------------------------------------------------
+/**
+ * Shared header + body container for the cell popovers/menus. On mobile (and
+ * for the picker menus) it's a centered card over a dim backdrop (`Modal`). On
+ * desktop, when `docked`, the SAME header+children render inside the grid's
+ * right side-panel (no Modal, no backdrop) so filled-cell management matches
+ * the docked AssignSheet — one panel idiom, never a floating popup beside it.
+ */
 function ModalShell({
   title,
   subtitle,
   colors,
   onClose,
+  docked = false,
   children,
 }: {
   title: string;
   subtitle?: string;
   colors: Colors;
   onClose: () => void;
+  docked?: boolean;
   children: React.ReactNode;
 }) {
+  const head = (
+    <View style={styles.popoverHead}>
+      <View style={styles.popoverHeadText}>
+        <Text style={[styles.popoverTitle, { color: colors.text }]} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle && (
+          <Text style={[styles.popoverSub, { color: colors.textSecondary }]} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+      <TouchableOpacity onPress={onClose} hitSlop={12}>
+        <Ionicons name="close" size={22} color={colors.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  if (docked) {
+    return (
+      <View
+        style={[
+          styles.dockPanel,
+          { backgroundColor: colors.surface, borderLeftColor: colors.border },
+        ]}
+      >
+        <View style={styles.dockPanelInner}>
+          {head}
+          {children}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -1573,21 +1693,7 @@ function ModalShell({
           style={[styles.popover, { backgroundColor: colors.surface, borderColor: colors.border }]}
           onPress={(e) => e.stopPropagation()}
         >
-          <View style={styles.popoverHead}>
-            <View style={styles.popoverHeadText}>
-              <Text style={[styles.popoverTitle, { color: colors.text }]} numberOfLines={1}>
-                {title}
-              </Text>
-              {subtitle && (
-                <Text style={[styles.popoverSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {subtitle}
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
+          {head}
           {children}
         </Pressable>
       </Pressable>
@@ -1600,6 +1706,7 @@ function RoleCellPopover({
   event,
   cell,
   colors,
+  docked = false,
   onRemove,
   onAddSomeone,
   onClose,
@@ -1608,6 +1715,7 @@ function RoleCellPopover({
   event: RosterEvent;
   cell: RoleCell | undefined;
   colors: Colors;
+  docked?: boolean;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddSomeone: (cell: RoleCell) => void;
   onClose: () => void;
@@ -1618,9 +1726,10 @@ function RoleCellPopover({
       title={role.roleName}
       subtitle={`${role.teamName} · ${monthDay(event.eventDate)} · ${cell.filled}/${cell.needed}`}
       colors={colors}
+      docked={docked}
       onClose={onClose}
     >
-      <ScrollView style={styles.popoverList}>
+      <ScrollView style={docked ? styles.popoverListDocked : styles.popoverList}>
         {cell.occupants.map((o) => (
           <View key={o.assignmentId} style={[styles.occupantRow, { borderBottomColor: colors.border }]}>
             <Ionicons name={statusIcon(o.status)} size={16} color={statusColor(o.status, colors)} />
@@ -1652,6 +1761,7 @@ function MemberCellPopover({
   event,
   cell,
   colors,
+  docked = false,
   onRemove,
   onAddRole,
   onClose,
@@ -1660,6 +1770,7 @@ function MemberCellPopover({
   event: RosterEvent;
   cell: MemberCell | undefined;
   colors: Colors;
+  docked?: boolean;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddRole: () => void;
   onClose: () => void;
@@ -1670,6 +1781,7 @@ function MemberCellPopover({
       title={member.userName}
       subtitle={`${event.title} · ${monthDay(event.eventDate)}`}
       colors={colors}
+      docked={docked}
       onClose={onClose}
     >
       {cell.doubleBooked && (
@@ -1677,7 +1789,7 @@ function MemberCellPopover({
           ⚠ Double-booked this day
         </Text>
       )}
-      <ScrollView style={styles.popoverList}>
+      <ScrollView style={docked ? styles.popoverListDocked : styles.popoverList}>
         {cell.assignments.map((a) => (
           <View key={a.assignmentId} style={[styles.occupantRow, { borderBottomColor: colors.border }]}>
             <Ionicons name={statusIcon(a.status)} size={16} color={statusColor(a.status, colors)} />
@@ -2199,6 +2311,18 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     padding: 16,
   },
+  // Desktop docked side-panel — same fixed width + treatment as AssignSheet's
+  // dockedRight panel, so filled-cell management reserves identical space and
+  // the grid's column-fill targets the same reduced width.
+  dockPanel: {
+    width: 420,
+    flexShrink: 0,
+    height: "100%",
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  dockPanelInner: { flex: 1, padding: 16 },
+  popoverListDocked: { flexGrow: 1, flexShrink: 1 },
   popoverHead: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 8 },
   popoverHeadText: { flex: 1, minWidth: 0 },
   popoverTitle: { fontSize: 17, fontWeight: "700" },
