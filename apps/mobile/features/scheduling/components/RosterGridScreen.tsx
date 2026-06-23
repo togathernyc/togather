@@ -67,6 +67,8 @@ type RosterEvent = {
   eventDate: number;
   times: Array<{ label: string; startsAt: number }>;
   status: "draft" | "published";
+  /** Unconfirmed assignments for the plan — who publish will notify. */
+  pendingCount: number;
 };
 
 type RosterTeam = { teamId: Id<"teams">; teamName: string };
@@ -467,21 +469,14 @@ export function RosterGridScreen() {
   // Publish (#477 FR-3)
   //
   // `publishEvent` notifies only *unconfirmed* assignments (confirmed people
-  // are never re-pinged), so the per-event "request count" we show in the
-  // confirm dialog is the number of unconfirmed occupants across that plan's
-  // role cells — the same population `markPublished` counts server-side.
+  // are never re-pinged). We surface `event.pendingCount` straight from
+  // `rosterMatrix`, which counts unconfirmed assignments off `by_plan` — the
+  // exact population `markPublished` notifies. Summing `roleCells` here would
+  // undercount assignments orphaned by a removed needed role (no cell exists).
   // -------------------------------------------------------------------------
   const requestCountForEvent = useCallback(
-    (event: RosterEvent): number => {
-      let n = 0;
-      for (const role of data?.roles ?? []) {
-        const c = roleCells[`${role.roleId}:${event._id}`];
-        if (!c) continue;
-        n += c.occupants.filter((o) => o.status === "unconfirmed").length;
-      }
-      return n;
-    },
-    [data, roleCells],
+    (event: RosterEvent): number => event.pendingCount,
+    [],
   );
 
   /** Draft event plans — the default publish target (unpublished dates). */

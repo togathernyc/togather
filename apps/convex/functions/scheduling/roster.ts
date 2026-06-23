@@ -69,14 +69,6 @@ export const rosterMatrix = query({
       .sort((a, b) => a.eventDate - b.eventDate)
       .slice(0, cap);
 
-    const events = plans.map((p) => ({
-      _id: p._id,
-      title: p.title,
-      eventDate: p.eventDate,
-      times: p.times,
-      status: p.status, // "draft" | "published" — AssignSheet needs this
-    }));
-
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(
       plans.map(async (plan) => {
@@ -97,6 +89,20 @@ export const rosterMatrix = query({
         return { plan, neededRoles, assignments, availability };
       }),
     );
+
+    const events = perPlan.map(({ plan, assignments }) => ({
+      _id: plan._id,
+      title: plan.title,
+      eventDate: plan.eventDate,
+      times: plan.times,
+      status: plan.status, // "draft" | "published" — AssignSheet needs this
+      // Authoritative count of who publish will notify: every `unconfirmed`
+      // assignment for the plan, counted off `by_plan` exactly as
+      // `markPublished` does. This includes assignments orphaned by a removed
+      // needed role (which have no `roleCells` entry), so the grid's publish
+      // confirm dialog can't undercount the request fan-out.
+      pendingCount: assignments.filter((a) => a.status === "unconfirmed").length,
+    }));
 
     // --- Resolve display names for every role and user referenced. ---
     const roleIds = new Set<string>();
