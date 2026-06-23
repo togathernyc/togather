@@ -201,11 +201,11 @@ describe("availabilityForPlan (leader grid)", () => {
     if (!result) return;
 
     // Active group members in the fixture world: leader, channel admin,
-    // moderator, member, and the placeholder = 5.
-    expect(result.counts.total).toBe(5);
+    // moderator, member, the placeholder, and the stale "Zeb" member = 6.
+    expect(result.counts.total).toBe(6);
     expect(result.counts.available).toBe(1);
     expect(result.counts.unavailable).toBe(1);
-    expect(result.counts.noResponse).toBe(3);
+    expect(result.counts.noResponse).toBe(4);
 
     // Sorted available-first, unavailable last.
     expect(result.members[0].status).toBe("available");

@@ -56,6 +56,13 @@ export interface SchedulingWorld {
    * `isActive: false`. Used by people-search / claim tests.
    */
   placeholderUserId: Id<"users">;
+  /**
+   * An active group member whose `userCommunities.lastLogin` is very old (and
+   * who sorts LAST by recency). Used to prove roster #477 FR-1: every
+   * assignable group member appears on empty search even if they haven't
+   * logged in recently. Name "Zeb" sorts last alphabetically too.
+   */
+  staleGroupMemberId: Id<"users">;
 }
 
 async function insertUser(
@@ -127,6 +134,10 @@ export async function buildSchedulingWorld(
     // sort: "Casey" < "Comonly", so the search ordering is predictable.
     const communityOnlyAId = await insertUser(ctx, "Casey", "+12025550007");
     const communityOnlyBId = await insertUser(ctx, "Comonly", "+12025550008");
+    // A group member who never logs in — the FR-1 regression target. "Zeb"
+    // sorts last alphabetically and (below) gets the oldest lastLogin, so a
+    // recency-capped search would drop them.
+    const staleGroupMemberId = await insertUser(ctx, "Zeb", "+12025550010");
     // Placeholder user — inserted as if `inviteAndAssign` had created them.
     // Active in community + group, but flagged so the UI / claim path can
     // recognise them.
@@ -189,6 +200,7 @@ export async function buildSchedulingWorld(
       channelAdminId,
       channelModeratorId,
       channelMemberId,
+      staleGroupMemberId,
     ]) {
       await ctx.db.insert("groupMembers", {
         groupId,
@@ -240,6 +252,22 @@ export async function buildSchedulingWorld(
       });
     }
 
+    // The stale group member is an active community member, but with the
+    // OLDEST lastLogin in the world — so a recency-ordered/-capped empty search
+    // would surface them last (and drop them under a tight cap). FR-1 requires
+    // them present regardless. The others above leave lastLogin unset (treated
+    // as "never", sorted to the end too) — giving this row an explicit ancient
+    // timestamp makes the recency ordering unambiguous.
+    await ctx.db.insert("userCommunities", {
+      communityId,
+      userId: staleGroupMemberId,
+      roles: 1,
+      status: 1,
+      lastLogin: 1, // epoch+1ms — the least-recent possible
+      createdAt: ts(),
+      updatedAt: ts(),
+    });
+
     // The placeholder is "already in the group" (the leader added them when
     // they were invited), but the community-only members are NOT.
     await ctx.db.insert("groupMembers", {
@@ -289,6 +317,7 @@ export async function buildSchedulingWorld(
       communityOnlyAId,
       communityOnlyBId,
       placeholderUserId,
+      staleGroupMemberId,
     };
   });
 
