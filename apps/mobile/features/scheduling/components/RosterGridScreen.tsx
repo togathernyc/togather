@@ -56,6 +56,7 @@ import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
+import { EventEditorPanel } from "./EventEditorPanel";
 
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
@@ -365,6 +366,12 @@ export function RosterGridScreen() {
     event: RosterEvent;
     note?: string;
   } | null>(null);
+  // Plan-detail panel (tap a date-column header). Shares the SAME right dock as
+  // the assign/cell panels on desktop (mutually exclusive); a bottom sheet on
+  // mobile. Holds only the planId — EventEditorPanel queries the rest.
+  const [planPanel, setPlanPanel] = useState<{
+    planId: Id<"eventPlans">;
+  } | null>(null);
   // Publish chooser (#477 FR-3): which date(s) to publish & send requests.
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -384,12 +391,14 @@ export function RosterGridScreen() {
   const openAssign = useCallback((target: AssignTarget) => {
     setRoleCellModal(null);
     setMemberCellModal(null);
+    setPlanPanel(null);
     setAssignTarget(target);
   }, []);
   const openRoleCell = useCallback(
     (payload: { role: RosterRole; event: RosterEvent }) => {
       setAssignTarget(null);
       setMemberCellModal(null);
+      setPlanPanel(null);
       setRoleCellModal(payload);
     },
     [],
@@ -398,10 +407,19 @@ export function RosterGridScreen() {
     (payload: { member: RosterMember; event: RosterEvent }) => {
       setAssignTarget(null);
       setRoleCellModal(null);
+      setPlanPanel(null);
       setMemberCellModal(payload);
     },
     [],
   );
+  // Open the plan-detail panel for a date column; closes any assign/cell panel
+  // so only one right-dock panel is ever live (the same discipline as above).
+  const openPlanPanel = useCallback((planId: Id<"eventPlans">) => {
+    setAssignTarget(null);
+    setRoleCellModal(null);
+    setMemberCellModal(null);
+    setPlanPanel({ planId });
+  }, []);
 
   const surfaceError = useCallback((title: string, e: unknown) => {
     const err = e as { data?: { message?: string }; message?: string };
@@ -1009,19 +1027,30 @@ export function RosterGridScreen() {
             const c = data.eventCounts[ev._id as string];
             const open = c?.openSlots ?? 0;
             return (
-              <View
+              <TouchableOpacity
                 key={ev._id}
+                activeOpacity={0.6}
+                onPress={() => openPlanPanel(ev._id)}
+                accessibilityRole="button"
+                accessibilityLabel={`${ev.title}, ${weekday(ev.eventDate)} ${monthDay(ev.eventDate)} — open plan details`}
                 style={[
                   styles.headerCell,
                   { width: CELL_W, height: HEADER_H, borderLeftColor: colors.border },
                 ]}
               >
-                <Text
-                  style={[styles.headerCellTitle, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {ev.title}
-                </Text>
+                <View style={styles.headerCellTitleRow}>
+                  <Text
+                    style={[styles.headerCellTitle, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {ev.title}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={9}
+                    color={colors.textTertiary}
+                  />
+                </View>
                 <Text style={[styles.headerCellWk, { color: colors.textSecondary }]}>
                   {weekday(ev.eventDate)}
                 </Text>
@@ -1049,7 +1078,7 @@ export function RosterGridScreen() {
                     </>
                   )}
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })}
           {/* Trailing "＋ Add date" column — creates a new draft plan at the
@@ -1476,6 +1505,27 @@ export function RosterGridScreen() {
             onClose={() => setMemberCellModal(null)}
           />
         )}
+
+        {/* Desktop: plan-detail panel docks in the SAME right region as the
+            assign/cell panels (mutually exclusive — opening it cleared them via
+            openPlanPanel, and opening any of them clears it). Tapping a date
+            header opens this. */}
+        {isWide && planPanel && (
+          <View
+            style={[
+              styles.dockPanel,
+              { backgroundColor: colors.surface, borderLeftColor: colors.border },
+            ]}
+          >
+            <View style={styles.dockPanelInner}>
+              <EventEditorPanel
+                key={planPanel.planId}
+                planId={planPanel.planId}
+                onClose={() => setPlanPanel(null)}
+              />
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Publish bar — MOBILE only (#477 FR-3); desktop hosts Publish in the
@@ -1576,6 +1626,40 @@ export function RosterGridScreen() {
           }
           onClose={() => setOpenRolesModal(null)}
         />
+      )}
+
+      {/* Mobile: plan-detail panel as a bottom sheet. (Desktop docks it in the
+          content row above.) */}
+      {!isWide && planPanel && (
+        <Modal
+          visible
+          transparent
+          animationType="slide"
+          onRequestClose={() => setPlanPanel(null)}
+        >
+          <View style={styles.sheetBackdrop}>
+            <Pressable
+              style={styles.sheetBackdropTap}
+              onPress={() => setPlanPanel(null)}
+              accessibilityLabel="Close plan details"
+            />
+            <View
+              style={[
+                styles.sheet,
+                {
+                  backgroundColor: colors.surface,
+                  paddingBottom: insets.bottom + 16,
+                },
+              ]}
+            >
+              <EventEditorPanel
+                key={planPanel.planId}
+                planId={planPanel.planId}
+                onClose={() => setPlanPanel(null)}
+              />
+            </View>
+          </View>
+        </Modal>
       )}
 
       {groupFilterOpen && (
@@ -2557,7 +2641,14 @@ const styles = StyleSheet.create({
     borderLeftWidth: StyleSheet.hairlineWidth,
     gap: 1,
   },
-  headerCellTitle: { fontSize: 9, maxWidth: "100%" },
+  headerCellTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    maxWidth: "100%",
+  },
+  headerCellTitle: { fontSize: 9, flexShrink: 1 },
   headerCellWk: { fontSize: 10 },
   headerCellDate: { fontSize: 13, fontWeight: "700" },
   headerCellTally: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 },
@@ -2647,6 +2738,21 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   dockPanelInner: { flex: 1, padding: 16 },
+  // Mobile bottom sheet for the plan-detail panel — a tall card pinned to the
+  // bottom over a dim backdrop (tap-to-dismiss above it).
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  sheetBackdropTap: { flex: 1 },
+  sheet: {
+    height: "88%",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
   popoverListDocked: { flexGrow: 1, flexShrink: 1 },
   popoverHead: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 8 },
   popoverHeadText: { flex: 1, minWidth: 0 },

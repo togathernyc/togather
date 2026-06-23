@@ -79,13 +79,14 @@ type Colors = ReturnType<typeof useTheme>["colors"];
 
 export function EventEditorPanel({
   planId,
-  docked = false,
   onClose,
 }: {
   planId: Id<"eventPlans">;
-  /** Desktop: render into the grid's right dock (no Modal chrome). */
-  docked?: boolean;
-  /** Called after the panel should close (× tap, or a delete that succeeds). */
+  /**
+   * Called after the panel should close (× tap, or a delete that succeeds).
+   * The CALLER owns the container chrome — the grid's right dock (desktop) or a
+   * bottom-sheet Modal (mobile) — so this body renders identically in both.
+   */
   onClose: () => void;
 }) {
   const { colors } = useTheme();
