@@ -40,6 +40,7 @@ import type { Id } from "@services/api/convex";
 import { ActionMenuSheet } from "@components/ui/ActionMenuSheet";
 import { confirmAsync } from "@/utils/platformAlert";
 import { formatEventDate } from "../utils/format";
+import { CenteredColumn } from "./CenteredColumn";
 
 type EventRow = {
   _id: Id<"eventPlans">;
@@ -379,6 +380,7 @@ export function EventListScreen() {
         { paddingBottom: insets.bottom + 24 },
       ]}
     >
+      <CenteredColumn style={styles.column}>
       {/* Two primary build actions, side by side: create a plan, or open the
           roster grid (the matrix where assignment happens). The grid is the
           main build surface, so it gets the filled, accented treatment. */}
@@ -461,6 +463,7 @@ export function EventListScreen() {
           {showPast && past.map(renderEventCard)}
         </>
       )}
+      </CenteredColumn>
     </ScrollView>
     <ActionMenuSheet
       visible={menuEvent !== null}
@@ -556,6 +559,12 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
+    gap: 12,
+  },
+  // On desktop, content children live inside CenteredColumn, so the row gap
+  // must live here too (the contentContainer then has a single child). On
+  // mobile CenteredColumn is a pass-through and `scrollContent`'s gap applies.
+  column: {
     gap: 12,
   },
   primaryActions: {
