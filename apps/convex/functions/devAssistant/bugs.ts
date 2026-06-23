@@ -20,6 +20,7 @@ import {
 import { internal } from "../../_generated/api";
 import { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { getMediaUrl } from "../../lib/utils";
 
 // ============================================================================
 // Status machine
@@ -430,9 +431,13 @@ export const getThreadContext = internalQuery({
     const messages: ThreadMessageView[] = ordered.map((m) => ({
       senderName: m.senderName ?? "Someone",
       content: m.content,
+      // Resolve stored R2 paths (r2:chat/...) to public HTTP URLs so the
+      // OpenAI image_url payload, the routine payload, and the admin preview
+      // all receive fetchable URIs. Drop anything that can't be resolved.
       imageUrls: (m.attachments ?? [])
         .filter((a) => a.type === "image")
-        .map((a) => a.url),
+        .map((a) => getMediaUrl(a.url))
+        .filter((url): url is string => !!url),
     }));
 
     const screenshotUrls = messages.flatMap((m) => m.imageUrls);

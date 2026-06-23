@@ -233,6 +233,17 @@ export const handleRoutineCallback = internalAction({
     );
     if (!updated) return;
 
+    // If the transition was illegal, applyCallback kept the prior status and
+    // only recorded lastError — don't post a status message for a transition
+    // that didn't happen (e.g. a CODE_REVIEW callback arriving after a human
+    // rejected the bug while the routine was running).
+    if (updated.status !== args.status) {
+      console.warn(
+        `[DevAssistant] Ignored callback ${args.status} for bug ${args.bugId} (current status ${updated.status})`,
+      );
+      return;
+    }
+
     const content = args.message ?? defaultCallbackMessage(args.status, args.prUrl);
     const mentionedUserIds: Id<"users">[] | undefined =
       args.status === "READY_TO_MERGE" ? [updated.originatorUserId] : undefined;

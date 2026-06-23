@@ -21,6 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import type { Id } from "@services/api/convex";
 import { api, useQuery, useStoredAuthToken } from "@services/api/convex";
+import { useAuth } from "@/providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 
@@ -66,14 +67,24 @@ function statusBadge(status: BugStatus): {
 export function BugCardFromMessage({ bugId }: BugCardFromMessageProps) {
   const router = useRouter();
   const token = useStoredAuthToken();
+  const { user } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
 
+  // This is a staff-only card and getBugForReview throws for non-staff. In a
+  // mixed channel every recipient renders this component, so gate the query on
+  // the viewer's staff flag — non-staff just see nothing instead of a Convex
+  // query error.
+  const isStaff = user?.is_superuser === true || user?.is_staff === true;
+
   const bug = useQuery(
     api.functions.devAssistant.bugs.getBugForReview,
-    token ? { token, bugId } : "skip",
+    token && isStaff ? { token, bugId } : "skip",
   );
 
+  if (!isStaff) {
+    return null;
+  }
   if (bug === undefined) {
     return (
       <View style={styles.loading}>
