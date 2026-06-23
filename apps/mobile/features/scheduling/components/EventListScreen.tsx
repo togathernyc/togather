@@ -31,6 +31,7 @@ import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { EmptyState } from "@components/ui/EmptyState";
+import { Button } from "@components/ui/Button";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -73,6 +74,9 @@ export function EventListScreen() {
   const createEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.createEvent,
   );
+  const quickStartRostering = useAuthenticatedMutation(
+    api.functions.scheduling.quickStart.quickStartRostering,
+  );
   const duplicateEvent = useAuthenticatedMutation(
     api.functions.scheduling.events.duplicateEvent,
   );
@@ -83,6 +87,7 @@ export function EventListScreen() {
     api.functions.scheduling.publicAvailability.createAvailabilityLink,
   );
   const [creating, setCreating] = useState(false);
+  const [settingUp, setSettingUp] = useState(false);
   const [sharingLink, setSharingLink] = useState(false);
   const [showPast, setShowPast] = useState(false);
   // Web ⋯ menu target (ActionSheetIOS/Alert don't work on web).
@@ -131,6 +136,33 @@ export function EventListScreen() {
       setCreating(false);
     }
   }, [creating, createEvent, groupId, router]);
+
+  // One-tap bootstrap for a brand-new group: creates a starter team + roles
+  // and a draft plan, then drops the leader into the editor to own the date.
+  // Idempotent on the backend — if rostering data already exists it no-ops and
+  // we just stay in the (now-populated) hub on the next reactive render.
+  const handleSetUpRostering = useCallback(async () => {
+    if (settingUp) return;
+    setSettingUp(true);
+    try {
+      const result = await quickStartRostering({ groupId });
+      if (result.planId) {
+        router.push(
+          `/rostering/${groupId}/event/${result.planId}` as never,
+        );
+      }
+      // alreadySetUp === true → nothing to navigate to; the list query
+      // refreshes into the populated hub on its own.
+    } catch (e) {
+      const err = e as { data?: { message?: string }; message?: string };
+      Alert.alert(
+        "Couldn't set up rostering",
+        err?.data?.message ?? err?.message ?? "Please try again.",
+      );
+    } finally {
+      setSettingUp(false);
+    }
+  }, [settingUp, quickStartRostering, groupId, router]);
 
   const handleDuplicate = useCallback(
     async (event: EventRow) => {
@@ -279,15 +311,46 @@ export function EventListScreen() {
   }
 
   if (events.length === 0) {
+    // Fresh group: lead with a one-tap "Set up rostering" that bootstraps a
+    // starter team + roles + a draft plan, then drops the leader into the
+    // editor. "New event plan" stays available as the secondary manual path.
     return (
       <View style={[styles.emptyWrap, { backgroundColor: colors.surface }]}>
         <EmptyState
           icon="calendar-outline"
-          title="No upcoming event plans"
-          message="Create an event plan to start scheduling volunteers."
-          actionLabel="New event plan"
-          onAction={handleNewEvent}
+          title="Set up rostering"
+          message="Create a starter team with roles and a first event plan in one tap. You can rename and tune everything afterwards."
         />
+        <View style={styles.emptyActions}>
+          <Button
+            onPress={handleSetUpRostering}
+            variant="primary"
+            loading={settingUp}
+            style={styles.emptyPrimaryButton}
+          >
+            Set up rostering
+          </Button>
+          <Pressable
+            onPress={handleNewEvent}
+            disabled={creating}
+            style={styles.emptySecondary}
+            accessibilityRole="button"
+            accessibilityLabel="Create a blank event plan"
+          >
+            {creating ? (
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            ) : (
+              <Text
+                style={[
+                  styles.emptySecondaryText,
+                  { color: colors.textSecondary },
+                ]}
+              >
+                Or create a blank event plan
+              </Text>
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -449,6 +512,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
+  },
+  emptyActions: {
+    width: "100%",
+    maxWidth: 300,
+    alignItems: "center",
+    gap: 16,
+    // Pull the actions up under the EmptyState message (which reserves a
+    // tall min-height for centering) so the primary CTA sits with the copy.
+    marginTop: -24,
+  },
+  emptyPrimaryButton: {
+    width: "100%",
+  },
+  emptySecondary: {
+    minHeight: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptySecondaryText: {
+    fontSize: 15,
+    fontWeight: "500",
   },
   scrollContent: {
     padding: 16,
