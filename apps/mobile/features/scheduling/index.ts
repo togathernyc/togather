@@ -19,6 +19,7 @@ export {
 } from "./api/crossTeamChannels";
 export { EventListScreen } from "./components/EventListScreen";
 export { EventEditorScreen } from "./components/EventEditorScreen";
+export { EventEditorPanel } from "./components/EventEditorPanel";
 export { RunSheetScreen } from "./components/RunSheetScreen";
 export { MusicianRehearsalScreen } from "./components/MusicianRehearsalScreen";
 export { MyScheduleScreen } from "./components/MyScheduleScreen";
