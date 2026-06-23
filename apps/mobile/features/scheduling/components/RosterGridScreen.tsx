@@ -33,6 +33,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  Share,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -40,10 +41,11 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@components/ui/Avatar";
-import { EmptyState } from "@components/ui/EmptyState";
+import { Button } from "@components/ui/Button";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -156,6 +158,15 @@ function monthDay(ms: number): string {
   });
 }
 
+/** Next Sunday at 9:00 AM local time — the neutral default for a new plan. */
+function nextSundayAtNine(): Date {
+  const d = new Date();
+  const daysUntilSunday = (7 - d.getDay()) % 7 || 7;
+  d.setDate(d.getDate() + daysUntilSunday);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
 /** Debounce a value by `delay` ms — same pattern as AssignSheet. */
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -221,13 +232,29 @@ export function RosterGridScreen() {
   // column with a 700px dead band beside it).
   const MIN_CELL_W = isWide ? 150 : 76;
 
+  // Past dates are normally hidden (the grid leads with upcoming). The ⋯
+  // overflow's "Include past" toggle flips this so leaders can reach and
+  // re-run past plans — replacing the old Schedule list's "Past plans" section.
+  const [includePast, setIncludePast] = useState(false);
+
   const data = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterMatrix,
-    groupId ? { groupId } : "skip",
+    groupId ? { groupId, includePast } : "skip",
   ) as RosterMatrix | undefined;
 
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
+  );
+  // Create a plan straight from the grid (the "＋ Add date" column / quick-start
+  // CTA). The reactive rosterMatrix query self-refreshes to show the new column.
+  const createEvent = useAuthenticatedMutation(
+    api.functions.scheduling.events.createEvent,
+  );
+  const quickStartRostering = useAuthenticatedMutation(
+    api.functions.scheduling.quickStart.quickStartRostering,
+  );
+  const createAvailabilityLink = useAuthenticatedMutation(
+    api.functions.scheduling.publicAvailability.createAvailabilityLink,
   );
   const unassign = useAuthenticatedMutation(
     api.functions.scheduling.assignments.unassign,
@@ -342,6 +369,13 @@ export function RosterGridScreen() {
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
 
+  // ⋯ overflow (Teams / Cross-team / Collect availability / Include past) and
+  // the in-flight states for its async actions + the "＋ Add date" column.
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [sharingLink, setSharingLink] = useState(false);
+  const [creatingEvent, setCreatingEvent] = useState(false);
+  const [settingUp, setSettingUp] = useState(false);
+
   // Single docked side-panel at a time (desktop). The assign panel and the two
   // cell-management panels (role / member) all share the grid's right dock
   // region, so opening one must close the others — otherwise two panels could
@@ -416,17 +450,19 @@ export function RosterGridScreen() {
 
   // Column width. On mobile it's the fixed minimum (today's behavior). On
   // desktop the date columns EXPAND to fill the available grid width — the
-  // measured body width minus the frozen NAME_W column — divided across the
-  // date columns, with only a MIN_CELL_W floor (no upper cap). So 1 date fills
-  // the whole grid area as one wide column, and ≥N dates fill the width then
-  // scroll horizontally once they hit the floor. `bodyW` re-measures whenever
-  // the grid area resizes (e.g. the assign side-panel docking shrinks it), so
-  // the fill always targets the space actually left of the panel — no dead band
-  // between the table and the panel. Frozen-column alignment is preserved since
-  // header + body share this same CELL_W.
+  // measured body width minus the frozen NAME_W column AND the trailing
+  // "＋ Add date" column (MIN_CELL_W) — divided across the date columns, with
+  // only a MIN_CELL_W floor (no upper cap). Reserving the add-date width keeps
+  // that column on-screen at the right edge instead of being pushed off the
+  // filled grid. So 1 date fills the remaining width as one wide column, and
+  // ≥N dates fill then scroll horizontally once they hit the floor. `bodyW`
+  // re-measures whenever the grid area resizes (e.g. the assign side-panel
+  // docking shrinks it), so the fill always targets the space actually left of
+  // the panel. Frozen-column alignment is preserved since header + body share
+  // this same CELL_W.
   const CELL_W = useMemo(() => {
     if (!isWide || bodyW === 0 || events.length === 0) return MIN_CELL_W;
-    const avail = bodyW - NAME_W;
+    const avail = bodyW - NAME_W - MIN_CELL_W;
     return Math.max(MIN_CELL_W, Math.floor(avail / events.length));
   }, [isWide, bodyW, events.length, NAME_W, MIN_CELL_W]);
 
@@ -619,6 +655,76 @@ export function RosterGridScreen() {
   }, [publishing, events, publishOne]);
 
   // -------------------------------------------------------------------------
+  // ⋯ overflow + plan creation (ported from EventListScreen — the grid is the
+  // rostering home now, so these actions live here).
+  // -------------------------------------------------------------------------
+
+  // Generate a public, app-optional availability link and hand it to the OS
+  // share sheet. People open it in a browser (no app needed) and their
+  // response is matched to their account when they later sign up.
+  const handleShareLink = useCallback(async () => {
+    if (sharingLink) return;
+    setSharingLink(true);
+    try {
+      const { publicToken } = await createAvailabilityLink({ groupId });
+      const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
+      await Share.share({
+        message: `Let us know when you can serve: ${url}`,
+      });
+    } catch (e) {
+      const err = e as { data?: { message?: string }; message?: string };
+      Alert.alert(
+        "Couldn't create link",
+        err?.data?.message ??
+          err?.message ??
+          "Add an upcoming event plan first, then try again.",
+      );
+    } finally {
+      setSharingLink(false);
+    }
+  }, [sharingLink, createAvailabilityLink, groupId]);
+
+  // Create a new draft plan at the neutral default date (next Sunday 9 AM, same
+  // as the editor's default). The reactive rosterMatrix self-refreshes → a new
+  // date column appears; the leader sets the real date in the plan editor.
+  const handleAddDate = useCallback(async () => {
+    if (creatingEvent) return;
+    setCreatingEvent(true);
+    try {
+      const date = nextSundayAtNine();
+      await createEvent({
+        groupId,
+        title: "Untitled event plan",
+        eventDate: date.getTime(),
+        times: [{ label: "9:00 AM", startsAt: date.getTime() }],
+      });
+    } catch (e) {
+      surfaceError("Couldn't add date", e);
+    } finally {
+      setCreatingEvent(false);
+    }
+  }, [creatingEvent, createEvent, groupId, surfaceError]);
+
+  // One-tap bootstrap for a brand-new group: starter team + roles + a draft
+  // plan, then into the editor to own the date. Idempotent on the backend.
+  const handleSetUpRostering = useCallback(async () => {
+    if (settingUp) return;
+    setSettingUp(true);
+    try {
+      const result = await quickStartRostering({ groupId });
+      if (result.planId) {
+        router.push(`/rostering/${groupId}/event/${result.planId}` as never);
+      }
+      // alreadySetUp === true → the grid query refreshes into the populated
+      // state on its own; nothing to navigate to.
+    } catch (e) {
+      surfaceError("Couldn't set up rostering", e);
+    } finally {
+      setSettingUp(false);
+    }
+  }, [settingUp, quickStartRostering, groupId, router, surfaceError]);
+
+  // -------------------------------------------------------------------------
   // Header
   // -------------------------------------------------------------------------
   const renderHeaderBar = () => (
@@ -658,7 +764,24 @@ export function RosterGridScreen() {
           />
         </View>
       )}
+      {!isWide && renderOverflowButton()}
     </View>
+  );
+
+  // ⋯ overflow — Teams / Cross-team / Collect availability / Include past.
+  // Lives in the mobile header and the desktop toolbar. Layout stays on the
+  // inner static View so RN-Web doesn't drop it (Pressable function-style is
+  // ignored on web).
+  const renderOverflowButton = () => (
+    <TouchableOpacity
+      onPress={() => setOverflowOpen(true)}
+      hitSlop={10}
+      style={styles.overflowBtn}
+      accessibilityRole="button"
+      accessibilityLabel="More rostering options"
+    >
+      <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
+    </TouchableOpacity>
   );
 
   // The shared view toggle, reused by the header (mobile) and toolbar (desktop).
@@ -691,15 +814,53 @@ export function RosterGridScreen() {
   }
 
   if (data.events.length === 0) {
+    // Fresh group: lead with a one-tap "Set up rostering" that bootstraps a
+    // starter team + roles + a draft plan, then drops the leader into the
+    // editor. "Add a blank event plan" stays available as the manual path.
     return (
       <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
         {renderHeaderBar()}
-        <View style={styles.centered}>
-          <EmptyState
-            icon="calendar-outline"
-            title="No upcoming events"
-            message="Create event plans and collect availability, then place volunteers here."
+        <View style={styles.emptyWrap}>
+          <Ionicons
+            name="calendar-outline"
+            size={64}
+            color={colors.iconSecondary}
+            style={styles.emptyIcon}
           />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>
+            Set up rostering
+          </Text>
+          <Text style={[styles.emptyMessage, { color: colors.textSecondary }]}>
+            Create a starter team with roles and a first event plan in one tap.
+            You can rename and tune everything afterwards.
+          </Text>
+          <View style={styles.emptyActions}>
+            <Button
+              onPress={handleSetUpRostering}
+              variant="primary"
+              loading={settingUp}
+              style={styles.emptyPrimaryButton}
+            >
+              Set up rostering
+            </Button>
+            <Pressable
+              onPress={handleAddDate}
+              disabled={creatingEvent}
+              style={styles.emptySecondary}
+              accessibilityRole="button"
+              accessibilityLabel="Add a blank event plan"
+            >
+              {creatingEvent ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <Text
+                  style={[styles.emptySecondaryText, { color: colors.textSecondary }]}
+                >
+                  Or add a blank event plan
+                </Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
     );
@@ -808,6 +969,7 @@ export function RosterGridScreen() {
       {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
       <View style={styles.toolbarSpacer} />
       {renderPublishButton(false)}
+      {renderOverflowButton()}
     </View>
   );
 
@@ -890,6 +1052,34 @@ export function RosterGridScreen() {
               </View>
             );
           })}
+          {/* Trailing "＋ Add date" column — creates a new draft plan at the
+              neutral default date; the reactive query adds its column. Lives
+              inside the scrolling header so it sits at the right edge of the
+              date columns. */}
+          <TouchableOpacity
+            onPress={handleAddDate}
+            disabled={creatingEvent}
+            accessibilityRole="button"
+            accessibilityLabel="Add a date"
+            style={[
+              styles.addDateCell,
+              { width: MIN_CELL_W, height: HEADER_H, borderLeftColor: colors.border },
+            ]}
+          >
+            {creatingEvent ? (
+              <ActivityIndicator size="small" color={colors.link} />
+            ) : (
+              <>
+                <Ionicons name="add" size={20} color={colors.link} />
+                <Text
+                  style={[styles.addDateText, { color: colors.link }]}
+                  numberOfLines={1}
+                >
+                  Add date
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -1411,6 +1601,28 @@ export function RosterGridScreen() {
             setTeamMenuOpen(false);
           }}
           onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
+
+      {overflowOpen && (
+        <OverflowMenu
+          colors={colors}
+          includePast={includePast}
+          sharingLink={sharingLink}
+          onTeams={() => {
+            setOverflowOpen(false);
+            router.push(`/rostering/${groupId}/teams` as never);
+          }}
+          onCrossTeam={() => {
+            setOverflowOpen(false);
+            router.push(`/rostering/${groupId}/cross-team` as never);
+          }}
+          onCollectAvailability={() => {
+            setOverflowOpen(false);
+            void handleShareLink();
+          }}
+          onToggleIncludePast={() => setIncludePast((v) => !v)}
+          onClose={() => setOverflowOpen(false)}
         />
       )}
 
@@ -2064,6 +2276,89 @@ function PublishMenu({
   );
 }
 
+/**
+ * ⋯ overflow menu — secondary rostering surfaces that no longer have a tab:
+ * Teams, Cross-team, Collect availability, plus the "Include past" toggle that
+ * flips the grid's rosterMatrix({ includePast }) arg.
+ */
+function OverflowMenu({
+  colors,
+  includePast,
+  sharingLink,
+  onTeams,
+  onCrossTeam,
+  onCollectAvailability,
+  onToggleIncludePast,
+  onClose,
+}: {
+  colors: Colors;
+  includePast: boolean;
+  sharingLink: boolean;
+  onTeams: () => void;
+  onCrossTeam: () => void;
+  onCollectAvailability: () => void;
+  onToggleIncludePast: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell title="Rostering" colors={colors} onClose={onClose}>
+      <View>
+        <Pressable
+          onPress={onTeams}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="people-outline" size={20} color={colors.text} />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Teams
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </Pressable>
+        <Pressable
+          onPress={onCrossTeam}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="git-merge-outline" size={20} color={colors.text} />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Cross-team
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </Pressable>
+        <Pressable
+          onPress={onCollectAvailability}
+          disabled={sharingLink}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          {sharingLink ? (
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          ) : (
+            <Ionicons name="share-outline" size={20} color={colors.text} />
+          )}
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Collect availability
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={onToggleIncludePast}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons
+            name={includePast ? "checkbox" : "square-outline"}
+            size={20}
+            color={includePast ? colors.link : colors.text}
+          />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Include past dates
+          </Text>
+        </Pressable>
+      </View>
+    </ModalShell>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Small shared UI
 // ---------------------------------------------------------------------------
@@ -2159,10 +2454,32 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   back: { width: 36, padding: 4 },
+  overflowBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   headerTitleWrap: { flex: 1 },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   headerSub: { fontSize: 12, marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+
+  // Quick-start empty state (no plans/teams yet) — ported from EventListScreen.
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  emptyIcon: { marginBottom: 24 },
+  emptyTitle: { fontSize: 20, fontWeight: "600", textAlign: "center", marginBottom: 8 },
+  emptyMessage: { fontSize: 16, textAlign: "center", lineHeight: 24, maxWidth: 300 },
+  emptyActions: {
+    width: "100%",
+    maxWidth: 300,
+    alignItems: "center",
+    gap: 16,
+    marginTop: 24,
+  },
+  emptyPrimaryButton: { width: "100%" },
+  emptySecondary: { minHeight: 24, alignItems: "center", justifyContent: "center" },
+  emptySecondaryText: { fontSize: 15, fontWeight: "500" },
   segmented: {
     flexDirection: "row",
     borderRadius: 9,
@@ -2245,6 +2562,14 @@ const styles = StyleSheet.create({
   headerCellDate: { fontSize: 13, fontWeight: "700" },
   headerCellTally: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 },
   headerCellTallyText: { fontSize: 11, fontWeight: "700" },
+  addDateCell: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  addDateText: { fontSize: 11, fontWeight: "600" },
   matrixBody: { flex: 1, flexDirection: "row" },
   sectionCell: {
     justifyContent: "center",
