@@ -41,14 +41,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@components/ui/Avatar";
 import { EmptyState } from "@components/ui/EmptyState";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
+  useAuthenticatedAction,
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import { AssignSheet } from "./AssignSheet";
 
 // ---------------------------------------------------------------------------
@@ -195,6 +198,7 @@ type AssignTarget = {
 
 export function RosterGridScreen() {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -218,6 +222,12 @@ export function RosterGridScreen() {
   );
   const unassign = useAuthenticatedMutation(
     api.functions.scheduling.assignments.unassign,
+  );
+  // Publish from the grid (#477 FR-3) — the SAME action the event editor uses,
+  // not a fork. The grid is group-scoped with multiple date columns, so the
+  // chooser below targets a specific plan (or all draft plans).
+  const publishEvent = useAuthenticatedAction(
+    api.functions.scheduling.assignments.publishEvent,
   );
 
   // --- View + filter state ---
@@ -318,6 +328,9 @@ export function RosterGridScreen() {
     event: RosterEvent;
     note?: string;
   } | null>(null);
+  // Publish chooser (#477 FR-3): which date(s) to publish & send requests.
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   const surfaceError = useCallback((title: string, e: unknown) => {
     const err = e as { data?: { message?: string }; message?: string };
@@ -448,6 +461,116 @@ export function RosterGridScreen() {
     },
     [data, roleCells],
   );
+
+  // -------------------------------------------------------------------------
+  // Publish (#477 FR-3)
+  //
+  // `publishEvent` notifies only *unconfirmed* assignments (confirmed people
+  // are never re-pinged), so the per-event "request count" we show in the
+  // confirm dialog is the number of unconfirmed occupants across that plan's
+  // role cells — the same population `markPublished` counts server-side.
+  // -------------------------------------------------------------------------
+  const requestCountForEvent = useCallback(
+    (event: RosterEvent): number => {
+      let n = 0;
+      for (const role of data?.roles ?? []) {
+        const c = roleCells[`${role.roleId}:${event._id}`];
+        if (!c) continue;
+        n += c.occupants.filter((o) => o.status === "unconfirmed").length;
+      }
+      return n;
+    },
+    [data, roleCells],
+  );
+
+  /** Draft event plans — the default publish target (unpublished dates). */
+  const draftEvents = useMemo(
+    () => events.filter((e) => e.status === "draft"),
+    [events],
+  );
+
+  /** Publish a single plan, with a confirm listing its request count. */
+  const publishOne = useCallback(
+    async (event: RosterEvent) => {
+      const count = requestCountForEvent(event);
+      const dateLabel = `${weekday(event.eventDate)} ${monthDay(event.eventDate)}`;
+      const already = event.status === "published";
+      const ok = await confirmAsync({
+        title: already ? "Re-send requests?" : "Publish & send requests?",
+        message:
+          `${dateLabel} — ${count} request${count === 1 ? "" : "s"} will be sent.` +
+          (count > 0
+            ? "\n\nConfirmed people won't be re-notified."
+            : "\n\nNo one is awaiting a response on this date yet."),
+        confirmText: already ? "Re-send" : "Send",
+      });
+      if (!ok) return;
+      setPublishing(true);
+      try {
+        const result = await publishEvent({ planId: event._id });
+        notify(
+          already ? "Requests re-sent" : "Published",
+          result.requestCount > 0
+            ? `Sent ${result.requestCount} request${result.requestCount === 1 ? "" : "s"}.`
+            : "No pending requests to send.",
+        );
+      } catch (e) {
+        surfaceError("Couldn't publish", e);
+      } finally {
+        setPublishing(false);
+      }
+    },
+    [requestCountForEvent, publishEvent, surfaceError],
+  );
+
+  /** Publish every draft plan, with a confirm listing each date + its count. */
+  const publishAllDrafts = useCallback(async () => {
+    if (draftEvents.length === 0) return;
+    const lines = draftEvents
+      .map((e) => {
+        const count = requestCountForEvent(e);
+        return `• ${weekday(e.eventDate)} ${monthDay(e.eventDate)} — ${count} request${count === 1 ? "" : "s"}`;
+      })
+      .join("\n");
+    const ok = await confirmAsync({
+      title: "Publish all draft dates?",
+      message: `These dates will notify volunteers:\n${lines}\n\nConfirmed people won't be re-notified.`,
+      confirmText: "Send",
+    });
+    if (!ok) return;
+    setPublishing(true);
+    try {
+      let total = 0;
+      for (const e of draftEvents) {
+        const result = await publishEvent({ planId: e._id });
+        total += result.requestCount;
+      }
+      notify(
+        "Published",
+        total > 0
+          ? `Sent ${total} request${total === 1 ? "" : "s"} across ${draftEvents.length} date${draftEvents.length === 1 ? "" : "s"}.`
+          : "No pending requests to send.",
+      );
+    } catch (e) {
+      surfaceError("Couldn't publish", e);
+    } finally {
+      setPublishing(false);
+    }
+  }, [draftEvents, requestCountForEvent, publishEvent, surfaceError]);
+
+  /**
+   * Entry point for the Publish action. With a single date in the grid, skip
+   * the chooser and publish it directly; with several, open the chooser so the
+   * leader picks a date (or all drafts) — every path goes through a confirm.
+   */
+  const handlePublishPress = useCallback(() => {
+    if (publishing) return;
+    if (events.length === 1) {
+      void publishOne(events[0]);
+    } else {
+      setPublishMenuOpen(true);
+    }
+  }, [publishing, events, publishOne]);
 
   // -------------------------------------------------------------------------
   // Header
@@ -893,6 +1016,20 @@ export function RosterGridScreen() {
       ? `${visibleRoles.length} ${visibleRoles.length === 1 ? "role" : "roles"}`
       : `${visibleMembers.length} ${visibleMembers.length === 1 ? "person" : "people"}`;
 
+  // Publish button label (#477 FR-3). One event → name the date; several with
+  // drafts left → generic; all published → "Re-send". Anyone who can see this
+  // grid is a scheduler (rosterMatrix requires it), so the action is always
+  // permission-appropriate — no extra gate needed.
+  const allPublished = events.length > 0 && draftEvents.length === 0;
+  const publishLabel =
+    events.length === 1
+      ? allPublished
+        ? `Re-send · ${monthDay(events[0].eventDate)}`
+        : `Publish & send · ${monthDay(events[0].eventDate)}`
+      : allPublished
+        ? "Re-send requests"
+        : "Publish & send requests";
+
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
       {renderHeaderBar()}
@@ -919,6 +1056,39 @@ export function RosterGridScreen() {
             {renderPeopleCells()}
           </>
         )}
+      </View>
+
+      {/* Publish bar — present in BOTH views (#477 FR-3). Scoped to a chosen
+          date via the chooser; single-date grids publish that date directly. */}
+      <View
+        style={[
+          styles.publishBar,
+          {
+            backgroundColor: colors.surface,
+            borderTopColor: colors.border,
+            paddingBottom: insets.bottom + 12,
+          },
+        ]}
+      >
+        <Pressable
+          onPress={handlePublishPress}
+          disabled={publishing}
+          accessibilityRole="button"
+          accessibilityLabel={publishLabel}
+        >
+          <View
+            style={[
+              styles.publishBtn,
+              { backgroundColor: primaryColor, opacity: publishing ? 0.7 : 1 },
+            ]}
+          >
+            {publishing ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.publishBtnText}>{publishLabel}</Text>
+            )}
+          </View>
+        </Pressable>
       </View>
 
       {/* ===== Modals ===== */}
@@ -1020,6 +1190,24 @@ export function RosterGridScreen() {
             setTeamMenuOpen(false);
           }}
           onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
+
+      {publishMenuOpen && (
+        <PublishMenu
+          events={events}
+          draftCount={draftEvents.length}
+          requestCountForEvent={requestCountForEvent}
+          colors={colors}
+          onPublishOne={(event) => {
+            setPublishMenuOpen(false);
+            void publishOne(event);
+          }}
+          onPublishAll={() => {
+            setPublishMenuOpen(false);
+            void publishAllDrafts();
+          }}
+          onClose={() => setPublishMenuOpen(false)}
         />
       )}
     </View>
@@ -1547,6 +1735,79 @@ function TeamFilterMenu({
   );
 }
 
+/**
+ * Publish chooser (#477 FR-3) — when the grid spans multiple dates, the leader
+ * picks which date to publish (each row shows its pending request count), or
+ * publishes all draft dates at once. Single-date grids skip this and publish
+ * directly. Every path runs through a confirm dialog before notifying anyone.
+ */
+function PublishMenu({
+  events,
+  draftCount,
+  requestCountForEvent,
+  colors,
+  onPublishOne,
+  onPublishAll,
+  onClose,
+}: {
+  events: RosterEvent[];
+  draftCount: number;
+  requestCountForEvent: (event: RosterEvent) => number;
+  colors: Colors;
+  onPublishOne: (event: RosterEvent) => void;
+  onPublishAll: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Publish & send"
+      subtitle="Pick a date to send requests for"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        {events.map((ev) => {
+          const count = requestCountForEvent(ev);
+          const published = ev.status === "published";
+          return (
+            <Pressable
+              key={ev._id}
+              onPress={() => onPublishOne(ev)}
+              style={[styles.menuRow, { borderBottomColor: colors.border }]}
+              accessibilityRole="button"
+            >
+              <View style={styles.menuRowText}>
+                <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+                  {weekday(ev.eventDate)} {monthDay(ev.eventDate)}
+                </Text>
+                <Text style={[styles.menuRowSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                  {published ? "Published · " : ""}
+                  {count} request{count === 1 ? "" : "s"}
+                </Text>
+              </View>
+              <Text style={[styles.menuRowCount, { color: colors.link }]}>
+                {published ? "Re-send" : "Send"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {draftCount > 1 && (
+        <Pressable
+          onPress={onPublishAll}
+          style={[styles.addBtn, { borderColor: colors.link }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="paper-plane-outline" size={16} color={colors.link} />
+          <Text style={[styles.addBtnText, { color: colors.link }]}>
+            Publish all draft dates ({draftCount})
+          </Text>
+        </Pressable>
+      )}
+    </ModalShell>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Small shared UI
 // ---------------------------------------------------------------------------
@@ -1817,4 +2078,20 @@ const styles = StyleSheet.create({
   menuRowText: { flex: 1, minWidth: 0 },
   menuRowSub: { fontSize: 11, marginTop: 1 },
   menuRowCount: { fontSize: 13, fontWeight: "600" },
+  publishBar: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  publishBtn: {
+    minHeight: 50,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  publishBtnText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#fff",
+  },
 });
