@@ -7,7 +7,7 @@
  * reading column on `isWide`; below the breakpoint it's a transparent pass-through
  * so mobile renders pixel-identically.
  *
- * Used by EventListScreen, EventEditorScreen, RosteringTeamsScreen, and
+ * Used by EventEditorScreen, RosteringTeamsScreen, and
  * RosteringCrossTeamScreen. The shared breakpoint is `width >= 700`, matching
  * the roster grid (RosterGridScreen).
  */
