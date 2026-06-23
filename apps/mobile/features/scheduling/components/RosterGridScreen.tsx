@@ -215,9 +215,11 @@ export function RosterGridScreen() {
   const HEADER_H = 70;
   // Minimum legible column width per platform. On desktop the cells region
   // grows to fill the viewport (see `CELL_W` below) so a 1–2 date roster reads
-  // as a real table rather than a sliver hugging the left edge.
+  // as a real table rather than a sliver hugging the left edge. There is no
+  // upper cap on the fill path: with few dates the columns expand to fill the
+  // full grid width (a single wide column is fine — far better than a 280px
+  // column with a 700px dead band beside it).
   const MIN_CELL_W = isWide ? 150 : 76;
-  const MAX_CELL_W = 280;
 
   const data = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterMatrix,
@@ -386,17 +388,19 @@ export function RosterGridScreen() {
   const roleCells = data?.roleCells ?? {};
 
   // Column width. On mobile it's the fixed minimum (today's behavior). On
-  // desktop the cells region grows to fill the measured body width: divide the
-  // space left of the frozen column across the date columns, clamped so a
-  // single date doesn't balloon and many dates don't crush. When the table
-  // would overflow the viewport (lots of dates) we fall back to MIN_CELL_W and
-  // let it scroll horizontally as before — frozen-column alignment is preserved
-  // either way since header + body share the same CELL_W.
+  // desktop the date columns EXPAND to fill the available grid width — the
+  // measured body width minus the frozen NAME_W column — divided across the
+  // date columns, with only a MIN_CELL_W floor (no upper cap). So 1 date fills
+  // the whole grid area as one wide column, and ≥N dates fill the width then
+  // scroll horizontally once they hit the floor. `bodyW` re-measures whenever
+  // the grid area resizes (e.g. the assign side-panel docking shrinks it), so
+  // the fill always targets the space actually left of the panel — no dead band
+  // between the table and the panel. Frozen-column alignment is preserved since
+  // header + body share this same CELL_W.
   const CELL_W = useMemo(() => {
     if (!isWide || bodyW === 0 || events.length === 0) return MIN_CELL_W;
     const avail = bodyW - NAME_W;
-    const fit = Math.floor(avail / events.length);
-    return Math.max(MIN_CELL_W, Math.min(MAX_CELL_W, fit));
+    return Math.max(MIN_CELL_W, Math.floor(avail / events.length));
   }, [isWide, bodyW, events.length, NAME_W, MIN_CELL_W]);
 
   // Clear a stale isolated team once it's no longer in the loaded team list
