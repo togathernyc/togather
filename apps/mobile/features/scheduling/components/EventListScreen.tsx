@@ -3,7 +3,9 @@
  *
  * The scheduler's plan list for a campus group — upcoming event plans, each
  * with a fill-progress bar (filled vs. needed slots) and a draft/published
- * status pill. A "+ New event plan" row creates a draft.
+ * status pill. A compact action header anchors the screen: one primary
+ * "Open roster grid" (the daily build surface) plus lighter "New plan" and
+ * "Collect availability" actions, so the hierarchy reads at a glance.
  *
  * Rendered headerless: the Rostering hub layout supplies the screen header
  * and top tab bar. Route: /rostering/[group_id]. See ADR-024.
@@ -57,7 +59,7 @@ type EventRow = {
 
 export function EventListScreen() {
   const { colors } = useTheme();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, accentLight } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
@@ -123,7 +125,7 @@ export function EventListScreen() {
     setCreating(true);
     try {
       // Default a new draft to next Sunday at 9 AM — the scheduler tunes it
-      // in the editor. Keeps "+ New event plan" a single tap to a usable draft.
+      // in the editor. Keeps "New event plan" a single tap to a usable draft.
       const date = nextSundayAtNine();
       const result = await createEvent({
         groupId,
@@ -219,7 +221,7 @@ export function EventListScreen() {
     [handleDuplicate, handleDelete],
   );
 
-  const renderEventCard = (event: EventRow) => {
+  const renderEventCard = (event: EventRow, highlight: boolean) => {
     const { totalNeeded, totalFilled, totalConfirmed } = event.fillSummary;
     const confirmedPct =
       totalNeeded > 0 ? (totalConfirmed / totalNeeded) * 100 : 0;
@@ -227,78 +229,129 @@ export function EventListScreen() {
     // Filled-but-not-yet-confirmed portion of the bar.
     const pendingPct = Math.max(0, filledPct - confirmedPct);
     const isPublished = event.status === "published";
+    const d = new Date(event.eventDate);
+    const month = d
+      .toLocaleDateString("en-US", { month: "short" })
+      .toUpperCase();
+    const day = d.getDate();
+    const timesLabel = event.times.map((t) => t.label).join(", ");
+
     return (
-      <Pressable
+      <TouchableOpacity
         key={event._id}
         onPress={() =>
           router.push(`/rostering/${groupId}/event/${event._id}` as never)
         }
-        style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+        activeOpacity={0.8}
+        style={[
+          styles.card,
+          { backgroundColor: colors.surfaceSecondary },
+          highlight && {
+            borderColor: primaryColor,
+            backgroundColor: accentLight,
+          },
+        ]}
       >
-        <View style={styles.cardTop}>
-          <View style={styles.cardTitleWrap}>
-            <Text
-              style={[styles.cardTitle, { color: colors.text }]}
-              numberOfLines={1}
-            >
-              {event.title}
-            </Text>
-            <Text style={[styles.cardDate, { color: colors.textSecondary }]}>
-              {formatEventDate(event.eventDate)}
-              {event.times.length > 0
-                ? ` · ${event.times.map((t) => t.label).join(", ")}`
-                : ""}
-            </Text>
-          </View>
-          <StatusPill
-            label={isPublished ? "Published" : "Draft"}
-            color={isPublished ? colors.success : colors.textSecondary}
-            bg={isPublished ? colors.success + "22" : colors.border}
-          />
-          <TouchableOpacity
-            onPress={(e) => {
-              // Keep the ⋯ tap distinct from the card's open-editor press.
-              e.stopPropagation();
-              handleEventMenu(event);
-            }}
-            hitSlop={12}
-            style={styles.menuButton}
-            accessibilityLabel="Event plan options"
+        {/* Leading date chip — gives the list a calendar-like rhythm and makes
+            each plan scannable at a glance. */}
+        <View
+          style={[
+            styles.dateChip,
+            {
+              backgroundColor: highlight ? primaryColor : colors.surface,
+              borderColor: highlight ? primaryColor : colors.border,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.dateChipMonth,
+              { color: highlight ? "#fff" : colors.textSecondary },
+            ]}
           >
-            <Ionicons
-              name="ellipsis-horizontal"
-              size={20}
-              color={colors.textSecondary}
-            />
-          </TouchableOpacity>
+            {month}
+          </Text>
+          <Text
+            style={[
+              styles.dateChipDay,
+              { color: highlight ? "#fff" : colors.text },
+            ]}
+          >
+            {day}
+          </Text>
         </View>
-        <View style={styles.fillRow}>
-          <View style={[styles.fillTrack, { backgroundColor: colors.border }]}>
-            {/* Confirmed (accepted) — solid. */}
-            <View
-              style={{
-                width: `${confirmedPct}%`,
-                backgroundColor: colors.success,
+
+        <View style={styles.cardBody}>
+          <View style={styles.cardHeaderRow}>
+            <View style={styles.cardTitleWrap}>
+              <Text
+                style={[styles.cardTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {event.title}
+              </Text>
+              <Text
+                style={[styles.cardDate, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {formatEventDate(event.eventDate)}
+                {timesLabel ? ` · ${timesLabel}` : ""}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={(e) => {
+                // Keep the ⋯ tap distinct from the card's open-editor press.
+                e.stopPropagation();
+                handleEventMenu(event);
               }}
-            />
-            {/* Filled but awaiting a response — faded. */}
-            <View
-              style={{
-                width: `${pendingPct}%`,
-                backgroundColor: colors.success + "59",
-              }}
-            />
+              hitSlop={12}
+              style={styles.menuButton}
+              accessibilityLabel="Event plan options"
+            >
+              <Ionicons
+                name="ellipsis-horizontal"
+                size={20}
+                color={colors.textSecondary}
+              />
+            </TouchableOpacity>
           </View>
-          <View style={styles.fillTextWrap}>
+
+          <View style={styles.fillRow}>
+            <View
+              style={[styles.fillTrack, { backgroundColor: colors.border }]}
+            >
+              {/* Confirmed (accepted) — solid. */}
+              <View
+                style={{
+                  width: `${confirmedPct}%`,
+                  backgroundColor: colors.success,
+                }}
+              />
+              {/* Filled but awaiting a response — faded. */}
+              <View
+                style={{
+                  width: `${pendingPct}%`,
+                  backgroundColor: colors.success + "59",
+                }}
+              />
+            </View>
+          </View>
+
+          <View style={styles.cardFooterRow}>
             <Text style={[styles.fillText, { color: colors.textSecondary }]}>
-              {totalFilled}/{totalNeeded} filled
+              <Text style={{ color: colors.text, fontWeight: "600" }}>
+                {totalFilled}/{totalNeeded}
+              </Text>{" "}
+              filled · {totalConfirmed} confirmed
             </Text>
-            <Text style={[styles.fillSubText, { color: colors.textSecondary }]}>
-              {totalConfirmed} confirmed
-            </Text>
+            <StatusPill
+              label={isPublished ? "Published" : "Draft"}
+              color={isPublished ? colors.success : colors.textSecondary}
+              bg={isPublished ? colors.success + "22" : colors.border}
+            />
           </View>
         </View>
-      </Pressable>
+      </TouchableOpacity>
     );
   };
 
@@ -373,115 +426,155 @@ export function EventListScreen() {
 
   return (
     <>
-    <ScrollView
-      style={{ backgroundColor: colors.surface }}
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingBottom: insets.bottom + 24 },
-      ]}
-    >
-      <CenteredColumn style={styles.column}>
-      {/* Two primary build actions, side by side: create a plan, or open the
-          roster grid (the matrix where assignment happens). The grid is the
-          main build surface, so it gets the filled, accented treatment. */}
-      <View style={styles.primaryActions}>
-        <Pressable
-          onPress={handleNewEvent}
-          disabled={creating}
-          style={[styles.newRow, { borderColor: primaryColor }]}
-          accessibilityRole="button"
-        >
-          {creating ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <Ionicons name="add" size={20} color={primaryColor} />
-          )}
-          <Text style={[styles.newLabel, { color: primaryColor }]}>
-            New event plan
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => router.push(`/rostering/${groupId}/grid` as never)}
-          style={[styles.gridRow, { backgroundColor: primaryColor }]}
-          accessibilityRole="button"
-          accessibilityLabel="Open the roster grid"
-        >
-          <Ionicons name="git-network-outline" size={20} color="#fff" />
-          <Text style={styles.gridLabel}>Open roster grid</Text>
-        </Pressable>
-      </View>
-
-      <Pressable
-        onPress={handleShareLink}
-        disabled={sharingLink}
-        style={styles.shareRow}
-        accessibilityRole="button"
-        accessibilityLabel="Collect availability"
+      <ScrollView
+        style={{ backgroundColor: colors.surface }}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: insets.bottom + 24 },
+        ]}
       >
-        {sharingLink ? (
-          <ActivityIndicator size="small" color={colors.textSecondary} />
-        ) : (
-          <Ionicons
-            name="share-outline"
-            size={18}
-            color={colors.textSecondary}
-          />
-        )}
-        <Text style={[styles.shareLabel, { color: colors.textSecondary }]}>
-          Collect availability
-        </Text>
-      </Pressable>
-
-      {upcoming.map(renderEventCard)}
-
-      {upcoming.length === 0 && past.length > 0 && (
-        <Text style={[styles.noUpcoming, { color: colors.textSecondary }]}>
-          No upcoming plans. Duplicate a past plan below to re-run it.
-        </Text>
-      )}
-
-      {past.length > 0 && (
-        <>
-          <Pressable
-            onPress={() => setShowPast((v) => !v)}
-            style={styles.pastToggle}
-            accessibilityRole="button"
-            accessibilityLabel={
-              showPast ? "Hide past plans" : "Show past plans"
-            }
-          >
-            <Ionicons
-              name={showPast ? "chevron-down" : "chevron-forward"}
-              size={16}
-              color={colors.textSecondary}
-            />
-            <Text style={[styles.pastToggleText, { color: colors.textSecondary }]}>
-              Past plans ({past.length})
-            </Text>
-          </Pressable>
-          {showPast && past.map(renderEventCard)}
-        </>
-      )}
-      </CenteredColumn>
-    </ScrollView>
-    <ActionMenuSheet
-      visible={menuEvent !== null}
-      title={menuEvent?.title}
-      actions={
-        menuEvent
-          ? [
-              { label: "Duplicate", onPress: () => void handleDuplicate(menuEvent) },
+        <CenteredColumn style={styles.column}>
+          {/* Action header — one clear primary (Open roster grid, the daily
+              build surface) with two lighter supporting actions beneath it.
+              Grouping them in a single card reads as intentional, not a row
+              of competing buttons. */}
+          <View
+            style={[
+              styles.actionCard,
               {
-                label: "Delete",
-                destructive: true,
-                onPress: () => void handleDelete(menuEvent),
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: colors.border,
               },
-            ]
-          : []
-      }
-      onClose={() => setMenuEvent(null)}
-    />
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => router.push(`/rostering/${groupId}/grid` as never)}
+              activeOpacity={0.9}
+              style={[styles.primaryButton, { backgroundColor: primaryColor }]}
+              accessibilityRole="button"
+              accessibilityLabel="Open the roster grid"
+            >
+              <Ionicons name="grid" size={18} color="#fff" />
+              <Text style={styles.primaryButtonLabel}>Open roster grid</Text>
+            </TouchableOpacity>
+
+            <View style={styles.secondaryRow}>
+              <TouchableOpacity
+                onPress={handleNewEvent}
+                disabled={creating}
+                activeOpacity={0.7}
+                style={[
+                  styles.secondaryButton,
+                  { backgroundColor: accentLight },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Create a new event plan"
+              >
+                {creating ? (
+                  <ActivityIndicator size="small" color={primaryColor} />
+                ) : (
+                  <Ionicons name="add" size={18} color={primaryColor} />
+                )}
+                <Text
+                  style={[styles.secondaryLabel, { color: primaryColor }]}
+                  numberOfLines={1}
+                >
+                  New plan
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleShareLink}
+                disabled={sharingLink}
+                activeOpacity={0.7}
+                style={[
+                  styles.secondaryButton,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                  styles.secondaryButtonOutline,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Collect availability"
+              >
+                {sharingLink ? (
+                  <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                  <Ionicons
+                    name="share-outline"
+                    size={18}
+                    color={colors.textSecondary}
+                  />
+                )}
+                <Text
+                  style={[styles.secondaryLabel, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  Collect availability
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Upcoming */}
+          {upcoming.length > 0 && (
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+              Upcoming
+            </Text>
+          )}
+          {upcoming.map((e, i) => renderEventCard(e, i === 0))}
+
+          {upcoming.length === 0 && past.length > 0 && (
+            <Text style={[styles.noUpcoming, { color: colors.textSecondary }]}>
+              No upcoming plans. Duplicate a past plan below to re-run it.
+            </Text>
+          )}
+
+          {past.length > 0 && (
+            <>
+              <TouchableOpacity
+                onPress={() => setShowPast((v) => !v)}
+                activeOpacity={0.7}
+                style={styles.pastToggle}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showPast ? "Hide past plans" : "Show past plans"
+                }
+              >
+                <Ionicons
+                  name={showPast ? "chevron-down" : "chevron-forward"}
+                  size={16}
+                  color={colors.textSecondary}
+                />
+                <Text
+                  style={[styles.pastToggleText, { color: colors.textSecondary }]}
+                >
+                  Past plans ({past.length})
+                </Text>
+              </TouchableOpacity>
+              {showPast && past.map((e) => renderEventCard(e, false))}
+            </>
+          )}
+        </CenteredColumn>
+      </ScrollView>
+      <ActionMenuSheet
+        visible={menuEvent !== null}
+        title={menuEvent?.title}
+        actions={
+          menuEvent
+            ? [
+                {
+                  label: "Duplicate",
+                  onPress: () => void handleDuplicate(menuEvent),
+                },
+                {
+                  label: "Delete",
+                  destructive: true,
+                  onPress: () => void handleDelete(menuEvent),
+                },
+              ]
+            : []
+        }
+        onClose={() => setMenuEvent(null)}
+      />
     </>
   );
 }
@@ -567,49 +660,56 @@ const styles = StyleSheet.create({
   column: {
     gap: 12,
   },
-  primaryActions: {
-    flexDirection: "row",
-    gap: 12,
+
+  // Action header — primary build action + lighter supporting actions.
+  actionCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 12,
+    gap: 10,
   },
-  newRow: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderWidth: 1.5,
-    borderStyle: "dashed",
-    borderRadius: 12,
-    paddingVertical: 14,
-  },
-  newLabel: {
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  gridRow: {
-    flex: 1,
+  primaryButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
+    gap: 8,
     borderRadius: 12,
     paddingVertical: 14,
   },
-  gridLabel: {
-    fontSize: 15,
-    fontWeight: "600",
+  primaryButtonLabel: {
+    fontSize: 16,
+    fontWeight: "700",
     color: "#fff",
   },
-  shareRow: {
+  secondaryRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  secondaryButton: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 4,
+    borderRadius: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
   },
-  shareLabel: {
+  secondaryButtonOutline: {
+    borderWidth: 1,
+  },
+  secondaryLabel: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: "600",
+  },
+
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginTop: 4,
+    marginBottom: -2,
   },
   pastToggle: {
     flexDirection: "row",
@@ -628,11 +728,40 @@ const styles = StyleSheet.create({
     textAlign: "center",
     paddingVertical: 8,
   },
+
+  // Plan card
   card: {
-    borderRadius: 12,
-    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "transparent",
+    padding: 12,
   },
-  cardTop: {
+  dateChip: {
+    width: 48,
+    height: 52,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateChipMonth: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  dateChipDay: {
+    fontSize: 20,
+    fontWeight: "700",
+    lineHeight: 24,
+  },
+  cardBody: {
+    flex: 1,
+    gap: 8,
+  },
+  cardHeaderRow: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
@@ -643,6 +772,7 @@ const styles = StyleSheet.create({
   menuButton: {
     padding: 2,
     marginLeft: 2,
+    marginTop: -2,
   },
   cardTitle: {
     fontSize: 16,
@@ -655,27 +785,24 @@ const styles = StyleSheet.create({
   fillRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginTop: 14,
   },
   fillTrack: {
     flex: 1,
-    height: 8,
-    borderRadius: 4,
+    height: 6,
+    borderRadius: 3,
     flexDirection: "row",
     overflow: "hidden",
   },
-  fillTextWrap: {
-    alignItems: "flex-end",
+  cardFooterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
   },
   fillText: {
     fontSize: 12,
     fontWeight: "500",
-  },
-  fillSubText: {
-    fontSize: 11,
-    marginTop: 1,
-    opacity: 0.8,
+    flex: 1,
   },
   pill: {
     paddingHorizontal: 10,
