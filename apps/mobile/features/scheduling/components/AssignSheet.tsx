@@ -291,6 +291,16 @@ export function AssignSheet({
     [filterMemberIds],
   );
 
+  // A group scope is chosen but its member IDs haven't arrived yet. Until they
+  // do, the sheet must NOT fall back to "unfiltered" — otherwise, on a slow
+  // connection, the active filter chip shows while every candidate stays
+  // tappable, letting a leader assign someone outside the selected group.
+  // We render a loading state and treat the candidate list as empty meanwhile.
+  const filterPending =
+    !!filterGroupId &&
+    !!filterGroups?.some((g) => g.id === filterGroupId) &&
+    !filterMemberSet;
+
   const filterGroupName = filterGroupId
     ? filterGroups?.find((g) => g.id === filterGroupId)?.name
     : undefined;
@@ -332,8 +342,10 @@ export function AssignSheet({
     // Apply the "also in group" scope first — it's presentation-only, so it
     // narrows every section (previous / group / community) uniformly. The
     // roster's own coverage tallies live elsewhere and stay whole (FR-4.4).
-    const list = (candidates ?? []).filter(
-      (c) => !filterMemberSet || filterMemberSet.has(c.userId as string),
+    const list = (candidates ?? []).filter((c) =>
+      filterPending
+        ? false
+        : !filterMemberSet || filterMemberSet.has(c.userId as string),
     );
     const byUser = new Map<string, CommunityPerson>(
       list.map((c) => [c.userId as string, c]),
@@ -380,6 +392,7 @@ export function AssignSheet({
     prioritizeAvailable,
     availabilityByUser,
     filterMemberSet,
+    filterPending,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -708,7 +721,7 @@ export function AssignSheet({
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-  const loading = candidates === undefined;
+  const loading = candidates === undefined || filterPending;
   const teamName = team?.name;
   const subtitle = [roleName, teamName].filter(Boolean).join(" · ");
   const showEmpty =
