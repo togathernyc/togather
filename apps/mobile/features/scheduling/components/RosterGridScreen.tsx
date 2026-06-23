@@ -222,7 +222,11 @@ export function RosterGridScreen() {
 
   // --- View + filter state ---
   const [mode, setMode] = useState<ViewMode>("roles");
-  const [hiddenTeams, setHiddenTeams] = useState<Set<string>>(new Set());
+  // Team scope: a single isolated team, or null for "All teams" (#477 FR-2).
+  // Picking a team shows only its roles; "All teams" shows everything. Gates
+  // the Roles view only — People rows stay ungated.
+  const [isolatedTeamId, setIsolatedTeamId] = useState<string | null>(null);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
   const [availableOnly, setAvailableOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -360,25 +364,27 @@ export function RosterGridScreen() {
   const events = data?.events ?? [];
   const roleCells = data?.roleCells ?? {};
 
-  const teamVisible = useCallback(
-    (teamId: string) => !hiddenTeams.has(teamId),
-    [hiddenTeams],
-  );
+  // Clear a stale isolated team once it's no longer in the loaded team list
+  // (e.g. its roles were removed). Keeps the dropdown label honest.
+  useEffect(() => {
+    if (
+      isolatedTeamId &&
+      data &&
+      !data.teams.some((t) => (t.teamId as string) === isolatedTeamId)
+    ) {
+      setIsolatedTeamId(null);
+    }
+  }, [data, isolatedTeamId]);
 
-  const toggleTeam = useCallback((teamId: string) => {
-    setHiddenTeams((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamId)) next.delete(teamId);
-      else next.add(teamId);
-      return next;
-    });
-  }, []);
+  const isolatedTeamName = isolatedTeamId
+    ? data?.teams.find((t) => (t.teamId as string) === isolatedTeamId)?.teamName
+    : undefined;
 
   /** Roles after team + "open only" filters; grouped headers are derived on render. */
   const visibleRoles = useMemo(() => {
     if (!data) return [];
     return data.roles.filter((r) => {
-      if (!teamVisible(r.teamId as string)) return false;
+      if (isolatedTeamId && (r.teamId as string) !== isolatedTeamId) return false;
       if (openOnly) {
         // Keep only roles with at least one open slot across visible events.
         const hasOpen = events.some((ev) => {
@@ -389,7 +395,7 @@ export function RosterGridScreen() {
       }
       return true;
     });
-  }, [data, events, roleCells, teamVisible, openOnly]);
+  }, [data, events, roleCells, isolatedTeamId, openOnly]);
 
   /**
    * Interleave team section-header rows into the (already team-sorted) role
@@ -512,28 +518,20 @@ export function RosterGridScreen() {
   // -------------------------------------------------------------------------
   const renderFilterBar = () => (
     <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipRow}
-      >
-        <Chip
-          label="All teams"
-          active={hiddenTeams.size === 0}
-          onPress={() => setHiddenTeams(new Set())}
-          colors={colors}
-        />
-        {data.teams.map((t) => (
+      <View style={styles.chipRow}>
+        {/* Team scope — single-select dropdown (#477 FR-2). Picking a team
+            isolates it; "All teams" shows everything. Gates Roles view only,
+            so it's only shown there. */}
+        {mode === "roles" && data.teams.length > 0 && (
           <Chip
-            key={t.teamId}
-            label={t.teamName}
-            active={teamVisible(t.teamId as string)}
-            onPress={() => toggleTeam(t.teamId as string)}
+            icon="people-outline"
+            label={isolatedTeamName ?? "All teams"}
+            trailingIcon="chevron-down"
+            active={isolatedTeamId !== null}
+            onPress={() => setTeamMenuOpen(true)}
             colors={colors}
           />
-        ))}
-      </ScrollView>
-      <View style={styles.chipRow}>
+        )}
         <Chip
           icon={openOnly ? "checkbox" : "square-outline"}
           label="Open only"
@@ -1011,6 +1009,19 @@ export function RosterGridScreen() {
           onClose={() => setGroupFilterOpen(false)}
         />
       )}
+
+      {teamMenuOpen && (
+        <TeamFilterMenu
+          teams={data.teams}
+          selectedId={isolatedTeamId}
+          colors={colors}
+          onPick={(id) => {
+            setIsolatedTeamId(id);
+            setTeamMenuOpen(false);
+          }}
+          onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
     </View>
   );
 }
@@ -1479,6 +1490,63 @@ function GroupFilterMenu({
   );
 }
 
+/**
+ * Team scope picker (#477 FR-2) — a single-select menu that isolates one
+ * team's roles in the Roles view. "All teams" clears the scope.
+ */
+function TeamFilterMenu({
+  teams,
+  selectedId,
+  colors,
+  onPick,
+  onClose,
+}: {
+  teams: RosterTeam[];
+  selectedId: string | null;
+  colors: Colors;
+  onPick: (id: string | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Teams"
+      subtitle="Show roles for…"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        <Pressable
+          onPress={() => onPick(null)}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            All teams
+          </Text>
+          {selectedId === null && (
+            <Ionicons name="checkmark" size={20} color={colors.link} />
+          )}
+        </Pressable>
+        {teams.map((t) => (
+          <Pressable
+            key={t.teamId}
+            onPress={() => onPick(t.teamId as string)}
+            style={[styles.menuRow, { borderBottomColor: colors.border }]}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+              {t.teamName}
+            </Text>
+            {selectedId === (t.teamId as string) && (
+              <Ionicons name="checkmark" size={20} color={colors.link} />
+            )}
+          </Pressable>
+        ))}
+      </ScrollView>
+    </ModalShell>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Small shared UI
 // ---------------------------------------------------------------------------
@@ -1511,17 +1579,21 @@ function SegBtn({
 
 function Chip({
   icon,
+  trailingIcon,
   label,
   active,
   onPress,
   colors,
 }: {
   icon?: keyof typeof Ionicons.glyphMap;
+  /** Optional icon after the label — e.g. a chevron marking a dropdown. */
+  trailingIcon?: keyof typeof Ionicons.glyphMap;
   label: string;
   active: boolean;
   onPress: () => void;
   colors: Colors;
 }) {
+  const tint = active ? colors.link : colors.textSecondary;
   return (
     <Pressable
       onPress={onPress}
@@ -1533,12 +1605,9 @@ function Chip({
         },
       ]}
     >
-      {icon && (
-        <Ionicons name={icon} size={14} color={active ? colors.link : colors.textSecondary} />
-      )}
-      <Text style={[styles.chipText, { color: active ? colors.link : colors.textSecondary }]}>
-        {label}
-      </Text>
+      {icon && <Ionicons name={icon} size={14} color={tint} />}
+      <Text style={[styles.chipText, { color: tint }]}>{label}</Text>
+      {trailingIcon && <Ionicons name={trailingIcon} size={13} color={tint} />}
     </Pressable>
   );
 }
