@@ -1892,6 +1892,29 @@ export default defineSchema({
     .index("by_channel_user", ["channelId", "userId"]),
 
   /**
+   * Chat Thread Subscriptions
+   *
+   * Per-user notification preference for a single thread (a parent message and
+   * its replies). The absence of a row is the default: a member is notified
+   * about a reply only when they are @mentioned. A row overrides that default:
+   *   - "all":  notify on every reply, even without a mention
+   *   - "none": never notify, even when @mentioned
+   *
+   * `threadId` is the parent (root) message of the thread. Toggled from the
+   * bell control in the thread view (see ThreadHeader on mobile).
+   */
+  chatThreadSubscriptions: defineTable({
+    threadId: v.id("chatMessages"),
+    userId: v.id("users"),
+    state: v.union(v.literal("all"), v.literal("none")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_thread", ["threadId"])
+    .index("by_thread_user", ["threadId", "userId"])
+    .index("by_user", ["userId"]),
+
+  /**
    * Chat Typing Indicators
    * Ephemeral typing indicators with automatic cleanup.
    */
