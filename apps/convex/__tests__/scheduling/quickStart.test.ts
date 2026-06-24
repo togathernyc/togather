@@ -165,7 +165,30 @@ describe("quickStartRostering", () => {
     });
   });
 
-  it("dates the plan with the neutral default (next Sunday at 9 AM, no cadence)", async () => {
+  it("uses the client-supplied startsAt for the plan date (leader-local time)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const { groupId, leaderId } = await buildBareGroup(t, world.communityId);
+    const leaderToken = (await generateTokens(leaderId)).accessToken;
+
+    // The client computes next-Sunday-9 AM in the LEADER's timezone and passes
+    // it in, so the quick-start date matches the manual "Add date" path exactly
+    // (and doesn't drift to the server timezone). The mutation must store this
+    // value verbatim rather than recomputing server-side.
+    const clientStartsAt = Date.now() + 3 * 86400000 + 1234;
+    const result = await t.mutation(
+      api.functions.scheduling.quickStart.quickStartRostering,
+      { token: leaderToken, groupId, startsAt: clientStartsAt },
+    );
+
+    await t.run(async (ctx) => {
+      const plan = await ctx.db.get(result.planId!);
+      expect(plan!.eventDate).toBe(clientStartsAt);
+      // The single seeded time also pins to the supplied instant.
+      expect(plan!.times[0].startsAt).toBe(clientStartsAt);
+    });
+  });
+
+  it("falls back to a server next-Sunday-9 AM when startsAt is omitted", async () => {
     const { t, world } = await setupSchedulingWorld();
     const { groupId, leaderId } = await buildBareGroup(t, world.communityId);
     const leaderToken = (await generateTokens(leaderId)).accessToken;
@@ -179,8 +202,7 @@ describe("quickStartRostering", () => {
     await t.run(async (ctx) => {
       const plan = await ctx.db.get(result.planId!);
       const date = new Date(plan!.eventDate);
-      // Mirrors the manual "New event plan" default: next Sunday at 9:00 AM
-      // local — a neutral placeholder the leader edits in the editor.
+      // Server-timezone fallback: next Sunday at 9:00 AM — a neutral placeholder.
       expect(date.getDay()).toBe(0); // Sunday
       expect(date.getHours()).toBe(9);
       expect(date.getMinutes()).toBe(0);

@@ -37,11 +37,14 @@ import { suggestStarterRolesForName } from "./starterRoles";
 const STARTER_TEAM_NAME = "Serving Team";
 
 /**
- * Next Sunday at 9:00 AM local time. Mirrors the client `nextSundayAtNine`
- * default in `EventListScreen` so a quick-started plan and a manually-created
- * one share the same neutral placeholder date.
+ * Next Sunday at 9:00 AM in the SERVER timezone — a fallback only. The client
+ * normally passes `startsAt` computed with its own `nextSundayAtNine` (in the
+ * LEADER's local time) so the quick-start date matches the manual "Add date"
+ * path exactly. This server-side version is used only when that arg is omitted
+ * (e.g. an older client), and may land at 9 AM in the wrong timezone — which is
+ * exactly the discrepancy `startsAt` exists to avoid.
  */
-function nextSundayAtNine(): Date {
+function nextSundayAtNineServer(): Date {
   const d = new Date();
   const daysUntilSunday = (7 - d.getDay()) % 7 || 7;
   d.setDate(d.getDate() + daysUntilSunday);
@@ -53,6 +56,13 @@ export const quickStartRostering = mutation({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
+    /**
+     * The plan's default date/time, computed CLIENT-side (next Sunday at 9 AM in
+     * the leader's local timezone, the same `nextSundayAtNine` the manual "Add
+     * date" flow uses). Passed in so both bootstrap paths agree for non-UTC
+     * churches. Omitted → a server-timezone fallback (see `nextSundayAtNineServer`).
+     */
+    startsAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -102,8 +112,10 @@ export const quickStartRostering = mutation({
     }
 
     // 3. A draft event plan dated with the neutral manual default. The leader
-    // owns the real date and edits it in the editor.
-    const eventDate = nextSundayAtNine().getTime();
+    // owns the real date and edits it in the editor. The date comes from the
+    // CLIENT (leader-local 9 AM) so it matches the manual "Add date" path; only
+    // when omitted do we fall back to the server-timezone computation.
+    const eventDate = args.startsAt ?? nextSundayAtNineServer().getTime();
     const planId = await createEventDraftImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
