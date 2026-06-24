@@ -144,6 +144,11 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
+  # Dev-assistant bot (@Togather pipeline). Optional — only present once the
+  # feature is being enabled; missing items are skipped without failing.
+  "CLAUDE_ROUTINES_TRIGGER_URL"
+  "CLAUDE_ROUTINES_TOKEN"
+  "DEV_ASSISTANT_CALLBACK_SECRET"
 )
 
 # ---------------------------------------------------------------------------
