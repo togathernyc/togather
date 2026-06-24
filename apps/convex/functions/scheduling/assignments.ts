@@ -1145,8 +1145,14 @@ export const sendUnconfirmedReminders = internalAction({
       month: "short",
       day: "numeric",
     });
+    // SMS needs an absolute web link; push/in-app navigation needs a RELATIVE
+    // path. expo-router treats an absolute `https://…` URL as an external link
+    // and opens it in the browser instead of routing in-app, so the inbox/push
+    // `url` must stay relative (see resolveNotificationNavigation).
     const linkFor = (assignmentId: string) =>
       `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
+    const pathFor = (assignmentId: string) =>
+      `/scheduling/assignment/${assignmentId}`;
 
     // Copy branches on the recipient's current status. A `confirmed`
     // volunteer (only present in the 1-day pass) gets a no-ask heads-up;
@@ -1183,7 +1189,7 @@ export const sendUnconfirmedReminders = internalAction({
     const pushNotifications = recipients.flatMap((recipient) => {
       const tokens = tokensByUser.get(recipient.userId) ?? [];
       const { title, body } = copyFor(recipient);
-      const url = linkFor(recipient.assignmentId);
+      const url = pathFor(recipient.assignmentId);
       return tokens.map((token) => ({
         token,
         title,
@@ -1233,7 +1239,7 @@ export const sendUnconfirmedReminders = internalAction({
             groupId: targets.groupId,
             title,
             body,
-            url: linkFor(recipient.assignmentId),
+            url: pathFor(recipient.assignmentId),
           };
         }),
       },
@@ -1413,9 +1419,14 @@ export const sendAssignmentRequests = internalAction({
     });
 
     // Build per-assignment deep links so a tapped request opens straight to
-    // the volunteer's accept/decline screen.
+    // the volunteer's accept/decline screen. SMS needs the absolute web link;
+    // push/in-app navigation needs a RELATIVE path, because expo-router opens
+    // an absolute `https://…` URL in the browser instead of routing in-app
+    // (see resolveNotificationNavigation).
     const linkFor = (assignmentId: string) =>
       `${DOMAIN_CONFIG.appUrl}/scheduling/assignment/${assignmentId}`;
+    const pathFor = (assignmentId: string) =>
+      `/scheduling/assignment/${assignmentId}`;
     // Placeholder users don't have the app yet — point them at the signup
     // deeplink with phone prefilled. The phone-OTP claim logic takes over
     // and the assignment is inherited via the placeholder's stable `_id`.
@@ -1445,7 +1456,7 @@ export const sendAssignmentRequests = internalAction({
       const tokens = tokensByUser.get(recipient.userId) ?? [];
       const title = `You're scheduled: ${targets.title}`;
       const body = `${recipient.roleName} on ${eventDate}. Tap to accept or decline.`;
-      const url = linkFor(recipient.assignmentId);
+      const url = pathFor(recipient.assignmentId);
       return tokens.map((token) => ({
         token,
         title,
@@ -1523,7 +1534,7 @@ export const sendAssignmentRequests = internalAction({
           groupId: targets.groupId,
           title: `You're scheduled: ${targets.title}`,
           body: `${recipient.roleName} on ${eventDate}.`,
-          url: linkFor(recipient.assignmentId),
+          url: pathFor(recipient.assignmentId),
         })),
       },
     );

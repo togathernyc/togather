@@ -120,6 +120,28 @@ async function latestInboxTitle(
   });
 }
 
+/** The newest scheduling-request inbox deep-link url for a user (or null). */
+async function latestInboxUrl(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+): Promise<string | null> {
+  return t.run(async (ctx) => {
+    const rows = await ctx.db
+      .query("notifications")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("userId"), userId),
+          q.eq(q.field("notificationType"), "scheduling_assignment_request"),
+        ),
+      )
+      .collect();
+    if (rows.length === 0) return null;
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    const data = rows[0].data as { url?: string } | undefined;
+    return data?.url ?? null;
+  });
+}
+
 describe("scheduling reminders — schedule on publish", () => {
   it("schedules both 4d and 1d reminders at the right times with stored ids", async () => {
     vi.useFakeTimers();
@@ -235,6 +257,42 @@ describe("scheduling reminders — fire behavior", () => {
     const plan = await t.run((ctx) => ctx.db.get(planId));
     expect(plan?.reminder4dSent).toBe(true);
     expect(plan?.reminder1dSent).toBeFalsy();
+  });
+
+  it("stores a RELATIVE in-app path for the assignment link (opens app, not browser)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00.000Z").getTime());
+
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const planId = await makeEvent(t, world, leaderToken, 10);
+    await assign(t, world, leaderToken, planId, world.channelMemberId);
+    await t.action(api.functions.scheduling.assignments.publishEvent, {
+      token: leaderToken,
+      planId,
+    });
+    await t.finishInProgressScheduledFunctions();
+
+    // The initial accept/decline request fan-out (sendAssignmentRequests).
+    await t.action(
+      internal.functions.scheduling.assignments.sendAssignmentRequests,
+      { planId, publisherId: world.groupLeaderId },
+    );
+    const requestUrl = await latestInboxUrl(t, world.channelMemberId);
+    expect(requestUrl).not.toBeNull();
+    // Must be a relative expo-router path — an absolute https:// URL would be
+    // treated as an external link and open in the browser instead of the app.
+    expect(requestUrl).toMatch(/^\/scheduling\/assignment\//);
+    expect(requestUrl).not.toMatch(/^https?:\/\//);
+
+    // The reminder fan-out (a separate code path) must do the same.
+    await t.action(
+      internal.functions.scheduling.assignments.sendUnconfirmedReminders,
+      { planId, kind: "4d" },
+    );
+    const reminderUrl = await latestInboxUrl(t, world.channelMemberId);
+    expect(reminderUrl).toMatch(/^\/scheduling\/assignment\//);
+    expect(reminderUrl).not.toMatch(/^https?:\/\//);
   });
 
   it("4d skips a confirmed volunteer but 1d sends them a serving-tomorrow heads-up", async () => {
