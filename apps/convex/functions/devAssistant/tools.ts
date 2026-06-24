@@ -193,6 +193,13 @@ export async function executeTool(
           title: args.title as string | undefined,
           body: args.body as string | undefined,
           repro: args.repro as string | undefined,
+          // Refresh the screenshot set so screenshots added to the thread after
+          // the bug was created (and which prompted this refinement) reach the
+          // routine payload. getThreadContext collects the full current set.
+          screenshotUrls:
+            execCtx.screenshotUrls.length > 0
+              ? execCtx.screenshotUrls
+              : undefined,
         },
       );
       return { success: result.ok, ...result };

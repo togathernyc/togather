@@ -39,14 +39,26 @@ export const bugStatusValidator = v.union(
 
 type BugStatus = Doc<"devBugs">["status"];
 
-/** Valid forward transitions. Empty arrays are terminal states. */
+/**
+ * Valid forward transitions. The lifecycle is MONOTONIC — a bug only ever moves
+ * forward (plus REJECTED from any non-terminal state). This is deliberate:
+ *
+ *  - Stale/reordered routine callbacks can't corrupt state. If an older
+ *    CODE_REVIEW callback is replayed after the bug reached READY_TO_MERGE, the
+ *    backward transition is illegal and applyCallback ignores it.
+ *  - Each status is reached at most once, so the `bug:<id>:<status>` chat
+ *    idempotency key is genuinely unique per lifecycle.
+ *
+ * The routine runs its own internal review cycle and reports forward progress
+ * (CODE_REVIEW once, then READY_TO_MERGE); it never needs us to bounce backward.
+ */
 const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   DRAFT: ["IN_REVIEW", "REJECTED"],
   IN_REVIEW: ["READY_FOR_IMPL", "REJECTED"],
   READY_FOR_IMPL: ["IN_PROGRESS", "REJECTED"],
   IN_PROGRESS: ["CODE_REVIEW", "REJECTED"],
-  CODE_REVIEW: ["READY_TO_MERGE", "IN_PROGRESS", "REJECTED"],
-  READY_TO_MERGE: ["MERGED", "CODE_REVIEW", "REJECTED"],
+  CODE_REVIEW: ["READY_TO_MERGE", "REJECTED"],
+  READY_TO_MERGE: ["MERGED", "REJECTED"],
   MERGED: [],
   REJECTED: [],
 };

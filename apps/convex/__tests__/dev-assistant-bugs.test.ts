@@ -205,4 +205,31 @@ describe("dev-assistant bug lifecycle", () => {
     );
     expect(byRun?._id).toBe(bugId);
   });
+
+  test("applyCallback ignores stale backward replays (monotonic lifecycle)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { communityId, channelId, userId } = await seedContext(t);
+    const { bugId } = await t.mutation(
+      internal.functions.devAssistant.bugs.createBug,
+      { communityId, channelId, originatorUserId: userId, title: "T", body: "B" },
+    );
+    // Bug has already advanced to READY_TO_MERGE.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bugId, {
+        status: "READY_TO_MERGE",
+        routineRunId: "run-stale",
+        prUrl: "https://example.com/pr/9",
+      });
+    });
+
+    // A reordered/retried older CODE_REVIEW callback must NOT move the bug
+    // backward and clear the ready-to-merge state.
+    const replay = await t.mutation(
+      internal.functions.devAssistant.bugs.applyCallback,
+      { bugId, status: "CODE_REVIEW" },
+    );
+    expect(replay?.status).toBe("READY_TO_MERGE");
+    expect(replay?.lastError).toContain("Ignored callback transition");
+  });
 });

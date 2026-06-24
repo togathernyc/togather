@@ -130,6 +130,13 @@ Gated behind the `dev-assistant-bot` feature flag. Reuses `OPENAI_SECRET_KEY`
 | `CLAUDE_ROUTINES_TOKEN` | Bearer token sent as `Authorization: Bearer <token>` on the outbound POST. | Same as above. |
 | `DEV_ASSISTANT_CALLBACK_SECRET` | HMAC-SHA256 key for inbound callbacks. The routine signs the raw callback body and sends the hex digest in `x-togather-signature`; we recompute and constant-time compare. Callback endpoint: `POST https://<deployment>.convex.site/dev-assistant/callback`. | Callbacks rejected with 401; bug never advances past `IN_PROGRESS`. |
 
+One-time per deployment (any environment), create the sentinel bot user so
+`@Togather` mentions resolve — idempotent, independent of the demo seed:
+
+```bash
+npx convex run migrations/ensureDevAssistantBotUser:ensureDevAssistantBotUser
+```
+
 ### Development Settings
 
 | Secret | Description |
