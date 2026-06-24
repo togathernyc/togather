@@ -154,6 +154,11 @@ type RoleRow =
   | { kind: "addRole"; teamId: Id<"teams">; teamName: string }
   | { kind: "addTeam" };
 
+/** A team header or role row the leader has right-clicked to delete. */
+type DeleteTarget =
+  | { kind: "team"; teamId: Id<"teams">; teamName: string }
+  | { kind: "role"; roleId: Id<"teamRoles">; roleName: string; teamId: Id<"teams"> };
+
 // ---------------------------------------------------------------------------
 // Local helpers
 // ---------------------------------------------------------------------------
@@ -165,6 +170,22 @@ function monthDay(ms: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+/**
+ * Web-only right-click prop bag. RN-Web forwards unknown DOM props onto the
+ * host node, so `onContextMenu` lands on the underlying <div>. The RN types
+ * don't know it, hence the cast. Mirrors the idiom in DateColumnHeaderEditor.
+ * On native this returns `{}` (no right-click) — long-press is the fallback.
+ */
+function webContextMenu(onOpen: () => void): Record<string, unknown> {
+  if (typeof document === "undefined") return {};
+  return {
+    onContextMenu: (e: { preventDefault?: () => void }) => {
+      e.preventDefault?.();
+      onOpen();
+    },
+  };
 }
 
 /** Next Sunday at 9:00 AM local time — the neutral default for a new plan. */
@@ -292,6 +313,14 @@ export function RosterGridScreen() {
   // Create a serving team inline from the row-header "＋ Add team" affordance.
   const createServingTeam = useAuthenticatedMutation(
     api.functions.scheduling.teams.createServingTeam,
+  );
+  // Delete a role / team from the frozen column (right-click → confirm). Both
+  // archive + cascade their assignments and text staffed people server-side.
+  const deleteRole = useAuthenticatedMutation(
+    api.functions.scheduling.deletion.deleteRole,
+  );
+  const deleteTeam = useAuthenticatedMutation(
+    api.functions.scheduling.deletion.deleteTeam,
   );
   // Publish from the grid (#477 FR-3) — the SAME action the event editor uses,
   // not a fork. The grid is group-scoped with multiple date columns, so the
@@ -425,6 +454,11 @@ export function RosterGridScreen() {
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [addTeamName, setAddTeamName] = useState("");
   const [savingRow, setSavingRow] = useState(false);
+
+  // Right-click (web) / long-press (mobile) on a team header or role row opens
+  // a one-item menu → "Delete team" / "Delete role" → confirm flow. See
+  // `DeleteRowFlow` below.
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   // Single docked side-panel at a time (desktop). The assign panel and the two
   // cell-management panels (role / member) all share the grid's right dock
@@ -1296,9 +1330,17 @@ export function RosterGridScreen() {
     >
       {roleRows.map((r, i) => {
         if (r.kind === "section") {
+          const teamId = r.teamId as Id<"teams">;
           return (
-            <View
+            <Pressable
               key={`sec-${r.teamId}`}
+              onLongPress={() =>
+                setDeleteTarget({ kind: "team", teamId, teamName: r.teamName })
+              }
+              {...webContextMenu(() =>
+                setDeleteTarget({ kind: "team", teamId, teamName: r.teamName }),
+              )}
+              accessibilityLabel={`${r.teamName} team — long-press to delete`}
               style={[
                 styles.sectionCell,
                 { width: NAME_W, height: SECTION_H, backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border },
@@ -1307,7 +1349,7 @@ export function RosterGridScreen() {
               <Text style={[styles.sectionText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {r.teamName.toUpperCase()}
               </Text>
-            </View>
+            </Pressable>
           );
         }
         if (r.kind === "addRole") {
@@ -1461,9 +1503,20 @@ export function RosterGridScreen() {
           const c = roleCells[`${r.role.roleId}:${ev._id}`];
           return n + (c && c.needed > 0 && c.open === 0 ? 1 : 0);
         }, 0);
+        const role = r.role;
+        const openRoleDelete = () =>
+          setDeleteTarget({
+            kind: "role",
+            roleId: role.roleId,
+            roleName: role.roleName,
+            teamId: role.teamId,
+          });
         return (
-          <View
-            key={r.role.roleId}
+          <Pressable
+            key={role.roleId}
+            onLongPress={openRoleDelete}
+            {...webContextMenu(openRoleDelete)}
+            accessibilityLabel={`${role.roleName} role — long-press to delete`}
             style={[
               styles.nameCell,
               {
@@ -1476,13 +1529,13 @@ export function RosterGridScreen() {
           >
             <View style={styles.nameTextWrap}>
               <Text style={[styles.nameText, { color: colors.text }]} numberOfLines={1}>
-                {r.role.roleName}
+                {role.roleName}
               </Text>
               <Text style={[styles.subCount, { color: colors.textTertiary }]}>
                 covered {coveredCount}/{events.length}
               </Text>
             </View>
-          </View>
+          </Pressable>
         );
       })}
     </ScrollView>
@@ -2040,6 +2093,20 @@ export function RosterGridScreen() {
             setTeamMenuOpen(false);
           }}
           onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteRowFlow
+          target={deleteTarget}
+          events={events}
+          roles={data.roles}
+          roleCells={roleCells}
+          colors={colors}
+          deleteRole={deleteRole}
+          deleteTeam={deleteTeam}
+          onError={surfaceError}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
 
@@ -2887,6 +2954,245 @@ function LegendItem({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Delete team / role flow
+// ---------------------------------------------------------------------------
+
+/** A person staffed in the doomed team/role, with the dates they'd lose. */
+type StaffedPerson = { userId: string; userName: string; dates: number[] };
+
+/**
+ * Compute the people currently staffed (non-declined) in the target team/role
+ * across all visible event columns, from the already-loaded `roleCells`. This
+ * is what powers the "<N> people are staffed…" confirmation — no extra query.
+ */
+function staffedForTarget(
+  target: DeleteTarget,
+  events: RosterEvent[],
+  roles: RosterRole[],
+  roleCells: Record<string, RoleCell>,
+): StaffedPerson[] {
+  const roleIds =
+    target.kind === "role"
+      ? [target.roleId as string]
+      : roles
+          .filter((r) => (r.teamId as string) === (target.teamId as string))
+          .map((r) => r.roleId as string);
+
+  const byUser = new Map<string, StaffedPerson>();
+  for (const roleId of roleIds) {
+    for (const ev of events) {
+      const cell = roleCells[`${roleId}:${ev._id}`];
+      if (!cell) continue;
+      for (const o of cell.occupants) {
+        if (o.status === "declined") continue;
+        const existing = byUser.get(o.userId as string);
+        if (existing) {
+          if (!existing.dates.includes(ev.eventDate)) {
+            existing.dates.push(ev.eventDate);
+          }
+        } else {
+          byUser.set(o.userId as string, {
+            userId: o.userId as string,
+            userName: o.userName,
+            dates: [ev.eventDate],
+          });
+        }
+      }
+    }
+  }
+  return [...byUser.values()];
+}
+
+/** "Sun, Jul 5" / "Sun, Jul 5 and Sun, Jul 12" / "3 dates" — the affected-date copy. */
+function describeDates(dates: number[]): string {
+  const unique = [...new Set(dates)].sort((a, b) => a - b);
+  if (unique.length === 0) return "upcoming events";
+  if (unique.length === 1) return monthDay(unique[0]);
+  if (unique.length === 2) return `${monthDay(unique[0])} and ${monthDay(unique[1])}`;
+  return `${unique.length} dates`;
+}
+
+/**
+ * Right-click delete flow for a team header or role row: a one-item menu →
+ * "cannot be undone" confirm → (only if people are staffed) a "they'll be
+ * texted" confirm → the delete mutation. The staffed count + names + dates are
+ * computed client-side from the grid's `roleCells`, so the second modal can
+ * show them before any mutation runs.
+ */
+function DeleteRowFlow({
+  target,
+  events,
+  roles,
+  roleCells,
+  colors,
+  deleteRole,
+  deleteTeam,
+  onError,
+  onClose,
+}: {
+  target: DeleteTarget;
+  events: RosterEvent[];
+  roles: RosterRole[];
+  roleCells: Record<string, RoleCell>;
+  colors: Colors;
+  deleteRole: (args: { roleId: Id<"teamRoles"> }) => Promise<unknown>;
+  deleteTeam: (args: { teamId: Id<"teams"> }) => Promise<unknown>;
+  onError: (title: string, e: unknown) => void;
+  onClose: () => void;
+}) {
+  // "menu" → "confirm" → "notify" (only when staffed). Starts at the one-item
+  // menu so right-click and long-press both land on a consistent, discoverable
+  // surface (matching the date-column ⋯ menu idiom).
+  const [step, setStep] = useState<"menu" | "confirm" | "notify">("menu");
+  const [busy, setBusy] = useState(false);
+
+  const name = target.kind === "team" ? target.teamName : target.roleName;
+  const noun = target.kind === "team" ? "team" : "role";
+  const staffed = useMemo(
+    () => staffedForTarget(target, events, roles, roleCells),
+    [target, events, roles, roleCells],
+  );
+  const allDates = useMemo(
+    () => staffed.flatMap((p) => p.dates),
+    [staffed],
+  );
+
+  const runDelete = useCallback(async () => {
+    setBusy(true);
+    try {
+      if (target.kind === "team") {
+        await deleteTeam({ teamId: target.teamId });
+      } else {
+        await deleteRole({ roleId: target.roleId });
+      }
+      onClose();
+    } catch (e) {
+      onError(`Couldn't delete ${noun}`, e);
+      setBusy(false);
+    }
+  }, [target, deleteTeam, deleteRole, onClose, onError, noun]);
+
+  // Step 1 → either jump to the notify modal (staffed) or delete after confirm.
+  const onConfirmFirst = useCallback(() => {
+    if (staffed.length > 0) {
+      setStep("notify");
+    } else {
+      void runDelete();
+    }
+  }, [staffed.length, runDelete]);
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.deleteBackdrop} onPress={busy ? undefined : onClose}>
+        <Pressable
+          style={[
+            styles.deleteCard,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
+          {step === "menu" && (
+            <>
+              <Text
+                style={[styles.deleteHeading, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {name}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setStep("confirm")}
+                style={styles.deleteMenuItem}
+                accessibilityRole="button"
+                accessibilityLabel={`Delete ${noun}`}
+              >
+                <Ionicons name="trash-outline" size={16} color={colors.destructive} />
+                <Text style={[styles.deleteMenuItemText, { color: colors.destructive }]}>
+                  Delete {noun}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {step === "confirm" && (
+            <>
+              <Text style={[styles.deleteTitle, { color: colors.text }]}>
+                Delete &ldquo;{name}&rdquo;?
+              </Text>
+              <Text style={[styles.deleteBody, { color: colors.textSecondary }]}>
+                This action cannot be undone.
+              </Text>
+              <View style={styles.deleteActions}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={[styles.deleteBtn, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={[styles.deleteBtnText, { color: colors.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={onConfirmFirst}
+                  disabled={busy}
+                  style={[styles.deleteBtn, { backgroundColor: colors.destructive }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete"
+                >
+                  {busy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={[styles.deleteBtnText, { color: "#fff" }]}>Delete</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {step === "notify" && (
+            <>
+              <Text style={[styles.deleteTitle, { color: colors.text }]}>
+                Delete &ldquo;{name}&rdquo;?
+              </Text>
+              <Text style={[styles.deleteBody, { color: colors.textSecondary }]}>
+                {staffed.length} {staffed.length === 1 ? "person is" : "people are"}{" "}
+                staffed in this {noun}. They&rsquo;ll receive a text that their{" "}
+                {noun} has been removed for {describeDates(allDates)}.
+              </Text>
+              <Text style={[styles.deleteNames, { color: colors.textTertiary }]} numberOfLines={2}>
+                {staffed.map((p) => p.userName).join(", ")}
+              </Text>
+              <View style={styles.deleteActions}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  disabled={busy}
+                  style={[styles.deleteBtn, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={[styles.deleteBtnText, { color: colors.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => void runDelete()}
+                  disabled={busy}
+                  style={[styles.deleteBtn, { backgroundColor: colors.destructive }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete and notify"
+                >
+                  {busy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={[styles.deleteBtnText, { color: "#fff" }]}>Delete &amp; notify</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
@@ -3207,4 +3513,55 @@ const styles = StyleSheet.create({
   publishBtnTextFull: {
     fontSize: 16,
   },
+
+  // Delete team/role flow (right-click menu → confirm → notify). A centered
+  // card over a dim backdrop — a Modal, not an in-column popover, so the
+  // frozen-column ScrollView can't clip it (same reason as DateColumnHeaderEditor).
+  deleteBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  deleteCard: {
+    width: "100%",
+    maxWidth: 340,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 18,
+  },
+  deleteHeading: {
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 4,
+    paddingBottom: 6,
+  },
+  deleteMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+  },
+  deleteMenuItemText: { fontSize: 15, fontWeight: "500" },
+  deleteTitle: { fontSize: 17, fontWeight: "700", marginBottom: 8 },
+  deleteBody: { fontSize: 14, lineHeight: 20 },
+  deleteNames: { fontSize: 13, marginTop: 8, fontStyle: "italic" },
+  deleteActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 18,
+  },
+  deleteBtn: {
+    minWidth: 96,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+  deleteBtnText: { fontSize: 15, fontWeight: "600" },
 });
