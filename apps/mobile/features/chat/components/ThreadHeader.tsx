@@ -27,32 +27,54 @@ interface ThreadHeaderProps {
   notificationState?: ThreadNotificationState;
   /** Advance the notification preference to its next state. */
   onToggleNotifications?: () => void;
+  /**
+   * Whether this is a DM/group_dm thread. DM replies notify by default
+   * (mentions are meaningless in a 1:1), so the bell only distinguishes
+   * "all replies" from "muted" rather than the group three-state cycle.
+   */
+  isDm?: boolean;
 }
 
-const BELL_ICON: Record<
-  ThreadNotificationState,
-  keyof typeof Ionicons.glyphMap
-> = {
-  default: "notifications-outline",
-  all: "notifications",
-  none: "notifications-off-outline",
-};
-
-const BELL_LABEL: Record<ThreadNotificationState, string> = {
-  default: "Notifications: only when mentioned",
-  all: "Notifications: all replies",
-  none: "Notifications: muted",
-};
+/** Icon, label, and active styling for the bell given the state and channel kind. */
+function bellDisplay(
+  state: ThreadNotificationState,
+  isDm: boolean,
+): { icon: keyof typeof Ionicons.glyphMap; label: string; active: boolean } {
+  if (state === "none") {
+    return {
+      icon: "notifications-off-outline",
+      label: "Notifications: muted",
+      active: false,
+    };
+  }
+  // In DMs both "default" and "all" mean every reply notifies.
+  if (isDm || state === "all") {
+    return {
+      icon: "notifications",
+      label: "Notifications: all replies",
+      active: true,
+    };
+  }
+  return {
+    icon: "notifications-outline",
+    label: "Notifications: only when mentioned",
+    active: false,
+  };
+}
 
 export const ThreadHeader = memo(function ThreadHeader({
   channelName,
   onBack,
   notificationState,
   onToggleNotifications,
+  isDm = false,
 }: ThreadHeaderProps) {
   const { colors } = useTheme();
 
   const showBell = !!notificationState && !!onToggleNotifications;
+  const display = notificationState
+    ? bellDisplay(notificationState, isDm)
+    : null;
 
   return (
     <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -67,18 +89,18 @@ export const ThreadHeader = memo(function ThreadHeader({
         )}
       </View>
 
-      {showBell && (
+      {showBell && display && (
         <TouchableOpacity
           onPress={onToggleNotifications}
           style={styles.bellButton}
           accessibilityRole="button"
-          accessibilityLabel={BELL_LABEL[notificationState!]}
+          accessibilityLabel={display.label}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
-            name={BELL_ICON[notificationState!]}
+            name={display.icon}
             size={22}
-            color={notificationState === "all" ? colors.link : colors.text}
+            color={display.active ? colors.link : colors.text}
           />
         </TouchableOpacity>
       )}

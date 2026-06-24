@@ -94,11 +94,16 @@ export function ThreadPage({
     (threadSubscription?.state as ThreadNotificationState | undefined) ??
     "default";
 
-  // Cycle the bell: mentions-only (default) → all replies → muted → default.
+  // DM replies notify by default, so the bell is a simple on/off there. Group
+  // threads cycle: mentions-only (default) → all replies → muted → default.
+  const isDm = !!dmChannelId;
   const handleToggleNotifications = useCallback(async () => {
     if (!token) return;
-    const next: ThreadNotificationState =
-      notificationState === "default"
+    const next: ThreadNotificationState = isDm
+      ? notificationState === "none"
+        ? "default"
+        : "none"
+      : notificationState === "default"
         ? "all"
         : notificationState === "all"
           ? "none"
@@ -109,7 +114,7 @@ export function ThreadPage({
       console.error("[ThreadPage] Failed to update thread notifications:", error);
       Alert.alert("Error", "Failed to update notification settings.");
     }
-  }, [token, notificationState, messageId, setThreadSubscriptionMutation]);
+  }, [token, notificationState, messageId, isDm, setThreadSubscriptionMutation]);
 
   // Message actions overlay state
   const [overlayVisible, setOverlayVisible] = useState(false);
@@ -283,6 +288,7 @@ export function ThreadPage({
         onBack={handleBack}
         notificationState={notificationState}
         onToggleNotifications={handleToggleNotifications}
+        isDm={isDm}
       />
 
       <View style={[styles.content, { backgroundColor: colors.surfaceSecondary }]}>
