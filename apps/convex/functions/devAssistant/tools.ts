@@ -164,10 +164,15 @@ export async function executeTool(
       );
       execCtx.currentBugId = bugId;
 
-      // Post the bug card into the thread.
+      // Post the bug card into the thread. The card content is a generic
+      // placeholder, NOT the synthesized title: insertBotMessage copies content
+      // into lastMessagePreview and onMessageSent uses it for push previews to
+      // all channel members, so the staff-only title must not live here. The
+      // card itself renders the real title via the staff-gated getBugForReview
+      // query.
       await ctx.runMutation(internal.functions.scheduledJobs.insertBotMessage, {
         channelId: execCtx.channelId,
-        content: args.title as string,
+        content: "📝 Opened a bug for review",
         botType: "dev_assistant",
         contentType: "bug_card",
         bugId,

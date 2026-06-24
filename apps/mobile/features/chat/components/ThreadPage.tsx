@@ -278,6 +278,8 @@ export function ThreadPage({
                       senderNotificationsDisabled: item.data.senderNotificationsDisabled,
                       pollId: item.data.pollId,
                       availabilityRequestId: item.data.availabilityRequestId,
+                      taskId: item.data.taskId,
+                      bugId: item.data.bugId,
                     }}
                     currentUserId={currentUserId}
                     onLongPress={handleLongPressMessage}
@@ -317,6 +319,10 @@ export function ThreadPage({
                     senderName: item.data.senderName,
                     senderProfilePhoto: item.data.senderProfilePhoto,
                     senderNotificationsDisabled: item.data.senderNotificationsDisabled,
+                    pollId: item.data.pollId,
+                    availabilityRequestId: item.data.availabilityRequestId,
+                    taskId: item.data.taskId,
+                    bugId: item.data.bugId,
                   }}
                   currentUserId={currentUserId}
                   onLongPress={handleLongPressMessage}
