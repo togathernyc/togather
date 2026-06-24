@@ -67,6 +67,8 @@ interface Message {
   reachOutRequestId?: Id<"reachOutRequests">;
   // Canonical task reference for task cards
   taskId?: Id<"tasks">;
+  // Dev-assistant bug reference for contentType === "bug_card"
+  bugId?: Id<"devBugs">;
   // Poll reference for contentType === "poll"
   pollId?: Id<"polls">;
   // Availability-request reference for contentType === "availability_request"
@@ -352,6 +354,7 @@ export function MessageList({
             hideLinkPreview: message.hideLinkPreview,
             reachOutRequestId: message.reachOutRequestId,
             taskId: message.taskId,
+            bugId: message.bugId,
             pollId: message.pollId,
             availabilityRequestId: message.availabilityRequestId,
             blastId: message.blastId,
