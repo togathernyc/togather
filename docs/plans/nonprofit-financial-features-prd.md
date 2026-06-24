@@ -1,19 +1,38 @@
-# PRD: Nonprofit Financial Features (Giving, Funds, Budgets & Cards)
+# PRD: Nonprofit Financial Features (Group Giving, Funds, Budgets & Cards)
 
 - **Status:** Draft / for discussion
 - **Author:** (you)
-- **Last updated:** 2026-06-21
+- **Last updated:** 2026-06-24
 - **Branch:** `claude/nonprofit-financial-features-30zw04`
-- **Scope of this doc:** A single combined PRD covering four interdependent feature areas:
-  1. Community giving + auto-issued giving statements
-  2. Group funds & budgets (restricted/designated giving)
+- **Scope of this doc:** A single combined PRD covering four interdependent feature areas, now **group-first**:
+  1. **Group funds, budgets & designated giving** (headline)
+  2. Giving statements (IRS-compliant, auto-issued)
   3. Budget spending cards (Stripe Issuing)
   4. Financial reporting & dashboards
+  5. Community-wide giving (**optional / deferred** — see §9)
 
-> This is a design/PRD document, not an implementation plan. It documents goals,
-> constraints, the money-movement architecture, the data model, per-feature
-> requirements, open questions, and a phased rollout. Engineering plans/ADRs are
-> spun out per phase once we align on direction.
+> This is a design/PRD document, not an implementation plan.
+
+### Revision note (2026-06-24) — pivot to group-first
+
+Early feedback: **community leaders do not want to route their community's
+primary donations (tithes/offerings) through another app** — they're attached to
+their existing giving platform and won't move it. But **group-level giving is
+wanted**: groups raising money for *their* activities and purposes.
+
+So this revision makes **group funds + designated giving the headline** and demotes
+community-wide giving to an optional/deferred mode (§9).
+
+**Important clarification (don't be misled by the pivot):** you confirmed group
+giving is **tax-deductible charitable giving designated to a group**, *not*
+informal cost-sharing. Legally, a group is **not** a separate entity — that money
+still flows to the **community's 501c3** and statements still issue under the
+**community's EIN**, simply *restricted/designated* to the group. Therefore the
+heavy compliance foundation (Stripe Connect onboarding, KYC, Apple nonprofit
+verification) **still applies** — the pivot changes the *donor-facing emphasis and
+build order*, not the regulatory machinery. (If we later want a genuinely lighter
+path, that's the "activity cost-sharing" model we explicitly did **not** choose;
+noted in §12 as a future option.)
 
 ---
 
@@ -23,58 +42,73 @@ Togather is a community management platform (Communities → Group Types → Gro
 Members). Today the only money flow is **platform billing** — communities pay
 Togather a monthly subscription via Stripe (`apps/convex/functions/ee/billing.ts`).
 
-This initiative adds the **other direction of money**: members give *to* their
-community, communities track that giving for financial records and auto-issue
-tax-compliant **giving statements**, communities allocate **budgets to groups**
-and let members **designate gifts to specific group funds**, and authorized
-people **spend** group budgets via issued **cards** — all inside the app.
+This initiative adds money flowing **toward the mission**, centered on **groups**:
 
-The north star: a nonprofit community can run its entire donation + fund-
-accounting + expense lifecycle in Togather without bolting on a separate giving
-platform (Tithe.ly, Pushpay) and a separate expense tool (Ramp, Brex).
+- Members **give to a specific group's fund** (e.g. "Youth missions trip", "Small
+  group benevolence") as a **tax-deductible, designated charitable gift** to the
+  community's 501c3.
+- Admins set **budgets per group** and groups see **budget vs. actual** live.
+- Authorized people **spend** a group's budget via issued **cards**, with limits
+  and full attribution.
+- The community auto-issues **IRS-compliant giving statements** for all charitable
+  giving (group-designated + any community-wide), under its own EIN.
+- **Community-wide giving** is supported but **optional/deferred** — for the
+  communities that *do* want it — and is explicitly **not** positioned as a
+  replacement for a church's primary offering platform.
+
+The north star: a group can **raise money for its purpose and spend it
+accountably**, end to end, inside Togather — without standing up its own
+fundraiser and without the community having to migrate its main giving platform.
 
 ### Why this is viable inside the app (the Apple question)
 
-Your instinct is correct, with one important condition. Apple **App Review
-Guideline 3.2.1(vi)** allows *approved nonprofits* to collect donations **inside
-the app without using In-App Purchase** (so **no 30% Apple cut**) — provided they
-use **Apple Pay**, disclose how funds are used, and make tax receipts available.
+Apple **App Review Guideline 3.2.1(vi)** lets *approved nonprofits* collect
+donations **inside the app without In-App Purchase** (so **no 30% Apple cut**),
+provided they use **Apple Pay**, disclose how funds are used, and make tax
+receipts available.
 
-The catch for us: Togather is a **platform that connects donors to many
-nonprofits**, and Apple requires that **every nonprofit listed in the app has
-gone through Apple's nonprofit approval process**. So "no Apple tax on donations"
-is real, but it is **gated on a per-community nonprofit-verification step** that
-we must build into onboarding.
+Because group-designated giving is **still tax-deductible charitable giving to the
+community's 501c3**, this is the path that applies — and its condition applies too:
+Togather is a **platform connecting donors to many nonprofits**, so Apple requires
+**every community has gone through nonprofit approval**. We gate giving behind a
+per-community verification step (§4).
 
-Card spending and budget management are **not donation flows and not digital
-goods** — they are real-world money movement and are entirely outside IAP.
+Card spending and budget management are **real-world money movement, not digital
+goods** — entirely outside IAP.
 
 ---
 
 ## 2. Goals & Non-Goals
 
-### Goals
+### Goals (reordered group-first)
 
-- Let a member give to their community in a few taps (one-time + recurring).
-- Give communities a clean ledger of all giving for financial records & audits.
-- **Auto-issue IRS-compliant giving statements** (annual + on-demand).
-- Let admins create **funds** (general + per-group) and **set budgets** per group.
-- Let members **designate** a gift to a specific fund/group.
-- Let communities issue **cards** so groups/people can spend their budgets, with
-  per-card limits and full attribution of who spent what on which fund.
-- Give admins **dashboards**: giving over time, fund balances, budget vs. actual.
-- Keep each community as its **own 501c3 of record** — money flows to them, they
-  issue statements under their own EIN, Togather is the software platform.
+- Let a member give to a **specific group's fund** in a few taps (one-time +
+  recurring), as a designated, tax-deductible gift.
+- Let admins create **funds** (general + per-group, restricted/unrestricted) and
+  **set budgets** per group, with budget-vs-actual visibility.
+- Let groups **spend** their budget via **issued cards**, with per-card limits and
+  attribution of who spent what on which fund.
+- **Auto-issue IRS-compliant giving statements** (annual + on-demand) under each
+  community's own EIN, covering all charitable giving.
+- Give admins & leaders **dashboards**: giving by group/fund, fund balances,
+  budget vs. actual, card spend.
+- Keep each community as its **own 501c3 of record**; money flows to them via
+  Stripe Connect; Togather stays the software platform.
+- Support **community-wide giving as an optional mode** for communities that want
+  it — without forcing it or positioning it as their main offering platform.
 
-### Non-Goals (for this initiative)
+### Non-Goals
 
 - Togather acting as fiscal sponsor / merchant-of-record / holder of donor funds.
-  (Explicitly rejected — see §4.1. Each community is its own 501c3.)
-- Full double-entry fund accounting / GAAP general ledger replacement. We track
-  giving and fund balances; we are not QuickBooks.
-- Grant management, pledge campaigns, payroll, or 1099/vendor tax filing (future).
-- Non-US tax regimes (US 501c3 / IRS first; internationalization is later).
-- Crypto / stablecoin giving.
+- Positioning community-wide giving as a replacement for a church's primary
+  tithe/offering platform (explicitly **not** the goal — see Revision note).
+- **Informal activity cost-sharing / chip-ins** (pizza splits, non-deductible
+  collections). We chose the *charitable designated* model; cost-sharing is a
+  possible future track (§12), not in scope now.
+- Full double-entry / GAAP general ledger replacement (we track giving + fund
+  balances; we are not QuickBooks).
+- Grant management, pledge campaigns, payroll, 1099/vendor tax filing.
+- Non-US tax regimes; crypto/stablecoin giving.
 
 ---
 
@@ -82,306 +116,282 @@ goods** — they are real-world money movement and are entirely outside IAP.
 
 | Persona | Needs |
 | --- | --- |
-| **Donor / member** | Give quickly, designate to a group, set up recurring giving, see my giving history, download my year-end statement. |
-| **Community admin / treasurer** | See all giving, reconcile, configure funds, set group budgets, issue/freeze cards, run reports, ensure statements go out. |
-| **Group leader** | See my group's budget vs. spend, request/hold a card, submit receipts, see who gave to my group's fund. |
+| **Donor / member** | Give quickly to a **group I care about**, set up recurring giving, see my history, download my year-end statement. |
+| **Group leader** | Raise money for my group's purpose, see budget vs. spend, hold/manage a card, capture receipts, see who gave to our fund. |
+| **Community admin / treasurer** | Configure funds, set group budgets, oversee all giving, issue/freeze cards, run reports, ensure statements go out, stay compliant. |
 | **Card spender** | Get a (virtual) card instantly, know my limit, tap to pay, attach a receipt. |
-| **Togather (platform)** | Verify each community's nonprofit status, route money via Connect, take a platform/processing margin, stay off the hook as merchant-of-record. |
+| **Togather (platform)** | Verify each community's nonprofit status, route money via Connect, stay off the hook as merchant-of-record. |
 
 Representative stories:
 
-- *As a donor*, I tap "Give", choose **$50 → "Youth Group fund"**, pay with Apple
-  Pay, and immediately see it in my giving history.
-- *As a donor*, in January I get a push + email: "Your 2025 giving statement from
-  Grace Community is ready" and download a PDF that satisfies IRS substantiation.
+- *As a group leader*, I open a **"Missions Trip" fund** for my group, share it,
+  and members give toward our $4,000 goal.
+- *As a donor*, I tap **Give → "Youth Group"**, choose $50 monthly via Apple Pay,
+  and see it in my history; it's a designated, deductible gift to the church.
 - *As a treasurer*, I set the **Youth Group budget to $2,000/yr**, issue the youth
   leader a virtual card capped at **$500/mo**, and watch budget-vs-actual live.
-- *As a group leader*, I tap my card into Apple Wallet, buy pizza for $40, snap the
-  receipt, and it's auto-categorized against my group's fund.
+- *As a group leader*, I tap my card in Apple Wallet, buy supplies for $40, snap
+  the receipt, and it auto-categorizes against our fund.
+- *As a donor*, in January I get "Your 2025 giving statement from Grace Community
+  is ready" — a PDF that satisfies IRS substantiation, covering all my giving
+  (group-designated and otherwise).
 
 ---
 
 ## 4. Foundational Architecture & Constraints
 
-This section is the backbone the four features sit on. Decisions here are the
-ones that are expensive to change later.
+The four features sit on this backbone. Decisions here are expensive to change.
 
 ### 4.1 Legal / money-movement model — **each community is its own 501c3**
 
 **Decision (confirmed):** Togather is the **software platform**. Each community is
-its **own legal nonprofit (501c3) with its own EIN and bank account**. Donations
-flow **directly to the community**, and the community is the **donee of record**
-that issues giving statements under its own name/EIN.
+its **own legal nonprofit (501c3) with its own EIN and bank account**. Charitable
+gifts — **including group-designated gifts** — flow **directly to the community**,
+and the community is the **donee of record** issuing statements under its own
+name/EIN.
+
+**Group ≠ legal entity.** A "group fund" is a **designation/restriction inside the
+community's 501c3**, not a separate bank account or tax entity. This is what makes
+group-designated giving deductible: it's a gift to the qualified charity (the
+community), restricted to a group's purpose. The "group" framing is about **donor
+experience, designation, visibility, and group control of budget/spend** — not a
+separate money pipe.
 
 **Implementation: Stripe Connect.** Each community gets a **Stripe connected
-account**. Togather is the Connect **platform**. Modern Connect uses
-**controller properties** rather than the legacy Standard/Express/Custom labels;
-we configure each connected account so:
+account**; Togather is the Connect **platform**. Modern Connect uses **controller
+properties** (not the legacy Standard/Express/Custom labels). We configure each
+account so:
 
-- The **community is liable** for its charges/refunds and is the merchant of
-  record (keeps Togather out of the fund-holding/MOR role — directly supports our
-  non-goal in §2).
-- **Togather controls onboarding UX** (embedded/hosted onboarding) and dashboard
-  surface so the experience stays in-app/in-brand.
-- Funds settle to the **community's own bank account** on a payout schedule.
-- Togather can take a **platform fee / application fee** per donation if/when we
-  monetize giving (separate from the existing subscription).
-
-**Why this model:**
-- Cleanest legally — Togather never holds or owns donor money, dramatically
-  lowering our compliance + liability surface.
-- Maps exactly to Apple's "platform connecting donors to *approved* nonprofits"
-  framing (§4.2).
-- Each community's statements are correct by construction (their EIN, their name).
-
-**Cost:** Each community must complete **nonprofit onboarding/KYC** with Stripe
-(and our Apple verification) before it can accept giving. This is the main new
-onboarding burden — see §4.4.
+- The **community is liable** and is merchant of record (keeps Togather out of
+  fund-holding/MOR — supports the §2 non-goal).
+- **Togather controls onboarding UX** so the experience stays in-app/in-brand.
+- Funds settle to the **community's own bank account**.
+- Togather can take a **platform/application fee** per gift if/when we monetize
+  giving (open question §12).
 
 ### 4.2 Apple App Store compliance (donations)
 
-- Donations use **Apple Pay → Stripe**, **not IAP**. No 30% cut. (Guideline
-  3.2.1(vi).)
-- **Per-community nonprofit verification is mandatory.** A community cannot
-  enable giving until it's verified as an approved nonprofit. We must:
-  - Collect/verify EIN + 501c3 determination (and run Apple's nonprofit approval
-    process for platform-listed nonprofits).
-  - Gate the "Give" UI behind a `givingStatus = active` flag that only flips on
-    after both Stripe Connect KYC **and** nonprofit verification pass.
-- **Disclosure**: each community's give screen must disclose how funds are used
-  and surface tax-receipt availability (we generate the receipts — §5.4).
-- **Card spending is outside IAP entirely** (real-world goods/services / money
-  movement), so it doesn't implicate IAP rules. Standard financial-app review
-  considerations apply.
+- Donations use **Apple Pay → Stripe**, **not IAP**. No 30% cut. (3.2.1(vi).)
+- **Per-community nonprofit verification is mandatory** — including for
+  group-designated giving, because it's still charitable giving. A community
+  cannot enable *any* giving until verified. We must:
+  - Collect/verify EIN + 501c3 determination and complete Apple's nonprofit
+    approval for platform-listed nonprofits.
+  - Gate the "Give" UI behind `givingStatus = active`, which flips on only after
+    Stripe Connect KYC **and** nonprofit verification pass.
+- **Disclosure**: each give screen discloses how funds are used and surfaces tax-
+  receipt availability.
+- **Card spending is outside IAP** (real-world money movement).
 
-> ⚠️ Open compliance question (§11): exact mechanics + lead time of Apple's
-> nonprofit approval program for a multi-tenant platform like ours, and whether
-> Android/Play has an analogous gate. Needs a legal/AppStore review before build.
+> ⚠️ The pivot to group-first does **not** remove this gate. See §12 open
+> questions on Apple's nonprofit-approval mechanics for a multi-tenant platform.
 
 ### 4.3 Card issuing & budgets — Stripe Issuing (+ Treasury/Financial Accounts)
 
-Budget **spending** is **Stripe Issuing**. To fund and run cards on behalf of each
-community's connected account, the connected account needs the **`card_issuing`**
-capability (and **`treasury`** capability if we attach cards to a Stripe
-**financial account** balance). An **Issuing balance** must be funded before a
-card can transact (US default = **pull funding** from a verified bank account,
-~up to 5 business days; **push funding** in beta).
+Budget **spending** is **Stripe Issuing**. The connected account needs the
+**`card_issuing`** capability (and **`treasury`** if cards draw on a Stripe
+**financial-account** balance). An **Issuing balance** must be funded before a card
+can transact (US default = **pull funding** from a verified bank, ~up to 5 business
+days; **push funding** in beta).
 
-This means a group "budget" has two layers we must keep distinct:
+A group "budget" therefore has **two distinct layers**:
 
-- **Accounting budget** (an app-level number/cap an admin assigns to a group — the
-  "you may spend $2,000 this year" figure). Always available.
-- **Funded card balance** (actual money loaded to an Issuing balance that cards
-  draw from). Requires funding + KYC capabilities.
+- **Accounting budget** — an app-level cap an admin assigns to a group ("you may
+  spend $2,000 this year"). Available immediately.
+- **Funded card balance** — actual money loaded to an Issuing balance that cards
+  draw from. Requires funding + KYC capabilities.
 
-A community can use the accounting budget layer immediately; cards require the
-extra capability/funding steps. We design budgets so cards are an **opt-in
-overlay** on top of fund balances, not a prerequisite.
+Cards are an **opt-in overlay** on top of fund balances, never a prerequisite for
+giving or budgets.
 
-### 4.4 Onboarding & enablement flow (new)
+### 4.4 Onboarding & enablement flow
 
 ```
 Community decides to enable giving
         │
         ▼
 1. Nonprofit verification (EIN, 501c3 determination) ──┐
-2. Stripe Connect onboarding/KYC (controller acct)     ├─ both must pass
+2. Stripe Connect onboarding/KYC (controller acct)     ├─ all must pass
 3. Apple nonprofit approval (platform-listed)          ┘
         ▼
-givingStatus = active  →  "Give" UI unlocked
+givingStatus = active  →  Give UI unlocked (group funds first)
         ▼
-(optional) Enable funds & budgets  →  designate giving on
+Create group funds + set group budgets  →  designated giving live
         ▼
 (optional) Enable Issuing: card_issuing capability + fund Issuing balance
         ▼
 Issue cards
+        ▼
+(optional) Enable community-wide "General fund" giving (§9)
 ```
 
 ### 4.5 Reuse of existing infrastructure
 
 - **Stripe SDK already installed** (`stripe@^20.4.1`, root + `apps/convex`).
 - **Existing webhook + billing patterns** in `apps/convex/functions/ee/billing.ts`
-  and `apps/convex/http.ts` are the template for the new Connect/Issuing webhooks.
-- **EE vs OSS split**: giving/funds/cards are commercial, nonprofit-grade features
-  and should live under the **ELv2 `ee/`** tree alongside existing billing, **not**
-  the AGPL core. (Confirm in §11.)
+  and `apps/convex/http.ts` are the template for Connect/Issuing webhooks.
+- **EE vs OSS**: giving/funds/cards are commercial nonprofit-grade features →
+  should live under **ELv2 `ee/`** alongside billing, not AGPL core (confirm §12).
 - **Permissions**: extend the `userCommunities` role bitmask
-  (`apps/convex/lib/permissions.ts`) with a **treasurer/finance** role rather than
-  overloading primary-admin.
+  (`apps/convex/lib/permissions.ts`) with a **treasurer/finance** role; reuse
+  `groupMembers.role` (leader) for group-fund/budget management.
 
 ---
 
-## 5. Feature 1 — Community Giving + Statements
+## 5. Feature 1 (Headline) — Group Funds, Budgets & Designated Giving
 
-### 5.1 Overview
+This is the centerpiece. It merges "where money goes" (funds), "what's allowed"
+(budgets), and "money in" (designated giving) into one group-centric experience.
 
-A member gives money to their community: one-time or recurring, optionally
-designated to a fund (§6). Every gift is recorded in an immutable ledger that
-powers statements (§5.4) and reports (§8).
+### 5.1 Concepts
 
-### 5.2 Donor flow
+- **Fund**: a designation bucket money can be given to. Every community has a
+  **General fund**; the focus here is **per-group funds** ("Youth missions trip").
+- **Restricted vs. unrestricted**: a fund can be **restricted** (must be spent on
+  its purpose). Designated gifts to a restricted group fund increase only that
+  fund's balance — important for nonprofit integrity.
+- **Budget**: an admin-set **spending allowance** for a group over a period
+  (annual/monthly). Distinct from fund balance (§4.3): budget = plan/cap; fund
+  balance = money actually available.
 
-1. Member opens **Give** (gated on `givingStatus = active`).
-2. Choose **amount** (presets + custom), **frequency** (one-time / weekly /
-   monthly), and **fund** (defaults to "General"; group funds listed if enabled).
-3. Pay via **Apple Pay** (primary), card, or bank/ACH (lower fees for recurring).
-4. Confirmation + instant entry in **My Giving** history.
-5. Optional **cover-the-fees** toggle (donor pays processing so the community nets
-   100%).
+### 5.2 Group leader / admin flows
 
-### 5.3 Data captured per gift (donation ledger)
+- **Create a group fund** (name, purpose/description, optional goal amount,
+  restricted?, donor-visible?). Leaders can create funds for their own group;
+  admins for any group (permission TBD §12).
+- **Set a group's budget** (amount + period + rollover policy).
+- View **fund balance** (gifts in − spend out) and **budget vs. actual**.
+- Optional **fundraising goal / progress bar** for campaign-style group funds.
 
-Each gift records: donor (member) identity, community, fund/group designation,
-gross amount, fees, net amount, payment method, Stripe payment intent/charge id,
-recurring-plan id (if any), status (succeeded/refunded/failed), timestamp, and
-**tax-deductibility metadata** (was anything of value given in return — see §5.4).
+### 5.3 Donor-designated giving flow
 
-### 5.4 Giving statements (IRS-compliant) — the differentiator
+1. Member opens **Give** (gated on `givingStatus = active`) — or taps "Give" from
+   inside a **group**.
+2. Picks a **group fund** (group context preselects it), **amount** (presets +
+   custom), **frequency** (one-time / weekly / monthly).
+3. Pays via **Apple Pay** (primary), card, or bank/ACH (lower fees for recurring).
+4. Confirmation + instant entry in **My Giving**; group's fund balance + goal
+   progress update live.
+5. Optional **cover-the-fees** toggle (donor pays processing; group nets 100%).
 
-Statements must satisfy **IRS substantiation rules** (Pub. 1771). Requirements we
-must bake in:
+Every gift is a **designated, tax-deductible charitable gift** to the community's
+501c3, restricted to the group fund — so it counts toward statements (§6).
 
-- For any single gift **≥ $250**, the donor needs a **contemporaneous written
-  acknowledgment**. Year-end **computer-generated statements are acceptable**.
-- The statement **must state whether the org provided goods or services** in
-  exchange, and if so a **good-faith estimate of their value** (quid pro quo).
-- **Quid pro quo > $75** requires a written disclosure of the deductible portion.
-- Religious orgs: if only **intangible religious benefits** were provided, the
-  statement must say so explicitly.
-- Must include: org legal name + EIN, donor name, date(s), amount(s), and the
-  goods/services statement.
+### 5.4 Data captured per gift (donation ledger)
 
-**Design:**
-- Each gift carries a `goodsOrServicesProvided` flag + optional value (default:
-  none → fully deductible). Most gifts are pure donations; quid-pro-quo (e.g.
-  fundraising dinner) is the exception we must support.
-- **Auto-issue annual statements** in January for the prior tax year: generate a
-  branded **PDF per donor per community**, store in **Cloudflare R2**, notify via
-  **push + Resend email**, and expose **on-demand download** in My Giving any time.
-- Statements are generated from the **community's own EIN/legal name** (§4.1), so
-  they're valid receipts with no Togather-as-donee ambiguity.
-- Re-generation/versioning when refunds or corrections occur after issuance.
+Donor identity, community, **fund + group designation**, gross/fees/net, method,
+Stripe payment-intent/charge id, recurring-plan id, status, and **tax metadata**
+(`goodsOrServicesProvided` + value; default none → fully deductible), timestamp.
 
 ### 5.5 Recurring giving
 
-- Stripe subscriptions/recurring on the connected account.
-- Donor self-service: pause, edit amount, change fund, change method, cancel.
-- Dunning/retry on failed charges; notify donor; reflect in ledger as failed.
+- Stripe recurring on the connected account; donor self-service (pause, edit
+  amount, change fund, change method, cancel); dunning/retry on failure.
 
-### 5.6 Edge cases
+### 5.6 Guardrails
 
-- **Refunds / chargebacks** → ledger reversal + statement recompute.
-- **Anonymous-to-community giving** vs. statement need (donor still needs a
-  receipt → we always know donor identity; "anonymous" only hides from leaders).
-- **Gift before nonprofit verified** → blocked by `givingStatus` gate.
-- **Member leaves community** → retains access to historical statements.
+- Spending against a **restricted** fund can't exceed that fund's balance.
+- Budget overruns: warn/alert (optionally block at card-auth — §7) as a group's
+  spend nears/exceeds budget.
+- **Fund reallocation** (moving money between funds) is an explicit, logged admin
+  action — preserves restricted-fund integrity + audit trail.
+
+### 5.7 Edge cases
+
+- **Refunds / chargebacks** → ledger reversal + statement recompute + fund-balance
+  adjustment.
+- **"Anonymous" group gift** → hidden from group leaders, but donor identity is
+  always retained (statements require it).
+- **Group archived/deleted with a fund balance** → admin must reassign/close the
+  fund (restricted funds can't just vanish).
+- **Gift attempted before nonprofit verified** → blocked by `givingStatus`.
 
 ---
 
-## 6. Feature 2 — Group Funds & Budgets
+## 6. Feature 2 — Giving Statements (IRS-compliant)
 
-### 6.1 Concepts
+Applies to **all charitable giving** — group-designated and community-wide alike.
+This is a core differentiator and must be correct.
 
-- **Fund**: a designation bucket money can be given to. Every community has a
-  **General fund**; communities can create additional funds, including
-  **per-group funds** ("Youth Group", "Missions Trip").
-- **Restricted vs. unrestricted**: funds can be marked **restricted** (must be
-  spent on that purpose) — important for nonprofit accounting integrity. Designated
-  gifts to a restricted fund increase that fund's balance only.
-- **Budget**: an admin-set **spending allowance** for a group over a period
-  (annual/monthly). Distinct from fund balance (§4.3): budget is the *plan/cap*;
-  fund balance is *money actually available*.
+### 6.1 IRS requirements we must satisfy (Pub. 1771)
 
-### 6.2 Admin flows
+- Single gift **≥ $250** → donor needs a **contemporaneous written
+  acknowledgment**; year-end **computer-generated statements are acceptable**.
+- Statement **must state whether the org provided goods/services** in exchange, and
+  if so a **good-faith estimate of value** (quid pro quo).
+- **Quid pro quo > $75** → written disclosure of the deductible portion.
+- **Intangible religious benefits only** → statement must say so explicitly.
+- Must include: org legal name + **EIN**, donor name, date(s), amount(s), and the
+  goods/services statement.
 
-- Create/edit/archive funds; mark restricted; attach a fund to a group.
-- Set a group's **budget** (amount + period + rollover policy).
-- View **fund balance** (gifts in − spend out) and **budget vs. actual**.
-- Configure whether a group's fund is **donor-visible** in the Give screen.
+### 6.2 Design
 
-### 6.3 Donor-designated giving
-
-- In the Give screen, donor picks a fund/group; the gift is tagged to that fund.
-- Restricted-fund gifts are tracked separately and reported distinctly (§8).
-
-### 6.4 Relationship to existing schema
-
-Funds attach to `communities` and optionally to `groups`
-(`apps/convex/schema.ts`). Budgets are a per-group, per-period record. Designation
-on a gift references the fund. Reuse existing group leadership
-(`groupMembers.role`) to decide who can see/manage a group's fund & budget.
-
-### 6.5 Guardrails
-
-- Spending against a **restricted** fund can't exceed that fund's balance.
-- Budget overruns: warn/alert (and optionally block at the card-authorization
-  layer — §7) when a group's spend approaches/exceeds budget.
-- Moving money between funds (reallocation) is an **explicit, logged admin action**
-  (preserves restricted-fund integrity / audit trail).
+- Each gift carries `goodsOrServicesProvided` (default none → fully deductible);
+  quid-pro-quo (e.g. fundraising dinner) is the supported exception.
+- **Auto-issue annual statements** each January for the prior tax year: a branded
+  **PDF per donor per community**, stored in **Cloudflare R2**, delivered via
+  **push + Resend email**, plus **on-demand download** in My Giving anytime.
+- Generated from the **community's own EIN/legal name** (§4.1) — valid receipts,
+  no Togather-as-donee ambiguity. Statements **aggregate a donor's gifts across all
+  funds/groups** within that community.
+- Re-generation/versioning when refunds or corrections occur post-issuance.
 
 ---
 
 ## 7. Feature 3 — Budget Spending Cards (Stripe Issuing)
 
-Goal: authorized people spend a group's budget with a card, with limits and
-full attribution. We were asked to **spec both models and recommend one**.
+Authorized people spend a group's budget with a card, with limits + attribution.
+We were asked to spec both models and recommend one.
 
-### 7.1 Model A — **Per-person cards** (one card per authorized spender)
+### 7.1 Model A — **Per-person cards** (one per authorized spender)
 
-- Each authorized spender gets their **own** card (virtual instantly via Apple
-  Wallet; physical optional) tied to a group's fund/budget.
-- Per-card **spending controls**: monthly/transaction limits, allowed merchant
-  categories, freeze/cancel.
-- **Attribution is automatic** — every transaction maps to a person.
-
-**Pros:** clean accountability (who spent what), individual limits, instant
-freeze of one person without disrupting others, scales to many leaders.
-**Cons:** more cards to manage; each cardholder may need identity info for KYC.
+- Each spender gets their **own** card (virtual instantly via Apple Wallet;
+  physical optional), tied to a group's fund/budget.
+- Per-card controls: monthly/transaction limits, allowed merchant categories,
+  freeze/cancel. **Attribution is automatic** — every txn maps to a person.
+- **Pros:** clean accountability, individual limits, freeze one person without
+  disrupting others, scales to many leaders.
+- **Cons:** more cards to manage; cardholders may need identity info for KYC.
 
 ### 7.2 Model B — **One shared card per group**
 
 - A single group card the leader manages; multiple people may use the number.
-- **Attribution is weak** — transactions land on the group, not a person; you rely
-  on receipt capture + manual notes to know who spent.
-- **Pros:** simplest to set up; fewest cards.
-- **Cons:** poor accountability, harder reconciliation, one compromised number
-  affects the whole group, awkward for shared physical cards.
+- **Attribution is weak** — txns land on the group, not a person; rely on receipt
+  capture + manual notes.
+- **Pros:** simplest, fewest cards. **Cons:** poor accountability, harder
+  reconciliation, one compromised number affects the whole group.
 
-### 7.3 **Recommendation: Per-person (Model A) as the default**, shared as a niche option
+### 7.3 **Recommendation: Per-person (Model A) default**, shared as a niche option
 
-- Nonprofits live or die on **accountability and audit trails**; per-person
-  attribution is the whole point of issuing cards vs. reimbursements.
-- Virtual cards are free/instant to issue, so "one per person" isn't costly.
-- Offer **shared cards as an explicit, discouraged option** for small groups that
-  insist (e.g. a single physical card kept in a shared space).
-- **Default v1: per-person virtual cards**, with **physical cards** and **shared
-  cards** as fast-follows.
+Nonprofits live on **accountability and audit trails**; per-person attribution is
+the whole point of cards vs. reimbursements. Virtual cards are free/instant, so
+"one per person" isn't costly. Offer **shared cards as an explicit, discouraged
+option** for small groups (e.g. one physical card in a shared space). **v1 =
+per-person virtual cards**; physical + shared cards are fast-follows.
 
 ### 7.4 Mechanics (both models)
 
-- Built on **Stripe Issuing**; connected account needs **`card_issuing`** (and
-  **`treasury`** if cards draw on a financial-account balance) — §4.3.
+- **Stripe Issuing**; connected account needs **`card_issuing`** (and **`treasury`**
+  if cards draw on a financial-account balance) — §4.3.
 - **Funding**: the group's **Issuing balance** must be funded from the community's
-  bank (US pull funding, ~≤5 business days; push funding beta). Until funded, a
-  card can't transact even if the *accounting budget* exists.
-- **Real-time authorization controls**: spending limits, merchant-category
-  restrictions, and optional **budget-aware decline** (decline if it would blow the
-  group's remaining budget). Implemented via Issuing authorization webhooks.
+  bank (US pull funding ~≤5 business days; push funding beta). Until funded, a card
+  can't transact even if the accounting budget exists.
+- **Real-time authorization controls** via Issuing auth webhooks: limits, MCC
+  restrictions, optional **budget-aware decline** (decline if it would blow the
+  group's remaining budget).
 - **Receipt capture**: prompt the spender to attach a receipt (photo → R2) right
-  after a transaction; required above a threshold (IRS-friendly).
-- **Reconciliation**: every authorization/transaction posts to the ledger against
-  the group's fund, reducing fund balance and budget-remaining.
-- **Lifecycle**: issue, add to Apple Wallet, freeze, set/adjust limits, cancel,
-  replace lost/stolen.
+  after a txn; required above a threshold.
+- **Reconciliation**: every txn posts to the ledger against the group's fund,
+  reducing fund balance + budget-remaining.
+- **Lifecycle**: issue, add to Apple Wallet, freeze, adjust limits, cancel, replace
+  lost/stolen.
 
-### 7.5 Compliance / risk notes
+### 7.5 Compliance / risk
 
-- Issuing requires **cardholder + business KYC**; per-person model means collecting
-  some cardholder info.
-- Card programs add fraud/dispute surface — needs alerting + freeze tooling for
-  treasurers.
-- Confirm Issuing card terms allow our nonprofit-community use case during the
-  Stripe enablement review.
+- Issuing requires **cardholder + business KYC** (per-person → collect cardholder
+  info). Adds fraud/dispute surface → needs alerting + freeze tooling for
+  treasurers. Confirm Issuing terms cover our nonprofit-community use during Stripe
+  enablement.
 
 ---
 
@@ -389,126 +399,140 @@ freeze of one person without disrupting others, scales to many leaders.
 
 ### 8.1 Admin / treasurer dashboard
 
-- **Giving over time** (day/week/month/year), by fund, by group, by method.
-- **Fund balances** (with restricted vs. unrestricted split).
+- **Giving over time** (day/week/month/year), **by group**, by fund, by method.
+- **Fund balances** (restricted vs. unrestricted split).
 - **Budget vs. actual** per group, with overrun alerts.
-- **Top funds / designation breakdown**; recurring vs. one-time mix.
-- **Donor roster** with giving totals (respecting anonymity rules) for the
-  treasurer; **statement issuance status** (issued / pending / failed) at year-end.
-- **Card spend**: by card, by person, by fund; uncategorized / missing-receipt
-  queue.
-- Export **CSV** for the community's accountant / QuickBooks import.
+- Recurring vs. one-time mix; **statement issuance status** at year-end.
+- **Card spend** by card/person/fund; uncategorized / missing-receipt queue.
+- **CSV export** for the community's accountant / QuickBooks import.
 
 ### 8.2 Group leader view
 
-- My group's **budget remaining**, **fund balance**, recent gifts to our fund,
+- **Budget remaining**, **fund balance**, goal progress, recent gifts to our fund,
   recent card spend, missing receipts.
 
 ### 8.3 Donor view ("My Giving")
 
-- History across funds, recurring plans management, **download statements** any
-  time, year-to-date total.
+- History across groups/funds, recurring-plan management, **download statements**
+  anytime, year-to-date total.
 
 ### 8.4 Implementation notes
 
-- All views are **Convex reactive queries** over the donation + spend ledgers
-  (live updates).
-- Heavy aggregates may need **pre-computed rollups** (cron-driven, like the
-  existing `memberFollowupScores` pattern) rather than per-request scans.
+- Convex **reactive queries** over the donation + spend ledgers (live updates).
+- Heavy aggregates → **pre-computed rollups** (cron-driven, like the existing
+  `memberFollowupScores` pattern) rather than per-request scans.
 
 ---
 
-## 9. Proposed Data Model (Convex) — sketch
+## 9. Feature 5 — Community-wide Giving (optional / deferred)
+
+For communities that **do** want an in-app general-fund/offering channel. **Not the
+headline, not built first, and not positioned as a replacement** for a church's
+primary giving platform (per the §-Revision feedback).
+
+- Same rails as group giving: Apple Pay → Stripe Connect → community 501c3,
+  designated to the **General fund** instead of a group fund.
+- Same statements (§6) and ledger (§5.4) — community-wide gifts just carry no
+  group designation.
+- **Enablement is a separate, explicit toggle** so a community can run group giving
+  only and never surface a community-wide "Give to the church" CTA.
+- Build **after** group giving + statements + funds/budgets are solid.
+
+---
+
+## 10. Proposed Data Model (Convex) — sketch
 
 New tables in `apps/convex/schema.ts` (names indicative):
 
-- `communityGiving` — connected-account + giving config per community:
-  `communityId`, `stripeConnectedAccountId`, `givingStatus`
+- `communityGiving` — `communityId`, `stripeConnectedAccountId`, `givingStatus`
   (`pending`/`active`/`suspended`), `nonprofitVerified`, `ein`, `legalName`,
-  `payoutBankStatus`, `issuingEnabled`.
-- `funds` — `communityId`, `groupId?`, `name`, `isRestricted`, `isGeneral`,
-  `donorVisible`, `archivedAt?`.
-- `groupBudgets` — `communityId`, `groupId`, `fundId`, `amount`, `period`
-  (`annual`/`monthly`), `rolloverPolicy`, `startsAt`/`endsAt`.
-- `donations` (ledger; append-only) — `communityId`, `donorUserId`, `fundId`,
+  `payoutBankStatus`, `issuingEnabled`, `communityWideGivingEnabled`.
+- `funds` — `communityId`, `groupId?`, `name`, `purpose`, `goalAmount?`,
+  `isRestricted`, `isGeneral`, `donorVisible`, `archivedAt?`.
+- `groupBudgets` — `communityId`, `groupId`, `fundId`, `amount`, `period`,
+  `rolloverPolicy`, `startsAt`/`endsAt`.
+- `donations` (append-only ledger) — `communityId`, `donorUserId`, `fundId`,
   `groupId?`, `grossAmount`, `feeAmount`, `netAmount`, `coveredFees`, `method`,
-  `stripePaymentIntentId`, `recurringPlanId?`, `status`, `goodsOrServicesProvided`,
-  `goodsValue?`, `createdAt`.
+  `stripePaymentIntentId`, `recurringPlanId?`, `status`,
+  `goodsOrServicesProvided`, `goodsValue?`, `createdAt`.
 - `recurringGifts` — `donorUserId`, `communityId`, `fundId`, `amount`, `interval`,
   `stripeSubscriptionId`, `status`.
 - `givingStatements` — `communityId`, `donorUserId`, `taxYear`, `r2Key`,
   `totalDeductible`, `issuedAt`, `version`, `status`.
-- `issuedCards` — `communityId`, `groupId`, `fundId`, `holderUserId?`
-  (null for shared), `model` (`per_person`/`shared`), `stripeCardId`,
-  `last4`, `limits`, `status` (`active`/`frozen`/`canceled`).
+- `issuedCards` — `communityId`, `groupId`, `fundId`, `holderUserId?`, `model`
+  (`per_person`/`shared`), `stripeCardId`, `last4`, `limits`, `status`.
 - `cardTransactions` (ledger) — `cardId`, `groupId`, `fundId`, `spenderUserId?`,
   `amount`, `merchant`, `mcc`, `stripeAuthorizationId`, `status`, `receiptR2Key?`,
   `createdAt`.
 
 Permissions: add a **treasurer/finance** role bit in
-`apps/convex/lib/permissions.ts`.
+`apps/convex/lib/permissions.ts`; reuse `groupMembers.role` for group-fund/budget
+management.
 
 ---
 
-## 10. Phased Rollout
+## 11. Phased Rollout (group-first)
 
 | Phase | Delivers | Gates / dependencies |
 | --- | --- | --- |
-| **0. Compliance + Connect foundation** | Connect onboarding, nonprofit + Apple verification, `givingStatus` gate, webhooks | Legal/AppStore review (§11); no user-facing giving yet |
-| **1. Community giving** | Give screen (Apple Pay, one-time + recurring), donation ledger, My Giving | Phase 0 |
-| **2. Statements** | Auto-issued + on-demand IRS-compliant PDF statements (R2 + email/push) | Phase 1 |
-| **3. Funds & budgets** | Funds (incl. restricted + per-group), designated giving, group budgets, budget-vs-actual | Phase 1 |
-| **4. Cards (per-person v1)** | Stripe Issuing enablement, Issuing balance funding, virtual per-person cards, limits, receipt capture, reconciliation | Phase 3 + Issuing capability/KYC |
+| **0. Compliance + Connect foundation** | Connect onboarding, nonprofit + Apple verification, `givingStatus` gate, webhooks | Legal/AppStore review (§12); no user-facing giving yet |
+| **1. Group funds + designated giving** | Group funds (incl. restricted), Give-to-group flow (Apple Pay, one-time + recurring), donation ledger, My Giving, goal progress | Phase 0 |
+| **2. Budgets + leader/admin views** | Group budgets, budget-vs-actual, fund balances, group leader view | Phase 1 |
+| **3. Statements** | Auto-issued + on-demand IRS-compliant PDF statements (R2 + email/push) | Phase 1 |
+| **4. Cards (per-person v1)** | Issuing enablement, Issuing-balance funding, virtual per-person cards, limits, receipt capture, reconciliation | Phase 2 + Issuing capability/KYC |
 | **5. Cards fast-follow** | Physical cards, shared-card option, budget-aware declines | Phase 4 |
 | **6. Reporting depth** | Full dashboards, exports, rollups | Phases 1–4 |
+| **7. Community-wide giving (optional)** | General-fund giving toggle + CTA, for communities that want it | Phases 1–3 |
 
-Phases 1–3 deliver the highest value with the lowest regulatory complexity; cards
-(4–5) carry the most KYC/risk work and depend on funds.
+Phases 1–3 deliver the highest value at the lowest regulatory complexity; cards
+(4–5) carry the most KYC/risk and depend on budgets; community-wide giving (7) is
+deliberately last and opt-in.
 
 ---
 
-## 11. Open Questions & Risks (need decisions before build)
+## 12. Open Questions & Risks (need decisions before build)
 
-1. **Apple nonprofit approval mechanics** — exact process, lead time, and whether
-   a multi-tenant platform enrolls once or per-community. **Blocking for Phase 0.**
-   Needs legal/AppStore counsel.
-2. **Android / Google Play** — is there an analogous donation gate? Confirm parity.
-3. **EE vs OSS placement** — confirm giving/funds/cards live under ELv2 `ee/`
-   (recommended, matches billing) vs AGPL core.
-4. **Platform monetization of giving** — do we take a Connect application fee on
-   donations, or is giving free and we monetize only via subscription? Affects
-   donor "cover the fees" UX and trust/positioning.
-5. **Stripe product enablement** — Connect (controller config), Issuing, and
-   possibly Treasury all require Stripe review/approval for our use case and
-   volumes. Start these applications early.
-6. **Issuing funding latency** — US pull funding can take ~5 business days; do we
-   need push funding (beta) so budgets fund fast enough to be usable?
-7. **Restricted-fund accounting depth** — how far do we go toward true fund
-   accounting vs. simple balance tracking before communities need QuickBooks?
-8. **Donor identity / anonymity** — reconcile "anonymous gift" UX with the fact
-   that statements always require donor identity.
+1. **Apple nonprofit approval mechanics** — exact process, lead time, and whether a
+   multi-tenant platform enrolls once or per-community. **Blocking for Phase 0.**
+   Needs legal/AppStore counsel. (Unchanged by the group-first pivot — group
+   giving is still charitable.)
+2. **Android / Google Play** — analogous donation gate? Confirm parity.
+3. **EE vs OSS placement** — confirm giving/funds/cards live under ELv2 `ee/`.
+4. **Who can create group funds / set budgets** — group leaders autonomously, or
+   admin-approved? Affects abuse surface and treasurer oversight.
+5. **Platform monetization of giving** — Connect application fee on gifts, or free
+   (monetize only via subscription)? Affects "cover the fees" UX + positioning.
+6. **Stripe product enablement** — Connect (controller config), Issuing, possibly
+   Treasury all require Stripe review for our use case/volumes. Start early.
+7. **Issuing funding latency** — US pull funding ~5 business days; do we need push
+   funding (beta) so group budgets fund fast enough to be usable?
+8. **Restricted-fund accounting depth** — how far toward true fund accounting vs.
+   simple balance tracking before communities need QuickBooks?
 9. **Existing community-billing collision** — communities already have
-   `stripeCustomerId`/subscription. Ensure the Connect account (money *in*) and
-   the subscription customer (money *out to Togather*) are cleanly separated on the
-   schema and in webhooks.
-10. **State charitable-solicitation registration** — many US states require
-    nonprofits to register before soliciting donations. Do we surface/track this
-    per community, or is it the community's responsibility (likely the latter, but
-    document it)?
+   `stripeCustomerId`/subscription (money *out* to Togather). Keep the Connect
+   account (money *in*) cleanly separated on schema + webhooks.
+10. **State charitable-solicitation registration** — many states require
+    registration before soliciting donations; surface/track per community, or treat
+    as the community's responsibility? (Group fundraising may broaden this.)
+11. **Future: activity cost-sharing track** — we deliberately chose *charitable
+    designated* giving. If demand appears for non-deductible chip-ins (pizza,
+    trips), that's a separate, lighter-compliance model (no statement, different
+    Apple/tax treatment) to spec later — do **not** conflate it with charitable
+    funds.
 
 ---
 
-## 12. Appendix — Key References
+## 13. Appendix — Key References
 
-- Apple App Review Guidelines (3.2.1 Business / nonprofit donations):
+- Apple App Review Guidelines (3.2.1 / nonprofit donations):
   https://developer.apple.com/app-store/review/guidelines/
 - IRS — Substantiating charitable contributions:
   https://www.irs.gov/charities-non-profits/substantiating-charitable-contributions
-- IRS Pub. 1771 (Charitable Contributions — Substantiation & Disclosure):
+- IRS Pub. 1771 (Substantiation & Disclosure):
   https://www.irs.gov/pub/irs-pdf/p1771.pdf
 - IRS — Written acknowledgments:
   https://www.irs.gov/charities-non-profits/charitable-organizations/charitable-contributions-written-acknowledgments
-- Stripe Connect (platform/marketplace): https://stripe.com/connect
+- Stripe Connect: https://stripe.com/connect
 - Stripe Issuing: https://stripe.com/issuing
 - Stripe — Fund Issuing balances with Connect:
   https://docs.stripe.com/issuing/connect/funding
@@ -519,6 +543,6 @@ Phases 1–3 deliver the highest value with the lowest regulatory complexity; ca
 
 - Existing billing (template for Connect/Issuing webhooks):
   `apps/convex/functions/ee/billing.ts`, `apps/convex/http.ts`
-- Schema (new tables go here): `apps/convex/schema.ts`
+- Schema (new tables): `apps/convex/schema.ts`
 - Permissions (add treasurer role): `apps/convex/lib/permissions.ts`
 - Stripe SDK already present: root + `apps/convex/package.json` (`stripe@^20.4.1`)
