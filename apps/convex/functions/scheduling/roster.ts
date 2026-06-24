@@ -263,8 +263,17 @@ export const rosterMatrix = query({
           a.sortOrder - b.sortOrder ||
           a.roleName.localeCompare(b.roleName),
       );
-    const teams = [...teamDocs.values()]
-      .map((t) => ({ teamId: t._id, teamName: t.name }))
+    const teamDocsList = [...teamDocs.values()];
+    const channelDocs = await Promise.all(
+      teamDocsList.map((t) => (t.channelId ? ctx.db.get(t.channelId) : Promise.resolve(null))),
+    );
+    const teams = teamDocsList
+      .map((t, idx) => ({
+        teamId: t._id,
+        teamName: t.name,
+        hasChannel: t.channelId !== undefined,
+        channelMemberCount: channelDocs[idx]?.memberCount ?? 0,
+      }))
       .sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     // --- People-centric rows: active group members. ---
