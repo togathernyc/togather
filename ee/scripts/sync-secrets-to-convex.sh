@@ -99,6 +99,12 @@ SECRET_KEYS=(
   "STRIPE_SECRET_KEY"
   "STRIPE_WEBHOOK_SECRET"
   "STRIPE_PRODUCT_ID"
+  # Dev-assistant bot (@Togather pipeline). Optional — synced only when present.
+  # Sourced from 1Password via sync-1password-to-github.sh (OPTIONAL_SECRETS),
+  # then exported into the deploy env by .github/actions/load-secrets.
+  "CLAUDE_ROUTINES_TRIGGER_URL"
+  "CLAUDE_ROUTINES_TOKEN"
+  "DEV_ASSISTANT_CALLBACK_SECRET"
 )
 
 # ---------------------------------------------------------------------------

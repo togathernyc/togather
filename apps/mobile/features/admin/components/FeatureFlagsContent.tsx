@@ -52,6 +52,11 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
     description:
       "Collapse a chat channel's push notifications into a single tray card — a new message replaces that channel's existing notification instead of stacking a new one. Off: each message shows its own notification.",
   },
+  {
+    key: "dev-assistant-bot",
+    description:
+      "Enables @Togather dev-assistant bot + bug pipeline (staff only).",
+  },
 ];
 
 type FlagRow = {

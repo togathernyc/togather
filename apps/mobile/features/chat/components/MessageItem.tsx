@@ -41,6 +41,7 @@ import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
+import { BugCardFromMessage } from './BugCardFromMessage';
 import { PollCardFromMessage } from './PollCardFromMessage';
 import { AvailabilityRequestCardFromMessage } from './AvailabilityRequestCardFromMessage';
 import { AvailabilityLinkCard } from './AvailabilityLinkCard';
@@ -82,6 +83,7 @@ interface MessageItemProps {
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
+    bugId?: Id<"devBugs">;
     pollId?: Id<"polls">;
     availabilityRequestId?: Id<"availabilityRequests">;
     /** Present only on messages that mirror an event text blast (SMS + push). */
@@ -881,6 +883,17 @@ function MessageItemInner({
     );
   };
 
+  const renderBugCard = () => {
+    if (message.contentType !== "bug_card" || !message.bugId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <BugCardFromMessage bugId={message.bugId} />
+      </View>
+    );
+  };
+
   const renderPollCard = () => {
     if (message.contentType !== "poll" || !message.pollId) {
       return null;
@@ -1027,7 +1040,7 @@ function MessageItemInner({
           )}
 
           {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
+          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "bug_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
@@ -1105,6 +1118,9 @@ function MessageItemInner({
 
           {/* Task card */}
           {renderTaskCard()}
+
+          {/* Dev-assistant bug card */}
+          {renderBugCard()}
 
           {/* Poll card */}
           {renderPollCard()}

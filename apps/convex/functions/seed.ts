@@ -724,6 +724,13 @@ export const seedDemoData = internalAction({
 
     console.log(`[seed] Users ready: ${userIds.length}`);
 
+    // Ensure the @Togather dev-assistant sentinel bot user (idempotent). This
+    // is the production-safe path too — see migrations/ensureDevAssistantBotUser.
+    await ctx.runMutation(
+      internal.migrations.ensureDevAssistantBotUser.ensureDevAssistantBotUser,
+      {},
+    );
+
     // Create community memberships
     for (const userId of userIds) {
       const roles = userRoles.get(userId);

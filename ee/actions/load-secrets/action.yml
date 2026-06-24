@@ -55,5 +55,10 @@ runs:
         EXPO_PUBLIC_CONVEX_URL: op://Togather/EXPO_PUBLIC_CONVEX_URL/${{ inputs.environment }}
         EXPO_PUBLIC_POSTHOG_API_KEY: op://Togather/EXPO_PUBLIC_POSTHOG_API_KEY/${{ inputs.environment }}
         IMAGE_CDN_URL: op://Togather/IMAGE_CDN_URL/${{ inputs.environment }}
+        # Dev-assistant bot (@Togather pipeline). Optional so deploys don't fail
+        # before these 1Password items exist; synced to Convex when present.
+        CLAUDE_ROUTINES_TRIGGER_URL: op://Togather/CLAUDE_ROUTINES_TRIGGER_URL/${{ inputs.environment }}
+        CLAUDE_ROUTINES_TOKEN: op://Togather/CLAUDE_ROUTINES_TOKEN/${{ inputs.environment }}
+        DEV_ASSISTANT_CALLBACK_SECRET: op://Togather/DEV_ASSISTANT_CALLBACK_SECRET/${{ inputs.environment }}
       with:
         export-env: true
