@@ -155,7 +155,11 @@ export const dispatchBug = internalAction({
           // rejects the request with 400 "anthropic-version: header is required".
           "anthropic-version": "2023-06-01",
         },
-        body: JSON.stringify(payload),
+        // The routine fire endpoint delivers the per-invocation `text` string
+        // as the routine's triggering message and ignores any other top-level
+        // fields. The routine parses the bug brief out of that message, so the
+        // payload must be JSON-stringified into `text` (not sent as the body).
+        body: JSON.stringify({ text: JSON.stringify(payload) }),
       });
       if (!res.ok) {
         const errBody = await res.text();

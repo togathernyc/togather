@@ -249,7 +249,7 @@ describe("dev-assistant routine dispatch", () => {
     for (const key of Object.keys(ROUTINE_ENV)) delete process.env[key];
   });
 
-  test("dispatchBug sends the required anthropic-version header", async () => {
+  test("dispatchBug posts the brief in `text` with the anthropic-version header", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { communityId, channelId, userId } = await seedContext(t);
@@ -273,6 +273,18 @@ describe("dev-assistant routine dispatch", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.headers).toMatchObject({
       "anthropic-version": "2023-06-01",
+    });
+
+    // The fire endpoint reads the per-invocation payload from `text` and ignores
+    // other top-level fields, so the brief must be JSON-stringified into `text`.
+    const sentBody = JSON.parse(init.body as string);
+    expect(Object.keys(sentBody)).toEqual(["text"]);
+    const brief = JSON.parse(sentBody.text);
+    expect(brief).toMatchObject({
+      bugId,
+      title: "T",
+      body: "B",
+      callbackUrl: `${ROUTINE_ENV.CONVEX_SITE_URL}/dev-assistant/callback`,
     });
 
     // The endpoint accepted it, so the bug stays in the dispatched lane.
