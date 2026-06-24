@@ -210,6 +210,13 @@ type AssignTarget = {
   timeLabel?: string;
   assignedUserIds: Set<string>;
   keepOpenWhileUnfilled: boolean;
+  /** Current "needed" count for this role on this plan — drives the stepper. */
+  neededCount: number;
+  /**
+   * People already assigned to this role on this plan — the stepper's floor
+   * (you can't need fewer slots than are already filled).
+   */
+  assignedCount: number;
 };
 
 export function RosterGridScreen() {
@@ -264,6 +271,20 @@ export function RosterGridScreen() {
   );
   const unassign = useAuthenticatedMutation(
     api.functions.scheduling.assignments.unassign,
+  );
+  // Set how many of a role are needed for a plan (the AssignSheet stepper).
+  // `setNeededRoles` REPLACES the plan's whole needed-roles set, so the handler
+  // below rebuilds the full array from `roleCells` and changes only one count.
+  const setNeededRoles = useAuthenticatedMutation(
+    api.functions.scheduling.events.setNeededRoles,
+  );
+  // Create a role inline from a team's row-header "＋ Add role" affordance.
+  const createRole = useAuthenticatedMutation(
+    api.functions.scheduling.roles.createRole,
+  );
+  // Create a serving team inline from the row-header "＋ Add team" affordance.
+  const createServingTeam = useAuthenticatedMutation(
+    api.functions.scheduling.teams.createServingTeam,
   );
   // Publish from the grid (#477 FR-3) — the SAME action the event editor uses,
   // not a fork. The grid is group-scoped with multiple date columns, so the
@@ -472,6 +493,36 @@ export function RosterGridScreen() {
   // --- Derived filters ---
   const events = data?.events ?? [];
   const roleCells = data?.roleCells ?? {};
+
+  /**
+   * Set the needed count for one (role, plan) via `setNeededRoles`, which
+   * REPLACES the plan's entire needed-roles set. We rebuild that full set from
+   * the current `roleCells` (every role with needed > 0 on this plan), then
+   * override just the target role's count — so 0→1 ADDS the role to the date
+   * and N→0 removes it. The reactive `rosterMatrix` query refreshes the cells.
+   */
+  const handleSetNeeded = useCallback(
+    async (
+      planId: Id<"eventPlans">,
+      roleId: Id<"teamRoles">,
+      count: number,
+    ) => {
+      if (!data) return;
+      const next = data.roles
+        .map((r) => {
+          const cell = roleCells[`${r.roleId}:${planId}`];
+          const c = r.roleId === roleId ? count : (cell?.needed ?? 0);
+          return { teamId: r.teamId, roleId: r.roleId, count: c };
+        })
+        .filter((r) => r.count > 0);
+      try {
+        await setNeededRoles({ planId, roles: next });
+      } catch (e) {
+        surfaceError("Couldn't update needed", e);
+      }
+    },
+    [data, roleCells, setNeededRoles, surfaceError],
+  );
 
   // Column width. On mobile it's the fixed minimum (today's behavior). On
   // desktop the date columns EXPAND to fill the available grid width — the
@@ -1240,8 +1291,11 @@ export function RosterGridScreen() {
                   colors={colors}
                   onPress={() => {
                     const cell = roleCells[`${r.role.roleId}:${ev._id}`];
-                    if (!cell) return;
-                    if (cell.occupants.length === 0) {
+                    // Every cell opens the assign panel — including not-needed
+                    // cells (no `cell` row, or needed === 0). The panel's Needed
+                    // stepper lets a leader add the role to this date (0→1+) or
+                    // change its count; the candidate list fills open slots.
+                    if (!cell || cell.occupants.length === 0) {
                       openAssign({
                         planId: ev._id,
                         planStatus: ev.status,
@@ -1250,7 +1304,9 @@ export function RosterGridScreen() {
                         roleName: r.role.roleName,
                         timeLabel: singleTimeLabel(ev),
                         assignedUserIds: new Set(),
-                        keepOpenWhileUnfilled: cell.needed > 1,
+                        keepOpenWhileUnfilled: (cell?.needed ?? 0) > 1,
+                        neededCount: cell?.needed ?? 0,
+                        assignedCount: cell?.filled ?? 0,
                       });
                     } else {
                       openRoleCell({ role: r.role, event: ev });
@@ -1482,6 +1538,21 @@ export function RosterGridScreen() {
             keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
             filterMemberIds={filterMemberSet}
             filterGroupName={filterGroupName}
+            neededCount={
+              roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.needed ??
+              assignTarget.neededCount
+            }
+            assignedCount={
+              roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.filled ??
+              assignTarget.assignedCount
+            }
+            onSetNeeded={(count) =>
+              handleSetNeeded(
+                assignTarget.planId,
+                assignTarget.roleId,
+                count,
+              )
+            }
             onClose={() => setAssignTarget(null)}
           />
         )}
@@ -1510,6 +1581,8 @@ export function RosterGridScreen() {
                 timeLabel: singleTimeLabel(ev),
                 assignedUserIds: new Set(cell.occupants.map((o) => o.userId as string)),
                 keepOpenWhileUnfilled: cell.open > 1,
+                neededCount: cell.needed,
+                assignedCount: cell.filled,
               });
             }}
             onClose={() => setRoleCellModal(null)}
@@ -1575,6 +1648,21 @@ export function RosterGridScreen() {
           keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
           filterMemberIds={filterMemberSet}
           filterGroupName={filterGroupName}
+          neededCount={
+            roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.needed ??
+            assignTarget.neededCount
+          }
+          assignedCount={
+            roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.filled ??
+            assignTarget.assignedCount
+          }
+          onSetNeeded={(count) =>
+            handleSetNeeded(
+              assignTarget.planId,
+              assignTarget.roleId,
+              count,
+            )
+          }
           onClose={() => setAssignTarget(null)}
         />
       )}
@@ -1601,6 +1689,8 @@ export function RosterGridScreen() {
               timeLabel: singleTimeLabel(ev),
               assignedUserIds: new Set(cell.occupants.map((o) => o.userId as string)),
               keepOpenWhileUnfilled: cell.open > 1,
+              neededCount: cell.needed,
+              assignedCount: cell.filled,
             });
           }}
           onClose={() => setRoleCellModal(null)}
@@ -1762,17 +1852,22 @@ function RoleCellView({
 }) {
   const base = striped ? colors.surfaceSecondary : colors.surface;
 
-  // Role not needed this event → dim, non-interactive placeholder.
+  // Role not needed this event → dim placeholder, but STILL tappable: tapping
+  // opens the assign panel where the Needed stepper can add the role to this
+  // date (0→1). A faint "+" hints that the empty cell is actionable.
   if (!cell || cell.needed === 0) {
     return (
-      <View
+      <Pressable
+        onPress={onPress}
         style={[
           styles.cell,
           { width, height, backgroundColor: base, borderColor: colors.border, opacity: 0.45 },
         ]}
+        accessibilityRole="button"
+        accessibilityLabel="Not needed — tap to add this role"
       >
-        <Text style={[styles.cellMuted, { color: colors.textTertiary }]}>·</Text>
-      </View>
+        <Ionicons name="add" size={13} color={colors.textTertiary} />
+      </Pressable>
     );
   }
 

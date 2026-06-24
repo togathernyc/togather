@@ -168,6 +168,9 @@ export function AssignSheet({
   keepOpenWhileUnfilled = false,
   filterMemberIds = null,
   filterGroupName,
+  neededCount,
+  assignedCount,
+  onSetNeeded,
   onClose,
 }: {
   visible: boolean;
@@ -213,6 +216,25 @@ export function AssignSheet({
   filterMemberIds?: Set<string> | null;
   /** Name of the scoped group, for the "also in X" hint in the GROUP header. */
   filterGroupName?: string;
+  /**
+   * How many of this role are needed on this plan — the value shown in the
+   * "Needed: N [−] [+]" stepper. The parent owns this (it has the full
+   * needed-roles set) and updates it reactively via `setNeededRoles`. Omit
+   * (along with `onSetNeeded`) to hide the stepper — e.g. the event editor,
+   * which sets needed roles through its own NeededRolesModal.
+   */
+  neededCount?: number;
+  /**
+   * People already assigned to this role on this plan — the stepper's floor.
+   * `[−]` is disabled at this value (you can't need fewer slots than are
+   * already filled; unassign someone first to go lower).
+   */
+  assignedCount?: number;
+  /**
+   * Apply a new needed count for this role/plan (reuses `setNeededRoles`).
+   * When omitted, the Needed stepper is not rendered.
+   */
+  onSetNeeded?: (count: number) => void;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
@@ -698,6 +720,10 @@ export function AssignSheet({
   // Render
   // ---------------------------------------------------------------------------
   const loading = candidates === undefined;
+  // Stepper values, defaulted so the optional props read cleanly. `floor` is
+  // the number already assigned — the lowest the needed count can go.
+  const needed = neededCount ?? 0;
+  const floor = assignedCount ?? 0;
   const teamName = team?.name;
   const subtitle = [roleName, teamName].filter(Boolean).join(" · ");
   const showEmpty =
@@ -785,6 +811,44 @@ export function AssignSheet({
           <Ionicons name="close" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
+
+      {/* Needed stepper — sets how many of this role are needed on this plan
+          (reuses `setNeededRoles`). Floor is the number already assigned, so a
+          leader can't drop below the people already placed. 0→1 adds the role
+          to this date; N→0 removes it. Hidden when the parent doesn't pass
+          `onSetNeeded` (e.g. the event editor's own NeededRolesModal). */}
+      {onSetNeeded && (
+        <View style={[styles.neededRow, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.neededLabel, { color: colors.text }]}>
+            Needed: {needed}
+          </Text>
+          <View style={styles.neededControls}>
+            <TouchableOpacity
+              onPress={() => onSetNeeded(Math.max(floor, needed - 1))}
+              disabled={needed <= floor}
+              accessibilityRole="button"
+              accessibilityLabel="Decrease needed"
+              style={[
+                styles.stepBtn,
+                {
+                  borderColor: colors.border,
+                  opacity: needed <= floor ? 0.4 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="remove" size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onSetNeeded(needed + 1)}
+              accessibilityRole="button"
+              accessibilityLabel="Increase needed"
+              style={[styles.stepBtn, { borderColor: colors.border }]}
+            >
+              <Ionicons name="add" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={styles.cardBody}
@@ -1079,6 +1143,31 @@ const styles = StyleSheet.create({
   headerSub: {
     fontSize: 13,
     marginTop: 2,
+  },
+  neededRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  neededLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  neededControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stepBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
   },
   centered: {
     paddingVertical: 32,
