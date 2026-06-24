@@ -82,11 +82,16 @@ function errMessage(e: unknown): string {
 function formatTimeLabel(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
-function weekday(ms: number): string {
-  return new Date(ms).toLocaleDateString("en-US", { weekday: "short" });
-}
 function monthDay(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+/** "Sun, Jul 5" — the plain-text date shown in the header (no input box). */
+function dateLabel(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export function DateColumnHeaderEditor({
@@ -140,6 +145,9 @@ export function DateColumnHeaderEditor({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  // Date/time edit popup — the native pickers live ONLY here, never inline in
+  // the header (which previously rendered ugly always-visible input boxes).
+  const [whenEditOpen, setWhenEditOpen] = useState(false);
 
   // --- Title auto-save (debounced) + blur/unmount flush (reused pattern) ---
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -279,6 +287,12 @@ export function DateColumnHeaderEditor({
 
   const runSheetCount = runSheetItems?.length ?? 0;
 
+  // "10:00 AM · 12:00 PM" — the plain-text time summary shown in the header.
+  const timesSummary =
+    event.times.length > 0
+      ? event.times.map((t) => formatTimeLabel(new Date(t.startsAt))).join(" · ")
+      : "Add time";
+
   // RN-Web forwards unknown DOM props on the host node; onContextMenu lands on
   // the underlying <div>. The types don't know it, so we attach via a cast on a
   // web-only prop bag. The ⋯ button is the reliable primary; this is the bonus.
@@ -352,41 +366,40 @@ export function DateColumnHeaderEditor({
         </TouchableOpacity>
       </View>
 
-      {/* Date — inline picker trigger. */}
-      <View style={styles.whenRow}>
-        <Text style={[styles.weekday, { color: colors.textSecondary }]}>
-          {weekday(event.eventDate)}
-        </Text>
-        <DatePicker
-          value={new Date(event.eventDate)}
-          onChange={handleChangeDate}
-          mode="date"
-          style={styles.pickerReset}
-        />
-      </View>
-
-      {/* Times — one inline trigger per service, plus a compact "+ time". */}
-      <View style={styles.timesRow}>
-        {event.times.map((t, index) => (
-          <DatePicker
-            key={`${t.startsAt}-${index}`}
-            value={new Date(t.startsAt)}
-            onChange={(d) => handleChangeTimeAt(index, d)}
-            mode="time"
-            style={styles.pickerReset}
-          />
-        ))}
-        <TouchableOpacity
-          onPress={handleAddTime}
-          hitSlop={6}
-          style={styles.addTime}
-          accessibilityRole="button"
-          accessibilityLabel="Add a time"
+      {/* Date — plain text + pencil; tapping opens the edit popup (no inline
+          native input box in the header). */}
+      <TouchableOpacity
+        onPress={() => setWhenEditOpen(true)}
+        style={styles.whenRow}
+        hitSlop={4}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit date — ${dateLabel(event.eventDate)}`}
+      >
+        <Text
+          style={[styles.weekday, { color: colors.textSecondary }]}
+          numberOfLines={1}
         >
-          <Ionicons name="add" size={12} color={colors.link} />
-          <Text style={[styles.addTimeText, { color: colors.link }]}>time</Text>
-        </TouchableOpacity>
-      </View>
+          {dateLabel(event.eventDate)}
+        </Text>
+        <Ionicons name="pencil" size={10} color={colors.textTertiary} />
+      </TouchableOpacity>
+
+      {/* Time(s) — plain text + pencil; same edit popup. */}
+      <TouchableOpacity
+        onPress={() => setWhenEditOpen(true)}
+        style={styles.timesRow}
+        hitSlop={4}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit times — ${timesSummary}`}
+      >
+        <Text
+          style={[styles.timesText, { color: colors.textSecondary }]}
+          numberOfLines={1}
+        >
+          {timesSummary}
+        </Text>
+        <Ionicons name="pencil" size={10} color={colors.textTertiary} />
+      </TouchableOpacity>
 
       {/* Coverage / availability tally (rendered by the caller, view-aware). */}
       <View style={styles.tallyRow}>{tally}</View>
@@ -492,6 +505,78 @@ export function DateColumnHeaderEditor({
         </Modal>
       )}
 
+      {/* Date / time edit popup — the actual pickers live here, not inline in
+          the header. Reuses the same save handlers (handleChangeDate /
+          handleChangeTimeAt / handleAddTime / saveTimes). Centered card over a
+          dim backdrop, matching the screen's other menus (ModalShell idiom). */}
+      {whenEditOpen && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setWhenEditOpen(false)}
+        >
+          <Pressable
+            style={styles.menuBackdrop}
+            onPress={() => setWhenEditOpen(false)}
+          >
+            <Pressable
+              style={[
+                styles.menuCard,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.whenEditHeader}>
+                <Text style={[styles.whenEditTitle, { color: colors.text }]} numberOfLines={1}>
+                  {event.title} · date & times
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setWhenEditOpen(false)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Done"
+                >
+                  <Text style={[styles.whenEditDone, { color: colors.link }]}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.whenEditBody}>
+                <Text style={[styles.whenEditLabel, { color: colors.textSecondary }]}>
+                  Date
+                </Text>
+                <DatePicker
+                  value={new Date(event.eventDate)}
+                  onChange={handleChangeDate}
+                  mode="date"
+                />
+
+                <Text style={[styles.whenEditLabel, { color: colors.textSecondary }]}>
+                  Times
+                </Text>
+                {event.times.map((t, index) => (
+                  <DatePicker
+                    key={`${t.startsAt}-${index}`}
+                    value={new Date(t.startsAt)}
+                    onChange={(d) => handleChangeTimeAt(index, d)}
+                    mode="time"
+                  />
+                ))}
+                <TouchableOpacity
+                  onPress={handleAddTime}
+                  style={styles.addTime}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a time"
+                >
+                  <Ionicons name="add" size={16} color={colors.link} />
+                  <Text style={[styles.addTimeText, { color: colors.link }]}>Add time</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       <NeededRolesModal
         visible={neededVisible}
         planId={event._id}
@@ -576,27 +661,40 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 4,
+    gap: 3,
   },
-  weekday: { fontSize: 11, fontWeight: "600" },
+  weekday: { fontSize: 11, fontWeight: "600", flexShrink: 1 },
   timesRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "center",
-    gap: 2,
+    gap: 3,
   },
-  // The shared DatePicker ships a bottom margin + bordered box; zero the margin
-  // so the trigger reads as a compact inline value inside the tight header.
-  pickerReset: { marginBottom: 0 },
+  timesText: { fontSize: 10, fontWeight: "500", flexShrink: 1 },
   addTime: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 1,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    gap: 4,
+    paddingVertical: 6,
   },
-  addTimeText: { fontSize: 10, fontWeight: "600" },
+  addTimeText: { fontSize: 14, fontWeight: "600" },
+  whenEditHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  whenEditTitle: { fontSize: 13, fontWeight: "700", flexShrink: 1, marginRight: 12 },
+  whenEditDone: { fontSize: 15, fontWeight: "600" },
+  whenEditBody: { paddingHorizontal: 14, paddingBottom: 12 },
+  whenEditLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 8,
+    marginBottom: 4,
+  },
   tallyRow: {
     flexDirection: "row",
     alignItems: "center",
