@@ -34,20 +34,28 @@ ensureModelAvailable(notifyTarget?)
    ├─ Opus healthy?  ──► return { available: true, model: "claude-opus-4-8" }
    ├─ Opus down, Sonnet healthy? ──► return { available: true, model: "claude-sonnet-4-6" }
    └─ both down:
-        • post a heads-up into the thread (once, on entering the outage)
+        • record this thread as an outage target (deduped) and post it a
+          one-time heads-up
         • start the hourly poll loop (idempotent — never stacked)
         • return { available: false }
                 │
                 ▼
         pollModelAvailability (every hour, self-rescheduling)
                 │
-                ├─ a model recovered ──► announce "back online", stop
+                ├─ a model recovered ──► announce "back online" to every
+                │                        affected thread, then stop
                 └─ still down ──► reschedule one hour out
 ```
 
-State lives in the singleton `claudeModelPolls` row (`schema.ts`), which both
-prevents duplicate poll loops and caches the last-known status for
-`checkModelStatus`.
+Multiple threads can trip the gate during one outage; each is recorded once in
+`notifyTargets` and gets exactly one heads-up and one back-online notice.
+Whichever path notices recovery first — a later gate retry or the hourly poll —
+announces to all of them and clears the loop (`resolveRecovery`); the other
+becomes a no-op.
+
+State lives in the singleton `claudeModelPolls` row (`schema.ts`), which
+prevents duplicate poll loops, holds the outage's notify targets, and caches the
+last-known status for `checkModelStatus`.
 
 ## Tools (callable internal actions)
 

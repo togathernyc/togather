@@ -7,9 +7,14 @@
  *
  *   1. Probes Claude Opus, then Claude Sonnet (`selectAvailableClaudeModel`).
  *   2. Returns the first healthy model so the caller can run the task.
- *   3. If BOTH are down, posts a heads-up into the thread and starts an
+ *   3. If BOTH are down, posts a heads-up into the calling thread and starts an
  *      hourly poll (`pollModelAvailability`) that re-checks until a model
- *      recovers — then announces it's back and stops.
+ *      recovers — then announces it's back to every affected thread and stops.
+ *
+ * Multiple threads can trip the gate during the same outage; each is recorded
+ * once in `notifyTargets` and gets exactly one heads-up and one back-online
+ * notice. Whichever path notices recovery first (a later gate retry, or the
+ * hourly poll) announces to all of them and clears the loop.
  *
  * `checkModelStatus` is the read-only "what's the status right now" tool.
  *
@@ -36,11 +41,21 @@ import {
 /** Singleton key for the poll-state row. */
 const POLL_KEY = "global";
 
-/** Where to post availability heads-up messages, when a target is known. */
+interface NotifyTarget {
+  groupId: Id<"groups">;
+  channelSlug?: string;
+}
+
+/** A single thread to notify, as accepted from a calling task. */
 const notifyTargetArgs = {
   notifyGroupId: v.optional(v.id("groups")),
   notifyChannelSlug: v.optional(v.string()),
 };
+
+/** Identity key for deduping notify targets by thread. */
+function targetKey(t: NotifyTarget): string {
+  return `${t.groupId}::${t.channelSlug ?? ""}`;
+}
 
 function getAnthropicApiKey(): string | null {
   return process.env.ANTHROPIC_API_KEY ?? null;
@@ -52,16 +67,22 @@ async function probeModels(apiKey: string): Promise<ModelSelection> {
 
 async function postNotice(
   ctx: ActionCtx,
-  target: { groupId?: Id<"groups">; channelSlug?: string },
+  target: NotifyTarget,
   message: string,
 ): Promise<void> {
-  if (!target.groupId) return; // No thread to notify — log-only path.
   await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
     groupId: target.groupId,
     message,
     targetChannelSlug: target.channelSlug,
     botType: "claude_availability",
   });
+}
+
+const OUTAGE_MESSAGE =
+  "⚠️ Claude is temporarily unavailable — both Opus and Sonnet are unreachable. I'll keep checking every hour and resume automatically once one is back.";
+
+function recoveryMessage(model: string): string {
+  return `✅ Claude is back online (using ${model}). I'll resume from here.`;
 }
 
 // ===========================================================================
@@ -79,26 +100,41 @@ export const getPoll = internalQuery({
 });
 
 /**
- * Start the poll loop if one isn't already running. Idempotent: when a poll is
- * already `active`, this is a no-op and returns `{ started: false }`, so
- * repeated task requests during an outage never stack multiple poll chains.
+ * Start the poll loop if one isn't already running and record the calling
+ * thread as an outage target. Idempotent on both axes:
+ *   - `started`: true only when the loop transitioned from off → on, so poll
+ *     chains never stack.
+ *   - `targetAdded`: true only when this thread wasn't already a target, so a
+ *     thread is warned at most once per outage.
  */
 export const beginPoll = internalMutation({
-  args: notifyTargetArgs,
-  handler: async (ctx, args): Promise<{ started: boolean }> => {
+  args: { ...notifyTargetArgs, statusesJson: v.optional(v.string()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ started: boolean; targetAdded: boolean }> => {
     const now = Date.now();
     const existing = await ctx.db
       .query("claudeModelPolls")
       .withIndex("by_key", (q) => q.eq("key", POLL_KEY))
       .unique();
 
-    if (existing?.active) return { started: false };
+    const target: NotifyTarget | null = args.notifyGroupId
+      ? { groupId: args.notifyGroupId, channelSlug: args.notifyChannelSlug }
+      : null;
+
+    const current: NotifyTarget[] = existing?.notifyTargets ?? [];
+    const targetAdded =
+      target !== null && !current.some((t) => targetKey(t) === targetKey(target));
+    const notifyTargets = targetAdded ? [...current, target] : current;
+    const started = !existing?.active;
 
     if (existing) {
       await ctx.db.patch(existing._id, {
         active: true,
-        notifyGroupId: args.notifyGroupId,
-        notifyChannelSlug: args.notifyChannelSlug,
+        notifyTargets,
+        lastCheckedAt: now,
+        lastStatuses: args.statusesJson ?? existing.lastStatuses,
         updatedAt: now,
       });
     } else {
@@ -106,47 +142,63 @@ export const beginPoll = internalMutation({
         key: POLL_KEY,
         active: true,
         lastCheckedAt: now,
-        notifyGroupId: args.notifyGroupId,
-        notifyChannelSlug: args.notifyChannelSlug,
+        lastStatuses: args.statusesJson,
+        notifyTargets,
         createdAt: now,
         updatedAt: now,
       });
     }
-    return { started: true };
+    return { started, targetAdded };
   },
 });
 
-/** Record the latest probe outcome and set whether the loop keeps running. */
-export const recordPollResult = internalMutation({
-  args: {
-    active: v.boolean(),
-    lastAvailableModel: v.optional(v.string()),
-    statusesJson: v.optional(v.string()),
-  },
+/** Record a poll tick that did NOT recover (loop keeps running, or stops on no-key). */
+export const recordTick = internalMutation({
+  args: { active: v.boolean(), statusesJson: v.optional(v.string()) },
   handler: async (ctx, args): Promise<void> => {
     const now = Date.now();
     const existing = await ctx.db
       .query("claudeModelPolls")
       .withIndex("by_key", (q) => q.eq("key", POLL_KEY))
       .unique();
-
-    const patch = {
+    if (!existing) return;
+    await ctx.db.patch(existing._id, {
       active: args.active,
       lastCheckedAt: now,
-      lastAvailableModel: args.lastAvailableModel,
-      lastStatuses: args.statusesJson,
+      lastStatuses: args.statusesJson ?? existing.lastStatuses,
       updatedAt: now,
-    };
+    });
+  },
+});
 
-    if (existing) {
-      await ctx.db.patch(existing._id, patch);
-    } else {
-      await ctx.db.insert("claudeModelPolls", {
-        key: POLL_KEY,
-        createdAt: now,
-        ...patch,
-      });
-    }
+/**
+ * Clear an active poll on recovery and hand back the threads that need a
+ * back-online notice. Returns `wasActive: false` (with no targets) when there
+ * was no outage in progress, so the healthy path stays a cheap no-op and only
+ * one caller ever announces recovery.
+ */
+export const resolveRecovery = internalMutation({
+  args: { lastAvailableModel: v.string(), statusesJson: v.optional(v.string()) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ wasActive: boolean; targets: NotifyTarget[] }> => {
+    const existing = await ctx.db
+      .query("claudeModelPolls")
+      .withIndex("by_key", (q) => q.eq("key", POLL_KEY))
+      .unique();
+    if (!existing?.active) return { wasActive: false, targets: [] };
+
+    const targets = existing.notifyTargets ?? [];
+    await ctx.db.patch(existing._id, {
+      active: false,
+      notifyTargets: [],
+      lastAvailableModel: args.lastAvailableModel,
+      lastCheckedAt: Date.now(),
+      lastStatuses: args.statusesJson ?? existing.lastStatuses,
+      updatedAt: Date.now(),
+    });
+    return { wasActive: true, targets };
   },
 });
 
@@ -178,8 +230,8 @@ export const checkModelStatus = internalAction({
  * Gate: confirm a Claude model is reachable before executing a task.
  *
  * Returns `{ available: true, model }` with the first healthy model, or
- * `{ available: false }` after notifying the thread and starting the hourly
- * poll. Callers should treat `available: false` as "don't dispatch yet".
+ * `{ available: false }` after notifying the calling thread and starting the
+ * hourly poll. Callers should treat `available: false` as "don't dispatch yet".
  */
 export const ensureModelAvailable = internalAction({
   args: notifyTargetArgs,
@@ -203,17 +255,19 @@ export const ensureModelAvailable = internalAction({
     }
 
     const selection = await probeModels(apiKey);
+    const statusesJson = JSON.stringify(selection.statuses);
 
     if (selection.selectedModel) {
-      // A healthy model means any prior outage is over — clear an active poll.
-      await ctx.runMutation(
-        internal.functions.ai.modelAvailability.recordPollResult,
-        {
-          active: false,
-          lastAvailableModel: selection.selectedModel,
-          statusesJson: JSON.stringify(selection.statuses),
-        },
+      // Healthy. If this retry is the first to see Claude recover, clear the
+      // active poll and deliver the back-online notice to every affected
+      // thread (the scheduled poll will then exit as a no-op).
+      const recovery = await ctx.runMutation(
+        internal.functions.ai.modelAvailability.resolveRecovery,
+        { lastAvailableModel: selection.selectedModel, statusesJson },
       );
+      if (recovery.wasActive) {
+        await announceRecovery(ctx, recovery.targets, selection.selectedModel);
+      }
       return {
         available: true,
         model: selection.selectedModel,
@@ -221,27 +275,25 @@ export const ensureModelAvailable = internalAction({
       };
     }
 
-    // Both models down. Start one poll loop and announce it only on the
-    // transition into the outage (beginPoll is idempotent), so repeated task
-    // requests during the same outage don't spam the thread.
-    const { started } = await ctx.runMutation(
+    // Both models down. Record this thread as a target (idempotently) and start
+    // one poll loop. Notify any newly-affected thread once, regardless of
+    // whether this call is the one that started the loop.
+    const { started, targetAdded } = await ctx.runMutation(
       internal.functions.ai.modelAvailability.beginPoll,
-      args,
+      { ...args, statusesJson },
     );
-    if (started) {
-      await ctx.runMutation(
-        internal.functions.ai.modelAvailability.recordPollResult,
-        { active: true, statusesJson: JSON.stringify(selection.statuses) },
-      );
+    if (targetAdded && args.notifyGroupId) {
       await postNotice(
         ctx,
         { groupId: args.notifyGroupId, channelSlug: args.notifyChannelSlug },
-        "⚠️ Claude is temporarily unavailable — both Opus and Sonnet are unreachable. I'll keep checking every hour and resume automatically once one is back.",
+        OUTAGE_MESSAGE,
       );
+    }
+    if (started) {
       await ctx.scheduler.runAfter(
         CLAUDE_POLL_INTERVAL_MS,
         internal.functions.ai.modelAvailability.pollModelAvailability,
-        args,
+        {},
       );
     }
 
@@ -255,12 +307,13 @@ export const ensureModelAvailable = internalAction({
 
 /**
  * Hourly poll loop. Re-checks the fallback chain; on recovery it announces the
- * model and stops, otherwise it reschedules itself one hour out. Guarded by
- * the poll-state row so a recovered (or cancelled) loop doesn't keep running.
+ * model to every affected thread and stops, otherwise it reschedules itself one
+ * hour out. Reads its notify targets from the poll-state row, so it covers
+ * every thread that tripped the gate during the outage.
  */
 export const pollModelAvailability = internalAction({
-  args: notifyTargetArgs,
-  handler: async (ctx, args): Promise<void> => {
+  args: {},
+  handler: async (ctx): Promise<void> => {
     const poll = await ctx.runQuery(
       internal.functions.ai.modelAvailability.getPoll,
       {},
@@ -272,40 +325,45 @@ export const pollModelAvailability = internalAction({
       // No key means polling can never succeed — stop and let a future
       // ensureModelAvailable restart it once the key is configured.
       await ctx.runMutation(
-        internal.functions.ai.modelAvailability.recordPollResult,
+        internal.functions.ai.modelAvailability.recordTick,
         { active: false },
       );
       return;
     }
 
     const selection = await probeModels(apiKey);
+    const statusesJson = JSON.stringify(selection.statuses);
 
     if (selection.selectedModel) {
-      await ctx.runMutation(
-        internal.functions.ai.modelAvailability.recordPollResult,
-        {
-          active: false,
-          lastAvailableModel: selection.selectedModel,
-          statusesJson: JSON.stringify(selection.statuses),
-        },
+      const recovery = await ctx.runMutation(
+        internal.functions.ai.modelAvailability.resolveRecovery,
+        { lastAvailableModel: selection.selectedModel, statusesJson },
       );
-      await postNotice(
-        ctx,
-        { groupId: args.notifyGroupId, channelSlug: args.notifyChannelSlug },
-        `✅ Claude is back online (using ${selection.selectedModel}). I'll resume from here.`,
-      );
+      if (recovery.wasActive) {
+        await announceRecovery(ctx, recovery.targets, selection.selectedModel);
+      }
       return;
     }
 
     // Still down — record and try again in an hour.
-    await ctx.runMutation(
-      internal.functions.ai.modelAvailability.recordPollResult,
-      { active: true, statusesJson: JSON.stringify(selection.statuses) },
-    );
+    await ctx.runMutation(internal.functions.ai.modelAvailability.recordTick, {
+      active: true,
+      statusesJson,
+    });
     await ctx.scheduler.runAfter(
       CLAUDE_POLL_INTERVAL_MS,
       internal.functions.ai.modelAvailability.pollModelAvailability,
-      args,
+      {},
     );
   },
 });
+
+async function announceRecovery(
+  ctx: ActionCtx,
+  targets: NotifyTarget[],
+  model: string,
+): Promise<void> {
+  for (const target of targets) {
+    await postNotice(ctx, target, recoveryMessage(model));
+  }
+}
