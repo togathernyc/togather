@@ -12,9 +12,10 @@ import React from 'react';
 import { Linking, StyleProp, Text, TextStyle } from 'react-native';
 
 export type ContentPart = {
-  type: 'text' | 'mention' | 'url';
+  type: 'text' | 'mention' | 'url' | 'bold';
   value: string;
-  /** For mentions, the display string without brackets (e.g. `@John Smith`). */
+  /** For mentions, the display string without brackets (e.g. `@John Smith`).
+   *  For bold segments, the inner text without the surrounding `**` markers. */
   displayValue?: string;
 };
 
@@ -30,9 +31,11 @@ export function parseMessageContent(content: string): ContentPart[] {
 
   const mentionRegex = /@\[([^\]]+)\]/g;
   const urlRegex = /(https?:\/\/[^\s]+)/g;
+  // Matches **bold text** — single line only (. does not match \n)
+  const boldRegex = /\*\*(.+?)\*\*/g;
 
   const allMatches: Array<{
-    type: 'mention' | 'url';
+    type: 'mention' | 'url' | 'bold';
     value: string;
     displayValue?: string;
     index: number;
@@ -49,6 +52,14 @@ export function parseMessageContent(content: string): ContentPart[] {
   }
   while ((match = urlRegex.exec(content)) !== null) {
     allMatches.push({ type: 'url', value: match[0], index: match.index });
+  }
+  while ((match = boldRegex.exec(content)) !== null) {
+    allMatches.push({
+      type: 'bold',
+      value: match[0],
+      displayValue: match[1],
+      index: match.index,
+    });
   }
 
   allMatches.sort((a, b) => a.index - b.index);
@@ -137,6 +148,13 @@ export function LinkifiedText({
               onPress={() => onMentionPress?.(part.value)}
             >
               {part.displayValue || part.value}
+            </Text>
+          );
+        }
+        if (part.type === 'bold') {
+          return (
+            <Text key={index} style={{ fontWeight: 'bold' }}>
+              {part.displayValue ?? part.value}
             </Text>
           );
         }

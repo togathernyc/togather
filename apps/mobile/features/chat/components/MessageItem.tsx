@@ -534,6 +534,13 @@ function MessageItemInner({
               </Text>
             );
           }
+          if (part.type === 'bold') {
+            return (
+              <Text key={index} style={{ fontWeight: 'bold' }}>
+                {part.displayValue ?? part.value}
+              </Text>
+            );
+          }
           return <Text key={index}>{part.value}</Text>;
         })}
       </Text>
