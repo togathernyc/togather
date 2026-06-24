@@ -119,6 +119,12 @@ pnpm dev
 | `OPENAI_SECRET_KEY` | OpenAI API key (already used by poster keywording). The prayer moderator calls `gpt-4o-mini` in JSON mode. | Moderator fails open — every prayer is accepted without LLM screening. |
 | `OLLAMA_API_KEY` | **Escape hatch only.** Used if you flip `PROVIDER` to `"ollama"` in `apps/convex/lib/moderation/prayer.ts` (e.g. if OpenAI spend gets too high). See https://ollama.com/pricing. | Same fail-open behavior when unset. |
 
+### Claude model availability (Togather Bot)
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `ANTHROPIC_API_KEY` | Standard Anthropic API key (`sk-ant-...`). The bot probes Anthropic's Models API (`GET /v1/models/{id}`) with this key to confirm a Claude model is reachable before dispatching a task, preferring Claude Opus and falling back to Claude Sonnet. See `apps/convex/functions/ai/`. | The availability gate fails closed (reports unavailable) instead of polling forever, so tasks aren't dispatched into a void. |
+
 ### Development Settings
 
 | Secret | Description |

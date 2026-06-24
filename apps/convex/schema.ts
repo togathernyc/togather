@@ -2814,4 +2814,25 @@ export default defineSchema({
     type: v.string(),
     sentAt: v.number(),
   }).index("by_prayer_type", ["prayerId", "type"]),
+
+  // =============================================================================
+  // CLAUDE MODEL AVAILABILITY POLL
+  // =============================================================================
+  // Singleton-ish row (keyed by the constant "global") tracking the bot's
+  // hourly Claude-model availability poll. `active: true` means a self-
+  // rescheduling poll loop is running because both Opus and Sonnet were down;
+  // it flips to false once a model recovers. The row also doubles as a
+  // last-known status cache for the "check model status" tool. See
+  // `functions/ai/modelAvailability.ts`.
+  claudeModelPolls: defineTable({
+    key: v.string(), // singleton key, always "global"
+    active: v.boolean(),
+    lastCheckedAt: v.number(), // Unix ms
+    lastAvailableModel: v.optional(v.string()),
+    lastStatuses: v.optional(v.string()), // JSON snapshot of ClaudeModelStatus[]
+    notifyGroupId: v.optional(v.id("groups")),
+    notifyChannelSlug: v.optional(v.string()),
+    createdAt: v.number(), // Unix ms
+    updatedAt: v.number(), // Unix ms
+  }).index("by_key", ["key"]),
 });
