@@ -634,38 +634,46 @@ export function RosterGridScreen() {
   }, [data, events, roleCells, isolatedTeamId, openOnly]);
 
   /**
-   * Interleave team section-header rows into the (already team-sorted) role
-   * list. Computed unconditionally (above the early returns) to respect the
-   * Rules of Hooks.
+   * Build the frozen-column rows from `data.teams` — the authoritative team
+   * list — rather than from "teams that happen to have roles". Every team gets
+   * a section header, its (filtered) role rows, and its "＋ Add role"
+   * affordance, so a team with zero roles still renders (header + Add role) and
+   * is usable. Roles are grouped under their team via `visibleRoles`. Computed
+   * unconditionally (above the early returns) to respect the Rules of Hooks.
    */
   const roleRows = useMemo<RoleRow[]>(() => {
-    const out: RoleRow[] = [];
-    let lastTeam: RosterRole | null = null;
-    const flushAddRole = () => {
-      if (lastTeam) {
-        out.push({
-          kind: "addRole",
-          teamId: lastTeam.teamId,
-          teamName: lastTeam.teamName,
-        });
-      }
-    };
+    if (!data) return [];
+    // Group the already-filtered roles by team for O(1) lookup per team.
+    const rolesByTeam = new Map<string, RosterRole[]>();
     for (const role of visibleRoles) {
       const tid = role.teamId as string;
-      if (tid !== (lastTeam?.teamId as string | undefined)) {
-        // Close the previous team's role list with its "＋ Add role" row.
-        flushAddRole();
-        out.push({ kind: "section", teamId: tid, teamName: role.teamName });
-        lastTeam = role;
-      }
-      out.push({ kind: "role", role });
+      const list = rolesByTeam.get(tid);
+      if (list) list.push(role);
+      else rolesByTeam.set(tid, [role]);
     }
-    // "＋ Add role" for the final team, then the trailing "＋ Add team". When a
-    // team is isolated, hide "Add team" so the row stays scoped to that team.
-    flushAddRole();
+    const out: RoleRow[] = [];
+    for (const team of data.teams) {
+      const tid = team.teamId as string;
+      // When a team is isolated, render only that team's section.
+      if (isolatedTeamId && tid !== isolatedTeamId) continue;
+      // With "Open only" active, hide teams that have no visible roles so the
+      // filter still reads as a coverage view — but always show an isolated
+      // team and any team that has visible roles.
+      const teamRoles = rolesByTeam.get(tid) ?? [];
+      if (openOnly && teamRoles.length === 0 && tid !== isolatedTeamId) continue;
+      out.push({ kind: "section", teamId: tid, teamName: team.teamName });
+      for (const role of teamRoles) out.push({ kind: "role", role });
+      out.push({
+        kind: "addRole",
+        teamId: team.teamId,
+        teamName: team.teamName,
+      });
+    }
+    // Trailing "＋ Add team". When a team is isolated, hide it so the rows stay
+    // scoped to that team.
     if (!isolatedTeamId) out.push({ kind: "addTeam" });
     return out;
-  }, [visibleRoles, isolatedTeamId]);
+  }, [data, visibleRoles, isolatedTeamId, openOnly]);
 
   /** Members after team* + search + open/available filters. (*teams don't gate people rows.) */
   const visibleMembers = useMemo(() => {
