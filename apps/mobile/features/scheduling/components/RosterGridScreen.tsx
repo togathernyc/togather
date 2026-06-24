@@ -57,6 +57,7 @@ import { confirmAsync, notify } from "@/utils/platformAlert";
 import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
 import { EventEditorPanel } from "./EventEditorPanel";
+import { DateColumnHeaderEditor } from "./DateColumnHeaderEditor";
 
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
@@ -224,7 +225,11 @@ export function RosterGridScreen() {
   const NAME_W = isWide ? 220 : 150;
   const ROW_H = 52;
   const SECTION_H = 28;
-  const HEADER_H = 70;
+  // The header row is a plain tally column on mobile and a richer inline plan
+  // editor on desktop (title + date/times + run-sheet), so it's taller there.
+  // Only the header cells share this height — body cells use ROW_H — so growing
+  // it doesn't disturb frozen-column/body alignment.
+  const HEADER_H = isWide ? 132 : 70;
   // Minimum legible column width per platform. On desktop the cells region
   // grows to fill the viewport (see `CELL_W` below) so a 1–2 date roster reads
   // as a real table rather than a sliver hugging the left edge. There is no
@@ -366,9 +371,10 @@ export function RosterGridScreen() {
     event: RosterEvent;
     note?: string;
   } | null>(null);
-  // Plan-detail panel (tap a date-column header). Shares the SAME right dock as
-  // the assign/cell panels on desktop (mutually exclusive); a bottom sheet on
-  // mobile. Holds only the planId — EventEditorPanel queries the rest.
+  // Plan-detail panel — MOBILE ONLY now. Tapping a date-column header opens the
+  // EventEditorPanel as a bottom sheet. On desktop the header itself is the plan
+  // editor (DateColumnHeaderEditor), so there is no desktop plan dock and this
+  // stays null there. Holds only the planId — EventEditorPanel queries the rest.
   const [planPanel, setPlanPanel] = useState<{
     planId: Id<"eventPlans">;
   } | null>(null);
@@ -412,8 +418,9 @@ export function RosterGridScreen() {
     },
     [],
   );
-  // Open the plan-detail panel for a date column; closes any assign/cell panel
-  // so only one right-dock panel is ever live (the same discipline as above).
+  // Open the plan-detail bottom sheet (MOBILE) for a date column. Clears any
+  // open assign/cell panel so only one overlay is live. Unused on desktop —
+  // the column header edits the plan inline (DateColumnHeaderEditor).
   const openPlanPanel = useCallback((planId: Id<"eventPlans">) => {
     setAssignTarget(null);
     setRoleCellModal(null);
@@ -1026,6 +1033,47 @@ export function RosterGridScreen() {
           {events.map((ev) => {
             const c = data.eventCounts[ev._id as string];
             const open = c?.openSlots ?? 0;
+            // The view-aware coverage/availability tally, shared by both the
+            // mobile header cell and the desktop inline editor.
+            const tally =
+              mode === "roles" ? (
+                open > 0 ? (
+                  <>
+                    <Ionicons name="ellipse-outline" size={10} color={colors.textTertiary} />
+                    <Text style={[styles.headerCellTallyText, { color: colors.textTertiary }]}>
+                      {open}
+                    </Text>
+                  </>
+                ) : (
+                  <Ionicons name="checkmark" size={12} color={colors.success} />
+                )
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={11} color={colors.success} />
+                  <Text style={[styles.headerCellTallyText, { color: colors.success }]}>
+                    {c?.available ?? 0}
+                  </Text>
+                </>
+              );
+
+            // Desktop: the header IS the plan editor — no docked side panel.
+            // Mobile: a plain tappable header opens the EventEditorPanel sheet.
+            if (isWide) {
+              return (
+                <DateColumnHeaderEditor
+                  key={ev._id}
+                  event={ev}
+                  groupId={groupId}
+                  width={CELL_W}
+                  height={HEADER_H}
+                  narrow={CELL_W < 200}
+                  colors={colors}
+                  tally={tally}
+                  onPublish={() => publishOne(ev)}
+                />
+              );
+            }
+
             return (
               <TouchableOpacity
                 key={ev._id}
@@ -1057,27 +1105,7 @@ export function RosterGridScreen() {
                 <Text style={[styles.headerCellDate, { color: colors.text }]}>
                   {monthDay(ev.eventDate)}
                 </Text>
-                <View style={styles.headerCellTally}>
-                  {mode === "roles" ? (
-                    open > 0 ? (
-                      <>
-                        <Ionicons name="ellipse-outline" size={10} color={colors.textTertiary} />
-                        <Text style={[styles.headerCellTallyText, { color: colors.textTertiary }]}>
-                          {open}
-                        </Text>
-                      </>
-                    ) : (
-                      <Ionicons name="checkmark" size={12} color={colors.success} />
-                    )
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark" size={11} color={colors.success} />
-                      <Text style={[styles.headerCellTallyText, { color: colors.success }]}>
-                        {c?.available ?? 0}
-                      </Text>
-                    </>
-                  )}
-                </View>
+                <View style={styles.headerCellTally}>{tally}</View>
               </TouchableOpacity>
             );
           })}
@@ -1506,26 +1534,9 @@ export function RosterGridScreen() {
           />
         )}
 
-        {/* Desktop: plan-detail panel docks in the SAME right region as the
-            assign/cell panels (mutually exclusive — opening it cleared them via
-            openPlanPanel, and opening any of them clears it). Tapping a date
-            header opens this. */}
-        {isWide && planPanel && (
-          <View
-            style={[
-              styles.dockPanel,
-              { backgroundColor: colors.surface, borderLeftColor: colors.border },
-            ]}
-          >
-            <View style={styles.dockPanelInner}>
-              <EventEditorPanel
-                key={planPanel.planId}
-                planId={planPanel.planId}
-                onClose={() => setPlanPanel(null)}
-              />
-            </View>
-          </View>
-        )}
+        {/* Desktop has NO plan side-panel: the date-column header IS the plan
+            editor (DateColumnHeaderEditor). The plan-detail panel survives only
+            as the mobile bottom sheet (rendered below). */}
       </View>
 
       {/* Publish bar — MOBILE only (#477 FR-3); desktop hosts Publish in the
