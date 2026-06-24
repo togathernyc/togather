@@ -37,7 +37,7 @@
     "testTimeout": 5000,
     "forceExit": true,
     "transformIgnorePatterns": [
-      "node_modules/(?!(?:.pnpm/)?((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@expo/vector-icons/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|@sentry/.*|native-base|react-native-svg|@tanstack/react-query|date-fns|bad-words|badwords-list))"
+      "node_modules/(?!(?:.pnpm/)?((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|@expo/vector-icons/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|@sentry/.*|native-base|react-native-svg|@shopify[/+]flash-list|@tanstack/react-query|date-fns|bad-words|badwords-list))"
     ],
     "testMatch": [
       "**/__tests__/**/*.(ts|tsx|js)",

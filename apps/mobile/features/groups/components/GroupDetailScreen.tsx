@@ -270,11 +270,6 @@ export function GroupDetailScreen() {
     router.push(`/(user)/leader-tools/${group._id}/toolbar-settings`);
   };
 
-  const handleScheduling = () => {
-    if (!group?._id) return;
-    router.push(`/rostering/${group._id}`);
-  };
-
   if (isLoading) {
     return <GroupDetailSkeleton />;
   }
@@ -544,8 +539,8 @@ export function GroupDetailScreen() {
             events. */}
         {group._id && <UpcomingEventsSection groupId={group._id} />}
 
-        {/* ROSTERING — leader-only horizontal list of event plans. Hidden
-            when the group has no plans yet. */}
+        {/* ROSTERING — leader-only entry row into the rostering hub, with a
+            light status summary (plan count · next date · fill). */}
         {group._id && isLeader && <RosteringSection groupId={group._id} />}
 
         {/* CHANNELS */}
@@ -686,17 +681,6 @@ export function GroupDetailScreen() {
                 icon="options-outline"
                 label="Toolbar Settings"
                 onPress={handleToolbarSettings}
-                color={colors.text}
-                iconColor={colors.icon}
-                topBorder
-                borderColor={colors.border}
-              />
-            )}
-            {isLeader && (
-              <ActionRow
-                icon="calendar-outline"
-                label="Rostering"
-                onPress={handleScheduling}
                 color={colors.text}
                 iconColor={colors.icon}
                 topBorder

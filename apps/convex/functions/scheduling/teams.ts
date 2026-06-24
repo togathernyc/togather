@@ -91,6 +91,59 @@ async function createTeamChannel(
 }
 
 /**
+ * Create a serving team (ADR-025) — the shared implementation behind the
+ * `createServingTeam` mutation and any other mutation that needs to bootstrap
+ * a team as part of a larger flow (e.g. `quickStartRostering`). Callers are
+ * responsible for auth; this assumes the caller is an authorized scheduler.
+ *
+ * By default the team also gets a chat channel — a `custom` channel flagged
+ * `isServingTeam`. Pass `withChannel: false` for a channel-less team. The
+ * channel's membership is auto-synced from assignments, so the creator is not
+ * added as a member.
+ */
+export async function createServingTeamImpl(
+  ctx: MutationCtx,
+  args: {
+    groupId: Id<"groups">;
+    communityId: Id<"communities">;
+    name: string;
+    description?: string;
+    createdById: Id<"users">;
+    withChannel?: boolean;
+  },
+): Promise<{ teamId: Id<"teams">; channelId: Id<"chatChannels"> | null }> {
+  const name = validateName(args.name);
+  const now = Date.now();
+  const withChannel = args.withChannel ?? true;
+
+  // The team's chat channel: a custom channel flagged as a serving team.
+  // Membership is auto-synced from assignments (ADR-023), so the creator
+  // is not added as a member — they manage it as a group leader.
+  const channelId = withChannel
+    ? await createTeamChannel(ctx, {
+        groupId: args.groupId,
+        name,
+        description: args.description,
+        createdById: args.createdById,
+        now,
+      })
+    : undefined;
+
+  const teamId = await ctx.db.insert("teams", {
+    groupId: args.groupId,
+    communityId: args.communityId,
+    name,
+    description: args.description,
+    channelId,
+    createdAt: now,
+    createdById: args.createdById,
+    updatedAt: now,
+  });
+
+  return { teamId, channelId: channelId ?? null };
+}
+
+/**
  * Create a serving team (ADR-025).
  *
  * By default the team also gets a chat channel — a `custom` channel flagged
@@ -113,35 +166,14 @@ export const createServingTeam = mutation({
     const userId = await requireAuth(ctx, args.token);
     const group = await requireGroupScheduler(ctx, args.groupId, userId);
 
-    const name = validateName(args.name);
-    const now = Date.now();
-    const withChannel = args.withChannel ?? true;
-
-    // The team's chat channel: a custom channel flagged as a serving team.
-    // Membership is auto-synced from assignments (ADR-023), so the creator
-    // is not added as a member — they manage it as a group leader.
-    const channelId = withChannel
-      ? await createTeamChannel(ctx, {
-          groupId: args.groupId,
-          name,
-          description: args.description,
-          createdById: userId,
-          now,
-        })
-      : undefined;
-
-    const teamId = await ctx.db.insert("teams", {
+    return createServingTeamImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
-      name,
+      name: args.name,
       description: args.description,
-      channelId,
-      createdAt: now,
       createdById: userId,
-      updatedAt: now,
+      withChannel: args.withChannel,
     });
-
-    return { teamId, channelId: channelId ?? null };
   },
 });
 

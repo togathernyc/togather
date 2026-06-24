@@ -139,7 +139,9 @@ import type * as functions_scheduling_index from "../functions/scheduling/index.
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
 import type * as functions_scheduling_people from "../functions/scheduling/people.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
+import type * as functions_scheduling_presence from "../functions/scheduling/presence.js";
 import type * as functions_scheduling_publicAvailability from "../functions/scheduling/publicAvailability.js";
+import type * as functions_scheduling_quickStart from "../functions/scheduling/quickStart.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_roster from "../functions/scheduling/roster.js";
 import type * as functions_scheduling_songs from "../functions/scheduling/songs.js";
@@ -171,6 +173,7 @@ import type * as functions_uploads from "../functions/uploads.js";
 import type * as functions_userProfiles from "../functions/userProfiles.js";
 import type * as functions_users from "../functions/users.js";
 import type * as http from "../http.js";
+import type * as lib_apiKeys from "../lib/apiKeys.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ee_emailTemplates from "../lib/ee/emailTemplates.js";
 import type * as lib_email_templates_BaseLayout from "../lib/email/templates/BaseLayout.js";
@@ -345,7 +348,9 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
   "functions/scheduling/people": typeof functions_scheduling_people;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
+  "functions/scheduling/presence": typeof functions_scheduling_presence;
   "functions/scheduling/publicAvailability": typeof functions_scheduling_publicAvailability;
+  "functions/scheduling/quickStart": typeof functions_scheduling_quickStart;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/roster": typeof functions_scheduling_roster;
   "functions/scheduling/songs": typeof functions_scheduling_songs;
@@ -377,6 +382,7 @@ declare const fullApi: ApiFromModules<{
   "functions/userProfiles": typeof functions_userProfiles;
   "functions/users": typeof functions_users;
   http: typeof http;
+  "lib/apiKeys": typeof lib_apiKeys;
   "lib/auth": typeof lib_auth;
   "lib/ee/emailTemplates": typeof lib_ee_emailTemplates;
   "lib/email/templates/BaseLayout": typeof lib_email_templates_BaseLayout;

@@ -3078,4 +3078,32 @@ export default defineSchema({
     type: v.string(),
     sentAt: v.number(),
   }).index("by_prayer_type", ["prayerId", "type"]),
+
+  /**
+   * Lightweight live presence for the roster grid (#477) — "who else is
+   * viewing/editing this roster right now". Convex-native: a heartbeat row per
+   * (gridKey, user), refreshed every few seconds by the client; a reactive
+   * `listViewers` query returns whoever's row is within the staleness window.
+   * No external presence service.
+   *
+   * `gridKey` is the rostering group's id as a string — the grid is scoped per
+   * campus group (`rosterMatrix({ groupId })`), so the group id is the natural
+   * stable grid scope. `name`/`avatarUrl` are denormalized from the user at
+   * heartbeat time so `listViewers` needs no per-row user join. Staleness is
+   * enforced read-side in `listViewers` (rows older than the window are
+   * filtered out), so a missed `leave` self-heals; a cleanup cron is optional.
+   */
+  rosterPresence: defineTable({
+    /** The grid scope — the rostering group's id, as a string. */
+    gridKey: v.string(),
+    userId: v.id("users"),
+    /** Unix ms of the last heartbeat. Drives the staleness filter. */
+    lastSeenAt: v.number(),
+    /** Denormalized display name (snapshot at heartbeat). */
+    name: v.string(),
+    /** Denormalized resolved avatar URL, if any (snapshot at heartbeat). */
+    avatarUrl: v.optional(v.string()),
+  })
+    .index("by_gridKey", ["gridKey"])
+    .index("by_gridKey_user", ["gridKey", "userId"]),
 });

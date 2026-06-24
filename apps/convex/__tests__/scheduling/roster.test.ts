@@ -126,6 +126,102 @@ describe("rosterMatrix", () => {
     expect(adminRow?.availableCount).toBe(1);
   });
 
+  it("pendingCount counts assignments orphaned by a removed needed role", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const eventDate = Date.now() + 7 * DAY;
+    const plan = await createPlan(t, leader, world.groupId, "Service", eventDate);
+
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leader,
+      planId: plan,
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+    });
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leader,
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+    });
+
+    // Baseline: one unconfirmed assignment, surfaced as a cell AND in pendingCount.
+    let m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    expect(m.roleCells[`${world.roleId}:${plan}`]?.occupants).toHaveLength(1);
+    expect(m.events.find((e) => e._id === plan)?.pendingCount).toBe(1);
+
+    // Remove the needed role: deletes the neededRoles row but leaves the
+    // assignment orphaned (no cell). `markPublished` still notifies that
+    // volunteer (it counts by_plan), so pendingCount must stay 1 — otherwise
+    // the grid's publish confirm dialog would undercount the fan-out.
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leader,
+      planId: plan,
+      roles: [],
+    });
+
+    m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    expect(m.roleCells[`${world.roleId}:${plan}`]).toBeUndefined();
+    expect(m.events.find((e) => e._id === plan)?.pendingCount).toBe(1);
+  });
+
+  it("includes a brand-new team + role with no needed-roles or assignments", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // A plan exists, but the freshly-added team/role below are NEVER referenced
+    // by any needed-role or assignment — exactly the inline "＋ Add team" /
+    // "＋ Add role" case. They must still surface as empty assignable rows.
+    const eventDate = Date.now() + 7 * DAY;
+    const plan = await createPlan(t, leader, world.groupId, "Service", eventDate);
+
+    const { emptyTeamId, emptyRoleId } = await t.run(async (ctx) => {
+      const emptyTeamId = await ctx.db.insert("teams", {
+        groupId: world.groupId,
+        communityId: world.communityId,
+        name: "Hospitality",
+        isArchived: false,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+        updatedAt: Date.now(),
+      });
+      const emptyRoleId = await ctx.db.insert("teamRoles", {
+        teamId: emptyTeamId,
+        communityId: world.communityId,
+        name: "Greeter",
+        sortOrder: 0,
+        defaultNeeded: 1,
+        isArchived: false,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+      });
+      return { emptyTeamId, emptyRoleId };
+    });
+
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+
+    // The empty team + role appear as rows even with no needed-roles / assigns.
+    expect(m.teams.some((tm) => tm.teamId === emptyTeamId)).toBe(true);
+    const greeter = m.roles.find((r) => r.roleId === emptyRoleId);
+    expect(greeter).toBeDefined();
+    expect(greeter?.teamId).toBe(emptyTeamId);
+    expect(greeter?.roleName).toBe("Greeter");
+
+    // No roleCell (0 needed) and it contributes 0 to the plan's needed tally.
+    expect(m.roleCells[`${emptyRoleId}:${plan}`]).toBeUndefined();
+    expect(m.eventCounts[plan].neededTotal).toBe(0);
+    expect(m.eventCounts[plan].openSlots).toBe(0);
+  });
+
   it("rejects a non-scheduler", async () => {
     const { t, world } = await setup();
     const member = (await generateTokens(world.channelMemberId)).accessToken;
