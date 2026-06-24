@@ -261,10 +261,15 @@ export function RosterGridScreen() {
   const ROW_H = 52;
   const SECTION_H = 28;
   // The header row is a plain tally column on mobile and a richer inline plan
-  // editor on desktop (title + date/times + run-sheet), so it's taller there.
-  // Only the header cells share this height — body cells use ROW_H — so growing
-  // it doesn't disturb frozen-column/body alignment.
-  const HEADER_H = isWide ? 132 : 70;
+  // editor on desktop (title row + date text + tally + run-sheet button), so
+  // it's taller there. Sized to fit that simplified content snugly: the desktop
+  // header stacks a ~22px title row, a ~16px date row, a 14px tally, and a ~16px
+  // run-sheet button (gap 2 each + 12px vertical padding ≈ 86px). The earlier
+  // 132 was sized for the removed inline date/time INPUT boxes and left an
+  // obvious empty gap. The cell uses `minHeight` so nothing clips. Only the
+  // header cells share this height — body cells use ROW_H — so it doesn't
+  // disturb frozen-column/body alignment.
+  const HEADER_H = isWide ? 88 : 70;
   // Minimum legible column width per platform. On desktop the cells region
   // grows to fill the viewport (see `CELL_W` below) so a 1–2 date roster reads
   // as a real table rather than a sliver hugging the left edge. There is no
