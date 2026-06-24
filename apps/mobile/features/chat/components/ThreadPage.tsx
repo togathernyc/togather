@@ -26,11 +26,11 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
-import { useMutation, api, useStoredAuthToken } from "@services/api/convex";
+import { useMutation, useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { useParentMessage } from "../hooks/useParentMessage";
 import { useThreadReplies } from "../hooks/useThreadReplies";
 import { useGroupDetails } from "../../groups/hooks/useGroupDetails";
-import { ThreadHeader } from "./ThreadHeader";
+import { ThreadHeader, type ThreadNotificationState } from "./ThreadHeader";
 import { MessageItem } from "./MessageItem";
 import { MessageInput } from "./MessageInput";
 import { MessageActionsOverlay } from "./MessageActionsOverlay";
@@ -79,6 +79,37 @@ export function ThreadPage({
   const toggleReactionMutation = useMutation(api.functions.messaging.reactions.toggleReaction);
   const deleteMessageMutation = useMutation(api.functions.messaging.messages.deleteMessage);
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
+
+  // Per-thread notification preference (bell control in the header).
+  const setThreadSubscriptionMutation = useMutation(
+    api.functions.messaging.threadSubscriptions.setThreadSubscription,
+  );
+  const threadSubscription = useQuery(
+    api.functions.messaging.threadSubscriptions.getThreadSubscription,
+    token ? { token, threadId: messageId } : "skip",
+  );
+  // The query's return type widens `state` to `string` over the wire; the
+  // backend constrains it to the ThreadNotificationState union.
+  const notificationState =
+    (threadSubscription?.state as ThreadNotificationState | undefined) ??
+    "default";
+
+  // Cycle the bell: mentions-only (default) → all replies → muted → default.
+  const handleToggleNotifications = useCallback(async () => {
+    if (!token) return;
+    const next: ThreadNotificationState =
+      notificationState === "default"
+        ? "all"
+        : notificationState === "all"
+          ? "none"
+          : "default";
+    try {
+      await setThreadSubscriptionMutation({ token, threadId: messageId, state: next });
+    } catch (error) {
+      console.error("[ThreadPage] Failed to update thread notifications:", error);
+      Alert.alert("Error", "Failed to update notification settings.");
+    }
+  }, [token, notificationState, messageId, setThreadSubscriptionMutation]);
 
   // Message actions overlay state
   const [overlayVisible, setOverlayVisible] = useState(false);
@@ -247,7 +278,12 @@ export function ThreadPage({
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={0}
     >
-      <ThreadHeader channelName={channelName} onBack={handleBack} />
+      <ThreadHeader
+        channelName={channelName}
+        onBack={handleBack}
+        notificationState={notificationState}
+        onToggleNotifications={handleToggleNotifications}
+      />
 
       <View style={[styles.content, { backgroundColor: colors.surfaceSecondary }]}>
         <FlashList
