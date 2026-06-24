@@ -209,8 +209,18 @@ export function DateColumnHeaderEditor({
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
       if (!date) return;
+      const ms = date.getTime();
+      // Guard against intermediate/invalid values while typing into the native
+      // date input. Editing the year digit-by-digit briefly yields a complete
+      // but absurd date (e.g. year 0026); without this guard that gets saved as
+      // `eventDate`, shoving the plan into the far past so it drops out of the
+      // upcoming-only grid and looks like the plan was deleted. Only persist a
+      // valid, plausibly-dated value; ignore the keystrokes in between.
+      if (Number.isNaN(ms)) return;
+      const year = date.getFullYear();
+      if (year < 2000 || year > 3000) return;
       try {
-        await updateEvent({ planId: event._id, eventDate: date.getTime() });
+        await updateEvent({ planId: event._id, eventDate: ms });
       } catch (e) {
         notify("Couldn't update date", errMessage(e));
       }
