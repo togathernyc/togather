@@ -58,6 +58,7 @@ import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
 import { EventEditorPanel } from "./EventEditorPanel";
 import { DateColumnHeaderEditor } from "./DateColumnHeaderEditor";
+import { TeamChannelToggle } from "./TeamChannelToggle";
 
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
@@ -75,7 +76,12 @@ type RosterEvent = {
   pendingCount: number;
 };
 
-type RosterTeam = { teamId: Id<"teams">; teamName: string };
+type RosterTeam = {
+  teamId: Id<"teams">;
+  teamName: string;
+  hasChannel: boolean;
+  channelMemberCount: number;
+};
 
 type RosterRole = {
   roleId: Id<"teamRoles">;
@@ -152,6 +158,13 @@ type RoleRow =
   | { kind: "section"; teamId: string; teamName: string }
   | { kind: "role"; role: RosterRole }
   | { kind: "addRole"; teamId: Id<"teams">; teamName: string }
+  | {
+      kind: "enableChat";
+      teamId: Id<"teams">;
+      teamName: string;
+      hasChannel: boolean;
+      channelMemberCount: number;
+    }
   | { kind: "addTeam" };
 
 /** A team header or role row the leader has right-clicked to delete. */
@@ -672,6 +685,13 @@ export function RosterGridScreen() {
         kind: "addRole",
         teamId: team.teamId,
         teamName: team.teamName,
+      });
+      out.push({
+        kind: "enableChat",
+        teamId: team.teamId,
+        teamName: team.teamName,
+        hasChannel: team.hasChannel,
+        channelMemberCount: team.channelMemberCount,
       });
     }
     // Trailing "＋ Add team". When a team is isolated, hide it so the rows stay
@@ -1447,6 +1467,29 @@ export function RosterGridScreen() {
             </View>
           );
         }
+        if (r.kind === "enableChat") {
+          return (
+            <View
+              key={`enablechat-${r.teamId}`}
+              style={[
+                styles.addRow,
+                {
+                  width: NAME_W,
+                  height: ROW_H,
+                  backgroundColor: colors.surface,
+                  borderBottomColor: colors.border,
+                },
+              ]}
+            >
+              <TeamChannelToggle
+                teamId={r.teamId}
+                teamName={r.teamName}
+                hasChannel={r.hasChannel}
+                channelMemberCount={r.channelMemberCount}
+              />
+            </View>
+          );
+        }
         if (r.kind === "addTeam") {
           return (
             <View
@@ -1587,13 +1630,19 @@ export function RosterGridScreen() {
               />
             );
           }
-          // The "＋ Add role" / "＋ Add team" rows live only in the frozen
-          // column; the body renders an empty spacer of the SAME height so the
-          // synced vertical scroll + frozen-column alignment stay intact.
-          if (r.kind === "addRole" || r.kind === "addTeam") {
+          // The "＋ Add role" / "＋ Add team" / "Enable chat" rows live only in
+          // the frozen column; the body renders an empty spacer of the SAME
+          // height so the synced vertical scroll + frozen-column alignment stay.
+          if (r.kind === "addRole" || r.kind === "addTeam" || r.kind === "enableChat") {
+            const key =
+              r.kind === "addRole"
+                ? `addrole-${r.teamId}`
+                : r.kind === "enableChat"
+                  ? `enablechat-${r.teamId}`
+                  : "addteam";
             return (
               <View
-                key={r.kind === "addRole" ? `addrole-${r.teamId}` : "addteam"}
+                key={key}
                 style={[
                   styles.row,
                   {
