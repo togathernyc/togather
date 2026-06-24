@@ -121,11 +121,46 @@ export const rosterMatrix = query({
         if (doc) roleDocs.set(rid, doc);
       }),
     );
+
+    // Also fold in EVERY non-archived team of this group and its non-archived
+    // roles — even those with no needed-roles or assignments yet. Without this,
+    // a freshly inline-added team ("＋ Add team") or role ("＋ Add role") — which
+    // starts with zero needed-roles and zero assignments — never appears in the
+    // grid, so the leader can't set a needed count or assign anyone to it. Empty
+    // roles render as assignable rows (0 needed / 0 filled) and contribute 0 to
+    // any tally. Roles referenced by an archived team's old assignments still
+    // resolve via the per-reference fetch above, so removing a team doesn't drop
+    // its historical rows.
+    const groupTeams = (
+      await ctx.db
+        .query("teams")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    ).filter((t) => !t.isArchived);
+    const teamDocs = new Map<string, Doc<"teams">>();
+    for (const t of groupTeams) teamDocs.set(t._id as string, t);
+    const groupRoleLists = await Promise.all(
+      groupTeams.map((t) =>
+        ctx.db
+          .query("teamRoles")
+          .withIndex("by_team", (q) => q.eq("teamId", t._id))
+          .collect(),
+      ),
+    );
+    for (const list of groupRoleLists) {
+      for (const role of list) {
+        if (role.isArchived) continue;
+        roleDocs.set(role._id as string, role);
+      }
+    }
+
+    // Resolve any remaining referenced teams not in this group's set (e.g. a
+    // role on a team that was since archived but still has live assignments).
     const teamIds = new Set<string>();
     for (const doc of roleDocs.values()) teamIds.add(doc.teamId as string);
-    const teamDocs = new Map<string, Doc<"teams">>();
     await Promise.all(
       [...teamIds].map(async (tid) => {
+        if (teamDocs.has(tid)) return;
         const doc = await ctx.db.get(tid as Id<"teams">);
         if (doc) teamDocs.set(tid, doc);
       }),
