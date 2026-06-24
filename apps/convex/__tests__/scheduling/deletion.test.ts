@@ -134,6 +134,85 @@ describe("deleteRole", () => {
     expect(m.roles.some((r) => r.roleId === world.roleId)).toBe(false);
   });
 
+  it("only purges upcoming assignments + notifies for them; past ones are preserved", async () => {
+    const { t, world } = await setup();
+    vi.stubEnv("OTP_TEST_PHONE_NUMBERS", "+12025550003");
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // A past plan and an upcoming plan, both staffing the same role.
+    const pastPlan = await createPlan(t, leader, world.groupId, "Past Service", Date.now() - 14 * DAY);
+    const futurePlan = await createPlan(t, leader, world.groupId, "Future Service", Date.now() + 7 * DAY);
+
+    for (const planId of [pastPlan, futurePlan]) {
+      await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+        token: leader,
+        planId,
+        roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+      });
+    }
+    // Assign the same member on both plans. A past-event assignment skips the
+    // future-event guard, so seed the past row directly.
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leader,
+      planId: futurePlan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+    });
+    const pastAssignmentId = await t.run(async (ctx) => {
+      const plan = await ctx.db.get(pastPlan);
+      return ctx.db.insert("roleAssignments", {
+        planId: pastPlan,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+        eventDate: plan!.eventDate,
+        status: "confirmed",
+        assignedById: world.groupLeaderId,
+        assignedAt: Date.now(),
+      });
+    });
+
+    const res = await t.mutation(api.functions.scheduling.deletion.deleteRole, {
+      token: leader,
+      roleId: world.roleId,
+    });
+    // Only the upcoming assignment is notified.
+    expect(res.notifiedCount).toBe(1);
+    expect(await pendingNotifyJobs(t)).toBe(1);
+
+    const survived = await t.run(async (ctx) => {
+      const past = await ctx.db.get(pastAssignmentId);
+      const pastNeeded = await ctx.db
+        .query("neededRoles")
+        .withIndex("by_plan", (q) => q.eq("planId", pastPlan))
+        .collect();
+      const futureNeeded = await ctx.db
+        .query("neededRoles")
+        .withIndex("by_plan", (q) => q.eq("planId", futurePlan))
+        .collect();
+      const futureAssigns = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", futurePlan))
+        .collect();
+      return {
+        pastExists: past !== null,
+        pastNeeded: pastNeeded.length,
+        futureNeeded: futureNeeded.length,
+        futureAssigns: futureAssigns.length,
+      };
+    });
+    // Past assignment + neededRole untouched; upcoming ones purged.
+    expect(survived).toEqual({
+      pastExists: true,
+      pastNeeded: 1,
+      futureNeeded: 0,
+      futureAssigns: 0,
+    });
+
+    await t.finishInProgressScheduledFunctions();
+  });
+
   it("sends no text when nobody is staffed", async () => {
     const { t, world } = await setup();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;

@@ -6,8 +6,9 @@
  * role is *archived* (`isArchived: true`), never hard-deleted, so historical
  * assignments on past events still resolve. What we DO hard-delete is the
  * forward-looking scheduling state — `neededRoles` rows and `roleAssignments`
- * across all of the group's plans — because a deleted role/team must vanish
- * from every upcoming event's roster.
+ * on the group's UPCOMING plans only (event date >= start of today) — because a
+ * deleted role/team must vanish from every upcoming event's roster. Past plans'
+ * neededRoles/assignments are left intact so historical rosters survive.
  *
  * Anyone still staffed on a future event is texted that their role was
  * removed, reusing the exact SMS primitive the publish path uses
@@ -52,30 +53,62 @@ const removedAssignmentValidator = v.object({
   eventDate: v.number(),
 });
 
+/** Start-of-today (local) cutoff — mirrors `roster.ts`'s upcoming convention. */
+function startOfTodayMs(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 /**
- * Delete `roleAssignments` + `neededRoles` for a set of roles across all of a
- * group's plans, returning the affected (user, role, date) tuples so the
- * caller can notify them. Only assignments whose `status !== "declined"` are
- * reported — a volunteer who already declined isn't "staffed" and shouldn't be
- * texted. Shared by `deleteRole` (one role) and `deleteTeam` (all the team's
- * roles).
+ * Collect the IDs of a group's UPCOMING plans (event date >= start of today),
+ * fetched once so the cascade can test plan membership without an N+1 lookup
+ * per `neededRoles` row.
+ */
+async function upcomingPlanIds(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+): Promise<Set<Id<"eventPlans">>> {
+  const cutoff = startOfTodayMs();
+  const plans = await ctx.db
+    .query("eventPlans")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+  return new Set(
+    plans.filter((p) => p.eventDate >= cutoff).map((p) => p._id),
+  );
+}
+
+/**
+ * Delete `roleAssignments` + `neededRoles` for a set of roles across the
+ * group's UPCOMING plans only, returning the affected (user, role, date)
+ * tuples so the caller can notify them. Past plans are left intact: their
+ * historical rosters must survive and we must not text anyone about a service
+ * that already happened.
+ *
+ * Only assignments whose `status !== "declined"` are reported — a volunteer
+ * who already declined isn't "staffed" and shouldn't be texted. Shared by
+ * `deleteRole` (one role) and `deleteTeam` (all the team's roles).
  */
 async function cascadeDeleteRoles(
   ctx: MutationCtx,
   roleIds: Set<Id<"teamRoles">>,
   roleNameById: Map<Id<"teamRoles">, string>,
+  upcomingPlans: Set<Id<"eventPlans">>,
 ): Promise<RemovedAssignment[]> {
   const removed: RemovedAssignment[] = [];
+  const cutoff = startOfTodayMs();
 
   for (const roleId of roleIds) {
     // Assignments for this role across every plan (the `by_role` index spans
-    // all plans, so we don't need to enumerate plans ourselves).
+    // all plans). Filter to upcoming events by the denormalized `eventDate`.
     const assignments = await ctx.db
       .query("roleAssignments")
       .withIndex("by_role", (q) => q.eq("roleId", roleId))
       .collect();
 
     for (const a of assignments) {
+      if (a.eventDate < cutoff) continue; // past event — leave the row intact
       if (a.status !== "declined") {
         removed.push({
           userId: a.userId,
@@ -86,13 +119,14 @@ async function cascadeDeleteRoles(
       await ctx.db.delete(a._id);
     }
 
-    // neededRoles for this role (the `by_plan_team` index is plan-scoped, so
-    // we filter the role's team rows by roleId — a small set per plan).
+    // neededRoles for this role. They carry no date, so test membership against
+    // the group's pre-collected upcoming-plan set (avoids per-row plan lookups).
     const needed = await ctx.db
       .query("neededRoles")
       .filter((q) => q.eq(q.field("roleId"), roleId))
       .collect();
     for (const n of needed) {
+      if (!upcomingPlans.has(n.planId)) continue; // past plan — leave intact
       await ctx.db.delete(n._id);
     }
   }
@@ -124,10 +158,12 @@ export const deleteRole = mutation({
     }
     await requireGroupScheduler(ctx, team.groupId, userId);
 
+    const upcomingPlans = await upcomingPlanIds(ctx, team.groupId);
     const removed = await cascadeDeleteRoles(
       ctx,
       new Set([args.roleId]),
       new Map([[args.roleId, role.name]]),
+      upcomingPlans,
     );
 
     await ctx.db.patch(args.roleId, { isArchived: true });
@@ -175,7 +211,13 @@ export const deleteTeam = mutation({
     const roleIds = new Set(liveRoles.map((r) => r._id));
     const roleNameById = new Map(liveRoles.map((r) => [r._id, r.name]));
 
-    const removed = await cascadeDeleteRoles(ctx, roleIds, roleNameById);
+    const upcomingPlans = await upcomingPlanIds(ctx, team.groupId);
+    const removed = await cascadeDeleteRoles(
+      ctx,
+      roleIds,
+      roleNameById,
+      upcomingPlans,
+    );
 
     for (const r of liveRoles) {
       await ctx.db.patch(r._id, { isArchived: true });
