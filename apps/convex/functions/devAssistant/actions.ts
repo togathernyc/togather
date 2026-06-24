@@ -150,6 +150,10 @@ export const dispatchBug = internalAction({
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          // Required on every api.anthropic.com endpoint, including the
+          // Claude Code routine fire endpoint — without it the gateway
+          // rejects the request with 400 "anthropic-version: header is required".
+          "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify(payload),
       });

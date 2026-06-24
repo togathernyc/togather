@@ -2,9 +2,11 @@
  * Tests for the dev-assistant bug lifecycle DB ops (functions/devAssistant/bugs.ts).
  *
  * Covers the state machine guards, dispatch idempotency (markDispatched), and
- * callback idempotency/transition handling (applyCallback). The agent loop,
- * OpenAI calls, and outbound routine POST are out of scope here — this exercises
- * the pure DB transitions the rest of the pipeline depends on.
+ * callback idempotency/transition handling (applyCallback). The agent loop and
+ * OpenAI calls are out of scope here — this exercises the pure DB transitions
+ * the rest of the pipeline depends on, plus the required headers on the outbound
+ * routine POST (the Claude Code fire endpoint rejects requests missing
+ * anthropic-version).
  */
 
 import { convexTest } from "convex-test";
@@ -231,5 +233,52 @@ describe("dev-assistant bug lifecycle", () => {
     );
     expect(replay?.status).toBe("READY_TO_MERGE");
     expect(replay?.lastError).toContain("Ignored callback transition");
+  });
+});
+
+describe("dev-assistant routine dispatch", () => {
+  const ROUTINE_ENV = {
+    CLAUDE_ROUTINES_TRIGGER_URL:
+      "https://api.anthropic.com/v1/claude_code/routines/trig_test/fire",
+    CLAUDE_ROUTINES_TOKEN: "test-token",
+    CONVEX_SITE_URL: "https://example.convex.site",
+  } as const;
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const key of Object.keys(ROUTINE_ENV)) delete process.env[key];
+  });
+
+  test("dispatchBug sends the required anthropic-version header", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { communityId, channelId, userId } = await seedContext(t);
+    const { bugId } = await t.mutation(
+      internal.functions.devAssistant.bugs.createBug,
+      { communityId, channelId, originatorUserId: userId, title: "T", body: "B" },
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bugId, { status: "READY_FOR_IMPL" });
+    });
+
+    Object.assign(process.env, ROUTINE_ENV);
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toMatchObject({
+      "anthropic-version": "2023-06-01",
+    });
+
+    // The endpoint accepted it, so the bug stays in the dispatched lane.
+    const bug = await t.query(internal.functions.devAssistant.bugs.getBug, {
+      bugId,
+    });
+    expect(bug?.status).toBe("IN_PROGRESS");
   });
 });
