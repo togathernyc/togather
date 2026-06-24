@@ -66,6 +66,9 @@ export function parseMessageContent(content: string): ContentPart[] {
 
   let lastIndex = 0;
   for (const m of allMatches) {
+    // Skip matches that overlap with already-consumed content (e.g. a URL
+    // inside **…** is consumed by the bold match that comes first).
+    if (m.index < lastIndex) continue;
     if (m.index > lastIndex) {
       parts.push({ type: 'text', value: content.substring(lastIndex, m.index) });
     }
