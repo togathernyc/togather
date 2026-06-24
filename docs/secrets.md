@@ -137,6 +137,13 @@ One-time per deployment (any environment), create the sentinel bot user so
 npx convex run migrations/ensureDevAssistantBotUser:ensureDevAssistantBotUser
 ```
 
+> **Use in staff-only channels.** `@Togather` is staff/superuser-gated at the
+> originator and the bug-review card is staff-gated, but its status posts (PR
+> links, "Code's up", merge link) are normal bot messages visible to — and
+> push to — all channel members. Only mention `@Togather` in channels where
+> every member is staff. (Accepted MVP limitation; the full fix is to gate the
+> bot to all-staff channels or route status through a staff-gated surface.)
+
 ### Development Settings
 
 | Secret | Description |

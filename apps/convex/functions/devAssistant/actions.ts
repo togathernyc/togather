@@ -248,6 +248,12 @@ export const handleRoutineCallback = internalAction({
     const mentionedUserIds: Id<"users">[] | undefined =
       args.status === "READY_TO_MERGE" ? [updated.originatorUserId] : undefined;
 
+    // KNOWN LIMITATION (MVP, accepted): these status posts (PR links, "Code's
+    // up", merge link) are plain bot messages, so they're visible to — and push
+    // to — every member of the channel, not just staff. Unlike the bug card,
+    // they are not staff-gated. @Togather is therefore intended for staff-only
+    // channels; mentioning it in a channel with non-staff members will surface
+    // internal PR links/status to them. See docs/secrets.md.
     await ctx.runMutation(internal.functions.scheduledJobs.insertBotMessage, {
       channelId: updated.channelId,
       content,
