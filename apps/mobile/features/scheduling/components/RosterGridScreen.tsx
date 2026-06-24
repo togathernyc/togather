@@ -818,18 +818,35 @@ export function RosterGridScreen() {
     if (settingUp) return;
     setSettingUp(true);
     try {
-      const result = await quickStartRostering({ groupId });
+      // Compute the default plan date CLIENT-side (leader-local next-Sunday-9 AM)
+      // with the SAME helper `handleAddDate` uses, so the quick-start and manual
+      // paths agree for non-UTC churches instead of using the server timezone.
+      const result = await quickStartRostering({
+        groupId,
+        startsAt: nextSundayAtNine().getTime(),
+      });
       if (result.planId) {
         router.push(`/rostering/${groupId}/event/${result.planId}` as never);
+        return;
       }
-      // alreadySetUp === true → the grid query refreshes into the populated
-      // state on its own; nothing to navigate to.
+      // `alreadySetUp` with no new plan → the group already had teams or only
+      // past plans (hidden by the default upcoming filter), so quick-start
+      // created nothing. Fall back to creating/opening a plan so the CTA is
+      // never a dead tap that just clears its spinner on the empty screen.
+      await handleAddDate();
     } catch (e) {
       surfaceError("Couldn't set up rostering", e);
     } finally {
       setSettingUp(false);
     }
-  }, [settingUp, quickStartRostering, groupId, router, surfaceError]);
+  }, [
+    settingUp,
+    quickStartRostering,
+    groupId,
+    router,
+    surfaceError,
+    handleAddDate,
+  ]);
 
   // Inline "＋ Add role" under a team section → existing `createRole` mutation
   // (the same one TeamSetupScreen uses). The reactive rosterMatrix adds the new
