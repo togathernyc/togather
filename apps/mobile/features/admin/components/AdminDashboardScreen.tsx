@@ -104,6 +104,13 @@ export function AdminDashboardScreen() {
             <Text style={[styles.actionTitle, { color: colors.text }]}>Feature Flags</Text>
             <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Toggle staged rollouts</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/admin/maintainers" as any)}
+          >
+            <Text style={[styles.actionTitle, { color: colors.text }]}>Maintainers</Text>
+            <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Manage dev-assistant access</Text>
+          </TouchableOpacity>
           <View style={[styles.actionCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
             <Text style={[styles.actionTitle, { color: colors.text }]}>Groups</Text>
             <Text style={[styles.actionSubtext, { color: colors.textSecondary }]}>Manage small groups</Text>

@@ -102,7 +102,12 @@ jest.mock('../GifPicker', () => ({
 jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(),
   api: {
-    functions: { devAssistant: { index: { getBotUserId: 'getBotUserId' } } },
+    functions: {
+      devAssistant: {
+        index: { getBotUserId: 'getBotUserId' },
+        maintainers: { myAccess: 'myAccess' },
+      },
+    },
   },
 }));
 

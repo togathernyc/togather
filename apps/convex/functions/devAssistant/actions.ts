@@ -35,12 +35,13 @@ export const processThreadMention = internalAction({
     );
     if (!enabled) return;
 
-    // Staff gate — the bot only ever works for Togather staff/superusers.
+    // Access gate — the bot works for Togather staff/superusers and for
+    // delegated dev maintainers (granted via /(user)/admin/maintainers).
     const access = await ctx.runQuery(
       internal.functions.devAssistant.bugs.getUserAccess,
       { userId: args.originatorUserId },
     );
-    if (!access.isStaff && !access.isSuperuser) return;
+    if (!access.isStaff && !access.isSuperuser && !access.isMaintainer) return;
 
     // Load the thread window + screenshots + any existing bug.
     const threadCtx = await ctx.runQuery(

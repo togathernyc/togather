@@ -6,6 +6,7 @@ export { DeveloperApiKeysScreen } from "./DeveloperApiKeysScreen";
 export { DuplicateAccountsScreen } from "./DuplicateAccountsScreen";
 export { ExportBottomSheet } from "./ExportBottomSheet";
 export { FeatureFlagsContent } from "./FeatureFlagsContent";
+export { MaintainersContent } from "./MaintainersContent";
 export { GroupAttendanceDetails } from "./GroupAttendanceDetails";
 export { GroupTypeEditModal } from "./GroupTypeEditModal";
 export { PendingRequestsContent } from "./PendingRequestsContent";
