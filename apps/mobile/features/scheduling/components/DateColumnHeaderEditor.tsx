@@ -5,16 +5,18 @@
  * grid-first roster screen (≥700px) the docked plan-detail side panel is gone:
  * everything a leader edited there now lives in the column header itself.
  *
- *  - Title — tap to rename inline (debounced auto-save + blur/unmount flush,
- *    the same discipline EventEditorPanel/EventEditorScreen use so an in-flight
- *    rename is never lost).
- *  - Date + time(s) — inline DatePicker triggers; a "+ time" adds a service.
+ *  - Title — plain text; tap to rename inline (debounced auto-save +
+ *    blur/unmount flush, the same discipline EventEditorPanel/EventEditorScreen
+ *    use so an in-flight rename is never lost).
+ *  - Date — plain text; tap opens a date-only popup (just the date picker).
  *  - Run sheet — a compact button showing the item count → the run-sheet route.
  *  - A visible `⋯` button AND a web right-click (`onContextMenu`) open a context
- *    menu: Set needed roles · Add time · Open run sheet · Publish this date ·
+ *    menu: Set needed roles · Edit time · Open run sheet · Publish this date ·
  *    Duplicate · Delete — all wired to the SAME plan mutations the editor uses.
+ *    "Edit time" opens a times-only popup (list of service times with
+ *    add/change/remove).
  *
- * Narrow columns keep title + date/time visible and fold the run-sheet button
+ * Narrow columns keep title + date visible and fold the run-sheet button
  * (and everything else) into the `⋯`/right-click menu.
  *
  * Reuses the plan mutations directly (scheduling.events.updateEvent /
@@ -145,9 +147,11 @@ export function DateColumnHeaderEditor({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
-  // Date/time edit popup — the native pickers live ONLY here, never inline in
-  // the header (which previously rendered ugly always-visible input boxes).
-  const [whenEditOpen, setWhenEditOpen] = useState(false);
+  // Two separate edit popups — the native pickers live ONLY here, never inline
+  // in the header. The date is a plain-text tap in the header; times moved into
+  // the ⋯ menu ("Edit time").
+  const [dateEditOpen, setDateEditOpen] = useState(false);
+  const [timesEditOpen, setTimesEditOpen] = useState(false);
 
   // --- Title auto-save (debounced) + blur/unmount flush (reused pattern) ---
   const titleSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -243,6 +247,13 @@ export function DateColumnHeaderEditor({
     ]);
   }, [event.times, event.eventDate, saveTimes]);
 
+  const handleRemoveTimeAt = useCallback(
+    (index: number) => {
+      void saveTimes(event.times.filter((_, i) => i !== index));
+    },
+    [event.times, saveTimes],
+  );
+
   // --- Menu actions ---
   const openRunSheet = useCallback(() => {
     setMenuOpen(false);
@@ -286,12 +297,6 @@ export function DateColumnHeaderEditor({
   }, [planDoc?.roles]);
 
   const runSheetCount = runSheetItems?.length ?? 0;
-
-  // "10:00 AM · 12:00 PM" — the plain-text time summary shown in the header.
-  const timesSummary =
-    event.times.length > 0
-      ? event.times.map((t) => formatTimeLabel(new Date(t.startsAt))).join(" · ")
-      : "Add time";
 
   // RN-Web forwards unknown DOM props on the host node; onContextMenu lands on
   // the underlying <div>. The types don't know it, so we attach via a cast on a
@@ -352,7 +357,6 @@ export function DateColumnHeaderEditor({
             >
               {event.title}
             </Text>
-            <Ionicons name="pencil" size={10} color={colors.textTertiary} />
           </Pressable>
         )}
         <TouchableOpacity
@@ -366,10 +370,10 @@ export function DateColumnHeaderEditor({
         </TouchableOpacity>
       </View>
 
-      {/* Date — plain text + pencil; tapping opens the edit popup (no inline
-          native input box in the header). */}
+      {/* Date — plain text; tapping opens the date-only edit popup (no inline
+          native input box, no pencil, no times in the header). */}
       <TouchableOpacity
-        onPress={() => setWhenEditOpen(true)}
+        onPress={() => setDateEditOpen(true)}
         style={styles.whenRow}
         hitSlop={4}
         accessibilityRole="button"
@@ -381,24 +385,6 @@ export function DateColumnHeaderEditor({
         >
           {dateLabel(event.eventDate)}
         </Text>
-        <Ionicons name="pencil" size={10} color={colors.textTertiary} />
-      </TouchableOpacity>
-
-      {/* Time(s) — plain text + pencil; same edit popup. */}
-      <TouchableOpacity
-        onPress={() => setWhenEditOpen(true)}
-        style={styles.timesRow}
-        hitSlop={4}
-        accessibilityRole="button"
-        accessibilityLabel={`Edit times — ${timesSummary}`}
-      >
-        <Text
-          style={[styles.timesText, { color: colors.textSecondary }]}
-          numberOfLines={1}
-        >
-          {timesSummary}
-        </Text>
-        <Ionicons name="pencil" size={10} color={colors.textTertiary} />
       </TouchableOpacity>
 
       {/* Coverage / availability tally (rendered by the caller, view-aware). */}
@@ -461,11 +447,11 @@ export function DateColumnHeaderEditor({
               />
               <MenuItem
                 icon="time-outline"
-                label="Add time"
+                label="Edit time"
                 colors={colors}
                 onPress={() => {
                   setMenuOpen(false);
-                  handleAddTime();
+                  setTimesEditOpen(true);
                 }}
               />
               <MenuItem
@@ -505,20 +491,18 @@ export function DateColumnHeaderEditor({
         </Modal>
       )}
 
-      {/* Date / time edit popup — the actual pickers live here, not inline in
-          the header. Reuses the same save handlers (handleChangeDate /
-          handleChangeTimeAt / handleAddTime / saveTimes). Centered card over a
-          dim backdrop, matching the screen's other menus (ModalShell idiom). */}
-      {whenEditOpen && (
+      {/* Date-only edit popup — opened by tapping the plain-text date in the
+          header. Just the date picker + Done. Reuses handleChangeDate. */}
+      {dateEditOpen && (
         <Modal
           visible
           transparent
           animationType="fade"
-          onRequestClose={() => setWhenEditOpen(false)}
+          onRequestClose={() => setDateEditOpen(false)}
         >
           <Pressable
             style={styles.menuBackdrop}
-            onPress={() => setWhenEditOpen(false)}
+            onPress={() => setDateEditOpen(false)}
           >
             <Pressable
               style={[
@@ -529,10 +513,10 @@ export function DateColumnHeaderEditor({
             >
               <View style={styles.whenEditHeader}>
                 <Text style={[styles.whenEditTitle, { color: colors.text }]} numberOfLines={1}>
-                  {event.title} · date & times
+                  {event.title} · date
                 </Text>
                 <TouchableOpacity
-                  onPress={() => setWhenEditOpen(false)}
+                  onPress={() => setDateEditOpen(false)}
                   hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel="Done"
@@ -550,17 +534,67 @@ export function DateColumnHeaderEditor({
                   onChange={handleChangeDate}
                   mode="date"
                 />
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
 
-                <Text style={[styles.whenEditLabel, { color: colors.textSecondary }]}>
-                  Times
+      {/* Times-only editor — opened by the ⋯ menu's "Edit time". Lists each
+          service time (change inline) with a remove ✕, an Add time button, and
+          Done. Reuses handleChangeTimeAt / handleAddTime / handleRemoveTimeAt. */}
+      {timesEditOpen && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => setTimesEditOpen(false)}
+        >
+          <Pressable
+            style={styles.menuBackdrop}
+            onPress={() => setTimesEditOpen(false)}
+          >
+            <Pressable
+              style={[
+                styles.menuCard,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.whenEditHeader}>
+                <Text style={[styles.whenEditTitle, { color: colors.text }]} numberOfLines={1}>
+                  {event.title} · times
                 </Text>
+                <TouchableOpacity
+                  onPress={() => setTimesEditOpen(false)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Done"
+                >
+                  <Text style={[styles.whenEditDone, { color: colors.link }]}>Done</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.whenEditBody}>
                 {event.times.map((t, index) => (
-                  <DatePicker
-                    key={`${t.startsAt}-${index}`}
-                    value={new Date(t.startsAt)}
-                    onChange={(d) => handleChangeTimeAt(index, d)}
-                    mode="time"
-                  />
+                  <View key={`${t.startsAt}-${index}`} style={styles.timeEditRow}>
+                    <View style={styles.timeEditPicker}>
+                      <DatePicker
+                        value={new Date(t.startsAt)}
+                        onChange={(d) => handleChangeTimeAt(index, d)}
+                        mode="time"
+                      />
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveTimeAt(index)}
+                      hitSlop={8}
+                      style={styles.removeTime}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove time ${t.label}`}
+                    >
+                      <Ionicons name="close" size={16} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
                 ))}
                 <TouchableOpacity
                   onPress={handleAddTime}
@@ -664,13 +698,18 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   weekday: { fontSize: 11, fontWeight: "600", flexShrink: 1 },
-  timesRow: {
+  timeEditRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
+    gap: 8,
   },
-  timesText: { fontSize: 10, fontWeight: "500", flexShrink: 1 },
+  timeEditPicker: { flex: 1, minWidth: 0 },
+  removeTime: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   addTime: {
     flexDirection: "row",
     alignItems: "center",
