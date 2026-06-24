@@ -2120,9 +2120,6 @@ export function RosterGridScreen() {
       {deleteTarget && (
         <DeleteRowFlow
           target={deleteTarget}
-          events={events}
-          roles={data.roles}
-          roleCells={roleCells}
           colors={colors}
           deleteRole={deleteRole}
           deleteTeam={deleteTeam}
@@ -2981,52 +2978,6 @@ function LegendItem({
 // Delete team / role flow
 // ---------------------------------------------------------------------------
 
-/** A person staffed in the doomed team/role, with the dates they'd lose. */
-type StaffedPerson = { userId: string; userName: string; dates: number[] };
-
-/**
- * Compute the people currently staffed (non-declined) in the target team/role
- * across all visible event columns, from the already-loaded `roleCells`. This
- * is what powers the "<N> people are staffed…" confirmation — no extra query.
- */
-function staffedForTarget(
-  target: DeleteTarget,
-  events: RosterEvent[],
-  roles: RosterRole[],
-  roleCells: Record<string, RoleCell>,
-): StaffedPerson[] {
-  const roleIds =
-    target.kind === "role"
-      ? [target.roleId as string]
-      : roles
-          .filter((r) => (r.teamId as string) === (target.teamId as string))
-          .map((r) => r.roleId as string);
-
-  const byUser = new Map<string, StaffedPerson>();
-  for (const roleId of roleIds) {
-    for (const ev of events) {
-      const cell = roleCells[`${roleId}:${ev._id}`];
-      if (!cell) continue;
-      for (const o of cell.occupants) {
-        if (o.status === "declined") continue;
-        const existing = byUser.get(o.userId as string);
-        if (existing) {
-          if (!existing.dates.includes(ev.eventDate)) {
-            existing.dates.push(ev.eventDate);
-          }
-        } else {
-          byUser.set(o.userId as string, {
-            userId: o.userId as string,
-            userName: o.userName,
-            dates: [ev.eventDate],
-          });
-        }
-      }
-    }
-  }
-  return [...byUser.values()];
-}
-
 /** "Sun, Jul 5" / "Sun, Jul 5 and Sun, Jul 12" / "3 dates" — the affected-date copy. */
 function describeDates(dates: number[]): string {
   const unique = [...new Set(dates)].sort((a, b) => a - b);
@@ -3048,9 +2999,6 @@ function describeDates(dates: number[]): string {
  */
 function DeleteRowFlow({
   target,
-  events,
-  roles,
-  roleCells,
   colors,
   deleteRole,
   deleteTeam,
@@ -3060,9 +3008,6 @@ function DeleteRowFlow({
   onClose,
 }: {
   target: DeleteTarget;
-  events: RosterEvent[];
-  roles: RosterRole[];
-  roleCells: Record<string, RoleCell>;
   colors: Colors;
   deleteRole: (args: { roleId: Id<"teamRoles"> }) => Promise<unknown>;
   deleteTeam: (args: { teamId: Id<"teams"> }) => Promise<unknown>;
@@ -3082,14 +3027,23 @@ function DeleteRowFlow({
   const name = target.kind === "team" ? target.teamName : target.roleName;
   const noun = target.kind === "team" ? "team" : "role";
   const [draftName, setDraftName] = useState(name);
-  const staffed = useMemo(
-    () => staffedForTarget(target, events, roles, roleCells),
-    [target, events, roles, roleCells],
-  );
-  const allDates = useMemo(
-    () => staffed.flatMap((p) => p.dates),
-    [staffed],
-  );
+
+  // Who actually gets texted, queried server-side across ALL upcoming plans —
+  // not just the grid's visible columns (which cap at ~10 and hide past), so
+  // the warning never undercounts. Fetched lazily: only once the user opens the
+  // destructive confirm step (the menu / rename steps don't need it).
+  const wantStaffed = step === "confirm" || step === "notify";
+  const affected = useAuthenticatedQuery(
+    api.functions.scheduling.deletion.affectedByDeletion,
+    wantStaffed
+      ? target.kind === "role"
+        ? { roleId: target.roleId }
+        : { teamId: target.teamId }
+      : "skip",
+  ) as
+    | { peopleCount: number; dates: number[]; names: string[] }
+    | undefined;
+  const affectedLoading = wantStaffed && affected === undefined;
 
   const runDelete = useCallback(async () => {
     setBusy(true);
@@ -3106,14 +3060,17 @@ function DeleteRowFlow({
     }
   }, [target, deleteTeam, deleteRole, onClose, onError, noun]);
 
-  // Step 1 → either jump to the notify modal (staffed) or delete after confirm.
+  // Step 1 → jump to the notify modal when the server says people are staffed,
+  // otherwise delete straight away. Wait for the count to load first so we
+  // never silently skip the notify warning when affected events are off-screen.
   const onConfirmFirst = useCallback(() => {
-    if (staffed.length > 0) {
+    if (affected === undefined) return; // still loading — button shows a spinner
+    if (affected.peopleCount > 0) {
       setStep("notify");
     } else {
       void runDelete();
     }
-  }, [staffed.length, runDelete]);
+  }, [affected, runDelete]);
 
   const runRename = useCallback(async () => {
     const trimmed = draftName.trim();
@@ -3258,12 +3215,12 @@ function DeleteRowFlow({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={onConfirmFirst}
-                  disabled={busy}
+                  disabled={busy || affectedLoading}
                   style={[styles.deleteBtn, { backgroundColor: colors.destructive }]}
                   accessibilityRole="button"
                   accessibilityLabel="Delete"
                 >
-                  {busy ? (
+                  {busy || affectedLoading ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
                     <Text style={[styles.deleteBtnText, { color: "#fff" }]}>Delete</Text>
@@ -3279,12 +3236,16 @@ function DeleteRowFlow({
                 Delete &ldquo;{name}&rdquo;?
               </Text>
               <Text style={[styles.deleteBody, { color: colors.textSecondary }]}>
-                {staffed.length} {staffed.length === 1 ? "person is" : "people are"}{" "}
+                {affected?.peopleCount ?? 0}{" "}
+                {(affected?.peopleCount ?? 0) === 1 ? "person is" : "people are"}{" "}
                 staffed in this {noun}. They&rsquo;ll receive a text that their{" "}
-                {noun} has been removed for {describeDates(allDates)}.
+                {noun} has been removed for {describeDates(affected?.dates ?? [])}.
               </Text>
               <Text style={[styles.deleteNames, { color: colors.textTertiary }]} numberOfLines={2}>
-                {staffed.map((p) => p.userName).join(", ")}
+                {(affected?.names ?? []).join(", ")}
+                {affected && affected.names.length < affected.peopleCount
+                  ? ", …"
+                  : ""}
               </Text>
               <View style={styles.deleteActions}>
                 <TouchableOpacity
