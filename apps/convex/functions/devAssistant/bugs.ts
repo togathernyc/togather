@@ -21,6 +21,7 @@ import { internal } from "../../_generated/api";
 import { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getMediaUrl } from "../../lib/utils";
+import { DEV_MAINTAINER_ROLE } from "./maintainers";
 
 // ============================================================================
 // Status machine
@@ -384,14 +385,23 @@ export const applyCallback = internalMutation({
 // Thread context for the agent
 // ============================================================================
 
-/** Lightweight staff/superuser check used by the (action-side) gate. */
+/**
+ * Lightweight access check used by the (action-side) trigger gate. Superusers
+ * and staff have implicit access; delegated `dev_maintainer`s can summon the
+ * assistant too (but not the superuser-only review/merge ops — see
+ * maintainers.ts).
+ */
 export const getUserAccess = internalQuery({
   args: { userId: v.id("users") },
-  handler: async (ctx, args): Promise<{ isStaff: boolean; isSuperuser: boolean }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ isStaff: boolean; isSuperuser: boolean; isMaintainer: boolean }> => {
     const user = await ctx.db.get(args.userId);
     return {
       isStaff: user?.isStaff ?? false,
       isSuperuser: user?.isSuperuser ?? false,
+      isMaintainer: user?.platformRoles?.includes(DEV_MAINTAINER_ROLE) ?? false,
     };
   },
 });

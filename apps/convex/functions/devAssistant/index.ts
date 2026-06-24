@@ -6,9 +6,12 @@
  * once marked READY_FOR_IMPL hands it to a Claude Code Routine (outbound POST)
  * which writes code, opens a PR, and reports back via a signed HTTP callback.
  *
- * Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
+ * Gated behind the "dev-assistant-bot" feature flag. Triggerable by Togather
+ * staff/superusers and by delegated dev maintainers (see maintainers.ts);
+ * reviewing/merging stays superuser-only.
  *
- * - bugs.ts     — devBugs DB ops + token-authed review-screen queries
+ * - bugs.ts        — devBugs DB ops + token-authed review-screen queries
+ * - maintainers.ts — dev_maintainer role grants + trigger-access helpers
  * - agent.ts    — OpenAI tool-use loop (gpt-4o, vision for screenshots)
  * - tools.ts    — tool definitions + dispatcher
  * - prompts.ts  — brief-synthesis system prompt

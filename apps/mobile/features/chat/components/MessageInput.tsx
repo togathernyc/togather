@@ -194,18 +194,21 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const { setTyping } = useTypingIndicators(channelId);
   const { members: baseMembers } = useChannelMembers(channelId);
 
-  // Dev-assistant bot: staff/superusers can @mention @Togather. Gated behind
-  // the dev-assistant-bot flag. The synthetic entry is appended to the member
-  // list so both the autocomplete dropdown and the @[Display Name] -> userId
-  // resolver (extractMentionedUserIds) see it.
-  const { user: currentAuthUser } = useAuth();
+  // Dev-assistant bot: staff/superusers and delegated dev maintainers can
+  // @mention @Togather. Gated behind the dev-assistant-bot flag. The synthetic
+  // entry is appended to the member list so both the autocomplete dropdown and
+  // the @[Display Name] -> userId resolver (extractMentionedUserIds) see it.
+  // `canUseAssistant` is the same gate the server enforces on trigger.
+  const { token } = useAuth();
   const { enabled: devAssistantFlagEnabled } = useConvexFeatureFlag(
     "dev-assistant-bot",
   );
+  const assistantAccess = useQuery(
+    api.functions.devAssistant.maintainers.myAccess,
+    token && devAssistantFlagEnabled ? { token } : "skip",
+  );
   const canMentionBot =
-    (currentAuthUser?.is_superuser === true ||
-      currentAuthUser?.is_staff === true) &&
-    devAssistantFlagEnabled;
+    devAssistantFlagEnabled && assistantAccess?.canUseAssistant === true;
   const botUserId = useQuery(
     api.functions.devAssistant.index.getBotUserId,
     canMentionBot ? {} : "skip",
