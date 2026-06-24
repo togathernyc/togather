@@ -12,7 +12,22 @@
  * always already inside the right community context.
  */
 import { router } from "expo-router";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
+
+/**
+ * Normalize a pre-computed notification link into something expo-router can
+ * navigate to in-app. Some backend notifications stored an absolute app URL
+ * (e.g. `https://togather.nyc/scheduling/assignment/x`); expo-router treats an
+ * absolute `https://…` URL as an external link and hands it to the browser
+ * instead of routing within the app. Strip our own origin down to a relative
+ * path so the tap opens the app. Non-app (genuinely external) URLs pass
+ * through untouched.
+ */
+function toInAppLink(url: string): string {
+  const origin = DOMAIN_CONFIG.appUrl;
+  return url.startsWith(`${origin}/`) ? url.slice(origin.length) : url;
+}
 
 /**
  * Side-effecting dependencies the resolver needs. NotificationProvider passes
@@ -51,7 +66,7 @@ export async function resolveNotificationNavigation(
 
   // A pre-computed URL always wins.
   if (url) {
-    router.push(url as never);
+    router.push(toInAppLink(url) as never);
     return;
   }
 
