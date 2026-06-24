@@ -106,26 +106,72 @@ describe("searchCommunityPeople", () => {
     if (casey) expect(casey.isPlaceholder).toBe(false);
   });
 
-  it("limit caps the result count; default applies when omitted", async () => {
+  it("empty search returns the FULL group list regardless of `limit` (FR-1)", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
 
-    const unlimited = await t.query(
+    // On empty search, completeness takes precedence over the recency cap
+    // (roster #477 FR-1.1) — passing a tiny `limit` must NOT truncate group
+    // members away. This is the inverse of the pre-#477 behavior.
+    const full = await t.query(
       api.functions.scheduling.people.searchCommunityPeople,
       { token: leaderToken, groupId: world.groupId, search: "" },
     );
-
-    const limited = await t.query(
+    const tinyLimit = await t.query(
       api.functions.scheduling.people.searchCommunityPeople,
       { token: leaderToken, groupId: world.groupId, search: "", limit: 2 },
     );
-    expect(limited).toHaveLength(2);
 
-    // Default limit applies — the world has fewer than 30 candidates, so the
-    // unlimited call returns everything that matched (no truncation).
-    // This protects against a regression that drops the default cap.
-    expect(unlimited.length).toBeGreaterThan(limited.length);
-    expect(unlimited.length).toBeLessThanOrEqual(30);
+    // Both must contain every active group member (caller excluded).
+    const inGroupFull = full.filter((r) => r.inGroup).map((r) => r.userId);
+    const inGroupTiny = tinyLimit.filter((r) => r.inGroup).map((r) => r.userId);
+    expect(new Set(inGroupTiny)).toEqual(new Set(inGroupFull));
+    expect(inGroupFull).toContain(world.channelAdminId);
+    expect(inGroupFull).toContain(world.channelMemberId);
+    expect(inGroupFull).toContain(world.staleGroupMemberId);
+  });
+
+  it("surfaces a group member with the OLDEST lastLogin on empty search (FR-1.1)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // "Zeb" is an active group member whose lastLogin is the least-recent in
+    // the world — the pre-#477 recency-capped fallback dropped exactly this
+    // person until you typed their name. They MUST appear without typing.
+    const results = await t.query(
+      api.functions.scheduling.people.searchCommunityPeople,
+      { token: leaderToken, groupId: world.groupId, search: "" },
+    );
+    const stale = results.find((r) => r.userId === world.staleGroupMemberId);
+    expect(stale, "stale group member must appear on empty search").toBeDefined();
+    expect(stale!.inGroup).toBe(true);
+  });
+
+  it("typing NARROWS the empty-search set — no new names appear (FR-1.3)", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const onOpen = await t.query(
+      api.functions.scheduling.people.searchCommunityPeople,
+      { token: leaderToken, groupId: world.groupId, search: "" },
+    );
+    const onOpenIds = new Set(onOpen.map((r) => r.userId));
+
+    // "z" matches only "Zeb" (display name "Zeb Test"). The typed result must
+    // be a strict SUBSET of what was shown on open — never an expansion.
+    const typed = await t.query(
+      api.functions.scheduling.people.searchCommunityPeople,
+      { token: leaderToken, groupId: world.groupId, search: "z" },
+    );
+    expect(typed.length).toBeGreaterThan(0);
+    expect(typed.length).toBeLessThan(onOpen.length);
+    for (const r of typed) {
+      expect(
+        onOpenIds.has(r.userId),
+        `"${r.displayName}" appeared after typing but was absent on open`,
+      ).toBe(true);
+    }
+    expect(typed.map((r) => r.userId)).toContain(world.staleGroupMemberId);
   });
 
   it("rejects a non-group, non-community-admin caller with a ConvexError", async () => {

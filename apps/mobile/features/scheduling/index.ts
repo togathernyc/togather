@@ -17,16 +17,13 @@ export {
   updateCrossTeamChannelRef,
   listCrossTeamChannelsRef,
 } from "./api/crossTeamChannels";
-export { EventListScreen } from "./components/EventListScreen";
 export { EventEditorScreen } from "./components/EventEditorScreen";
+export { EventEditorPanel } from "./components/EventEditorPanel";
 export { RunSheetScreen } from "./components/RunSheetScreen";
 export { MusicianRehearsalScreen } from "./components/MusicianRehearsalScreen";
 export { MyScheduleScreen } from "./components/MyScheduleScreen";
 export { MyAvailabilityScreen } from "./components/MyAvailabilityScreen";
 export { RosterGridScreen } from "./components/RosterGridScreen";
 export { AssignmentDetailScreen } from "./components/AssignmentDetailScreen";
-
-/** Rostering hub — see ADR-024. */
-export { RosteringTopTabBar } from "./components/RosteringTopTabBar";
 export { RosteringTeamsScreen } from "./components/RosteringTeamsScreen";
 export { RosteringCrossTeamScreen } from "./components/RosteringCrossTeamScreen";

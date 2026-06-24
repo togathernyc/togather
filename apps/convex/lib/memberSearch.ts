@@ -17,6 +17,16 @@ import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "./permissions";
 import { getUsersWithNotificationsDisabled } from "./notifications/enabledStatus";
 
 /**
+ * Upper bound on candidates returned when guaranteeing a group's FULL
+ * membership on empty search (roster #477 FR-1 / FR-9). Large enough to cover
+ * a very large church group (≥500 members) so the "Assign someone" sheet never
+ * search-gates the population, while still bounding the per-row lookups. If a
+ * single group ever exceeds this, the overflow falls back to recency order —
+ * an extreme edge no real serving roster hits today.
+ */
+const GROUP_COMPLETE_LIMIT = 1000;
+
+/**
  * Base member result returned by search
  */
 export interface MemberSearchResult {
@@ -88,6 +98,20 @@ export interface MemberSearchOptions {
    * UIs surface a sensible default list before the leader types anything.
    */
   fallbackToRecentWhenEmpty?: boolean;
+  /**
+   * When set and `search` is empty, guarantee that EVERY active member of this
+   * group is in the returned candidate set — not just a recency-bounded slice
+   * (roster #477 FR-1). The rostering "Assign someone" sheet relies on this:
+   * a leader must see every assignable group member on open, including
+   * volunteers who haven't logged in recently. Group members are unioned with
+   * the recency-surfaced community members (`fallbackToRecentWhenEmpty`); the
+   * group set is exhaustive, the wider-community set stays recency-bounded
+   * (you can always type to find more community-only people).
+   *
+   * Has no effect when `search` is non-empty — typing narrows the set via the
+   * search index, which already covers every indexed member.
+   */
+  includeAllGroupMembersWhenEmpty?: Id<"groups">;
 }
 
 /**
@@ -215,11 +239,23 @@ export async function searchCommunityMembersInternal(
     limit = 30,
     includeAdminFields = false,
     fallbackToRecentWhenEmpty = false,
+    includeAllGroupMembersWhenEmpty,
   } = options;
 
   // Hard cap regardless of caller — protects the per-row notif-disabled /
   // membership lookups from quadratic blow-ups.
-  const effectiveLimit = Math.max(1, Math.min(limit, 100));
+  //
+  // When `includeAllGroupMembersWhenEmpty` is in play we must NOT truncate the
+  // group's membership away (roster #477 FR-1 / FR-9: every assignable group
+  // member must be reachable on open, even for a ≥500-member group). We raise
+  // the ceiling to GROUP_COMPLETE_LIMIT for that case so the full group set
+  // survives the final filter loop; the per-row lookups still scale with the
+  // group size, not the whole community, so this stays bounded.
+  const searchIsEmptyForGroup =
+    !!includeAllGroupMembersWhenEmpty && !(search?.trim());
+  const effectiveLimit = searchIsEmptyForGroup
+    ? Math.max(1, Math.min(limit, GROUP_COMPLETE_LIMIT))
+    : Math.max(1, Math.min(limit, 100));
   const excludeIds = new Set(excludeUserIds);
   const searchQuery = search?.trim() || "";
 
@@ -263,24 +299,71 @@ export async function searchCommunityMembersInternal(
         }
       }
     }
-  } else if (fallbackToRecentWhenEmpty) {
-    // Pull the most recently-active community members directly off the
-    // descending `by_community_lastLogin` index. We over-fetch to account
-    // for downstream filters (excluded users, isActive, etc.) but the read
-    // count is bounded by `effectiveLimit`, not community size.
-    const recentMemberships = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_community_lastLogin", (q) => q.eq("communityId", communityId))
-      .order("desc")
-      .filter((q) => q.eq(q.field("status"), 1))
-      .take(effectiveLimit * 3);
+  } else if (includeAllGroupMembersWhenEmpty || fallbackToRecentWhenEmpty) {
+    // --- Empty search ---------------------------------------------------------
+    // Two complementary sources, unioned:
+    //
+    //   1. The FULL active membership of `includeAllGroupMembersWhenEmpty`
+    //      (roster #477 FR-1). This is the completeness guarantee — every
+    //      assignable group member must appear on open, even one who never
+    //      logs in. Read off the `groupMembers.by_group` index, bounded by the
+    //      group's size (not the community's). No recency cap here.
+    //
+    //   2. The most recently-active COMMUNITY members
+    //      (`fallbackToRecentWhenEmpty`), so the leader can also see wider-
+    //      community people to add+assign. This tier stays recency-bounded —
+    //      the leader types a name to reach anyone past the cap.
+    //
+    // Order matters: gather group members first so they always survive the
+    // `effectiveLimit` truncation below; community-only recency fills the rest.
+    if (includeAllGroupMembersWhenEmpty) {
+      const groupMemberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) =>
+          q.eq("groupId", includeAllGroupMembersWhenEmpty),
+        )
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("leftAt"), undefined),
+            q.or(
+              q.eq(q.field("requestStatus"), undefined),
+              q.eq(q.field("requestStatus"), null),
+              q.eq(q.field("requestStatus"), "accepted"),
+            ),
+          ),
+        )
+        .collect();
+      const groupUsers = await Promise.all(
+        groupMemberships.map((m) => ctx.db.get(m.userId)),
+      );
+      for (const user of groupUsers) {
+        if (user && !allMatchingUsers.has(user._id)) {
+          allMatchingUsers.set(user._id, user);
+        }
+      }
+    }
 
-    const recentUsers = await Promise.all(
-      recentMemberships.map((m) => ctx.db.get(m.userId)),
-    );
-    for (const user of recentUsers) {
-      if (user && !allMatchingUsers.has(user._id)) {
-        allMatchingUsers.set(user._id, user);
+    if (fallbackToRecentWhenEmpty) {
+      // Pull the most recently-active community members directly off the
+      // descending `by_community_lastLogin` index. We over-fetch to account
+      // for downstream filters (excluded users, isActive, etc.) but the read
+      // count is bounded by `effectiveLimit`, not community size.
+      const recentMemberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community_lastLogin", (q) =>
+          q.eq("communityId", communityId),
+        )
+        .order("desc")
+        .filter((q) => q.eq(q.field("status"), 1))
+        .take(effectiveLimit * 3);
+
+      const recentUsers = await Promise.all(
+        recentMemberships.map((m) => ctx.db.get(m.userId)),
+      );
+      for (const user of recentUsers) {
+        if (user && !allMatchingUsers.has(user._id)) {
+          allMatchingUsers.set(user._id, user);
+        }
       }
     }
   } else {

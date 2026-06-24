@@ -33,6 +33,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  Share,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -40,16 +41,23 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@components/ui/Avatar";
-import { EmptyState } from "@components/ui/EmptyState";
+import { Button } from "@components/ui/Button";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
+  useAuthenticatedAction,
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import { AssignSheet } from "./AssignSheet";
+import { GridPresenceBar } from "./GridPresenceBar";
+import { EventEditorPanel } from "./EventEditorPanel";
+import { DateColumnHeaderEditor } from "./DateColumnHeaderEditor";
 
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
@@ -63,6 +71,8 @@ type RosterEvent = {
   eventDate: number;
   times: Array<{ label: string; startsAt: number }>;
   status: "draft" | "published";
+  /** Unconfirmed assignments for the plan — who publish will notify. */
+  pendingCount: number;
 };
 
 type RosterTeam = { teamId: Id<"teams">; teamName: string };
@@ -132,10 +142,17 @@ type RosterMatrix = {
 
 type ViewMode = "roles" | "people";
 
-/** A frozen-column row in the role view: a team section header or a role. */
+/**
+ * A frozen-column row in the role view: a team section header, a role, an
+ * inline "＋ Add role" affordance (one per team), or the trailing "＋ Add team"
+ * affordance. The add-* rows render in the frozen column with a matching empty
+ * spacer in the body so vertical scroll + alignment stay in sync.
+ */
 type RoleRow =
   | { kind: "section"; teamId: string; teamName: string }
-  | { kind: "role"; role: RosterRole };
+  | { kind: "role"; role: RosterRole }
+  | { kind: "addRole"; teamId: Id<"teams">; teamName: string }
+  | { kind: "addTeam" };
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -148,6 +165,15 @@ function monthDay(ms: number): string {
     month: "short",
     day: "numeric",
   });
+}
+
+/** Next Sunday at 9:00 AM local time — the neutral default for a new plan. */
+function nextSundayAtNine(): Date {
+  const d = new Date();
+  const daysUntilSunday = (7 - d.getDay()) % 7 || 7;
+  d.setDate(d.getDate() + daysUntilSunday);
+  d.setHours(9, 0, 0, 0);
+  return d;
 }
 
 /** Debounce a value by `delay` ms — same pattern as AssignSheet. */
@@ -191,10 +217,18 @@ type AssignTarget = {
   timeLabel?: string;
   assignedUserIds: Set<string>;
   keepOpenWhileUnfilled: boolean;
+  /** Current "needed" count for this role on this plan — drives the stepper. */
+  neededCount: number;
+  /**
+   * People already assigned to this role on this plan — the stepper's floor
+   * (you can't need fewer slots than are already filled).
+   */
+  assignedCount: number;
 };
 
 export function RosterGridScreen() {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -202,27 +236,77 @@ export function RosterGridScreen() {
   const groupId = group_id as Id<"groups">;
 
   const isWide = width >= 700;
-  const NAME_W = isWide ? 196 : 150;
-  const CELL_W = isWide ? 84 : 76;
+  const NAME_W = isWide ? 220 : 150;
   const ROW_H = 52;
   const SECTION_H = 28;
-  const HEADER_H = 70;
+  // The header row is a plain tally column on mobile and a richer inline plan
+  // editor on desktop (title + date/times + run-sheet), so it's taller there.
+  // Only the header cells share this height — body cells use ROW_H — so growing
+  // it doesn't disturb frozen-column/body alignment.
+  const HEADER_H = isWide ? 132 : 70;
+  // Minimum legible column width per platform. On desktop the cells region
+  // grows to fill the viewport (see `CELL_W` below) so a 1–2 date roster reads
+  // as a real table rather than a sliver hugging the left edge. There is no
+  // upper cap on the fill path: with few dates the columns expand to fill the
+  // full grid width (a single wide column is fine — far better than a 280px
+  // column with a 700px dead band beside it).
+  const MIN_CELL_W = isWide ? 150 : 76;
+
+  // Past dates are normally hidden (the grid leads with upcoming). The ⋯
+  // overflow's "Include past" toggle flips this so leaders can reach and
+  // re-run past plans — replacing the old Schedule list's "Past plans" section.
+  const [includePast, setIncludePast] = useState(false);
 
   const data = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterMatrix,
-    groupId ? { groupId } : "skip",
+    groupId ? { groupId, includePast } : "skip",
   ) as RosterMatrix | undefined;
 
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
   );
+  // Create a plan straight from the grid (the "＋ Add date" column / quick-start
+  // CTA). The reactive rosterMatrix query self-refreshes to show the new column.
+  const createEvent = useAuthenticatedMutation(
+    api.functions.scheduling.events.createEvent,
+  );
+  const quickStartRostering = useAuthenticatedMutation(
+    api.functions.scheduling.quickStart.quickStartRostering,
+  );
+  const createAvailabilityLink = useAuthenticatedMutation(
+    api.functions.scheduling.publicAvailability.createAvailabilityLink,
+  );
   const unassign = useAuthenticatedMutation(
     api.functions.scheduling.assignments.unassign,
+  );
+  // Set how many of a role are needed for a plan (the AssignSheet stepper).
+  // `setNeededRoles` REPLACES the plan's whole needed-roles set, so the handler
+  // below rebuilds the full array from `roleCells` and changes only one count.
+  const setNeededRoles = useAuthenticatedMutation(
+    api.functions.scheduling.events.setNeededRoles,
+  );
+  // Create a role inline from a team's row-header "＋ Add role" affordance.
+  const createRole = useAuthenticatedMutation(
+    api.functions.scheduling.roles.createRole,
+  );
+  // Create a serving team inline from the row-header "＋ Add team" affordance.
+  const createServingTeam = useAuthenticatedMutation(
+    api.functions.scheduling.teams.createServingTeam,
+  );
+  // Publish from the grid (#477 FR-3) — the SAME action the event editor uses,
+  // not a fork. The grid is group-scoped with multiple date columns, so the
+  // chooser below targets a specific plan (or all draft plans).
+  const publishEvent = useAuthenticatedAction(
+    api.functions.scheduling.assignments.publishEvent,
   );
 
   // --- View + filter state ---
   const [mode, setMode] = useState<ViewMode>("roles");
-  const [hiddenTeams, setHiddenTeams] = useState<Set<string>>(new Set());
+  // Team scope: a single isolated team, or null for "All teams" (#477 FR-2).
+  // Picking a team shows only its roles; "All teams" shows everything. Gates
+  // the Roles view only — People rows stay ungated.
+  const [isolatedTeamId, setIsolatedTeamId] = useState<string | null>(null);
+  const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
   const [availableOnly, setAvailableOnly] = useState(false);
   const [search, setSearch] = useState("");
@@ -281,6 +365,7 @@ export function RosterGridScreen() {
   const headerScrollRef = useRef<ScrollView>(null);
   const frozenScrollRef = useRef<ScrollView>(null);
   const [bodyH, setBodyH] = useState(0);
+  const [bodyW, setBodyW] = useState(0);
 
   const onCellsHScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     headerScrollRef.current?.scrollTo({
@@ -314,6 +399,71 @@ export function RosterGridScreen() {
     event: RosterEvent;
     note?: string;
   } | null>(null);
+  // Plan-detail panel — MOBILE ONLY now. Tapping a date-column header opens the
+  // EventEditorPanel as a bottom sheet. On desktop the header itself is the plan
+  // editor (DateColumnHeaderEditor), so there is no desktop plan dock and this
+  // stays null there. Holds only the planId — EventEditorPanel queries the rest.
+  const [planPanel, setPlanPanel] = useState<{
+    planId: Id<"eventPlans">;
+  } | null>(null);
+  // Publish chooser (#477 FR-3): which date(s) to publish & send requests.
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  // ⋯ overflow (Teams / Cross-team / Collect availability / Include past) and
+  // the in-flight states for its async actions + the "＋ Add date" column.
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [sharingLink, setSharingLink] = useState(false);
+  const [creatingEvent, setCreatingEvent] = useState(false);
+  const [settingUp, setSettingUp] = useState(false);
+
+  // Inline row-header creation (frozen left column). `addRoleForTeam` holds the
+  // team whose "＋ Add role" input is open (null = none); `addTeamOpen` toggles
+  // the trailing "＋ Add team" input. `savingRow` guards against double-submit.
+  const [addRoleForTeam, setAddRoleForTeam] = useState<Id<"teams"> | null>(null);
+  const [addRoleName, setAddRoleName] = useState("");
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [addTeamName, setAddTeamName] = useState("");
+  const [savingRow, setSavingRow] = useState(false);
+
+  // Single docked side-panel at a time (desktop). The assign panel and the two
+  // cell-management panels (role / member) all share the grid's right dock
+  // region, so opening one must close the others — otherwise two panels could
+  // render at once. On mobile these are independent overlay modals; clearing
+  // siblings is harmless there too (only one is ever opened at a time).
+  const openAssign = useCallback((target: AssignTarget) => {
+    setRoleCellModal(null);
+    setMemberCellModal(null);
+    setPlanPanel(null);
+    setAssignTarget(target);
+  }, []);
+  const openRoleCell = useCallback(
+    (payload: { role: RosterRole; event: RosterEvent }) => {
+      setAssignTarget(null);
+      setMemberCellModal(null);
+      setPlanPanel(null);
+      setRoleCellModal(payload);
+    },
+    [],
+  );
+  const openMemberCell = useCallback(
+    (payload: { member: RosterMember; event: RosterEvent }) => {
+      setAssignTarget(null);
+      setRoleCellModal(null);
+      setPlanPanel(null);
+      setMemberCellModal(payload);
+    },
+    [],
+  );
+  // Open the plan-detail bottom sheet (MOBILE) for a date column. Clears any
+  // open assign/cell panel so only one overlay is live. Unused on desktop —
+  // the column header edits the plan inline (DateColumnHeaderEditor).
+  const openPlanPanel = useCallback((planId: Id<"eventPlans">) => {
+    setAssignTarget(null);
+    setRoleCellModal(null);
+    setMemberCellModal(null);
+    setPlanPanel({ planId });
+  }, []);
 
   const surfaceError = useCallback((title: string, e: unknown) => {
     const err = e as { data?: { message?: string }; message?: string };
@@ -360,25 +510,75 @@ export function RosterGridScreen() {
   const events = data?.events ?? [];
   const roleCells = data?.roleCells ?? {};
 
-  const teamVisible = useCallback(
-    (teamId: string) => !hiddenTeams.has(teamId),
-    [hiddenTeams],
+  /**
+   * Set the needed count for one (role, plan) via `setNeededRoles`, which
+   * REPLACES the plan's entire needed-roles set. We rebuild that full set from
+   * the current `roleCells` (every role with needed > 0 on this plan), then
+   * override just the target role's count — so 0→1 ADDS the role to the date
+   * and N→0 removes it. The reactive `rosterMatrix` query refreshes the cells.
+   */
+  const handleSetNeeded = useCallback(
+    async (
+      planId: Id<"eventPlans">,
+      roleId: Id<"teamRoles">,
+      count: number,
+    ) => {
+      if (!data) return;
+      const next = data.roles
+        .map((r) => {
+          const cell = roleCells[`${r.roleId}:${planId}`];
+          const c = r.roleId === roleId ? count : (cell?.needed ?? 0);
+          return { teamId: r.teamId, roleId: r.roleId, count: c };
+        })
+        .filter((r) => r.count > 0);
+      try {
+        await setNeededRoles({ planId, roles: next });
+      } catch (e) {
+        surfaceError("Couldn't update needed", e);
+      }
+    },
+    [data, roleCells, setNeededRoles, surfaceError],
   );
 
-  const toggleTeam = useCallback((teamId: string) => {
-    setHiddenTeams((prev) => {
-      const next = new Set(prev);
-      if (next.has(teamId)) next.delete(teamId);
-      else next.add(teamId);
-      return next;
-    });
-  }, []);
+  // Column width. On mobile it's the fixed minimum (today's behavior). On
+  // desktop the date columns EXPAND to fill the available grid width — the
+  // measured body width minus the frozen NAME_W column AND the trailing
+  // "＋ Add date" column (MIN_CELL_W) — divided across the date columns, with
+  // only a MIN_CELL_W floor (no upper cap). Reserving the add-date width keeps
+  // that column on-screen at the right edge instead of being pushed off the
+  // filled grid. So 1 date fills the remaining width as one wide column, and
+  // ≥N dates fill then scroll horizontally once they hit the floor. `bodyW`
+  // re-measures whenever the grid area resizes (e.g. the assign side-panel
+  // docking shrinks it), so the fill always targets the space actually left of
+  // the panel. Frozen-column alignment is preserved since header + body share
+  // this same CELL_W.
+  const CELL_W = useMemo(() => {
+    if (!isWide || bodyW === 0 || events.length === 0) return MIN_CELL_W;
+    const avail = bodyW - NAME_W - MIN_CELL_W;
+    return Math.max(MIN_CELL_W, Math.floor(avail / events.length));
+  }, [isWide, bodyW, events.length, NAME_W, MIN_CELL_W]);
+
+  // Clear a stale isolated team once it's no longer in the loaded team list
+  // (e.g. its roles were removed). Keeps the dropdown label honest.
+  useEffect(() => {
+    if (
+      isolatedTeamId &&
+      data &&
+      !data.teams.some((t) => (t.teamId as string) === isolatedTeamId)
+    ) {
+      setIsolatedTeamId(null);
+    }
+  }, [data, isolatedTeamId]);
+
+  const isolatedTeamName = isolatedTeamId
+    ? data?.teams.find((t) => (t.teamId as string) === isolatedTeamId)?.teamName
+    : undefined;
 
   /** Roles after team + "open only" filters; grouped headers are derived on render. */
   const visibleRoles = useMemo(() => {
     if (!data) return [];
     return data.roles.filter((r) => {
-      if (!teamVisible(r.teamId as string)) return false;
+      if (isolatedTeamId && (r.teamId as string) !== isolatedTeamId) return false;
       if (openOnly) {
         // Keep only roles with at least one open slot across visible events.
         const hasOpen = events.some((ev) => {
@@ -389,7 +589,7 @@ export function RosterGridScreen() {
       }
       return true;
     });
-  }, [data, events, roleCells, teamVisible, openOnly]);
+  }, [data, events, roleCells, isolatedTeamId, openOnly]);
 
   /**
    * Interleave team section-header rows into the (already team-sorted) role
@@ -398,17 +598,32 @@ export function RosterGridScreen() {
    */
   const roleRows = useMemo<RoleRow[]>(() => {
     const out: RoleRow[] = [];
-    let lastTeam: string | null = null;
+    let lastTeam: RosterRole | null = null;
+    const flushAddRole = () => {
+      if (lastTeam) {
+        out.push({
+          kind: "addRole",
+          teamId: lastTeam.teamId,
+          teamName: lastTeam.teamName,
+        });
+      }
+    };
     for (const role of visibleRoles) {
       const tid = role.teamId as string;
-      if (tid !== lastTeam) {
+      if (tid !== (lastTeam?.teamId as string | undefined)) {
+        // Close the previous team's role list with its "＋ Add role" row.
+        flushAddRole();
         out.push({ kind: "section", teamId: tid, teamName: role.teamName });
-        lastTeam = tid;
+        lastTeam = role;
       }
       out.push({ kind: "role", role });
     }
+    // "＋ Add role" for the final team, then the trailing "＋ Add team". When a
+    // team is isolated, hide "Add team" so the row stays scoped to that team.
+    flushAddRole();
+    if (!isolatedTeamId) out.push({ kind: "addTeam" });
     return out;
-  }, [visibleRoles]);
+  }, [visibleRoles, isolatedTeamId]);
 
   /** Members after team* + search + open/available filters. (*teams don't gate people rows.) */
   const visibleMembers = useMemo(() => {
@@ -444,6 +659,235 @@ export function RosterGridScreen() {
   );
 
   // -------------------------------------------------------------------------
+  // Publish (#477 FR-3)
+  //
+  // `publishEvent` notifies only *unconfirmed* assignments (confirmed people
+  // are never re-pinged). We surface `event.pendingCount` straight from
+  // `rosterMatrix`, which counts unconfirmed assignments off `by_plan` — the
+  // exact population `markPublished` notifies. Summing `roleCells` here would
+  // undercount assignments orphaned by a removed needed role (no cell exists).
+  // -------------------------------------------------------------------------
+  const requestCountForEvent = useCallback(
+    (event: RosterEvent): number => event.pendingCount,
+    [],
+  );
+
+  /** Draft event plans — the default publish target (unpublished dates). */
+  const draftEvents = useMemo(
+    () => events.filter((e) => e.status === "draft"),
+    [events],
+  );
+
+  /** Publish a single plan, with a confirm listing its request count. */
+  const publishOne = useCallback(
+    async (event: RosterEvent) => {
+      const count = requestCountForEvent(event);
+      const dateLabel = `${weekday(event.eventDate)} ${monthDay(event.eventDate)}`;
+      const already = event.status === "published";
+      const ok = await confirmAsync({
+        title: already ? "Re-send requests?" : "Publish & send requests?",
+        message:
+          `${dateLabel} — ${count} request${count === 1 ? "" : "s"} will be sent.` +
+          (count > 0
+            ? "\n\nConfirmed people won't be re-notified."
+            : "\n\nNo one is awaiting a response on this date yet."),
+        confirmText: already ? "Re-send" : "Send",
+      });
+      if (!ok) return;
+      setPublishing(true);
+      try {
+        const result = await publishEvent({ planId: event._id });
+        notify(
+          already ? "Requests re-sent" : "Published",
+          result.requestCount > 0
+            ? `Sent ${result.requestCount} request${result.requestCount === 1 ? "" : "s"}.`
+            : "No pending requests to send.",
+        );
+      } catch (e) {
+        surfaceError("Couldn't publish", e);
+      } finally {
+        setPublishing(false);
+      }
+    },
+    [requestCountForEvent, publishEvent, surfaceError],
+  );
+
+  /** Publish every draft plan, with a confirm listing each date + its count. */
+  const publishAllDrafts = useCallback(async () => {
+    if (draftEvents.length === 0) return;
+    const lines = draftEvents
+      .map((e) => {
+        const count = requestCountForEvent(e);
+        return `• ${weekday(e.eventDate)} ${monthDay(e.eventDate)} — ${count} request${count === 1 ? "" : "s"}`;
+      })
+      .join("\n");
+    const ok = await confirmAsync({
+      title: "Publish all draft dates?",
+      message: `These dates will notify volunteers:\n${lines}\n\nConfirmed people won't be re-notified.`,
+      confirmText: "Send",
+    });
+    if (!ok) return;
+    setPublishing(true);
+    try {
+      let total = 0;
+      for (const e of draftEvents) {
+        const result = await publishEvent({ planId: e._id });
+        total += result.requestCount;
+      }
+      notify(
+        "Published",
+        total > 0
+          ? `Sent ${total} request${total === 1 ? "" : "s"} across ${draftEvents.length} date${draftEvents.length === 1 ? "" : "s"}.`
+          : "No pending requests to send.",
+      );
+    } catch (e) {
+      surfaceError("Couldn't publish", e);
+    } finally {
+      setPublishing(false);
+    }
+  }, [draftEvents, requestCountForEvent, publishEvent, surfaceError]);
+
+  /**
+   * Entry point for the Publish action. With a single date in the grid, skip
+   * the chooser and publish it directly; with several, open the chooser so the
+   * leader picks a date (or all drafts) — every path goes through a confirm.
+   */
+  const handlePublishPress = useCallback(() => {
+    if (publishing) return;
+    if (events.length === 1) {
+      void publishOne(events[0]);
+    } else {
+      setPublishMenuOpen(true);
+    }
+  }, [publishing, events, publishOne]);
+
+  // -------------------------------------------------------------------------
+  // ⋯ overflow + plan creation (ported from EventListScreen — the grid is the
+  // rostering home now, so these actions live here).
+  // -------------------------------------------------------------------------
+
+  // Generate a public, app-optional availability link and hand it to the OS
+  // share sheet. People open it in a browser (no app needed) and their
+  // response is matched to their account when they later sign up.
+  const handleShareLink = useCallback(async () => {
+    if (sharingLink) return;
+    setSharingLink(true);
+    try {
+      const { publicToken } = await createAvailabilityLink({ groupId });
+      const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
+      await Share.share({
+        message: `Let us know when you can serve: ${url}`,
+      });
+    } catch (e) {
+      const err = e as { data?: { message?: string }; message?: string };
+      Alert.alert(
+        "Couldn't create link",
+        err?.data?.message ??
+          err?.message ??
+          "Add an upcoming event plan first, then try again.",
+      );
+    } finally {
+      setSharingLink(false);
+    }
+  }, [sharingLink, createAvailabilityLink, groupId]);
+
+  // Create a new draft plan at the neutral default date (next Sunday 9 AM, same
+  // as the editor's default). The reactive rosterMatrix self-refreshes → a new
+  // date column appears; the leader sets the real date in the plan editor.
+  const handleAddDate = useCallback(async () => {
+    if (creatingEvent) return;
+    setCreatingEvent(true);
+    try {
+      const date = nextSundayAtNine();
+      await createEvent({
+        groupId,
+        title: "Untitled event plan",
+        eventDate: date.getTime(),
+        times: [{ label: "9:00 AM", startsAt: date.getTime() }],
+      });
+    } catch (e) {
+      surfaceError("Couldn't add date", e);
+    } finally {
+      setCreatingEvent(false);
+    }
+  }, [creatingEvent, createEvent, groupId, surfaceError]);
+
+  // One-tap bootstrap for a brand-new group: starter team + roles + a draft
+  // plan, then into the editor to own the date. Idempotent on the backend.
+  const handleSetUpRostering = useCallback(async () => {
+    if (settingUp) return;
+    setSettingUp(true);
+    try {
+      // Compute the default plan date CLIENT-side (leader-local next-Sunday-9 AM)
+      // with the SAME helper `handleAddDate` uses, so the quick-start and manual
+      // paths agree for non-UTC churches instead of using the server timezone.
+      const result = await quickStartRostering({
+        groupId,
+        startsAt: nextSundayAtNine().getTime(),
+      });
+      if (result.planId) {
+        router.push(`/rostering/${groupId}/event/${result.planId}` as never);
+        return;
+      }
+      // `alreadySetUp` with no new plan → the group already had teams or only
+      // past plans (hidden by the default upcoming filter), so quick-start
+      // created nothing. Fall back to creating/opening a plan so the CTA is
+      // never a dead tap that just clears its spinner on the empty screen.
+      await handleAddDate();
+    } catch (e) {
+      surfaceError("Couldn't set up rostering", e);
+    } finally {
+      setSettingUp(false);
+    }
+  }, [
+    settingUp,
+    quickStartRostering,
+    groupId,
+    router,
+    surfaceError,
+    handleAddDate,
+  ]);
+
+  // Inline "＋ Add role" under a team section → existing `createRole` mutation
+  // (the same one TeamSetupScreen uses). The reactive rosterMatrix adds the new
+  // role row. Keeps the input open on desktop so a leader can add several.
+  const handleAddRole = useCallback(
+    async (teamId: Id<"teams">) => {
+      const name = addRoleName.trim();
+      if (!name || savingRow) return;
+      setSavingRow(true);
+      try {
+        await createRole({ teamId, name });
+        setAddRoleName("");
+        if (!isWide) setAddRoleForTeam(null);
+      } catch (e) {
+        surfaceError("Couldn't add role", e);
+      } finally {
+        setSavingRow(false);
+      }
+    },
+    [addRoleName, savingRow, createRole, isWide, surfaceError],
+  );
+
+  // Inline "＋ Add team" → existing `createServingTeam` mutation (also creates
+  // the team's chat channel, same as quickStart). The reactive rosterMatrix
+  // adds the new team section.
+  const handleAddTeam = useCallback(async () => {
+    const name = addTeamName.trim();
+    if (!name || savingRow) return;
+    setSavingRow(true);
+    try {
+      await createServingTeam({ groupId, name });
+      setAddTeamName("");
+      setAddTeamOpen(false);
+    } catch (e) {
+      surfaceError("Couldn't add team", e);
+    } finally {
+      setSavingRow(false);
+    }
+  }, [addTeamName, savingRow, createServingTeam, groupId, surfaceError]);
+
+  // -------------------------------------------------------------------------
   // Header
   // -------------------------------------------------------------------------
   const renderHeaderBar = () => (
@@ -464,20 +908,60 @@ export function RosterGridScreen() {
           </Text>
         )}
       </View>
-      <View style={styles.segmented}>
-        <SegBtn
-          label="Roles"
-          active={mode === "roles"}
-          onPress={() => setMode("roles")}
-          colors={colors}
-        />
-        <SegBtn
-          label="People"
-          active={mode === "people"}
-          onPress={() => setMode("people")}
-          colors={colors}
-        />
-      </View>
+      {groupId && <GridPresenceBar groupId={groupId} />}
+      {/* On desktop the view toggle moves into the single toolbar row below
+          (renderDesktopToolbar); on mobile it stays here in the header. */}
+      {!isWide && (
+        <View style={styles.segmented}>
+          <SegBtn
+            label="Roles"
+            active={mode === "roles"}
+            onPress={() => setMode("roles")}
+            colors={colors}
+          />
+          <SegBtn
+            label="People"
+            active={mode === "people"}
+            onPress={() => setMode("people")}
+            colors={colors}
+          />
+        </View>
+      )}
+      {!isWide && renderOverflowButton()}
+    </View>
+  );
+
+  // ⋯ overflow — Teams / Cross-team / Collect availability / Include past.
+  // Lives in the mobile header and the desktop toolbar. Layout stays on the
+  // inner static View so RN-Web doesn't drop it (Pressable function-style is
+  // ignored on web).
+  const renderOverflowButton = () => (
+    <TouchableOpacity
+      onPress={() => setOverflowOpen(true)}
+      hitSlop={10}
+      style={styles.overflowBtn}
+      accessibilityRole="button"
+      accessibilityLabel="More rostering options"
+    >
+      <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
+    </TouchableOpacity>
+  );
+
+  // The shared view toggle, reused by the header (mobile) and toolbar (desktop).
+  const renderViewToggle = () => (
+    <View style={styles.segmented}>
+      <SegBtn
+        label="Roles"
+        active={mode === "roles"}
+        onPress={() => setMode("roles")}
+        colors={colors}
+      />
+      <SegBtn
+        label="People"
+        active={mode === "people"}
+        onPress={() => setMode("people")}
+        colors={colors}
+      />
     </View>
   );
 
@@ -493,92 +977,162 @@ export function RosterGridScreen() {
   }
 
   if (data.events.length === 0) {
+    // Fresh group: lead with a one-tap "Set up rostering" that bootstraps a
+    // starter team + roles + a draft plan, then drops the leader into the
+    // editor. "Add a blank event plan" stays available as the manual path.
     return (
       <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
         {renderHeaderBar()}
-        <View style={styles.centered}>
-          <EmptyState
-            icon="calendar-outline"
-            title="No upcoming events"
-            message="Create event plans and collect availability, then place volunteers here."
+        <View style={styles.emptyWrap}>
+          <Ionicons
+            name="calendar-outline"
+            size={64}
+            color={colors.iconSecondary}
+            style={styles.emptyIcon}
           />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>
+            Set up rostering
+          </Text>
+          <Text style={[styles.emptyMessage, { color: colors.textSecondary }]}>
+            Create a starter team with roles and a first event plan in one tap.
+            You can rename and tune everything afterwards.
+          </Text>
+          <View style={styles.emptyActions}>
+            <Button
+              onPress={handleSetUpRostering}
+              variant="primary"
+              loading={settingUp}
+              style={styles.emptyPrimaryButton}
+            >
+              Set up rostering
+            </Button>
+            <Pressable
+              onPress={handleAddDate}
+              disabled={creatingEvent}
+              style={styles.emptySecondary}
+              accessibilityRole="button"
+              accessibilityLabel="Add a blank event plan"
+            >
+              {creatingEvent ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <Text
+                  style={[styles.emptySecondaryText, { color: colors.textSecondary }]}
+                >
+                  Or add a blank event plan
+                </Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </View>
     );
   }
 
   // -------------------------------------------------------------------------
-  // Filter bar
+  // Filter controls
+  //
+  // The same set of chips/search render in two containers: a stacked filter bar
+  // on mobile (renderFilterBar) and a single inline toolbar row on desktop
+  // (renderDesktopToolbar, where Publish is right-aligned). The chip builders
+  // below are shared so the two layouts can never drift.
   // -------------------------------------------------------------------------
-  const renderFilterBar = () => (
-    <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipRow}
-      >
-        <Chip
-          label="All teams"
-          active={hiddenTeams.size === 0}
-          onPress={() => setHiddenTeams(new Set())}
-          colors={colors}
+
+  // Team scope — single-select dropdown (#477 FR-2). Gates the Roles view only.
+  const teamChip =
+    mode === "roles" && data.teams.length > 0 ? (
+      <Chip
+        icon="people-outline"
+        label={isolatedTeamName ?? "All teams"}
+        trailingIcon="chevron-down"
+        active={isolatedTeamId !== null}
+        onPress={() => setTeamMenuOpen(true)}
+        colors={colors}
+      />
+    ) : null;
+
+  const openOnlyChip = (
+    <Chip
+      icon={openOnly ? "checkbox" : "square-outline"}
+      label="Open only"
+      active={openOnly}
+      onPress={() => setOpenOnly((v) => !v)}
+      colors={colors}
+    />
+  );
+
+  const availableOnlyChip =
+    mode === "people" ? (
+      <Chip
+        icon={availableOnly ? "checkbox" : "square-outline"}
+        label="Available only"
+        active={availableOnly}
+        onPress={() => setAvailableOnly((v) => !v)}
+        colors={colors}
+      />
+    ) : null;
+
+  // "Also in group" is now a GRID-LEVEL scope (#477 FR-4): set once here, it
+  // narrows the People view rows AND seeds the assign sheet's candidate pool.
+  // Shown in both views; hidden when the leader has no other eligible groups.
+  const groupScopeChip =
+    filterGroups && filterGroups.length > 0 ? (
+      <Chip
+        icon="funnel"
+        label={filterGroupName ? `In: ${filterGroupName}` : "Also in group"}
+        trailingIcon="chevron-down"
+        active={filterGroupId !== null}
+        onPress={() => setGroupFilterOpen(true)}
+        colors={colors}
+      />
+    ) : null;
+
+  const renderSearchBox = () =>
+    mode === "people" ? (
+      <View style={[styles.searchBox, { borderColor: colors.border }]}>
+        <Ionicons name="search" size={15} color={colors.textSecondary} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search people…"
+          placeholderTextColor={colors.textSecondary}
+          value={search}
+          onChangeText={setSearch}
+          autoCorrect={false}
+          autoCapitalize="none"
         />
-        {data.teams.map((t) => (
-          <Chip
-            key={t.teamId}
-            label={t.teamName}
-            active={teamVisible(t.teamId as string)}
-            onPress={() => toggleTeam(t.teamId as string)}
-            colors={colors}
-          />
-        ))}
-      </ScrollView>
-      <View style={styles.chipRow}>
-        <Chip
-          icon={openOnly ? "checkbox" : "square-outline"}
-          label="Open only"
-          active={openOnly}
-          onPress={() => setOpenOnly((v) => !v)}
-          colors={colors}
-        />
-        {mode === "people" && (
-          <Chip
-            icon={availableOnly ? "checkbox" : "square-outline"}
-            label="Available only"
-            active={availableOnly}
-            onPress={() => setAvailableOnly((v) => !v)}
-            colors={colors}
-          />
-        )}
-        {mode === "people" && filterGroups && filterGroups.length > 0 && (
-          <Chip
-            icon="funnel"
-            label={filterGroupName ? `In: ${filterGroupName}` : "Also in group"}
-            active={filterGroupId !== null}
-            onPress={() => setGroupFilterOpen(true)}
-            colors={colors}
-          />
+        {search.length > 0 && (
+          <TouchableOpacity onPress={() => setSearch("")} hitSlop={8}>
+            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
         )}
       </View>
-      {mode === "people" && (
-        <View style={[styles.searchBox, { borderColor: colors.border }]}>
-          <Ionicons name="search" size={15} color={colors.textSecondary} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search people…"
-            placeholderTextColor={colors.textSecondary}
-            value={search}
-            onChangeText={setSearch}
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch("")} hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+    ) : null;
+
+  const renderFilterBar = () => (
+    <View style={[styles.filterBar, { borderBottomColor: colors.border }]}>
+      <View style={styles.chipRow}>
+        {teamChip}
+        {openOnlyChip}
+        {availableOnlyChip}
+        {groupScopeChip}
+      </View>
+      {renderSearchBox()}
+    </View>
+  );
+
+  // Desktop: one horizontal toolbar row — view toggle, filters, then Publish
+  // pinned right. Replaces both the header toggle and the stacked filter bar.
+  const renderDesktopToolbar = () => (
+    <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
+      {renderViewToggle()}
+      {teamChip}
+      {groupScopeChip}
+      {openOnlyChip}
+      {availableOnlyChip}
+      {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
+      <View style={styles.toolbarSpacer} />
+      {renderPublishButton(false)}
+      {renderOverflowButton()}
     </View>
   );
 
@@ -617,50 +1171,110 @@ export function RosterGridScreen() {
           {events.map((ev) => {
             const c = data.eventCounts[ev._id as string];
             const open = c?.openSlots ?? 0;
+            // The view-aware coverage/availability tally, shared by both the
+            // mobile header cell and the desktop inline editor.
+            const tally =
+              mode === "roles" ? (
+                open > 0 ? (
+                  <>
+                    <Ionicons name="ellipse-outline" size={10} color={colors.textTertiary} />
+                    <Text style={[styles.headerCellTallyText, { color: colors.textTertiary }]}>
+                      {open}
+                    </Text>
+                  </>
+                ) : (
+                  <Ionicons name="checkmark" size={12} color={colors.success} />
+                )
+              ) : (
+                <>
+                  <Ionicons name="checkmark" size={11} color={colors.success} />
+                  <Text style={[styles.headerCellTallyText, { color: colors.success }]}>
+                    {c?.available ?? 0}
+                  </Text>
+                </>
+              );
+
+            // Desktop: the header IS the plan editor — no docked side panel.
+            // Mobile: a plain tappable header opens the EventEditorPanel sheet.
+            if (isWide) {
+              return (
+                <DateColumnHeaderEditor
+                  key={ev._id}
+                  event={ev}
+                  groupId={groupId}
+                  width={CELL_W}
+                  height={HEADER_H}
+                  narrow={CELL_W < 200}
+                  colors={colors}
+                  tally={tally}
+                  onPublish={() => publishOne(ev)}
+                />
+              );
+            }
+
             return (
-              <View
+              <TouchableOpacity
                 key={ev._id}
+                activeOpacity={0.6}
+                onPress={() => openPlanPanel(ev._id)}
+                accessibilityRole="button"
+                accessibilityLabel={`${ev.title}, ${weekday(ev.eventDate)} ${monthDay(ev.eventDate)} — open plan details`}
                 style={[
                   styles.headerCell,
                   { width: CELL_W, height: HEADER_H, borderLeftColor: colors.border },
                 ]}
               >
-                <Text
-                  style={[styles.headerCellTitle, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {ev.title}
-                </Text>
+                <View style={styles.headerCellTitleRow}>
+                  <Text
+                    style={[styles.headerCellTitle, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {ev.title}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={9}
+                    color={colors.textTertiary}
+                  />
+                </View>
                 <Text style={[styles.headerCellWk, { color: colors.textSecondary }]}>
                   {weekday(ev.eventDate)}
                 </Text>
                 <Text style={[styles.headerCellDate, { color: colors.text }]}>
                   {monthDay(ev.eventDate)}
                 </Text>
-                <View style={styles.headerCellTally}>
-                  {mode === "roles" ? (
-                    open > 0 ? (
-                      <>
-                        <Ionicons name="ellipse-outline" size={10} color={colors.textTertiary} />
-                        <Text style={[styles.headerCellTallyText, { color: colors.textTertiary }]}>
-                          {open}
-                        </Text>
-                      </>
-                    ) : (
-                      <Ionicons name="checkmark" size={12} color={colors.success} />
-                    )
-                  ) : (
-                    <>
-                      <Ionicons name="checkmark" size={11} color={colors.success} />
-                      <Text style={[styles.headerCellTallyText, { color: colors.success }]}>
-                        {c?.available ?? 0}
-                      </Text>
-                    </>
-                  )}
-                </View>
-              </View>
+                <View style={styles.headerCellTally}>{tally}</View>
+              </TouchableOpacity>
             );
           })}
+          {/* Trailing "＋ Add date" column — creates a new draft plan at the
+              neutral default date; the reactive query adds its column. Lives
+              inside the scrolling header so it sits at the right edge of the
+              date columns. */}
+          <TouchableOpacity
+            onPress={handleAddDate}
+            disabled={creatingEvent}
+            accessibilityRole="button"
+            accessibilityLabel="Add a date"
+            style={[
+              styles.addDateCell,
+              { width: MIN_CELL_W, height: HEADER_H, borderLeftColor: colors.border },
+            ]}
+          >
+            {creatingEvent ? (
+              <ActivityIndicator size="small" color={colors.link} />
+            ) : (
+              <>
+                <Ionicons name="add" size={20} color={colors.link} />
+                <Text
+                  style={[styles.addDateText, { color: colors.link }]}
+                  numberOfLines={1}
+                >
+                  Add date
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -693,6 +1307,153 @@ export function RosterGridScreen() {
               <Text style={[styles.sectionText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {r.teamName.toUpperCase()}
               </Text>
+            </View>
+          );
+        }
+        if (r.kind === "addRole") {
+          const open = addRoleForTeam === r.teamId;
+          return (
+            <View
+              key={`addrole-${r.teamId}`}
+              style={[
+                styles.addRow,
+                {
+                  width: NAME_W,
+                  height: ROW_H,
+                  backgroundColor: colors.surface,
+                  borderBottomColor: colors.border,
+                },
+              ]}
+            >
+              {open ? (
+                <View style={styles.addInputRow}>
+                  <TextInput
+                    style={[styles.addInput, { color: colors.text, borderColor: colors.border }]}
+                    placeholder="Role name"
+                    placeholderTextColor={colors.textTertiary}
+                    value={addRoleName}
+                    onChangeText={setAddRoleName}
+                    autoFocus
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!savingRow}
+                    onSubmitEditing={() => handleAddRole(r.teamId)}
+                    returnKeyType="done"
+                  />
+                  {savingRow ? (
+                    <ActivityIndicator size="small" color={colors.link} />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => handleAddRole(r.teamId)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save role"
+                    >
+                      <Ionicons name="checkmark" size={20} color={colors.link} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddRoleForTeam(null);
+                      setAddRoleName("");
+                    }}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel add role"
+                  >
+                    <Ionicons name="close" size={18} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddTeamOpen(false);
+                    setAddRoleForTeam(r.teamId);
+                    setAddRoleName("");
+                  }}
+                  style={styles.addCta}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add a role to ${r.teamName}`}
+                >
+                  <Ionicons name="add" size={16} color={colors.link} />
+                  <Text style={[styles.addCtaText, { color: colors.link }]} numberOfLines={1}>
+                    Add role
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        }
+        if (r.kind === "addTeam") {
+          return (
+            <View
+              key="addteam"
+              style={[
+                styles.addRow,
+                {
+                  width: NAME_W,
+                  height: ROW_H,
+                  backgroundColor: colors.surfaceSecondary,
+                  borderBottomColor: colors.border,
+                },
+              ]}
+            >
+              {addTeamOpen ? (
+                <View style={styles.addInputRow}>
+                  <TextInput
+                    style={[styles.addInput, { color: colors.text, borderColor: colors.border }]}
+                    placeholder="Team name"
+                    placeholderTextColor={colors.textTertiary}
+                    value={addTeamName}
+                    onChangeText={setAddTeamName}
+                    autoFocus
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!savingRow}
+                    onSubmitEditing={handleAddTeam}
+                    returnKeyType="done"
+                  />
+                  {savingRow ? (
+                    <ActivityIndicator size="small" color={colors.link} />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={handleAddTeam}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save team"
+                    >
+                      <Ionicons name="checkmark" size={20} color={colors.link} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddTeamOpen(false);
+                      setAddTeamName("");
+                    }}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel add team"
+                  >
+                    <Ionicons name="close" size={18} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddRoleForTeam(null);
+                    setAddTeamOpen(true);
+                    setAddTeamName("");
+                  }}
+                  style={styles.addCta}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a team"
+                >
+                  <Ionicons name="add" size={16} color={colors.link} />
+                  <Text style={[styles.addCtaText, { color: colors.link, fontWeight: "700" }]} numberOfLines={1}>
+                    Add team
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           );
         }
@@ -752,6 +1513,26 @@ export function RosterGridScreen() {
               />
             );
           }
+          // The "＋ Add role" / "＋ Add team" rows live only in the frozen
+          // column; the body renders an empty spacer of the SAME height so the
+          // synced vertical scroll + frozen-column alignment stay intact.
+          if (r.kind === "addRole" || r.kind === "addTeam") {
+            return (
+              <View
+                key={r.kind === "addRole" ? `addrole-${r.teamId}` : "addteam"}
+                style={[
+                  styles.row,
+                  {
+                    height: ROW_H,
+                    backgroundColor:
+                      r.kind === "addTeam" ? colors.surfaceSecondary : colors.surface,
+                    borderBottomColor: colors.border,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+              />
+            );
+          }
           return (
             <View key={r.role.roleId} style={styles.row}>
               {events.map((ev) => (
@@ -764,9 +1545,12 @@ export function RosterGridScreen() {
                   colors={colors}
                   onPress={() => {
                     const cell = roleCells[`${r.role.roleId}:${ev._id}`];
-                    if (!cell) return;
-                    if (cell.occupants.length === 0) {
-                      setAssignTarget({
+                    // Every cell opens the assign panel — including not-needed
+                    // cells (no `cell` row, or needed === 0). The panel's Needed
+                    // stepper lets a leader add the role to this date (0→1+) or
+                    // change its count; the candidate list fills open slots.
+                    if (!cell || cell.occupants.length === 0) {
+                      openAssign({
                         planId: ev._id,
                         planStatus: ev.status,
                         teamId: r.role.teamId,
@@ -774,10 +1558,12 @@ export function RosterGridScreen() {
                         roleName: r.role.roleName,
                         timeLabel: singleTimeLabel(ev),
                         assignedUserIds: new Set(),
-                        keepOpenWhileUnfilled: cell.needed > 1,
+                        keepOpenWhileUnfilled: (cell?.needed ?? 0) > 1,
+                        neededCount: cell?.needed ?? 0,
+                        assignedCount: cell?.filled ?? 0,
                       });
                     } else {
-                      setRoleCellModal({ role: r.role, event: ev });
+                      openRoleCell({ role: r.role, event: ev });
                     }
                   }}
                 />
@@ -868,7 +1654,7 @@ export function RosterGridScreen() {
                   colors={colors}
                   onPress={() => {
                     if (cell && cell.assignments.length > 0) {
-                      setMemberCellModal({ member: m, event: ev });
+                      openMemberCell({ member: m, event: ev });
                     } else {
                       setOpenRolesModal({
                         member: m,
@@ -895,36 +1681,213 @@ export function RosterGridScreen() {
       ? `${visibleRoles.length} ${visibleRoles.length === 1 ? "role" : "roles"}`
       : `${visibleMembers.length} ${visibleMembers.length === 1 ? "person" : "people"}`;
 
+  // Publish button label (#477 FR-3). One event → name the date; several with
+  // drafts left → generic; all published → "Re-send". Anyone who can see this
+  // grid is a scheduler (rosterMatrix requires it), so the action is always
+  // permission-appropriate — no extra gate needed.
+  const allPublished = events.length > 0 && draftEvents.length === 0;
+  const publishLabel =
+    events.length === 1
+      ? allPublished
+        ? `Re-send · ${monthDay(events[0].eventDate)}`
+        : `Publish & send · ${monthDay(events[0].eventDate)}`
+      : allPublished
+        ? "Re-send requests"
+        : "Publish & send requests";
+
+  /**
+   * The Publish CTA. Rendered two ways: `compact` (desktop toolbar — inline,
+   * auto-width, right-aligned) and full-bleed (mobile sticky bottom bar).
+   * Same action and label both ways. Layout lives on the inner static View so
+   * RN-Web doesn't drop it (Pressable function-style is ignored on web).
+   */
+  const renderPublishButton = (full: boolean) => (
+    <Pressable
+      onPress={handlePublishPress}
+      disabled={publishing}
+      accessibilityRole="button"
+      accessibilityLabel={publishLabel}
+    >
+      <View
+        style={[
+          styles.publishBtn,
+          full ? styles.publishBtnFull : styles.publishBtnCompact,
+          { backgroundColor: primaryColor, opacity: publishing ? 0.7 : 1 },
+        ]}
+      >
+        {publishing ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <View style={styles.publishBtnContent}>
+            {!full && (
+              <Ionicons name="paper-plane" size={15} color="#fff" />
+            )}
+            <Text
+              style={[styles.publishBtnText, full && styles.publishBtnTextFull]}
+              numberOfLines={1}
+            >
+              {publishLabel}
+            </Text>
+          </View>
+        )}
+      </View>
+    </Pressable>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
       {renderHeaderBar()}
-      {renderFilterBar()}
+      {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
 
-      {renderHeaderRow(cornerLabel)}
-
-      <View style={styles.matrixBody} onLayout={(e) => setBodyH(e.nativeEvent.layout.height)}>
-        {rows === 0 ? (
-          <View style={styles.centered}>
-            <Text style={{ color: colors.textSecondary }}>
-              {mode === "roles" ? "No roles to show." : "No one to show."}
-            </Text>
+      {/* On desktop the grid and the docked assign panel share a row so the
+          grid stays visible beside the panel; on mobile the grid takes the
+          full width and AssignSheet overlays as a modal (below). */}
+      <View style={isWide ? styles.contentRowWide : styles.contentColumn}>
+        <View style={styles.gridArea}>
+          {renderHeaderRow(cornerLabel)}
+          <View
+            style={styles.matrixBody}
+            onLayout={(e) => {
+              setBodyH(e.nativeEvent.layout.height);
+              setBodyW(e.nativeEvent.layout.width);
+            }}
+          >
+            {rows === 0 ? (
+              <View style={styles.centered}>
+                <Text style={{ color: colors.textSecondary }}>
+                  {mode === "roles" ? "No roles to show." : "No one to show."}
+                </Text>
+              </View>
+            ) : mode === "roles" ? (
+              <>
+                {renderRoleFrozen()}
+                {renderRoleCells()}
+              </>
+            ) : (
+              <>
+                {renderPeopleFrozen()}
+                {renderPeopleCells()}
+              </>
+            )}
           </View>
-        ) : mode === "roles" ? (
-          <>
-            {renderRoleFrozen()}
-            {renderRoleCells()}
-          </>
-        ) : (
-          <>
-            {renderPeopleFrozen()}
-            {renderPeopleCells()}
-          </>
+        </View>
+
+        {/* Desktop: docked right side-panel — stays open after assigning so a
+            leader can fill a whole column. Mobile renders AssignSheet as a
+            modal below instead. */}
+        {isWide && assignTarget && (
+          <AssignSheet
+            visible
+            dockedRight
+            planId={assignTarget.planId}
+            planStatus={assignTarget.planStatus}
+            groupId={groupId}
+            teamId={assignTarget.teamId}
+            roleId={assignTarget.roleId}
+            roleName={assignTarget.roleName}
+            timeLabel={assignTarget.timeLabel}
+            assignedUserIds={assignTarget.assignedUserIds}
+            prioritizeAvailable
+            keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
+            filterMemberIds={filterMemberSet}
+            filterGroupName={filterGroupName}
+            neededCount={
+              roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.needed ??
+              assignTarget.neededCount
+            }
+            assignedCount={
+              roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.filled ??
+              assignTarget.assignedCount
+            }
+            onSetNeeded={(count) =>
+              handleSetNeeded(
+                assignTarget.planId,
+                assignTarget.roleId,
+                count,
+              )
+            }
+            onClose={() => setAssignTarget(null)}
+          />
         )}
+
+        {/* Desktop: filled-cell management docks in the SAME right region as
+            the assign panel (mutually exclusive — only one is ever non-null, see
+            openAssign/openRoleCell/openMemberCell). Mobile renders these as
+            popover modals below. */}
+        {isWide && roleCellModal && (
+          <RoleCellPopover
+            role={roleCellModal.role}
+            event={roleCellModal.event}
+            cell={roleCells[`${roleCellModal.role.roleId}:${roleCellModal.event._id}`]}
+            colors={colors}
+            docked
+            onRemove={handleUnassign}
+            onAddSomeone={(cell) => {
+              const role = roleCellModal.role;
+              const ev = roleCellModal.event;
+              openAssign({
+                planId: ev._id,
+                planStatus: ev.status,
+                teamId: role.teamId,
+                roleId: role.roleId,
+                roleName: role.roleName,
+                timeLabel: singleTimeLabel(ev),
+                assignedUserIds: new Set(cell.occupants.map((o) => o.userId as string)),
+                keepOpenWhileUnfilled: cell.open > 1,
+                neededCount: cell.needed,
+                assignedCount: cell.filled,
+              });
+            }}
+            onClose={() => setRoleCellModal(null)}
+          />
+        )}
+
+        {isWide && memberCellModal && (
+          <MemberCellPopover
+            member={memberCellModal.member}
+            event={memberCellModal.event}
+            cell={memberCellModal.member.cells[memberCellModal.event._id as string]}
+            colors={colors}
+            docked
+            onRemove={handleUnassign}
+            onAddRole={() => {
+              const m = memberCellModal.member;
+              const ev = memberCellModal.event;
+              setMemberCellModal(null);
+              setOpenRolesModal({ member: m, event: ev });
+            }}
+            onClose={() => setMemberCellModal(null)}
+          />
+        )}
+
+        {/* Desktop has NO plan side-panel: the date-column header IS the plan
+            editor (DateColumnHeaderEditor). The plan-detail panel survives only
+            as the mobile bottom sheet (rendered below). */}
       </View>
 
+      {/* Publish bar — MOBILE only (#477 FR-3); desktop hosts Publish in the
+          toolbar (renderDesktopToolbar). Scoped to a chosen date via the
+          chooser; single-date grids publish that date directly. */}
+      {!isWide && (
+        <View
+          style={[
+            styles.publishBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+              paddingBottom: insets.bottom + 12,
+            },
+          ]}
+        >
+          {renderPublishButton(true)}
+        </View>
+      )}
+
       {/* ===== Modals ===== */}
-      {assignTarget && (
+      {/* Mobile: AssignSheet as a centered modal overlay. (Desktop docks it in
+          the content row above.) */}
+      {!isWide && assignTarget && (
         <AssignSheet
           visible
           planId={assignTarget.planId}
@@ -937,11 +1900,30 @@ export function RosterGridScreen() {
           assignedUserIds={assignTarget.assignedUserIds}
           prioritizeAvailable
           keepOpenWhileUnfilled={assignTarget.keepOpenWhileUnfilled}
+          filterMemberIds={filterMemberSet}
+          filterGroupName={filterGroupName}
+          neededCount={
+            roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.needed ??
+            assignTarget.neededCount
+          }
+          assignedCount={
+            roleCells[`${assignTarget.roleId}:${assignTarget.planId}`]?.filled ??
+            assignTarget.assignedCount
+          }
+          onSetNeeded={(count) =>
+            handleSetNeeded(
+              assignTarget.planId,
+              assignTarget.roleId,
+              count,
+            )
+          }
           onClose={() => setAssignTarget(null)}
         />
       )}
 
-      {roleCellModal && (
+      {/* Mobile: filled-cell management as popover modals. (Desktop docks them
+          in the content row above.) */}
+      {!isWide && roleCellModal && (
         <RoleCellPopover
           role={roleCellModal.role}
           event={roleCellModal.event}
@@ -961,13 +1943,15 @@ export function RosterGridScreen() {
               timeLabel: singleTimeLabel(ev),
               assignedUserIds: new Set(cell.occupants.map((o) => o.userId as string)),
               keepOpenWhileUnfilled: cell.open > 1,
+              neededCount: cell.needed,
+              assignedCount: cell.filled,
             });
           }}
           onClose={() => setRoleCellModal(null)}
         />
       )}
 
-      {memberCellModal && (
+      {!isWide && memberCellModal && (
         <MemberCellPopover
           member={memberCellModal.member}
           event={memberCellModal.event}
@@ -999,6 +1983,40 @@ export function RosterGridScreen() {
         />
       )}
 
+      {/* Mobile: plan-detail panel as a bottom sheet. (Desktop docks it in the
+          content row above.) */}
+      {!isWide && planPanel && (
+        <Modal
+          visible
+          transparent
+          animationType="slide"
+          onRequestClose={() => setPlanPanel(null)}
+        >
+          <View style={styles.sheetBackdrop}>
+            <Pressable
+              style={styles.sheetBackdropTap}
+              onPress={() => setPlanPanel(null)}
+              accessibilityLabel="Close plan details"
+            />
+            <View
+              style={[
+                styles.sheet,
+                {
+                  backgroundColor: colors.surface,
+                  paddingBottom: insets.bottom + 16,
+                },
+              ]}
+            >
+              <EventEditorPanel
+                key={planPanel.planId}
+                planId={planPanel.planId}
+                onClose={() => setPlanPanel(null)}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {groupFilterOpen && (
         <GroupFilterMenu
           groups={filterGroups ?? []}
@@ -1009,6 +2027,59 @@ export function RosterGridScreen() {
             setGroupFilterOpen(false);
           }}
           onClose={() => setGroupFilterOpen(false)}
+        />
+      )}
+
+      {teamMenuOpen && (
+        <TeamFilterMenu
+          teams={data.teams}
+          selectedId={isolatedTeamId}
+          colors={colors}
+          onPick={(id) => {
+            setIsolatedTeamId(id);
+            setTeamMenuOpen(false);
+          }}
+          onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
+
+      {overflowOpen && (
+        <OverflowMenu
+          colors={colors}
+          includePast={includePast}
+          sharingLink={sharingLink}
+          onTeams={() => {
+            setOverflowOpen(false);
+            router.push(`/rostering/${groupId}/teams` as never);
+          }}
+          onCrossTeam={() => {
+            setOverflowOpen(false);
+            router.push(`/rostering/${groupId}/cross-team` as never);
+          }}
+          onCollectAvailability={() => {
+            setOverflowOpen(false);
+            void handleShareLink();
+          }}
+          onToggleIncludePast={() => setIncludePast((v) => !v)}
+          onClose={() => setOverflowOpen(false)}
+        />
+      )}
+
+      {publishMenuOpen && (
+        <PublishMenu
+          events={events}
+          draftCount={draftEvents.length}
+          requestCountForEvent={requestCountForEvent}
+          colors={colors}
+          onPublishOne={(event) => {
+            setPublishMenuOpen(false);
+            void publishOne(event);
+          }}
+          onPublishAll={() => {
+            setPublishMenuOpen(false);
+            void publishAllDrafts();
+          }}
+          onClose={() => setPublishMenuOpen(false)}
         />
       )}
     </View>
@@ -1035,17 +2106,22 @@ function RoleCellView({
 }) {
   const base = striped ? colors.surfaceSecondary : colors.surface;
 
-  // Role not needed this event → dim, non-interactive placeholder.
+  // Role not needed this event → dim placeholder, but STILL tappable: tapping
+  // opens the assign panel where the Needed stepper can add the role to this
+  // date (0→1). A faint "+" hints that the empty cell is actionable.
   if (!cell || cell.needed === 0) {
     return (
-      <View
+      <Pressable
+        onPress={onPress}
         style={[
           styles.cell,
           { width, height, backgroundColor: base, borderColor: colors.border, opacity: 0.45 },
         ]}
+        accessibilityRole="button"
+        accessibilityLabel="Not needed — tap to add this role"
       >
-        <Text style={[styles.cellMuted, { color: colors.textTertiary }]}>·</Text>
-      </View>
+        <Ionicons name="add" size={13} color={colors.textTertiary} />
+      </Pressable>
     );
   }
 
@@ -1210,19 +2286,62 @@ function PeopleCellView({
 // ---------------------------------------------------------------------------
 // Popovers / menus
 // ---------------------------------------------------------------------------
+/**
+ * Shared header + body container for the cell popovers/menus. On mobile (and
+ * for the picker menus) it's a centered card over a dim backdrop (`Modal`). On
+ * desktop, when `docked`, the SAME header+children render inside the grid's
+ * right side-panel (no Modal, no backdrop) so filled-cell management matches
+ * the docked AssignSheet — one panel idiom, never a floating popup beside it.
+ */
 function ModalShell({
   title,
   subtitle,
   colors,
   onClose,
+  docked = false,
   children,
 }: {
   title: string;
   subtitle?: string;
   colors: Colors;
   onClose: () => void;
+  docked?: boolean;
   children: React.ReactNode;
 }) {
+  const head = (
+    <View style={styles.popoverHead}>
+      <View style={styles.popoverHeadText}>
+        <Text style={[styles.popoverTitle, { color: colors.text }]} numberOfLines={1}>
+          {title}
+        </Text>
+        {subtitle && (
+          <Text style={[styles.popoverSub, { color: colors.textSecondary }]} numberOfLines={1}>
+            {subtitle}
+          </Text>
+        )}
+      </View>
+      <TouchableOpacity onPress={onClose} hitSlop={12}>
+        <Ionicons name="close" size={22} color={colors.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  if (docked) {
+    return (
+      <View
+        style={[
+          styles.dockPanel,
+          { backgroundColor: colors.surface, borderLeftColor: colors.border },
+        ]}
+      >
+        <View style={styles.dockPanelInner}>
+          {head}
+          {children}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
@@ -1230,21 +2349,7 @@ function ModalShell({
           style={[styles.popover, { backgroundColor: colors.surface, borderColor: colors.border }]}
           onPress={(e) => e.stopPropagation()}
         >
-          <View style={styles.popoverHead}>
-            <View style={styles.popoverHeadText}>
-              <Text style={[styles.popoverTitle, { color: colors.text }]} numberOfLines={1}>
-                {title}
-              </Text>
-              {subtitle && (
-                <Text style={[styles.popoverSub, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {subtitle}
-                </Text>
-              )}
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
+          {head}
           {children}
         </Pressable>
       </Pressable>
@@ -1257,6 +2362,7 @@ function RoleCellPopover({
   event,
   cell,
   colors,
+  docked = false,
   onRemove,
   onAddSomeone,
   onClose,
@@ -1265,6 +2371,7 @@ function RoleCellPopover({
   event: RosterEvent;
   cell: RoleCell | undefined;
   colors: Colors;
+  docked?: boolean;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddSomeone: (cell: RoleCell) => void;
   onClose: () => void;
@@ -1275,9 +2382,10 @@ function RoleCellPopover({
       title={role.roleName}
       subtitle={`${role.teamName} · ${monthDay(event.eventDate)} · ${cell.filled}/${cell.needed}`}
       colors={colors}
+      docked={docked}
       onClose={onClose}
     >
-      <ScrollView style={styles.popoverList}>
+      <ScrollView style={docked ? styles.popoverListDocked : styles.popoverList}>
         {cell.occupants.map((o) => (
           <View key={o.assignmentId} style={[styles.occupantRow, { borderBottomColor: colors.border }]}>
             <Ionicons name={statusIcon(o.status)} size={16} color={statusColor(o.status, colors)} />
@@ -1309,6 +2417,7 @@ function MemberCellPopover({
   event,
   cell,
   colors,
+  docked = false,
   onRemove,
   onAddRole,
   onClose,
@@ -1317,6 +2426,7 @@ function MemberCellPopover({
   event: RosterEvent;
   cell: MemberCell | undefined;
   colors: Colors;
+  docked?: boolean;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddRole: () => void;
   onClose: () => void;
@@ -1327,6 +2437,7 @@ function MemberCellPopover({
       title={member.userName}
       subtitle={`${event.title} · ${monthDay(event.eventDate)}`}
       colors={colors}
+      docked={docked}
       onClose={onClose}
     >
       {cell.doubleBooked && (
@@ -1334,7 +2445,7 @@ function MemberCellPopover({
           ⚠ Double-booked this day
         </Text>
       )}
-      <ScrollView style={styles.popoverList}>
+      <ScrollView style={docked ? styles.popoverListDocked : styles.popoverList}>
         {cell.assignments.map((a) => (
           <View key={a.assignmentId} style={[styles.occupantRow, { borderBottomColor: colors.border }]}>
             <Ionicons name={statusIcon(a.status)} size={16} color={statusColor(a.status, colors)} />
@@ -1479,6 +2590,219 @@ function GroupFilterMenu({
   );
 }
 
+/**
+ * Team scope picker (#477 FR-2) — a single-select menu that isolates one
+ * team's roles in the Roles view. "All teams" clears the scope.
+ */
+function TeamFilterMenu({
+  teams,
+  selectedId,
+  colors,
+  onPick,
+  onClose,
+}: {
+  teams: RosterTeam[];
+  selectedId: string | null;
+  colors: Colors;
+  onPick: (id: string | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Teams"
+      subtitle="Show roles for…"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        <Pressable
+          onPress={() => onPick(null)}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            All teams
+          </Text>
+          {selectedId === null && (
+            <Ionicons name="checkmark" size={20} color={colors.link} />
+          )}
+        </Pressable>
+        {teams.map((t) => (
+          <Pressable
+            key={t.teamId}
+            onPress={() => onPick(t.teamId as string)}
+            style={[styles.menuRow, { borderBottomColor: colors.border }]}
+            accessibilityRole="button"
+          >
+            <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+              {t.teamName}
+            </Text>
+            {selectedId === (t.teamId as string) && (
+              <Ionicons name="checkmark" size={20} color={colors.link} />
+            )}
+          </Pressable>
+        ))}
+      </ScrollView>
+    </ModalShell>
+  );
+}
+
+/**
+ * Publish chooser (#477 FR-3) — when the grid spans multiple dates, the leader
+ * picks which date to publish (each row shows its pending request count), or
+ * publishes all draft dates at once. Single-date grids skip this and publish
+ * directly. Every path runs through a confirm dialog before notifying anyone.
+ */
+function PublishMenu({
+  events,
+  draftCount,
+  requestCountForEvent,
+  colors,
+  onPublishOne,
+  onPublishAll,
+  onClose,
+}: {
+  events: RosterEvent[];
+  draftCount: number;
+  requestCountForEvent: (event: RosterEvent) => number;
+  colors: Colors;
+  onPublishOne: (event: RosterEvent) => void;
+  onPublishAll: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell
+      title="Publish & send"
+      subtitle="Pick a date to send requests for"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        {events.map((ev) => {
+          const count = requestCountForEvent(ev);
+          const published = ev.status === "published";
+          return (
+            <Pressable
+              key={ev._id}
+              onPress={() => onPublishOne(ev)}
+              style={[styles.menuRow, { borderBottomColor: colors.border }]}
+              accessibilityRole="button"
+            >
+              <View style={styles.menuRowText}>
+                <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+                  {weekday(ev.eventDate)} {monthDay(ev.eventDate)}
+                </Text>
+                <Text style={[styles.menuRowSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                  {published ? "Published · " : ""}
+                  {count} request{count === 1 ? "" : "s"}
+                </Text>
+              </View>
+              <Text style={[styles.menuRowCount, { color: colors.link }]}>
+                {published ? "Re-send" : "Send"}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {draftCount > 1 && (
+        <Pressable
+          onPress={onPublishAll}
+          style={[styles.addBtn, { borderColor: colors.link }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="paper-plane-outline" size={16} color={colors.link} />
+          <Text style={[styles.addBtnText, { color: colors.link }]}>
+            Publish all draft dates ({draftCount})
+          </Text>
+        </Pressable>
+      )}
+    </ModalShell>
+  );
+}
+
+/**
+ * ⋯ overflow menu — secondary rostering surfaces that no longer have a tab:
+ * Teams, Cross-team, Collect availability, plus the "Include past" toggle that
+ * flips the grid's rosterMatrix({ includePast }) arg.
+ */
+function OverflowMenu({
+  colors,
+  includePast,
+  sharingLink,
+  onTeams,
+  onCrossTeam,
+  onCollectAvailability,
+  onToggleIncludePast,
+  onClose,
+}: {
+  colors: Colors;
+  includePast: boolean;
+  sharingLink: boolean;
+  onTeams: () => void;
+  onCrossTeam: () => void;
+  onCollectAvailability: () => void;
+  onToggleIncludePast: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell title="Rostering" colors={colors} onClose={onClose}>
+      <View>
+        <Pressable
+          onPress={onTeams}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="people-outline" size={20} color={colors.text} />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Teams
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </Pressable>
+        <Pressable
+          onPress={onCrossTeam}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="git-merge-outline" size={20} color={colors.text} />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Cross-team
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </Pressable>
+        <Pressable
+          onPress={onCollectAvailability}
+          disabled={sharingLink}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          {sharingLink ? (
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          ) : (
+            <Ionicons name="share-outline" size={20} color={colors.text} />
+          )}
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Collect availability
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={onToggleIncludePast}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons
+            name={includePast ? "checkbox" : "square-outline"}
+            size={20}
+            color={includePast ? colors.link : colors.text}
+          />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Include past dates
+          </Text>
+        </Pressable>
+      </View>
+    </ModalShell>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Small shared UI
 // ---------------------------------------------------------------------------
@@ -1511,17 +2835,21 @@ function SegBtn({
 
 function Chip({
   icon,
+  trailingIcon,
   label,
   active,
   onPress,
   colors,
 }: {
   icon?: keyof typeof Ionicons.glyphMap;
+  /** Optional icon after the label — e.g. a chevron marking a dropdown. */
+  trailingIcon?: keyof typeof Ionicons.glyphMap;
   label: string;
   active: boolean;
   onPress: () => void;
   colors: Colors;
 }) {
+  const tint = active ? colors.link : colors.textSecondary;
   return (
     <Pressable
       onPress={onPress}
@@ -1533,12 +2861,9 @@ function Chip({
         },
       ]}
     >
-      {icon && (
-        <Ionicons name={icon} size={14} color={active ? colors.link : colors.textSecondary} />
-      )}
-      <Text style={[styles.chipText, { color: active ? colors.link : colors.textSecondary }]}>
-        {label}
-      </Text>
+      {icon && <Ionicons name={icon} size={14} color={tint} />}
+      <Text style={[styles.chipText, { color: tint }]}>{label}</Text>
+      {trailingIcon && <Ionicons name={trailingIcon} size={13} color={tint} />}
     </Pressable>
   );
 }
@@ -1573,10 +2898,32 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   back: { width: 36, padding: 4 },
+  overflowBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   headerTitleWrap: { flex: 1 },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   headerSub: { fontSize: 12, marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+
+  // Quick-start empty state (no plans/teams yet) — ported from EventListScreen.
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  emptyIcon: { marginBottom: 24 },
+  emptyTitle: { fontSize: 20, fontWeight: "600", textAlign: "center", marginBottom: 8 },
+  emptyMessage: { fontSize: 16, textAlign: "center", lineHeight: 24, maxWidth: 300 },
+  emptyActions: {
+    width: "100%",
+    maxWidth: 300,
+    alignItems: "center",
+    gap: 16,
+    marginTop: 24,
+  },
+  emptyPrimaryButton: { width: "100%" },
+  emptySecondary: { minHeight: 24, alignItems: "center", justifyContent: "center" },
+  emptySecondaryText: { fontSize: 15, fontWeight: "500" },
   segmented: {
     flexDirection: "row",
     borderRadius: 9,
@@ -1599,6 +2946,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chipRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  toolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexWrap: "wrap",
+  },
+  toolbarSearch: { width: 220 },
+  toolbarSpacer: { flexGrow: 1 },
+  contentColumn: { flex: 1 },
+  contentRowWide: { flex: 1, flexDirection: "row" },
+  gridArea: { flex: 1, minWidth: 0 },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1640,11 +3001,26 @@ const styles = StyleSheet.create({
     borderLeftWidth: StyleSheet.hairlineWidth,
     gap: 1,
   },
-  headerCellTitle: { fontSize: 9, maxWidth: "100%" },
+  headerCellTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    maxWidth: "100%",
+  },
+  headerCellTitle: { fontSize: 9, flexShrink: 1 },
   headerCellWk: { fontSize: 10 },
   headerCellDate: { fontSize: 13, fontWeight: "700" },
   headerCellTally: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 },
   headerCellTallyText: { fontSize: 11, fontWeight: "700" },
+  addDateCell: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    gap: 2,
+  },
+  addDateText: { fontSize: 11, fontWeight: "600" },
   matrixBody: { flex: 1, flexDirection: "row" },
   sectionCell: {
     justifyContent: "center",
@@ -1659,6 +3035,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 6,
+  },
+  addRow: {
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  addCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  addCtaText: { fontSize: 13, fontWeight: "600" },
+  addInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  addInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   nameTextWrap: { flex: 1, minWidth: 0 },
   nameInline: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -1711,6 +3112,33 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     padding: 16,
   },
+  // Desktop docked side-panel — same fixed width + treatment as AssignSheet's
+  // dockedRight panel, so filled-cell management reserves identical space and
+  // the grid's column-fill targets the same reduced width.
+  dockPanel: {
+    width: 420,
+    flexShrink: 0,
+    height: "100%",
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  dockPanelInner: { flex: 1, padding: 16 },
+  // Mobile bottom sheet for the plan-detail panel — a tall card pinned to the
+  // bottom over a dim backdrop (tap-to-dismiss above it).
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  sheetBackdropTap: { flex: 1 },
+  sheet: {
+    height: "88%",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  popoverListDocked: { flexGrow: 1, flexShrink: 1 },
   popoverHead: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 8 },
   popoverHeadText: { flex: 1, minWidth: 0 },
   popoverTitle: { fontSize: 17, fontWeight: "700" },
@@ -1748,4 +3176,35 @@ const styles = StyleSheet.create({
   menuRowText: { flex: 1, minWidth: 0 },
   menuRowSub: { fontSize: 11, marginTop: 1 },
   menuRowCount: { fontSize: 13, fontWeight: "600" },
+  publishBar: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  publishBtn: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  publishBtnFull: {
+    minHeight: 50,
+    borderRadius: 12,
+  },
+  publishBtnCompact: {
+    minHeight: 38,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+  },
+  publishBtnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+  },
+  publishBtnText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  publishBtnTextFull: {
+    fontSize: 16,
+  },
 });
