@@ -90,6 +90,13 @@ export const searchCommunityPeople = query({
     // (completeness > the recency cap — FR-1.1/FR-1.4). When the leader is
     // SEARCHING, the search index already covers everyone, so we keep the
     // tighter `MAX_LIMIT` and slice as before.
+    //
+    // Read cost is bounded: the helper sources completeness from the group's
+    // OWN membership (O(group size)) and caps the wider-community recency tail
+    // to a small constant — it does NOT over-fetch the community in proportion
+    // to `GROUP_FULL_LIST_LIMIT`. (Earlier the tail scaled with this 1000
+    // ceiling → up to 3000 `userCommunities` reads → past Convex's per-query
+    // cap → the query threw → infinite spinner on larger communities.)
     const isEmptySearch = args.search.trim().length === 0;
     const rows = await searchCommunityMembersInternal(ctx, {
       communityId: group.communityId,
