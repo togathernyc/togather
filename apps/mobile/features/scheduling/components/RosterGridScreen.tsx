@@ -142,10 +142,17 @@ type RosterMatrix = {
 
 type ViewMode = "roles" | "people";
 
-/** A frozen-column row in the role view: a team section header or a role. */
+/**
+ * A frozen-column row in the role view: a team section header, a role, an
+ * inline "＋ Add role" affordance (one per team), or the trailing "＋ Add team"
+ * affordance. The add-* rows render in the frozen column with a matching empty
+ * spacer in the body so vertical scroll + alignment stay in sync.
+ */
 type RoleRow =
   | { kind: "section"; teamId: string; teamName: string }
-  | { kind: "role"; role: RosterRole };
+  | { kind: "role"; role: RosterRole }
+  | { kind: "addRole"; teamId: Id<"teams">; teamName: string }
+  | { kind: "addTeam" };
 
 // ---------------------------------------------------------------------------
 // Local helpers
@@ -410,6 +417,15 @@ export function RosterGridScreen() {
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
 
+  // Inline row-header creation (frozen left column). `addRoleForTeam` holds the
+  // team whose "＋ Add role" input is open (null = none); `addTeamOpen` toggles
+  // the trailing "＋ Add team" input. `savingRow` guards against double-submit.
+  const [addRoleForTeam, setAddRoleForTeam] = useState<Id<"teams"> | null>(null);
+  const [addRoleName, setAddRoleName] = useState("");
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [addTeamName, setAddTeamName] = useState("");
+  const [savingRow, setSavingRow] = useState(false);
+
   // Single docked side-panel at a time (desktop). The assign panel and the two
   // cell-management panels (role / member) all share the grid's right dock
   // region, so opening one must close the others — otherwise two panels could
@@ -582,17 +598,32 @@ export function RosterGridScreen() {
    */
   const roleRows = useMemo<RoleRow[]>(() => {
     const out: RoleRow[] = [];
-    let lastTeam: string | null = null;
+    let lastTeam: RosterRole | null = null;
+    const flushAddRole = () => {
+      if (lastTeam) {
+        out.push({
+          kind: "addRole",
+          teamId: lastTeam.teamId,
+          teamName: lastTeam.teamName,
+        });
+      }
+    };
     for (const role of visibleRoles) {
       const tid = role.teamId as string;
-      if (tid !== lastTeam) {
+      if (tid !== (lastTeam?.teamId as string | undefined)) {
+        // Close the previous team's role list with its "＋ Add role" row.
+        flushAddRole();
         out.push({ kind: "section", teamId: tid, teamName: role.teamName });
-        lastTeam = tid;
+        lastTeam = role;
       }
       out.push({ kind: "role", role });
     }
+    // "＋ Add role" for the final team, then the trailing "＋ Add team". When a
+    // team is isolated, hide "Add team" so the row stays scoped to that team.
+    flushAddRole();
+    if (!isolatedTeamId) out.push({ kind: "addTeam" });
     return out;
-  }, [visibleRoles]);
+  }, [visibleRoles, isolatedTeamId]);
 
   /** Members after team* + search + open/available filters. (*teams don't gate people rows.) */
   const visibleMembers = useMemo(() => {
@@ -799,6 +830,45 @@ export function RosterGridScreen() {
       setSettingUp(false);
     }
   }, [settingUp, quickStartRostering, groupId, router, surfaceError]);
+
+  // Inline "＋ Add role" under a team section → existing `createRole` mutation
+  // (the same one TeamSetupScreen uses). The reactive rosterMatrix adds the new
+  // role row. Keeps the input open on desktop so a leader can add several.
+  const handleAddRole = useCallback(
+    async (teamId: Id<"teams">) => {
+      const name = addRoleName.trim();
+      if (!name || savingRow) return;
+      setSavingRow(true);
+      try {
+        await createRole({ teamId, name });
+        setAddRoleName("");
+        if (!isWide) setAddRoleForTeam(null);
+      } catch (e) {
+        surfaceError("Couldn't add role", e);
+      } finally {
+        setSavingRow(false);
+      }
+    },
+    [addRoleName, savingRow, createRole, isWide, surfaceError],
+  );
+
+  // Inline "＋ Add team" → existing `createServingTeam` mutation (also creates
+  // the team's chat channel, same as quickStart). The reactive rosterMatrix
+  // adds the new team section.
+  const handleAddTeam = useCallback(async () => {
+    const name = addTeamName.trim();
+    if (!name || savingRow) return;
+    setSavingRow(true);
+    try {
+      await createServingTeam({ groupId, name });
+      setAddTeamName("");
+      setAddTeamOpen(false);
+    } catch (e) {
+      surfaceError("Couldn't add team", e);
+    } finally {
+      setSavingRow(false);
+    }
+  }, [addTeamName, savingRow, createServingTeam, groupId, surfaceError]);
 
   // -------------------------------------------------------------------------
   // Header
@@ -1223,6 +1293,153 @@ export function RosterGridScreen() {
             </View>
           );
         }
+        if (r.kind === "addRole") {
+          const open = addRoleForTeam === r.teamId;
+          return (
+            <View
+              key={`addrole-${r.teamId}`}
+              style={[
+                styles.addRow,
+                {
+                  width: NAME_W,
+                  height: ROW_H,
+                  backgroundColor: colors.surface,
+                  borderBottomColor: colors.border,
+                },
+              ]}
+            >
+              {open ? (
+                <View style={styles.addInputRow}>
+                  <TextInput
+                    style={[styles.addInput, { color: colors.text, borderColor: colors.border }]}
+                    placeholder="Role name"
+                    placeholderTextColor={colors.textTertiary}
+                    value={addRoleName}
+                    onChangeText={setAddRoleName}
+                    autoFocus
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!savingRow}
+                    onSubmitEditing={() => handleAddRole(r.teamId)}
+                    returnKeyType="done"
+                  />
+                  {savingRow ? (
+                    <ActivityIndicator size="small" color={colors.link} />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => handleAddRole(r.teamId)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save role"
+                    >
+                      <Ionicons name="checkmark" size={20} color={colors.link} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddRoleForTeam(null);
+                      setAddRoleName("");
+                    }}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel add role"
+                  >
+                    <Ionicons name="close" size={18} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddTeamOpen(false);
+                    setAddRoleForTeam(r.teamId);
+                    setAddRoleName("");
+                  }}
+                  style={styles.addCta}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Add a role to ${r.teamName}`}
+                >
+                  <Ionicons name="add" size={16} color={colors.link} />
+                  <Text style={[styles.addCtaText, { color: colors.link }]} numberOfLines={1}>
+                    Add role
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        }
+        if (r.kind === "addTeam") {
+          return (
+            <View
+              key="addteam"
+              style={[
+                styles.addRow,
+                {
+                  width: NAME_W,
+                  height: ROW_H,
+                  backgroundColor: colors.surfaceSecondary,
+                  borderBottomColor: colors.border,
+                },
+              ]}
+            >
+              {addTeamOpen ? (
+                <View style={styles.addInputRow}>
+                  <TextInput
+                    style={[styles.addInput, { color: colors.text, borderColor: colors.border }]}
+                    placeholder="Team name"
+                    placeholderTextColor={colors.textTertiary}
+                    value={addTeamName}
+                    onChangeText={setAddTeamName}
+                    autoFocus
+                    autoCapitalize="words"
+                    autoCorrect={false}
+                    editable={!savingRow}
+                    onSubmitEditing={handleAddTeam}
+                    returnKeyType="done"
+                  />
+                  {savingRow ? (
+                    <ActivityIndicator size="small" color={colors.link} />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={handleAddTeam}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Save team"
+                    >
+                      <Ionicons name="checkmark" size={20} color={colors.link} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => {
+                      setAddTeamOpen(false);
+                      setAddTeamName("");
+                    }}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel add team"
+                  >
+                    <Ionicons name="close" size={18} color={colors.textTertiary} />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAddRoleForTeam(null);
+                    setAddTeamOpen(true);
+                    setAddTeamName("");
+                  }}
+                  style={styles.addCta}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a team"
+                >
+                  <Ionicons name="add" size={16} color={colors.link} />
+                  <Text style={[styles.addCtaText, { color: colors.link, fontWeight: "700" }]} numberOfLines={1}>
+                    Add team
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        }
         const coveredCount = events.reduce((n, ev) => {
           const c = roleCells[`${r.role.roleId}:${ev._id}`];
           return n + (c && c.needed > 0 && c.open === 0 ? 1 : 0);
@@ -1275,6 +1492,26 @@ export function RosterGridScreen() {
                 style={[
                   styles.row,
                   { height: SECTION_H, backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth },
+                ]}
+              />
+            );
+          }
+          // The "＋ Add role" / "＋ Add team" rows live only in the frozen
+          // column; the body renders an empty spacer of the SAME height so the
+          // synced vertical scroll + frozen-column alignment stay intact.
+          if (r.kind === "addRole" || r.kind === "addTeam") {
+            return (
+              <View
+                key={r.kind === "addRole" ? `addrole-${r.teamId}` : "addteam"}
+                style={[
+                  styles.row,
+                  {
+                    height: ROW_H,
+                    backgroundColor:
+                      r.kind === "addTeam" ? colors.surfaceSecondary : colors.surface,
+                    borderBottomColor: colors.border,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                  },
                 ]}
               />
             );
@@ -2781,6 +3018,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 6,
+  },
+  addRow: {
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  addCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  addCtaText: { fontSize: 13, fontWeight: "600" },
+  addInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  addInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   nameTextWrap: { flex: 1, minWidth: 0 },
   nameInline: { flexDirection: "row", alignItems: "center", gap: 6 },
