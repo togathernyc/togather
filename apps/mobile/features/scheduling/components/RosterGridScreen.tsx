@@ -322,6 +322,14 @@ export function RosterGridScreen() {
   const deleteTeam = useAuthenticatedMutation(
     api.functions.scheduling.deletion.deleteTeam,
   );
+  // Rename a role / team from the same right-click menu — reuses the existing
+  // update mutations the Teams setup screen uses (both scheduler-gated).
+  const updateRole = useAuthenticatedMutation(
+    api.functions.scheduling.roles.updateRole,
+  );
+  const updateTeam = useAuthenticatedMutation(
+    api.functions.scheduling.teams.updateTeam,
+  );
   // Publish from the grid (#477 FR-3) — the SAME action the event editor uses,
   // not a fork. The grid is group-scoped with multiple date columns, so the
   // chooser below targets a specific plan (or all draft plans).
@@ -2105,6 +2113,8 @@ export function RosterGridScreen() {
           colors={colors}
           deleteRole={deleteRole}
           deleteTeam={deleteTeam}
+          updateRole={updateRole}
+          updateTeam={updateTeam}
           onError={surfaceError}
           onClose={() => setDeleteTarget(null)}
         />
@@ -3014,11 +3024,14 @@ function describeDates(dates: number[]): string {
 }
 
 /**
- * Right-click delete flow for a team header or role row: a one-item menu →
- * "cannot be undone" confirm → (only if people are staffed) a "they'll be
- * texted" confirm → the delete mutation. The staffed count + names + dates are
- * computed client-side from the grid's `roleCells`, so the second modal can
- * show them before any mutation runs.
+ * Right-click actions for a team header or role row: a menu (Rename · Delete)
+ * → either an inline rename field, or the "cannot be undone" confirm → (only
+ * if people are staffed) a "they'll be texted" confirm → the delete mutation.
+ * The staffed count + names + dates are computed client-side from the grid's
+ * `roleCells`, so the second modal can show them before any mutation runs.
+ *
+ * Rename reuses the existing `updateRole` / `updateTeam` mutations (both
+ * scheduler-gated) — the same ones the Teams setup screen uses.
  */
 function DeleteRowFlow({
   target,
@@ -3028,6 +3041,8 @@ function DeleteRowFlow({
   colors,
   deleteRole,
   deleteTeam,
+  updateRole,
+  updateTeam,
   onError,
   onClose,
 }: {
@@ -3038,17 +3053,22 @@ function DeleteRowFlow({
   colors: Colors;
   deleteRole: (args: { roleId: Id<"teamRoles"> }) => Promise<unknown>;
   deleteTeam: (args: { teamId: Id<"teams"> }) => Promise<unknown>;
+  updateRole: (args: { roleId: Id<"teamRoles">; name: string }) => Promise<unknown>;
+  updateTeam: (args: { teamId: Id<"teams">; name: string }) => Promise<unknown>;
   onError: (title: string, e: unknown) => void;
   onClose: () => void;
 }) {
-  // "menu" → "confirm" → "notify" (only when staffed). Starts at the one-item
-  // menu so right-click and long-press both land on a consistent, discoverable
-  // surface (matching the date-column ⋯ menu idiom).
-  const [step, setStep] = useState<"menu" | "confirm" | "notify">("menu");
+  // "menu" → "rename" (inline field) | "confirm" → "notify" (only when
+  // staffed). Starts at the menu so right-click and long-press both land on a
+  // consistent, discoverable surface (matching the date-column ⋯ menu idiom).
+  const [step, setStep] = useState<"menu" | "rename" | "confirm" | "notify">(
+    "menu",
+  );
   const [busy, setBusy] = useState(false);
 
   const name = target.kind === "team" ? target.teamName : target.roleName;
   const noun = target.kind === "team" ? "team" : "role";
+  const [draftName, setDraftName] = useState(name);
   const staffed = useMemo(
     () => staffedForTarget(target, events, roles, roleCells),
     [target, events, roles, roleCells],
@@ -3082,6 +3102,26 @@ function DeleteRowFlow({
     }
   }, [staffed.length, runDelete]);
 
+  const runRename = useCallback(async () => {
+    const trimmed = draftName.trim();
+    if (!trimmed || trimmed === name) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    try {
+      if (target.kind === "team") {
+        await updateTeam({ teamId: target.teamId, name: trimmed });
+      } else {
+        await updateRole({ roleId: target.roleId, name: trimmed });
+      }
+      onClose();
+    } catch (e) {
+      onError(`Couldn't rename ${noun}`, e);
+      setBusy(false);
+    }
+  }, [draftName, name, target, updateTeam, updateRole, onClose, onError, noun]);
+
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.deleteBackdrop} onPress={busy ? undefined : onClose}>
@@ -3101,6 +3141,20 @@ function DeleteRowFlow({
                 {name}
               </Text>
               <TouchableOpacity
+                onPress={() => {
+                  setDraftName(name);
+                  setStep("rename");
+                }}
+                style={styles.deleteMenuItem}
+                accessibilityRole="button"
+                accessibilityLabel={`Rename ${noun}`}
+              >
+                <Ionicons name="pencil-outline" size={16} color={colors.text} />
+                <Text style={[styles.deleteMenuItemText, { color: colors.text }]}>
+                  Rename
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                 onPress={() => setStep("confirm")}
                 style={styles.deleteMenuItem}
                 accessibilityRole="button"
@@ -3111,6 +3165,64 @@ function DeleteRowFlow({
                   Delete {noun}
                 </Text>
               </TouchableOpacity>
+            </>
+          )}
+
+          {step === "rename" && (
+            <>
+              <Text
+                style={[styles.deleteHeading, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                Rename {noun}
+              </Text>
+              <TextInput
+                style={[
+                  styles.renameInput,
+                  { color: colors.text, borderColor: colors.border },
+                ]}
+                value={draftName}
+                onChangeText={setDraftName}
+                placeholder={`${noun === "team" ? "Team" : "Role"} name`}
+                placeholderTextColor={colors.textTertiary}
+                autoFocus
+                autoCapitalize="words"
+                autoCorrect={false}
+                editable={!busy}
+                onSubmitEditing={() => void runRename()}
+                returnKeyType="done"
+                accessibilityLabel={`${noun} name`}
+              />
+              <View style={styles.deleteActions}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  disabled={busy}
+                  style={[styles.deleteBtn, { borderColor: colors.border }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Text style={[styles.deleteBtnText, { color: colors.text }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => void runRename()}
+                  disabled={busy || !draftName.trim()}
+                  style={[
+                    styles.deleteBtn,
+                    {
+                      backgroundColor: colors.link,
+                      opacity: !draftName.trim() ? 0.5 : 1,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save name"
+                >
+                  {busy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={[styles.deleteBtnText, { color: "#fff" }]}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </>
           )}
 
@@ -3545,6 +3657,14 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   deleteMenuItemText: { fontSize: 15, fontWeight: "500" },
+  renameInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
+    fontSize: 15,
+    marginTop: 4,
+  },
   deleteTitle: { fontSize: 17, fontWeight: "700", marginBottom: 8 },
   deleteBody: { fontSize: 14, lineHeight: 20 },
   deleteNames: { fontSize: 13, marginTop: 8, fontStyle: "italic" },
