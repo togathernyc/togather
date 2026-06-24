@@ -393,6 +393,23 @@ export function AssignSheet({
     [],
   );
 
+  /**
+   * Keep Needed ≥ assigned. Called after every successful assign: if the role
+   * was full (or had 0 needed), grow Needed to cover the person just placed so
+   * "Needed" never reads lower than reality. `assignedCount` is the pre-assign
+   * prop, so the new floor is `assignedCount + 1`. No-op when `onSetNeeded`
+   * isn't provided (stepper hidden) or Needed already has room. Unassigning
+   * never calls this, so freed slots stay open.
+   */
+  const growNeededForAssign = useCallback(() => {
+    if (!onSetNeeded) return;
+    const needed = neededCount ?? 0;
+    const filledAfter = (assignedCount ?? 0) + 1;
+    if (needed < filledAfter) {
+      onSetNeeded(Math.max(needed, filledAfter));
+    }
+  }, [onSetNeeded, neededCount, assignedCount]);
+
   const handleAssignFromGroup = useCallback(
     async (person: CommunityPerson) => {
       if (assignedUserIds.has(person.userId as string)) return;
@@ -405,6 +422,9 @@ export function AssignSheet({
           userId: person.userId,
           timeLabel,
         });
+        // Auto-grow Needed to cover this assignment (e.g. 0→1, or a full
+        // role's count up by one) so assigned never exceeds needed.
+        growNeededForAssign();
         if (result?.doubleBooked) {
           Alert.alert(
             "Heads up — double-booked",
@@ -434,6 +454,7 @@ export function AssignSheet({
       dockedRight,
       onClose,
       surfaceError,
+      growNeededForAssign,
     ],
   );
 
@@ -449,6 +470,8 @@ export function AssignSheet({
           userId: person.userId,
           timeLabel,
         });
+        // Grow Needed to cover this assignment (see handleAssignFromGroup).
+        growNeededForAssign();
         const firstName = person.firstName?.trim() || person.displayName;
         Alert.alert(
           "Assigned",
@@ -474,6 +497,7 @@ export function AssignSheet({
       onClose,
       roleName,
       surfaceError,
+      growNeededForAssign,
     ],
   );
 
@@ -507,6 +531,9 @@ export function AssignSheet({
             existingDisplayName?: string | null;
           }
         | undefined;
+      // Every non-throwing branch below results in an assignment (existing
+      // match, deferred invite, or sent invite), so grow Needed to cover it.
+      growNeededForAssign();
       if (result?.existedAlready) {
         const matched = result.existingDisplayName || firstName;
         Alert.alert(
@@ -555,6 +582,7 @@ export function AssignSheet({
     dockedRight,
     onClose,
     surfaceError,
+    growNeededForAssign,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -819,25 +847,49 @@ export function AssignSheet({
           `onSetNeeded` (e.g. the event editor's own NeededRolesModal). */}
       {onSetNeeded && (
         <View style={[styles.neededRow, { borderBottomColor: colors.border }]}>
-          <Text style={[styles.neededLabel, { color: colors.text }]}>
-            Needed: {needed}
-          </Text>
+          <View style={styles.neededLabelWrap}>
+            <Text style={[styles.neededLabel, { color: colors.text }]}>
+              Needed: {needed}
+            </Text>
+            {floor > 0 && (
+              <Text
+                style={[styles.neededHint, { color: colors.textSecondary }]}
+              >
+                {floor} assigned
+              </Text>
+            )}
+          </View>
           <View style={styles.neededControls}>
-            <TouchableOpacity
-              onPress={() => onSetNeeded(Math.max(floor, needed - 1))}
-              disabled={needed <= floor}
-              accessibilityRole="button"
-              accessibilityLabel="Decrease needed"
-              style={[
-                styles.stepBtn,
-                {
-                  borderColor: colors.border,
-                  opacity: needed <= floor ? 0.4 : 1,
-                },
-              ]}
-            >
-              <Ionicons name="remove" size={20} color={colors.text} />
-            </TouchableOpacity>
+            {/* `−` is floored at the number already assigned (and at 0): you
+                can't drop a slot someone's in. Disabled = greyed + non-tappable
+                so it never silently no-ops. Unassign someone to go lower. */}
+            {(() => {
+              const decreaseDisabled = needed <= floor || needed <= 0;
+              return (
+                <TouchableOpacity
+                  onPress={() => onSetNeeded(Math.max(floor, needed - 1))}
+                  disabled={decreaseDisabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease needed"
+                  accessibilityState={{ disabled: decreaseDisabled }}
+                  style={[
+                    styles.stepBtn,
+                    {
+                      borderColor: colors.border,
+                      opacity: decreaseDisabled ? 0.35 : 1,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="remove"
+                    size={20}
+                    color={
+                      decreaseDisabled ? colors.textTertiary : colors.text
+                    }
+                  />
+                </TouchableOpacity>
+              );
+            })()}
             <TouchableOpacity
               onPress={() => onSetNeeded(needed + 1)}
               accessibilityRole="button"
@@ -1152,9 +1204,18 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  neededLabelWrap: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    flexShrink: 1,
+  },
   neededLabel: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  neededHint: {
+    fontSize: 13,
   },
   neededControls: {
     flexDirection: "row",

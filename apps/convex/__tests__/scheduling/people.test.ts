@@ -13,6 +13,7 @@ import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
 import { api } from "../../_generated/api";
 import { buildSchedulingWorld } from "./fixtures";
+import { buildSearchText } from "../../lib/utils";
 
 async function setupSchedulingWorld() {
   const t = convexTest(schema, modules);
@@ -172,6 +173,153 @@ describe("searchCommunityPeople", () => {
       ).toBe(true);
     }
     expect(typed.map((r) => r.userId)).toContain(world.staleGroupMemberId);
+  });
+
+  it("bounds reads on empty search: full group + only a small community tail (no 3000-row over-fetch)", async () => {
+    // Regression for the roster-grid infinite spinner. The empty-search path
+    // must return EVERY group member (FR-1) while keeping the wider-community
+    // "extras" tail a small constant — not a slice that scales with the 1000
+    // group ceiling (which over-fetched up to ~3000 userCommunities rows on a
+    // real ~85+ member community and threw past Convex's read cap).
+    const t = convexTest(schema, modules);
+
+    const GROUP_SIZE = 40; // a sizeable serving group
+    const COMMUNITY_EXTRAS = 300; // many more community-only people around it
+
+    const { communityId, groupId, leaderId, groupMemberIds } = await t.run(
+      async (ctx) => {
+        const communityId = await ctx.db.insert("communities", {
+          name: "Big Community",
+          slug: "big",
+          isPublic: true,
+        });
+        const groupTypeId = await ctx.db.insert("groupTypes", {
+          communityId,
+          name: "Campus",
+          slug: "campus",
+          isActive: true,
+          createdAt: Date.now(),
+          displayOrder: 1,
+        });
+        const groupId = await ctx.db.insert("groups", {
+          communityId,
+          groupTypeId,
+          name: "Big Campus",
+          isArchived: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+
+        async function newUser(first: string) {
+          const userId = await ctx.db.insert("users", {
+            firstName: first,
+            lastName: "Test",
+            email: `${first.toLowerCase()}@example.com`,
+            isActive: true,
+            roles: 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            searchText: buildSearchText({
+              firstName: first,
+              lastName: "Test",
+              email: `${first.toLowerCase()}@example.com`,
+            }),
+          });
+          await ctx.db.insert("userCommunities", {
+            communityId,
+            userId,
+            roles: 1,
+            status: 1,
+            // Distinct lastLogin so recency ordering is deterministic; group
+            // members get the OLDEST stamps so a recency-bounded tail would
+            // never surface them — proving completeness comes from the union.
+            lastLogin: 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          return userId;
+        }
+
+        // Leader (caller) — in the group so requireGroupMember passes.
+        const leaderId = await newUser("Leader");
+        await ctx.db.insert("groupMembers", {
+          groupId,
+          userId: leaderId,
+          role: "leader",
+          joinedAt: Date.now(),
+          notificationsEnabled: true,
+        });
+
+        // The group's full membership (the completeness set).
+        const groupMemberIds: string[] = [];
+        for (let i = 0; i < GROUP_SIZE; i++) {
+          const userId = await newUser(`Grp${String(i).padStart(3, "0")}`);
+          await ctx.db.insert("groupMembers", {
+            groupId,
+            userId,
+            role: "member",
+            joinedAt: Date.now(),
+            notificationsEnabled: true,
+          });
+          groupMemberIds.push(userId);
+        }
+
+        // Many community-only people NOT in the group. Give them the MOST
+        // recent lastLogin so they dominate the recency index — the empty
+        // search must still cap them to the small constant tail.
+        for (let i = 0; i < COMMUNITY_EXTRAS; i++) {
+          const userId = await ctx.db.insert("users", {
+            firstName: `Ext${String(i).padStart(3, "0")}`,
+            lastName: "Test",
+            email: `ext${i}@example.com`,
+            isActive: true,
+            roles: 1,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            searchText: buildSearchText({
+              firstName: `Ext${i}`,
+              lastName: "Test",
+            }),
+          });
+          await ctx.db.insert("userCommunities", {
+            communityId,
+            userId,
+            roles: 1,
+            status: 1,
+            lastLogin: Date.now() + i, // most recent
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+        }
+
+        return { communityId, groupId, leaderId, groupMemberIds };
+      },
+    );
+
+    expect(communityId).toBeDefined();
+
+    const leaderToken = (await generateTokens(leaderId)).accessToken;
+    const results = await t.query(
+      api.functions.scheduling.people.searchCommunityPeople,
+      { token: leaderToken, groupId, search: "" },
+    );
+
+    // 1) Completeness: EVERY group member appears (caller excluded), each
+    //    flagged inGroup. Recency-bounded fallbacks would have dropped these
+    //    (oldest lastLogin), so their presence proves the group union.
+    const inGroupIds = new Set(
+      results.filter((r) => r.inGroup).map((r) => r.userId),
+    );
+    for (const id of groupMemberIds) {
+      expect(inGroupIds.has(id as never)).toBe(true);
+    }
+
+    // 2) Bounded tail: community-only ("extras") rows are capped to a small
+    //    constant — NOT all 300. Before the fix this tier scaled toward the
+    //    1000 ceiling (×3 over-fetch). Assert far fewer than the population.
+    const extras = results.filter((r) => !r.inGroup);
+    expect(extras.length).toBeLessThanOrEqual(50);
+    expect(extras.length).toBeLessThan(COMMUNITY_EXTRAS);
   });
 
   it("rejects a non-group, non-community-admin caller with a ConvexError", async () => {

@@ -27,6 +27,22 @@ import { getUsersWithNotificationsDisabled } from "./notifications/enabledStatus
 const GROUP_COMPLETE_LIMIT = 1000;
 
 /**
+ * Cap on the wider-community "extra people not in the group" tail on the
+ * empty-search path. When `includeAllGroupMembersWhenEmpty` is set the group-
+ * member union ALREADY guarantees completeness (FR-1), so this recency tier
+ * only needs to surface a small set of community-only people the leader might
+ * want to add+assign — they can always type a name to reach anyone past it.
+ *
+ * Keeping this a small CONSTANT (rather than scaling with the 1000-row group
+ * ceiling) is what bounds the empty-search read count to O(group size) +
+ * O(constant): on an 85+ member real community the old `effectiveLimit * 3` =
+ * up to 3000 `userCommunities` rows — each followed by a `ctx.db.get` AND a
+ * membership re-check — blew past Convex's per-query read cap and the query
+ * threw, surfacing as a permanent infinite spinner (roster grid fix).
+ */
+const COMMUNITY_TAIL_LIMIT = 50;
+
+/**
  * Base member result returned by search
  */
 export interface MemberSearchResult {
@@ -267,6 +283,11 @@ export async function searchCommunityMembersInternal(
   // recent-members fallback, use `userCommunities.by_community_lastLogin` to
   // surface the most recently-active people without scanning every user.
   const allMatchingUsers: Map<Id<"users">, Doc<"users">> = new Map();
+  // Users sourced from `includeAllGroupMembersWhenEmpty`'s active membership.
+  // These are already known-active members of the group (and therefore of the
+  // community), so we skip the per-row `userCommunities` membership re-check
+  // for them below — only the (now small, bounded) community tail needs it.
+  const knownGroupMemberIds = new Set<Id<"users">>();
 
   if (searchQuery) {
     // Build the set of terms to issue against the search index. Comma-
@@ -337,17 +358,34 @@ export async function searchCommunityMembersInternal(
         groupMemberships.map((m) => ctx.db.get(m.userId)),
       );
       for (const user of groupUsers) {
-        if (user && !allMatchingUsers.has(user._id)) {
-          allMatchingUsers.set(user._id, user);
+        if (user) {
+          knownGroupMemberIds.add(user._id);
+          if (!allMatchingUsers.has(user._id)) {
+            allMatchingUsers.set(user._id, user);
+          }
         }
       }
     }
 
     if (fallbackToRecentWhenEmpty) {
       // Pull the most recently-active community members directly off the
-      // descending `by_community_lastLogin` index. We over-fetch to account
-      // for downstream filters (excluded users, isActive, etc.) but the read
-      // count is bounded by `effectiveLimit`, not community size.
+      // descending `by_community_lastLogin` index.
+      //
+      // When `includeAllGroupMembersWhenEmpty` is also set, the group-member
+      // union above ALREADY guarantees completeness, so this tier only needs a
+      // small constant slice of community-only "extras" — NOT a slice that
+      // scales with the (up to 1000) group ceiling. We bound the take to a
+      // small CONSTANT (`COMMUNITY_TAIL_LIMIT`) in that case so the total
+      // empty-search read count stays O(group size) + O(constant) instead of
+      // O(3000), which previously blew past Convex's per-query read cap on
+      // larger communities and threw (infinite spinner).
+      //
+      // For the plain recency fallback (no group completeness guarantee) we
+      // keep the prior `effectiveLimit * 3` over-fetch — `effectiveLimit` is
+      // capped at 100 there, so it's already bounded.
+      const recencyTake = includeAllGroupMembersWhenEmpty
+        ? COMMUNITY_TAIL_LIMIT
+        : effectiveLimit * 3;
       const recentMemberships = await ctx.db
         .query("userCommunities")
         .withIndex("by_community_lastLogin", (q) =>
@@ -355,7 +393,7 @@ export async function searchCommunityMembersInternal(
         )
         .order("desc")
         .filter((q) => q.eq(q.field("status"), 1))
-        .take(effectiveLimit * 3);
+        .take(recencyTake);
 
       const recentUsers = await Promise.all(
         recentMemberships.map((m) => ctx.db.get(m.userId)),
@@ -468,16 +506,33 @@ export async function searchCommunityMembersInternal(
   // Check which users are active members of this community. One lookup per
   // candidate via the `by_user_community` compound index — read count scales
   // with the number of search-index matches, not community size.
+  //
+  // EXCEPTION: users sourced from `includeAllGroupMembersWhenEmpty`'s active
+  // membership (`knownGroupMemberIds`) are already known-active members of the
+  // group — and you cannot be an active group member without being an active
+  // community member — so we SKIP the per-row `userCommunities` re-check for
+  // them (it's redundant) and still fetch the doc only to surface their
+  // role/lastLogin. The (now bounded) community tail is the only set that
+  // genuinely needs a membership *check*. This keeps the empty-search read
+  // count O(group size) + O(constant) rather than scaling the re-check across
+  // a 3000-row over-fetch (roster grid fix).
   const usersArray = Array.from(allMatchingUsers.values());
-  const membershipPromises = usersArray.map((user) =>
-    ctx.db
+  const membershipPromises = usersArray.map(async (user) => {
+    // Skip the redundant membership read for known-active group members: a
+    // synthetic active membership stands in (roles default to 0 — the assign
+    // sheet doesn't surface admin badges for in-group rows). Only the
+    // community tail and the search path actually need a membership check.
+    if (knownGroupMemberIds.has(user._id)) {
+      return { status: 1, roles: 0 } as Doc<"userCommunities">;
+    }
+    return ctx.db
       .query("userCommunities")
       .withIndex("by_user_community", (q) =>
         q.eq("userId", user._id).eq("communityId", communityId)
       )
       .filter((q) => q.eq(q.field("status"), 1)) // Active status
-      .first()
-  );
+      .first();
+  });
   const memberships = await Promise.all(membershipPromises);
 
   // Apply all filters once up front so we know exactly which rows survive

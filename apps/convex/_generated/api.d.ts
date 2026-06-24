@@ -139,6 +139,7 @@ import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
 import type * as functions_scheduling_availability from "../functions/scheduling/availability.js";
 import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
+import type * as functions_scheduling_deletion from "../functions/scheduling/deletion.js";
 import type * as functions_scheduling_eventItems from "../functions/scheduling/eventItems.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
@@ -214,8 +215,8 @@ import type * as lib_utils from "../lib/utils.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations_addChannelSlugs from "../migrations/addChannelSlugs.js";
-import type * as migrations_ensureDevAssistantBotUser from "../migrations/ensureDevAssistantBotUser.js";
 import type * as migrations_backfillLastActivityAt from "../migrations/backfillLastActivityAt.js";
+import type * as migrations_ensureDevAssistantBotUser from "../migrations/ensureDevAssistantBotUser.js";
 
 import type {
   ApiFromModules,
@@ -355,6 +356,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
   "functions/scheduling/availability": typeof functions_scheduling_availability;
   "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
+  "functions/scheduling/deletion": typeof functions_scheduling_deletion;
   "functions/scheduling/eventItems": typeof functions_scheduling_eventItems;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
@@ -430,8 +432,8 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   "lib/validators": typeof lib_validators;
   "migrations/addChannelSlugs": typeof migrations_addChannelSlugs;
-  "migrations/ensureDevAssistantBotUser": typeof migrations_ensureDevAssistantBotUser;
   "migrations/backfillLastActivityAt": typeof migrations_backfillLastActivityAt;
+  "migrations/ensureDevAssistantBotUser": typeof migrations_ensureDevAssistantBotUser;
 }>;
 
 /**
