@@ -99,6 +99,11 @@ SECRET_KEYS=(
   "STRIPE_SECRET_KEY"
   "STRIPE_WEBHOOK_SECRET"
   "STRIPE_PRODUCT_ID"
+  # Dev-assistant bot (@Togather pipeline). Optional — synced only when present
+  # (loaded via the optional-secrets block in ee/actions/load-secrets).
+  "CLAUDE_ROUTINES_TRIGGER_URL"
+  "CLAUDE_ROUTINES_TOKEN"
+  "DEV_ASSISTANT_CALLBACK_SECRET"
 )
 
 # ---------------------------------------------------------------------------
