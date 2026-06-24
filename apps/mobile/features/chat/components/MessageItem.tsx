@@ -1350,8 +1350,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   // Edge-to-edge image-only bubble: image fills the bubble with no surrounding color.
+  // Restore the full corner radius — own/otherMessageBubble flatten the tail-side bottom
+  // corner to 3 to seat the tail, but image-only bubbles render no tail, so all four
+  // corners should match (otherwise the photo looks asymmetric under overflow: 'hidden').
   imageOnlyBubble: {
     backgroundColor: 'transparent',
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
   },
   imageOnlyAttachments: {
     marginTop: 0,
