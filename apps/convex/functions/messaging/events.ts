@@ -25,6 +25,42 @@ import { chatRequestEmail } from "../../lib/notifications/emailTemplates";
 const MAX_PREVIEW_LENGTH = 100;
 
 // ============================================================================
+// Notification routing
+// ============================================================================
+
+/** Where a single member's notification for a message should go. */
+type RecipientBucket = "mention" | "regular" | "skip";
+
+/**
+ * Decide whether a channel member should be notified about a message and, if
+ * so, in which bucket ("mention" → rich push + email, "regular" → push only).
+ *
+ * Top-level messages keep the original behavior: mentioned members get the
+ * mention notification, everyone else gets a regular new-message push.
+ *
+ * Thread replies default to "mentions only" to avoid notification overload —
+ * a member is not notified unless they were @mentioned. Members can override
+ * this per thread via `chatThreadSubscriptions`:
+ *   - "all":  notified on every reply (as a mention if also mentioned)
+ *   - "none": never notified, even when mentioned
+ */
+export function decideRecipientBucket(opts: {
+  isMentioned: boolean;
+  isReply: boolean;
+  threadState?: "all" | "none";
+}): RecipientBucket {
+  if (!opts.isReply) {
+    return opts.isMentioned ? "mention" : "regular";
+  }
+  if (opts.threadState === "none") return "skip";
+  if (opts.threadState === "all") {
+    return opts.isMentioned ? "mention" : "regular";
+  }
+  // Default for thread replies: only notify members who were mentioned.
+  return opts.isMentioned ? "mention" : "skip";
+}
+
+// ============================================================================
 // Event Handlers
 // ============================================================================
 
@@ -126,6 +162,23 @@ export const onMessageSent = internalMutation({
     // so the Activity feed's inbox badge reflects the new message.
     if (message.blastId) return;
 
+    // Thread replies (messages with a parentMessageId) default to "mentions
+    // only" so members aren't notified about every reply. Members can opt in
+    // ("all") or fully mute ("none") a thread; load those overrides once here
+    // and apply them while partitioning recipients below.
+    const threadId = message.parentMessageId;
+    const isReply = !!threadId;
+    const threadStates = new Map<string, "all" | "none">();
+    if (threadId) {
+      const subscriptions = await ctx.db
+        .query("chatThreadSubscriptions")
+        .withIndex("by_thread", (q) => q.eq("threadId", threadId))
+        .collect();
+      for (const sub of subscriptions) {
+        threadStates.set(sub.userId, sub.state);
+      }
+    }
+
     // Send push notifications via centralized notification system
     // Schedule an action to send notifications (actions can make external API calls)
     if (members.length > 0) {
@@ -215,9 +268,14 @@ export const onMessageSent = internalMutation({
           }
 
           const bucket = groupBuckets.get(key)!;
-          if (message.mentionedUserIds?.includes(member.userId)) {
+          const target = decideRecipientBucket({
+            isMentioned: !!message.mentionedUserIds?.includes(member.userId),
+            isReply,
+            threadState: threadStates.get(member.userId),
+          });
+          if (target === "mention") {
             bucket.mentionRecipients.push(member.userId);
-          } else {
+          } else if (target === "regular") {
             bucket.regularRecipients.push(member.userId);
           }
         }
@@ -259,6 +317,11 @@ export const onMessageSent = internalMutation({
         const pendingRecipients: Id<"users">[] = [];
         const acceptedRecipients: Id<"users">[] = [];
         for (const member of members) {
+          // DMs are low-volume, so replies still notify by default; only an
+          // explicit "none" mute on the thread suppresses the notification.
+          if (isReply && threadStates.get(member.userId) === "none") {
+            continue;
+          }
           if (member.requestState === "pending") {
             pendingRecipients.push(member.userId);
           } else {
@@ -299,9 +362,14 @@ export const onMessageSent = internalMutation({
         const regularRecipients: Id<"users">[] = [];
 
         for (const member of members) {
-          if (message.mentionedUserIds?.includes(member.userId)) {
+          const target = decideRecipientBucket({
+            isMentioned: !!message.mentionedUserIds?.includes(member.userId),
+            isReply,
+            threadState: threadStates.get(member.userId),
+          });
+          if (target === "mention") {
             mentionRecipients.push(member.userId);
-          } else {
+          } else if (target === "regular") {
             regularRecipients.push(member.userId);
           }
         }

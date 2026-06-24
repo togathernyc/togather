@@ -101,6 +101,7 @@ import type * as functions_messaging_reachOut from "../functions/messaging/reach
 import type * as functions_messaging_reactions from "../functions/messaging/reactions.js";
 import type * as functions_messaging_readState from "../functions/messaging/readState.js";
 import type * as functions_messaging_sharedChannels from "../functions/messaging/sharedChannels.js";
+import type * as functions_messaging_threadSubscriptions from "../functions/messaging/threadSubscriptions.js";
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
@@ -319,6 +320,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/reactions": typeof functions_messaging_reactions;
   "functions/messaging/readState": typeof functions_messaging_readState;
   "functions/messaging/sharedChannels": typeof functions_messaging_sharedChannels;
+  "functions/messaging/threadSubscriptions": typeof functions_messaging_threadSubscriptions;
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
