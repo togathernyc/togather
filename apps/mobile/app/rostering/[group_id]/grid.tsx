@@ -1,10 +1,13 @@
-import { RosterGridScreen } from "@features/scheduling";
+import { Redirect, useLocalSearchParams } from "expo-router";
 
 /**
- * Leader roster grid — route `/rostering/[group_id]/grid`.
- * The both-toggle matrix that places volunteers into roles across events
- * (see RosterGridScreen).
+ * Legacy `/rostering/[group_id]/grid` route.
+ *
+ * The grid IS the rostering home now (Stage 1), so this redirects to
+ * `/rostering/[group_id]` to avoid two URLs for the same surface. Kept as a
+ * redirect so existing deep links / "Open roster grid" buttons don't break.
  */
-export default function RosterGridRoute() {
-  return <RosterGridScreen />;
+export default function RosterGridRedirect() {
+  const { group_id } = useLocalSearchParams<{ group_id: string }>();
+  return <Redirect href={`/rostering/${group_id}` as never} />;
 }

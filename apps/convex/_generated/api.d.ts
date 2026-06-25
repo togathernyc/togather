@@ -44,6 +44,13 @@ import type * as functions_communityLandingPageActions from "../functions/commun
 import type * as functions_communityPeople from "../functions/communityPeople.js";
 import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
+import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
+import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
+import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
+import type * as functions_devAssistant_index from "../functions/devAssistant/index.js";
+import type * as functions_devAssistant_maintainers from "../functions/devAssistant/maintainers.js";
+import type * as functions_devAssistant_prompts from "../functions/devAssistant/prompts.js";
+import type * as functions_devAssistant_tools from "../functions/devAssistant/tools.js";
 import type * as functions_ee_billing from "../functions/ee/billing.js";
 import type * as functions_ee_notifications_proposalNotifications from "../functions/ee/notifications/proposalNotifications.js";
 import type * as functions_ee_proposals from "../functions/ee/proposals.js";
@@ -94,6 +101,7 @@ import type * as functions_messaging_reachOut from "../functions/messaging/reach
 import type * as functions_messaging_reactions from "../functions/messaging/reactions.js";
 import type * as functions_messaging_readState from "../functions/messaging/readState.js";
 import type * as functions_messaging_sharedChannels from "../functions/messaging/sharedChannels.js";
+import type * as functions_messaging_threadSubscriptions from "../functions/messaging/threadSubscriptions.js";
 import type * as functions_messaging_typing from "../functions/messaging/typing.js";
 import type * as functions_migrations from "../functions/migrations.js";
 import type * as functions_migrations_migrateToCommunityPeople from "../functions/migrations/migrateToCommunityPeople.js";
@@ -133,13 +141,16 @@ import type * as functions_scheduledJobs from "../functions/scheduledJobs.js";
 import type * as functions_scheduling_assignments from "../functions/scheduling/assignments.js";
 import type * as functions_scheduling_availability from "../functions/scheduling/availability.js";
 import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
+import type * as functions_scheduling_deletion from "../functions/scheduling/deletion.js";
 import type * as functions_scheduling_eventItems from "../functions/scheduling/eventItems.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
 import type * as functions_scheduling_people from "../functions/scheduling/people.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
+import type * as functions_scheduling_presence from "../functions/scheduling/presence.js";
 import type * as functions_scheduling_publicAvailability from "../functions/scheduling/publicAvailability.js";
+import type * as functions_scheduling_quickStart from "../functions/scheduling/quickStart.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_roster from "../functions/scheduling/roster.js";
 import type * as functions_scheduling_songs from "../functions/scheduling/songs.js";
@@ -171,6 +182,7 @@ import type * as functions_uploads from "../functions/uploads.js";
 import type * as functions_userProfiles from "../functions/userProfiles.js";
 import type * as functions_users from "../functions/users.js";
 import type * as http from "../http.js";
+import type * as lib_apiKeys from "../lib/apiKeys.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_ee_emailTemplates from "../lib/ee/emailTemplates.js";
 import type * as lib_email_templates_BaseLayout from "../lib/email/templates/BaseLayout.js";
@@ -206,6 +218,7 @@ import type * as lib_validation from "../lib/validation.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations_addChannelSlugs from "../migrations/addChannelSlugs.js";
 import type * as migrations_backfillLastActivityAt from "../migrations/backfillLastActivityAt.js";
+import type * as migrations_ensureDevAssistantBotUser from "../migrations/ensureDevAssistantBotUser.js";
 
 import type {
   ApiFromModules,
@@ -250,6 +263,13 @@ declare const fullApi: ApiFromModules<{
   "functions/communityPeople": typeof functions_communityPeople;
   "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
+  "functions/devAssistant/actions": typeof functions_devAssistant_actions;
+  "functions/devAssistant/agent": typeof functions_devAssistant_agent;
+  "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
+  "functions/devAssistant/index": typeof functions_devAssistant_index;
+  "functions/devAssistant/maintainers": typeof functions_devAssistant_maintainers;
+  "functions/devAssistant/prompts": typeof functions_devAssistant_prompts;
+  "functions/devAssistant/tools": typeof functions_devAssistant_tools;
   "functions/ee/billing": typeof functions_ee_billing;
   "functions/ee/notifications/proposalNotifications": typeof functions_ee_notifications_proposalNotifications;
   "functions/ee/proposals": typeof functions_ee_proposals;
@@ -300,6 +320,7 @@ declare const fullApi: ApiFromModules<{
   "functions/messaging/reactions": typeof functions_messaging_reactions;
   "functions/messaging/readState": typeof functions_messaging_readState;
   "functions/messaging/sharedChannels": typeof functions_messaging_sharedChannels;
+  "functions/messaging/threadSubscriptions": typeof functions_messaging_threadSubscriptions;
   "functions/messaging/typing": typeof functions_messaging_typing;
   "functions/migrations": typeof functions_migrations;
   "functions/migrations/migrateToCommunityPeople": typeof functions_migrations_migrateToCommunityPeople;
@@ -339,13 +360,16 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/assignments": typeof functions_scheduling_assignments;
   "functions/scheduling/availability": typeof functions_scheduling_availability;
   "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
+  "functions/scheduling/deletion": typeof functions_scheduling_deletion;
   "functions/scheduling/eventItems": typeof functions_scheduling_eventItems;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
   "functions/scheduling/people": typeof functions_scheduling_people;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
+  "functions/scheduling/presence": typeof functions_scheduling_presence;
   "functions/scheduling/publicAvailability": typeof functions_scheduling_publicAvailability;
+  "functions/scheduling/quickStart": typeof functions_scheduling_quickStart;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/roster": typeof functions_scheduling_roster;
   "functions/scheduling/songs": typeof functions_scheduling_songs;
@@ -377,6 +401,7 @@ declare const fullApi: ApiFromModules<{
   "functions/userProfiles": typeof functions_userProfiles;
   "functions/users": typeof functions_users;
   http: typeof http;
+  "lib/apiKeys": typeof lib_apiKeys;
   "lib/auth": typeof lib_auth;
   "lib/ee/emailTemplates": typeof lib_ee_emailTemplates;
   "lib/email/templates/BaseLayout": typeof lib_email_templates_BaseLayout;
@@ -412,6 +437,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validators": typeof lib_validators;
   "migrations/addChannelSlugs": typeof migrations_addChannelSlugs;
   "migrations/backfillLastActivityAt": typeof migrations_backfillLastActivityAt;
+  "migrations/ensureDevAssistantBotUser": typeof migrations_ensureDevAssistantBotUser;
 }>;
 
 /**

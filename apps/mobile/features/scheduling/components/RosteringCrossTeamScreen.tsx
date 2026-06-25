@@ -26,6 +26,8 @@ import { EmptyState } from "@components/ui/EmptyState";
 import { useAuthenticatedQuery } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { listCrossTeamChannelsRef, type CrossTeamChannel } from "../api/crossTeamChannels";
+import { CenteredColumn } from "./CenteredColumn";
+import { RosteringBackHeader } from "./RosteringBackHeader";
 
 export function RosteringCrossTeamScreen() {
   const { colors } = useTheme();
@@ -48,13 +50,18 @@ export function RosteringCrossTeamScreen() {
 
   if (channels === undefined) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.surface }]}>
-        <ActivityIndicator size="small" color={colors.text} />
+      <View style={[styles.root, { backgroundColor: colors.surface }]}>
+        <RosteringBackHeader title="Cross-team" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="small" color={colors.text} />
+        </View>
       </View>
     );
   }
 
   return (
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
+      <RosteringBackHeader title="Cross-team" />
     <ScrollView
       style={{ backgroundColor: colors.surface }}
       contentContainerStyle={[
@@ -62,6 +69,7 @@ export function RosteringCrossTeamScreen() {
         { paddingBottom: insets.bottom + 24 },
       ]}
     >
+      <CenteredColumn style={styles.column}>
       <Pressable
         onPress={handleNew}
         style={[styles.newRow, { borderColor: primaryColor }]}
@@ -122,11 +130,14 @@ export function RosteringCrossTeamScreen() {
           </View>
         ))
       )}
+      </CenteredColumn>
     </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1 },
   centered: {
     flex: 1,
     alignItems: "center",
@@ -134,6 +145,12 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+    gap: 12,
+  },
+  // On desktop, content children live inside CenteredColumn, so the row gap
+  // must live here too (the contentContainer then has a single child). On
+  // mobile CenteredColumn is a pass-through and `content`'s gap applies.
+  column: {
     gap: 12,
   },
   newRow: {

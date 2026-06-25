@@ -27,10 +27,16 @@ import { requireAuth } from "../../lib/auth";
 import { searchCommunityMembersInternal } from "../../lib/memberSearch";
 import { requireGroupMember } from "./permissions";
 
-/** Default cap on returned candidates. */
+/** Default cap on returned candidates when the leader is searching. */
 const DEFAULT_LIMIT = 30;
-/** Hard cap to keep the query bounded even when callers pass a large limit. */
+/** Hard cap to keep the SEARCH path bounded even when callers pass a large limit. */
 const MAX_LIMIT = 100;
+/**
+ * Cap on the EMPTY-search (full-list) path — roster #477 FR-1. Large enough to
+ * return every assignable member of a very large church group (≥500) without
+ * search-gating the population; mirrors the helper's `GROUP_COMPLETE_LIMIT`.
+ */
+const GROUP_FULL_LIST_LIMIT = 1000;
 
 /**
  * Build the user's display name the same way the rest of the app does:
@@ -72,21 +78,34 @@ export const searchCommunityPeople = query({
     // Delegate to the shared helper — same search index + isActive /
     // isPlaceholder rules as the admin People and group Add People searches.
     // `annotateGroupId` makes each row carry `inGroup`; `fallbackToRecentWhenEmpty`
-    // surfaces a sensible default list before the leader has typed anything.
+    // surfaces wider-community people before the leader has typed anything; and
+    // `includeAllGroupMembersWhenEmpty` guarantees EVERY assignable group
+    // member is in the set on empty search (roster #477 FR-1) — not just a
+    // recency slice. A volunteer who hasn't logged in recently must be findable
+    // without typing their name.
     //
-    // Pass `MAX_LIMIT` (the helper's own hard cap) instead of the caller's
-    // `limit` so we don't truncate in-group members away before the
-    // AssignSheet-specific in-group-first re-sort below — the helper
-    // returns rows in relevance / last-login order, which would drop
-    // in-group people ranked below the cutoff and leave them invisible
-    // after the re-sort. Slicing happens after the re-sort.
+    // On EMPTY search, pass a high limit (`GROUP_FULL_LIST_LIMIT`) so the full
+    // group population survives the helper's truncation before the in-group-
+    // first re-sort below; we deliberately do NOT slice the empty-search result
+    // (completeness > the recency cap — FR-1.1/FR-1.4). When the leader is
+    // SEARCHING, the search index already covers everyone, so we keep the
+    // tighter `MAX_LIMIT` and slice as before.
+    //
+    // Read cost is bounded: the helper sources completeness from the group's
+    // OWN membership (O(group size)) and caps the wider-community recency tail
+    // to a small constant — it does NOT over-fetch the community in proportion
+    // to `GROUP_FULL_LIST_LIMIT`. (Earlier the tail scaled with this 1000
+    // ceiling → up to 3000 `userCommunities` reads → past Convex's per-query
+    // cap → the query threw → infinite spinner on larger communities.)
+    const isEmptySearch = args.search.trim().length === 0;
     const rows = await searchCommunityMembersInternal(ctx, {
       communityId: group.communityId,
       search: args.search,
       excludeUserIds: [callerId],
       annotateGroupId: args.groupId,
-      limit: MAX_LIMIT,
+      limit: isEmptySearch ? GROUP_FULL_LIST_LIMIT : MAX_LIMIT,
       fallbackToRecentWhenEmpty: true,
+      includeAllGroupMembersWhenEmpty: args.groupId,
     });
 
     const candidates = rows.map((row) => ({
@@ -110,6 +129,13 @@ export const searchCommunityPeople = query({
       return a.displayName.localeCompare(b.displayName);
     });
 
+    // On empty search return the COMPLETE list (FR-1) — slicing to `limit`
+    // here would re-introduce the very recency cap the fix removes. The leader
+    // can still pass a small `limit` for the SEARCH path (e.g. typeahead). The
+    // client scrolls / virtualizes the full list (FR-1.4 / FR-9).
+    if (isEmptySearch) {
+      return candidates;
+    }
     return candidates.slice(0, limit);
   },
 });

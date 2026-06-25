@@ -1724,6 +1724,8 @@ export const insertBotMessage = internalMutation({
     mentionedUserIds: v.optional(v.array(v.id("users"))),
     contentType: v.optional(v.string()),
     taskId: v.optional(v.id("tasks")),
+    bugId: v.optional(v.id("devBugs")),
+    parentMessageId: v.optional(v.id("chatMessages")),
     sourceKey: v.optional(v.string()),
   },
   handler: async (
@@ -1735,6 +1737,8 @@ export const insertBotMessage = internalMutation({
       mentionedUserIds,
       contentType,
       taskId,
+      bugId,
+      parentMessageId,
       sourceKey,
     },
   ) => {
@@ -1756,6 +1760,7 @@ export const insertBotMessage = internalMutation({
       welcome: "Welcome Bot 👋",
       task_reminder: "Task Reminder 📋",
       communication: "Communication Bot 💬",
+      dev_assistant: "Togather Bot 🤖",
       system: "Togather Bot",
     };
     const senderName = botNames[botType] || "Togather Bot";
@@ -1766,14 +1771,28 @@ export const insertBotMessage = internalMutation({
       // senderId is undefined for bot messages
       content,
       contentType: contentType || "bot",
+      parentMessageId,
       createdAt: now_,
       isDeleted: false,
       senderName,
       mentionedUserIds: mentionedUserIds || undefined,
       taskId,
+      bugId,
       sourceKey,
       lastActivityAt: now_,
     });
+
+    // If this is a thread reply, bump the parent's reply count + activity so
+    // the thread surfaces in the channel list (mirror messaging/messages.ts).
+    if (parentMessageId) {
+      const parentMessage = await ctx.db.get(parentMessageId);
+      if (parentMessage) {
+        await ctx.db.patch(parentMessageId, {
+          threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
+          lastActivityAt: now_,
+        });
+      }
+    }
 
     // Update channel with last message info
     const preview = content.slice(0, 100);

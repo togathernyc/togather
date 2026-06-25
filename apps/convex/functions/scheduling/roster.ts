@@ -69,14 +69,6 @@ export const rosterMatrix = query({
       .sort((a, b) => a.eventDate - b.eventDate)
       .slice(0, cap);
 
-    const events = plans.map((p) => ({
-      _id: p._id,
-      title: p.title,
-      eventDate: p.eventDate,
-      times: p.times,
-      status: p.status, // "draft" | "published" — AssignSheet needs this
-    }));
-
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(
       plans.map(async (plan) => {
@@ -98,6 +90,20 @@ export const rosterMatrix = query({
       }),
     );
 
+    const events = perPlan.map(({ plan, assignments }) => ({
+      _id: plan._id,
+      title: plan.title,
+      eventDate: plan.eventDate,
+      times: plan.times,
+      status: plan.status, // "draft" | "published" — AssignSheet needs this
+      // Authoritative count of who publish will notify: every `unconfirmed`
+      // assignment for the plan, counted off `by_plan` exactly as
+      // `markPublished` does. This includes assignments orphaned by a removed
+      // needed role (which have no `roleCells` entry), so the grid's publish
+      // confirm dialog can't undercount the request fan-out.
+      pendingCount: assignments.filter((a) => a.status === "unconfirmed").length,
+    }));
+
     // --- Resolve display names for every role and user referenced. ---
     const roleIds = new Set<string>();
     const userIds = new Set<string>();
@@ -115,11 +121,46 @@ export const rosterMatrix = query({
         if (doc) roleDocs.set(rid, doc);
       }),
     );
+
+    // Also fold in EVERY non-archived team of this group and its non-archived
+    // roles — even those with no needed-roles or assignments yet. Without this,
+    // a freshly inline-added team ("＋ Add team") or role ("＋ Add role") — which
+    // starts with zero needed-roles and zero assignments — never appears in the
+    // grid, so the leader can't set a needed count or assign anyone to it. Empty
+    // roles render as assignable rows (0 needed / 0 filled) and contribute 0 to
+    // any tally. Roles referenced by an archived team's old assignments still
+    // resolve via the per-reference fetch above, so removing a team doesn't drop
+    // its historical rows.
+    const groupTeams = (
+      await ctx.db
+        .query("teams")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    ).filter((t) => !t.isArchived);
+    const teamDocs = new Map<string, Doc<"teams">>();
+    for (const t of groupTeams) teamDocs.set(t._id as string, t);
+    const groupRoleLists = await Promise.all(
+      groupTeams.map((t) =>
+        ctx.db
+          .query("teamRoles")
+          .withIndex("by_team", (q) => q.eq("teamId", t._id))
+          .collect(),
+      ),
+    );
+    for (const list of groupRoleLists) {
+      for (const role of list) {
+        if (role.isArchived) continue;
+        roleDocs.set(role._id as string, role);
+      }
+    }
+
+    // Resolve any remaining referenced teams not in this group's set (e.g. a
+    // role on a team that was since archived but still has live assignments).
     const teamIds = new Set<string>();
     for (const doc of roleDocs.values()) teamIds.add(doc.teamId as string);
-    const teamDocs = new Map<string, Doc<"teams">>();
     await Promise.all(
       [...teamIds].map(async (tid) => {
+        if (teamDocs.has(tid)) return;
         const doc = await ctx.db.get(tid as Id<"teams">);
         if (doc) teamDocs.set(tid, doc);
       }),
@@ -222,8 +263,17 @@ export const rosterMatrix = query({
           a.sortOrder - b.sortOrder ||
           a.roleName.localeCompare(b.roleName),
       );
-    const teams = [...teamDocs.values()]
-      .map((t) => ({ teamId: t._id, teamName: t.name }))
+    const teamDocsList = [...teamDocs.values()];
+    const channelDocs = await Promise.all(
+      teamDocsList.map((t) => (t.channelId ? ctx.db.get(t.channelId) : Promise.resolve(null))),
+    );
+    const teams = teamDocsList
+      .map((t, idx) => ({
+        teamId: t._id,
+        teamName: t.name,
+        hasChannel: t.channelId !== undefined,
+        channelMemberCount: channelDocs[idx]?.memberCount ?? 0,
+      }))
       .sort((a, b) => a.teamName.localeCompare(b.teamName));
 
     // --- People-centric rows: active group members. ---

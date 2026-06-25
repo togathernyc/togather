@@ -22,6 +22,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import type { Id } from '@services/api/convex';
+import { api, useQuery } from '@services/api/convex';
+import { useAuth } from '@/providers/AuthProvider';
+import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import { useImageUpload } from '../hooks/useImageUpload';
 import { useWebEnterToSend } from '../hooks/useWebEnterToSend';
 import { useFileUpload, type SelectedFile } from '../hooks/useFileUpload';
@@ -189,7 +192,36 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   const sendMessage = externalSendMessage ?? internalHook.sendMessage;
   const isSending = externalIsSending ?? internalHook.isSending;
   const { setTyping } = useTypingIndicators(channelId);
-  const { members } = useChannelMembers(channelId);
+  const { members: baseMembers } = useChannelMembers(channelId);
+
+  // Dev-assistant bot: staff/superusers and delegated dev maintainers can
+  // @mention @Togather. Gated behind the dev-assistant-bot flag. The synthetic
+  // entry is appended to the member list so both the autocomplete dropdown and
+  // the @[Display Name] -> userId resolver (extractMentionedUserIds) see it.
+  // `canUseAssistant` is the same gate the server enforces on trigger.
+  const { token } = useAuth();
+  const { enabled: devAssistantFlagEnabled } = useConvexFeatureFlag(
+    "dev-assistant-bot",
+  );
+  const assistantAccess = useQuery(
+    api.functions.devAssistant.maintainers.myAccess,
+    token && devAssistantFlagEnabled ? { token } : "skip",
+  );
+  const canMentionBot =
+    devAssistantFlagEnabled && assistantAccess?.canUseAssistant === true;
+  const botUserId = useQuery(
+    api.functions.devAssistant.index.getBotUserId,
+    canMentionBot ? {} : "skip",
+  );
+  const members = useMemo(() => {
+    if (canMentionBot && botUserId) {
+      return [
+        ...baseMembers,
+        { userId: botUserId, displayName: "Togather", notificationsDisabled: false },
+      ];
+    }
+    return baseMembers;
+  }, [baseMembers, canMentionBot, botUserId]);
 
   // Combined upload state (used for disabling send button and input)
   const uploading = imageUploading || fileUploading || videoUploading;

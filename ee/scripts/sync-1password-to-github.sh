@@ -144,6 +144,11 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
+  # Dev-assistant bot (@Togather pipeline). Optional — only present once the
+  # feature is being enabled; missing items are skipped without failing.
+  "CLAUDE_ROUTINES_TRIGGER_URL"
+  "CLAUDE_ROUTINES_TOKEN"
+  "DEV_ASSISTANT_CALLBACK_SECRET"
 )
 
 # ---------------------------------------------------------------------------
@@ -175,7 +180,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO" --body -; then
+        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
           echo " done"
         else
           echo " FAILED"
@@ -201,7 +206,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO" --body -; then
+        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
           echo " done"
         else
           echo " FAILED"
@@ -225,7 +230,7 @@ sync_environment() {
       echo "  [dry-run] Would set IMAGE_CDN_URL (alias for R2_PUBLIC_URL)"
     else
       echo -n "  Setting IMAGE_CDN_URL (alias for R2_PUBLIC_URL)..."
-      if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO" --body -; then
+      if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO"; then
         echo " done"
       else
         echo " FAILED"

@@ -41,6 +41,7 @@ import { ThreadReplies } from './ThreadReplies';
 import { ReactionDetailsModal } from './ReactionDetailsModal';
 import { ReachOutRequestCardFromMessage } from './ReachOutRequestCardFromMessage';
 import { TaskCardFromMessage } from './TaskCardFromMessage';
+import { BugCardFromMessage } from './BugCardFromMessage';
 import { PollCardFromMessage } from './PollCardFromMessage';
 import { AvailabilityRequestCardFromMessage } from './AvailabilityRequestCardFromMessage';
 import { AvailabilityLinkCard } from './AvailabilityLinkCard';
@@ -82,6 +83,7 @@ interface MessageItemProps {
     hideLinkPreview?: boolean;
     reachOutRequestId?: Id<"reachOutRequests">;
     taskId?: Id<"tasks">;
+    bugId?: Id<"devBugs">;
     pollId?: Id<"polls">;
     availabilityRequestId?: Id<"availabilityRequests">;
     /** Present only on messages that mirror an event text blast (SMS + push). */
@@ -695,6 +697,19 @@ function MessageItemInner({
     };
   }, [message.attachments]);
 
+  // An image-only message (images, no text or other attachments) renders edge-to-edge
+  // like iMessage: no bubble background, padding, footer, or tail around the image, so
+  // the blue/gray bubble color never shows as a border. Reply/reactions are unaffected —
+  // their handlers live on the outer Pressable and the reactions row outside the bubble.
+  // Blast messages keep their bubble so the "Also sent via SMS" badge stays readable.
+  const isImageOnlyMessage =
+    validImageAttachments.length > 0 &&
+    !hasTextContent &&
+    !message.blastId &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    videoAttachments.length === 0;
+
   // Handle image tap - open gallery viewer
   const handleImagePress = useCallback((index: number) => {
     setImageViewerInitialIndex(index);
@@ -708,7 +723,7 @@ function MessageItemInner({
     }
 
     return (
-      <View style={styles.attachmentsContainer}>
+      <View style={isImageOnlyMessage ? styles.imageOnlyAttachments : styles.attachmentsContainer}>
         <ImageAttachmentsGrid
           images={validImageAttachments}
           onImagePress={handleImagePress}
@@ -881,6 +896,17 @@ function MessageItemInner({
     );
   };
 
+  const renderBugCard = () => {
+    if (message.contentType !== "bug_card" || !message.bugId) {
+      return null;
+    }
+    return (
+      <View style={styles.eventCardsContainer}>
+        <BugCardFromMessage bugId={message.bugId} />
+      </View>
+    );
+  };
+
   const renderPollCard = () => {
     if (message.contentType !== "poll" || !message.pollId) {
       return null;
@@ -1027,14 +1053,15 @@ function MessageItemInner({
           )}
 
           {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
+          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "bug_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
                   styles.messageBubble,
-                  isOwnMessage
-                    ? [styles.ownMessageBubble, { backgroundColor: themeColors.chatBubbleOwn }]
-                    : [styles.otherMessageBubble, { backgroundColor: themeColors.chatBubbleOther }],
+                  isOwnMessage ? styles.ownMessageBubble : styles.otherMessageBubble,
+                  isImageOnlyMessage
+                    ? styles.imageOnlyBubble
+                    : { backgroundColor: isOwnMessage ? themeColors.chatBubbleOwn : themeColors.chatBubbleOther },
                 ]}
               >
                 {hasTextContent && (
@@ -1065,38 +1092,45 @@ function MessageItemInner({
                   </View>
                 )}
 
-                {/* Timestamp and edited badge */}
-                <View style={[styles.messageFooter, styles.bubbleFooter]}>
-                  <Text
-                    style={[
-                      styles.timestamp,
-                      { color: themeColors.textTertiary },
-                      isOwnMessage && { color: themeColors.textSecondary },
-                    ]}
-                  >
-                    {formatMessageTime(message.createdAt)}
-                  </Text>
-                  {message.editedAt && !message.isDeleted && (
+                {/* Timestamp and edited badge — hidden on edge-to-edge image-only bubbles
+                    (iMessage shows no inline timestamp on photos; date separators and the
+                    read-receipt row below the bubble still convey timing). */}
+                {!isImageOnlyMessage && (
+                  <View style={[styles.messageFooter, styles.bubbleFooter]}>
                     <Text
                       style={[
-                        styles.editedBadge,
+                        styles.timestamp,
                         { color: themeColors.textTertiary },
                         isOwnMessage && { color: themeColors.textSecondary },
                       ]}
                     >
-                      (edited)
+                      {formatMessageTime(message.createdAt)}
                     </Text>
-                  )}
-                </View>
+                    {message.editedAt && !message.isDeleted && (
+                      <Text
+                        style={[
+                          styles.editedBadge,
+                          { color: themeColors.textTertiary },
+                          isOwnMessage && { color: themeColors.textSecondary },
+                        ]}
+                      >
+                        (edited)
+                      </Text>
+                    )}
+                  </View>
+                )}
               </View>
-              {/* Bubble tail */}
-              <View
-                style={
-                  isOwnMessage
-                    ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
-                    : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
-                }
-              />
+              {/* Bubble tail — omitted for edge-to-edge image-only bubbles so no
+                  blue/gray tail floats beside the photo. */}
+              {!isImageOnlyMessage && (
+                <View
+                  style={
+                    isOwnMessage
+                      ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
+                      : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
+                  }
+                />
+              )}
             </View>
           )}
 
@@ -1105,6 +1139,9 @@ function MessageItemInner({
 
           {/* Task card */}
           {renderTaskCard()}
+
+          {/* Dev-assistant bug card */}
+          {renderBugCard()}
 
           {/* Poll card */}
           {renderPollCard()}
@@ -1311,6 +1348,19 @@ const styles = StyleSheet.create({
   attachmentsContainer: {
     marginTop: 4,
     paddingHorizontal: 10,
+  },
+  // Edge-to-edge image-only bubble: image fills the bubble with no surrounding color.
+  // Restore the full corner radius — own/otherMessageBubble flatten the tail-side bottom
+  // corner to 3 to seat the tail, but image-only bubbles render no tail, so all four
+  // corners should match (otherwise the photo looks asymmetric under overflow: 'hidden').
+  imageOnlyBubble: {
+    backgroundColor: 'transparent',
+    borderBottomLeftRadius: 14,
+    borderBottomRightRadius: 14,
+  },
+  imageOnlyAttachments: {
+    marginTop: 0,
+    paddingHorizontal: 0,
   },
   bubbleTextContent: {
     paddingHorizontal: 10,

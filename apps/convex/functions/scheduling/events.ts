@@ -64,6 +64,45 @@ const timeValidator = v.object({
 });
 
 /**
+ * Insert a `draft` event plan for a campus group. The shared implementation
+ * behind the `createEvent` mutation, reused by `quickStartRostering`. Callers
+ * MUST have already authorized the scheduler — this helper does no auth.
+ */
+export async function createEventDraftImpl(
+  ctx: MutationCtx,
+  args: {
+    groupId: Id<"groups">;
+    communityId: Id<"communities">;
+    title: string;
+    eventDate: number;
+    times: Array<{ label: string; startsAt: number }>;
+    createdById: Id<"users">;
+    notes?: string;
+    meetingIds?: Id<"meetings">[];
+  },
+): Promise<Id<"eventPlans">> {
+  const title = args.title.trim();
+  if (!title) {
+    throw new ConvexError("Event title cannot be empty");
+  }
+
+  const nowMs = Date.now();
+  return ctx.db.insert("eventPlans", {
+    groupId: args.groupId,
+    communityId: args.communityId,
+    title,
+    eventDate: args.eventDate,
+    times: args.times,
+    status: "draft",
+    notes: args.notes,
+    meetingIds: args.meetingIds,
+    createdAt: nowMs,
+    createdById: args.createdById,
+    updatedAt: nowMs,
+  });
+}
+
+/**
  * Create a dated event for a campus group. New events start in `draft`.
  *
  * Auth: group leader or community admin.
@@ -82,24 +121,15 @@ export const createEvent = mutation({
     const userId = await requireAuth(ctx, args.token);
     const group = await requireGroupScheduler(ctx, args.groupId, userId);
 
-    const title = args.title.trim();
-    if (!title) {
-      throw new ConvexError("Event title cannot be empty");
-    }
-
-    const nowMs = Date.now();
-    const planId = await ctx.db.insert("eventPlans", {
+    const planId = await createEventDraftImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
-      title,
+      title: args.title,
       eventDate: args.eventDate,
       times: args.times,
-      status: "draft",
+      createdById: userId,
       notes: args.notes,
       meetingIds: args.meetingIds,
-      createdAt: nowMs,
-      createdById: userId,
-      updatedAt: nowMs,
     });
 
     return { planId };
@@ -439,6 +469,41 @@ export const setNeededRoles = mutation({
  *
  * Auth: group leader or community admin for the event's group.
  */
+/**
+ * Seed `neededRoles` for `planId` from the `defaultNeeded` of every
+ * non-archived role on `teamIds`. The shared implementation behind the
+ * `seedNeededRolesFromDefaults` mutation, reused by `quickStartRostering`.
+ *
+ * Callers MUST have already authorized the scheduler and verified each team
+ * belongs to the plan's group — this helper does no auth.
+ */
+export async function seedNeededRolesFromDefaultsImpl(
+  ctx: MutationCtx,
+  planId: Id<"eventPlans">,
+  teamIds: Id<"teams">[],
+): Promise<number> {
+  let written = 0;
+  for (const teamId of teamIds) {
+    const roles = await ctx.db
+      .query("teamRoles")
+      .withIndex("by_team", (q) => q.eq("teamId", teamId))
+      .collect();
+    for (const role of roles) {
+      if (role.isArchived === true) continue;
+      const count = role.defaultNeeded ?? 0;
+      if (count <= 0) continue;
+      await ctx.db.insert("neededRoles", {
+        planId,
+        teamId,
+        roleId: role._id,
+        count,
+      });
+      written += 1;
+    }
+  }
+  return written;
+}
+
 export const seedNeededRolesFromDefaults = mutation({
   args: {
     token: v.string(),
@@ -449,30 +514,17 @@ export const seedNeededRolesFromDefaults = mutation({
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
-    let written = 0;
+    // Security: only seed from serving teams that belong to this event's
+    // group — same check `setNeededRoles` / `assignRole` enforce.
     for (const teamId of args.teamIds) {
-      // Security: only seed from serving teams that belong to this event's
-      // group — same check `setNeededRoles` / `assignRole` enforce.
       await requireGroupTeam(ctx, teamId, plan.groupId);
-
-      const roles = await ctx.db
-        .query("teamRoles")
-        .withIndex("by_team", (q) => q.eq("teamId", teamId))
-        .collect();
-      for (const role of roles) {
-        if (role.isArchived === true) continue;
-        const count = role.defaultNeeded ?? 0;
-        if (count <= 0) continue;
-        await ctx.db.insert("neededRoles", {
-          planId: args.planId,
-          teamId,
-          roleId: role._id,
-          count,
-        });
-        written += 1;
-      }
     }
 
+    const written = await seedNeededRolesFromDefaultsImpl(
+      ctx,
+      args.planId,
+      args.teamIds,
+    );
     return { planId: args.planId, neededRoleCount: written };
   },
 });

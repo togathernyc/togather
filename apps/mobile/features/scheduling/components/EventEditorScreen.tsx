@@ -23,6 +23,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -42,6 +43,7 @@ import { NeededRolesModal } from "./NeededRolesModal";
 import { AssignSheet } from "./AssignSheet";
 import { TimesEditor } from "./TimesEditor";
 import { TeamChannelToggle } from "./TeamChannelToggle";
+import { CenteredColumn, ROSTERING_WIDE_BREAKPOINT } from "./CenteredColumn";
 
 /** Formats a Date as a display time label, e.g. "9:00 AM". */
 function formatTimeLabel(date: Date): string {
@@ -86,6 +88,8 @@ export function EventEditorScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isWide = width >= ROSTERING_WIDE_BREAKPOINT;
   const router = useRouter();
   const { plan_id } = useLocalSearchParams<{ plan_id: string }>();
   const planId = plan_id as Id<"eventPlans">;
@@ -351,6 +355,30 @@ export function EventEditorScreen() {
   const singleTimeLabel =
     event.times.length === 1 ? event.times[0].label : undefined;
 
+  // The Publish CTA. On mobile it lives in a sticky full-width bottom bar; on
+  // desktop it's a contained, right-aligned button at the end of the content
+  // column (no full-bleed bar), matching the roster grid's toolbar pattern.
+  const publishButton = (
+    <Pressable
+      onPress={handlePublish}
+      disabled={publishing}
+      style={({ pressed }) => [
+        styles.publishBtn,
+        isWide && styles.publishBtnWide,
+        { backgroundColor: primaryColor },
+        (publishing || pressed) && { opacity: 0.8 },
+      ]}
+    >
+      {publishing ? (
+        <ActivityIndicator size="small" color="#fff" />
+      ) : (
+        <Text style={styles.publishBtnText}>
+          {isPublished ? "Re-send requests" : "Publish & send requests"}
+        </Text>
+      )}
+    </Pressable>
+  );
+
   return (
     <View
       style={[
@@ -363,9 +391,11 @@ export function EventEditorScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: insets.bottom + 96 },
+          // Desktop has no sticky bottom bar, so it needs no reserved space.
+          { paddingBottom: isWide ? insets.bottom + 24 : insets.bottom + 96 },
         ]}
       >
+        <CenteredColumn>
         {/* Title */}
         {editingTitle ? (
           <TextInput
@@ -531,37 +561,30 @@ export function EventEditorScreen() {
             />
           ))
         )}
+
+        {/* Desktop: Publish sits inline (right-aligned) at the end of the
+            content column — no full-bleed sticky bar. */}
+        {isWide && (
+          <View style={styles.publishRowWide}>{publishButton}</View>
+        )}
+        </CenteredColumn>
       </ScrollView>
 
-      {/* Publish bar */}
-      <View
-        style={[
-          styles.publishBar,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.border,
-            paddingBottom: insets.bottom + 12,
-          },
-        ]}
-      >
-        <Pressable
-          onPress={handlePublish}
-          disabled={publishing}
-          style={({ pressed }) => [
-            styles.publishBtn,
-            { backgroundColor: primaryColor },
-            (publishing || pressed) && { opacity: 0.8 },
+      {/* Mobile: sticky full-width Publish bar pinned to the bottom. */}
+      {!isWide && (
+        <View
+          style={[
+            styles.publishBar,
+            {
+              backgroundColor: colors.surface,
+              borderTopColor: colors.border,
+              paddingBottom: insets.bottom + 12,
+            },
           ]}
         >
-          {publishing ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.publishBtnText}>
-              {isPublished ? "Re-send requests" : "Publish & send requests"}
-            </Text>
-          )}
-        </Pressable>
-      </View>
+          {publishButton}
+        </View>
+      )}
 
       <NeededRolesModal
         visible={neededVisible}
@@ -1068,6 +1091,16 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+  },
+  // Desktop: a contained button instead of a full-width bar.
+  publishBtnWide: {
+    minHeight: 44,
+    paddingHorizontal: 24,
+  },
+  publishRowWide: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    marginTop: 28,
   },
   publishBtnText: {
     fontSize: 16,

@@ -51,12 +51,12 @@ import {
   Pressable,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
   TextInput,
   Alert,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
 import { Avatar } from "@components/ui/Avatar";
 import { useTheme } from "@hooks/useTheme";
@@ -155,6 +155,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 
 export function AssignSheet({
   visible,
+  dockedRight = false,
   planId,
   planStatus,
   groupId,
@@ -165,9 +166,20 @@ export function AssignSheet({
   assignedUserIds,
   prioritizeAvailable = false,
   keepOpenWhileUnfilled = false,
+  filterMemberIds = null,
+  filterGroupName,
+  neededCount,
+  assignedCount,
+  onSetNeeded,
   onClose,
 }: {
   visible: boolean;
+  /**
+   * Desktop: render as a docked right side-panel (flush right, full height)
+   * beside the grid instead of a centered modal. The panel never auto-closes
+   * after assigning so a leader can fill a whole column — only the X dismisses.
+   */
+  dockedRight?: boolean;
   planId: Id<"eventPlans">;
   /**
    * Whether the plan is still a draft or already published. Controls whether
@@ -195,6 +207,34 @@ export function AssignSheet({
    * reactively updates `assignedUserIds`, so filled people grey out in place.
    */
   keepOpenWhileUnfilled?: boolean;
+  /**
+   * Grid-level "also in group" scope (#477 FR-4), owned by RosterGridScreen and
+   * passed down — `null` means no scope. When set, the candidate list is
+   * intersected with this member set (presentation-only). The control itself
+   * lives once in the grid toolbar, not in this sheet.
+   */
+  filterMemberIds?: Set<string> | null;
+  /** Name of the scoped group, for the "also in X" hint in the GROUP header. */
+  filterGroupName?: string;
+  /**
+   * How many of this role are needed on this plan — the value shown in the
+   * "Needed: N [−] [+]" stepper. The parent owns this (it has the full
+   * needed-roles set) and updates it reactively via `setNeededRoles`. Omit
+   * (along with `onSetNeeded`) to hide the stepper — e.g. the event editor,
+   * which sets needed roles through its own NeededRolesModal.
+   */
+  neededCount?: number;
+  /**
+   * People already assigned to this role on this plan — the stepper's floor.
+   * `[−]` is disabled at this value (you can't need fewer slots than are
+   * already filled; unassign someone first to go lower).
+   */
+  assignedCount?: number;
+  /**
+   * Apply a new needed count for this role/plan (reuses `setNeededRoles`).
+   * When omitted, the Needed stepper is not rendered.
+   */
+  onSetNeeded?: (count: number) => void;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
@@ -260,6 +300,12 @@ export function AssignSheet({
     [availability],
   );
 
+  // "Also in group" scope (#477 FR-4) is now owned by the grid toolbar and
+  // passed down as a resolved member set — this sheet just applies it. `null`
+  // means no scope. The control + its `rosterFilterGroups` /
+  // `rosterFilterMemberIds` queries live once in RosterGridScreen.
+  const filterMemberSet = filterMemberIds;
+
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
   );
@@ -281,7 +327,12 @@ export function AssignSheet({
   // is hidden — the candidate list IS the result of their query.
   // ---------------------------------------------------------------------------
   const { previousRows, groupRows, communityRows } = useMemo(() => {
-    const list = candidates ?? [];
+    // Apply the "also in group" scope first — it's presentation-only, so it
+    // narrows every section (previous / group / community) uniformly. The
+    // roster's own coverage tallies live elsewhere and stay whole (FR-4.4).
+    const list = (candidates ?? []).filter(
+      (c) => !filterMemberSet || filterMemberSet.has(c.userId as string),
+    );
     const byUser = new Map<string, CommunityPerson>(
       list.map((c) => [c.userId as string, c]),
     );
@@ -320,7 +371,14 @@ export function AssignSheet({
       );
     }
     return { previousRows, groupRows, communityRows };
-  }, [candidates, previous, debouncedSearch, prioritizeAvailable, availabilityByUser]);
+  }, [
+    candidates,
+    previous,
+    debouncedSearch,
+    prioritizeAvailable,
+    availabilityByUser,
+    filterMemberSet,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Mutation handlers
@@ -335,6 +393,23 @@ export function AssignSheet({
     [],
   );
 
+  /**
+   * Keep Needed ≥ assigned. Called after every successful assign: if the role
+   * was full (or had 0 needed), grow Needed to cover the person just placed so
+   * "Needed" never reads lower than reality. `assignedCount` is the pre-assign
+   * prop, so the new floor is `assignedCount + 1`. No-op when `onSetNeeded`
+   * isn't provided (stepper hidden) or Needed already has room. Unassigning
+   * never calls this, so freed slots stay open.
+   */
+  const growNeededForAssign = useCallback(() => {
+    if (!onSetNeeded) return;
+    const needed = neededCount ?? 0;
+    const filledAfter = (assignedCount ?? 0) + 1;
+    if (needed < filledAfter) {
+      onSetNeeded(Math.max(needed, filledAfter));
+    }
+  }, [onSetNeeded, neededCount, assignedCount]);
+
   const handleAssignFromGroup = useCallback(
     async (person: CommunityPerson) => {
       if (assignedUserIds.has(person.userId as string)) return;
@@ -347,6 +422,9 @@ export function AssignSheet({
           userId: person.userId,
           timeLabel,
         });
+        // Auto-grow Needed to cover this assignment (e.g. 0→1, or a full
+        // role's count up by one) so assigned never exceeds needed.
+        growNeededForAssign();
         if (result?.doubleBooked) {
           Alert.alert(
             "Heads up — double-booked",
@@ -355,8 +433,10 @@ export function AssignSheet({
         }
         // Multi-person roles (e.g. "Vocals 3") stay open so the leader fills
         // the rest without re-opening; the just-assigned person greys out as
-        // the parent's reactive `assignedUserIds` updates.
-        if (!keepOpenWhileUnfilled) onClose();
+        // the parent's reactive `assignedUserIds` updates. The desktop docked
+        // panel ALWAYS stays open (closes only via its X) so a leader can fill
+        // a whole column.
+        if (!keepOpenWhileUnfilled && !dockedRight) onClose();
       } catch (e) {
         surfaceError("Couldn't assign", e);
       } finally {
@@ -371,8 +451,10 @@ export function AssignSheet({
       roleId,
       timeLabel,
       keepOpenWhileUnfilled,
+      dockedRight,
       onClose,
       surfaceError,
+      growNeededForAssign,
     ],
   );
 
@@ -388,6 +470,8 @@ export function AssignSheet({
           userId: person.userId,
           timeLabel,
         });
+        // Grow Needed to cover this assignment (see handleAssignFromGroup).
+        growNeededForAssign();
         const firstName = person.firstName?.trim() || person.displayName;
         Alert.alert(
           "Assigned",
@@ -395,7 +479,7 @@ export function AssignSheet({
             ? `Added ${firstName} to the group and assigned to ${roleName}.`
             : `Assigned ${firstName} to ${roleName}.`,
         );
-        onClose();
+        if (!dockedRight) onClose();
       } catch (e) {
         surfaceError("Couldn't add & assign", e);
       } finally {
@@ -409,9 +493,11 @@ export function AssignSheet({
       teamId,
       roleId,
       timeLabel,
+      dockedRight,
       onClose,
       roleName,
       surfaceError,
+      growNeededForAssign,
     ],
   );
 
@@ -445,6 +531,9 @@ export function AssignSheet({
             existingDisplayName?: string | null;
           }
         | undefined;
+      // Every non-throwing branch below results in an assignment (existing
+      // match, deferred invite, or sent invite), so grow Needed to cover it.
+      growNeededForAssign();
       if (result?.existedAlready) {
         const matched = result.existingDisplayName || firstName;
         Alert.alert(
@@ -467,7 +556,15 @@ export function AssignSheet({
           `Couldn't send the SMS, but ${firstName} is created and assigned. You can resend later.`,
         );
       }
-      onClose();
+      if (dockedRight) {
+        // Keep the panel open to fill more of the column; clear the form so the
+        // next invite starts blank.
+        setInviteOpen(false);
+        setInviteFirstName("");
+        setInvitePhone("");
+      } else {
+        onClose();
+      }
     } catch (e) {
       surfaceError("Couldn't invite", e);
     } finally {
@@ -482,8 +579,10 @@ export function AssignSheet({
     roleId,
     timeLabel,
     roleName,
+    dockedRight,
     onClose,
     surfaceError,
+    growNeededForAssign,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -649,6 +748,10 @@ export function AssignSheet({
   // Render
   // ---------------------------------------------------------------------------
   const loading = candidates === undefined;
+  // Stepper values, defaulted so the optional props read cleanly. `floor` is
+  // the number already assigned — the lowest the needed count can go.
+  const needed = neededCount ?? 0;
+  const floor = assignedCount ?? 0;
   const teamName = team?.name;
   const subtitle = [roleName, teamName].filter(Boolean).join(" · ");
   const showEmpty =
@@ -657,6 +760,370 @@ export function AssignSheet({
     groupRows.length === 0 &&
     communityRows.length === 0;
 
+  // Flatten the three sections into a single list for FlashList. The candidate
+  // pool can now be the FULL group membership (≥500 in big churches — #477
+  // FR-1/FR-9), so the rows must virtualize rather than render all at once.
+  // Section labels are interleaved as their own items; the search box + group
+  // filter live in the list header, the invite form in the footer.
+  type AssignListItem =
+    | { kind: "label"; key: string; label: string }
+    | { kind: "group"; key: string; person: CommunityPerson; prior: boolean }
+    | { kind: "community"; key: string; person: CommunityPerson };
+
+  const listData = useMemo<AssignListItem[]>(() => {
+    const out: AssignListItem[] = [];
+    if (previousRows.length > 0) {
+      out.push({ kind: "label", key: "l-prev", label: "PREVIOUSLY FILLED BY" });
+      for (const p of previousRows) {
+        out.push({ kind: "group", key: `prev-${p.userId}`, person: p, prior: true });
+      }
+    }
+    if (groupRows.length > 0) {
+      out.push({
+        kind: "label",
+        key: "l-group",
+        label: filterGroupName ? `GROUP · ALSO IN ${filterGroupName.toUpperCase()}` : "GROUP",
+      });
+      for (const p of groupRows) {
+        out.push({ kind: "group", key: `grp-${p.userId}`, person: p, prior: false });
+      }
+    }
+    if (communityRows.length > 0) {
+      out.push({
+        kind: "label",
+        key: "l-comm",
+        label: "COMMUNITY",
+      });
+      for (const p of communityRows) {
+        out.push({ kind: "community", key: `comm-${p.userId}`, person: p });
+      }
+    }
+    return out;
+  }, [previousRows, groupRows, communityRows, filterGroupName]);
+
+  // Plain function (not memoized): the row renderers it delegates to close over
+  // fresh state each render, so memoizing here would be a no-op. FlashList still
+  // recycles rows by `keyExtractor` + `extraData`.
+  const renderListItem = ({ item }: { item: AssignListItem }) => {
+    if (item.kind === "label") {
+      return (
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+          {item.label}
+        </Text>
+      );
+    }
+    if (item.kind === "group") {
+      return renderGroupRow(item.person, item.prior);
+    }
+    return renderCommunityRow(item.person);
+  };
+
+  // Header + scrollable body — identical in both presentations (docked panel /
+  // centered modal). Only the container around it changes by breakpoint.
+  const panelContent = (
+    <>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View style={styles.headerTextWrap}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
+            Assign someone
+          </Text>
+          <Text
+            style={[styles.headerSub, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {subtitle}
+            {timeLabel ? ` · ${timeLabel}` : ""}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
+          <Ionicons name="close" size={24} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Needed stepper — sets how many of this role are needed on this plan
+          (reuses `setNeededRoles`). Floor is the number already assigned, so a
+          leader can't drop below the people already placed. 0→1 adds the role
+          to this date; N→0 removes it. Hidden when the parent doesn't pass
+          `onSetNeeded` (e.g. the event editor's own NeededRolesModal). */}
+      {onSetNeeded && (
+        <View style={[styles.neededRow, { borderBottomColor: colors.border }]}>
+          <View style={styles.neededLabelWrap}>
+            <Text style={[styles.neededLabel, { color: colors.text }]}>
+              Needed: {needed}
+            </Text>
+            {floor > 0 && (
+              <Text
+                style={[styles.neededHint, { color: colors.textSecondary }]}
+              >
+                {floor} assigned
+              </Text>
+            )}
+          </View>
+          <View style={styles.neededControls}>
+            {/* `−` is floored at the number already assigned (and at 0): you
+                can't drop a slot someone's in. Disabled = greyed + non-tappable
+                so it never silently no-ops. Unassign someone to go lower. */}
+            {(() => {
+              const decreaseDisabled = needed <= floor || needed <= 0;
+              return (
+                <TouchableOpacity
+                  onPress={() => onSetNeeded(Math.max(floor, needed - 1))}
+                  disabled={decreaseDisabled}
+                  accessibilityRole="button"
+                  accessibilityLabel="Decrease needed"
+                  accessibilityState={{ disabled: decreaseDisabled }}
+                  style={[
+                    styles.stepBtn,
+                    {
+                      borderColor: colors.border,
+                      opacity: decreaseDisabled ? 0.35 : 1,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="remove"
+                    size={20}
+                    color={
+                      decreaseDisabled ? colors.textTertiary : colors.text
+                    }
+                  />
+                </TouchableOpacity>
+              );
+            })()}
+            <TouchableOpacity
+              onPress={() => onSetNeeded(needed + 1)}
+              accessibilityRole="button"
+              accessibilityLabel="Increase needed"
+              style={[styles.stepBtn, { borderColor: colors.border }]}
+            >
+              <Ionicons name="add" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <KeyboardAvoidingView
+        style={styles.cardBody}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+          <FlashList
+            data={listData}
+            // Re-render rows when these change the per-row affordance (busy
+            // spinner, disabled state, "Assigned" greying as the parent
+            // reactively updates `assignedUserIds`).
+            extraData={`${busyUserId ?? ""}|${invitingSubmit}|${assignedUserIds.size}`}
+            keyExtractor={(item) => item.key}
+            renderItem={renderListItem}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            ListHeaderComponent={
+              <View>
+                <View
+                  style={[
+                    styles.searchBox,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                  ]}
+                >
+                  <Ionicons name="search" size={16} color={colors.textSecondary} />
+                  <TextInput
+                    style={[styles.searchInput, { color: colors.text }]}
+                    placeholder="Search by name…"
+                    placeholderTextColor={colors.textSecondary}
+                    value={search}
+                    onChangeText={setSearch}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                </View>
+
+                {/* "Also in group" scope hint (#477 FR-4). The control now
+                    lives once in the grid toolbar; here we only echo the active
+                    scope so the narrowed list is legible. */}
+                {filterGroupName && (
+                  <View
+                    style={[
+                      styles.scopeRow,
+                      {
+                        borderColor: primaryColor,
+                        backgroundColor: primaryColor + "14",
+                      },
+                    ]}
+                  >
+                    <Ionicons name="funnel" size={14} color={primaryColor} />
+                    <Text
+                      style={[styles.scopeText, { color: primaryColor }]}
+                      numberOfLines={1}
+                    >
+                      Also in: {filterGroupName}
+                    </Text>
+                  </View>
+                )}
+
+                {loading && (
+                  <View style={styles.centered}>
+                    <ActivityIndicator size="small" color={colors.text} />
+                  </View>
+                )}
+                {showEmpty && (
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    {debouncedSearch.trim() || filterGroupName
+                      ? "No one matches these filters."
+                      : "No assignable people yet — invite someone new below."}
+                  </Text>
+                )}
+              </View>
+            }
+            ListFooterComponent={
+              <View>
+                {/* Invite someone new — collapsed by default. */}
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                  INVITE SOMEONE NEW
+                </Text>
+                {inviteOpen ? (
+                  <View
+                    style={[
+                      styles.inviteCard,
+                      { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                    ]}
+                  >
+                    <TextInput
+                      style={[
+                        styles.inviteInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                      placeholder="Name"
+                      placeholderTextColor={colors.textSecondary}
+                      value={inviteFirstName}
+                      onChangeText={setInviteFirstName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      editable={!invitingSubmit}
+                    />
+                    <TextInput
+                      style={[
+                        styles.inviteInput,
+                        { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                      placeholder="Phone (e.g. (555) 123-4567)"
+                      placeholderTextColor={colors.textSecondary}
+                      value={invitePhone}
+                      onChangeText={setInvitePhone}
+                      keyboardType="phone-pad"
+                      autoCorrect={false}
+                      editable={!invitingSubmit}
+                    />
+                    <View style={styles.inviteActions}>
+                      <Pressable
+                        onPress={() => {
+                          if (invitingSubmit) return;
+                          setInviteOpen(false);
+                          setInviteFirstName("");
+                          setInvitePhone("");
+                        }}
+                        disabled={invitingSubmit}
+                        accessibilityRole="button"
+                        accessibilityLabel="Cancel invite"
+                      >
+                        <View style={styles.inviteCancelInner}>
+                          <Text
+                            style={[styles.inviteCancelText, { color: colors.textSecondary }]}
+                          >
+                            Cancel
+                          </Text>
+                        </View>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleInviteSubmit}
+                        disabled={invitingSubmit}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          planStatus === "draft"
+                            ? "Invite and assign"
+                            : "Send invite and assign"
+                        }
+                      >
+                        <View
+                          style={[
+                            styles.inviteSubmitInner,
+                            {
+                              backgroundColor: primaryColor,
+                              opacity: invitingSubmit ? 0.6 : 1,
+                            },
+                          ]}
+                        >
+                          {invitingSubmit ? (
+                            <ActivityIndicator size="small" color={colors.surface} />
+                          ) : (
+                            <Text
+                              style={[styles.inviteSubmitText, { color: colors.surface }]}
+                            >
+                              {planStatus === "draft"
+                                ? "Invite & assign"
+                                : "Send invite & assign"}
+                            </Text>
+                          )}
+                        </View>
+                      </Pressable>
+                    </View>
+                    <Text
+                      style={[styles.inviteHelperText, { color: colors.textSecondary }]}
+                    >
+                      {planStatus === "draft"
+                        ? `We'll text ${inviteFirstName.trim() || "them"} the invite when you publish this event plan.`
+                        : "An SMS invite will be sent now."}
+                    </Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={() => setInviteOpen(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Invite someone new"
+                  >
+                    <View
+                      style={[
+                        styles.inviteToggle,
+                        { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                      ]}
+                    >
+                      <Ionicons
+                        name="add-circle-outline"
+                        size={18}
+                        color={primaryColor}
+                      />
+                      <Text
+                        style={[styles.inviteToggleText, { color: primaryColor }]}
+                      >
+                        Invite someone new
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+              </View>
+            }
+          />
+      </KeyboardAvoidingView>
+    </>
+  );
+
+  // Desktop: a docked right side-panel flush against the grid (no backdrop, no
+  // Modal), so the grid stays visible and interactive beside it.
+  if (dockedRight) {
+    if (!visible) return null;
+    return (
+      <View
+        style={[
+          styles.dockPanel,
+          { backgroundColor: colors.surface, borderLeftColor: colors.border },
+        ]}
+      >
+        {panelContent}
+      </View>
+    );
+  }
+
+  // Mobile: a centered card over a dim backdrop, so the roster grid stays
+  // visible behind it instead of a full-screen sheet.
   return (
     <Modal
       visible={visible}
@@ -664,8 +1131,6 @@ export function AssignSheet({
       animationType="fade"
       onRequestClose={onClose}
     >
-      {/* Inline popup: a centered card over a dim backdrop, so the roster grid
-          stays visible behind it instead of a full-screen sheet. */}
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
           style={[
@@ -674,257 +1139,7 @@ export function AssignSheet({
           ]}
           onPress={(e) => e.stopPropagation()}
         >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <View style={styles.headerTextWrap}>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>
-                Assign someone
-              </Text>
-              <Text
-                style={[styles.headerSub, { color: colors.textSecondary }]}
-                numberOfLines={1}
-              >
-                {subtitle}
-                {timeLabel ? ` · ${timeLabel}` : ""}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
-              <Ionicons name="close" size={24} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <KeyboardAvoidingView
-            style={styles.cardBody}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-          >
-          <ScrollView
-            style={styles.scrollFlex}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
-          >
-            <View
-              style={[
-                styles.searchBox,
-                { backgroundColor: colors.surface, borderColor: colors.border },
-              ]}
-            >
-              <Ionicons name="search" size={16} color={colors.textSecondary} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search by name…"
-                placeholderTextColor={colors.textSecondary}
-                value={search}
-                onChangeText={setSearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-            </View>
-
-            {loading ? (
-              <View style={styles.centered}>
-                <ActivityIndicator size="small" color={colors.text} />
-              </View>
-            ) : (
-              <>
-                {previousRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      PREVIOUSLY FILLED BY
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {previousRows.map((m) => renderGroupRow(m, true))}
-                    </View>
-                  </>
-                )}
-
-                {groupRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      GROUP
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {groupRows.map((m) => renderGroupRow(m, false))}
-                    </View>
-                  </>
-                )}
-
-                {communityRows.length > 0 && (
-                  <>
-                    <Text
-                      style={[styles.sectionLabel, { color: colors.textSecondary }]}
-                    >
-                      COMMUNITY
-                    </Text>
-                    <View
-                      style={[
-                        styles.group,
-                        { backgroundColor: colors.surfaceSecondary },
-                      ]}
-                    >
-                      {communityRows.map(renderCommunityRow)}
-                    </View>
-                  </>
-                )}
-
-                {showEmpty && (
-                  <Text
-                    style={[styles.emptyText, { color: colors.textSecondary }]}
-                  >
-                    {debouncedSearch.trim()
-                      ? `No one in this community matches "${debouncedSearch.trim()}".`
-                      : "No assignable people yet — invite someone new below."}
-                  </Text>
-                )}
-              </>
-            )}
-
-            {/* Invite someone new — collapsed by default. */}
-            <Text
-              style={[styles.sectionLabel, { color: colors.textSecondary }]}
-            >
-              INVITE SOMEONE NEW
-            </Text>
-            {inviteOpen ? (
-              <View
-                style={[
-                  styles.inviteCard,
-                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                ]}
-              >
-                <TextInput
-                  style={[
-                    styles.inviteInput,
-                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
-                  ]}
-                  placeholder="Name"
-                  placeholderTextColor={colors.textSecondary}
-                  value={inviteFirstName}
-                  onChangeText={setInviteFirstName}
-                  autoCapitalize="words"
-                  autoCorrect={false}
-                  editable={!invitingSubmit}
-                />
-                <TextInput
-                  style={[
-                    styles.inviteInput,
-                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface },
-                  ]}
-                  placeholder="Phone (e.g. (555) 123-4567)"
-                  placeholderTextColor={colors.textSecondary}
-                  value={invitePhone}
-                  onChangeText={setInvitePhone}
-                  keyboardType="phone-pad"
-                  autoCorrect={false}
-                  editable={!invitingSubmit}
-                />
-                <View style={styles.inviteActions}>
-                  <Pressable
-                    onPress={() => {
-                      if (invitingSubmit) return;
-                      setInviteOpen(false);
-                      setInviteFirstName("");
-                      setInvitePhone("");
-                    }}
-                    disabled={invitingSubmit}
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel invite"
-                  >
-                    <View style={styles.inviteCancelInner}>
-                      <Text
-                        style={[styles.inviteCancelText, { color: colors.textSecondary }]}
-                      >
-                        Cancel
-                      </Text>
-                    </View>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleInviteSubmit}
-                    disabled={invitingSubmit}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      planStatus === "draft"
-                        ? "Invite and assign"
-                        : "Send invite and assign"
-                    }
-                  >
-                    <View
-                      style={[
-                        styles.inviteSubmitInner,
-                        {
-                          backgroundColor: primaryColor,
-                          opacity: invitingSubmit ? 0.6 : 1,
-                        },
-                      ]}
-                    >
-                      {invitingSubmit ? (
-                        <ActivityIndicator size="small" color={colors.surface} />
-                      ) : (
-                        <Text
-                          style={[styles.inviteSubmitText, { color: colors.surface }]}
-                        >
-                          {planStatus === "draft"
-                            ? "Invite & assign"
-                            : "Send invite & assign"}
-                        </Text>
-                      )}
-                    </View>
-                  </Pressable>
-                </View>
-                <Text
-                  style={[
-                    styles.inviteHelperText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  {planStatus === "draft"
-                    ? `We'll text ${inviteFirstName.trim() || "them"} the invite when you publish this event plan.`
-                    : "An SMS invite will be sent now."}
-                </Text>
-              </View>
-            ) : (
-              <Pressable
-                onPress={() => setInviteOpen(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Invite someone new"
-              >
-                <View
-                  style={[
-                    styles.inviteToggle,
-                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                  ]}
-                >
-                  <Ionicons
-                    name="add-circle-outline"
-                    size={18}
-                    color={primaryColor}
-                  />
-                  <Text
-                    style={[
-                      styles.inviteToggleText,
-                      { color: primaryColor },
-                    ]}
-                  >
-                    Invite someone new
-                  </Text>
-                </View>
-              </Pressable>
-            )}
-          </ScrollView>
-          </KeyboardAvoidingView>
+          {panelContent}
         </Pressable>
       </Pressable>
     </Modal>
@@ -947,10 +1162,16 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
   },
-  cardBody: {
-    flexShrink: 1,
+  // Desktop docked panel: fixed-width column flush against the grid's right
+  // edge, full height. No border radius — it reads as a docked inspector.
+  dockPanel: {
+    width: 420,
+    flexShrink: 0,
+    height: "100%",
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
   },
-  scrollFlex: {
+  cardBody: {
     flexShrink: 1,
   },
   header: {
@@ -974,6 +1195,40 @@ const styles = StyleSheet.create({
   headerSub: {
     fontSize: 13,
     marginTop: 2,
+  },
+  neededRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  neededLabelWrap: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    flexShrink: 1,
+  },
+  neededLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  neededHint: {
+    fontSize: 13,
+  },
+  neededControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  stepBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
   },
   centered: {
     paddingVertical: 32,
@@ -1005,9 +1260,20 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
-  group: {
-    borderRadius: 12,
-    overflow: "hidden",
+  scopeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 10,
+  },
+  scopeText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
   },
   memberRow: {
     flexDirection: "row",

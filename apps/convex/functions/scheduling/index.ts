@@ -81,6 +81,12 @@ export {
 export { searchCommunityPeople } from "./people";
 
 // ============================================================================
+// Live presence — "who's viewing/editing this roster" (#477).
+// Frontend resolves these as `api.functions.scheduling.presence.*`.
+// ============================================================================
+export { heartbeat, listViewers, leave } from "./presence";
+
+// ============================================================================
 // My Schedule (volunteer view)
 // ============================================================================
 export { myAssignments } from "./mySchedule";
