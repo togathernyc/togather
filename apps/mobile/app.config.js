@@ -189,18 +189,18 @@ export default {
       // avoid extra Google Play review scrutiny:
       // - SYSTEM_ALERT_WINDOW leaks in from react-native's debug manifest (dev
       //   overlay only); we never draw over other apps.
-      // - READ/WRITE_EXTERNAL_STORAGE are legacy perms injected by expo-media-
-      //   library/file-system/image-picker. On targetSdk 35 they're ignored at
-      //   runtime (scoped storage + READ_MEDIA_* supersede them).
       // - CONTACTS/CALENDAR are injected by the expo-contacts/expo-calendar
       //   config plugins, but neither module has any runtime usage in the app.
       //   Shipping sensitive permissions with no backing feature is a known Play
       //   rejection cause, so we strip them. (If/when these features are built,
       //   remove the relevant entries here.)
+      // NOTE: We intentionally do NOT block READ/WRITE_EXTERNAL_STORAGE. Although
+      // targetSdk 35 ignores them, the app's minSdk is 24 — on Android 12/API 32
+      // and older there is no READ_MEDIA_*, so expo-image-picker/media-library
+      // still gate gallery access (profile/group/event photos) on these legacy
+      // perms. Blocking them would break photo picking on those devices.
       blockedPermissions: [
         "android.permission.SYSTEM_ALERT_WINDOW",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.READ_CONTACTS",
         "android.permission.WRITE_CONTACTS",
         "android.permission.READ_CALENDAR",

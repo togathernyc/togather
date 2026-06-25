@@ -95,10 +95,19 @@ and do steps 5–6.
 ```bash
 cd apps/mobile
 eas build --platform android --profile production --non-interactive   # AAB
+```
+⚠️ **The very first AAB must be uploaded MANUALLY** through the Play Console
+(drag the `.aab` into a release on a track). Google requires at least one manual
+upload before the Play Developer API — and therefore `eas submit` — will work for
+this app. Download the AAB from the EAS build page and upload it by hand for the
+first release.
+
+**Subsequent** uploads can then be automated:
+```bash
 eas submit --platform android --latest --non-interactive              # → internal track
 ```
-The AAB lands on the **internal testing** track (per `eas.json`). Confirm it
-appears in Play Console → Testing → Internal testing.
+The submit lands on the **internal testing** track (per `eas.json`). Confirm
+releases appear in Play Console → Testing.
 
 ### 4. Choose the app signing option (see decision box above)
 Do this during the first AAB upload. If Option A, continue to steps 5–6. If
