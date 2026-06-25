@@ -64,6 +64,10 @@
       "ios": {
         "ascAppId": "6756286011",
         "bundleIdentifier": "app.gatherful.mobile"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "completed"
       }
     }
   }

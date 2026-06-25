@@ -1,7 +1,7 @@
 # ADR-021: Android Distribution via Direct APK Download
 
 ## Status
-Accepted
+Accepted — **amended 2026-06-22** (see [Amendment](#amendment-2026-06-22-adding-google-play-alongside-r2) below: Google Play is being added *alongside* R2 sideload, not replacing it).
 
 ## Date
 2025-01-17
@@ -129,3 +129,32 @@ The `minSupportedVersion` field can be used to force updates when critical fixes
 2. **In-app update prompt** - Could add periodic check for new versions
 3. **Separate CDN domain** - Could move to `cdn.togather.nyc` if URL aesthetics matter
 4. **Delta updates** - Not currently supported, but APKs are reasonably sized
+
+## Amendment (2026-06-22): Adding Google Play alongside R2
+
+We are now publishing to the **Google Play Store** for discoverability and user
+trust (sideloading requires enabling "unknown sources", which is friction and a
+trust signal many community members balk at). This **does not remove** the R2
+sideload path — both ship from the same EAS builds:
+
+- `production` profile → **AAB** → `eas submit` → Play Store
+- `production-apk` profile → **APK** → R2 (`togather.nyc/android`) — unchanged
+
+### What this changed
+- `eas.json`: added `submit.production.android` (internal track). The existing
+  CI submit step (`deploy-to-production.yml:281`) was already present but dormant.
+- `app.config.js`: added `android.blockedPermissions` to strip
+  `SYSTEM_ALERT_WINDOW` + legacy storage perms (Play review hygiene).
+
+### Key consequence — Play App Signing & deep links
+Play App Signing may re-sign the distributed app with a **different** key than the
+EAS keystore (`FA:C6:…`) used for R2 APKs. App Links (`togather.nyc`), Google Maps,
+and OAuth all key off the signing cert's SHA-256, so the Play build can break them
+unless the Play signing SHA is added to the assetlinks fingerprints in
+`apps/link-preview/cloudflare-worker.js`. This is avoidable by uploading the
+existing EAS key as the Play signing key.
+
+### Launch process
+The personal developer account hits Google's **12-tester / 14-day closed-testing**
+gate before production access. Full step-by-step:
+[`docs/launch/google-play-launch-runbook.md`](../../launch/google-play-launch-runbook.md).
