@@ -12,7 +12,6 @@ import {
   Modal,
   Pressable,
   Image,
-  Keyboard,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -1542,10 +1541,7 @@ export function FollowupDetailContent({
         >
           <Pressable
             style={[styles.modalContent, { backgroundColor: colors.modalBackground }]}
-            onPress={(e) => {
-              e.stopPropagation();
-              Keyboard.dismiss();
-            }}
+            onPress={(e) => e.stopPropagation()}
           >
             <Text style={[styles.modalTitle, { color: colors.text }]}>Log Past Contact</Text>
             <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
