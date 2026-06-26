@@ -95,10 +95,10 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const lastCheckRef = useRef(0);
   const previousAppStateRef = useRef<AppStateStatus>(AppState.currentState);
 
-  // Once a silent update is staged this session it will apply on the next cold
-  // start; re-checking would only re-download the same bundle on every
-  // foreground. Stop checking until the app is relaunched.
-  const silentStagedRef = useRef(false);
+  // The id of the silent update already downloaded this session, if any. We
+  // keep re-checking (a later deploy may be forced and must still win), but
+  // skip re-downloading this exact bundle on every foreground.
+  const stagedSilentUpdateIdRef = useRef<string | null>(null);
 
   const crumb = (message: string, data?: Record<string, unknown>) => {
     SentryUtils.addBreadcrumb(message, 'ota-update', data);
@@ -108,13 +108,6 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Don't re-enter if a check / download / reload is already in flight.
     if (statusRef.current !== 'idle') {
       crumb('OTA check skipped: already in flight', { trigger, status: statusRef.current });
-      return;
-    }
-
-    // A silent update is already downloaded and waiting for the next cold
-    // start; nothing more to do until the app relaunches.
-    if (silentStagedRef.current) {
-      crumb('OTA check skipped: silent update already staged', { trigger });
       return;
     }
 
@@ -152,9 +145,21 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      const updateType = readOTAUpdateType((checkResult as any).manifest);
+      const manifest = (checkResult as any).manifest;
+      const updateType = readOTAUpdateType(manifest);
+      const updateId: string | null = manifest?.id ?? null;
 
       if (updateType === 'silent') {
+        // Already downloaded this exact bundle this session — it's waiting for
+        // the next cold start. Skip the redundant re-fetch, but note we did NOT
+        // bail before checkForUpdateAsync: a later forced deploy is a different
+        // update id and still gets handled below.
+        if (updateId && updateId === stagedSilentUpdateIdRef.current) {
+          crumb('OTA silent update already staged, skipping re-fetch', { updateId });
+          setStatus('idle');
+          return;
+        }
+
         // Background download, no UI. expo-updates launches the most recently
         // downloaded bundle on the next cold start, so staging it is enough —
         // we never reload mid-session.
@@ -163,8 +168,8 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const fetchResult = await Updates.fetchUpdateAsync();
 
         if (fetchResult.isNew) {
-          silentStagedRef.current = true;
-          crumb('OTA staged silently; will apply on next launch');
+          stagedSilentUpdateIdRef.current = updateId;
+          crumb('OTA staged silently; will apply on next launch', { updateId });
         } else {
           crumb('OTA silent fetch returned no new bundle');
         }

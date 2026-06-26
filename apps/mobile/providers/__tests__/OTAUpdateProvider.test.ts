@@ -43,12 +43,17 @@ const mockFetchUpdate = Updates.fetchUpdateAsync as jest.Mock;
 const mockReload = Updates.reloadAsync as jest.Mock;
 
 // EAS Update nests the app config under manifest.extra.expoClient, so the
-// delivery flag lives at extra.expoClient.extra.otaUpdateType.
-const manifestWithType = (otaUpdateType: 'forced' | 'silent' | undefined) => ({
+// delivery flag lives at extra.expoClient.extra.otaUpdateType. `id` is the
+// per-update identifier used to skip re-fetching an already-staged bundle.
+const manifestWithType = (
+  otaUpdateType: 'forced' | 'silent' | undefined,
+  id = 'update-1'
+) => ({
+  id,
   extra: { expoClient: { extra: otaUpdateType ? { otaUpdateType } : {} } },
 });
-const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithType('forced') };
-const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithType('silent') };
+const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithType('forced', 'forced-1') };
+const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithType('silent', 'silent-1') };
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(OTAUpdateProvider, null, children);
@@ -242,7 +247,7 @@ describe('OTAUpdateProvider', () => {
       expect(result.current.status).toBe('idle');
     });
 
-    it('does not re-fetch a silent update once it is staged this session', async () => {
+    it('keeps checking but does not re-fetch the same staged silent update', async () => {
       mockCheckForUpdate.mockResolvedValue(SILENT_UPDATE);
       mockFetchUpdate.mockResolvedValue({ isNew: true });
 
@@ -253,14 +258,51 @@ describe('OTAUpdateProvider', () => {
       triggerForeground();
       await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
 
-      // A later foreground past the throttle window must be short-circuited by
-      // the silent-staged guard — no second check or download.
+      // A later foreground past the throttle still RE-CHECKS (a later deploy
+      // could be forced and must win), but the same staged bundle (same id) is
+      // not downloaded again.
       jest.setSystemTime(STARTUP_GRACE_MS + 1 + MIN_RECHECK_INTERVAL_MS + 1);
       triggerForeground();
+      await waitFor(() => expect(mockCheckForUpdate).toHaveBeenCalledTimes(2));
       await flushPromises();
 
-      expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
       expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('still forces a reload when a forced update lands after a silent one was staged', async () => {
+      // Codex P2 on PR #503: a session that staged a silent update must still
+      // receive a later forced update (the breaking-contract use case) without
+      // needing the user to kill and reopen the app.
+      mockCheckForUpdate
+        .mockResolvedValueOnce(SILENT_UPDATE)
+        .mockResolvedValueOnce(FORCED_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      // First foreground: stage the silent update, no reload.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      expect(mockReload).not.toHaveBeenCalled();
+
+      // Later foreground past the throttle: a forced update is now available
+      // and must reach this still-alive session.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1 + MIN_RECHECK_INTERVAL_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      await waitFor(() => expect(mockReload).toHaveBeenCalledTimes(1));
     });
 
     it('does NOT reload on active->active (system dialog dismissal)', async () => {
