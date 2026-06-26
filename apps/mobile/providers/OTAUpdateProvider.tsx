@@ -1,14 +1,29 @@
 /**
- * OTAUpdateProvider - Auto-applying OTA update provider
+ * OTAUpdateProvider - OTA update provider with silent + forced delivery
  *
  * Checks for updates on mount and every time the app returns to the
- * foreground. If an update exists, downloads it and auto-applies it via
- * Updates.reloadAsync — no user action required. Check failures (including
- * offline) are silent: status returns to 'idle' and the user keeps using the
- * current build.
+ * foreground. What happens when an update exists depends on the delivery mode
+ * stamped into that update's manifest at publish time (extra.otaUpdateType,
+ * set by the Deploy to Production workflow):
+ *
+ *   - 'silent' (default): download the bundle in the background and let
+ *     expo-updates apply it on the next cold start. No modal, no reload, no
+ *     interruption. This is the right behavior for routine frontend changes —
+ *     users stop seeing the "Updating" modal on every deploy.
+ *   - 'forced': download now behind the blocking OTAUpdateModal and
+ *     reloadAsync immediately. Reserved for breaking frontend<->backend
+ *     contract changes and big features the team wants everyone on at once.
+ *
+ * Anything other than the literal 'forced' is treated as silent, so a missing
+ * or garbled flag can never surprise users with a forced reload.
+ *
+ * Check failures (including offline) are silent: status returns to 'idle' and
+ * the user keeps using the current build.
  *
  * State machine:
- *   idle -> checking -> (downloading -> ready -> reload) | idle
+ *   idle -> checking -> (downloading -> ready -> reload)   // forced
+ *                     | (staging -> idle)                  // silent
+ *                     | idle                               // nothing to do
  *
  * Safety guards (to mitigate post-reload UI-freeze on iOS + Fabric):
  *   - STARTUP_GRACE_MS — refuse to reload until the JS session has been
@@ -34,11 +49,27 @@ import { AppState, AppStateStatus } from 'react-native';
 import * as Updates from 'expo-updates';
 import { SentryUtils } from './SentryProvider';
 
-type OTAStatus = 'idle' | 'checking' | 'downloading' | 'ready' | 'error';
+// 'downloading' and 'ready' belong to the forced flow and drive the visible
+// OTAUpdateModal. 'staging' is the silent flow's background download — it must
+// NOT show the modal, so the modal deliberately excludes it.
+type OTAStatus = 'idle' | 'checking' | 'downloading' | 'ready' | 'staging' | 'error';
+
+type OTAUpdateType = 'silent' | 'forced';
 
 interface OTAUpdateContextType {
   status: OTAStatus;
   errorMessage: string | null;
+}
+
+/**
+ * Read the delivery mode off an update manifest. EAS Update nests the app
+ * config under manifest.extra.expoClient, so our flag lives at
+ * extra.expoClient.extra.otaUpdateType. Defaults to 'silent' for any missing
+ * or unexpected value — forced is only ever the explicit, exact 'forced'.
+ */
+export function readOTAUpdateType(manifest: unknown): OTAUpdateType {
+  const otaUpdateType = (manifest as any)?.extra?.expoClient?.extra?.otaUpdateType;
+  return otaUpdateType === 'forced' ? 'forced' : 'silent';
 }
 
 const OTAUpdateContext = createContext<OTAUpdateContextType>({
@@ -64,6 +95,11 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const lastCheckRef = useRef(0);
   const previousAppStateRef = useRef<AppStateStatus>(AppState.currentState);
 
+  // Once a silent update is staged this session it will apply on the next cold
+  // start; re-checking would only re-download the same bundle on every
+  // foreground. Stop checking until the app is relaunched.
+  const silentStagedRef = useRef(false);
+
   const crumb = (message: string, data?: Record<string, unknown>) => {
     SentryUtils.addBreadcrumb(message, 'ota-update', data);
   };
@@ -72,6 +108,13 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Don't re-enter if a check / download / reload is already in flight.
     if (statusRef.current !== 'idle') {
       crumb('OTA check skipped: already in flight', { trigger, status: statusRef.current });
+      return;
+    }
+
+    // A silent update is already downloaded and waiting for the next cold
+    // start; nothing more to do until the app relaunches.
+    if (silentStagedRef.current) {
+      crumb('OTA check skipped: silent update already staged', { trigger });
       return;
     }
 
@@ -109,7 +152,27 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      crumb('OTA update available, downloading');
+      const updateType = readOTAUpdateType((checkResult as any).manifest);
+
+      if (updateType === 'silent') {
+        // Background download, no UI. expo-updates launches the most recently
+        // downloaded bundle on the next cold start, so staging it is enough —
+        // we never reload mid-session.
+        crumb('OTA silent update available, staging in background');
+        setStatus('staging');
+        const fetchResult = await Updates.fetchUpdateAsync();
+
+        if (fetchResult.isNew) {
+          silentStagedRef.current = true;
+          crumb('OTA staged silently; will apply on next launch');
+        } else {
+          crumb('OTA silent fetch returned no new bundle');
+        }
+        setStatus('idle');
+        return;
+      }
+
+      crumb('OTA forced update available, downloading');
       setStatus('downloading');
       const fetchResult = await Updates.fetchUpdateAsync();
 

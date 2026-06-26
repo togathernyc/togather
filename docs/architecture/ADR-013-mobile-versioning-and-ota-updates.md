@@ -208,6 +208,33 @@ The date/time segments are added by CI during OTA deployment. Fresh binary insta
 
 ---
 
+## OTA Delivery Modes (silent vs forced)
+
+Not every OTA needs to interrupt the user. Each published update carries a
+delivery mode that `OTAUpdateProvider` reads off the update manifest
+(`extra.otaUpdateType`) and acts on:
+
+| Mode | What the user sees | When to use |
+|------|--------------------|-------------|
+| `silent` (default) | Nothing. The bundle downloads in the background and applies on the **next cold start**. | Routine frontend changes that don't break the frontend↔backend contract. |
+| `forced` | The full-screen, non-dismissible "Updating" modal, then an immediate `reloadAsync`. | Breaking frontend↔backend contract changes (avoid errors on stale clients) **or** a big feature you want everyone on at once. |
+
+Anything other than the literal `forced` is treated as `silent`, so a missing
+or garbled flag can never surprise users with a forced reload.
+
+**How the mode is set:** the `Deploy to Production` workflow has an
+`update_mode` input (`silent` | `forced`, default `silent`). It's exported as
+`OTA_UPDATE_TYPE` to the `eas update` step, where `app.config.js` bakes it into
+the update's `extra.otaUpdateType`. The decision travels with the update — no
+backend coordination required.
+
+**Backend-only deploys publish nothing.** The deploy workflow tags each
+production release as `production-latest` and diffs `apps/mobile` +
+`packages/shared` against it. If nothing mobile changed, no OTA is published at
+all — a Convex-only deploy no longer shows users any update UI.
+
+---
+
 ## Common Scenarios
 
 ### Bug Fix (OTA Safe)

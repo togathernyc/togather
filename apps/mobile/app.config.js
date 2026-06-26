@@ -259,6 +259,14 @@ export default {
       // OTA version - set by CI during deployment (format: X.Y.Z.MMDDYY.HHMM)
       // Falls back to binary version for embedded builds
       otaVersion: process.env.OTA_VERSION || "1.0.22",
+      // OTA delivery mode — read by OTAUpdateProvider off the published update's
+      // manifest. "silent" (default): download in the background and apply on the
+      // next cold start, no modal. "forced": download now behind the blocking
+      // OTAUpdateModal and reloadAsync immediately. Set per deploy by the
+      // "Deploy to Production" workflow's `update_mode` input. Anything other than
+      // the literal "forced" is treated as silent so a missing/garbled value can
+      // never surprise users with a forced reload.
+      otaUpdateType: process.env.OTA_UPDATE_TYPE === "forced" ? "forced" : "silent",
       // Build variant - used to determine environment at runtime
       // Set by EAS build profiles (staging vs production)
       isStaging: IS_STAGING,

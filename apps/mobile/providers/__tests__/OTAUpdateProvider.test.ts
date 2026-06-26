@@ -42,6 +42,14 @@ const mockCheckForUpdate = Updates.checkForUpdateAsync as jest.Mock;
 const mockFetchUpdate = Updates.fetchUpdateAsync as jest.Mock;
 const mockReload = Updates.reloadAsync as jest.Mock;
 
+// EAS Update nests the app config under manifest.extra.expoClient, so the
+// delivery flag lives at extra.expoClient.extra.otaUpdateType.
+const manifestWithType = (otaUpdateType: 'forced' | 'silent' | undefined) => ({
+  extra: { expoClient: { extra: otaUpdateType ? { otaUpdateType } : {} } },
+});
+const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithType('forced') };
+const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithType('silent') };
+
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(OTAUpdateProvider, null, children);
 
@@ -104,7 +112,7 @@ describe('OTAUpdateProvider', () => {
       // Codex P2 on PR #392: a user who opens the app after an OTA is
       // published and stays foregrounded must still receive the update,
       // even without a background→foreground transition.
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+      mockCheckForUpdate.mockResolvedValue(FORCED_UPDATE);
       mockFetchUpdate.mockResolvedValue({ isNew: true });
       mockReload.mockResolvedValue(undefined);
 
@@ -153,8 +161,8 @@ describe('OTAUpdateProvider', () => {
       expect(mockReload).not.toHaveBeenCalled();
     });
 
-    it('downloads and auto-applies update after grace + settle delay', async () => {
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+    it('downloads and auto-applies a FORCED update after grace + settle delay', async () => {
+      mockCheckForUpdate.mockResolvedValue(FORCED_UPDATE);
       mockFetchUpdate.mockResolvedValue({ isNew: true });
       mockReload.mockResolvedValue(undefined);
 
@@ -182,6 +190,77 @@ describe('OTAUpdateProvider', () => {
       await waitFor(() => {
         expect(mockReload).toHaveBeenCalledTimes(1);
       });
+    });
+
+    it('stages a SILENT update in the background without showing UI or reloading', async () => {
+      // Default delivery mode: download for next launch, never reload mid-session.
+      mockCheckForUpdate.mockResolvedValue(SILENT_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => {
+        expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      // Settle window passes — a forced update would reload here; a silent one
+      // must not. Status returns to idle and the modal (downloading/ready) is
+      // never shown.
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
+    });
+
+    it('treats an update with no delivery flag as silent (no reload)', async () => {
+      // Missing flag must never surprise users with a forced reload.
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: true, manifest: manifestWithType(undefined) });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => {
+        expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
+    });
+
+    it('does not re-fetch a silent update once it is staged this session', async () => {
+      mockCheckForUpdate.mockResolvedValue(SILENT_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+
+      // A later foreground past the throttle window must be short-circuited by
+      // the silent-staged guard — no second check or download.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1 + MIN_RECHECK_INTERVAL_MS + 1);
+      triggerForeground();
+      await flushPromises();
+
+      expect(mockCheckForUpdate).toHaveBeenCalledTimes(1);
+      expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT reload on active->active (system dialog dismissal)', async () => {
