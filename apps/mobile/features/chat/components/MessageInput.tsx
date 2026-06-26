@@ -424,6 +424,14 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
    */
   const handleWebPaste = useCallback((e: any) => {
     if (Platform.OS !== 'web') return;
+
+    // In a not-yet-accepted DM the attachment affordances are intentionally
+    // hidden — the server rejects attachments until the recipient accepts the
+    // request, and that failure path previously cascaded into a navigator
+    // crash loop (see the `recipientPending` prop docs). Don't let paste stage
+    // an image either; bail so a plain-text paste still works normally.
+    if (recipientPending) return;
+
     const clipboard = e?.clipboardData;
     if (!clipboard) return;
 
@@ -450,7 +458,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
     const objectUrls = imageFiles.map((file) => URL.createObjectURL(file));
     void uploadAndAttachImages(objectUrls);
-  }, [uploadAndAttachImages]);
+  }, [uploadAndAttachImages, recipientPending]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)

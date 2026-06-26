@@ -302,6 +302,23 @@ describe('MessageInput', () => {
         expect((global as any).URL.createObjectURL).toHaveBeenCalledTimes(1);
       });
 
+      it('ignores a pasted image in a not-yet-accepted DM (recipientPending)', () => {
+        const { getByPlaceholderText } = render(
+          <MessageInput channelId={'test-channel' as any} recipientPending />
+        );
+        const input = getByPlaceholderText('Message...');
+
+        const event = makePasteEvent([{ type: 'image/png' }]);
+        act(() => {
+          fireEvent(input, 'paste', event);
+        });
+
+        // Pending DMs reject attachments server-side, so paste must not stage
+        // an image — and it should leave the default paste alone.
+        expect(event.preventDefault).not.toHaveBeenCalled();
+        expect((global as any).URL.createObjectURL).not.toHaveBeenCalled();
+      });
+
       it('ignores a text-only paste so default paste still works', () => {
         const { getByPlaceholderText } = render(
           <MessageInput channelId={'test-channel' as any} />
