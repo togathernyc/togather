@@ -26,6 +26,7 @@ import { api, useQuery } from '@services/api/convex';
 import { useAuth } from '@/providers/AuthProvider';
 import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import { useImageUpload } from '../hooks/useImageUpload';
+import { getPastedImageFiles } from '../utils/imageUpload';
 import { useWebEnterToSend } from '../hooks/useWebEnterToSend';
 import { useFileUpload, type SelectedFile } from '../hooks/useFileUpload';
 import { useSendMessage } from '../hooks/useConvexSendMessage';
@@ -422,7 +423,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
    * pull them out, upload them through the normal image flow, and let plain-text
    * pastes fall through to the default browser behavior untouched.
    */
-  const handleWebPaste = useCallback((e: any) => {
+  const handleWebPaste = useCallback((e: ClipboardEvent) => {
     if (Platform.OS !== 'web') return;
 
     // In a not-yet-accepted DM the attachment affordances are intentionally
@@ -432,24 +433,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     // an image either; bail so a plain-text paste still works normally.
     if (recipientPending) return;
 
-    const clipboard = e?.clipboardData;
-    if (!clipboard) return;
-
-    // Prefer clipboard items (most reliable for pasted images across browsers),
-    // falling back to the files list.
-    const fromItems = clipboard.items
-      ? Array.from(clipboard.items as ArrayLike<DataTransferItem>)
-          .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-          .map((item) => item.getAsFile())
-          .filter((file): file is File => file != null)
-      : [];
-    const fromFiles = clipboard.files
-      ? Array.from(clipboard.files as ArrayLike<File>).filter((file) =>
-          file.type.startsWith('image/'),
-        )
-      : [];
-    const imageFiles = fromItems.length > 0 ? fromItems : fromFiles;
-
+    const imageFiles = getPastedImageFiles(e?.clipboardData);
     if (imageFiles.length === 0) return; // nothing to handle — allow normal paste
 
     // We're taking over the paste, so stop the browser from also dropping the
@@ -459,6 +443,28 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const objectUrls = imageFiles.map((file) => URL.createObjectURL(file));
     void uploadAndAttachImages(objectUrls);
   }, [uploadAndAttachImages, recipientPending]);
+
+  /**
+   * Wire up the web paste handler via a real DOM listener.
+   *
+   * react-native-web's <TextInput> only forwards an allowlisted set of props to
+   * the underlying <textarea> (see its `forwardedProps`), and `onPaste` is NOT
+   * on that list — so passing `onPaste` as a JSX prop is silently dropped and
+   * the handler never fires. Attach the listener directly to the host DOM node
+   * instead. The RN-Web ref resolves to the actual <textarea> element on web.
+   *
+   * `isVoiceRecording` is a dependency because the voice recorder unmounts the
+   * <TextInput> and remounts a fresh one when it closes — mirroring
+   * `useWebEnterToSend` — so the listener must re-attach to the new DOM node.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = textInputRef.current as unknown as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== 'function') return;
+    const listener = (event: Event) => handleWebPaste(event as ClipboardEvent);
+    node.addEventListener('paste', listener);
+    return () => node.removeEventListener('paste', listener);
+  }, [handleWebPaste, isVoiceRecording]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
@@ -1224,7 +1230,6 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
           editable={!uploading}
-          {...(Platform.OS === 'web' && { onPaste: handleWebPaste })}
         />
 
         {/* Send Button */}
