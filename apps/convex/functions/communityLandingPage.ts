@@ -700,10 +700,14 @@ export const setCustomFieldsAndNotes = internalMutation({
       }
     }
 
-    // Schedule communityPeople upsert so the People table is immediately populated
+    // Schedule communityPeople upsert so the People table is immediately
+    // populated. This is the genuine public form submission, so reactivate the
+    // person if they were previously archived (the leader-driven import /
+    // quick-add callers deliberately do not pass this).
     await ctx.scheduler.runAfter(0, internal.functions.communityPeople.upsertFromSubmission, {
       communityId: args.communityId,
       userId: args.userId,
+      reactivate: true,
     });
 
     return { smsSnippets, followupNoteId };

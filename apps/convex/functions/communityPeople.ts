@@ -2507,6 +2507,11 @@ export const upsertFromSubmission = internalMutation({
   args: {
     communityId: v.id("communities"),
     userId: v.id("users"),
+    // Only the public form-submission caller sets this. It reactivates the
+    // person (clears archive + restarts the auto-archive clock). The generic
+    // denormalization callers (CSV import, quick-add) leave it off so a routine
+    // import never resurrects an archived member. See computePersonActiveState.
+    reactivate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const nowTs = Date.now();
@@ -2593,13 +2598,6 @@ export const upsertFromSubmission = internalMutation({
       alerts: (scoreDoc as any).alerts ?? [],
       isSnoozed: (scoreDoc as any).isSnoozed ?? false,
       snoozedUntil: (scoreDoc as any).snoozedUntil,
-      // A form submission is fresh engagement: reactivate the person across all
-      // their groups and restart the auto-archive clock from now. `reactivatedAt`
-      // keeps them active until the full inactivity window passes, surviving the
-      // daily score refresh. See computePersonActiveState.
-      isActive: true,
-      archivedAt: undefined,
-      reactivatedAt: nowTs,
       customText1: (scoreDoc as any).customText1,
       customText2: (scoreDoc as any).customText2,
       customText3: (scoreDoc as any).customText3,
@@ -2618,6 +2616,15 @@ export const upsertFromSubmission = internalMutation({
       rawValues: (scoreDoc as any).rawValues,
       updatedAt: nowTs,
     };
+
+    // A form submission is fresh engagement: reactivate the person across all
+    // their groups and restart the auto-archive clock from now. `reactivatedAt`
+    // keeps them active until the full inactivity window passes, surviving the
+    // daily score refresh (see computePersonActiveState). Leave archive state
+    // untouched for generic denormalization callers (CSV import, quick-add).
+    const reactivationFields = args.reactivate
+      ? { isActive: true, archivedAt: undefined, reactivatedAt: nowTs }
+      : {};
 
     // 6. Find all active group memberships for this user in this community
     const allMemberships = await ctx.db
@@ -2645,11 +2652,16 @@ export const upsertFromSubmission = internalMutation({
 
       let cpId: Id<"communityPeople">;
       if (existing) {
-        await ctx.db.patch(existing._id, { ...canonicalFields, groupId });
+        await ctx.db.patch(existing._id, {
+          ...canonicalFields,
+          ...reactivationFields,
+          groupId,
+        });
         cpId = existing._id;
       } else {
         cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
+          ...reactivationFields,
           groupId,
           createdAt: nowTs,
         });
