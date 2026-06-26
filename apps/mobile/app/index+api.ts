@@ -341,9 +341,9 @@ ul, ol { list-style: none; }
             </a>
             <a href="${landingUrl}/android" class="btn btn-secondary btn-lg">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 5v14M5 12l7 7 7-7"/>
+                <path d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
-              Get the app (Android)
+              Join Android testers
             </a>
           </div>
 
@@ -719,11 +719,11 @@ ul, ol { list-style: none; }
                 <text x="60" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">App Store</text>
               </svg>
             </a>
-            <a href="${landingUrl}/android" class="store-badge" aria-label="Get the app for Android">
+            <a href="${landingUrl}/android" class="store-badge" aria-label="Join Android testers">
               <svg viewBox="0 0 135 40" fill="currentColor">
                 <rect width="135" height="40" rx="6"/>
-                <text x="67" y="14" text-anchor="middle" fill="white" font-size="8" font-family="Inter, sans-serif">Get the app</text>
-                <text x="67" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">Android</text>
+                <text x="67" y="14" text-anchor="middle" fill="white" font-size="8" font-family="Inter, sans-serif">Join the</text>
+                <text x="67" y="28" text-anchor="middle" fill="white" font-size="14" font-weight="600" font-family="Inter, sans-serif">Android test</text>
               </svg>
             </a>
           </div>

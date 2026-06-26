@@ -74,7 +74,7 @@ export function TestFlightBanner() {
 
   const isIOS = isIOSBrowser();
   const downloadUrl = isIOS ? APP_STORE_URL : ANDROID_URL;
-  const bannerText = isIOS ? 'Get the app on the App Store' : 'Get the app for Android';
+  const bannerText = isIOS ? 'Get the app on the App Store' : 'Join Android testers';
 
   const handlePress = () => {
     Linking.openURL(downloadUrl);
