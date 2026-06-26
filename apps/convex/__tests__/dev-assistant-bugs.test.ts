@@ -71,7 +71,7 @@ describe("dev-assistant bug lifecycle", () => {
     activeHandle = t;
     const { communityId, channelId, userId } = await seedContext(t);
 
-    const { bugId, reviewLink } = await t.mutation(
+    const { bugId, reviewLink, reviewUrl } = await t.mutation(
       internal.functions.devAssistant.bugs.createBug,
       {
         communityId,
@@ -82,7 +82,12 @@ describe("dev-assistant bug lifecycle", () => {
       },
     );
 
+    // In-app router path keeps the `(user)` route group for navigation.
     expect(reviewLink).toBe(`/(user)/admin/bugs/${bugId}`);
+    // Chat-facing URL is absolute, on togather.nyc, and drops the route group.
+    expect(reviewUrl).toBe(`https://togather.nyc/admin/bugs/${bugId}`);
+    expect(reviewUrl).not.toContain("togather.com");
+    expect(reviewUrl).not.toContain("(user)");
     const bug = await t.query(internal.functions.devAssistant.bugs.getBug, {
       bugId,
     });

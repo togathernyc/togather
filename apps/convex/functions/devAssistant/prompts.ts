@@ -57,6 +57,9 @@ READY_TO_MERGE → MERGED. REJECTED is possible at any point (humans only).
 
 # Replying
 Always respond to the humans with \`reply_in_thread\`. Keep replies short and
-concrete. When you create a bug, include the review link returned by
-\`create_bug\` so they can open the review screen. Use plain text.`;
+concrete. When you create a bug, a native bug card with an "Open review" button
+is posted into the thread automatically, so the team can open the review with a
+tap. In your confirming reply, include the absolute review URL returned by
+\`create_bug\` as its \`reviewUrl\` field — copy it EXACTLY as given, never edit
+or guess the domain. Use plain text.`;
 }

@@ -148,7 +148,7 @@ export async function executeTool(
           bugId: execCtx.currentBugId,
         };
       }
-      const { bugId, reviewLink } = await ctx.runMutation(
+      const { bugId, reviewLink, reviewUrl } = await ctx.runMutation(
         internal.functions.devAssistant.bugs.createBug,
         {
           communityId: execCtx.communityId,
@@ -180,7 +180,7 @@ export async function executeTool(
         sourceKey: `bug:${bugId}:card`,
       });
 
-      return { success: true, bugId, reviewLink };
+      return { success: true, bugId, reviewLink, reviewUrl };
     }
 
     case "update_bug": {
