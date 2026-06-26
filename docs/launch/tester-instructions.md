@@ -10,11 +10,18 @@ minutes to join, then just keep the app installed and open it now and then.
   into the Play Store on your phone**. This is the #1 thing people get wrong.
 
 ## How to join (2 minutes)
-1. Tap this link on your phone: **`<OPT-IN LINK — paste from Play Console>`**
-2. Tap **"Become a tester."**
-3. It opens the Togather page in the Play Store — tap **Install**.
-   - ⏳ It can take a few minutes (sometimes up to a couple hours) to show up.
-     If it's not there yet, don't worry — check back later.
+1. **Join the testers group** — open this link and tap **Join group**:
+   **https://groups.google.com/a/supa.media/g/togather-testers**
+   (Use the same Google account that's signed into your Play Store.)
+2. **Opt in to the test** — tap this link on your phone:
+   **https://play.google.com/apps/testing/app.gatherful.mobile**
+   then tap **"Become a tester."**
+3. **Install from the Play Store** — open this link and tap **Install**:
+   **https://play.google.com/store/apps/details?id=app.gatherful.mobile**
+   - Togather is a **closed test**, so it **won't show up if you search** the
+     Play Store — you have to use the link above.
+   - ⏳ If you see **"item not found"** or the page won't load, your access is
+     still propagating. Wait **~30 minutes** and try the link again.
 4. Open the app and sign in like normal.
 
 ## What we need from you for 14 days
