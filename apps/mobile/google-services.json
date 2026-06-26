@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "624189213570",
+    "project_id": "togather-ddd50",
+    "storage_bucket": "togather-ddd50.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:624189213570:android:015740212fe1e0876cdd9b",
+        "android_client_info": {
+          "package_name": "app.gatherful.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC1LkjAnrtP6P1KqhblDrIPYXeGD7rom-U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
