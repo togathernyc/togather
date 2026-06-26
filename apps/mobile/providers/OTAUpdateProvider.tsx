@@ -2,20 +2,27 @@
  * OTAUpdateProvider - OTA update provider with silent + forced delivery
  *
  * Checks for updates on mount and every time the app returns to the
- * foreground. What happens when an update exists depends on the delivery mode
- * stamped into that update's manifest at publish time (extra.otaUpdateType,
- * set by the Deploy to Production workflow):
+ * foreground. Whether an available update is applied silently or forced is
+ * decided by a monotonic "forced floor" serial stamped into every update's
+ * manifest at publish time (extra.otaForcedSerial, set by the Deploy to
+ * Production workflow). It is bumped only on a forced deploy and carried
+ * forward unchanged on silent deploys.
  *
- *   - 'silent' (default): download the bundle in the background and let
- *     expo-updates apply it on the next cold start. No modal, no reload, no
- *     interruption. This is the right behavior for routine frontend changes —
+ *   - incoming serial <= running serial → SILENT: download the bundle in the
+ *     background and let expo-updates apply it on the next cold start. No
+ *     modal, no reload. The right behavior for routine frontend changes —
  *     users stop seeing the "Updating" modal on every deploy.
- *   - 'forced': download now behind the blocking OTAUpdateModal and
- *     reloadAsync immediately. Reserved for breaking frontend<->backend
- *     contract changes and big features the team wants everyone on at once.
+ *   - incoming serial  > running serial → FORCED: a forced release has shipped
+ *     that this bundle predates. Download now behind the blocking
+ *     OTAUpdateModal and reloadAsync immediately. Reserved for breaking
+ *     frontend<->backend contract changes and big features.
  *
- * Anything other than the literal 'forced' is treated as silent, so a missing
- * or garbled flag can never surprise users with a forced reload.
+ * Because the floor is sticky (a later silent release still carries the last
+ * forced serial), a device that missed the forced window force-reloads on its
+ * next check even if a silent release has since superseded the forced one.
+ *
+ * A missing/garbled serial reads as 0, so it can never accidentally exceed the
+ * running serial and surprise users with a forced reload.
  *
  * Check failures (including offline) are silent: status returns to 'idle' and
  * the user keeps using the current build.
@@ -54,22 +61,22 @@ import { SentryUtils } from './SentryProvider';
 // NOT show the modal, so the modal deliberately excludes it.
 type OTAStatus = 'idle' | 'checking' | 'downloading' | 'ready' | 'staging' | 'error';
 
-type OTAUpdateType = 'silent' | 'forced';
-
 interface OTAUpdateContextType {
   status: OTAStatus;
   errorMessage: string | null;
 }
 
 /**
- * Read the delivery mode off an update manifest. EAS Update nests the app
- * config under manifest.extra.expoClient, so our flag lives at
- * extra.expoClient.extra.otaUpdateType. Defaults to 'silent' for any missing
- * or unexpected value — forced is only ever the explicit, exact 'forced'.
+ * Read the forced-floor serial off a manifest. EAS Update nests the app config
+ * under manifest.extra.expoClient, so our value lives at
+ * extra.expoClient.extra.otaForcedSerial. Any missing or non-numeric value
+ * reads as 0 — the lowest possible floor — so it can never spuriously exceed a
+ * running serial and trigger an unwanted forced reload.
  */
-export function readOTAUpdateType(manifest: unknown): OTAUpdateType {
-  const otaUpdateType = (manifest as any)?.extra?.expoClient?.extra?.otaUpdateType;
-  return otaUpdateType === 'forced' ? 'forced' : 'silent';
+export function readForcedSerial(manifest: unknown): number {
+  const raw = (manifest as any)?.extra?.expoClient?.extra?.otaForcedSerial;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : 0;
 }
 
 const OTAUpdateContext = createContext<OTAUpdateContextType>({
@@ -146,14 +153,21 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       const manifest = (checkResult as any).manifest;
-      const updateType = readOTAUpdateType(manifest);
       const updateId: string | null = manifest?.id ?? null;
 
-      if (updateType === 'silent') {
+      // Forced iff the incoming update carries a higher forced-floor serial than
+      // the bundle we're running. A forced release bumps the floor; silent
+      // releases carry it forward, so this stays true for a device that missed
+      // the forced window even when a later silent release supersedes it.
+      const incomingForcedSerial = readForcedSerial(manifest);
+      const runningForcedSerial = readForcedSerial((Updates as any).manifest);
+      const isForced = incomingForcedSerial > runningForcedSerial;
+
+      if (!isForced) {
         // Already downloaded this exact bundle this session — it's waiting for
         // the next cold start. Skip the redundant re-fetch, but note we did NOT
-        // bail before checkForUpdateAsync: a later forced deploy is a different
-        // update id and still gets handled below.
+        // bail before checkForUpdateAsync: a later forced deploy carries a
+        // higher serial and still gets handled below.
         if (updateId && updateId === stagedSilentUpdateIdRef.current) {
           crumb('OTA silent update already staged, skipping re-fetch', { updateId });
           setStatus('idle');
@@ -163,7 +177,10 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Background download, no UI. expo-updates launches the most recently
         // downloaded bundle on the next cold start, so staging it is enough —
         // we never reload mid-session.
-        crumb('OTA silent update available, staging in background');
+        crumb('OTA silent update available, staging in background', {
+          incomingForcedSerial,
+          runningForcedSerial,
+        });
         setStatus('staging');
         const fetchResult = await Updates.fetchUpdateAsync();
 
@@ -177,7 +194,10 @@ export const OTAUpdateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return;
       }
 
-      crumb('OTA forced update available, downloading');
+      crumb('OTA forced update available, downloading', {
+        incomingForcedSerial,
+        runningForcedSerial,
+      });
       setStatus('downloading');
       const fetchResult = await Updates.fetchUpdateAsync();
 

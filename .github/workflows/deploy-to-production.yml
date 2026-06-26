@@ -77,12 +77,16 @@ jobs:
           git fetch origin --tags --force --quiet || true
           LAST_DEPLOY=$(git rev-parse -q --verify refs/tags/production-latest || true)
 
+          # Root dependency inputs (pnpm-lock.yaml / root package.json) are
+          # bundled into the mobile JS too, so a release that only bumps a shared
+          # dependency must still publish an OTA — otherwise installed apps keep
+          # running the old dependency code.
           MOBILE_PATHS_CHANGED=true
           if [ -n "$LAST_DEPLOY" ]; then
-            if git diff --quiet "$LAST_DEPLOY" HEAD -- apps/mobile packages/shared; then
+            if git diff --quiet "$LAST_DEPLOY" HEAD -- apps/mobile packages/shared package.json pnpm-lock.yaml; then
               MOBILE_PATHS_CHANGED=false
             fi
-            echo "Diffed ${LAST_DEPLOY:0:8}..HEAD for apps/mobile + packages/shared → changed=$MOBILE_PATHS_CHANGED"
+            echo "Diffed ${LAST_DEPLOY:0:8}..HEAD for apps/mobile + packages/shared + root deps → changed=$MOBILE_PATHS_CHANGED"
           else
             echo "No production-latest tag yet — treating mobile as changed (first tracked deploy)."
           fi
@@ -391,6 +395,9 @@ jobs:
     # mobile_js_changed is only true when fingerprint didn't change (no native changes)
     if: needs.validate-and-detect.outputs.mobile_js_changed == 'true'
     runs-on: ubuntu-latest
+    # Needed to move the production-forced-floor tag on forced deploys.
+    permissions:
+      contents: write
     environment:
       name: production
 
@@ -454,18 +461,52 @@ jobs:
           echo "ota_version=$OTA_VERSION" >> $GITHUB_OUTPUT
           echo "OTA Version: $OTA_VERSION"
 
+      - name: Resolve OTA forced floor
+        id: forced_floor
+        env:
+          UPDATE_MODE: ${{ inputs.update_mode }}
+        run: |
+          # The forced floor is a monotonic serial persisted in the annotated tag
+          # `production-forced-floor`. Every update bakes it into its manifest;
+          # the app force-reloads when its running serial is older. A forced
+          # deploy bumps the floor to "now"; a silent deploy carries it forward,
+          # so a forced release stays sticky for devices that missed its window.
+          git fetch origin --tags --force --quiet || true
+          CURRENT_FLOOR=$(git for-each-ref --format='%(contents)' refs/tags/production-forced-floor 2>/dev/null | head -1 | tr -dc '0-9')
+          [ -z "$CURRENT_FLOOR" ] && CURRENT_FLOOR=0
+          if [ "$UPDATE_MODE" = "forced" ]; then
+            FLOOR=$(date -u +%s)
+            echo "forced deploy → bumping forced floor: $CURRENT_FLOOR → $FLOOR"
+          else
+            FLOOR=$CURRENT_FLOOR
+            echo "silent deploy → carrying forward forced floor: $FLOOR"
+          fi
+          echo "floor=$FLOOR" >> $GITHUB_OUTPUT
+
       - name: Publish OTA Update
         working-directory: apps/mobile
         env:
           OTA_VERSION: ${{ steps.ota_version.outputs.ota_version }}
+          UPDATE_MODE: ${{ inputs.update_mode }}
           # Read by app.config.js at publish time and baked into the update's
-          # manifest (extra.otaUpdateType). The app's OTAUpdateProvider reads it
-          # to decide between a silent background apply and a forced reload.
-          OTA_UPDATE_TYPE: ${{ inputs.update_mode }}
+          # manifest (extra.otaForcedSerial). OTAUpdateProvider force-reloads when
+          # the running bundle's serial is older than this.
+          OTA_FORCED_SERIAL: ${{ steps.forced_floor.outputs.floor }}
         run: |
-          echo "Publishing production OTA update (mode: ${OTA_UPDATE_TYPE:-silent})..."
+          echo "Publishing production OTA update (mode: ${UPDATE_MODE:-silent}, forced floor: $OTA_FORCED_SERIAL)..."
           # --environment production ensures EAS env vars are available when evaluating app.config.js
-          eas update --channel production --environment production --message "Production release $OTA_VERSION (${OTA_UPDATE_TYPE:-silent})" --non-interactive
+          eas update --channel production --environment production --message "Production release $OTA_VERSION (${UPDATE_MODE:-silent}, floor $OTA_FORCED_SERIAL)" --non-interactive
+
+      - name: Persist forced floor
+        if: ${{ inputs.update_mode == 'forced' }}
+        env:
+          FLOOR: ${{ steps.forced_floor.outputs.floor }}
+        run: |
+          # Only forced deploys advance the floor; move the tag to this commit so
+          # the next deploy (silent or forced) carries the new value forward.
+          git tag -f -a production-forced-floor -m "$FLOOR" "$GITHUB_SHA"
+          git push -f origin refs/tags/production-forced-floor
+          echo "✓ Persisted forced floor $FLOOR"
 
   # Deploy landing page to production
   deploy-landing:

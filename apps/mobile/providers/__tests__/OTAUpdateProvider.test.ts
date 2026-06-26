@@ -15,10 +15,16 @@ import * as Updates from 'expo-updates';
 
 // --- Mocks ---
 
+// The running bundle's manifest, exposed via a getter so tests can swap it
+// (a namespace import's properties are read-only and can't be reassigned).
+let mockRunningManifest: unknown;
 jest.mock('expo-updates', () => ({
   checkForUpdateAsync: jest.fn(),
   fetchUpdateAsync: jest.fn(),
   reloadAsync: jest.fn(),
+  get manifest() {
+    return mockRunningManifest;
+  },
 }));
 
 jest.mock('../SentryProvider', () => ({
@@ -43,17 +49,24 @@ const mockFetchUpdate = Updates.fetchUpdateAsync as jest.Mock;
 const mockReload = Updates.reloadAsync as jest.Mock;
 
 // EAS Update nests the app config under manifest.extra.expoClient, so the
-// delivery flag lives at extra.expoClient.extra.otaUpdateType. `id` is the
-// per-update identifier used to skip re-fetching an already-staged bundle.
-const manifestWithType = (
-  otaUpdateType: 'forced' | 'silent' | undefined,
-  id = 'update-1'
-) => ({
+// forced-floor serial lives at extra.expoClient.extra.otaForcedSerial. `id` is
+// the per-update identifier used to skip re-fetching an already-staged bundle.
+// `otaForcedSerial: undefined` omits the field entirely (reads back as 0).
+const manifestWithSerial = (otaForcedSerial: number | undefined, id = 'update-1') => ({
   id,
-  extra: { expoClient: { extra: otaUpdateType ? { otaUpdateType } : {} } },
+  extra: {
+    expoClient: {
+      extra: otaForcedSerial === undefined ? {} : { otaForcedSerial },
+    },
+  },
 });
-const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithType('forced', 'forced-1') };
-const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithType('silent', 'silent-1') };
+const setRunningSerial = (serial: number) => {
+  mockRunningManifest = manifestWithSerial(serial, 'running');
+};
+
+// Running bundle sits at floor 0; an update at serial 0 is silent, > 0 is forced.
+const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithSerial(0, 'silent-1') };
+const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithSerial(100, 'forced-1') };
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(OTAUpdateProvider, null, children);
@@ -74,6 +87,7 @@ describe('OTAUpdateProvider', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     appStateChangeHandler = null;
+    setRunningSerial(0);
   });
 
   it('skips update check in dev mode and stays idle', () => {
@@ -224,9 +238,9 @@ describe('OTAUpdateProvider', () => {
       expect(result.current.status).toBe('idle');
     });
 
-    it('treats an update with no delivery flag as silent (no reload)', async () => {
-      // Missing flag must never surprise users with a forced reload.
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true, manifest: manifestWithType(undefined) });
+    it('treats an update with no forced serial as silent (no reload)', async () => {
+      // Missing serial reads as 0, never exceeding the running floor.
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: true, manifest: manifestWithSerial(undefined) });
       mockFetchUpdate.mockResolvedValue({ isNew: true });
 
       const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
@@ -303,6 +317,59 @@ describe('OTAUpdateProvider', () => {
         await flushPromises();
       });
       await waitFor(() => expect(mockReload).toHaveBeenCalledTimes(1));
+    });
+
+    it('forces a device that missed a forced release even when the superseding update is silent', async () => {
+      // Codex P1 on PR #503: the running bundle predates a forced release (floor
+      // 100), and the only update now offered is a *silent* one — but it carries
+      // the sticky forced floor (100) > running (0), so the device must still
+      // force-reload instead of quietly staging it.
+      setRunningSerial(0);
+      mockCheckForUpdate.mockResolvedValue({
+        isAvailable: true,
+        manifest: manifestWithSerial(100, 'silent-after-forced'),
+      });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      await waitFor(() => expect(mockReload).toHaveBeenCalledTimes(1));
+    });
+
+    it('stays silent for a device already on the forced bundle', async () => {
+      // Running bundle is already at the forced floor (100); a later silent
+      // release also carries 100, so 100 > 100 is false → no forced reload.
+      setRunningSerial(100);
+      mockCheckForUpdate.mockResolvedValue({
+        isAvailable: true,
+        manifest: manifestWithSerial(100, 'later-silent'),
+      });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
     });
 
     it('does NOT reload on active->active (system dialog dismissal)', async () => {

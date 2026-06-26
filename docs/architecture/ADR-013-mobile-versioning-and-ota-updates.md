@@ -210,28 +210,41 @@ The date/time segments are added by CI during OTA deployment. Fresh binary insta
 
 ## OTA Delivery Modes (silent vs forced)
 
-Not every OTA needs to interrupt the user. Each published update carries a
-delivery mode that `OTAUpdateProvider` reads off the update manifest
-(`extra.otaUpdateType`) and acts on:
+Not every OTA needs to interrupt the user. Delivery is governed by a monotonic
+**forced floor** serial that `OTAUpdateProvider` reads off the update manifest
+(`extra.otaForcedSerial`):
 
 | Mode | What the user sees | When to use |
 |------|--------------------|-------------|
 | `silent` (default) | Nothing. The bundle downloads in the background and applies on the **next cold start**. | Routine frontend changes that don't break the frontend↔backend contract. |
 | `forced` | The full-screen, non-dismissible "Updating" modal, then an immediate `reloadAsync`. | Breaking frontend↔backend contract changes (avoid errors on stale clients) **or** a big feature you want everyone on at once. |
 
-Anything other than the literal `forced` is treated as `silent`, so a missing
-or garbled flag can never surprise users with a forced reload.
+**The decision rule:** the app force-reloads when an incoming update's
+`otaForcedSerial` is **greater than the serial of the running bundle**;
+otherwise it stages the update silently. A missing/garbled serial reads as `0`,
+so it can never spuriously trigger a forced reload.
 
-**How the mode is set:** the `Deploy to Production` workflow has an
-`update_mode` input (`silent` | `forced`, default `silent`). It's exported as
-`OTA_UPDATE_TYPE` to the `eas update` step, where `app.config.js` bakes it into
-the update's `extra.otaUpdateType`. The decision travels with the update — no
-backend coordination required.
+**Why a serial and not a boolean.** `checkForUpdateAsync()` only ever returns
+the *latest* manifest. A plain `forced` flag on one release would be lost the
+moment a later silent release superseded it, so a device that missed the forced
+window would never reload. The floor is **sticky**: a forced deploy bumps it,
+and every later silent deploy carries the same value forward — so a stale device
+sees the higher floor even on a silent update and still force-reloads.
+
+**How the floor is set:** the `Deploy to Production` workflow has an
+`update_mode` input (`silent` | `forced`, default `silent`). The OTA job reads
+the current floor from the annotated `production-forced-floor` git tag; a
+`forced` deploy bumps it to the deploy timestamp and moves the tag, a `silent`
+deploy carries it forward. The value is exported as `OTA_FORCED_SERIAL` to the
+`eas update` step, where `app.config.js` bakes it into `extra.otaForcedSerial`.
+No backend coordination required. (Native store releases use the separate
+`NativeUpdateModal` path and don't touch this floor.)
 
 **Backend-only deploys publish nothing.** The deploy workflow tags each
 production release as `production-latest` and diffs `apps/mobile` +
-`packages/shared` against it. If nothing mobile changed, no OTA is published at
-all — a Convex-only deploy no longer shows users any update UI.
+`packages/shared` + root dependency files (`package.json`, `pnpm-lock.yaml`)
+against it. If nothing mobile changed, no OTA is published at all — a Convex-only
+deploy no longer shows users any update UI.
 
 ---
 
