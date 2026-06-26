@@ -262,6 +262,15 @@ export default {
       // OTA version - set by CI during deployment (format: X.Y.Z.MMDDYY.HHMM)
       // Falls back to binary version for embedded builds
       otaVersion: process.env.OTA_VERSION || "1.0.22",
+      // OTA forced floor — a monotonic serial of the most recent *forced*
+      // release, carried forward unchanged on silent releases. OTAUpdateProvider
+      // reads it off both the published update's manifest and the running
+      // bundle, and force-reloads whenever the running serial is older than an
+      // incoming update's. This keeps a forced release "sticky": a device that
+      // missed the forced window still force-reloads even when a later silent
+      // release supersedes it. Set per deploy by the "Deploy to Production"
+      // workflow (OTA_FORCED_SERIAL); 0 until the first forced release.
+      otaForcedSerial: Number(process.env.OTA_FORCED_SERIAL) || 0,
       // Build variant - used to determine environment at runtime
       // Set by EAS build profiles (staging vs production)
       isStaging: IS_STAGING,
