@@ -233,4 +233,123 @@ describe("upsertFromSubmission reactivation gating", () => {
     expect(placeholder?.isActive).toBe(false);
     expect(typeof placeholder?.archivedAt).toBe("number");
   });
+
+  test("a stale archived row for a left group does not re-archive active rows", async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+
+    const ids = await t.run(async (ctx) => {
+      const communityId = await ctx.db.insert("communities", {
+        name: "Stale Left Group Community",
+        slug: "stale-left-group",
+        isPublic: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const groupTypeId = await ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Announcements",
+        slug: "announcements",
+        isActive: true,
+        createdAt: now,
+        displayOrder: 0,
+      });
+      const announcementGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Announcements",
+        isAnnouncementGroup: true,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const userId = await ctx.db.insert("users", {
+        firstName: "Rae",
+        lastName: "Joyne",
+        email: "rae@test.com",
+        phone: "+15555554002",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const groupMemberId = await ctx.db.insert("groupMembers", {
+        groupId: announcementGroupId,
+        userId,
+        role: "member",
+        joinedAt: now,
+        notificationsEnabled: true,
+      });
+      await ctx.db.insert("memberFollowupScores", {
+        groupId: announcementGroupId,
+        groupMemberId,
+        userId,
+        firstName: "Rae",
+        lastName: "Joyne",
+        score1: 0,
+        score2: 0,
+        alerts: [],
+        isSnoozed: false,
+        attendanceScore: 0,
+        connectionScore: 0,
+        followupScore: 0,
+        missedMeetings: 0,
+        consecutiveMissed: 0,
+        scoreIds: [],
+        updatedAt: now,
+        addedAt: now,
+      });
+      // Current announcement row is ACTIVE (e.g. just reactivated).
+      const activeRowId = await ctx.db.insert("communityPeople", {
+        communityId,
+        groupId: announcementGroupId,
+        userId,
+        firstName: "Rae",
+        lastName: "Joyne",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // A group the user has LEFT, with a leftover archived row.
+      const leftGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId,
+        name: "Old Group",
+        isAnnouncementGroup: false,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: leftGroupId,
+        userId,
+        role: "member",
+        joinedAt: now - 1000,
+        leftAt: now - 500,
+        notificationsEnabled: true,
+      });
+      await ctx.db.insert("communityPeople", {
+        communityId,
+        groupId: leftGroupId,
+        userId,
+        firstName: "Rae",
+        lastName: "Joyne",
+        isActive: false,
+        archivedAt: now - 400,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return { communityId, userId, activeRowId };
+    });
+
+    await t.mutation(internal.functions.communityPeople.upsertFromSubmission, {
+      communityId: ids.communityId,
+      userId: ids.userId,
+    });
+
+    // The current active row must stay active — the stale left-group archive
+    // is not authoritative.
+    const activeRow = await t.run((ctx) => ctx.db.get(ids.activeRowId));
+    expect(activeRow?.isActive).toBe(true);
+  });
 });
