@@ -176,7 +176,7 @@ shipping side by side; that is no longer the case for production.
 - The app is **not searchable** in the Play Store (closed testing) — testers reach
   it only via the links above. Until access propagates the listing can return
   "item not found"; the wait is ~30 minutes.
-- See [`docs/launch/tester-instructions.md`](../../launch/tester-instructions.md)
+- See [`docs/launch/tester-instructions.md`](../launch/tester-instructions.md)
   for the tester-facing flow.
 
 ### What is retained
