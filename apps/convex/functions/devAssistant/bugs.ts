@@ -22,6 +22,7 @@ import { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getMediaUrl } from "../../lib/utils";
 import { DEV_MAINTAINER_ROLE } from "./maintainers";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
 // Status machine
@@ -131,7 +132,10 @@ export const createBug = internalMutation({
     repro: v.optional(v.string()),
     screenshotUrls: v.optional(v.array(v.string())),
   },
-  handler: async (ctx, args): Promise<{ bugId: Id<"devBugs">; reviewLink: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ bugId: Id<"devBugs">; reviewLink: string; reviewUrl: string }> => {
     const now = Date.now();
     const bugId = await ctx.db.insert("devBugs", {
       communityId: args.communityId,
@@ -147,10 +151,17 @@ export const createBug = internalMutation({
       updatedAt: now,
     });
 
+    // In-app router path (used for navigation inside the app, where the
+    // `(user)` route group is meaningful to Expo Router).
     const reviewLink = `/(user)/admin/bugs/${bugId}`;
     await ctx.db.patch(bugId, { reviewLink });
 
-    return { bugId, reviewLink };
+    // Absolute, human-facing URL for the chat reply. Built from the centralized
+    // domain config (togather.nyc) so the bot never fabricates a domain, and
+    // without the `(user)` route group, which is not a real URL segment.
+    const reviewUrl = `${DOMAIN_CONFIG.appUrl}/admin/bugs/${bugId}`;
+
+    return { bugId, reviewLink, reviewUrl };
   },
 });
 
