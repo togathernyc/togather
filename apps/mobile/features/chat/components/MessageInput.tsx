@@ -326,6 +326,33 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   /**
    * Pick photos and videos from gallery (supports multi-select for photos)
    */
+  /**
+   * Add image URIs to the composer and upload them in parallel. Shared by the
+   * media picker and the web paste handler so both behave identically.
+   */
+  const uploadAndAttachImages = useCallback(async (imageUris: string[]) => {
+    if (imageUris.length === 0) return;
+    setSelectedImages(prev => [...prev, ...imageUris]);
+
+    const uploadPromises = imageUris.map(async (uri) => {
+      const uploadResult = await uploadImage(uri);
+      if (uploadResult.error) {
+        console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
+        return null;
+      }
+      return uploadResult.url;
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const successfulUrls = results.filter((url): url is string => url !== null);
+    setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
+
+    const failedCount = imageUris.length - successfulUrls.length;
+    if (failedCount > 0) {
+      console.warn(`[MessageInput] ${failedCount} images failed to upload`);
+    }
+  }, [uploadImage]);
+
   const pickMedia = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -342,26 +369,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         // Handle images (existing flow — multi-select, parallel upload)
         if (imageAssets.length > 0) {
-          const imageUris = imageAssets.map(asset => asset.uri);
-          setSelectedImages(prev => [...prev, ...imageUris]);
-
-          const uploadPromises = imageUris.map(async (uri) => {
-            const uploadResult = await uploadImage(uri);
-            if (uploadResult.error) {
-              console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
-              return null;
-            }
-            return uploadResult.url;
-          });
-
-          const results = await Promise.all(uploadPromises);
-          const successfulUrls = results.filter((url): url is string => url !== null);
-          setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
-
-          const failedCount = imageUris.length - successfulUrls.length;
-          if (failedCount > 0) {
-            console.warn(`[MessageInput] ${failedCount} images failed to upload`);
-          }
+          await uploadAndAttachImages(imageAssets.map(asset => asset.uri));
         }
 
         // Handle video (take first only)
@@ -406,7 +414,43 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     } catch (error) {
       console.error('[MessageInput] Media picker error:', error);
     }
-  }, [uploadImage, uploadVideoFile, resetVideoUpload]);
+  }, [uploadAndAttachImages, uploadVideoFile, resetVideoUpload]);
+
+  /**
+   * Web only: paste a copied image (e.g. a macOS screenshot via Cmd+V) straight
+   * into the composer. Screenshots arrive on the clipboard as image/* files; we
+   * pull them out, upload them through the normal image flow, and let plain-text
+   * pastes fall through to the default browser behavior untouched.
+   */
+  const handleWebPaste = useCallback((e: any) => {
+    if (Platform.OS !== 'web') return;
+    const clipboard = e?.clipboardData;
+    if (!clipboard) return;
+
+    // Prefer clipboard items (most reliable for pasted images across browsers),
+    // falling back to the files list.
+    const fromItems = clipboard.items
+      ? Array.from(clipboard.items as ArrayLike<DataTransferItem>)
+          .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => file != null)
+      : [];
+    const fromFiles = clipboard.files
+      ? Array.from(clipboard.files as ArrayLike<File>).filter((file) =>
+          file.type.startsWith('image/'),
+        )
+      : [];
+    const imageFiles = fromItems.length > 0 ? fromItems : fromFiles;
+
+    if (imageFiles.length === 0) return; // nothing to handle — allow normal paste
+
+    // We're taking over the paste, so stop the browser from also dropping the
+    // image (or a data: URL of it) into the text field.
+    e.preventDefault();
+
+    const objectUrls = imageFiles.map((file) => URL.createObjectURL(file));
+    void uploadAndAttachImages(objectUrls);
+  }, [uploadAndAttachImages]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
@@ -1172,6 +1216,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           scrollEnabled={isWeb ? true : nativeScrollEnabled}
           maxLength={2000}
           editable={!uploading}
+          {...(Platform.OS === 'web' && { onPaste: handleWebPaste })}
         />
 
         {/* Send Button */}
