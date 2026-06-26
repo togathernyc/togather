@@ -90,6 +90,8 @@ type FollowupMember = {
   latestNote?: string;
   latestNoteAt?: number;
   isLeader: boolean;
+  // Archived state. `isActive === false` = archived; undefined/true = active.
+  isActive?: boolean;
   score1: number;
   score2: number;
   score3?: number;
@@ -161,7 +163,12 @@ type ColumnDef = {
 };
 
 // Built-in editable columns that get a visual highlight
-const BUILTIN_EDITABLE_COLUMNS = new Set(["assignee", "status", "zipCode"]);
+const BUILTIN_EDITABLE_COLUMNS = new Set([
+  "assignee",
+  "status",
+  "zipCode",
+  "archived",
+]);
 
 type DropdownPosition = {
   top: number;
@@ -623,6 +630,9 @@ export function FollowupDesktopTable({
         serverSortKey: "lastActiveAt",
       },
       { key: "alerts", label: "Alerts", defaultWidth: 120, sortable: false },
+      // Clickable cell to archive/unarchive a person inline. Pair with the
+      // `archived:true` / `archived:only` search to surface archived people.
+      { key: "archived", label: "Archived", defaultWidth: 110, sortable: false },
     );
 
     // Custom field columns
@@ -687,6 +697,7 @@ export function FollowupDesktopTable({
     map["lastFollowupAt"] = "Last Contact";
     map["lastActiveAt"] = "Date Active";
     map["alerts"] = "Alerts";
+    map["archived"] = "Archived";
     for (const cf of customFields) {
       map[cf.slot] = cf.name;
     }
@@ -715,6 +726,7 @@ export function FollowupDesktopTable({
       "lastFollowupAt",
       "lastActiveAt",
       "alerts",
+      "archived",
     );
     for (const cf of customFields) keys.push(cf.slot);
     return keys;
@@ -1091,6 +1103,10 @@ export function FollowupDesktopTable({
   const setZipCodeMut = useAuthenticatedMutation(
     api.functions.communityPeople.setZipCode,
   );
+  // Archive / unarchive mutation
+  const setActiveMut = useAuthenticatedMutation(
+    api.functions.communityPeople.setActive,
+  );
   const assigneeMutationQueueRef = useRef<Record<string, Promise<void>>>({});
 
   // Bulk remove mutations
@@ -1291,6 +1307,32 @@ export function FollowupDesktopTable({
         const next = { ...prev };
         if (next[memberId]) {
           delete next[memberId].status;
+          if (Object.keys(next[memberId]).length === 0) delete next[memberId];
+        }
+        return next;
+      });
+    }
+  };
+
+  // Archive (hide from the table) or unarchive (reactivate) a person inline.
+  // Unarchiving records a server-side reactivation timestamp so the daily score
+  // job keeps them active for the full inactivity window. See setActive.
+  const handleToggleArchived = async (memberId: string, nextActive: boolean) => {
+    setOptimistic((prev) => ({
+      ...prev,
+      [memberId]: { ...prev[memberId], isActive: nextActive },
+    }));
+    try {
+      await setActiveMut({
+        communityPeopleId: memberId as any,
+        isActive: nextActive,
+      });
+    } catch (err) {
+      console.error("[setActive] failed:", err);
+      setOptimistic((prev) => {
+        const next = { ...prev };
+        if (next[memberId]) {
+          delete next[memberId].isActive;
           if (Object.keys(next[memberId]).length === 0) delete next[memberId];
         }
         return next;
@@ -1640,6 +1682,7 @@ export function FollowupDesktopTable({
         overrides.assigneeId = nextIds[0];
       }
       if (opt.status !== undefined) overrides.status = opt.status ?? undefined;
+      if (opt.isActive !== undefined) overrides.isActive = opt.isActive;
       // Apply custom field overrides
       for (const [key, val] of Object.entries(opt)) {
         if (key.startsWith("custom")) overrides[key] = val ?? undefined;
@@ -1918,6 +1961,44 @@ export function FollowupDesktopTable({
                 ? item.status.charAt(0).toUpperCase() + item.status.slice(1)
                 : "\u2014"}
             </Text>
+          </TouchableOpacity>
+        );
+      }
+
+      case "archived": {
+        const isArchived = item.isActive === false;
+        return (
+          <TouchableOpacity
+            style={s.editableCellTouchable}
+            data-archived="true"
+            onPress={() =>
+              handleToggleArchived(item.groupMemberId, isArchived)
+            }
+          >
+            <View
+              style={[
+                s.archivedBadge,
+                {
+                  backgroundColor: isArchived
+                    ? colors.warning
+                    : colors.surfaceSecondary,
+                },
+              ]}
+            >
+              <Ionicons
+                name={isArchived ? "archive" : "archive-outline"}
+                size={14}
+                color={isArchived ? colors.text : colors.iconSecondary}
+              />
+              <Text
+                style={[
+                  s.archivedBadgeText,
+                  { color: isArchived ? colors.text : colors.textSecondary },
+                ]}
+              >
+                {isArchived ? "Archived" : "Active"}
+              </Text>
+            </View>
           </TouchableOpacity>
         );
       }
@@ -2672,6 +2753,7 @@ export function FollowupDesktopTable({
                         if (e.target?.closest?.("[data-checkbox]")) return;
                         if (e.target?.closest?.("[data-notes]")) return;
                         if (e.target?.closest?.("[data-tasks]")) return;
+                        if (e.target?.closest?.("[data-archived]")) return;
                         setShowSettingsPanel(false);
                         setShowQuickAddPanel(false);
                         setSelectedMemberId(item.groupMemberId);
@@ -3591,6 +3673,21 @@ const s = StyleSheet.create({
   assigneeMoreText: {
     fontSize: 11,
     fontWeight: "600" as const,
+  },
+
+  // Archived badge — clickable archive/unarchive cell
+  archivedBadge: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    alignSelf: "flex-start" as const,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    gap: 4,
+  },
+  archivedBadgeText: {
+    fontSize: 12,
+    fontWeight: "500" as const,
   },
 
   // Notes cell

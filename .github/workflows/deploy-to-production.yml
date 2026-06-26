@@ -10,6 +10,14 @@ on:
         description: 'Type "deploy" to confirm you have tested staging'
         required: true
         type: string
+      update_mode:
+        description: 'Frontend OTA delivery. silent: users get it on next app open (no modal). forced: everyone downloads + reloads now (use for breaking frontend<->backend changes or big features). Ignored when there are no mobile JS changes or when a native store build is required.'
+        required: false
+        default: 'silent'
+        type: choice
+        options:
+          - silent
+          - forced
 
 jobs:
   # Validate confirmation and detect what needs to be deployed
@@ -57,29 +65,53 @@ jobs:
         run: |
           echo "Detecting changes to deploy..."
 
-          # Get the last production deployment tag or commit
-          # For now, we'll deploy everything that's on main
-          # In the future, you could track the last deployed commit
-
-          # Check for Convex changes
+          # Convex is idempotent and cheap to redeploy, so we always run it.
           echo "convex_changed=true" >> $GITHUB_OUTPUT
           echo "✓ Will deploy Convex"
 
-          # Check for mobile changes - detect based on fingerprint comparison
-          # Run fingerprint check to see if native code changed since last build
-          cd apps/mobile
-          if node scripts/check-fingerprint.js 2>/dev/null; then
-            # Fingerprint matches - only JS changes, safe for OTA
-            echo "mobile_native_changed=false" >> $GITHUB_OUTPUT
-            echo "mobile_js_changed=true" >> $GITHUB_OUTPUT
-            echo "✓ Fingerprint unchanged - will deploy mobile OTA"
+          # Decide whether the frontend needs anything at all. Each successful
+          # production deploy moves the `production-latest` tag to the deployed
+          # commit; diffing against it tells us if mobile/shared code actually
+          # changed. A backend-only deploy must NOT publish an OTA — that's what
+          # makes the "Updating" modal appear on every release.
+          git fetch origin --tags --force --quiet || true
+          LAST_DEPLOY=$(git rev-parse -q --verify refs/tags/production-latest || true)
+
+          # Root dependency inputs (pnpm-lock.yaml / root package.json) are
+          # bundled into the mobile JS too, so a release that only bumps a shared
+          # dependency must still publish an OTA — otherwise installed apps keep
+          # running the old dependency code.
+          MOBILE_PATHS_CHANGED=true
+          if [ -n "$LAST_DEPLOY" ]; then
+            if git diff --quiet "$LAST_DEPLOY" HEAD -- apps/mobile packages/shared package.json pnpm-lock.yaml; then
+              MOBILE_PATHS_CHANGED=false
+            fi
+            echo "Diffed ${LAST_DEPLOY:0:8}..HEAD for apps/mobile + packages/shared + root deps → changed=$MOBILE_PATHS_CHANGED"
           else
-            # Fingerprint changed or doesn't exist - need native build
-            echo "mobile_native_changed=true" >> $GITHUB_OUTPUT
-            echo "mobile_js_changed=false" >> $GITHUB_OUTPUT
-            echo "✓ Fingerprint changed - will build mobile native"
+            echo "No production-latest tag yet — treating mobile as changed (first tracked deploy)."
           fi
-          cd ../..
+
+          if [ "$MOBILE_PATHS_CHANGED" = "false" ]; then
+            # Backend-only deploy: leave the installed app completely alone.
+            echo "mobile_native_changed=false" >> $GITHUB_OUTPUT
+            echo "mobile_js_changed=false" >> $GITHUB_OUTPUT
+            echo "✓ No mobile/shared changes since last deploy - skipping all mobile updates"
+          else
+            # Mobile changed - use the fingerprint to split native vs OTA.
+            cd apps/mobile
+            if node scripts/check-fingerprint.js 2>/dev/null; then
+              # Fingerprint matches - only JS changes, safe for OTA
+              echo "mobile_native_changed=false" >> $GITHUB_OUTPUT
+              echo "mobile_js_changed=true" >> $GITHUB_OUTPUT
+              echo "✓ Fingerprint unchanged - will deploy mobile OTA"
+            else
+              # Fingerprint changed or doesn't exist - need native build
+              echo "mobile_native_changed=true" >> $GITHUB_OUTPUT
+              echo "mobile_js_changed=false" >> $GITHUB_OUTPUT
+              echo "✓ Fingerprint changed - will build mobile native"
+            fi
+            cd ../..
+          fi
 
           # Get version - must run from apps/mobile for proper package resolution
           VERSION=$(cd apps/mobile && node -p "require('./app.config.js').default.expo.version")
@@ -98,7 +130,7 @@ jobs:
           echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Convex | ${{ steps.detect.outputs.convex_changed == 'true' && '🔄 Will deploy' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Mobile Native | ${{ steps.detect.outputs.mobile_native_changed == 'true' && '🔄 Will build & submit' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Mobile OTA | ${{ steps.detect.outputs.mobile_js_changed == 'true' && '🔄 Will deploy' || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mobile OTA | ${{ steps.detect.outputs.mobile_js_changed == 'true' && format('🔄 Will deploy ({0})', inputs.update_mode) || '⏭️ No changes' }} |" >> $GITHUB_STEP_SUMMARY
 
   # Deploy Convex to production
   deploy-convex:
@@ -363,6 +395,9 @@ jobs:
     # mobile_js_changed is only true when fingerprint didn't change (no native changes)
     if: needs.validate-and-detect.outputs.mobile_js_changed == 'true'
     runs-on: ubuntu-latest
+    # Needed to move the production-forced-floor tag on forced deploys.
+    permissions:
+      contents: write
     environment:
       name: production
 
@@ -426,14 +461,56 @@ jobs:
           echo "ota_version=$OTA_VERSION" >> $GITHUB_OUTPUT
           echo "OTA Version: $OTA_VERSION"
 
+      - name: Resolve OTA forced floor
+        id: forced_floor
+        env:
+          UPDATE_MODE: ${{ inputs.update_mode }}
+        run: |
+          # The forced floor is a monotonic serial persisted in the annotated tag
+          # `production-forced-floor`. Every update bakes it into its manifest;
+          # the app force-reloads when its running serial is older. A forced
+          # deploy bumps the floor to "now"; a silent deploy carries it forward,
+          # so a forced release stays sticky for devices that missed its window.
+          git fetch origin --tags --force --quiet || true
+          CURRENT_FLOOR=$(git for-each-ref --format='%(contents)' refs/tags/production-forced-floor 2>/dev/null | head -1 | tr -dc '0-9')
+          [ -z "$CURRENT_FLOOR" ] && CURRENT_FLOOR=0
+          if [ "$UPDATE_MODE" = "forced" ]; then
+            FLOOR=$(date -u +%s)
+            echo "forced deploy → bumping forced floor: $CURRENT_FLOOR → $FLOOR"
+          else
+            FLOOR=$CURRENT_FLOOR
+            echo "silent deploy → carrying forward forced floor: $FLOOR"
+          fi
+          echo "floor=$FLOOR" >> $GITHUB_OUTPUT
+
       - name: Publish OTA Update
         working-directory: apps/mobile
         env:
           OTA_VERSION: ${{ steps.ota_version.outputs.ota_version }}
+          UPDATE_MODE: ${{ inputs.update_mode }}
+          # Read by app.config.js at publish time and baked into the update's
+          # manifest (extra.otaForcedSerial). OTAUpdateProvider force-reloads when
+          # the running bundle's serial is older than this.
+          OTA_FORCED_SERIAL: ${{ steps.forced_floor.outputs.floor }}
         run: |
-          echo "Publishing production OTA update..."
+          echo "Publishing production OTA update (mode: ${UPDATE_MODE:-silent}, forced floor: $OTA_FORCED_SERIAL)..."
           # --environment production ensures EAS env vars are available when evaluating app.config.js
-          eas update --channel production --environment production --message "Production release $OTA_VERSION" --non-interactive
+          eas update --channel production --environment production --message "Production release $OTA_VERSION (${UPDATE_MODE:-silent}, floor $OTA_FORCED_SERIAL)" --non-interactive
+
+      - name: Persist forced floor
+        if: ${{ inputs.update_mode == 'forced' }}
+        env:
+          FLOOR: ${{ steps.forced_floor.outputs.floor }}
+        run: |
+          # Only forced deploys advance the floor; move the tag to this commit so
+          # the next deploy (silent or forced) carries the new value forward.
+          # An annotated tag needs a committer identity, which the runner lacks
+          # by default — set the github-actions bot identity before tagging.
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git tag -f -a production-forced-floor -m "$FLOOR" "$GITHUB_SHA"
+          git push -f origin refs/tags/production-forced-floor
+          echo "✓ Persisted forced floor $FLOOR"
 
   # Deploy landing page to production
   deploy-landing:
@@ -695,7 +772,11 @@ jobs:
             echo "- **Android**: Wait for Play Store review (~hours to days)" >> $GITHUB_STEP_SUMMARY
           fi
           if [ "${{ needs.deploy-mobile-ota.result }}" == "success" ]; then
-            echo "- **OTA**: Users will receive the update within minutes" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs.update_mode }}" == "forced" ]; then
+              echo "- **OTA (forced)**: Users download and reload now, behind the updating modal" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **OTA (silent)**: Users get it in the background; applies on their next app open (no modal)" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           if [ "${{ needs.deploy-convex.result }}" == "success" ]; then
             echo "- **Convex**: Deployed to production" >> $GITHUB_STEP_SUMMARY
@@ -706,3 +787,35 @@ jobs:
           if [ "${{ needs.deploy-web.result }}" == "success" ]; then
             echo "- **Web App**: Live at https://app.togather.nyc" >> $GITHUB_STEP_SUMMARY
           fi
+
+  # Record the deployed commit so the next run can detect what actually changed.
+  # The detect job diffs apps/mobile + packages/shared against this tag to decide
+  # whether a backend-only deploy should publish an OTA at all.
+  tag-deploy:
+    name: Tag Production Deploy
+    needs: [validate-and-detect, deploy-convex, deploy-mobile-native, deploy-mobile-ota, deploy-landing, deploy-link-preview, deploy-web]
+    # Only advance the tag when nothing that ran failed. Skipped jobs (e.g. no
+    # native build needed) are fine; a real failure must leave the tag where it
+    # is so the next deploy still sees the unshipped changes.
+    if: |
+      always() &&
+      needs.validate-and-detect.result == 'success' &&
+      needs.deploy-landing.result == 'success' &&
+      needs.deploy-link-preview.result == 'success' &&
+      needs.deploy-web.result == 'success' &&
+      needs.deploy-convex.result != 'failure' &&
+      needs.deploy-mobile-native.result != 'failure' &&
+      needs.deploy-mobile-ota.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Move production-latest tag to deployed commit
+        run: |
+          git tag -f production-latest "$GITHUB_SHA"
+          git push -f origin "refs/tags/production-latest"
+          echo "✓ Tagged ${GITHUB_SHA:0:8} as production-latest"

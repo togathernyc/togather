@@ -203,5 +203,7 @@ export function adaptCommunityPerson(cp: any) {
     latestNote: cp.latestNote,
     latestNoteAt: cp.latestNoteAt,
     isLeader: cp.isLeader ?? false,
+    // Archived state. `isActive === false` = archived; undefined/true = active.
+    isActive: cp.isActive,
   };
 }

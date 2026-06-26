@@ -668,7 +668,7 @@ export const listAllForCsvExport = action({
     const columnKeys = [
       "addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth",
       ...SCORE_COLUMNS.map((s) => s.slot),
-      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
+      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts", "archived",
       ...customFields.map((cf) => cf.slot),
     ];
     const columnLabelMap: Record<string, string> = {
@@ -676,7 +676,7 @@ export const listAllForCsvExport = action({
       email: "Email", phone: "Phone", zipCode: "ZIP Code", dateOfBirth: "Birthday",
       assignee: "Assignees", notes: "Notes", tasks: "Tasks", status: "Status",
       lastAttendedAt: "Last Attended", lastFollowupAt: "Last Contact",
-      lastActiveAt: "Date Active", alerts: "Alerts",
+      lastActiveAt: "Date Active", alerts: "Alerts", archived: "Archived",
     };
     for (const sc of SCORE_COLUMNS) columnLabelMap[sc.slot] = sc.name;
     for (const cf of customFields) columnLabelMap[cf.slot] = cf.name;
@@ -718,6 +718,7 @@ export const listAllForCsvExport = action({
           case "lastFollowupAt": return formatTs(m.lastFollowupAt);
           case "lastActiveAt": return formatTs(m.lastActiveAt);
           case "alerts": return (m.alerts ?? []).join("; ");
+          case "archived": return m.isActive === false ? "Archived" : "Active";
           default: {
             if (key.startsWith("custom")) {
               const raw = m[key];
@@ -1554,6 +1555,11 @@ export const setStatus = mutation({
  * sticks — the daily score job won't resurrect it — until the person opens the
  * app again, at which point they're reactivated. `archivedAt` records when the
  * archive happened so the job can detect a later app open.
+ *
+ * A manual unarchive records `reactivatedAt` so the person stays active for the
+ * full inactivity window measured from the unarchive — they won't be re-archived
+ * on the next daily run just because their last real activity is already stale.
+ * See computePersonActiveState in communityScoreComputation.ts.
  */
 export const setActive = mutation({
   args: {
@@ -1571,9 +1577,11 @@ export const setActive = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
+    const now = Date.now();
     const patchFields = {
       isActive: args.isActive,
-      archivedAt: args.isActive ? undefined : Date.now(),
+      archivedAt: args.isActive ? undefined : now,
+      reactivatedAt: args.isActive ? now : undefined,
     };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
@@ -2499,6 +2507,11 @@ export const upsertFromSubmission = internalMutation({
   args: {
     communityId: v.id("communities"),
     userId: v.id("users"),
+    // Only the public form-submission caller sets this. It reactivates the
+    // person (clears archive + restarts the auto-archive clock). The generic
+    // denormalization callers (CSV import, quick-add) leave it off so a routine
+    // import never resurrects an archived member. See computePersonActiveState.
+    reactivate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const nowTs = Date.now();
@@ -2604,6 +2617,15 @@ export const upsertFromSubmission = internalMutation({
       updatedAt: nowTs,
     };
 
+    // A form submission is fresh engagement: reactivate the person across all
+    // their groups and restart the auto-archive clock from now. `reactivatedAt`
+    // keeps them active until the full inactivity window passes, surviving the
+    // daily score refresh (see computePersonActiveState). Leave archive state
+    // untouched for generic denormalization callers (CSV import, quick-add).
+    const reactivationFields = args.reactivate
+      ? { isActive: true, archivedAt: undefined, reactivatedAt: nowTs }
+      : {};
+
     // 6. Find all active group memberships for this user in this community
     const allMemberships = await ctx.db
       .query("groupMembers")
@@ -2618,6 +2640,41 @@ export const upsertFromSubmission = internalMutation({
         communityGroupIds.push(group._id);
       }
     }
+    const communityGroupIdSet = new Set(
+      communityGroupIds.map((id) => id.toString()),
+    );
+
+    // Archiving is community-wide, so a new per-group row for an already-archived
+    // person must start archived too — otherwise a generic upsert (CSV import /
+    // quick-add) into a group that lacks a row would make them reappear there.
+    // Snapshot the existing archive state once; only relevant when NOT
+    // reactivating (a real submission clears the archive everywhere instead).
+    //
+    // Only rows for groups the user is STILL an active member of are
+    // authoritative: a left-group row stays archived until the daily prune even
+    // after a reactivation, and must not re-archive the user's current rows.
+    let inheritedArchiveFields: {
+      isActive: boolean;
+      archivedAt: number | undefined;
+    } | null = null;
+    if (!args.reactivate) {
+      const archivedSiblings = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_community_user", (q: any) =>
+          q.eq("communityId", args.communityId).eq("userId", args.userId),
+        )
+        .filter((q: any) => q.eq(q.field("isActive"), false))
+        .collect();
+      const authoritative = archivedSiblings.find((row) =>
+        communityGroupIdSet.has((row as any).groupId.toString()),
+      );
+      if (authoritative) {
+        inheritedArchiveFields = {
+          isActive: false,
+          archivedAt: (authoritative as any).archivedAt ?? nowTs,
+        };
+      }
+    }
 
     // 7. Upsert communityPeople record for each group + sync junction
     for (const groupId of communityGroupIds) {
@@ -2629,12 +2686,24 @@ export const upsertFromSubmission = internalMutation({
         .first();
 
       let cpId: Id<"communityPeople">;
+      // Inherit the person's community-wide archive state on both branches
+      // (no-op when reactivating, since the archive is being cleared). On
+      // inserts this archives brand-new rows; on patches it archives active
+      // placeholders — e.g. a quick-add row created just before this runs — so
+      // an archived person never reappears in another group's People table.
       if (existing) {
-        await ctx.db.patch(existing._id, { ...canonicalFields, groupId });
+        await ctx.db.patch(existing._id, {
+          ...canonicalFields,
+          ...reactivationFields,
+          ...(inheritedArchiveFields ?? {}),
+          groupId,
+        });
         cpId = existing._id;
       } else {
         cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
+          ...reactivationFields,
+          ...(inheritedArchiveFields ?? {}),
           groupId,
           createdAt: nowTs,
         });

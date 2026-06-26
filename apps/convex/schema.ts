@@ -2438,6 +2438,13 @@ export default defineSchema({
     isActive: v.optional(v.boolean()),
     archivedAt: v.optional(v.number()),
 
+    // When the person was last manually unarchived or reactivated by a form
+    // submission. Counts as activity for the 60-day auto-archive clock, so a
+    // manual unarchive sticks until the person is quiet for the full window
+    // measured from this moment (not from their stale last activity). See
+    // computePersonActiveState in communityScoreComputation.ts.
+    reactivatedAt: v.optional(v.number()),
+
     // When the "approaching auto-archive" check-in notice was last sent to the
     // person's leaders/assignees. Used to send that notice once per inactivity
     // spell (see shouldSendPreArchiveNotice in functions/memberArchiveNotice.ts).

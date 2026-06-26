@@ -72,37 +72,52 @@ export function mostRecentTimestamp(
  * - A manual or automatic archive sticks. The daily job never resurrects an
  *   archived person on its own.
  * - The ONE thing that reactivates an archived person is fresh activity after
- *   the archive: if `lastActivityTs` is newer than the moment they were archived,
+ *   the archive: if their activity is newer than the moment they were archived,
  *   clear the flag. (For records archived before `archivedAt` was tracked, fall
  *   back to "active within the inactivity window".)
+ * - A manual unarchive or a form submission records `reactivatedAt`. It counts
+ *   as activity, so the clock restarts from that moment: a reactivated person
+ *   stays active unless BOTH their last real activity AND the reactivation date
+ *   are past the 60-day threshold.
  * - An active person is auto-archived once they go quiet for the threshold.
- *   People with no recorded activity have no `lastActivityTs`, so we fall back to
+ *   People with no recorded activity have no activity signal, so we fall back to
  *   `addedAt` (date added).
  */
 export function computePersonActiveState(params: {
   nowTs: number;
   lastActivityTs?: number;
+  reactivatedAt?: number;
   addedAt?: number;
   currentIsActive?: boolean;
   currentArchivedAt?: number;
 }): { isActive: boolean; archivedAt: number | undefined } {
-  const { nowTs, lastActivityTs, addedAt, currentIsActive, currentArchivedAt } =
-    params;
+  const {
+    nowTs,
+    lastActivityTs,
+    reactivatedAt,
+    addedAt,
+    currentIsActive,
+    currentArchivedAt,
+  } = params;
+
+  // A manual unarchive (or a form submission) counts as activity for the
+  // auto-archive clock, alongside the person's own engagement signals.
+  const activitySignal = mostRecentTimestamp(lastActivityTs, reactivatedAt);
 
   if (currentIsActive === false) {
     // Archived. Only activity that happened AFTER archiving brings them back.
     const activeSinceArchive =
-      lastActivityTs != null &&
+      activitySignal != null &&
       (currentArchivedAt != null
-        ? lastActivityTs > currentArchivedAt
-        : nowTs - lastActivityTs <= INACTIVITY_THRESHOLD_MS);
+        ? activitySignal > currentArchivedAt
+        : nowTs - activitySignal <= INACTIVITY_THRESHOLD_MS);
     return activeSinceArchive
       ? { isActive: true, archivedAt: undefined }
       : { isActive: false, archivedAt: currentArchivedAt };
   }
 
   // Active (or brand new). Auto-archive once activity goes stale.
-  const activityTs = lastActivityTs ?? addedAt;
+  const activityTs = activitySignal ?? addedAt;
   if (activityTs != null && nowTs - activityTs > INACTIVITY_THRESHOLD_MS) {
     return { isActive: false, archivedAt: nowTs };
   }
@@ -636,6 +651,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
             member.lastAttendedAt,
             member.lastServedAt,
           ),
+          reactivatedAt: (existing as any).reactivatedAt,
           addedAt: member.addedAt,
           currentIsActive: (existing as any).isActive,
           currentArchivedAt: (existing as any).archivedAt,
@@ -671,6 +687,7 @@ export const upsertCommunityPeopleBatch = internalMutation({
                   member.lastAttendedAt,
                   member.lastServedAt,
                 ),
+                reactivatedAt: (siblingRecord as any)?.reactivatedAt,
                 addedAt: member.addedAt,
                 currentIsActive: (siblingRecord as any)?.isActive,
                 currentArchivedAt: (siblingRecord as any)?.archivedAt,
@@ -679,6 +696,9 @@ export const upsertCommunityPeopleBatch = internalMutation({
           ...scoreDoc,
           isActive: activeState.isActive,
           archivedAt: activeState.archivedAt,
+          // Carry the community-wide reactivation timestamp onto the new
+          // per-group record so the manual-unarchive clock survives.
+          reactivatedAt: (siblingRecord as any)?.reactivatedAt,
           // Copy leader-set fields from sibling if exists
           status: siblingRecord?.status,
           assigneeIds: siblingRecord?.assigneeIds,

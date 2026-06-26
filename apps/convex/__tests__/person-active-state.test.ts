@@ -136,6 +136,62 @@ describe("computePersonActiveState", () => {
     });
     expect(r.isActive).toBe(true);
   });
+
+  // A manual unarchive (or a form submission) records `reactivatedAt`, which
+  // counts as activity so the 60-day clock restarts from that moment.
+  test("a manual unarchive keeps a long-inactive person active", () => {
+    // Last real activity was 200 days ago, but they were unarchived yesterday.
+    const r = computePersonActiveState({
+      nowTs: NOW,
+      lastActivityTs: daysAgo(200),
+      reactivatedAt: daysAgo(1),
+      addedAt: daysAgo(400),
+      currentIsActive: true,
+    });
+    expect(r.isActive).toBe(true);
+    expect(r.archivedAt).toBeUndefined();
+  });
+
+  test("a manually-unarchived person is re-archived once the unarchive itself goes stale", () => {
+    // Both the last activity and the unarchive are now older than 60 days.
+    const r = computePersonActiveState({
+      nowTs: NOW,
+      lastActivityTs: daysAgo(200),
+      reactivatedAt: daysAgo(75),
+      addedAt: daysAgo(400),
+      currentIsActive: true,
+    });
+    expect(r.isActive).toBe(false);
+    expect(r.archivedAt).toBe(NOW);
+  });
+
+  test("a form submission (reactivatedAt) reactivates a previously archived person", () => {
+    // Archived 30 days ago, no app activity since, but just submitted a form.
+    const r = computePersonActiveState({
+      nowTs: NOW,
+      lastActivityTs: daysAgo(120),
+      reactivatedAt: NOW, // submission timestamp
+      addedAt: daysAgo(400),
+      currentIsActive: false,
+      currentArchivedAt: daysAgo(30),
+    });
+    expect(r.isActive).toBe(true);
+    expect(r.archivedAt).toBeUndefined();
+  });
+
+  test("a stale reactivatedAt does not resurrect an archive that came after it", () => {
+    // Unarchived long ago, then re-archived more recently → stays archived.
+    const r = computePersonActiveState({
+      nowTs: NOW,
+      lastActivityTs: daysAgo(200),
+      reactivatedAt: daysAgo(90),
+      addedAt: daysAgo(400),
+      currentIsActive: false,
+      currentArchivedAt: daysAgo(20),
+    });
+    expect(r.isActive).toBe(false);
+    expect(r.archivedAt).toBe(daysAgo(20));
+  });
 });
 
 describe("mostRecentTimestamp", () => {

@@ -1,9 +1,14 @@
 /**
- * OTAUpdateModal - Downloading indicator for OTA updates
+ * OTAUpdateModal - Downloading indicator for FORCED OTA updates
  *
- * Shows a non-dismissible modal while an OTA update is downloading. Once the
- * update is ready, OTAUpdateProvider auto-applies it via Updates.reloadAsync,
- * so there's no "Restart Now" step — the app just refreshes itself.
+ * Shows a non-dismissible modal while a forced OTA update is downloading. Once
+ * the update is ready, OTAUpdateProvider auto-applies it via
+ * Updates.reloadAsync, so there's no "Restart Now" step — the app just
+ * refreshes itself.
+ *
+ * Only forced updates reach this modal. Silent updates (the default) download
+ * in the background under the 'staging' status, which is deliberately excluded
+ * below, and apply on the next cold start without any UI.
  *
  * Offline users never see this modal because the check fails silently and
  * status stays 'idle'.

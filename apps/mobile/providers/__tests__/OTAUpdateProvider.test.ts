@@ -15,10 +15,16 @@ import * as Updates from 'expo-updates';
 
 // --- Mocks ---
 
+// The running bundle's manifest, exposed via a getter so tests can swap it
+// (a namespace import's properties are read-only and can't be reassigned).
+let mockRunningManifest: unknown;
 jest.mock('expo-updates', () => ({
   checkForUpdateAsync: jest.fn(),
   fetchUpdateAsync: jest.fn(),
   reloadAsync: jest.fn(),
+  get manifest() {
+    return mockRunningManifest;
+  },
 }));
 
 jest.mock('../SentryProvider', () => ({
@@ -42,6 +48,26 @@ const mockCheckForUpdate = Updates.checkForUpdateAsync as jest.Mock;
 const mockFetchUpdate = Updates.fetchUpdateAsync as jest.Mock;
 const mockReload = Updates.reloadAsync as jest.Mock;
 
+// EAS Update nests the app config under manifest.extra.expoClient, so the
+// forced-floor serial lives at extra.expoClient.extra.otaForcedSerial. `id` is
+// the per-update identifier used to skip re-fetching an already-staged bundle.
+// `otaForcedSerial: undefined` omits the field entirely (reads back as 0).
+const manifestWithSerial = (otaForcedSerial: number | undefined, id = 'update-1') => ({
+  id,
+  extra: {
+    expoClient: {
+      extra: otaForcedSerial === undefined ? {} : { otaForcedSerial },
+    },
+  },
+});
+const setRunningSerial = (serial: number) => {
+  mockRunningManifest = manifestWithSerial(serial, 'running');
+};
+
+// Running bundle sits at floor 0; an update at serial 0 is silent, > 0 is forced.
+const SILENT_UPDATE = { isAvailable: true, manifest: manifestWithSerial(0, 'silent-1') };
+const FORCED_UPDATE = { isAvailable: true, manifest: manifestWithSerial(100, 'forced-1') };
+
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(OTAUpdateProvider, null, children);
 
@@ -61,6 +87,7 @@ describe('OTAUpdateProvider', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     appStateChangeHandler = null;
+    setRunningSerial(0);
   });
 
   it('skips update check in dev mode and stays idle', () => {
@@ -104,7 +131,7 @@ describe('OTAUpdateProvider', () => {
       // Codex P2 on PR #392: a user who opens the app after an OTA is
       // published and stays foregrounded must still receive the update,
       // even without a background→foreground transition.
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+      mockCheckForUpdate.mockResolvedValue(FORCED_UPDATE);
       mockFetchUpdate.mockResolvedValue({ isNew: true });
       mockReload.mockResolvedValue(undefined);
 
@@ -153,8 +180,8 @@ describe('OTAUpdateProvider', () => {
       expect(mockReload).not.toHaveBeenCalled();
     });
 
-    it('downloads and auto-applies update after grace + settle delay', async () => {
-      mockCheckForUpdate.mockResolvedValue({ isAvailable: true });
+    it('downloads and auto-applies a FORCED update after grace + settle delay', async () => {
+      mockCheckForUpdate.mockResolvedValue(FORCED_UPDATE);
       mockFetchUpdate.mockResolvedValue({ isNew: true });
       mockReload.mockResolvedValue(undefined);
 
@@ -182,6 +209,167 @@ describe('OTAUpdateProvider', () => {
       await waitFor(() => {
         expect(mockReload).toHaveBeenCalledTimes(1);
       });
+    });
+
+    it('stages a SILENT update in the background without showing UI or reloading', async () => {
+      // Default delivery mode: download for next launch, never reload mid-session.
+      mockCheckForUpdate.mockResolvedValue(SILENT_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => {
+        expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      });
+
+      // Settle window passes — a forced update would reload here; a silent one
+      // must not. Status returns to idle and the modal (downloading/ready) is
+      // never shown.
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
+    });
+
+    it('treats an update with no forced serial as silent (no reload)', async () => {
+      // Missing serial reads as 0, never exceeding the running floor.
+      mockCheckForUpdate.mockResolvedValue({ isAvailable: true, manifest: manifestWithSerial(undefined) });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => {
+        expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+      });
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
+    });
+
+    it('keeps checking but does not re-fetch the same staged silent update', async () => {
+      mockCheckForUpdate.mockResolvedValue(SILENT_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+
+      // A later foreground past the throttle still RE-CHECKS (a later deploy
+      // could be forced and must win), but the same staged bundle (same id) is
+      // not downloaded again.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1 + MIN_RECHECK_INTERVAL_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(mockCheckForUpdate).toHaveBeenCalledTimes(2));
+      await flushPromises();
+
+      expect(mockFetchUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('still forces a reload when a forced update lands after a silent one was staged', async () => {
+      // Codex P2 on PR #503: a session that staged a silent update must still
+      // receive a later forced update (the breaking-contract use case) without
+      // needing the user to kill and reopen the app.
+      mockCheckForUpdate
+        .mockResolvedValueOnce(SILENT_UPDATE)
+        .mockResolvedValueOnce(FORCED_UPDATE);
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      // First foreground: stage the silent update, no reload.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      expect(mockReload).not.toHaveBeenCalled();
+
+      // Later foreground past the throttle: a forced update is now available
+      // and must reach this still-alive session.
+      jest.setSystemTime(STARTUP_GRACE_MS + 1 + MIN_RECHECK_INTERVAL_MS + 1);
+      triggerForeground();
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      await waitFor(() => expect(mockReload).toHaveBeenCalledTimes(1));
+    });
+
+    it('forces a device that missed a forced release even when the superseding update is silent', async () => {
+      // Codex P1 on PR #503: the running bundle predates a forced release (floor
+      // 100), and the only update now offered is a *silent* one — but it carries
+      // the sticky forced floor (100) > running (0), so the device must still
+      // force-reload instead of quietly staging it.
+      setRunningSerial(0);
+      mockCheckForUpdate.mockResolvedValue({
+        isAvailable: true,
+        manifest: manifestWithSerial(100, 'silent-after-forced'),
+      });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+      mockReload.mockResolvedValue(undefined);
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => expect(result.current.status).toBe('ready'));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+      await waitFor(() => expect(mockReload).toHaveBeenCalledTimes(1));
+    });
+
+    it('stays silent for a device already on the forced bundle', async () => {
+      // Running bundle is already at the forced floor (100); a later silent
+      // release also carries 100, so 100 > 100 is false → no forced reload.
+      setRunningSerial(100);
+      mockCheckForUpdate.mockResolvedValue({
+        isAvailable: true,
+        manifest: manifestWithSerial(100, 'later-silent'),
+      });
+      mockFetchUpdate.mockResolvedValue({ isNew: true });
+
+      const { result } = renderHook(() => useOTAUpdateStatus(), { wrapper });
+      await flushPromises();
+
+      jest.setSystemTime(STARTUP_GRACE_MS + 1);
+      triggerForeground();
+
+      await waitFor(() => expect(mockFetchUpdate).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        jest.advanceTimersByTime(PRE_RELOAD_SETTLE_MS);
+        await flushPromises();
+      });
+
+      expect(mockReload).not.toHaveBeenCalled();
+      expect(result.current.status).toBe('idle');
     });
 
     it('does NOT reload on active->active (system dialog dismissal)', async () => {
