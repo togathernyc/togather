@@ -51,10 +51,17 @@ const ANDROID_PACKAGES = {
 // Android SHA256 fingerprints - get from Google Play Console or EAS credentials
 // Run: eas credentials -p android to view fingerprints
 const ANDROID_SHA256_FINGERPRINTS = {
-  // Production app signing key fingerprint
+  // Production fingerprints. App Links verification matches the signing cert of
+  // the installed APK, so we list every key a production build can be signed with.
+  // Source: Play Console → App integrity → App signing.
   production: [
-    // Upload key fingerprint (for debug/development)
-    // Release key fingerprint (managed by Google Play)
+    // Google Play App Signing key — apps installed from Play are re-signed with
+    // this key on Google's servers. REQUIRED for App Links on Play-distributed builds.
+    "00:76:C0:E6:BD:96:C1:96:C0:68:1C:29:07:3F:C2:57:FD:E4:39:84:95:FA:42:D2:7D:76:12:2D:0B:CE:0A:C0",
+    // EAS upload key — covers EAS-built APKs (internal distribution / R2 sideload).
+    "D0:4F:1D:A8:37:A3:B9:CF:91:66:08:09:AA:01:BE:E5:DC:CC:0E:6F:80:A5:C5:BE:DE:60:8B:0A:E0:A5:42:F1",
+    // Previously-configured fingerprint (origin unclear); retained so any build
+    // already signed with it continues to verify.
     "FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C"
   ],
   // Staging app signing key fingerprint
