@@ -457,8 +457,8 @@ function HeroSection() {
                 >
                   <IconAndroid className="w-6 h-6" />
                   <div className="flex flex-col leading-tight">
-                    <span className="text-[10px] font-medium text-white/70 uppercase tracking-wide">Download</span>
-                    <span className="text-base font-semibold -mt-0.5">APK for Android</span>
+                    <span className="text-[10px] font-medium text-white/70 uppercase tracking-wide">Join</span>
+                    <span className="text-base font-semibold -mt-0.5">Android testers</span>
                   </div>
                 </Link>
               </div>
@@ -733,7 +733,7 @@ function FAQSection() {
     {
       question: "What platforms does Togather support?",
       answer:
-        "Togather is available on iOS (App Store), Android (APK download), and the web. Your data syncs seamlessly across all devices.",
+        "Togather is available on iOS (App Store), Android (Google Play closed testing), and the web. Your data syncs seamlessly across all devices.",
     },
     {
       question: "Can I import members from Planning Center?",
@@ -865,8 +865,8 @@ function CTASection() {
               >
                 <IconAndroid className="w-5 h-5" />
                 <div className="flex flex-col leading-tight">
-                  <span className="text-[9px] font-medium text-white/70 uppercase tracking-wide">Download</span>
-                  <span className="text-sm font-semibold -mt-0.5">APK for Android</span>
+                  <span className="text-[9px] font-medium text-white/70 uppercase tracking-wide">Join</span>
+                  <span className="text-sm font-semibold -mt-0.5">Android testers</span>
                 </div>
               </Link>
             </div>
