@@ -214,6 +214,10 @@ export default {
         backgroundColor: "#ffffff"
       },
       package: getBundleIdentifier(),
+      // Firebase config for FCM push notifications. Production only — the file
+      // contains the app.gatherful.mobile client, so a staging build (package
+      // life.togather.staging) would fail the Google Services gradle check.
+      ...(IS_STAGING ? {} : { googleServicesFile: "./google-services.json" }),
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       intentFilters: getAndroidIntentFilters(),

@@ -26,6 +26,7 @@ import { api, useQuery } from '@services/api/convex';
 import { useAuth } from '@/providers/AuthProvider';
 import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import { useImageUpload } from '../hooks/useImageUpload';
+import { getPastedImageFiles } from '../utils/imageUpload';
 import { useWebEnterToSend } from '../hooks/useWebEnterToSend';
 import { useFileUpload, type SelectedFile } from '../hooks/useFileUpload';
 import { useSendMessage } from '../hooks/useConvexSendMessage';
@@ -326,6 +327,33 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   /**
    * Pick photos and videos from gallery (supports multi-select for photos)
    */
+  /**
+   * Add image URIs to the composer and upload them in parallel. Shared by the
+   * media picker and the web paste handler so both behave identically.
+   */
+  const uploadAndAttachImages = useCallback(async (imageUris: string[]) => {
+    if (imageUris.length === 0) return;
+    setSelectedImages(prev => [...prev, ...imageUris]);
+
+    const uploadPromises = imageUris.map(async (uri) => {
+      const uploadResult = await uploadImage(uri);
+      if (uploadResult.error) {
+        console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
+        return null;
+      }
+      return uploadResult.url;
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const successfulUrls = results.filter((url): url is string => url !== null);
+    setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
+
+    const failedCount = imageUris.length - successfulUrls.length;
+    if (failedCount > 0) {
+      console.warn(`[MessageInput] ${failedCount} images failed to upload`);
+    }
+  }, [uploadImage]);
+
   const pickMedia = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -342,26 +370,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         // Handle images (existing flow — multi-select, parallel upload)
         if (imageAssets.length > 0) {
-          const imageUris = imageAssets.map(asset => asset.uri);
-          setSelectedImages(prev => [...prev, ...imageUris]);
-
-          const uploadPromises = imageUris.map(async (uri) => {
-            const uploadResult = await uploadImage(uri);
-            if (uploadResult.error) {
-              console.error('[MessageInput] Upload failed for:', uri, uploadResult.error);
-              return null;
-            }
-            return uploadResult.url;
-          });
-
-          const results = await Promise.all(uploadPromises);
-          const successfulUrls = results.filter((url): url is string => url !== null);
-          setUploadedImageUrls(prev => [...prev, ...successfulUrls]);
-
-          const failedCount = imageUris.length - successfulUrls.length;
-          if (failedCount > 0) {
-            console.warn(`[MessageInput] ${failedCount} images failed to upload`);
-          }
+          await uploadAndAttachImages(imageAssets.map(asset => asset.uri));
         }
 
         // Handle video (take first only)
@@ -406,7 +415,56 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     } catch (error) {
       console.error('[MessageInput] Media picker error:', error);
     }
-  }, [uploadImage, uploadVideoFile, resetVideoUpload]);
+  }, [uploadAndAttachImages, uploadVideoFile, resetVideoUpload]);
+
+  /**
+   * Web only: paste a copied image (e.g. a macOS screenshot via Cmd+V) straight
+   * into the composer. Screenshots arrive on the clipboard as image/* files; we
+   * pull them out, upload them through the normal image flow, and let plain-text
+   * pastes fall through to the default browser behavior untouched.
+   */
+  const handleWebPaste = useCallback((e: ClipboardEvent) => {
+    if (Platform.OS !== 'web') return;
+
+    // In a not-yet-accepted DM the attachment affordances are intentionally
+    // hidden — the server rejects attachments until the recipient accepts the
+    // request, and that failure path previously cascaded into a navigator
+    // crash loop (see the `recipientPending` prop docs). Don't let paste stage
+    // an image either; bail so a plain-text paste still works normally.
+    if (recipientPending) return;
+
+    const imageFiles = getPastedImageFiles(e?.clipboardData);
+    if (imageFiles.length === 0) return; // nothing to handle — allow normal paste
+
+    // We're taking over the paste, so stop the browser from also dropping the
+    // image (or a data: URL of it) into the text field.
+    e.preventDefault();
+
+    const objectUrls = imageFiles.map((file) => URL.createObjectURL(file));
+    void uploadAndAttachImages(objectUrls);
+  }, [uploadAndAttachImages, recipientPending]);
+
+  /**
+   * Wire up the web paste handler via a real DOM listener.
+   *
+   * react-native-web's <TextInput> only forwards an allowlisted set of props to
+   * the underlying <textarea> (see its `forwardedProps`), and `onPaste` is NOT
+   * on that list — so passing `onPaste` as a JSX prop is silently dropped and
+   * the handler never fires. Attach the listener directly to the host DOM node
+   * instead. The RN-Web ref resolves to the actual <textarea> element on web.
+   *
+   * `isVoiceRecording` is a dependency because the voice recorder unmounts the
+   * <TextInput> and remounts a fresh one when it closes — mirroring
+   * `useWebEnterToSend` — so the listener must re-attach to the new DOM node.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = textInputRef.current as unknown as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== 'function') return;
+    const listener = (event: Event) => handleWebPaste(event as ClipboardEvent);
+    node.addEventListener('paste', listener);
+    return () => node.removeEventListener('paste', listener);
+  }, [handleWebPaste, isVoiceRecording]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)

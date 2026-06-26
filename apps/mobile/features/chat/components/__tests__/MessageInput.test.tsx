@@ -5,7 +5,7 @@ import { MessageInput } from '../MessageInput';
 
 jest.mock('../../hooks/useImageUpload', () => ({
   useImageUpload: () => ({
-    uploadImage: jest.fn(),
+    uploadImage: jest.fn(() => Promise.resolve({ url: 'r2:chat/pasted.png' })),
     uploading: false,
     progress: 0,
     reset: jest.fn(),
@@ -253,6 +253,13 @@ describe('MessageInput', () => {
       const input = getByPlaceholderText('Message...');
       expect(input.props.scrollEnabled).toBe(true);
     });
+
+    // NOTE: Image-paste detection is unit-tested directly against
+    // `getPastedImageFiles` in utils/__tests__/imageUpload.test.ts. The paste
+    // listener is attached to the real <textarea> DOM node via addEventListener
+    // (react-native-web silently drops an `onPaste` JSX prop), which the
+    // react-test-renderer host mock can't drive — so the end-to-end paste flow
+    // is verified manually in the browser rather than here.
   });
 
   // ==========================================================================

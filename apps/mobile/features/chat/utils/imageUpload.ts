@@ -68,6 +68,37 @@ export function getContentTypeFromUri(imageUri: string): string {
 }
 
 /**
+ * Pull image files off a paste/clipboard payload (web only).
+ *
+ * Screenshots and copied images land on the clipboard as `image/*` files.
+ * Browsers expose them two ways and not always consistently, so we prefer
+ * `clipboardData.items` (most reliable for pasted images) and fall back to
+ * `clipboardData.files`. Text-only pastes carry no image files and return [],
+ * which lets the caller leave the default paste behavior untouched.
+ *
+ * @param clipboard - The `clipboardData` from a paste ClipboardEvent
+ * @returns The image `File`s found on the clipboard (empty if none)
+ */
+export function getPastedImageFiles(clipboard: DataTransfer | null | undefined): File[] {
+  if (!clipboard) return [];
+
+  const fromItems = clipboard.items
+    ? Array.from(clipboard.items as ArrayLike<DataTransferItem>)
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file != null)
+    : [];
+
+  if (fromItems.length > 0) return fromItems;
+
+  return clipboard.files
+    ? Array.from(clipboard.files as ArrayLike<File>).filter((file) =>
+        file.type.startsWith('image/'),
+      )
+    : [];
+}
+
+/**
  * Check if an image extension is supported
  *
  * @param filename - The filename or URI to check
