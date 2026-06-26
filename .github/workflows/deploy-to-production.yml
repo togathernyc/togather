@@ -504,6 +504,10 @@ jobs:
         run: |
           # Only forced deploys advance the floor; move the tag to this commit so
           # the next deploy (silent or forced) carries the new value forward.
+          # An annotated tag needs a committer identity, which the runner lacks
+          # by default — set the github-actions bot identity before tagging.
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
           git tag -f -a production-forced-floor -m "$FLOOR" "$GITHUB_SHA"
           git push -f origin refs/tags/production-forced-floor
           echo "✓ Persisted forced floor $FLOOR"
