@@ -668,7 +668,7 @@ export const listAllForCsvExport = action({
     const columnKeys = [
       "addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth",
       ...SCORE_COLUMNS.map((s) => s.slot),
-      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts",
+      "assignee", "notes", "tasks", "status", "lastAttendedAt", "lastFollowupAt", "lastActiveAt", "alerts", "archived",
       ...customFields.map((cf) => cf.slot),
     ];
     const columnLabelMap: Record<string, string> = {
@@ -676,7 +676,7 @@ export const listAllForCsvExport = action({
       email: "Email", phone: "Phone", zipCode: "ZIP Code", dateOfBirth: "Birthday",
       assignee: "Assignees", notes: "Notes", tasks: "Tasks", status: "Status",
       lastAttendedAt: "Last Attended", lastFollowupAt: "Last Contact",
-      lastActiveAt: "Date Active", alerts: "Alerts",
+      lastActiveAt: "Date Active", alerts: "Alerts", archived: "Archived",
     };
     for (const sc of SCORE_COLUMNS) columnLabelMap[sc.slot] = sc.name;
     for (const cf of customFields) columnLabelMap[cf.slot] = cf.name;
@@ -718,6 +718,7 @@ export const listAllForCsvExport = action({
           case "lastFollowupAt": return formatTs(m.lastFollowupAt);
           case "lastActiveAt": return formatTs(m.lastActiveAt);
           case "alerts": return (m.alerts ?? []).join("; ");
+          case "archived": return m.isActive === false ? "Archived" : "Active";
           default: {
             if (key.startsWith("custom")) {
               const raw = m[key];

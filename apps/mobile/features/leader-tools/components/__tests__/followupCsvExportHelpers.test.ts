@@ -76,6 +76,18 @@ describe("followupCsvExportHelpers", () => {
     ).toBe("");
   });
 
+  it("cellValueForColumn renders archived state from isActive", () => {
+    const ctx = { leaderMap, tasksByMember: new Map(), customFields };
+    expect(
+      cellValueForColumn("archived", { ...baseMember, isActive: false }, ctx),
+    ).toBe("Archived");
+    expect(
+      cellValueForColumn("archived", { ...baseMember, isActive: true }, ctx),
+    ).toBe("Active");
+    // Missing isActive (undefined) is treated as active, matching the table.
+    expect(cellValueForColumn("archived", baseMember, ctx)).toBe("Active");
+  });
+
   it("generateFollowupPeopleCsv escapes quotes in notes", () => {
     const csv = generateFollowupPeopleCsv(
       [baseMember],
