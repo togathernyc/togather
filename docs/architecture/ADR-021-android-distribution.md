@@ -1,7 +1,7 @@
 # ADR-021: Android Distribution via Direct APK Download
 
 ## Status
-Accepted — **amended 2026-06-22** (see [Amendment](#amendment-2026-06-22-adding-google-play-alongside-r2) below: Google Play is being added *alongside* R2 sideload, not replacing it).
+Accepted — **amended 2026-06-22** (see [Amendment](#amendment-2026-06-22-adding-google-play-alongside-r2) below: Google Play is being added *alongside* R2 sideload, not replacing it) — **amended again 2026-06-26** (see [Amendment](#amendment-2026-06-26-production-moves-to-google-play-closed-testing) below: **production** Android distribution has moved from R2 sideload to Google Play closed testing; the public `/android` page no longer offers an APK).
 
 ## Date
 2025-01-17
@@ -158,3 +158,30 @@ existing EAS key as the Play signing key.
 The personal developer account hits Google's **12-tester / 14-day closed-testing**
 gate before production access. Full step-by-step:
 [`docs/launch/google-play-launch-runbook.md`](../../launch/google-play-launch-runbook.md).
+
+## Amendment (2026-06-26): Production moves to Google Play closed testing
+
+**Production** Android distribution has moved **off** the R2 sideload and onto
+**Google Play closed testing**. The original decision above (and the 2026-06-22
+amendment's "Play *alongside* R2") described the production APK and Play builds
+shipping side by side; that is no longer the case for production.
+
+### What changed
+- The public **`togather.nyc/android`** page **no longer offers an APK**. It now
+  serves **closed-testing instructions**: testers (1) join the Google Group
+  `https://groups.google.com/a/supa.media/g/togather-testers`, (2) open the opt-in
+  link `https://play.google.com/apps/testing/app.gatherful.mobile` and tap
+  "Become a tester", then (3) install from the Play Store listing
+  `https://play.google.com/store/apps/details?id=app.gatherful.mobile`.
+- The app is **not searchable** in the Play Store (closed testing) — testers reach
+  it only via the links above. Until access propagates the listing can return
+  "item not found"; the wait is ~30 minutes.
+- See [`docs/launch/tester-instructions.md`](../../launch/tester-instructions.md)
+  for the tester-facing flow.
+
+### What is retained
+- The **staging** APK sideload via R2 (**`togather.nyc/android-staging`**) is
+  **kept** for internal testing. Only the public/production sideload page changed.
+
+This supersedes the production sideload path of the original decision and the
+2026-06-22 amendment. Historical content above is preserved for context.

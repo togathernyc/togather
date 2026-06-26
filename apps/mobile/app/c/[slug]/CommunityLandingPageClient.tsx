@@ -376,7 +376,7 @@ export default function CommunityLandingPageClient() {
               }}
             >
               <Ionicons name="logo-android" size={20} color="#fff" />
-              <Text style={styles.appStoreButtonText}>Android APK</Text>
+              <Text style={styles.appStoreButtonText}>Get the app (Android)</Text>
             </TouchableOpacity>
           </View>
           </View>

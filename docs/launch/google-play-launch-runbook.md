@@ -15,7 +15,11 @@ prep work above it is already done in the `feat/google-play-prep` branch.
 See [ADR-021](../architecture/ADR-021-android-distribution.md) — the team
 deliberately shipped Android as a **sideloaded APK** from `togather.nyc/android`
 (Cloudflare R2) and deferred Play Store to "future". This runbook reverses that
-deferral. The R2 sideload path stays in place; Play Store is added alongside it.
+deferral. As of 2026-06-26 the public **`togather.nyc/android`** page no longer
+offers a production APK — it now serves **Google Play closed-testing
+instructions** (join the testers group → opt in → install from Play). Only the
+**staging** sideload (**`togather.nyc/android-staging`**, Cloudflare R2) remains,
+and it is internal-only. See ADR-021's 2026-06-26 amendment for the rationale.
 
 The app is **managed/prebuild** (the `android/` dir is gitignored build output).
 EAS already builds a production **AAB** (`production` profile in
