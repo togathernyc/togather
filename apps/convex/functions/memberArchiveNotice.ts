@@ -62,21 +62,28 @@ const CANDIDATE_PAGE_SIZE = 100;
  * person did anything — so we stay quiet. If they engage again (which bumps
  * `activityTs` past the old `noticeSentAt`) and later go quiet, a fresh notice
  * is allowed. Activity signals mirror the archive logic: app opens, attendance,
- * serving — falling back to `addedAt` for members who never engaged.
+ * serving, plus a manual unarchive / form reactivation (`reactivatedAt`) —
+ * falling back to `addedAt` for members who never engaged.
  */
 export function shouldSendPreArchiveNotice(params: {
   nowTs: number;
   isActive?: boolean;
   lastActivityTs?: number;
+  reactivatedAt?: number;
   addedAt?: number;
   noticeSentAt?: number;
 }): boolean {
-  const { nowTs, isActive, lastActivityTs, addedAt, noticeSentAt } = params;
+  const { nowTs, isActive, lastActivityTs, reactivatedAt, addedAt, noticeSentAt } =
+    params;
 
   // Already archived — nothing to pre-warn about.
   if (isActive === false) return false;
 
-  const activityTs = lastActivityTs ?? addedAt;
+  // A reactivation restarts the inactivity clock just like in
+  // computePersonActiveState, so it must count here too — otherwise a freshly
+  // reactivated person could get a misleading "about to be archived" nudge, or a
+  // stale notice could suppress a correct one later.
+  const activityTs = mostRecentTimestamp(lastActivityTs, reactivatedAt) ?? addedAt;
   if (activityTs == null) return false;
 
   const age = nowTs - activityTs;
@@ -121,6 +128,7 @@ export const getPreArchiveCandidatesPage = internalQuery({
             row.lastAttendedAt,
             row.lastServedAt,
           ),
+          reactivatedAt: row.reactivatedAt,
           addedAt: row.addedAt,
           noticeSentAt: row.preArchiveNoticeSentAt,
         }),

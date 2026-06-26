@@ -140,6 +140,34 @@ describe("shouldSendPreArchiveNotice", () => {
       }),
     ).toBe(true);
   });
+
+  test("a recent reactivation suppresses a would-be notice", () => {
+    // Last real activity is deep in the window, but the person was just
+    // reactivated (manual unarchive / form submission) — the clock restarted.
+    expect(
+      shouldSendPreArchiveNotice({
+        nowTs: NOW,
+        isActive: true,
+        lastActivityTs: ageMs(55 * DAY_MS),
+        reactivatedAt: ageMs(2 * DAY_MS),
+      }),
+    ).toBe(false);
+  });
+
+  test("a reactivation does not let a stale notice suppress a later correct one", () => {
+    // Notice was sent during the pre-reactivation spell; the person was then
+    // reactivated and has gone quiet again into the window. The fresh spell
+    // (measured from reactivatedAt) should still allow a notice.
+    expect(
+      shouldSendPreArchiveNotice({
+        nowTs: NOW,
+        isActive: true,
+        lastActivityTs: ageMs(200 * DAY_MS),
+        reactivatedAt: ageMs(55 * DAY_MS),
+        noticeSentAt: ageMs(120 * DAY_MS), // from the previous spell
+      }),
+    ).toBe(true);
+  });
 });
 
 // ============================================================================
