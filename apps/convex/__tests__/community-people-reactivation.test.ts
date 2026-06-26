@@ -183,4 +183,54 @@ describe("upsertFromSubmission reactivation gating", () => {
     expect(rows.length).toBe(2);
     expect(rows.every((r) => r.isActive === false)).toBe(true);
   });
+
+  test("a generic upsert archives an active placeholder row (quick-add path)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, userId } = await seedArchivedPerson(t);
+
+    // Quick-add creates a minimal, active communityPeople row synchronously
+    // before scheduling the generic upsert.
+    const placeholderId = await t.run(async (ctx) => {
+      const announcement = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
+        .filter((q: any) => q.eq(q.field("isAnnouncementGroup"), true))
+        .first();
+      const secondGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId: announcement!.groupTypeId,
+        name: "Dinner Party",
+        isAnnouncementGroup: false,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: secondGroupId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+      // Active placeholder (no isActive set → defaults active).
+      return await ctx.db.insert("communityPeople", {
+        communityId,
+        groupId: secondGroupId,
+        userId,
+        firstName: "Archie",
+        lastName: "Ved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await t.mutation(internal.functions.communityPeople.upsertFromSubmission, {
+      communityId,
+      userId,
+    });
+
+    const placeholder = await t.run((ctx) => ctx.db.get(placeholderId));
+    expect(placeholder?.isActive).toBe(false);
+    expect(typeof placeholder?.archivedAt).toBe("number");
+  });
 });

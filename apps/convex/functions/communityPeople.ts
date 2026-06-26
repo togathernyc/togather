@@ -2676,10 +2676,16 @@ export const upsertFromSubmission = internalMutation({
         .first();
 
       let cpId: Id<"communityPeople">;
+      // Inherit the person's community-wide archive state on both branches
+      // (no-op when reactivating, since the archive is being cleared). On
+      // inserts this archives brand-new rows; on patches it archives active
+      // placeholders — e.g. a quick-add row created just before this runs — so
+      // an archived person never reappears in another group's People table.
       if (existing) {
         await ctx.db.patch(existing._id, {
           ...canonicalFields,
           ...reactivationFields,
+          ...(inheritedArchiveFields ?? {}),
           groupId,
         });
         cpId = existing._id;
@@ -2687,8 +2693,6 @@ export const upsertFromSubmission = internalMutation({
         cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
           ...reactivationFields,
-          // Inherit the person's community-wide archive state on new rows
-          // (no-op when reactivating, since the archive is being cleared).
           ...(inheritedArchiveFields ?? {}),
           groupId,
           createdAt: nowTs,
