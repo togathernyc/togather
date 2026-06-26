@@ -1554,6 +1554,11 @@ export const setStatus = mutation({
  * sticks — the daily score job won't resurrect it — until the person opens the
  * app again, at which point they're reactivated. `archivedAt` records when the
  * archive happened so the job can detect a later app open.
+ *
+ * A manual unarchive records `reactivatedAt` so the person stays active for the
+ * full inactivity window measured from the unarchive — they won't be re-archived
+ * on the next daily run just because their last real activity is already stale.
+ * See computePersonActiveState in communityScoreComputation.ts.
  */
 export const setActive = mutation({
   args: {
@@ -1571,9 +1576,11 @@ export const setActive = mutation({
 
     await requireCommunityLeader(ctx, cpRecord.communityId, userId);
 
+    const now = Date.now();
     const patchFields = {
       isActive: args.isActive,
-      archivedAt: args.isActive ? undefined : Date.now(),
+      archivedAt: args.isActive ? undefined : now,
+      reactivatedAt: args.isActive ? now : undefined,
     };
     await ctx.db.patch(args.communityPeopleId, {
       ...patchFields,
@@ -2585,6 +2592,13 @@ export const upsertFromSubmission = internalMutation({
       alerts: (scoreDoc as any).alerts ?? [],
       isSnoozed: (scoreDoc as any).isSnoozed ?? false,
       snoozedUntil: (scoreDoc as any).snoozedUntil,
+      // A form submission is fresh engagement: reactivate the person across all
+      // their groups and restart the auto-archive clock from now. `reactivatedAt`
+      // keeps them active until the full inactivity window passes, surviving the
+      // daily score refresh. See computePersonActiveState.
+      isActive: true,
+      archivedAt: undefined,
+      reactivatedAt: nowTs,
       customText1: (scoreDoc as any).customText1,
       customText2: (scoreDoc as any).customText2,
       customText3: (scoreDoc as any).customText3,
