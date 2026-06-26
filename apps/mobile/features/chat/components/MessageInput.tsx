@@ -452,6 +452,10 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
    * on that list — so passing `onPaste` as a JSX prop is silently dropped and
    * the handler never fires. Attach the listener directly to the host DOM node
    * instead. The RN-Web ref resolves to the actual <textarea> element on web.
+   *
+   * `isVoiceRecording` is a dependency because the voice recorder unmounts the
+   * <TextInput> and remounts a fresh one when it closes — mirroring
+   * `useWebEnterToSend` — so the listener must re-attach to the new DOM node.
    */
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -460,7 +464,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     const listener = (event: Event) => handleWebPaste(event as ClipboardEvent);
     node.addEventListener('paste', listener);
     return () => node.removeEventListener('paste', listener);
-  }, [handleWebPaste]);
+  }, [handleWebPaste, isVoiceRecording]);
 
   /**
    * Pick a document file (PDF, DOC, audio, video, etc.)
