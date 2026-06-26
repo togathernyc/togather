@@ -135,4 +135,52 @@ describe("upsertFromSubmission reactivation gating", () => {
     expect(row?.archivedAt).toBeUndefined();
     expect(typeof row?.reactivatedAt).toBe("number");
   });
+
+  test("a generic upsert inherits the archive state when creating a new per-group row", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, userId } = await seedArchivedPerson(t);
+
+    // The archived person joins a second group that has no communityPeople row.
+    await t.run(async (ctx) => {
+      const group = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q: any) => q.eq("communityId", communityId))
+        .filter((q: any) => q.eq(q.field("isAnnouncementGroup"), true))
+        .first();
+      const secondGroupId = await ctx.db.insert("groups", {
+        communityId,
+        groupTypeId: group!.groupTypeId,
+        name: "Dinner Party",
+        isAnnouncementGroup: false,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: secondGroupId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
+
+    // Generic upsert (no reactivate) — must not resurrect the person anywhere.
+    await t.mutation(internal.functions.communityPeople.upsertFromSubmission, {
+      communityId,
+      userId,
+    });
+
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("communityPeople")
+        .withIndex("by_community_user", (q: any) =>
+          q.eq("communityId", communityId).eq("userId", userId),
+        )
+        .collect(),
+    );
+    // A new row was created for the second group, and it inherited the archive.
+    expect(rows.length).toBe(2);
+    expect(rows.every((r) => r.isActive === false)).toBe(true);
+  });
 });

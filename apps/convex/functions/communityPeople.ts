@@ -2626,6 +2626,31 @@ export const upsertFromSubmission = internalMutation({
       ? { isActive: true, archivedAt: undefined, reactivatedAt: nowTs }
       : {};
 
+    // Archiving is community-wide, so a new per-group row for an already-archived
+    // person must start archived too — otherwise a generic upsert (CSV import /
+    // quick-add) into a group that lacks a row would make them reappear there.
+    // Snapshot the existing archive state once; only relevant when NOT
+    // reactivating (a real submission clears the archive everywhere instead).
+    let inheritedArchiveFields: {
+      isActive: boolean;
+      archivedAt: number | undefined;
+    } | null = null;
+    if (!args.reactivate) {
+      const archivedSibling = await ctx.db
+        .query("communityPeople")
+        .withIndex("by_community_user", (q: any) =>
+          q.eq("communityId", args.communityId).eq("userId", args.userId),
+        )
+        .filter((q: any) => q.eq(q.field("isActive"), false))
+        .first();
+      if (archivedSibling) {
+        inheritedArchiveFields = {
+          isActive: false,
+          archivedAt: (archivedSibling as any).archivedAt ?? nowTs,
+        };
+      }
+    }
+
     // 6. Find all active group memberships for this user in this community
     const allMemberships = await ctx.db
       .query("groupMembers")
@@ -2662,6 +2687,9 @@ export const upsertFromSubmission = internalMutation({
         cpId = await ctx.db.insert("communityPeople", {
           ...canonicalFields,
           ...reactivationFields,
+          // Inherit the person's community-wide archive state on new rows
+          // (no-op when reactivating, since the archive is being cleared).
+          ...(inheritedArchiveFields ?? {}),
           groupId,
           createdAt: nowTs,
         });
