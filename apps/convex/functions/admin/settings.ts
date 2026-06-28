@@ -71,6 +71,12 @@ export const updateCommunitySettings = mutation({
     country: v.optional(v.string()),
     primaryColor: v.optional(v.string()),
     secondaryColor: v.optional(v.string()),
+    // Legacy no-op arg: Knicks mode moved to the app-wide "knicks-mode"
+    // feature flag (/admin/features). Still accepted (and ignored below) so
+    // old mobile bundles, whose admin toggle calls updateSettings({ knicksMode }),
+    // don't fail argument validation during the deploy/OTA window. Remove once
+    // old clients have aged out.
+    knicksMode: v.optional(v.boolean()),
     logo: v.optional(v.string()),
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()),
@@ -96,7 +102,10 @@ export const updateCommunitySettings = mutation({
       }
     }
 
-    const { communityId, token: _token, ...updates } = args;
+    // Drop the legacy `knicksMode` arg so it's never written to the community
+    // row — it's accepted only for old-client compat (see args above).
+    const { communityId, token: _token, knicksMode: _knicksMode, ...updates } =
+      args;
 
     // Filter out undefined values
     const cleanedUpdates = Object.fromEntries(

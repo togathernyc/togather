@@ -90,3 +90,56 @@ describe("Knicks mode app-wide feature flag", () => {
     expect(me!.activeCommunityKnicksMode).toBe(false);
   });
 });
+
+describe("updateCommunitySettings legacy knicksMode arg (old-client compat)", () => {
+  test("accepts the legacy knicksMode arg, ignores it, and still applies other updates", async () => {
+    const t = convexTest(schema, modules);
+
+    const { communityId, adminToken } = await (async () => {
+      const ids = await t.run(async (ctx) => {
+        const now = Date.now();
+        const adminId = await ctx.db.insert("users", {
+          firstName: "Admin",
+          lastName: "User",
+          email: "admin.knicks@example.com",
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+        const communityId = await ctx.db.insert("communities", {
+          name: "Old Name",
+          slug: "knicks-compat",
+          isPublic: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.insert("userCommunities", {
+          userId: adminId,
+          communityId,
+          roles: 4, // PRIMARY_ADMIN
+          status: 1, // active
+          createdAt: now,
+          updatedAt: now,
+        });
+        return { adminId, communityId };
+      });
+      const { accessToken } = await generateTokens(ids.adminId);
+      return { communityId: ids.communityId, adminToken: accessToken };
+    })();
+
+    // An old bundle's Knicks Mode switch sends knicksMode alongside a real edit.
+    await expect(
+      t.mutation(api.functions.admin.settings.updateCommunitySettings, {
+        token: adminToken,
+        communityId,
+        name: "New Name",
+        knicksMode: true,
+      }),
+    ).resolves.toBeDefined();
+
+    const community = await t.run((ctx) => ctx.db.get(communityId));
+    // The real edit applies; the legacy arg is dropped, never written.
+    expect(community!.name).toBe("New Name");
+    expect(community!.knicksMode).toBeUndefined();
+  });
+});
