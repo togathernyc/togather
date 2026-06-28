@@ -70,7 +70,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         "flex": 1,
       },
       {
-        "backgroundColor": "#e3edf8",
+        "backgroundColor": "#f2f2f7",
       },
     ]
   }
@@ -85,7 +85,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
             "paddingTop": 16,
           },
           {
-            "backgroundColor": "#e3edf8",
+            "backgroundColor": "#f2f2f7",
             "paddingTop": 16,
           },
         ]
@@ -99,7 +99,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
               "fontWeight": "bold",
             },
             {
-              "color": "#10243a",
+              "color": "#1a1a1a",
             },
           ]
         }
@@ -269,7 +269,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                     "marginBottom": 4,
                   },
                   {
-                    "color": "#10243a",
+                    "color": "#1a1a1a",
                   },
                 ]
               }
@@ -286,7 +286,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                     "marginBottom": 6,
                   },
                   {
-                    "color": "#456382",
+                    "color": "#666666",
                   },
                 ]
               }
@@ -358,7 +358,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -378,7 +378,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -396,7 +396,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -438,7 +438,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -458,7 +458,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -476,7 +476,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -518,7 +518,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -538,7 +538,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -556,7 +556,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -598,7 +598,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -618,7 +618,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -636,7 +636,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -678,7 +678,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -698,7 +698,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -716,7 +716,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -767,7 +767,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
               "textTransform": "uppercase",
             },
             {
-              "color": "#8aa3bd",
+              "color": "#999999",
             },
           ]
         }
@@ -805,7 +805,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -825,7 +825,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -850,7 +850,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -865,7 +865,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -908,7 +908,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -928,7 +928,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -953,7 +953,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -968,7 +968,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -1011,7 +1011,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1031,7 +1031,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1056,7 +1056,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -1071,7 +1071,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -1114,7 +1114,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -1134,7 +1134,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1159,7 +1159,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -1174,7 +1174,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -1245,7 +1245,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -1265,7 +1265,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1283,7 +1283,7 @@ exports[`Safe Area Insets Profile Screen adapts header padding to different safe
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -1304,7 +1304,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         "flex": 1,
       },
       {
-        "backgroundColor": "#e3edf8",
+        "backgroundColor": "#f2f2f7",
       },
     ]
   }
@@ -1319,7 +1319,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
             "paddingTop": 16,
           },
           {
-            "backgroundColor": "#e3edf8",
+            "backgroundColor": "#f2f2f7",
             "paddingTop": 16,
           },
         ]
@@ -1333,7 +1333,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
               "fontWeight": "bold",
             },
             {
-              "color": "#10243a",
+              "color": "#1a1a1a",
             },
           ]
         }
@@ -1503,7 +1503,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                     "marginBottom": 4,
                   },
                   {
-                    "color": "#10243a",
+                    "color": "#1a1a1a",
                   },
                 ]
               }
@@ -1520,7 +1520,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                     "marginBottom": 6,
                   },
                   {
-                    "color": "#456382",
+                    "color": "#666666",
                   },
                 ]
               }
@@ -1592,7 +1592,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1612,7 +1612,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1630,7 +1630,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -1672,7 +1672,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1692,7 +1692,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1710,7 +1710,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -1752,7 +1752,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1772,7 +1772,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1790,7 +1790,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -1832,7 +1832,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -1852,7 +1852,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1870,7 +1870,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -1912,7 +1912,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -1932,7 +1932,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -1950,7 +1950,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }
@@ -2001,7 +2001,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
               "textTransform": "uppercase",
             },
             {
-              "color": "#8aa3bd",
+              "color": "#999999",
             },
           ]
         }
@@ -2039,7 +2039,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -2059,7 +2059,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -2084,7 +2084,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -2099,7 +2099,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -2142,7 +2142,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -2162,7 +2162,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -2187,7 +2187,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -2202,7 +2202,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -2245,7 +2245,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0.5,
             "flexDirection": "row",
             "opacity": 1,
@@ -2265,7 +2265,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -2290,7 +2290,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -2305,7 +2305,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -2348,7 +2348,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -2368,7 +2368,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -2393,7 +2393,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "fontWeight": "400",
                 },
                 {
-                  "color": "#10243a",
+                  "color": "#1a1a1a",
                 },
               ]
             }
@@ -2408,7 +2408,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                   "marginTop": 2,
                 },
                 {
-                  "color": "#8aa3bd",
+                  "color": "#999999",
                 },
               ]
             }
@@ -2479,7 +2479,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
         style={
           {
             "alignItems": "center",
-            "borderBottomColor": "#cfe0f2",
+            "borderBottomColor": "#e0e0e0",
             "borderBottomWidth": 0,
             "flexDirection": "row",
             "opacity": 1,
@@ -2499,7 +2499,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "width": 36,
               },
               {
-                "backgroundColor": "#f2f7fc",
+                "backgroundColor": "#f5f5f5",
               },
             ]
           }
@@ -2517,7 +2517,7 @@ exports[`Safe Area Insets Profile Screen matches snapshot with safe area padding
                 "fontWeight": "400",
               },
               {
-                "color": "#10243a",
+                "color": "#1a1a1a",
               },
             ]
           }

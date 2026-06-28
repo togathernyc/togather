@@ -57,6 +57,11 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
     description:
       "Enables @Togather dev-assistant bot + bug pipeline (staff only).",
   },
+  {
+    key: "knicks-mode",
+    description:
+      "Themes the whole app in New York Knicks orange & blue, overriding every community's brand colors. Applies to all users across all communities. Off: communities use their own brand colors.",
+  },
 ];
 
 type FlagRow = {

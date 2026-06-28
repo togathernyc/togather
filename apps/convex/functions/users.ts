@@ -644,9 +644,6 @@ export const me = query({
     let activeCommunityName: string | null = null;
     let activeCommunityPrimaryColor: string | null = null;
     let activeCommunitySecondaryColor: string | null = null;
-    // Knicks mode is ON by default — null here means "use the default (on)".
-    // Only an explicit `false` in the community row turns it off.
-    let activeCommunityKnicksMode: boolean | null = null;
     let activeCommunityChurchFeatures: { prayerEnabled: boolean } | null = null;
 
     if (user.activeCommunityId) {
@@ -655,10 +652,18 @@ export const me = query({
         activeCommunityName = activeCommunity.name || null;
         activeCommunityPrimaryColor = activeCommunity.primaryColor || null;
         activeCommunitySecondaryColor = activeCommunity.secondaryColor || null;
-        activeCommunityKnicksMode = activeCommunity.knicksMode ?? null;
         activeCommunityChurchFeatures = activeCommunity.churchFeatures ?? null;
       }
     }
+
+    // Knicks mode is now an APP-WIDE feature flag, flipped by Togather staff
+    // in /admin/features — no longer a per-community setting. Default OFF: an
+    // absent flag row means off. See functions/admin/featureFlags.ts.
+    const knicksModeFlag = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", "knicks-mode"))
+      .first();
+    const knicksMode = knicksModeFlag?.enabled ?? false;
 
     const notificationsDisabled = await isUserNotificationsDisabled(ctx, userId);
 
@@ -691,7 +696,7 @@ export const me = query({
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
-      activeCommunityKnicksMode,
+      knicksMode,
       activeCommunityChurchFeatures,
       communityMemberships: communityMemberships.filter(Boolean),
     };

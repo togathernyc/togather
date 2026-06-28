@@ -1,12 +1,12 @@
 /**
- * KnicksModeSync - Bridges the active community's `knicksMode` setting up to
- * the ThemeProvider.
+ * KnicksModeSync - Bridges the app-wide Knicks mode feature flag up to the
+ * ThemeProvider.
  *
  * ThemeProvider sits ABOVE AuthProvider in the tree, so it can't read auth
  * state directly. This component lives inside the auth tree, reads the
- * resolved `community_knicks_mode` flag, and pushes it into the theme via
- * `setKnicksMode`. Knicks mode is ON by default — only an explicit `false`
- * from the community setting turns it off.
+ * resolved `knicks_mode` flag (sourced from the "knicks-mode" feature flag,
+ * flipped in /admin/features), and pushes it into the theme via
+ * `setKnicksMode`. Knicks mode is OFF by default.
  *
  * Renders nothing.
  */
@@ -18,7 +18,7 @@ export function KnicksModeSync() {
   const { user } = useAuth();
   const { setKnicksMode } = useTheme();
 
-  const knicksMode = user?.community_knicks_mode !== false;
+  const knicksMode = user?.knicks_mode === true;
 
   useEffect(() => {
     setKnicksMode(knicksMode);

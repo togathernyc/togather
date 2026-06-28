@@ -526,3 +526,30 @@ export const backfillProposerAnnouncementGroup = internalMutation({
     return { communityId, proposerId, insertedMembership: !existing };
   },
 });
+
+/**
+ * Clear the legacy per-community `knicksMode` field from all community rows.
+ *
+ * Knicks mode moved to an app-wide feature flag ("knicks-mode", flipped via
+ * /admin/features), so the column is no longer read or written. Run this in
+ * each environment to strip the leftover values, then drop the field from the
+ * `communities` schema in a follow-up.
+ *
+ * Idempotent — communities without the field are skipped.
+ *
+ * Run via: npx convex run functions/migrations:clearCommunityKnicksMode
+ */
+export const clearCommunityKnicksMode = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const communities = await ctx.db.query("communities").collect();
+    let cleared = 0;
+    for (const community of communities) {
+      if (community.knicksMode !== undefined) {
+        await ctx.db.patch(community._id, { knicksMode: undefined });
+        cleared += 1;
+      }
+    }
+    return { scanned: communities.length, cleared };
+  },
+});

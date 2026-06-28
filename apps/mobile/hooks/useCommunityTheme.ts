@@ -13,7 +13,8 @@ import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
 
 /**
  * "Knicks mode" — New York Knicks orange + blue. Overrides community brand
- * colors app-wide. ON by default; turned off per-community in admin settings.
+ * colors app-wide. OFF by default; flipped app-wide via the "knicks-mode"
+ * feature flag in /admin/features.
  */
 export const KNICKS_ORANGE = '#F58426';
 export const KNICKS_BLUE = '#006BB6';
@@ -64,8 +65,8 @@ export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
 
   return useMemo(() => {
-    // Knicks mode is ON by default — only an explicit `false` disables it.
-    const isKnicksMode = user?.community_knicks_mode !== false;
+    // Knicks mode is an app-wide feature flag, OFF by default.
+    const isKnicksMode = user?.knicks_mode === true;
 
     if (isKnicksMode) {
       return {
@@ -91,7 +92,7 @@ export function useCommunityTheme(): CommunityTheme {
       isKnicksMode: false,
     };
   }, [
-    user?.community_knicks_mode,
+    user?.knicks_mode,
     user?.community_primary_color,
     user?.community_secondary_color,
   ]);
