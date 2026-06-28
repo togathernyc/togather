@@ -33,10 +33,10 @@ export interface ThemeContextValue {
   preference: ThemePreference;
   /** Update the theme preference (persisted to storage) */
   setPreference: (pref: ThemePreference) => void;
-  /** Whether the app-wide Knicks (orange/blue) palette is active. On by default. */
+  /** Whether the app-wide Knicks (orange/blue) palette is active. Off by default. */
   knicksMode: boolean;
   /**
-   * Set Knicks mode. Driven by the active community's `knicksMode` setting,
+   * Set Knicks mode. Driven by the app-wide "knicks-mode" feature flag,
    * synced up from the auth tree via <KnicksModeSync /> (ThemeProvider sits
    * above AuthProvider, so it can't read auth state itself).
    */
@@ -44,21 +44,21 @@ export interface ThemeContextValue {
 }
 
 export const ThemeContext = createContext<ThemeContextValue>({
-  colors: knicksLightColors,
+  colors: lightColors,
   isDark: false,
   colorScheme: 'light',
   preference: 'auto',
   setPreference: () => {},
-  knicksMode: true,
+  knicksMode: false,
   setKnicksMode: () => {},
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemScheme = useColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('auto');
-  // Knicks mode is ON by default until the active community's setting says
+  // Knicks mode is OFF by default until the app-wide feature flag says
   // otherwise (synced in by <KnicksModeSync />).
-  const [knicksMode, setKnicksMode] = useState(true);
+  const [knicksMode, setKnicksMode] = useState(false);
 
   // Load saved preference on mount
   useEffect(() => {

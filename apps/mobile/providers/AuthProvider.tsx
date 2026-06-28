@@ -402,9 +402,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         location: convexUser.location ?? undefined,
         community_primary_color: convexUser.activeCommunityPrimaryColor ?? undefined,
         community_secondary_color: convexUser.activeCommunitySecondaryColor ?? undefined,
-        // Knicks mode: null/undefined from the server means "default (on)";
-        // only an explicit `false` disables it. Preserve `false` here.
-        community_knicks_mode: convexUser.activeCommunityKnicksMode ?? undefined,
+        // Knicks mode is an app-wide feature flag (flipped in /admin/features).
+        // Read it live via useConvexFeatureFlag, not from this cached snapshot —
+        // see KnicksModeSync / useCommunityTheme.
       };
 
       // Derive community from server response (no caching needed)

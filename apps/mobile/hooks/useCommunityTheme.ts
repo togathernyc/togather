@@ -9,11 +9,13 @@
  */
 import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
 
 /**
  * "Knicks mode" — New York Knicks orange + blue. Overrides community brand
- * colors app-wide. ON by default; turned off per-community in admin settings.
+ * colors app-wide. OFF by default; flipped app-wide via the "knicks-mode"
+ * feature flag in /admin/features.
  */
 export const KNICKS_ORANGE = '#F58426';
 export const KNICKS_BLUE = '#006BB6';
@@ -62,11 +64,13 @@ export function darkenColor(hex: string, factor: number = 0.4): string {
 
 export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
+  // Knicks mode is an app-wide feature flag (OFF by default). The single live
+  // subscription lives in <KnicksModeSync />, which pushes the value into
+  // ThemeProvider; we read it from there so flipping the flag in
+  // /admin/features re-themes the running app immediately.
+  const { knicksMode: isKnicksMode } = useTheme();
 
   return useMemo(() => {
-    // Knicks mode is ON by default — only an explicit `false` disables it.
-    const isKnicksMode = user?.community_knicks_mode !== false;
-
     if (isKnicksMode) {
       return {
         primaryColor: KNICKS_ORANGE,
@@ -91,7 +95,7 @@ export function useCommunityTheme(): CommunityTheme {
       isKnicksMode: false,
     };
   }, [
-    user?.community_knicks_mode,
+    isKnicksMode,
     user?.community_primary_color,
     user?.community_secondary_color,
   ]);
