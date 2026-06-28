@@ -2,23 +2,22 @@
  * KnicksModeSync - Bridges the app-wide Knicks mode feature flag up to the
  * ThemeProvider.
  *
- * ThemeProvider sits ABOVE AuthProvider in the tree, so it can't read auth
- * state directly. This component lives inside the auth tree, reads the
- * resolved `knicks_mode` flag (sourced from the "knicks-mode" feature flag,
- * flipped in /admin/features), and pushes it into the theme via
- * `setKnicksMode`. Knicks mode is OFF by default.
+ * ThemeProvider sits ABOVE the consumers in the tree, so it can't read the
+ * flag directly. This component subscribes to the app-wide "knicks-mode"
+ * feature flag (flipped in /admin/features) via a live Convex query and
+ * pushes the value into the theme via `setKnicksMode`, so flipping the flag
+ * updates the running app immediately — no relogin/profile refresh needed.
+ * Knicks mode is OFF by default.
  *
  * Renders nothing.
  */
 import { useEffect } from 'react';
-import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
+import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 
 export function KnicksModeSync() {
-  const { user } = useAuth();
   const { setKnicksMode } = useTheme();
-
-  const knicksMode = user?.knicks_mode === true;
+  const { enabled: knicksMode } = useConvexFeatureFlag('knicks-mode');
 
   useEffect(() => {
     setKnicksMode(knicksMode);

@@ -9,6 +9,7 @@
  */
 import { useMemo } from 'react';
 import { useAuth } from '@providers/AuthProvider';
+import { useTheme } from '@hooks/useTheme';
 import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from '@utils/styles';
 
 /**
@@ -63,11 +64,13 @@ export function darkenColor(hex: string, factor: number = 0.4): string {
 
 export function useCommunityTheme(): CommunityTheme {
   const { user } = useAuth();
+  // Knicks mode is an app-wide feature flag (OFF by default). The single live
+  // subscription lives in <KnicksModeSync />, which pushes the value into
+  // ThemeProvider; we read it from there so flipping the flag in
+  // /admin/features re-themes the running app immediately.
+  const { knicksMode: isKnicksMode } = useTheme();
 
   return useMemo(() => {
-    // Knicks mode is an app-wide feature flag, OFF by default.
-    const isKnicksMode = user?.knicks_mode === true;
-
     if (isKnicksMode) {
       return {
         primaryColor: KNICKS_ORANGE,
@@ -92,7 +95,7 @@ export function useCommunityTheme(): CommunityTheme {
       isKnicksMode: false,
     };
   }, [
-    user?.knicks_mode,
+    isKnicksMode,
     user?.community_primary_color,
     user?.community_secondary_color,
   ]);

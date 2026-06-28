@@ -659,6 +659,13 @@ export const me = query({
     // Knicks mode is now an APP-WIDE feature flag, flipped by Togather staff
     // in /admin/features — no longer a per-community setting. Default OFF: an
     // absent flag row means off. See functions/admin/featureFlags.ts.
+    //
+    // New mobile clients subscribe to the flag live via useConvexFeatureFlag
+    // and don't read it from this response. We still surface it below (as the
+    // legacy `activeCommunityKnicksMode` field) so OLD bundles — which read
+    // that field and default ON when it's absent — instead see the resolved
+    // app-wide value and stay OFF during the deploy/OTA window. Remove the
+    // response field once old clients have aged out.
     const knicksModeFlag = await ctx.db
       .query("featureFlags")
       .withIndex("by_key", (q) => q.eq("key", "knicks-mode"))
@@ -696,7 +703,8 @@ export const me = query({
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
-      knicksMode,
+      // Legacy field name, kept for old-client back-compat (see comment above).
+      activeCommunityKnicksMode: knicksMode,
       activeCommunityChurchFeatures,
       communityMemberships: communityMemberships.filter(Boolean),
     };

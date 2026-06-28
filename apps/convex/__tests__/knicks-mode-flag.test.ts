@@ -4,8 +4,10 @@
  * Knicks mode used to be a per-community setting (`communities.knicksMode`,
  * on by default). It now lives in the `featureFlags` table under the
  * "knicks-mode" key, flipped app-wide by staff via /admin/features, and is
- * OFF by default. `users.me` resolves the flag and surfaces it as
- * `knicksMode` so the mobile theme can react to it.
+ * OFF by default. `users.me` resolves the flag and surfaces it under the
+ * legacy `activeCommunityKnicksMode` field name so old mobile clients (which
+ * still read that field) keep working during rollout. New clients subscribe
+ * to the flag live via useConvexFeatureFlag instead.
  *
  * Coverage:
  *   - Default OFF when no flag row exists.
@@ -44,10 +46,10 @@ describe("Knicks mode app-wide feature flag", () => {
 
     const me = (await t.query(api.functions.users.me, {
       token: accessToken,
-    })) as { knicksMode: boolean } | null;
+    })) as { activeCommunityKnicksMode: boolean } | null;
 
     expect(me).not.toBeNull();
-    expect(me!.knicksMode).toBe(false);
+    expect(me!.activeCommunityKnicksMode).toBe(false);
   });
 
   test("users.me reports knicksMode=true when the flag is enabled", async () => {
@@ -64,9 +66,9 @@ describe("Knicks mode app-wide feature flag", () => {
 
     const me = (await t.query(api.functions.users.me, {
       token: accessToken,
-    })) as { knicksMode: boolean } | null;
+    })) as { activeCommunityKnicksMode: boolean } | null;
 
-    expect(me!.knicksMode).toBe(true);
+    expect(me!.activeCommunityKnicksMode).toBe(true);
   });
 
   test("users.me reports knicksMode=false when the flag exists but is disabled", async () => {
@@ -83,8 +85,8 @@ describe("Knicks mode app-wide feature flag", () => {
 
     const me = (await t.query(api.functions.users.me, {
       token: accessToken,
-    })) as { knicksMode: boolean } | null;
+    })) as { activeCommunityKnicksMode: boolean } | null;
 
-    expect(me!.knicksMode).toBe(false);
+    expect(me!.activeCommunityKnicksMode).toBe(false);
   });
 });
