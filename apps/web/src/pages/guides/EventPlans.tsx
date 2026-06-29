@@ -215,6 +215,12 @@ export function EventPlans() {
             request once more to volunteers with an open slot (handy after
             you've edited the roster).
           </p>
+          <p>
+            And you don't have to keep checking back: when a volunteer confirms
+            or declines, the plan's leaders get a notification (push and in-app)
+            so you find out the moment someone responds — a decline even carries
+            their note, so you know why and can backfill the slot.
+          </p>
         </Callout>
 
         <Figure caption="The plan editor's bottom bar sends the requests; volunteers confirm or decline from the push/SMS.">
@@ -297,6 +303,15 @@ export function EventPlans() {
           A segmented <Term>Roles</Term> / <Term>People</Term> control flips the
           grid to a per-person view when you'd rather see one volunteer's whole
           schedule.
+        </P>
+
+        <P>
+          Tap a role cell and choose <Term>Request history</Term> to see the full
+          trail for that slot: who was asked, when, and how many times, alongside
+          whether they've since confirmed, declined, or been removed. From there
+          you can <Term>Resend</Term> the confirm-or-decline request to a single
+          person who's still awaiting — a precise nudge when you don't want to
+          re-send to the whole plan.
         </P>
       </Section>
 
