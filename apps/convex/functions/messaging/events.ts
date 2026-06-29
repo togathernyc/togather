@@ -585,8 +585,9 @@ export const sendAdHocMessageNotifications = internalAction({
     };
 
     // Pending recipients: first-message-of-a-request copy.
-    // For each recipient, build a personalized email-fallback payload so that
-    // recipients without a live push token still hear about the request.
+    // For each recipient, build a personalized email payload that is sent in
+    // conjunction with the push so users hear about a new message request even
+    // when they aren't actively using the app.
     if (args.pendingRecipients.length > 0) {
       const pendingTitle = args.senderName;
       const pendingBody = `would like to chat: ${previewBody}`;
@@ -614,7 +615,7 @@ export const sendAdHocMessageNotifications = internalAction({
           body: pendingBody,
           data: { ...baseData, requestState: "pending" },
           communityId: args.communityId,
-          emailFallback: {
+          requestEmail: {
             subject: emailSubject,
             htmlBody: emailHtml,
             notificationType: "chat_request",
@@ -683,11 +684,14 @@ async function sendAdHocPushToUser(
     data: Record<string, unknown>;
     communityId?: Id<"communities">;
     /**
-     * Optional email fallback fired when the recipient has no active push
-     * tokens, OR when the push send fails. Used for chat requests so a
-     * recipient who isn't reachable via push still hears about the request.
+     * Optional email sent in conjunction with the push. Used for chat requests
+     * so the recipient hears about a new message request by email even when
+     * they aren't actively using the app — independent of whether push lands.
+     * Respects the recipient's `emailNotificationsEnabled` preference. Only
+     * requests pass this; accepted-chat messages stay push-only so the inbox
+     * doesn't double-notify on every reply.
      */
-    emailFallback?: {
+    requestEmail?: {
       subject: string;
       htmlBody: string;
       notificationType: string;
@@ -729,10 +733,11 @@ async function sendAdHocPushToUser(
     );
   }
 
-  // Cascade to email when push is unreachable (no tokens or send failed).
-  // Only requests get an email fallback — accepted-chat messages stay
+  // Email the recipient in conjunction with the push (not only as a fallback)
+  // so a new message request reaches them even when they aren't actively using
+  // the app. Only requests pass `requestEmail` — accepted-chat messages stay
   // push-only so the inbox doesn't double-notify on every reply.
-  if (!pushOk && args.emailFallback) {
+  if (args.requestEmail) {
     const userInfo = await ctx.runQuery(
       internal.functions.notifications.internal.getUserEmailInfo,
       { userId: args.userId },
@@ -742,13 +747,13 @@ async function sendAdHocPushToUser(
         internal.functions.notifications.internal.sendEmailNotification,
         {
           to: userInfo.email,
-          subject: args.emailFallback.subject,
-          htmlBody: args.emailFallback.htmlBody,
-          notificationType: args.emailFallback.notificationType,
+          subject: args.requestEmail.subject,
+          htmlBody: args.requestEmail.htmlBody,
+          notificationType: args.requestEmail.notificationType,
         },
       );
       console.log(
-        `[sendAdHocMessageNotifications] Email fallback sent to ${userInfo.email} (push unreachable)`,
+        `[sendAdHocMessageNotifications] Request email sent to ${userInfo.email}`,
       );
     }
   }
@@ -762,7 +767,7 @@ async function sendAdHocPushToUser(
       title: args.title,
       body: args.body,
       data: notificationData,
-      status: pushOk || args.emailFallback ? "sent" : "failed",
+      status: pushOk || args.requestEmail ? "sent" : "failed",
       trackingId,
     },
   );
