@@ -530,6 +530,11 @@ export const getChannelBySlug = query({
     // Also try matching by channelType for backwards compatibility
     // (e.g., "general" might be stored as slug, but "main" is channelType)
     let resolvedChannel = channel;
+
+    // Set when the channel is resolved via the pending shared-invite fallback
+    // below — i.e. the URL group has been invited to this channel but hasn't
+    // accepted yet. Drives the accept/decline UI on the channel info screen.
+    let pendingShareForGroup = false;
     if (!resolvedChannel) {
       // Map common slug names to channelType
       const slugToType: Record<string, string> = {
@@ -598,6 +603,42 @@ export const getChannelBySlug = query({
       }
     }
 
+    // 2c. Pending shared-invite fallback: a leader of the *invited* group can
+    // open the channel info screen for a channel shared with their group that
+    // they haven't accepted yet, so they can accept or decline from there.
+    // Gated to leaders — regular members never see a pending shared channel.
+    if (!resolvedChannel) {
+      const membershipForUrlGroup = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+
+      if (membershipForUrlGroup && isLeaderRole(membershipForUrlGroup.role)) {
+        const sharedChannels = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_isShared", (q) => q.eq("isShared", true))
+          .filter((q) => q.eq(q.field("archivedAt"), undefined))
+          .collect();
+
+        for (const candidate of sharedChannels) {
+          if (candidate.isArchived) continue;
+          const candidateSlug = getChannelSlug(candidate);
+          if (candidateSlug !== args.slug && candidate.slug !== args.slug) continue;
+          const pendingEntry = candidate.sharedGroups?.find(
+            (sg) => sg.groupId === args.groupId && sg.status === "pending"
+          );
+          if (pendingEntry) {
+            resolvedChannel = candidate;
+            pendingShareForGroup = true;
+            break;
+          }
+        }
+      }
+    }
+
     if (!resolvedChannel) {
       return null;
     }
@@ -655,6 +696,19 @@ export const getChannelBySlug = query({
       return null;
     }
 
+    // Name of the owning (primary) group — surfaced so the channel info
+    // screen can label shared channels ("Shared from <group>") and the
+    // pending-invite prompt without an extra round-trip.
+    let primaryGroupName: string | null = null;
+    if (
+      resolvedChannel.isShared &&
+      resolvedChannel.groupId &&
+      resolvedChannel.groupId !== args.groupId
+    ) {
+      const owningGroup = await ctx.db.get(resolvedChannel.groupId);
+      primaryGroupName = owningGroup?.name ?? null;
+    }
+
     // 5. Return channel with membership info
     return {
       ...resolvedChannel,
@@ -662,6 +716,8 @@ export const getChannelBySlug = query({
       isMember,
       role: channelMembership?.role,
       userGroupRole: groupMembership.role,
+      pendingShareForGroup,
+      primaryGroupName,
     };
   },
 });

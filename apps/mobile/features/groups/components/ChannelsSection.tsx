@@ -41,7 +41,6 @@ import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useGroupChannels } from "../hooks/useGroupChannels";
-import { useRespondToChannelInvite } from "../hooks/useRespondToChannelInvite";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
 
 interface ChannelsSectionProps {
@@ -89,9 +88,6 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
     token && isLeader ? { token, groupId: groupId as Id<"groups"> } : "skip"
   );
-
-  const { respondingTo, handleRespond: handleRespondToInvite } =
-    useRespondToChannelInvite({ token, groupId });
 
   const { channels: rawChannels } = useGroupChannels(groupId, {
     includeArchived: isLeader,
@@ -483,15 +479,21 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
         </TouchableOpacity>
       )}
 
+      {/* Shared channel requests — pending invites from other groups. Each is
+          a tappable row that opens the channel's info screen, where the leader
+          reviews and accepts/declines. (The accept/decline buttons used to live
+          inline here; they now live on the channel info screen.) */}
       {isLeader && pendingInvites && pendingInvites.length > 0 && (
         <>
           <Text style={[styles.header, styles.subSectionHeader, { color: colors.textSecondary }]}>
-            SHARED CHANNEL INVITATIONS
+            SHARED CHANNEL REQUESTS
           </Text>
           <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
             {pendingInvites.map((invite, idx) => (
-              <View
+              <TouchableOpacity
                 key={invite.channelId}
+                activeOpacity={0.7}
+                onPress={() => navigateToChannelInfo(invite.channelSlug)}
                 style={[
                   styles.row,
                   idx > 0 && {
@@ -511,34 +513,15 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
                     From {invite.primaryGroupName}
                   </Text>
                   <Text style={[styles.rowNote, { color: colors.textTertiary }]}>
-                    Invited by {invite.invitedByName}
+                    Tap to review · invited by {invite.invitedByName}
                   </Text>
                 </View>
-                <View style={styles.inviteActions}>
-                  <TouchableOpacity
-                    style={[styles.inviteAcceptButton, { backgroundColor: primaryColor }]}
-                    onPress={() => handleRespondToInvite(invite.channelId, "accepted")}
-                    disabled={respondingTo !== null}
-                  >
-                    {respondingTo === `${invite.channelId}-accept` ? (
-                      <ActivityIndicator size="small" color={colors.textInverse} />
-                    ) : (
-                      <Text style={styles.inviteAcceptText}>Accept</Text>
-                    )}
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.inviteDeclineButton, { borderColor: colors.destructive }]}
-                    onPress={() => handleRespondToInvite(invite.channelId, "declined")}
-                    disabled={respondingTo !== null}
-                  >
-                    {respondingTo === `${invite.channelId}-decline` ? (
-                      <ActivityIndicator size="small" color={colors.destructive} />
-                    ) : (
-                      <Ionicons name="close" size={18} color={colors.destructive} />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={colors.textTertiary}
+                />
+              </TouchableOpacity>
             ))}
           </View>
         </>
@@ -659,29 +642,5 @@ const styles = StyleSheet.create({
   createLabel: {
     fontSize: 16,
     fontWeight: "500",
-  },
-  inviteActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  inviteAcceptButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignItems: "center",
-  },
-  inviteAcceptText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-  },
-  inviteDeclineButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    justifyContent: "center",
-    alignItems: "center",
   },
 });

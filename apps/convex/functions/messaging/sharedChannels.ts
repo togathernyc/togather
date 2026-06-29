@@ -17,6 +17,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
+import { getChannelSlug } from "../../lib/slugs";
 import { updateChannelMemberCount } from "./helpers";
 
 // ============================================================================
@@ -119,6 +120,7 @@ export const inviteGroupToChannel = mutation({
         primaryGroupId: channelGroupId,
         inviterId: userId,
         channelName: channel.name,
+        channelSlug: getChannelSlug(channel),
       }
     );
   },
@@ -488,6 +490,7 @@ export const listPendingInvitesForGroup = query({
         channelId: channel._id,
         channelName: channel.name,
         channelType: channel.channelType,
+        channelSlug: getChannelSlug(channel),
         primaryGroupId: channel.groupId,
         primaryGroupName,
         invitedByName,

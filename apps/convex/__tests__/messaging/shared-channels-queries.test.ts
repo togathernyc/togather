@@ -532,3 +532,122 @@ describe("listGroupChannels — includes shared channels", () => {
     expect(sharedCh).toBeUndefined();
   });
 });
+
+// ============================================================================
+// getChannelBySlug — pending shared-invite fallback (leaders only)
+// ============================================================================
+
+/**
+ * Adds a leader of the secondary group (Group B) who is NOT a channel member.
+ * Used to exercise the pending-invite fallback, which is gated to leaders.
+ */
+async function addSecondaryGroupLeader(
+  t: ReturnType<typeof convexTest>,
+  data: SharedChannelTestData
+): Promise<string> {
+  const leaderId = await t.run(async (ctx) => {
+    return await ctx.db.insert("users", {
+      firstName: "Leader",
+      lastName: "B",
+      phone: "+15555550042",
+      phoneVerified: true,
+      activeCommunityId: data.communityId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("groupMembers", {
+      userId: leaderId,
+      groupId: data.groupBId,
+      role: "leader",
+      joinedAt: Date.now(),
+      notificationsEnabled: true,
+    });
+  });
+  const { accessToken } = await generateTokens(leaderId);
+  return accessToken;
+}
+
+describe("getChannelBySlug — pending shared-invite fallback", () => {
+  test("leader of invited group resolves a PENDING shared channel with the flag", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!._id).toBe(data.sharedChannelId);
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(true);
+    // The owning group's name is surfaced for the invitation prompt.
+    expect((result as Record<string, unknown>).primaryGroupName).toBe("Group A");
+    // Leader isn't a channel member yet — they accept first.
+    expect(result!.isMember).toBe(false);
+  });
+
+  test("non-leader member of invited group still cannot resolve a pending channel", async () => {
+    const t = convexTest(schema, modules);
+    // The seeded user is a plain member of both groups.
+    const data = await seedSharedChannelData(t, "pending");
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: data.accessToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).toBeNull();
+  });
+
+  test("accepted shared channel is not flagged as a pending invite", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: data.accessToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(false);
+  });
+});
+
+// ============================================================================
+// listPendingInvitesForGroup — payload includes channelSlug for deep-linking
+// ============================================================================
+
+describe("listPendingInvitesForGroup — channelSlug", () => {
+  test("includes channelSlug so the row can route to the channel info screen", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+      }
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].channelId).toBe(data.sharedChannelId);
+    expect(result[0].channelSlug).toBe("shared-events");
+  });
+});
