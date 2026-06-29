@@ -536,6 +536,21 @@ export function RosterGridScreen() {
     setPlanPanel({ planId });
   }, []);
 
+  // Open the request-history modal from the assign panel — the entry point for
+  // empty/open role cells, which route straight to AssignSheet (skipping the
+  // occupant popover). Resolves the full role/event rows from `data` by the
+  // assign target's ids so the same RequestHistoryModal can be reused.
+  const openHistoryForTarget = useCallback(
+    (target: AssignTarget) => {
+      const role = data?.roles.find((r) => r.roleId === target.roleId);
+      const event = data?.events.find((e) => e._id === target.planId);
+      if (!role || !event) return;
+      setAssignTarget(null);
+      setHistoryModal({ role, event });
+    },
+    [data],
+  );
+
   const surfaceError = useCallback((title: string, e: unknown) => {
     const err = e as { data?: { message?: string }; message?: string };
     Alert.alert(title, err?.data?.message ?? err?.message ?? "Something went wrong");
@@ -1941,6 +1956,7 @@ export function RosterGridScreen() {
                 count,
               )
             }
+            onShowHistory={() => openHistoryForTarget(assignTarget)}
             onClose={() => setAssignTarget(null)}
           />
         )}
@@ -2067,6 +2083,7 @@ export function RosterGridScreen() {
               count,
             )
           }
+          onShowHistory={() => openHistoryForTarget(assignTarget)}
           onClose={() => setAssignTarget(null)}
         />
       )}

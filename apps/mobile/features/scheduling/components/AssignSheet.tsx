@@ -171,6 +171,7 @@ export function AssignSheet({
   neededCount,
   assignedCount,
   onSetNeeded,
+  onShowHistory,
   onClose,
 }: {
   visible: boolean;
@@ -235,6 +236,12 @@ export function AssignSheet({
    * When omitted, the Needed stepper is not rendered.
    */
   onSetNeeded?: (count: number) => void;
+  /**
+   * Open the role/event request-history modal. Provided by the roster grid so
+   * the request trail stays reachable even for empty/open cells (which route
+   * here instead of the occupant popover). Omit to hide the affordance.
+   */
+  onShowHistory?: () => void;
   onClose: () => void;
 }) {
   const { colors } = useTheme();
@@ -835,6 +842,17 @@ export function AssignSheet({
             {timeLabel ? ` · ${timeLabel}` : ""}
           </Text>
         </View>
+        {onShowHistory && (
+          <TouchableOpacity
+            onPress={onShowHistory}
+            hitSlop={12}
+            style={styles.headerClose}
+            accessibilityRole="button"
+            accessibilityLabel="Request history"
+          >
+            <Ionicons name="time-outline" size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerClose}>
           <Ionicons name="close" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
