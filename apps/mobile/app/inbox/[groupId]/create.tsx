@@ -177,8 +177,16 @@ export default function CreateChannelScreen() {
       // string, so prefer `error.data` — otherwise the friendly server
       // messages below never match and the raw "Server Error" leaks into the
       // toast (which is exactly what users saw on the 20-channel limit).
+      // The payload is a bare string for createCustomChannel's errors but a
+      // `{ code, message }` object for createAutoChannel's (Planning Center),
+      // so handle both shapes before falling back to `error.message`.
+      const convexData = error?.data;
       const convexMessage: string =
-        typeof error?.data === "string" ? error.data : error?.message ?? "";
+        typeof convexData === "string"
+          ? convexData
+          : typeof convexData?.message === "string"
+            ? convexData.message
+            : error?.message ?? "";
 
       // Extract user-friendly error message
       let errorMessage = "Failed to create channel. Please try again.";
