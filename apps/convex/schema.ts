@@ -1793,7 +1793,16 @@ export default defineSchema({
     .index("by_sender", ["senderId"])
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
-    .index("by_sourceKey", ["sourceKey"]),
+    .index("by_sourceKey", ["sourceKey"])
+    // Full-text search over message body for inbox search. `isDeleted` is a
+    // filter field so soft-deleted messages don't consume the result budget.
+    // Permission/community scoping is enforced in the query handler against the
+    // user's accessible channels — Convex search filters can't OR across the
+    // user's channel set.
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["isDeleted"],
+    }),
 
   /**
    * Polls
