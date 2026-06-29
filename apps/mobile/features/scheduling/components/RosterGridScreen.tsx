@@ -2573,6 +2573,41 @@ function RoleCellPopover({
   onShowHistory: () => void;
   onClose: () => void;
 }) {
+  // Per-person serving request, straight from the occupant row. After assigning
+  // or reassigning one volunteer on a PUBLISHED plan, a leader can ping just that
+  // person instead of re-sending the whole plan via Publish. Reuses the same
+  // scheduler-gated action as the request-history "Resend"; the backend only
+  // (re-)sends to an `unconfirmed` assignment, so the action is shown only for
+  // awaiting people. Gated to published plans (see the occupant row): on a draft
+  // the first send is "Publish & send requests", so a stray tap can't text a
+  // volunteer about an unpublished roster the leader is still building.
+  const resend = useAuthenticatedAction(
+    api.functions.scheduling.assignments.resendAssignmentRequest,
+  );
+  const [resending, setResending] = useState<string | null>(null);
+
+  const handleSendOne = useCallback(
+    async (assignmentId: Id<"roleAssignments">, userName: string) => {
+      setResending(assignmentId as string);
+      try {
+        const result = await resend({ assignmentId });
+        if (result.scheduled) {
+          notify("Request sent", `Sent a serving request to ${userName}.`);
+        } else {
+          notify(
+            "Couldn't send",
+            "This volunteer already responded, or the assignment was removed.",
+          );
+        }
+      } catch {
+        notify("Couldn't send", "Something went wrong. Please try again.");
+      } finally {
+        setResending(null);
+      }
+    },
+    [resend],
+  );
+
   if (!cell) return null;
   return (
     <ModalShell
@@ -2589,6 +2624,19 @@ function RoleCellPopover({
             <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
               {o.userName}
             </Text>
+            {event.status === "published" && o.status === "unconfirmed" ? (
+              <TouchableOpacity
+                onPress={() => handleSendOne(o.assignmentId, o.userName)}
+                disabled={resending === (o.assignmentId as string)}
+                hitSlop={8}
+              >
+                <Text style={[styles.removeText, { color: colors.link }]}>
+                  {resending === (o.assignmentId as string)
+                    ? "Sending…"
+                    : "Send request"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity onPress={() => onRemove(o.assignmentId)} hitSlop={8}>
               <Text style={[styles.removeText, { color: colors.destructive }]}>Remove</Text>
             </TouchableOpacity>
