@@ -26,7 +26,7 @@ export type MessageSearchResult = {
   channelId: Id<"chatChannels">;
   channelName: string;
   channelType: string;
-  channelSlug: string | null;
+  channelSlug: string;
   isAdHoc: boolean;
   groupId: Id<"groups"> | null;
   groupName: string | null;

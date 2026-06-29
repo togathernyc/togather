@@ -258,6 +258,171 @@ describe("searchMessages", () => {
     expect(results).toHaveLength(0);
   });
 
+  test("returns a back-compat slug for legacy channels without a slug", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "zeta");
+    const { userId, accessToken } = await createUser(t, communityId, "Alice");
+
+    // A "main" group channel with no slug set (legacy data).
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Small Groups",
+        slug: "small-groups-zeta",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      }),
+    );
+    const groupId = await t.run(async (ctx) =>
+      ctx.db.insert("groups", {
+        name: "Legacy Group",
+        communityId,
+        groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("groupMembers", {
+        userId,
+        groupId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "main",
+        name: "General",
+        // no slug
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+    });
+    await insertMessage(t, channelId, "picnic in the legacy channel");
+
+    const { results } = await t.query(api.functions.messaging.search.searchMessages, {
+      token: accessToken,
+      communityId,
+      query: "picnic",
+    });
+
+    expect(results).toHaveLength(1);
+    // "main" channels fall back to the "general" slug, never null.
+    expect(results[0].channelSlug).toBe("general");
+  });
+
+  test("hides a shared channel a linked group has hidden from its members", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "eta");
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Small Groups",
+        slug: "small-groups-eta",
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      }),
+    );
+
+    // Owning group (owned by Bob) and a linked group (Alice is a non-leader member).
+    const ownerId = (await createUser(t, communityId, "Bob")).userId;
+    const { userId: aliceId, accessToken } = await createUser(t, communityId, "Alice");
+
+    const ownerGroupId = await t.run(async (ctx) =>
+      ctx.db.insert("groups", {
+        name: "Owner Group",
+        communityId,
+        groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const linkedGroupId = await t.run(async (ctx) =>
+      ctx.db.insert("groups", {
+        name: "Linked Group",
+        communityId,
+        groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("groupMembers", {
+        userId: aliceId,
+        groupId: linkedGroupId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    });
+
+    // Shared custom channel owned by ownerGroup, shared (accepted) with the
+    // linked group but hidden from that group's navigation.
+    const channelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId: ownerGroupId,
+        channelType: "custom",
+        name: "Shared Hidden",
+        slug: "shared-hidden",
+        createdById: ownerId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: true,
+        isShared: true,
+        sharedGroups: [
+          {
+            groupId: linkedGroupId,
+            status: "accepted",
+            invitedById: ownerId,
+            invitedAt: Date.now(),
+            hiddenFromNavigation: true,
+          },
+        ],
+        memberCount: 1,
+      }),
+    );
+    // Alice has a membership row on the shared channel.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId,
+        userId: aliceId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+    });
+    await insertMessage(t, channelId, "picnic in a hidden shared channel");
+
+    const { results } = await t.query(api.functions.messaging.search.searchMessages, {
+      token: accessToken,
+      communityId,
+      query: "picnic",
+    });
+
+    expect(results).toHaveLength(0);
+  });
+
   test("returns nothing for queries below the minimum length", async () => {
     const t = convexTest(schema, modules);
     const communityId = await createCommunity(t, "epsilon");

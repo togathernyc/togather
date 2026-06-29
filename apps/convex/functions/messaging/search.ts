@@ -6,7 +6,7 @@
  * can actually read (the same read boundary `getMessages` enforces). Convex
  * search-index filters can only match a single field value, so they can't OR
  * across the user's channel set — community/permission scoping is therefore
- * applied in the handler after pulling the top matches from the index.
+ * applied in the handler after pulling matches from the index.
  */
 
 import { v } from "convex/values";
@@ -17,20 +17,27 @@ import { requireAuth } from "../../lib/auth";
 import {
   isCustomChannel,
   channelIsLeaderEnabled,
+  channelEffectiveEnabledForGroup,
   isLeaderRole,
 } from "../../lib/helpers";
+import { getChannelSlug } from "../../lib/slugs";
 import { canAccessEventChannel } from "./eventChat";
 
 /** Below this length a search is a no-op (avoids matching on single letters). */
 const MIN_QUERY_LENGTH = 2;
-/**
- * Raw matches pulled from the search index before permission filtering. The
- * index returns globally relevance-ranked rows; we over-fetch so a reasonable
- * number survive the per-channel access filter below.
- */
-const SEARCH_FETCH_LIMIT = 100;
 /** Maximum results returned to the client after filtering. */
 const SEARCH_RESULT_LIMIT = 40;
+/** Page size when scanning the relevance-ranked search index. */
+const SEARCH_PAGE_SIZE = 100;
+/**
+ * Hard cap on how many index rows we scan before giving up. The index returns
+ * globally relevance-ranked rows and we filter to the caller's accessible
+ * channels afterwards, so in a multi-community dataset the top rows may all be
+ * inaccessible. We keep paging past those (rather than `.take(100)` once) until
+ * we fill the result limit, exhaust the index, or hit this scan cap — bounding
+ * cost while avoiding empty results when accessible matches exist deeper down.
+ */
+const MAX_SCAN_DOCS = 600;
 
 /**
  * Content types that aren't user-authored prose. System notices have body text
@@ -43,8 +50,8 @@ type SearchResult = {
   channelId: Id<"chatChannels">;
   channelName: string;
   channelType: string;
-  /** Channel slug — used to build the `/inbox/{groupId}/{slug}` deep link. */
-  channelSlug: string | null;
+  /** Channel slug (with back-compat fallback) for the `/inbox/{groupId}/{slug}` link. */
+  channelSlug: string;
   isAdHoc: boolean;
   groupId: Id<"groups"> | null;
   groupName: string | null;
@@ -63,8 +70,11 @@ type SearchResult = {
  *  - Leaders of a group can read all of that group's channels.
  *  - Anyone with an active channel-membership row can read that channel
  *    (covers DMs, group_dm, event, custom, and shared channels).
- *  - Disabled leader-only channels (custom / pco_services / announcements)
- *    stay hidden from non-leader members.
+ *  - Disabled / per-group-hidden leader-only channels (custom / pco_services /
+ *    announcements) stay hidden from non-leader members. Visibility is checked
+ *    per the user's actual group context via `channelEffectiveEnabledForGroup`
+ *    so a channel a linked group hid (`sharedGroups[].hiddenFromNavigation`)
+ *    isn't exposed to that group's members.
  *  - Event channels additionally go through `canAccessEventChannel`.
  *
  * The set is bounded by the user's memberships + their leader groups' channels,
@@ -82,7 +92,7 @@ async function resolveAccessibleChannelIds(
     return groupCache.get(id) ?? null;
   };
 
-  // Active group memberships → which groups the user leads.
+  // Active group memberships → the user's role in each group.
   const groupMemberships = await ctx.db
     .query("groupMembers")
     .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -96,17 +106,17 @@ async function resolveAccessibleChannelIds(
       ),
     )
     .collect();
-  const leaderGroupIds = new Set<string>(
-    groupMemberships
-      .filter((gm) => isLeaderRole(gm.role))
-      .map((gm) => gm.groupId),
+  const groupRoleMap = new Map<string, string>(
+    groupMemberships.map((gm) => [gm.groupId, gm.role]),
   );
 
   const accessible = new Set<string>();
 
   // Leaders see every (non-archived) channel in their group, even without a
-  // dedicated membership row.
-  for (const groupId of leaderGroupIds) {
+  // dedicated membership row. Leadership also bypasses the disabled-channel
+  // gate, so these are added unconditionally.
+  for (const [groupId, role] of groupRoleMap) {
+    if (!isLeaderRole(role)) continue;
     const group = await getGroup(groupId as Id<"groups">);
     if (!group || group.isArchived || group.communityId !== communityId) continue;
     const channels = await ctx.db
@@ -153,16 +163,40 @@ async function resolveAccessibleChannelIds(
       continue;
     }
 
-    // Disabled leader-only channels are invisible to non-leader members.
+    // Disabled / per-group-hidden leader-only channels are invisible to
+    // non-leader members. Check visibility against each group context the user
+    // actually has for this channel (owning group + any accepted shared group
+    // they belong to), matching the inbox/routing visibility rules.
     if (
       isCustomChannel(channel.channelType) ||
       channel.channelType === "pco_services" ||
       channel.channelType === "announcements"
     ) {
-      const isLeaderHere = channel.groupId
-        ? leaderGroupIds.has(channel.groupId)
-        : false;
-      if (!channelIsLeaderEnabled(channel) && !isLeaderHere) continue;
+      const contextGroupIds: Id<"groups">[] = [];
+      if (channel.groupId && groupRoleMap.has(channel.groupId)) {
+        contextGroupIds.push(channel.groupId);
+      }
+      if (channel.isShared && channel.sharedGroups) {
+        for (const sg of channel.sharedGroups) {
+          if (sg.status === "accepted" && groupRoleMap.has(sg.groupId)) {
+            contextGroupIds.push(sg.groupId);
+          }
+        }
+      }
+
+      let visible: boolean;
+      if (contextGroupIds.length === 0) {
+        // Member of a channel without a tied group context (unusual); fall back
+        // to the channel's global enabled flag.
+        visible = channelIsLeaderEnabled(channel);
+      } else {
+        visible = contextGroupIds.some(
+          (gid) =>
+            channelEffectiveEnabledForGroup(channel, gid) ||
+            isLeaderRole(groupRoleMap.get(gid)),
+        );
+      }
+      if (!visible) continue;
     }
 
     accessible.add(channel._id);
@@ -207,13 +241,6 @@ export const searchMessages = query({
       .collect();
     const blockedUserIds = new Set(blocks.map((b) => b.blockedId));
 
-    const matches = await ctx.db
-      .query("chatMessages")
-      .withSearchIndex("search_content", (q) =>
-        q.search("content", term).eq("isDeleted", false),
-      )
-      .take(SEARCH_FETCH_LIMIT);
-
     const meetingShortIdCache = new Map<string, string | null>();
     const getMeetingShortId = async (
       meetingId: Id<"meetings">,
@@ -226,48 +253,68 @@ export const searchMessages = query({
     };
 
     const results: SearchResult[] = [];
-    for (const message of matches) {
-      if (results.length >= SEARCH_RESULT_LIMIT) break;
-      if (!accessibleChannelIds.has(message.channelId)) continue;
-      if (NON_SEARCHABLE_CONTENT_TYPES.has(message.contentType)) continue;
-      if (message.senderId && blockedUserIds.has(message.senderId)) continue;
+    let scanned = 0;
+    let cursor: string | null = null;
+    let isDone = false;
 
-      const channel = channelCache.get(message.channelId);
-      if (!channel) continue;
+    // Page through relevance-ranked matches, skipping ones in channels the
+    // caller can't read, until we fill the result limit, exhaust the index, or
+    // hit the scan cap.
+    while (results.length < SEARCH_RESULT_LIMIT && scanned < MAX_SCAN_DOCS && !isDone) {
+      const page = await ctx.db
+        .query("chatMessages")
+        .withSearchIndex("search_content", (q) =>
+          q.search("content", term).eq("isDeleted", false),
+        )
+        .paginate({ cursor, numItems: SEARCH_PAGE_SIZE });
 
-      let groupName: string | null = null;
-      if (channel.groupId) {
-        const group = groupCache.get(channel.groupId);
-        groupName = group?.name ?? null;
+      scanned += page.page.length;
+      cursor = page.continueCursor;
+      isDone = page.isDone;
+
+      for (const message of page.page) {
+        if (results.length >= SEARCH_RESULT_LIMIT) break;
+        if (!accessibleChannelIds.has(message.channelId)) continue;
+        if (NON_SEARCHABLE_CONTENT_TYPES.has(message.contentType)) continue;
+        if (message.senderId && blockedUserIds.has(message.senderId)) continue;
+
+        const channel = channelCache.get(message.channelId);
+        if (!channel) continue;
+
+        let groupName: string | null = null;
+        if (channel.groupId) {
+          const group = groupCache.get(channel.groupId);
+          groupName = group?.name ?? null;
+        }
+
+        const meetingShortId =
+          channel.channelType === "event" && channel.meetingId
+            ? await getMeetingShortId(channel.meetingId)
+            : null;
+
+        results.push({
+          messageId: message._id,
+          channelId: message.channelId,
+          channelName: channel.name,
+          channelType: channel.channelType,
+          channelSlug: getChannelSlug(channel),
+          isAdHoc: channel.isAdHoc ?? false,
+          groupId: channel.groupId ?? null,
+          groupName,
+          meetingShortId,
+          content: message.content,
+          senderId: message.senderId ?? null,
+          senderName: message.senderName ?? null,
+          createdAt: message.createdAt,
+        });
       }
-
-      const meetingShortId =
-        channel.channelType === "event" && channel.meetingId
-          ? await getMeetingShortId(channel.meetingId)
-          : null;
-
-      results.push({
-        messageId: message._id,
-        channelId: message.channelId,
-        channelName: channel.name,
-        channelType: channel.channelType,
-        channelSlug: channel.slug ?? null,
-        isAdHoc: channel.isAdHoc ?? false,
-        groupId: channel.groupId ?? null,
-        groupName,
-        meetingShortId,
-        content: message.content,
-        senderId: message.senderId ?? null,
-        senderName: message.senderName ?? null,
-        createdAt: message.createdAt,
-      });
     }
 
     return {
       results,
-      // True when the index returned the full fetch budget — there may be more
-      // matches beyond what we ranked and filtered.
-      truncated: matches.length >= SEARCH_FETCH_LIMIT,
+      // True when matches may exist beyond what we surfaced — we stopped at the
+      // result limit or the scan cap before exhausting the index.
+      truncated: !isDone,
     };
   },
 });
