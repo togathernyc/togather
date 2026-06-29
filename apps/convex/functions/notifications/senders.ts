@@ -960,7 +960,9 @@ export const notifySharedChannelInvite = internalAction({
     invitedGroupId: v.id("groups"),
     primaryGroupId: v.id("groups"),
     inviterId: v.id("users"),
+    channelId: v.id("chatChannels"),
     channelName: v.string(),
+    channelSlug: v.string(),
   },
   handler: async (ctx, args): Promise<{ success: boolean; error?: string; sent?: number }> => {
     try {
@@ -1017,6 +1019,8 @@ export const notifySharedChannelInvite = internalAction({
             type: "shared_channel_invite",
             groupId: args.invitedGroupId,
             primaryGroupId: args.primaryGroupId,
+            channelId: args.channelId,
+            channelSlug: args.channelSlug,
             communityId: primaryGroupInfo.communityId,
             groupAvatarUrl: notificationImageUrl,
           },
@@ -1045,6 +1049,8 @@ export const notifySharedChannelInvite = internalAction({
         data: {
           groupId: args.invitedGroupId,
           primaryGroupId: args.primaryGroupId,
+          channelId: args.channelId,
+          channelSlug: args.channelSlug,
           communityId: primaryGroupInfo.communityId,
           groupAvatarUrl: notificationImageUrl,
         },

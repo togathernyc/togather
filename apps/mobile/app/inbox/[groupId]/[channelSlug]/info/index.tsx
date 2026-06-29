@@ -11,12 +11,20 @@ import { useLocalSearchParams } from "expo-router";
 import { ChannelInfoScreen } from "@features/chat/components/ChannelInfoScreen";
 
 export default function ChannelInfoRoute() {
-  const { groupId, channelSlug } = useLocalSearchParams<{
+  const { groupId, channelSlug, channelId } = useLocalSearchParams<{
     groupId: string;
     channelSlug: string;
+    // Optional disambiguator for shared channels (slugs aren't globally unique).
+    channelId?: string;
   }>();
 
   if (!groupId || !channelSlug) return null;
 
-  return <ChannelInfoScreen groupId={groupId} channelSlug={channelSlug} />;
+  return (
+    <ChannelInfoScreen
+      groupId={groupId}
+      channelSlug={channelSlug}
+      channelId={channelId}
+    />
+  );
 }
