@@ -60,10 +60,15 @@ function TextWithLinks({ text, style }: { text: string; style?: any }) {
   );
 }
 
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppImage } from "@components/ui";
+import { AppImage, Avatar } from "@components/ui";
 import { getMediaUrl } from "@/utils/media";
+import {
+  formatHostLine,
+  hostDisplayName,
+  type HostRow,
+} from "@/features/events/utils/hostAttribution";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
 import {
@@ -794,26 +799,25 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         />
 
         <View style={styles.content}>
-          {/* Host Attribution. Shows "Hosted by {primary host} + N others"
-              when the event has explicit hosts; otherwise attributes to the
+          {/* Host Attribution. Shows the host/cohost names alongside a
+              horizontal, tappable row of host avatars (each badged with a
+              crown). Tapping an avatar opens that host's profile. When the
+              event has no explicit hosts it falls back to attributing the
               group. Creator is never surfaced — hosts are the canonical
               owner per the host-decoupling change. */}
           <View style={[styles.organizerRow, { borderBottomColor: colors.surfaceSecondary }]}>
             {(() => {
-              type HostRow = {
-                id: string;
-                firstName: string | null;
-                lastName: string | null;
-                profilePhoto: string | null;
-              };
               const hosts =
                 ((eventData as any).hosts as HostRow[] | undefined) ?? [];
-              const primary = hosts[0];
-              const extraHostCount = Math.max(0, hosts.length - 1);
 
-              if (!primary) {
+              const groupSubtitle = (eventData as any).isAnnouncementGroup
+                ? eventData.communityName
+                : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`;
+
+              // No explicit hosts: attribute the event to the group.
+              if (hosts.length === 0) {
                 return (
-                  <>
+                  <View style={styles.organizerHeader}>
                     <AppImage
                       source={eventData.groupImage}
                       style={styles.groupAvatar}
@@ -826,38 +830,56 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                       <Text style={[styles.organizerName, { color: colors.text }]}>{eventData.groupName}</Text>
                       <Text style={[styles.communityName, { color: colors.textSecondary }]}>{eventData.communityName}</Text>
                     </View>
-                  </>
+                  </View>
                 );
               }
 
-              const firstName = primary.firstName || "";
-              const lastInitial = primary.lastName?.[0] ? `${primary.lastName[0]}.` : "";
-              const display = [firstName, lastInitial].filter(Boolean).join(" ").trim();
-              const hostLine = display
-                ? extraHostCount > 0
-                  ? `Hosted by ${display} + ${extraHostCount} other${extraHostCount === 1 ? "" : "s"}`
-                  : `Hosted by ${display}`
-                : "Hosted";
+              // Name up to two hosts (host + cohost) before collapsing the
+              // rest into "+ N others"; see formatHostLine for the rules.
+              const hostLine = formatHostLine(hosts);
 
               return (
-                <>
-                  <AppImage
-                    source={primary.profilePhoto ?? undefined}
-                    style={styles.groupAvatar}
-                    placeholder={{
-                      type: 'initials',
-                      name: display || (eventData.groupName ?? undefined),
-                    }}
-                  />
-                  <View style={styles.organizerInfo}>
-                    <Text style={[styles.organizerName, { color: colors.text }]}>{hostLine}</Text>
-                    <Text style={[styles.communityName, { color: colors.textSecondary }]}>
-                      {(eventData as any).isAnnouncementGroup
-                        ? eventData.communityName
-                        : `${eventData.groupName}${eventData.communityName ? ' · ' + eventData.communityName : ''}`}
-                    </Text>
+                <View style={styles.organizerColumn}>
+                  <View style={styles.organizerHeader}>
+                    <MaterialCommunityIcons name="crown" size={20} color={colors.text} />
+                    <View style={styles.organizerInfo}>
+                      <Text style={[styles.organizerName, { color: colors.text }]}>{hostLine}</Text>
+                      <Text style={[styles.communityName, { color: colors.textSecondary }]}>
+                        {groupSubtitle}
+                      </Text>
+                    </View>
                   </View>
-                </>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.hostAvatarRow}
+                  >
+                    {hosts.map((host) => {
+                      const name = hostDisplayName(host);
+                      return (
+                        <TouchableOpacity
+                          key={host.id}
+                          style={styles.hostAvatarItem}
+                          activeOpacity={0.7}
+                          onPress={() => router.push(`/(user)/profile/${host.id}`)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`View ${name || "host"}'s profile`}
+                        >
+                          <Avatar imageUrl={host.profilePhoto} name={name} size={56} />
+                          <View
+                            style={[
+                              styles.hostCrownBadge,
+                              { backgroundColor: colors.text, borderColor: colors.surface },
+                            ]}
+                          >
+                            <MaterialCommunityIcons name="crown" size={11} color={colors.surface} />
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
               );
             })()}
           </View>
@@ -1250,12 +1272,17 @@ const styles = StyleSheet.create({
 
   // Organizer
   organizerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     marginBottom: 20,
     paddingBottom: 20,
     borderBottomWidth: 1,
+  },
+  organizerColumn: {
+    gap: 12,
+  },
+  organizerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   groupAvatar: {
     width: 40,
@@ -1264,6 +1291,26 @@ const styles = StyleSheet.create({
   },
   organizerInfo: {
     flex: 1,
+  },
+  hostAvatarRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 2,
+  },
+  hostAvatarItem: {
+    width: 56,
+    height: 56,
+  },
+  hostCrownBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
   },
   organizerName: {
     fontSize: 16,
