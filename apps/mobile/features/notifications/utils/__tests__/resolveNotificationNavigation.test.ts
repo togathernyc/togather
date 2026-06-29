@@ -76,4 +76,36 @@ describe("resolveNotificationNavigation — type-based routing still works", () 
 
     expect(mockPush).toHaveBeenCalledWith("/e/evt99?source=app");
   });
+
+  it("routes a shared_channel_invite to the channel info screen of the invited group", async () => {
+    await resolveNotificationNavigation({
+      type: "shared_channel_invite",
+      groupId: "groupB",
+      channelSlug: "shared-events",
+    });
+
+    expect(mockPush).toHaveBeenCalledWith("/inbox/groupB/shared-events/info");
+  });
+
+  it("falls back to the group page for a shared_channel_invite without a channelSlug", async () => {
+    await resolveNotificationNavigation({
+      type: "shared_channel_invite",
+      groupId: "groupB",
+    });
+
+    expect(mockPush).toHaveBeenCalledWith("/groups/groupB");
+  });
+
+  it("includes channelId in the shared_channel_invite deep link to disambiguate same-slug invites", async () => {
+    await resolveNotificationNavigation({
+      type: "shared_channel_invite",
+      groupId: "groupB",
+      channelSlug: "shared-events",
+      channelId: "chan_123",
+    });
+
+    expect(mockPush).toHaveBeenCalledWith(
+      "/inbox/groupB/shared-events/info?channelId=chan_123",
+    );
+  });
 });
