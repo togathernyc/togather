@@ -6,7 +6,7 @@
  * meetingPermissions.ts). When the viewer removes themselves and isn't a
  * leader, we confirm — they'd lose edit rights on save.
  */
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -47,6 +47,18 @@ type MemberRow = {
   profileImage: string | null;
 };
 
+/** Map raw `groupMembers.list` items (browse or search) to picker rows. */
+function mapMembers(items: any[]): MemberRow[] {
+  return items
+    .filter((item) => item.user != null)
+    .map((item) => ({
+      id: String(item.user.id),
+      firstName: item.user.firstName ?? "",
+      lastName: item.user.lastName ?? "",
+      profileImage: item.user.profileImage ?? null,
+    }));
+}
+
 export function HostsPicker({
   groupId,
   token,
@@ -60,26 +72,36 @@ export function HostsPicker({
   const { colors } = useTheme();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  // Higher limit: announcement groups can have hundreds of community members,
-  // and the current user may be outside a 200-row page. Convex queries are
-  // reactive, so the full page only loads once.
+  // Debounce the search input so we don't fire a query on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Browse list: the first page of members, also used to resolve the names of
+  // already-selected host chips. Convex queries are reactive, so this only
+  // loads once. Searching is handled server-side by a separate query below so
+  // large groups can find any member, not just those on this page.
   const membersData = useQuery(
     api.functions.groupMembers.list,
     groupId && token ? { groupId, limit: 1000, token } : "skip",
   );
 
-  const members: MemberRow[] = useMemo(() => {
-    const items = membersData?.items ?? [];
-    return items
-      .filter((item: any) => item.user != null)
-      .map((item: any) => ({
-        id: String(item.user.id),
-        firstName: item.user.firstName ?? "",
-        lastName: item.user.lastName ?? "",
-        profileImage: item.user.profileImage ?? null,
-      }));
-  }, [membersData]);
+  // Server-side search across the ENTIRE group. Only runs once the user types,
+  // so large announcement groups can find members beyond the browse page.
+  const searchData = useQuery(
+    api.functions.groupMembers.list,
+    groupId && token && debouncedSearch
+      ? { groupId, token, search: debouncedSearch, limit: 100 }
+      : "skip",
+  );
+
+  const members: MemberRow[] = useMemo(
+    () => mapMembers(membersData?.items ?? []),
+    [membersData],
+  );
 
   const membersById = useMemo(() => {
     const map = new Map<string, MemberRow>();
@@ -92,13 +114,20 @@ export function HostsPicker({
     [hostUserIds],
   );
 
-  const filteredMembers = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return members;
-    return members.filter((m) =>
-      `${m.firstName} ${m.lastName}`.toLowerCase().includes(needle),
-    );
-  }, [members, search]);
+  // When the user has typed a search, show the server-side results (which span
+  // the whole group); otherwise show the browse list.
+  const isSearching = debouncedSearch.length > 0;
+  const searchResults: MemberRow[] = useMemo(
+    () => mapMembers(searchData?.items ?? []),
+    [searchData],
+  );
+  const displayedMembers = isSearching ? searchResults : members;
+  // Distinguish "still loading results" from "no matches". While the debounce
+  // is catching up (search text set but debounced value not yet), or the search
+  // query is in flight, treat it as loading so we don't flash "no members".
+  const isListLoading = isSearching
+    ? search.trim() !== debouncedSearch || searchData === undefined
+    : membersData === undefined;
 
   const toggleMember = (memberId: string) => {
     const asUserId = memberId as Id<"users">;
@@ -239,13 +268,13 @@ export function HostsPicker({
             />
           </View>
 
-          {membersData === undefined ? (
+          {isListLoading ? (
             <View style={styles.loading}>
               <ActivityIndicator color={colors.textSecondary} />
             </View>
           ) : (
             <FlatList
-              data={filteredMembers}
+              data={displayedMembers}
               keyExtractor={(item) => item.id}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => {
