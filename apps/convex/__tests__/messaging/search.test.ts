@@ -47,6 +47,17 @@ async function createUser(
       updatedAt: Date.now(),
     }),
   );
+  // Active community membership — searchMessages requires the caller to be a
+  // member of the community they're searching (defense-in-depth tenant gate).
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId,
+      status: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
   const { accessToken } = await generateTokens(userId);
   return { userId, accessToken };
 }
@@ -471,6 +482,179 @@ describe("searchMessages", () => {
       query: "picnic",
     });
     expect(after.results).toHaveLength(1);
+  });
+
+  test("finds an event-channel message for an RSVPer with no membership row", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "evt-rsvp");
+    // Host owns the group/meeting; attendee only RSVPs (no chatChannelMembers row).
+    const { userId: hostId } = await createUser(t, communityId, "Host");
+    const { userId: attendeeId, accessToken } = await createUser(
+      t,
+      communityId,
+      "Attendee",
+    );
+
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Small Groups",
+        slug: `sg-${Math.random().toString(36).slice(2, 8)}`,
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      }),
+    );
+    const groupId = await t.run(async (ctx) =>
+      ctx.db.insert("groups", {
+        name: "Event Group",
+        communityId,
+        groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId,
+        communityId,
+        createdById: hostId,
+        hostUserIds: [hostId],
+        title: "Picnic Event",
+        scheduledAt: Date.now(),
+        status: "scheduled",
+        meetingType: 1,
+        createdAt: Date.now(),
+        shortId: "abc123",
+        rsvpEnabled: true,
+        rsvpOptions: [{ id: 1, label: "Going", enabled: true }],
+      }),
+    );
+
+    const eventChannelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "event",
+        name: "Picnic Event",
+        slug: "event-abc123",
+        meetingId,
+        createdById: hostId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: true,
+        memberCount: 1,
+      }),
+    );
+
+    // Attendee RSVPs but has NO chatChannelMembers row — mirrors a "Can't Go"
+    // or not-yet-seated attendee who can still read the chat in-app.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("meetingRsvps", {
+        meetingId,
+        userId: attendeeId,
+        rsvpOptionId: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await insertMessage(t, eventChannelId, "picnic logistics in the event chat");
+
+    const { results } = await t.query(
+      api.functions.messaging.search.searchMessages,
+      { token: accessToken, communityId, query: "picnic" },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0].channelId).toBe(eventChannelId);
+    expect(results[0].channelType).toBe("event");
+  });
+
+  test("does not return an event-channel message for a non-RSVP non-member", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "evt-noaccess");
+    const { userId: hostId } = await createUser(t, communityId, "Host");
+    // Outsider is a community member but has no host/RSVP/membership tie to the event.
+    const { accessToken } = await createUser(t, communityId, "Outsider");
+
+    const groupTypeId = await t.run(async (ctx) =>
+      ctx.db.insert("groupTypes", {
+        communityId,
+        name: "Small Groups",
+        slug: `sg-${Math.random().toString(36).slice(2, 8)}`,
+        isActive: true,
+        displayOrder: 1,
+        createdAt: Date.now(),
+      }),
+    );
+    const groupId = await t.run(async (ctx) =>
+      ctx.db.insert("groups", {
+        name: "Event Group",
+        communityId,
+        groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const meetingId = await t.run(async (ctx) =>
+      ctx.db.insert("meetings", {
+        groupId,
+        communityId,
+        createdById: hostId,
+        hostUserIds: [hostId],
+        title: "Private Picnic",
+        scheduledAt: Date.now(),
+        status: "scheduled",
+        meetingType: 1,
+        createdAt: Date.now(),
+        shortId: "def456",
+        rsvpEnabled: true,
+        rsvpOptions: [{ id: 1, label: "Going", enabled: true }],
+      }),
+    );
+    const eventChannelId = await t.run(async (ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        channelType: "event",
+        name: "Private Picnic",
+        slug: "event-def456",
+        meetingId,
+        createdById: hostId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        isEnabled: true,
+        memberCount: 1,
+      }),
+    );
+    await insertMessage(t, eventChannelId, "secret picnic logistics");
+
+    const { results } = await t.query(
+      api.functions.messaging.search.searchMessages,
+      { token: accessToken, communityId, query: "picnic" },
+    );
+
+    expect(results).toHaveLength(0);
+  });
+
+  test("rejects a caller who is not a member of the searched community", async () => {
+    const t = convexTest(schema, modules);
+    const homeCommunity = await createCommunity(t, "home2");
+    const foreignCommunity = await createCommunity(t, "foreign2");
+    // Alice is a member of homeCommunity only.
+    const { accessToken } = await createUser(t, homeCommunity, "Alice");
+
+    await expect(
+      t.query(api.functions.messaging.search.searchMessages, {
+        token: accessToken,
+        communityId: foreignCommunity,
+        query: "picnic",
+      }),
+    ).rejects.toThrow();
   });
 
   test("returns nothing for queries below the minimum length", async () => {

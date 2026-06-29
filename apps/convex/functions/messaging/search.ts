@@ -23,6 +23,7 @@ import {
 } from "../../lib/helpers";
 import { getChannelSlug } from "../../lib/slugs";
 import { canAccessEventChannel } from "./eventChat";
+import { requireCommunityMember } from "../scheduling/permissions";
 
 /** Below this length a search is a no-op (avoids matching on single letters). */
 const MIN_QUERY_LENGTH = 2;
@@ -74,7 +75,12 @@ type SearchResult = {
  *    per the user's actual group context via `channelEffectiveEnabledForGroup`
  *    so a channel a linked group hid (`sharedGroups[].hiddenFromNavigation`)
  *    isn't exposed to that group's members.
- *  - Event channels additionally go through `canAccessEventChannel`.
+ *  - Event channels are gated SOLELY by `canAccessEventChannel` (host /
+ *    delegated leader / RSVP), with no membership-row requirement — matching
+ *    getMessages, which routes event channels straight through that check.
+ *    They are resolved in a dedicated pass over the caller's hosted / RSVP'd /
+ *    led-group meetings, and group leadership alone never grants access to an
+ *    explicit-host event channel.
  *
  * The set is bounded by the user's memberships + their leader groups' channels,
  * so this stays cheap regardless of total community size.
@@ -111,13 +117,23 @@ async function resolveAccessibleChannelIds(
 
   const accessible = new Set<string>();
 
+  // Led groups, used both for the leader channel pass below and for resolving
+  // delegated-host event-channel access (leaders of the hosting group can read
+  // an event channel that has no explicit host — see canAccessEventChannel).
+  const leaderGroupIds: Id<"groups">[] = [];
+
   // Leaders see every (non-archived) channel in their group, even without a
   // dedicated membership row. Leadership also bypasses the disabled-channel
-  // gate, so these are added unconditionally.
+  // gate, so these are added unconditionally — EXCEPT event channels, which
+  // always gate on meeting-based access (host / delegated leader / RSVP) via
+  // canAccessEventChannel, exactly as getMessages does. Leadership of the
+  // hosting group alone does not grant read access to an explicit-host event,
+  // so event channels are deferred to the canAccessEventChannel pass below.
   for (const [groupId, role] of groupRoleMap) {
     if (!isLeaderRole(role)) continue;
     const group = await getGroup(groupId as Id<"groups">);
     if (!group || group.isArchived || group.communityId !== communityId) continue;
+    leaderGroupIds.push(groupId as Id<"groups">);
     const channels = await ctx.db
       .query("chatChannels")
       .withIndex("by_group", (q) => q.eq("groupId", groupId as Id<"groups">))
@@ -125,6 +141,7 @@ async function resolveAccessibleChannelIds(
       .collect();
     for (const channel of channels) {
       channelCache.set(channel._id, channel);
+      if (channel.channelType === "event") continue;
       accessible.add(channel._id);
     }
   }
@@ -201,6 +218,70 @@ async function resolveAccessibleChannelIds(
     accessible.add(channel._id);
   }
 
+  // Event channels are readable purely via meeting-based access — host,
+  // delegated leader, or RSVP — with NO chatChannelMembers row required (see
+  // getMessages, which routes event channels straight through
+  // canAccessEventChannel). A "Can't Go" RSVPer or a host who never opened the
+  // chat can read it in-app, so search must surface it too. Gather the
+  // meetings the caller could host/attend, resolve their event channels, and
+  // gate each one through canAccessEventChannel exactly like getMessages —
+  // never broader.
+  const candidateMeetingIds = new Set<string>();
+
+  // Meetings the caller created (host access).
+  const createdMeetings = await ctx.db
+    .query("meetings")
+    .withIndex("by_createdBy", (q) => q.eq("createdById", userId))
+    .collect();
+  for (const meeting of createdMeetings) {
+    candidateMeetingIds.add(meeting._id);
+  }
+
+  // Meetings the caller RSVP'd to (RSVP access).
+  const rsvps = await ctx.db
+    .query("meetingRsvps")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  for (const rsvp of rsvps) {
+    candidateMeetingIds.add(rsvp.meetingId);
+  }
+
+  // Meetings in groups the caller leads (delegated-host access for events with
+  // no explicit host — canAccessEventChannel makes the final call).
+  for (const groupId of leaderGroupIds) {
+    const groupMeetings = await ctx.db
+      .query("meetings")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .collect();
+    for (const meeting of groupMeetings) {
+      candidateMeetingIds.add(meeting._id);
+    }
+  }
+
+  for (const meetingId of candidateMeetingIds) {
+    const channel = await ctx.db
+      .query("chatChannels")
+      .withIndex("by_meetingId", (q) =>
+        q.eq("meetingId", meetingId as Id<"meetings">),
+      )
+      .first();
+    if (!channel || channel.isArchived) continue;
+    if (accessible.has(channel._id)) continue;
+
+    // Community scoping: event channels inherit their hosting group's community.
+    if (channel.groupId) {
+      const group = await getGroup(channel.groupId);
+      if (!group || group.isArchived || group.communityId !== communityId) continue;
+    } else if (channel.communityId !== communityId) {
+      continue;
+    }
+
+    if (!(await canAccessEventChannel(ctx, userId, channel))) continue;
+
+    channelCache.set(channel._id, channel);
+    accessible.add(channel._id);
+  }
+
   return accessible;
 }
 
@@ -212,6 +293,14 @@ export const searchMessages = query({
   },
   handler: async (ctx, args): Promise<{ results: SearchResult[]; truncated: boolean }> => {
     const userId = await requireAuth(ctx, args.token);
+
+    // Defense-in-depth: fail fast if the caller isn't a member of the
+    // community they're searching. The per-channel re-scoping below already
+    // prevents cross-tenant leaks (every accessible channel is gated to
+    // args.communityId), so this changes nothing for legitimate callers — it
+    // just makes the tenant boundary self-evident and rejects a foreign
+    // communityId outright instead of silently returning an empty list.
+    await requireCommunityMember(ctx, args.communityId, userId);
 
     const term = args.query.trim();
     if (term.length < MIN_QUERY_LENGTH) {
