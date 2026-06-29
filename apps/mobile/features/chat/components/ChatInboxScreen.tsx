@@ -624,6 +624,7 @@ export function ChatInboxScreen({
           <InboxSearchResults
             query={trimmedSearch}
             results={searchResults?.results}
+            truncated={searchResults?.truncated}
           />
         ) : (
           <>

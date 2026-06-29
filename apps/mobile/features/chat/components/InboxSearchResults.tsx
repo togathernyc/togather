@@ -42,6 +42,28 @@ interface InboxSearchResultsProps {
   query: string;
   /** Results from the query; `undefined` while the query is in flight. */
   results: MessageSearchResult[] | undefined;
+  /**
+   * True when the backend stopped before exhausting the index (hit the result
+   * or scan cap). We surface a hint so users on large communities know more
+   * matches may exist beyond what's shown.
+   */
+  truncated?: boolean;
+}
+
+/**
+ * Display label for a result row's header. DMs/group DMs often have an empty
+ * `channelName` (DM titles are computed client-side from members), so fall back
+ * to the sender's name or a generic label rather than rendering a blank header.
+ */
+function resultHeaderLabel(result: MessageSearchResult): string {
+  if (result.groupName) {
+    return `${result.groupName} · ${result.channelName}`;
+  }
+  if (result.channelName) return result.channelName;
+  if (result.isAdHoc || !result.groupId) {
+    return result.senderName ?? "Direct message";
+  }
+  return "Direct message";
 }
 
 /** Compact relative time for a search-result row ("3h", "2d", "Apr 8"). */
@@ -60,7 +82,11 @@ function formatResultTime(timestamp: number, now: number): string {
   });
 }
 
-export function InboxSearchResults({ query, results }: InboxSearchResultsProps) {
+export function InboxSearchResults({
+  query,
+  results,
+  truncated,
+}: InboxSearchResultsProps) {
   const router = useRouter();
   const { colors } = useTheme();
 
@@ -71,11 +97,13 @@ export function InboxSearchResults({ query, results }: InboxSearchResultsProps) 
         router.push(`/e/${result.meetingShortId}?source=app` as any);
         return;
       }
-      // Ad-hoc DMs / group DMs have no owning group.
+      // Ad-hoc DMs / group DMs have no owning group. `channelName` is often
+      // empty for DMs (the title is computed client-side from members), so pass
+      // a sensible header label rather than a blank one.
       if (result.isAdHoc || !result.groupId) {
         router.push({
           pathname: `/inbox/dm/${result.channelId}` as any,
-          params: { groupName: result.channelName },
+          params: { groupName: resultHeaderLabel(result) },
         });
         return;
       }
@@ -124,10 +152,15 @@ export function InboxSearchResults({ query, results }: InboxSearchResultsProps) 
       keyExtractor={(item) => item.messageId}
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={styles.listContent}
+      ListFooterComponent={
+        truncated ? (
+          <Text style={[styles.truncatedFooter, { color: colors.textSecondary }]}>
+            Showing top matches — refine your search to narrow results.
+          </Text>
+        ) : null
+      }
       renderItem={({ item }) => {
-        const location = item.groupName
-          ? `${item.groupName} · ${item.channelName}`
-          : item.channelName || "Direct message";
+        const location = resultHeaderLabel(item);
         const senderPrefix = item.senderName ? `${item.senderName}: ` : "";
         return (
           <Pressable
@@ -199,5 +232,11 @@ const styles = StyleSheet.create({
   snippet: {
     fontSize: 15,
     lineHeight: 20,
+  },
+  truncatedFooter: {
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 24,
   },
 });
