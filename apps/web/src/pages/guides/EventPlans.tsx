@@ -306,12 +306,14 @@ export function EventPlans() {
         </P>
 
         <P>
-          Tap a role cell and choose <Term>Request history</Term> to see the full
-          trail for that slot: who was asked, when, and how many times, alongside
-          whether they've since confirmed, declined, or been removed. From there
-          you can <Term>Resend</Term> the confirm-or-decline request to a single
-          person who's still awaiting — a precise nudge when you don't want to
-          re-send to the whole plan.
+          Tap a role cell to manage who's in it. Next to anyone still awaiting a
+          response is <Term>Send request</Term> — it pings just that one person,
+          so after you assign or reassign a single volunteer you can request them
+          on their own instead of re-sending to the whole plan. Choose{" "}
+          <Term>Request history</Term> on the same popover to see the full trail
+          for that slot: who was asked, when, and how many times, alongside
+          whether they've since confirmed, declined, or been removed — and{" "}
+          <Term>Resend</Term> from there too.
         </P>
       </Section>
 
