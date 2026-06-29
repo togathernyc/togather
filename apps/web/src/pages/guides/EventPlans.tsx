@@ -306,10 +306,12 @@ export function EventPlans() {
         </P>
 
         <P>
-          Tap a role cell to manage who's in it. Next to anyone still awaiting a
-          response is <Term>Send request</Term> — it pings just that one person,
-          so after you assign or reassign a single volunteer you can request them
-          on their own instead of re-sending to the whole plan. Choose{" "}
+          Tap a role cell to manage who's in it. Once the plan is published, next
+          to anyone still awaiting a response is <Term>Send request</Term> — it
+          pings just that one person, so after you assign or reassign a single
+          volunteer you can request them on their own instead of re-sending to the
+          whole plan. (On a still-draft plan you publish first, which is what
+          sends the initial requests.) Choose{" "}
           <Term>Request history</Term> on the same popover to see the full trail
           for that slot: who was asked, when, and how many times, alongside
           whether they've since confirmed, declined, or been removed — and{" "}

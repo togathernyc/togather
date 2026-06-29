@@ -2574,10 +2574,13 @@ function RoleCellPopover({
   onClose: () => void;
 }) {
   // Per-person serving request, straight from the occupant row. After assigning
-  // or reassigning one volunteer, a leader can ping just that person instead of
-  // re-sending the whole plan via Publish. Reuses the same scheduler-gated
-  // action as the request-history "Resend"; the backend only (re-)sends to an
-  // `unconfirmed` assignment, so the action is shown only for awaiting people.
+  // or reassigning one volunteer on a PUBLISHED plan, a leader can ping just that
+  // person instead of re-sending the whole plan via Publish. Reuses the same
+  // scheduler-gated action as the request-history "Resend"; the backend only
+  // (re-)sends to an `unconfirmed` assignment, so the action is shown only for
+  // awaiting people. Gated to published plans (see the occupant row): on a draft
+  // the first send is "Publish & send requests", so a stray tap can't text a
+  // volunteer about an unpublished roster the leader is still building.
   const resend = useAuthenticatedAction(
     api.functions.scheduling.assignments.resendAssignmentRequest,
   );
@@ -2621,7 +2624,7 @@ function RoleCellPopover({
             <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
               {o.userName}
             </Text>
-            {o.status === "unconfirmed" ? (
+            {event.status === "published" && o.status === "unconfirmed" ? (
               <TouchableOpacity
                 onPress={() => handleSendOne(o.assignmentId, o.userName)}
                 disabled={resending === (o.assignmentId as string)}
