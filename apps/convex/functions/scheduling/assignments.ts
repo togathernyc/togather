@@ -809,6 +809,8 @@ export const respondToAssignment = mutation({
       throw new ConvexError("You can only respond to your own assignments");
     }
 
+    const previousStatus = assignment.status;
+
     await ctx.db.patch(args.assignmentId, {
       status: args.status,
       declineNote:
@@ -832,20 +834,26 @@ export const respondToAssignment = mutation({
       { sourceTeamId: assignment.teamId },
     );
 
-    // Let the schedulers know the volunteer responded. Fanned out via the job
-    // worker (push + in-app inbox) so a slow notification path never blocks the
-    // volunteer's accept/decline.
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.scheduling.assignments.notifyLeadersOfResponse,
-      {
-        assignmentId: args.assignmentId,
-        responderId: userId,
-        status: args.status,
-        declineNote:
-          args.status === "declined" ? args.declineNote : undefined,
-      },
-    );
+    // Let the schedulers know the volunteer responded — but only on an actual
+    // state change. A stale client or a double-tap can re-`respondToAssignment`
+    // with the same answer; without this guard each call would re-notify
+    // leaders, spamming duplicate accepted/declined messages for one response.
+    // A genuine change of heart (confirmed → declined, or vice-versa) still
+    // notifies. Fanned out via the job worker so a slow notification path never
+    // blocks the volunteer's accept/decline.
+    if (previousStatus !== args.status) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.assignments.notifyLeadersOfResponse,
+        {
+          assignmentId: args.assignmentId,
+          responderId: userId,
+          status: args.status,
+          declineNote:
+            args.status === "declined" ? args.declineNote : undefined,
+        },
+      );
+    }
 
     return { assignmentId: args.assignmentId, status: args.status };
   },

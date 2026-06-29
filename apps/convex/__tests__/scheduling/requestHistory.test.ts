@@ -422,6 +422,43 @@ describe("leader notification on accept/decline", () => {
     ).toBe(0);
   });
 
+  it("only notifies leaders on an actual status change, not on duplicate responses", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const volunteer = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await makeEvent(t, world, leader);
+    const assignmentId = await assign(t, world, leader, planId, world.channelMemberId);
+
+    // Count notify-leaders jobs ever scheduled (pending or completed), by name.
+    const notifyJobCount = () =>
+      t.run(async (ctx) => {
+        const jobs = await ctx.db.system
+          .query("_scheduled_functions")
+          .collect();
+        return jobs.filter((j) => j.name.includes("notifyLeadersOfResponse"))
+          .length;
+      });
+
+    const respond = (status: "confirmed" | "declined") =>
+      t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+        token: volunteer,
+        assignmentId,
+        status,
+      });
+
+    // First real response → one notification scheduled.
+    await respond("confirmed");
+    expect(await notifyJobCount()).toBe(1);
+
+    // Duplicate same-status response (stale client / double-tap) → no new one.
+    await respond("confirmed");
+    expect(await notifyJobCount()).toBe(1);
+
+    // Genuine change of heart → notify again.
+    await respond("declined");
+    expect(await notifyJobCount()).toBe(2);
+  });
+
   it("never self-notifies a leader who responds to their own assignment", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;
