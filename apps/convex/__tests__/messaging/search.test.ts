@@ -10,7 +10,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
-import { api } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 import { generateTokens } from "../../lib/auth";
 import type { Id } from "../../_generated/dataModel";
 
@@ -127,17 +127,26 @@ async function insertMessage(
     isDeleted?: boolean;
   } = {},
 ): Promise<Id<"chatMessages">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("chatMessages", {
+  return await t.run(async (ctx) => {
+    // Derive communityId from the channel exactly like production writes do, so
+    // the community-scoped search index can find the message.
+    const channel = await ctx.db.get(channelId);
+    let communityId = channel?.communityId;
+    if (!communityId && channel?.groupId) {
+      const group = await ctx.db.get(channel.groupId);
+      communityId = group?.communityId ?? undefined;
+    }
+    return ctx.db.insert("chatMessages", {
       channelId,
+      communityId,
       senderId: opts.senderId,
       senderName: opts.senderName ?? "Sender",
       content,
       contentType: opts.contentType ?? "text",
       createdAt: Date.now(),
       isDeleted: opts.isDeleted ?? false,
-    }),
-  );
+    });
+  });
 }
 
 describe("searchMessages", () => {
@@ -421,6 +430,47 @@ describe("searchMessages", () => {
     });
 
     expect(results).toHaveLength(0);
+  });
+
+  test("backfill populates communityId so legacy messages become searchable", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "theta");
+    const { userId, accessToken } = await createUser(t, communityId, "Alice");
+    const { channelId } = await createGroupWithChannel(t, communityId, userId);
+
+    // Legacy row written before the field existed: no communityId.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatMessages", {
+        channelId,
+        content: "legacy picnic message",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+    });
+
+    // Not yet searchable — the community-scoped index can't match a null
+    // communityId.
+    const before = await t.query(api.functions.messaging.search.searchMessages, {
+      token: accessToken,
+      communityId,
+      query: "picnic",
+    });
+    expect(before.results).toHaveLength(0);
+
+    // Large batch → completes in a single page (no self-reschedule).
+    const result = await t.mutation(
+      internal.functions.admin.migrations.backfillMessageCommunityId,
+      { batchSize: 1000 },
+    );
+    expect(result.patched).toBe(1);
+
+    const after = await t.query(api.functions.messaging.search.searchMessages, {
+      token: accessToken,
+      communityId,
+      query: "picnic",
+    });
+    expect(after.results).toHaveLength(1);
   });
 
   test("returns nothing for queries below the minimum length", async () => {

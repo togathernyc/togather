@@ -1,12 +1,13 @@
 /**
  * Inbox message search.
  *
- * Full-text search over chat message bodies for the app inbox. Results are
- * scoped to the caller's active community and restricted to channels the caller
- * can actually read (the same read boundary `getMessages` enforces). Convex
- * search-index filters can only match a single field value, so they can't OR
- * across the user's channel set — community/permission scoping is therefore
- * applied in the handler after pulling matches from the index.
+ * Full-text search over chat message bodies for the app inbox. The search index
+ * is filtered to the caller's active community via the denormalized
+ * `chatMessages.communityId` (so other tenants' messages are never scanned).
+ * Results are then restricted to the channels the caller can actually read (the
+ * same read boundary `getMessages` enforces) — Convex search filters can't OR
+ * across the user's channel set, so that per-channel scoping is applied in the
+ * handler after pulling community-scoped matches from the index.
  */
 
 import { v } from "convex/values";
@@ -30,12 +31,10 @@ const SEARCH_RESULT_LIMIT = 40;
 /** Page size when scanning the relevance-ranked search index. */
 const SEARCH_PAGE_SIZE = 100;
 /**
- * Hard cap on how many index rows we scan before giving up. The index returns
- * globally relevance-ranked rows and we filter to the caller's accessible
- * channels afterwards, so in a multi-community dataset the top rows may all be
- * inaccessible. We keep paging past those (rather than `.take(100)` once) until
- * we fill the result limit, exhaust the index, or hit this scan cap — bounding
- * cost while avoiding empty results when accessible matches exist deeper down.
+ * Hard cap on how many index rows we scan before giving up. The search index is
+ * filtered to the caller's community, so scanned rows are already same-tenant;
+ * we still page past channels the caller can't read (leaders-only channels, etc.)
+ * until we fill the result limit, exhaust the matches, or hit this scan cap.
  */
 const MAX_SCAN_DOCS = 600;
 
@@ -264,7 +263,10 @@ export const searchMessages = query({
       const page = await ctx.db
         .query("chatMessages")
         .withSearchIndex("search_content", (q) =>
-          q.search("content", term).eq("isDeleted", false),
+          q
+            .search("content", term)
+            .eq("communityId", args.communityId)
+            .eq("isDeleted", false),
         )
         .paginate({ cursor, numItems: SEARCH_PAGE_SIZE });
 

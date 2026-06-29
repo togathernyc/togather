@@ -19,6 +19,7 @@ import type { QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getDisplayName, getMediaUrl, generateShortId } from "../../lib/utils";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { requireGroupScheduler, requireGroupMember } from "../scheduling/permissions";
@@ -133,6 +134,7 @@ export const sendAvailabilityRequest = mutation({
     const content = message || "Availability request";
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: args.channelId,
+      communityId: await resolveChannelCommunityId(ctx, args.channelId),
       senderId: userId,
       content,
       contentType: "availability_request",

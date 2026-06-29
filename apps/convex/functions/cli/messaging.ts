@@ -12,6 +12,7 @@ import { v } from "convex/values";
 import { mutation } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import { requireAuth } from "../../lib/auth";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { checkRateLimit } from "../../lib/rateLimit";
 import {
   isCustomChannel,
@@ -268,6 +269,7 @@ export const sendMessage = mutation({
 
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: args.channelId,
+      communityId: await resolveChannelCommunityId(ctx, args.channelId),
       senderId: userId,
       content: args.content,
       contentType: "text",

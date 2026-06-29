@@ -10,6 +10,7 @@ import { query, mutation, internalQuery, internalMutation, internalAction } from
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth } from "../lib/auth";
+import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { canEditMeeting } from "../lib/meetingPermissions";
 import { NOTIFIED_RSVP_OPTION_IDS, isAttendingRsvpOption } from "../lib/meetingConfig";
 import { now, getMediaUrl } from "../lib/utils";
@@ -408,6 +409,7 @@ export const recordBlast = internalMutation({
 
     const messageId = await ctx.db.insert("chatMessages", {
       channelId,
+      communityId: await resolveChannelCommunityId(ctx, channelId),
       senderId: args.sentById,
       content: args.message,
       contentType: "text",

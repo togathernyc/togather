@@ -1733,6 +1733,14 @@ export default defineSchema({
    */
   chatMessages: defineTable({
     channelId: v.id("chatChannels"),
+    /**
+     * Denormalized community the message belongs to (derived from the channel's
+     * group, or the channel's own communityId for ad-hoc dm/group_dm channels).
+     * Set at write time and backfilled for existing rows; used as a search-index
+     * filter field so inbox search scopes to a community without scanning other
+     * tenants' messages. Optional only for legacy rows pending backfill.
+     */
+    communityId: v.optional(v.id("communities")),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
     contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "bug_card" | "poll" | "availability_request"
@@ -1794,14 +1802,15 @@ export default defineSchema({
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_sourceKey", ["sourceKey"])
-    // Full-text search over message body for inbox search. `isDeleted` is a
-    // filter field so soft-deleted messages don't consume the result budget.
-    // Permission/community scoping is enforced in the query handler against the
-    // user's accessible channels — Convex search filters can't OR across the
-    // user's channel set.
+    // Full-text search over message body for inbox search. `communityId`
+    // scopes the search to a single tenant in the index (so other communities'
+    // messages aren't scanned), and `isDeleted` keeps soft-deleted messages out
+    // of the result budget. Per-channel permission scoping is still enforced in
+    // the query handler against the user's accessible channels — Convex search
+    // filters can't OR across the user's channel set.
     .searchIndex("search_content", {
       searchField: "content",
-      filterFields: ["isDeleted"],
+      filterFields: ["communityId", "isDeleted"],
     }),
 
   /**
