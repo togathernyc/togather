@@ -172,25 +172,33 @@ export default function CreateChannelScreen() {
     } catch (error: any) {
       console.error("Failed to create channel:", error);
 
+      // ConvexError delivers its thrown payload on `error.data`. In production
+      // `error.message` is only a generic "[Request ID: …] Server Error"
+      // string, so prefer `error.data` — otherwise the friendly server
+      // messages below never match and the raw "Server Error" leaks into the
+      // toast (which is exactly what users saw on the 20-channel limit).
+      const convexMessage: string =
+        typeof error?.data === "string" ? error.data : error?.message ?? "";
+
       // Extract user-friendly error message
       let errorMessage = "Failed to create channel. Please try again.";
-      if (error?.message) {
-        // Handle Convex errors which often have the message in error.message
-        if (error.message.includes("Only group leaders")) {
+      if (convexMessage) {
+        if (convexMessage.includes("Only group leaders")) {
           errorMessage = "Only group leaders can create channels.";
-        } else if (error.message.includes("maximum of 20 channels")) {
+        } else if (convexMessage.includes("maximum of 20 channels")) {
           errorMessage =
             "This group has reached the maximum of 20 channels. Archive some channels to create new ones.";
-        } else if (error.message.includes("1-50 characters")) {
+        } else if (convexMessage.includes("1-50 characters")) {
           errorMessage = "Channel name must be between 1 and 50 characters.";
         } else if (
-          error.message.includes("Not authenticated") ||
-          error.message.includes("no auth token")
+          convexMessage.includes("Not authenticated") ||
+          convexMessage.includes("no auth token")
         ) {
           errorMessage = "Please log in again to create a channel.";
-        } else {
-          // Use the error message if it seems user-friendly
-          errorMessage = error.message;
+        } else if (!convexMessage.includes("Server Error")) {
+          // Use the server's message only when it's a real ConvexError
+          // payload, never the opaque production "Server Error" fallback.
+          errorMessage = convexMessage;
         }
       }
 

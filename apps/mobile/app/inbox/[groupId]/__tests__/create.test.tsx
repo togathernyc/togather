@@ -399,6 +399,38 @@ describe("CreateChannelScreen", () => {
       );
     });
 
+    // Regression: in production a ConvexError arrives with a generic
+    // "Server Error" `.message` and the real text on `.data`. The handler must
+    // read `.data`, otherwise the friendly message never surfaces and the raw
+    // "Server Error" leaks into the toast.
+    it("surfaces a production ConvexError from error.data, not 'Server Error'", async () => {
+      mockCreateChannel.mockRejectedValueOnce(
+        Object.assign(
+          new Error("[CONVEX M(...)] [Request ID: abc] Server Error"),
+          { data: "This group has reached the maximum of 20 channels" }
+        )
+      );
+
+      const { getByPlaceholderText, getByTestId, findByTestId } = render(
+        <CreateChannelScreen />
+      );
+      const nameInput = getByPlaceholderText("Enter channel name");
+
+      act(() => {
+        fireEvent.changeText(nameInput, "Test Channel");
+      });
+
+      const createButton = getByTestId("create-button");
+      await act(async () => {
+        fireEvent.press(createButton);
+      });
+
+      const toastMessage = await findByTestId("toast-message");
+      expect(toastMessage.props.children).toBe(
+        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
+      );
+    });
+
     it("shows toast with 'character limit' error message", async () => {
       mockCreateChannel.mockRejectedValueOnce(
         new Error("Channel name must be 1-50 characters")
