@@ -1292,4 +1292,81 @@ describe("DM request email notifications", () => {
     );
     expect(emailCall).toBeUndefined();
   });
+
+  test("does not email on follow-up messages sent while the recipient is still pending", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    const now = Date.now();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "ticket-dm-followup", status: "ok" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(user2Id, {
+        email: "recipient@example.com",
+        emailNotificationsEnabled: true,
+      });
+      await ctx.db.insert("pushTokens", {
+        userId: user2Id,
+        token: "ExponentPushToken[dm-followup-test]",
+        platform: "ios",
+        environment: "staging",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        lastUsedAt: now,
+      });
+    });
+
+    const channelId = await seedDmRequest(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // The opening request message already exists (and would have emailed).
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Hey, would love to connect!",
+        contentType: "text",
+        createdAt: now,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    // A follow-up sent while the recipient is still pending must not email.
+    const followUpId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatMessages", {
+        channelId,
+        senderId: userId,
+        content: "Still hoping to chat!",
+        contentType: "text",
+        createdAt: now + 1000,
+        isDeleted: false,
+        senderName: "Test User",
+      });
+    });
+
+    await t.mutation(internal.functions.messaging.events.onMessageSent, {
+      messageId: followUpId,
+      channelId,
+      senderId: userId,
+    });
+
+    vi.runAllTimers();
+    await t.finishInProgressScheduledFunctions();
+
+    const emailCall = fetchMock.mock.calls.find(
+      (c) => c?.[0] === RESEND_EMAIL_URL,
+    );
+    expect(emailCall).toBeUndefined();
+  });
 });
