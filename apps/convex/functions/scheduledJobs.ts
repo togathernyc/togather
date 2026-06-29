@@ -25,6 +25,7 @@ import {
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { notifyBatch } from "../lib/notifications/send";
+import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { now, getMediaUrlWithTransform, ImagePresets } from "../lib/utils";
 import {
   calculateCommunicationBotNextSchedule,
@@ -1768,6 +1769,7 @@ export const insertBotMessage = internalMutation({
     // Insert bot message (no senderId - it's a system/bot message)
     const messageId = await ctx.db.insert("chatMessages", {
       channelId,
+      communityId: await resolveChannelCommunityId(ctx, channelId),
       // senderId is undefined for bot messages
       content,
       contentType: contentType || "bot",

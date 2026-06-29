@@ -18,6 +18,7 @@ import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import {
   channelEffectiveEnabledForGroup,
   channelIsLeaderEnabled,
@@ -273,6 +274,7 @@ export const createPoll = mutation({
     // never observe an inconsistent state.
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: args.channelId,
+      communityId: await resolveChannelCommunityId(ctx, args.channelId),
       senderId: userId,
       content: trimmedQuestion,
       contentType: "poll",

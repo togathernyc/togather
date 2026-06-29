@@ -10,6 +10,7 @@ import type { MutationCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
 import { now, generateShortId, getDisplayName, getMediaUrl } from "../../lib/utils";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { requireAuth } from "../../lib/auth";
 import { isActiveLeader, isActiveMembership } from "../../lib/helpers";
 import {
@@ -1104,6 +1105,7 @@ export const postToChat = mutation({
     // Insert the chat message
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: targetChannel._id,
+      communityId: await resolveChannelCommunityId(ctx, targetChannel._id),
       senderId: userId,
       content,
       contentType: "text",

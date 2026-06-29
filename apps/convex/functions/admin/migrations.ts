@@ -6,8 +6,11 @@
 
 import { v } from "convex/values";
 import { mutation, internalMutation } from "../../_generated/server";
+import { internal } from "../../_generated/api";
+import type { Id } from "../../_generated/dataModel";
 import { now } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 
 // ============================================================================
 // Migration Functions (for Supabase to Convex sync)
@@ -90,5 +93,62 @@ export const migrateAdminGroupMembersToLeader = internalMutation({
     }
 
     return { migrated, total: adminMembers.length };
+  },
+});
+
+// ============================================================================
+// chatMessages.communityId backfill
+// ============================================================================
+
+/**
+ * Backfill `chatMessages.communityId` for legacy rows written before the field
+ * existed. New messages set it at write time (see `resolveChannelCommunityId`),
+ * so this only needs to run once after deploy to make historical messages
+ * searchable under the community-scoped `search_content` index.
+ *
+ * Processes one page at a time and reschedules itself until the table is
+ * exhausted, so a single `npx convex run` invocation backfills everything
+ * without exceeding per-mutation limits. Idempotent: rows that already have a
+ * communityId are skipped, so re-running is safe.
+ */
+export const backfillMessageCommunityId = internalMutation({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 200;
+    const page = await ctx.db
+      .query("chatMessages")
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize });
+
+    // Cache channel→community lookups within the batch; many messages share a
+    // channel, so this avoids redundant reads.
+    const communityByChannel = new Map<string, Id<"communities"> | undefined>();
+    let patched = 0;
+    for (const message of page.page) {
+      if (message.communityId) continue;
+      if (!communityByChannel.has(message.channelId)) {
+        communityByChannel.set(
+          message.channelId,
+          await resolveChannelCommunityId(ctx, message.channelId),
+        );
+      }
+      const communityId = communityByChannel.get(message.channelId);
+      if (communityId) {
+        await ctx.db.patch(message._id, { communityId });
+        patched++;
+      }
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.admin.migrations.backfillMessageCommunityId,
+        { cursor: page.continueCursor, batchSize },
+      );
+    }
+
+    return { patched, scanned: page.page.length, isDone: page.isDone };
   },
 });
