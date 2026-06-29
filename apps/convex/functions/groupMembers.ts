@@ -22,7 +22,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
 import { internal } from "../_generated/api";
-import { Id } from "../_generated/dataModel";
+import { Id, Doc } from "../_generated/dataModel";
 import { now, normalizePagination, getDisplayName, getMediaUrl } from "../lib/utils";
 import { paginationArgs, groupRoleValidator, memberStatusValidator } from "../lib/validators";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
@@ -107,6 +107,10 @@ export const search = query({
 /**
  * List members of a group with pagination
  *
+ * When `search` is provided, members are filtered server-side across the entire
+ * group (by name or email) before pagination, so large groups aren't limited to
+ * the first page of results.
+ *
  * SECURITY: Only returns members if the caller is a group member or community admin.
  * Non-members receive an empty response to prevent member list data leakage.
  */
@@ -116,6 +120,9 @@ export const list = query({
     token: v.optional(v.string()),
     includeInactive: v.optional(v.boolean()),
     role: v.optional(groupRoleValidator),
+    // When set, members are searched server-side across the whole group by
+    // name (and email), so large groups aren't limited to the first page.
+    search: v.optional(v.string()),
     ...paginationArgs,
   },
   handler: async (ctx, args) => {
@@ -188,6 +195,37 @@ export const list = query({
       return a.joinedAt - b.joinedAt;
     });
 
+    // userId -> user cache, reused for the final response below. We only fetch
+    // every user eagerly when we need their names to search; otherwise we fetch
+    // just the paginated page to avoid loading the whole group.
+    const userMap = new Map<string, Doc<"users"> | null>();
+
+    // Server-side search across the ENTIRE group, not just the current page.
+    // The mobile Hosts picker used to filter a single page client-side, so in
+    // large groups any member beyond the first page was unsearchable. Filtering
+    // here lets the picker find any member by name (or email) regardless of size.
+    const searchTerm = args.search?.trim().toLowerCase();
+    if (searchTerm) {
+      const allUserIds = members.map((m) => m.userId);
+      const allUsers = await Promise.all(allUserIds.map((id) => ctx.db.get(id)));
+      allUsers.forEach((user, i) => userMap.set(allUserIds[i], user));
+
+      members = members.filter((m) => {
+        const user = userMap.get(m.userId);
+        if (!user) return false;
+        const firstName = (user.firstName || "").toLowerCase();
+        const lastName = (user.lastName || "").toLowerCase();
+        const fullName = `${firstName} ${lastName}`.trim();
+        const email = (user.email || "").toLowerCase();
+        return (
+          fullName.includes(searchTerm) ||
+          firstName.includes(searchTerm) ||
+          lastName.includes(searchTerm) ||
+          email.includes(searchTerm)
+        );
+      });
+    }
+
     // Get total count before pagination
     const totalCount = members.length;
 
@@ -196,17 +234,14 @@ export const list = query({
     const hasMore = cursorIndex + limit < totalCount;
     const nextCursor = hasMore ? String(cursorIndex + limit) : undefined;
 
-    // Batch fetch all users upfront
+    // Batch fetch users for the page we're returning. When searching we already
+    // cached every user above, so only fetch the ones we don't have yet.
     const userIds = paginatedMembers.map((m) => m.userId);
-    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
-
-    // Build userId -> user map for O(1) lookup
-    const userMap = new Map<string, typeof users[0]>();
-    users.forEach((user, i) => {
-      if (user) {
-        userMap.set(userIds[i], user);
-      }
-    });
+    const missingUserIds = userIds.filter((id) => !userMap.has(id));
+    const fetchedUsers = await Promise.all(
+      missingUserIds.map((id) => ctx.db.get(id)),
+    );
+    missingUserIds.forEach((id, i) => userMap.set(id, fetchedUsers[i]));
 
     const notifsDisabled = await getUsersWithNotificationsDisabled(ctx, userIds);
 

@@ -26,6 +26,7 @@ import {
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
+import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
 /**
@@ -847,6 +848,7 @@ export const sendMessage = mutation({
 
     const messageId = await ctx.db.insert("chatMessages", {
       channelId,
+      communityId: await resolveChannelCommunityId(ctx, channelId),
       senderId: userId,
       content: args.content,
       contentType,
@@ -1088,6 +1090,7 @@ export const sendSystemMessage = internalMutation({
     // Create system message (no senderId = system message)
     const messageId = await ctx.db.insert("chatMessages", {
       channelId: args.channelId,
+      communityId: await resolveChannelCommunityId(ctx, args.channelId),
       // senderId is optional in schema for system/bot messages
       content: args.content,
       contentType: args.contentType || "system",

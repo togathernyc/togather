@@ -532,3 +532,265 @@ describe("listGroupChannels — includes shared channels", () => {
     expect(sharedCh).toBeUndefined();
   });
 });
+
+// ============================================================================
+// getChannelBySlug — pending shared-invite fallback (leaders only)
+// ============================================================================
+
+/**
+ * Adds a leader of the secondary group (Group B) who is NOT a channel member.
+ * Used to exercise the pending-invite fallback, which is gated to leaders.
+ */
+async function addSecondaryGroupLeader(
+  t: ReturnType<typeof convexTest>,
+  data: SharedChannelTestData
+): Promise<string> {
+  const leaderId = await t.run(async (ctx) => {
+    return await ctx.db.insert("users", {
+      firstName: "Leader",
+      lastName: "B",
+      phone: "+15555550042",
+      phoneVerified: true,
+      activeCommunityId: data.communityId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+  await t.run(async (ctx) => {
+    await ctx.db.insert("groupMembers", {
+      userId: leaderId,
+      groupId: data.groupBId,
+      role: "leader",
+      joinedAt: Date.now(),
+      notificationsEnabled: true,
+    });
+  });
+  const { accessToken } = await generateTokens(leaderId);
+  return accessToken;
+}
+
+describe("getChannelBySlug — pending shared-invite fallback", () => {
+  test("leader of invited group resolves a PENDING shared channel with the flag", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!._id).toBe(data.sharedChannelId);
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(true);
+    // The owning group's name is surfaced for the invitation prompt.
+    expect((result as Record<string, unknown>).primaryGroupName).toBe("Group A");
+    // Leader isn't a channel member yet — they accept first.
+    expect(result!.isMember).toBe(false);
+  });
+
+  test("non-leader member of invited group still cannot resolve a pending channel", async () => {
+    const t = convexTest(schema, modules);
+    // The seeded user is a plain member of both groups.
+    const data = await seedSharedChannelData(t, "pending");
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: data.accessToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).toBeNull();
+  });
+
+  test("accepted shared channel is not flagged as a pending invite", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: data.accessToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(false);
+  });
+
+  test("leader of an ACCEPTED secondary group resolves the channel without channel membership", async () => {
+    // Regression for the accept-from-info flow: respondToChannelInvite only
+    // flips the sharedGroups status, it doesn't add the leader as a channel
+    // member. A leader who accepts must still be able to load the channel info
+    // screen afterwards rather than getting "channel no longer available".
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!._id).toBe(data.sharedChannelId);
+    // Resolved via the leader fallback, not as a pending invite.
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(false);
+    expect(result!.isMember).toBe(false);
+  });
+});
+
+// ============================================================================
+// getChannelBySlug — channelId disambiguates same-slug shared invites
+// ============================================================================
+
+describe("getChannelBySlug — channelId disambiguator", () => {
+  test("resolves the channel matching channelId when two pending invites share a slug", async () => {
+    const t = convexTest(schema, modules);
+    // Group A → "shared-events" pending to Group B.
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    // A second primary group (Group C) owns a DIFFERENT channel that happens to
+    // use the same slug, also invited to Group B.
+    const groupCId = await t.run(async (ctx) => {
+      return await ctx.db.insert("groups", {
+        name: "Group C",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    const secondChannelId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatChannels", {
+        groupId: groupCId,
+        slug: "shared-events",
+        channelType: "custom",
+        name: "Other Events",
+        createdById: data.userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+        isShared: true,
+        sharedGroups: [
+          {
+            groupId: data.groupBId,
+            status: "pending",
+            invitedById: data.userId,
+            invitedAt: Date.now(),
+          },
+        ],
+      });
+    });
+
+    // channelId picks the exact channel, not just the first slug match.
+    const second = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: secondChannelId,
+      }
+    );
+    expect(second!._id).toBe(secondChannelId);
+
+    const first = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: data.sharedChannelId,
+      }
+    );
+    expect(first!._id).toBe(data.sharedChannelId);
+  });
+
+  test("channelId resolves the shared invite even when the invited group owns a same-slug local channel", async () => {
+    const t = convexTest(schema, modules);
+    // Group A owns "shared-events", pending to Group B.
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    // Group B ALSO owns a local channel with the SAME slug.
+    const localChannelId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatChannels", {
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelType: "custom",
+        name: "Group B Local",
+        createdById: data.userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    // Without a channelId hint, the local same-slug channel wins (by_group_slug).
+    const local = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+    expect(local!._id).toBe(localChannelId);
+
+    // With the invite's channelId, the local match must not shadow it — the
+    // shared (Group A) channel resolves and is flagged as a pending invite.
+    const shared = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: data.sharedChannelId,
+      }
+    );
+    expect(shared!._id).toBe(data.sharedChannelId);
+    expect((shared as Record<string, unknown>).pendingShareForGroup).toBe(true);
+  });
+});
+
+// ============================================================================
+// listPendingInvitesForGroup — payload includes channelSlug for deep-linking
+// ============================================================================
+
+describe("listPendingInvitesForGroup — channelSlug", () => {
+  test("includes channelSlug so the row can route to the channel info screen", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+      }
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].channelId).toBe(data.sharedChannelId);
+    expect(result[0].channelSlug).toBe("shared-events");
+  });
+});

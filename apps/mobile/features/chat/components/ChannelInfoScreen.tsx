@@ -71,6 +71,12 @@ import {
 type Props = {
   groupId: string;
   channelSlug: string;
+  /**
+   * Optional disambiguator for shared channels. Channel slugs are only unique
+   * within the owning group, so a group invited to two same-slug channels needs
+   * the id to resolve the right one. Plain group channels omit it.
+   */
+  channelId?: string;
 };
 
 type ChannelType =
@@ -108,7 +114,7 @@ function getChannelIconConfig(
   }
 }
 
-export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
+export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
@@ -122,7 +128,13 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     // can re-enable from Active state. Without this, the row is filtered out
     // and the screen shows "no longer available."
     token
-      ? { token, groupId: groupId as Id<"groups">, slug: channelSlug, includeArchived: true }
+      ? {
+          token,
+          groupId: groupId as Id<"groups">,
+          slug: channelSlug,
+          includeArchived: true,
+          ...(channelId ? { channelId: channelId as Id<"chatChannels"> } : {}),
+        }
       : "skip",
   );
 
@@ -170,6 +182,12 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const leaveChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.leaveChannel,
   );
+  const respondToInviteMutation = useAuthenticatedMutation(
+    api.functions.messaging.sharedChannels.respondToChannelInvite,
+  );
+  const removeGroupFromChannelMutation = useAuthenticatedMutation(
+    api.functions.messaging.sharedChannels.removeGroupFromChannel,
+  );
   const archiveCustomChannelMutation = useAuthenticatedMutation(
     api.functions.messaging.channels.archiveCustomChannel,
   );
@@ -210,6 +228,11 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [leaveVisible, setLeaveVisible] = useState(false);
   const [archiveVisible, setArchiveVisible] = useState(false);
+  const [pendingResponding, setPendingResponding] = useState<
+    null | "accept" | "decline"
+  >(null);
+  const [removeShareVisible, setRemoveShareVisible] = useState(false);
+  const [removingShare, setRemovingShare] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [pcoSettingsVisible, setPcoSettingsVisible] = useState(false);
@@ -294,6 +317,24 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     return channel.sharedGroups.filter((sg: any) => sg.status === "accepted").length;
   }, [channel?.sharedGroups]);
 
+  // Shared-channel relationship of THIS group (the URL group) to the channel.
+  // `pendingShareForGroup` / `primaryGroupName` come from getChannelBySlug.
+  const isPendingShareInvite =
+    (channel as { pendingShareForGroup?: boolean } | undefined)
+      ?.pendingShareForGroup === true;
+  const primaryGroupName = (
+    channel as { primaryGroupName?: string | null } | undefined
+  )?.primaryGroupName;
+  // True when this group is a *secondary* participant on a shared channel it
+  // owns by acceptance (not the owning group). Leaders here can remove the
+  // whole group from the channel — distinct from an individual "leave".
+  const isSecondaryShare = useMemo(() => {
+    if (!channel?.groupId || channel.groupId === groupId) return false;
+    return (channel.sharedGroups ?? []).some(
+      (sg: any) => sg.groupId === groupId && sg.status === "accepted",
+    );
+  }, [channel?.groupId, channel?.sharedGroups, groupId]);
+
   const handleBack = useCallback(() => {
     if (router.canGoBack()) {
       router.back();
@@ -367,6 +408,71 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
       setLeaving(false);
     }
   }, [channel?._id, leaveChannelMutation, groupId, router]);
+
+  const handleAcceptInvite = useCallback(async () => {
+    if (!channel?._id) return;
+    setPendingResponding("accept");
+    try {
+      await respondToInviteMutation({
+        channelId: channel._id,
+        groupId: groupId as Id<"groups">,
+        response: "accepted",
+      });
+      // Stay on the screen — getChannelBySlug now re-resolves the channel as an
+      // accepted shared channel and the normal management UI takes over.
+    } catch (e: any) {
+      Alert.alert("Couldn't accept", e?.message || "Please try again.");
+    } finally {
+      setPendingResponding(null);
+    }
+  }, [channel?._id, respondToInviteMutation, groupId]);
+
+  const handleDeclineInvite = useCallback(() => {
+    Alert.alert(
+      "Decline invitation",
+      "Decline this shared channel invitation?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Decline",
+          style: "destructive",
+          onPress: async () => {
+            if (!channel?._id) return;
+            setPendingResponding("decline");
+            try {
+              await respondToInviteMutation({
+                channelId: channel._id,
+                groupId: groupId as Id<"groups">,
+                response: "declined",
+              });
+              router.replace(`/groups/${groupId}` as any);
+            } catch (e: any) {
+              Alert.alert("Couldn't decline", e?.message || "Please try again.");
+            } finally {
+              setPendingResponding(null);
+            }
+          },
+        },
+      ],
+    );
+  }, [channel?._id, respondToInviteMutation, groupId, router]);
+
+  const handleRemoveShare = useCallback(async () => {
+    if (!channel?._id) return;
+    setRemovingShare(true);
+    try {
+      await removeGroupFromChannelMutation({
+        channelId: channel._id,
+        groupId: groupId as Id<"groups">,
+      });
+      setRemoveShareVisible(false);
+      router.replace(`/groups/${groupId}` as any);
+    } catch (e: any) {
+      Alert.alert("Couldn't remove", e?.message || "Please try again.");
+    } finally {
+      setRemovingShare(false);
+    }
+  }, [channel?._id, removeGroupFromChannelMutation, groupId, router]);
 
   const handleArchiveChannel = useCallback(async () => {
     if (!channel?._id) return;
@@ -571,7 +677,7 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         {/* Asymmetric-view banner — only when the viewer is here because
             they're a group leader and isn't actually a member of the
             channel itself (custom / PCO disabled / Leaders for non-leader-channel-members). */}
-        {isViewingAsLeaderOnly && (
+        {isViewingAsLeaderOnly && !isPendingShareInvite && (
           <AdminViewNote
             variant="banner"
             text="You can see this channel as a group leader. Members not in the channel don't see it."
@@ -604,6 +710,66 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
           )}
         </View>
 
+        {/* Pending shared-channel invitation — this group was invited to the
+            channel but hasn't accepted. Show a focused accept/decline prompt
+            and hide the normal management surfaces until the leader responds. */}
+        {isPendingShareInvite && (
+          <View
+            style={[
+              styles.sectionGroup,
+              styles.inviteCard,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            <Text style={[styles.inviteHeading, { color: colors.text }]}>
+              Shared channel invitation
+            </Text>
+            <Text style={[styles.inviteBody, { color: colors.textSecondary }]}>
+              {primaryGroupName
+                ? `${primaryGroupName} invited your group to join this channel.`
+                : "Your group has been invited to join this channel."}
+            </Text>
+            <View style={styles.inviteButtonRow}>
+              <TouchableOpacity
+                onPress={handleAcceptInvite}
+                disabled={pendingResponding !== null}
+                style={[
+                  styles.inviteAcceptBtn,
+                  { backgroundColor: primaryColor },
+                  pendingResponding !== null && { opacity: 0.6 },
+                ]}
+              >
+                {pendingResponding === "accept" ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.inviteAcceptText}>Accept</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleDeclineInvite}
+                disabled={pendingResponding !== null}
+                style={[
+                  styles.inviteDeclineBtn,
+                  { borderColor: colors.destructive },
+                  pendingResponding !== null && { opacity: 0.6 },
+                ]}
+              >
+                {pendingResponding === "decline" ? (
+                  <ActivityIndicator size="small" color={colors.destructive} />
+                ) : (
+                  <Text
+                    style={[styles.inviteDeclineText, { color: colors.destructive }]}
+                  >
+                    Decline
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {!isPendingShareInvite && (
+        <>
         {/* Open chat */}
         <Pressable
           onPress={handleOpenChat}
@@ -1000,6 +1166,33 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
                   Leave channel
                 </Text>
               </Pressable>
+
+              {/* Remove shared channel — leader-only opt-out for a group that
+                  participates in this channel as a secondary (non-owning)
+                  group. Removes the whole group from the share, distinct from
+                  an individual leave. The owning group keeps the channel. */}
+              {isLeader && isSecondaryShare && (
+                <Pressable
+                  onPress={() => setRemoveShareVisible(true)}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons
+                    name="remove-circle-outline"
+                    size={20}
+                    color={colors.destructive}
+                  />
+                  <Text style={[styles.actionLabel, { color: colors.destructive }]}>
+                    Remove shared channel
+                  </Text>
+                </Pressable>
+              )}
             </View>
           </>
         )}
@@ -1253,6 +1446,8 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
             </View>
           </>
         )}
+        </>
+        )}
       </ScrollView>
 
       {/* Rename modal */}
@@ -1342,6 +1537,17 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
         confirmText="Archive"
         destructive
         isLoading={archiving}
+      />
+
+      <ConfirmModal
+        visible={removeShareVisible}
+        title="Remove shared channel"
+        message={`Remove #${channelDisplayName} from this group? Members who are only here through this group will lose access. The owning group keeps the channel.`}
+        onConfirm={handleRemoveShare}
+        onCancel={() => setRemoveShareVisible(false)}
+        confirmText="Remove"
+        destructive
+        isLoading={removingShare}
       />
 
       {/* PCO Sync Settings — full-screen modal mounting the existing
@@ -1568,6 +1774,47 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
     borderRadius: 12,
     overflow: "hidden",
+  },
+  inviteCard: {
+    padding: 16,
+    gap: 8,
+  },
+  inviteHeading: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  inviteBody: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  inviteButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 8,
+  },
+  inviteAcceptBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteAcceptText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  inviteDeclineBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteDeclineText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   memberRow: {
     flexDirection: "row",
