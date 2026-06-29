@@ -838,6 +838,18 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               // rest into "+ N others"; see formatHostLine for the rules.
               const hostLine = formatHostLine(hosts);
 
+              // The profile route scopes to the viewer's *active* community and
+              // skips entirely without an auth token, so tapping a host only
+              // resolves correctly for an authenticated viewer whose active
+              // community is this event's community. On public share pages and
+              // cross-community views we still show the avatars (photo + crown)
+              // but leave them non-interactive rather than route to a broken
+              // "Profile unavailable" / wrong-community screen.
+              const canViewHostProfiles =
+                isAuthenticated &&
+                !!community?.id &&
+                String(community.id) === String((eventData as any).communityId);
+
               return (
                 <View style={styles.organizerColumn}>
                   <View style={styles.organizerHeader}>
@@ -857,15 +869,8 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                   >
                     {hosts.map((host) => {
                       const name = hostDisplayName(host);
-                      return (
-                        <TouchableOpacity
-                          key={host.id}
-                          style={styles.hostAvatarItem}
-                          activeOpacity={0.7}
-                          onPress={() => router.push(`/(user)/profile/${host.id}`)}
-                          accessibilityRole="button"
-                          accessibilityLabel={`View ${name || "host"}'s profile`}
-                        >
+                      const avatar = (
+                        <>
                           <Avatar imageUrl={host.profilePhoto} name={name} size={56} />
                           <View
                             style={[
@@ -875,6 +880,27 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                           >
                             <MaterialCommunityIcons name="crown" size={11} color={colors.surface} />
                           </View>
+                        </>
+                      );
+
+                      if (!canViewHostProfiles) {
+                        return (
+                          <View key={host.id} style={styles.hostAvatarItem}>
+                            {avatar}
+                          </View>
+                        );
+                      }
+
+                      return (
+                        <TouchableOpacity
+                          key={host.id}
+                          style={styles.hostAvatarItem}
+                          activeOpacity={0.7}
+                          onPress={() => router.push(`/(user)/profile/${host.id}`)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`View ${name || "host"}'s profile`}
+                        >
+                          {avatar}
                         </TouchableOpacity>
                       );
                     })}
