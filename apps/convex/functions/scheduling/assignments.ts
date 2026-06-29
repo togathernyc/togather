@@ -35,7 +35,11 @@ import {
 import { COMMUNITY_ROLES } from "../../lib/permissions";
 import { isLeaderRole } from "../../lib/helpers";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
-import { requireTeamGroupMember, requirePlanScheduler } from "./permissions";
+import {
+  requireTeamGroupMember,
+  requirePlanScheduler,
+  isGroupScheduler,
+} from "./permissions";
 
 /** Assignment statuses, for reference and validation. */
 const ASSIGNMENT_STATUSES = ["unconfirmed", "confirmed", "declined"] as const;
@@ -1835,6 +1839,7 @@ export const getResponseNotificationTargets = internalQuery({
       ctx.db.get(args.responderId),
     ]);
     if (!plan) return null;
+    const group = await ctx.db.get(plan.groupId);
 
     // Active group leaders of the plan's group.
     const groupMembers = await ctx.db
@@ -1847,9 +1852,19 @@ export const getResponseNotificationTargets = internalQuery({
       if (isLeaderRole(m.role)) leaderIds.add(m.userId.toString());
     }
     // Plus the scheduler who assigned them and the publisher — they may not be
-    // group leaders (e.g. a team channel admin), but they own this request.
-    leaderIds.add(assignment.assignedById.toString());
-    if (plan.createdById) leaderIds.add(plan.createdById.toString());
+    // group leaders (e.g. a community admin), but they own this request. Only
+    // include them if they STILL have scheduler access to the group: the
+    // notification carries volunteer names + decline notes, so a former
+    // scheduler who has left the group or lost admin must not receive it.
+    if (group) {
+      for (const ownerId of [assignment.assignedById, plan.createdById]) {
+        const key = ownerId.toString();
+        if (leaderIds.has(key)) continue;
+        if (await isGroupScheduler(ctx, group, ownerId)) {
+          leaderIds.add(key);
+        }
+      }
+    }
     // Never notify the responder about their own response.
     leaderIds.delete(args.responderId.toString());
 

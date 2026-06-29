@@ -364,6 +364,43 @@ describe("leader notification on accept/decline", () => {
     expect(leaderNote!.body).toContain("Out of town");
   });
 
+  it("does not notify a former scheduler who has since left the group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const volunteer = (await generateTokens(world.channelMemberId)).accessToken;
+    const planId = await makeEvent(t, world, leader);
+    // groupLeader is both the assigner and the plan creator here.
+    const assignmentId = await assign(t, world, leader, planId, world.channelMemberId);
+
+    // The leader leaves the group — they can no longer access the event, so they
+    // must not receive volunteer names / decline notes for it.
+    await t.run(async (ctx) => {
+      const m = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.groupLeaderId),
+        )
+        .first();
+      if (m) await ctx.db.patch(m._id, { leftAt: Date.now() });
+    });
+
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: volunteer,
+      assignmentId,
+      status: "confirmed",
+    });
+    await t.action(
+      internal.functions.scheduling.assignments.notifyLeadersOfResponse,
+      { assignmentId, responderId: world.channelMemberId, status: "confirmed" },
+    );
+
+    // No current scheduler remains → nobody is notified (in particular not the
+    // departed assigner/creator).
+    expect(
+      await inboxCount(t, world.groupLeaderId, "scheduling_assignment_response"),
+    ).toBe(0);
+  });
+
   it("never self-notifies a leader who responds to their own assignment", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;
