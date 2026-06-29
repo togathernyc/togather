@@ -971,6 +971,56 @@ describe("createCustomChannel", () => {
     ).rejects.toThrow("Only group leaders can create channels");
   });
 
+  // Regression: event channels (auto-created per meeting, hidden from the
+  // channel list) must NOT count toward the 20-channel creation limit. A group
+  // with many past events would otherwise hit "maximum of 20 channels" while
+  // showing only a few real channels, blocking all manual channel creation.
+  test("event channels do not count toward the 20-channel limit", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    // Seed 25 event channels (more than the limit) plus a couple real ones.
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `event-${i}`,
+          channelType: "event",
+          name: `Event ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          memberCount: 0,
+        });
+      }
+      await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    // Creation should still succeed — only the 1 managed channel counts.
+    const result = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "LIC Boys" }
+    );
+    expect(result.slug).toBe("lic-boys");
+  });
+
   test("enforces 20 channel limit", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);

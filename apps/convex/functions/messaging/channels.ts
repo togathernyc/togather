@@ -2737,7 +2737,16 @@ export const createCustomChannel = mutation({
       .filter((q) => q.eq(q.field("isArchived"), false))
       .collect();
 
-    if (existingChannels.length >= 20) {
+    // Only channels a leader actually manages count toward the limit. Event
+    // channels are auto-created (one per meeting), hidden from the channel
+    // list, and accumulate without bound — counting them lets a group with
+    // lots of past events hit "maximum of 20 channels" while showing only a
+    // handful of real channels, blocking all manual channel creation.
+    const managedChannelCount = existingChannels.filter(
+      (ch) => ch.channelType !== "event"
+    ).length;
+
+    if (managedChannelCount >= 20) {
       throw new ConvexError(
         "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
       );
