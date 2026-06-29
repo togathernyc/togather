@@ -34,6 +34,8 @@ export function iconForNotificationType(type: string): IoniconName {
       return "hand-left";
     case "followup_assigned":
       return "clipboard";
+    case "scheduling_assignment_response":
+      return "checkmark-done-outline";
     case "admin_broadcast":
       return "megaphone";
     default:

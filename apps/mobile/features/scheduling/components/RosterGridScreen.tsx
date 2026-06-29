@@ -54,6 +54,8 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { formatRelativeTime } from "@features/notifications";
+import { assignmentStatusLabel } from "../utils/format";
 import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
 import { EventEditorPanel } from "./EventEditorPanel";
@@ -443,6 +445,11 @@ export function RosterGridScreen() {
     role: RosterRole;
     event: RosterEvent;
   } | null>(null);
+  // Request-history modal for a role-cell (initial + re-sends + resend action).
+  const [historyModal, setHistoryModal] = useState<{
+    role: RosterRole;
+    event: RosterEvent;
+  } | null>(null);
   // People-view: a member's assignments for an event (manage + add role).
   const [memberCellModal, setMemberCellModal] = useState<{
     member: RosterMember;
@@ -494,6 +501,7 @@ export function RosterGridScreen() {
   const openAssign = useCallback((target: AssignTarget) => {
     setRoleCellModal(null);
     setMemberCellModal(null);
+    setHistoryModal(null);
     setPlanPanel(null);
     setAssignTarget(target);
   }, []);
@@ -501,6 +509,7 @@ export function RosterGridScreen() {
     (payload: { role: RosterRole; event: RosterEvent }) => {
       setAssignTarget(null);
       setMemberCellModal(null);
+      setHistoryModal(null);
       setPlanPanel(null);
       setRoleCellModal(payload);
     },
@@ -510,6 +519,7 @@ export function RosterGridScreen() {
     (payload: { member: RosterMember; event: RosterEvent }) => {
       setAssignTarget(null);
       setRoleCellModal(null);
+      setHistoryModal(null);
       setPlanPanel(null);
       setMemberCellModal(payload);
     },
@@ -522,6 +532,7 @@ export function RosterGridScreen() {
     setAssignTarget(null);
     setRoleCellModal(null);
     setMemberCellModal(null);
+    setHistoryModal(null);
     setPlanPanel({ planId });
   }, []);
 
@@ -1962,7 +1973,23 @@ export function RosterGridScreen() {
                 assignedCount: cell.filled,
               });
             }}
+            onShowHistory={() => {
+              const role = roleCellModal.role;
+              const ev = roleCellModal.event;
+              setRoleCellModal(null);
+              setHistoryModal({ role, event: ev });
+            }}
             onClose={() => setRoleCellModal(null)}
+          />
+        )}
+
+        {isWide && historyModal && (
+          <RequestHistoryModal
+            role={historyModal.role}
+            event={historyModal.event}
+            colors={colors}
+            docked
+            onClose={() => setHistoryModal(null)}
           />
         )}
 
@@ -2070,7 +2097,22 @@ export function RosterGridScreen() {
               assignedCount: cell.filled,
             });
           }}
+          onShowHistory={() => {
+            const role = roleCellModal.role;
+            const ev = roleCellModal.event;
+            setRoleCellModal(null);
+            setHistoryModal({ role, event: ev });
+          }}
           onClose={() => setRoleCellModal(null)}
+        />
+      )}
+
+      {!isWide && historyModal && (
+        <RequestHistoryModal
+          role={historyModal.role}
+          event={historyModal.event}
+          colors={colors}
+          onClose={() => setHistoryModal(null)}
         />
       )}
 
@@ -2501,6 +2543,7 @@ function RoleCellPopover({
   docked = false,
   onRemove,
   onAddSomeone,
+  onShowHistory,
   onClose,
 }: {
   role: RosterRole;
@@ -2510,6 +2553,7 @@ function RoleCellPopover({
   docked?: boolean;
   onRemove: (id: Id<"roleAssignments">) => void;
   onAddSomeone: (cell: RoleCell) => void;
+  onShowHistory: () => void;
   onClose: () => void;
 }) {
   if (!cell) return null;
@@ -2543,6 +2587,151 @@ function RoleCellPopover({
           <Ionicons name="add" size={18} color={colors.link} />
           <Text style={[styles.addBtnText, { color: colors.link }]}>Add someone</Text>
         </Pressable>
+      )}
+      <Pressable
+        onPress={onShowHistory}
+        style={[styles.addBtn, { borderColor: colors.border }]}
+        accessibilityRole="button"
+      >
+        <Ionicons name="time-outline" size={18} color={colors.textSecondary} />
+        <Text style={[styles.addBtnText, { color: colors.textSecondary }]}>
+          Request history
+        </Text>
+      </Pressable>
+    </ModalShell>
+  );
+}
+
+/**
+ * Request-history modal for a role+event cell. Shows every assignment request
+ * sent for the role on the plan (initial + re-sends), newest first, with the
+ * volunteer's current status, and a Resend action for anyone still awaiting a
+ * response. Mirrors the docked-on-desktop / modal-on-mobile pattern of the
+ * other cell popovers via ModalShell.
+ */
+function RequestHistoryModal({
+  role,
+  event,
+  colors,
+  docked = false,
+  onClose,
+}: {
+  role: RosterRole;
+  event: RosterEvent;
+  colors: Colors;
+  docked?: boolean;
+  onClose: () => void;
+}) {
+  const history = useAuthenticatedQuery(
+    api.functions.scheduling.assignments.assignmentRequestHistory,
+    { planId: event._id, roleId: role.roleId },
+  );
+  const resend = useAuthenticatedAction(
+    api.functions.scheduling.assignments.resendAssignmentRequest,
+  );
+  const [resending, setResending] = useState<string | null>(null);
+
+  const handleResend = useCallback(
+    async (assignmentId: Id<"roleAssignments">) => {
+      setResending(assignmentId as string);
+      try {
+        const result = await resend({ assignmentId });
+        if (result.scheduled) {
+          notify("Request re-sent", `${role.roleName} request was sent again.`);
+        } else {
+          notify(
+            "Couldn't re-send",
+            "This volunteer already declined, or the assignment was removed.",
+          );
+        }
+      } catch {
+        notify("Couldn't re-send", "Something went wrong. Please try again.");
+      } finally {
+        setResending(null);
+      }
+    },
+    [resend, role.roleName],
+  );
+
+  return (
+    <ModalShell
+      title="Request history"
+      subtitle={`${role.roleName} · ${monthDay(event.eventDate)}`}
+      colors={colors}
+      docked={docked}
+      onClose={onClose}
+    >
+      {history === undefined ? (
+        <ActivityIndicator style={{ paddingVertical: 20 }} color={colors.link} />
+      ) : history.length === 0 ? (
+        <Text style={[styles.menuEmpty, { color: colors.textSecondary }]}>
+          No requests sent yet.
+        </Text>
+      ) : (
+        <ScrollView style={docked ? styles.popoverListDocked : styles.popoverList}>
+          {history.map((h) => {
+            const removed = h.currentStatus === "removed";
+            const statusLabel = removed
+              ? "Removed"
+              : assignmentStatusLabel(h.currentStatus);
+            const verb = h.kind === "resend" ? "Re-sent" : "Requested";
+            return (
+              <View
+                key={h.id}
+                style={[styles.occupantRow, { borderBottomColor: colors.border }]}
+              >
+                <Ionicons
+                  name={
+                    removed
+                      ? "close-circle-outline"
+                      : statusIcon(h.currentStatus as AssignmentStatus)
+                  }
+                  size={16}
+                  color={
+                    removed
+                      ? colors.textSecondary
+                      : statusColor(h.currentStatus as AssignmentStatus, colors)
+                  }
+                />
+                <View style={styles.menuRowText}>
+                  <Text
+                    style={[styles.occupantName, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {h.userName}
+                  </Text>
+                  <Text
+                    style={[styles.menuRowSub, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {`${verb} · ${formatRelativeTime(h.sentAt)} · ${statusLabel}`}
+                  </Text>
+                  {h.declineNote ? (
+                    <Text
+                      style={[styles.menuRowSub, { color: colors.textSecondary }]}
+                      numberOfLines={2}
+                    >
+                      {`“${h.declineNote}”`}
+                    </Text>
+                  ) : null}
+                </View>
+                {h.currentStatus === "unconfirmed" ? (
+                  <TouchableOpacity
+                    onPress={() => handleResend(h.assignmentId)}
+                    disabled={resending === (h.assignmentId as string)}
+                    hitSlop={8}
+                  >
+                    <Text style={[styles.removeText, { color: colors.link }]}>
+                      {resending === (h.assignmentId as string)
+                        ? "Sending…"
+                        : "Resend"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            );
+          })}
+        </ScrollView>
       )}
     </ModalShell>
   );
