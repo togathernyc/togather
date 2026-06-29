@@ -183,10 +183,11 @@ describe("request history + per-person re-send", () => {
     expect(rows.map((r) => r.kind)).toEqual(["initial", "resend"]);
   });
 
-  it("resendAssignmentRequest is scheduler-gated and skips declined volunteers", async () => {
+  it("resendAssignmentRequest is scheduler-gated and only re-sends to awaiting volunteers", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;
     const volunteer = (await generateTokens(world.channelMemberId)).accessToken;
+    const confirmer = (await generateTokens(world.channelAdminId)).accessToken;
     const outsider = (await generateTokens(world.outsiderId)).accessToken;
     const planId = await makeEvent(t, world, leader);
     const assignmentId = await assign(t, world, leader, planId, world.channelMemberId);
@@ -219,6 +220,26 @@ describe("request history + per-person re-send", () => {
       { token: leader, assignmentId },
     );
     expect(declined.scheduled).toBe(false);
+
+    // …and not to one who has already confirmed (stale history modal): the
+    // fan-out only targets unconfirmed, so report scheduled:false honestly.
+    const confirmedAssignmentId = await assign(
+      t,
+      world,
+      leader,
+      planId,
+      world.channelAdminId,
+    );
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: confirmer,
+      assignmentId: confirmedAssignmentId,
+      status: "confirmed",
+    });
+    const confirmed = await t.action(
+      api.functions.scheduling.assignments.resendAssignmentRequest,
+      { token: leader, assignmentId: confirmedAssignmentId },
+    );
+    expect(confirmed.scheduled).toBe(false);
   });
 
   it("assignmentRequestHistory reflects the current assignment status", async () => {

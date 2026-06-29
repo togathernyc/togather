@@ -1704,8 +1704,9 @@ export const resendAssignmentRequest = action({
 
 /**
  * Internal: validate scheduler permission for a re-send and resolve the
- * assignment's plan. Returns `null` when the assignment no longer exists or is
- * already declined (a declined volunteer is never re-pinged automatically).
+ * assignment's plan. Returns `null` when the assignment no longer exists or has
+ * already been answered (confirmed or declined) — only an `unconfirmed`
+ * volunteer is re-pinged, matching the fan-out's recipient filter.
  */
 export const getAssignmentPlanForResend = internalQuery({
   args: {
@@ -1718,9 +1719,13 @@ export const getAssignmentPlanForResend = internalQuery({
       throw new ConvexError("Assignment not found");
     }
     await requirePlanScheduler(ctx, assignment.planId, args.callerId);
-    // Only re-send to people who haven't declined — getAssignmentRequestTargets
-    // also excludes declined, but bail early so the caller gets honest feedback.
-    if (assignment.status === "declined") {
+    // Only re-send to volunteers who haven't answered yet. The fan-out
+    // (`getAssignmentRequestTargets`) targets `unconfirmed` assignments only, so
+    // returning a plan id for a confirmed *or* declined assignment would report
+    // `scheduled: true` while actually sending/logging nothing — bail here so the
+    // caller (and the mobile toast) gets honest feedback. Guards against a stale
+    // history modal where the volunteer has since responded.
+    if (assignment.status !== "unconfirmed") {
       return null;
     }
     return assignment.planId;
