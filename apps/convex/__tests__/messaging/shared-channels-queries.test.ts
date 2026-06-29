@@ -722,6 +722,53 @@ describe("getChannelBySlug — channelId disambiguator", () => {
     );
     expect(first!._id).toBe(data.sharedChannelId);
   });
+
+  test("channelId resolves the shared invite even when the invited group owns a same-slug local channel", async () => {
+    const t = convexTest(schema, modules);
+    // Group A owns "shared-events", pending to Group B.
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    // Group B ALSO owns a local channel with the SAME slug.
+    const localChannelId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatChannels", {
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelType: "custom",
+        name: "Group B Local",
+        createdById: data.userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    // Without a channelId hint, the local same-slug channel wins (by_group_slug).
+    const local = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+    expect(local!._id).toBe(localChannelId);
+
+    // With the invite's channelId, the local match must not shadow it — the
+    // shared (Group A) channel resolves and is flagged as a pending invite.
+    const shared = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: data.sharedChannelId,
+      }
+    );
+    expect(shared!._id).toBe(data.sharedChannelId);
+    expect((shared as Record<string, unknown>).pendingShareForGroup).toBe(true);
+  });
 });
 
 // ============================================================================

@@ -95,4 +95,17 @@ describe("resolveNotificationNavigation — type-based routing still works", () 
 
     expect(mockPush).toHaveBeenCalledWith("/groups/groupB");
   });
+
+  it("includes channelId in the shared_channel_invite deep link to disambiguate same-slug invites", async () => {
+    await resolveNotificationNavigation({
+      type: "shared_channel_invite",
+      groupId: "groupB",
+      channelSlug: "shared-events",
+      channelId: "chan_123",
+    });
+
+    expect(mockPush).toHaveBeenCalledWith(
+      "/inbox/groupB/shared-events/info?channelId=chan_123",
+    );
+  });
 });

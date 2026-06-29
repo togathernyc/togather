@@ -119,6 +119,7 @@ export const inviteGroupToChannel = mutation({
         invitedGroupId: args.groupId,
         primaryGroupId: channelGroupId,
         inviterId: userId,
+        channelId: args.channelId,
         channelName: channel.name,
         channelSlug: getChannelSlug(channel),
       }

@@ -86,10 +86,15 @@ export async function resolveNotificationNavigation(
     case "shared_channel_invite":
       // Open the channel info screen for the invited group so the leader can
       // inspect, accept, or decline the shared channel. `groupId` here is the
-      // invited (secondary) group. Fall back to the group page for older
-      // notifications that predate the channelSlug payload.
+      // invited (secondary) group. channelId disambiguates same-slug invites
+      // (slugs aren't unique across owning groups). Fall back to the group page
+      // for older notifications that predate the channelSlug payload.
       if (groupId && channelSlug) {
-        router.push(`/inbox/${groupId}/${channelSlug}/info` as never);
+        router.push(
+          (channelId
+            ? `/inbox/${groupId}/${channelSlug}/info?channelId=${channelId}`
+            : `/inbox/${groupId}/${channelSlug}/info`) as never,
+        );
       } else if (groupId) {
         navigateToGroup(groupId);
       }

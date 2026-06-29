@@ -563,6 +563,15 @@ export const getChannelBySlug = query({
       }
     }
 
+    // When the caller supplies an explicit channelId (shared-channel request
+    // row or notification deep-link), it is authoritative: a same-slug *local*
+    // channel in the URL group must not shadow the intended (shared) channel.
+    // Drop a mismatched local hit so the shared fallbacks below — which match
+    // by id — can resolve the right one.
+    if (args.channelId && resolvedChannel && resolvedChannel._id !== args.channelId) {
+      resolvedChannel = null;
+    }
+
     // 2b. Shared channel fallback: if no channel found in this group,
     // check user's channel memberships for a shared channel matching the slug
     // where args.groupId is in sharedGroups with status "accepted"
