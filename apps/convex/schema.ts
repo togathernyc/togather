@@ -2756,6 +2756,35 @@ export default defineSchema({
     .index("by_team_eventDate", ["teamId", "eventDate"]),
 
   /**
+   * History of serving requests SENT to volunteers (one row per recipient per
+   * send). Unlike `roleAssignments` — which is mutated in place and hard-deleted
+   * on `unassign` — these rows are append-only, so a leader can review the full
+   * "who was asked, when, and how many times" trail and re-send a request to a
+   * single person from it. Written by `sendAssignmentRequests` (publish +
+   * re-send) and the per-person `resendAssignmentRequest` action.
+   */
+  assignmentRequestLog: defineTable({
+    planId: v.id("eventPlans"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    // The assignment the request was for. The assignment may later be removed
+    // (`unassign` hard-deletes), so this id can dangle — readers tolerate a
+    // missing target. The log row itself is never deleted.
+    assignmentId: v.id("roleAssignments"),
+    userId: v.id("users"), // recipient (the volunteer who was asked)
+    roleId: v.id("teamRoles"),
+    teamId: v.id("teams"),
+    eventDate: v.number(), // denormalized from the plan for display/sorting
+    sentById: v.id("users"), // the scheduler who triggered the send
+    sentAt: v.number(),
+    kind: v.string(), // "initial" | "resend"
+    channels: v.array(v.string()), // delivery channels used, e.g. ["push","sms"]
+  })
+    .index("by_plan", ["planId"])
+    .index("by_assignment", ["assignmentId"])
+    .index("by_plan_role", ["planId", "roleId"]),
+
+  /**
    * A single ordered item on an event plan's run sheet (ADR-026). The native
    * replacement for the PCO-derived order-of-items. One run sheet = many rows,
    * keyed by `planId` and ordered by `sequence`; the same run sheet is shared

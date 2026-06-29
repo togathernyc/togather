@@ -111,6 +111,30 @@ export async function requireTeamScheduler(
 }
 
 /**
+ * Whether `userId` currently has scheduler permission for `group` — an active
+ * group leader, or a community admin. Boolean sibling of
+ * `requireGroupScheduler`; use it to filter (rather than gate) — e.g. to drop
+ * a stale recipient who has since left the group before notifying them.
+ */
+export async function isGroupScheduler(
+  ctx: QueryCtx | MutationCtx,
+  group: Doc<"groups">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const groupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", group._id).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  if (groupMembership && isLeaderRole(groupMembership.role)) {
+    return true;
+  }
+  return isCommunityAdmin(ctx, group.communityId, userId);
+}
+
+/**
  * Require scheduler permission for the campus group that owns an event plan.
  * Used by event/assignment mutations that are scoped to a `groupId` rather
  * than a single team — group leader or community admin.
@@ -127,18 +151,7 @@ export async function requireGroupScheduler(
     throw new ConvexError("Group not found");
   }
 
-  const groupMembership = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_group_user", (q) =>
-      q.eq("groupId", groupId).eq("userId", userId),
-    )
-    .filter((q) => q.eq(q.field("leftAt"), undefined))
-    .first();
-  if (groupMembership && isLeaderRole(groupMembership.role)) {
-    return group;
-  }
-
-  if (await isCommunityAdmin(ctx, group.communityId, userId)) {
+  if (await isGroupScheduler(ctx, group, userId)) {
     return group;
   }
 

@@ -33,8 +33,13 @@ import {
   normalizePhone,
 } from "../../lib/utils";
 import { COMMUNITY_ROLES } from "../../lib/permissions";
+import { isLeaderRole } from "../../lib/helpers";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
-import { requireTeamGroupMember, requirePlanScheduler } from "./permissions";
+import {
+  requireTeamGroupMember,
+  requirePlanScheduler,
+  isGroupScheduler,
+} from "./permissions";
 
 /** Assignment statuses, for reference and validation. */
 const ASSIGNMENT_STATUSES = ["unconfirmed", "confirmed", "declined"] as const;
@@ -804,6 +809,8 @@ export const respondToAssignment = mutation({
       throw new ConvexError("You can only respond to your own assignments");
     }
 
+    const previousStatus = assignment.status;
+
     await ctx.db.patch(args.assignmentId, {
       status: args.status,
       declineNote:
@@ -826,6 +833,27 @@ export const respondToAssignment = mutation({
         .reconcileCrossTeamChannelsForSource,
       { sourceTeamId: assignment.teamId },
     );
+
+    // Let the schedulers know the volunteer responded — but only on an actual
+    // state change. A stale client or a double-tap can re-`respondToAssignment`
+    // with the same answer; without this guard each call would re-notify
+    // leaders, spamming duplicate accepted/declined messages for one response.
+    // A genuine change of heart (confirmed → declined, or vice-versa) still
+    // notifies. Fanned out via the job worker so a slow notification path never
+    // blocks the volunteer's accept/decline.
+    if (previousStatus !== args.status) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.scheduling.assignments.notifyLeadersOfResponse,
+        {
+          assignmentId: args.assignmentId,
+          responderId: userId,
+          status: args.status,
+          declineNote:
+            args.status === "declined" ? args.declineNote : undefined,
+        },
+      );
+    }
 
     return { assignmentId: args.assignmentId, status: args.status };
   },
@@ -1294,6 +1322,10 @@ export const getAssignmentRequestTargets = internalQuery({
     planId: v.id("eventPlans"),
     publisherId: v.id("users"),
     includeConfirmed: v.optional(v.boolean()),
+    // When set, restrict the fan-out to these specific assignments (powers the
+    // per-person "Re-send request" action). Any non-matching status filter
+    // below still applies.
+    assignmentIds: v.optional(v.array(v.id("roleAssignments"))),
   },
   handler: async (ctx, args) => {
     const plan = await ctx.db.get(args.planId);
@@ -1303,14 +1335,19 @@ export const getAssignmentRequestTargets = internalQuery({
       .query("roleAssignments")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
+    const onlyIds = args.assignmentIds
+      ? new Set(args.assignmentIds.map((id) => id.toString()))
+      : null;
     // Always nudge the unconfirmed; for the 1-day pass also include those
     // who've already confirmed (a serving-tomorrow heads-up). Declined and
-    // removed assignments are never notified.
-    const targeted = assignments.filter((a) =>
-      args.includeConfirmed
+    // removed assignments are never notified. A targeted re-send additionally
+    // narrows to the requested assignment ids.
+    const targeted = assignments.filter((a) => {
+      if (onlyIds && !onlyIds.has(a._id.toString())) return false;
+      return args.includeConfirmed
         ? a.status === "unconfirmed" || a.status === "confirmed"
-        : a.status === "unconfirmed",
-    );
+        : a.status === "unconfirmed";
+    });
 
     const [community, publisher] = await Promise.all([
       ctx.db.get(plan.communityId),
@@ -1327,6 +1364,9 @@ export const getAssignmentRequestTargets = internalQuery({
         return {
           assignmentId: assignment._id,
           userId: assignment.userId,
+          roleId: assignment.roleId,
+          teamId: assignment.teamId,
+          eventDate: assignment.eventDate,
           status: assignment.status,
           phone: user?.phone ?? null,
           roleName: role?.name ?? "a role",
@@ -1402,11 +1442,17 @@ export const sendAssignmentRequests = internalAction({
   args: {
     planId: v.id("eventPlans"),
     publisherId: v.id("users"),
+    // When set, only (re-)send to these assignments — the per-person re-send.
+    assignmentIds: v.optional(v.array(v.id("roleAssignments"))),
   },
   handler: async (ctx, args) => {
     const targets = await ctx.runQuery(
       internal.functions.scheduling.assignments.getAssignmentRequestTargets,
-      { planId: args.planId, publisherId: args.publisherId },
+      {
+        planId: args.planId,
+        publisherId: args.publisherId,
+        assignmentIds: args.assignmentIds,
+      },
     );
     if (!targets || targets.recipients.length === 0) {
       return { pushSent: 0, smsSent: 0 };
@@ -1539,7 +1585,434 @@ export const sendAssignmentRequests = internalAction({
       },
     );
 
+    // --- Request history log ---------------------------------------------
+    // Append-only record of every recipient we just asked, so leaders can
+    // review the request trail and re-send to one person. Records both real
+    // and placeholder recipients (placeholders got an SMS invite). Push is
+    // best-effort, so we only claim the "push" channel when a token existed.
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.recordRequestLog,
+      {
+        planId: args.planId,
+        groupId: targets.groupId,
+        communityId: targets.communityId,
+        sentById: args.publisherId,
+        entries: targets.recipients.map((recipient) => ({
+          assignmentId: recipient.assignmentId,
+          userId: recipient.userId,
+          roleId: recipient.roleId,
+          teamId: recipient.teamId,
+          eventDate: recipient.eventDate,
+          channels: [
+            ...((tokensByUser.get(recipient.userId)?.length ?? 0) > 0
+              ? ["push"]
+              : []),
+            ...(recipient.phone ? ["sms"] : []),
+          ],
+        })),
+      },
+    );
+
     return { pushSent, smsSent };
+  },
+});
+
+/**
+ * Internal: append rows to `assignmentRequestLog`, one per recipient. The
+ * `kind` ("initial" | "resend") is derived per assignment by checking whether
+ * an earlier log row already exists for it, so callers don't have to track
+ * publish-vs-republish state.
+ */
+export const recordRequestLog = internalMutation({
+  args: {
+    planId: v.id("eventPlans"),
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    sentById: v.id("users"),
+    entries: v.array(
+      v.object({
+        assignmentId: v.id("roleAssignments"),
+        userId: v.id("users"),
+        roleId: v.id("teamRoles"),
+        teamId: v.id("teams"),
+        eventDate: v.number(),
+        channels: v.array(v.string()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const sentAt = Date.now();
+    for (const entry of args.entries) {
+      const prior = await ctx.db
+        .query("assignmentRequestLog")
+        .withIndex("by_assignment", (q) =>
+          q.eq("assignmentId", entry.assignmentId),
+        )
+        .first();
+      await ctx.db.insert("assignmentRequestLog", {
+        planId: args.planId,
+        groupId: args.groupId,
+        communityId: args.communityId,
+        assignmentId: entry.assignmentId,
+        userId: entry.userId,
+        roleId: entry.roleId,
+        teamId: entry.teamId,
+        eventDate: entry.eventDate,
+        sentById: args.sentById,
+        sentAt,
+        kind: prior ? "resend" : "initial",
+        channels: entry.channels,
+      });
+    }
+  },
+});
+
+// ============================================================================
+// Request history + per-person re-send
+// ============================================================================
+
+/**
+ * Re-send the serving request for a single assignment (the per-person re-send
+ * from the request-history view). Reuses the same push + SMS + in-app fan-out
+ * as publish, scoped to one assignment, and appends a `resend` history row.
+ *
+ * Auth: group leader or community admin for the assignment's event.
+ */
+export const resendAssignmentRequest = action({
+  args: {
+    token: v.string(),
+    assignmentId: v.id("roleAssignments"),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ scheduled: boolean }> => {
+    const callerId = await requireAuthFromTokenAction(ctx, args.token);
+
+    const planId: Id<"eventPlans"> | null = await ctx.runQuery(
+      internal.functions.scheduling.assignments.getAssignmentPlanForResend,
+      { assignmentId: args.assignmentId, callerId: callerId as Id<"users"> },
+    );
+    if (!planId) {
+      return { scheduled: false };
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduling.assignments.sendAssignmentRequests,
+      {
+        planId,
+        publisherId: callerId as Id<"users">,
+        assignmentIds: [args.assignmentId],
+      },
+    );
+    return { scheduled: true };
+  },
+});
+
+/**
+ * Internal: validate scheduler permission for a re-send and resolve the
+ * assignment's plan. Returns `null` when the assignment no longer exists or has
+ * already been answered (confirmed or declined) — only an `unconfirmed`
+ * volunteer is re-pinged, matching the fan-out's recipient filter.
+ */
+export const getAssignmentPlanForResend = internalQuery({
+  args: {
+    assignmentId: v.id("roleAssignments"),
+    callerId: v.id("users"),
+  },
+  handler: async (ctx, args): Promise<Id<"eventPlans"> | null> => {
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new ConvexError("Assignment not found");
+    }
+    await requirePlanScheduler(ctx, assignment.planId, args.callerId);
+    // Only re-send to volunteers who haven't answered yet. The fan-out
+    // (`getAssignmentRequestTargets`) targets `unconfirmed` assignments only, so
+    // returning a plan id for a confirmed *or* declined assignment would report
+    // `scheduled: true` while actually sending/logging nothing — bail here so the
+    // caller (and the mobile toast) gets honest feedback. Guards against a stale
+    // history modal where the volunteer has since responded.
+    if (assignment.status !== "unconfirmed") {
+      return null;
+    }
+    return assignment.planId;
+  },
+});
+
+/**
+ * Request-history for an event plan — the full append-only trail of serving
+ * requests sent to volunteers, newest first, joined with each recipient's name,
+ * role, and *current* assignment status (so the view can show "asked 2× · still
+ * awaiting"). Optionally narrowed to a single role for the per-role-cell view.
+ *
+ * Auth: group leader or community admin for the plan's group (same gate as the
+ * roster grid) — the response lists volunteer names.
+ */
+export const assignmentRequestHistory = query({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+    roleId: v.optional(v.id("teamRoles")),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    await requirePlanScheduler(ctx, args.planId, callerId);
+
+    const rows = args.roleId
+      ? await ctx.db
+          .query("assignmentRequestLog")
+          .withIndex("by_plan_role", (q) =>
+            q.eq("planId", args.planId).eq("roleId", args.roleId!),
+          )
+          .collect()
+      : await ctx.db
+          .query("assignmentRequestLog")
+          .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+          .collect();
+
+    rows.sort((a, b) => b.sentAt - a.sentAt);
+
+    // Small per-query caches so a plan with many sends to the same person /
+    // role doesn't re-fetch the same docs.
+    const userCache = new Map<string, Doc<"users"> | null>();
+    const roleCache = new Map<string, Doc<"teamRoles"> | null>();
+    const assignmentCache = new Map<string, Doc<"roleAssignments"> | null>();
+    const getUser = async (id: Id<"users">) => {
+      const key = id.toString();
+      if (!userCache.has(key)) userCache.set(key, await ctx.db.get(id));
+      return userCache.get(key) ?? null;
+    };
+    const getRole = async (id: Id<"teamRoles">) => {
+      const key = id.toString();
+      if (!roleCache.has(key)) roleCache.set(key, await ctx.db.get(id));
+      return roleCache.get(key) ?? null;
+    };
+    const getAssignment = async (id: Id<"roleAssignments">) => {
+      const key = id.toString();
+      if (!assignmentCache.has(key))
+        assignmentCache.set(key, await ctx.db.get(id));
+      return assignmentCache.get(key) ?? null;
+    };
+
+    return Promise.all(
+      rows.map(async (row) => {
+        const [user, role, assignment] = await Promise.all([
+          getUser(row.userId),
+          getRole(row.roleId),
+          getAssignment(row.assignmentId),
+        ]);
+        return {
+          id: row._id,
+          assignmentId: row.assignmentId,
+          userId: row.userId,
+          userName:
+            `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim() ||
+            "Someone",
+          roleId: row.roleId,
+          roleName: role?.name ?? "a role",
+          sentAt: row.sentAt,
+          kind: row.kind,
+          channels: row.channels,
+          eventDate: row.eventDate,
+          // Current state of the assignment this request was for. `removed`
+          // means the volunteer was unassigned after being asked (the log row
+          // outlives the assignment row).
+          currentStatus: assignment ? assignment.status : "removed",
+          respondedAt: assignment?.respondedAt ?? null,
+          declineNote: assignment?.declineNote ?? null,
+        };
+      }),
+    );
+  },
+});
+
+// ============================================================================
+// Notify leaders when a volunteer accepts / declines
+// ============================================================================
+
+/**
+ * Internal: gather everything `notifyLeadersOfResponse` needs — the leaders to
+ * notify (group leaders of the plan's group, plus the person who assigned the
+ * volunteer and the plan's publisher), the responder's name, and the event /
+ * role context. The responder is never notified about their own response.
+ */
+export const getResponseNotificationTargets = internalQuery({
+  args: {
+    assignmentId: v.id("roleAssignments"),
+    responderId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) return null;
+
+    const [plan, role, responder] = await Promise.all([
+      ctx.db.get(assignment.planId),
+      ctx.db.get(assignment.roleId),
+      ctx.db.get(args.responderId),
+    ]);
+    if (!plan) return null;
+    const group = await ctx.db.get(plan.groupId);
+
+    // Active group leaders of the plan's group.
+    const groupMembers = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", plan.groupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const leaderIds = new Set<string>();
+    for (const m of groupMembers) {
+      if (isLeaderRole(m.role)) leaderIds.add(m.userId.toString());
+    }
+    // Plus the scheduler who assigned them and the publisher — they may not be
+    // group leaders (e.g. a community admin), but they own this request. Only
+    // include them if they STILL have scheduler access to the group: the
+    // notification carries volunteer names + decline notes, so a former
+    // scheduler who has left the group or lost admin must not receive it.
+    if (group) {
+      for (const ownerId of [assignment.assignedById, plan.createdById]) {
+        const key = ownerId.toString();
+        if (leaderIds.has(key)) continue;
+        if (await isGroupScheduler(ctx, group, ownerId)) {
+          leaderIds.add(key);
+        }
+      }
+    }
+    // Never notify the responder about their own response.
+    leaderIds.delete(args.responderId.toString());
+
+    return {
+      recipientIds: [...leaderIds] as Id<"users">[],
+      groupId: plan.groupId,
+      communityId: plan.communityId,
+      planTitle: plan.title,
+      eventDate: plan.eventDate,
+      roleName: role?.name ?? "a role",
+      responderName:
+        `${responder?.firstName ?? ""} ${responder?.lastName ?? ""}`.trim() ||
+        "A volunteer",
+    };
+  },
+});
+
+/**
+ * Internal: write the leader-facing "volunteer responded" rows into the
+ * in-app `notifications` inbox.
+ */
+export const recordResponseNotifications = internalMutation({
+  args: {
+    recipientIds: v.array(v.id("users")),
+    communityId: v.id("communities"),
+    groupId: v.id("groups"),
+    title: v.string(),
+    body: v.string(),
+    url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const nowMs = Date.now();
+    for (const userId of args.recipientIds) {
+      await ctx.db.insert("notifications", {
+        userId,
+        communityId: args.communityId,
+        groupId: args.groupId,
+        notificationType: "scheduling_assignment_response",
+        title: args.title,
+        body: args.body,
+        data: { url: args.url },
+        status: "sent",
+        isRead: false,
+        createdAt: nowMs,
+        sentAt: nowMs,
+      });
+    }
+  },
+});
+
+/**
+ * Internal: notify the schedulers/leaders that a volunteer accepted or declined
+ * their serving request. Push + in-app inbox, mirroring the request fan-out.
+ */
+export const notifyLeadersOfResponse = internalAction({
+  args: {
+    assignmentId: v.id("roleAssignments"),
+    responderId: v.id("users"),
+    status: v.union(v.literal("confirmed"), v.literal("declined")),
+    declineNote: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ pushSent: number; recorded: number }> => {
+    const targets = await ctx.runQuery(
+      internal.functions.scheduling.assignments
+        .getResponseNotificationTargets,
+      { assignmentId: args.assignmentId, responderId: args.responderId },
+    );
+    if (!targets || targets.recipientIds.length === 0) {
+      return { pushSent: 0, recorded: 0 };
+    }
+
+    const eventDate = new Date(targets.eventDate).toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const verb = args.status === "confirmed" ? "accepted" : "declined";
+    const title =
+      args.status === "confirmed"
+        ? `${targets.responderName} accepted`
+        : `${targets.responderName} declined`;
+    const noteSuffix =
+      args.status === "declined" && args.declineNote
+        ? ` "${args.declineNote}"`
+        : "";
+    const body =
+      `${targets.responderName} ${verb} ${targets.roleName} for ` +
+      `${targets.planTitle} on ${eventDate}.${noteSuffix}`;
+    // Relative path for in-app routing; the leader lands on the roster grid.
+    const url = `/rostering/${targets.groupId}`;
+
+    // --- Push -------------------------------------------------------------
+    const tokenResults: Array<{ userId: string; tokens: string[] }> =
+      await ctx.runQuery(
+        internal.functions.notifications.tokens.getActiveTokensForUsers,
+        { userIds: targets.recipientIds },
+      );
+    const pushNotifications = tokenResults.flatMap((r) =>
+      r.tokens.map((token) => ({
+        token,
+        title,
+        body,
+        data: {
+          type: "scheduling_assignment_response",
+          assignmentId: args.assignmentId,
+          url,
+        },
+      })),
+    );
+    let pushSent = 0;
+    if (pushNotifications.length > 0) {
+      const pushResult = await ctx.runAction(
+        internal.functions.notifications.internal.sendBatchPushNotifications,
+        { notifications: pushNotifications },
+      );
+      pushSent = pushResult.success ? pushNotifications.length : 0;
+    }
+
+    // --- In-app inbox -----------------------------------------------------
+    await ctx.runMutation(
+      internal.functions.scheduling.assignments.recordResponseNotifications,
+      {
+        recipientIds: targets.recipientIds,
+        communityId: targets.communityId,
+        groupId: targets.groupId,
+        title,
+        body,
+        url,
+      },
+    );
+
+    return { pushSent, recorded: targets.recipientIds.length };
   },
 });
 
