@@ -1157,7 +1157,12 @@ const styles = StyleSheet.create({
   card: {
     width: "100%",
     maxWidth: 460,
-    maxHeight: "85%",
+    // A *definite* height (not maxHeight) so the candidate FlashList gets a
+    // bounded parent to virtualize into. With a content-sized card the list
+    // area collapses to zero height and only the header + Needed stepper show
+    // — the searchable people list never renders. 85% leaves room to type/scroll
+    // and mirrors the desktop docked panel (which is full height).
+    height: "85%",
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",
@@ -1172,7 +1177,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cardBody: {
-    flexShrink: 1,
+    // Fill the space below the header + Needed stepper so the FlashList has a
+    // bounded height to virtualize into (both the centered modal card and the
+    // full-height desktop docked panel are definite-height parents).
+    flex: 1,
   },
   header: {
     flexDirection: "row",
