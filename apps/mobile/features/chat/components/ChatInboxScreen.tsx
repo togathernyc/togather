@@ -27,7 +27,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { AppImage } from "@components/ui";
+import { AppImage, SearchBar } from "@components/ui";
+import { InboxSearchResults } from "./InboxSearchResults";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
@@ -42,6 +43,10 @@ import { EnableNotificationsBanner } from "@features/notifications/components/En
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
 // (channels without a first message or quiet for >2 days are omitted from
 // the payload), so the client no longer duplicates that constant.
+
+// Minimum query length before the inbox search query runs. Mirrors the
+// MIN_QUERY_LENGTH guard in the backend `searchMessages` query.
+const MIN_SEARCH_LENGTH = 2;
 
 // Type for a channel as returned by getInboxChannels
 type InboxChannel = {
@@ -173,6 +178,20 @@ export function ChatInboxScreen({
   const notificationSummary = useQuery(
     api.functions.notifications.queries.inboxSummary,
     token ? { token } : "skip",
+  );
+
+  // Inbox message search. SearchBar debounces input, so `searchTerm` only
+  // updates after the user pauses typing — keeping the reactive query from
+  // firing on every keystroke. A search is only run once the term is long
+  // enough to be meaningful (see MIN_SEARCH_LENGTH).
+  const [searchTerm, setSearchTerm] = useState("");
+  const trimmedSearch = searchTerm.trim();
+  const isSearching = trimmedSearch.length >= MIN_SEARCH_LENGTH;
+  const searchResults = useQuery(
+    api.functions.messaging.search.searchMessages,
+    isSearching && token && communityId
+      ? { token, communityId, query: trimmedSearch }
+      : "skip",
   );
 
   // Cache inbox data for offline use
@@ -594,14 +613,30 @@ export function ChatInboxScreen({
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
         {renderHeader(true)}
-        <EnableNotificationsBanner />
-        <FlatList
-          data={listItemsWithDm}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContainer}
-          style={styles.list}
-        />
+        <View style={styles.searchBarContainer}>
+          <SearchBar
+            placeholder="Search messages"
+            onSearch={setSearchTerm}
+            onClear={() => setSearchTerm("")}
+          />
+        </View>
+        {isSearching ? (
+          <InboxSearchResults
+            query={trimmedSearch}
+            results={searchResults?.results}
+          />
+        ) : (
+          <>
+            <EnableNotificationsBanner />
+            <FlatList
+              data={listItemsWithDm}
+              renderItem={renderItem}
+              keyExtractor={keyExtractor}
+              contentContainerStyle={styles.listContainer}
+              style={styles.list}
+            />
+          </>
+        )}
       </View>
     </Wrapper>
   );
@@ -1387,6 +1422,10 @@ const styles = StyleSheet.create({
   },
   listContainer: {
     paddingVertical: 8,
+  },
+  searchBarContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
 
   // Events section
