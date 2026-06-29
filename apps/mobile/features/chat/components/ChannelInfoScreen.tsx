@@ -71,6 +71,12 @@ import {
 type Props = {
   groupId: string;
   channelSlug: string;
+  /**
+   * Optional disambiguator for shared channels. Channel slugs are only unique
+   * within the owning group, so a group invited to two same-slug channels needs
+   * the id to resolve the right one. Plain group channels omit it.
+   */
+  channelId?: string;
 };
 
 type ChannelType =
@@ -108,7 +114,7 @@ function getChannelIconConfig(
   }
 }
 
-export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
+export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
@@ -122,7 +128,13 @@ export function ChannelInfoScreen({ groupId, channelSlug }: Props) {
     // can re-enable from Active state. Without this, the row is filtered out
     // and the screen shows "no longer available."
     token
-      ? { token, groupId: groupId as Id<"groups">, slug: channelSlug, includeArchived: true }
+      ? {
+          token,
+          groupId: groupId as Id<"groups">,
+          slug: channelSlug,
+          includeArchived: true,
+          ...(channelId ? { channelId: channelId as Id<"chatChannels"> } : {}),
+        }
       : "skip",
   );
 

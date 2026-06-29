@@ -144,7 +144,18 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
   }, [enablingAnnouncements, groupId, toggleAnnouncementsChannelMutation]);
 
   const navigateToChannelInfo = useCallback(
-    (slug: string) => router.push(`/inbox/${groupId}/${slug}/info` as any),
+    // channelId disambiguates shared channels: slugs are only unique within the
+    // owning group, so a group invited to two same-slug channels needs the id to
+    // open the right one. Plain group channels omit it and route by path alone.
+    (slug: string, channelId?: string) =>
+      router.push(
+        channelId
+          ? ({
+              pathname: `/inbox/${groupId}/${slug}/info`,
+              params: { channelId },
+            } as any)
+          : (`/inbox/${groupId}/${slug}/info` as any)
+      ),
     [router, groupId]
   );
 
@@ -493,7 +504,7 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               <TouchableOpacity
                 key={invite.channelId}
                 activeOpacity={0.7}
-                onPress={() => navigateToChannelInfo(invite.channelSlug)}
+                onPress={() => navigateToChannelInfo(invite.channelSlug, invite.channelId)}
                 style={[
                   styles.row,
                   idx > 0 && {

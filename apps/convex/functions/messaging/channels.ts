@@ -510,6 +510,15 @@ export const getChannelBySlug = query({
      * and the screen shows "no longer available." Defaults to false.
      */
     includeArchived: v.optional(v.boolean()),
+    /**
+     * Optional disambiguator for the shared-channel fallbacks. Channel slugs
+     * are only unique within the owning group, so a group invited to two
+     * channels with the same slug (from two different primary groups) would
+     * otherwise resolve to whichever the scan hits first. When the caller
+     * knows the exact channel (e.g. a shared-channel request row), it passes
+     * the id so we resolve that specific channel.
+     */
+    channelId: v.optional(v.id("chatChannels")),
   },
   handler: async (ctx, args) => {
     // 1. Authenticate user
@@ -576,6 +585,7 @@ export const getChannelBySlug = query({
       for (const membership of userMemberships) {
         const candidateChannel = await ctx.db.get(membership.channelId);
         if (!candidateChannel || candidateChannel.isArchived) continue;
+        if (args.channelId && candidateChannel._id !== args.channelId) continue;
         if (!candidateChannel.isShared) continue;
         const sharedCustomOrPco =
           isCustomChannel(candidateChannel.channelType) ||
@@ -603,10 +613,15 @@ export const getChannelBySlug = query({
       }
     }
 
-    // 2c. Pending shared-invite fallback: a leader of the *invited* group can
-    // open the channel info screen for a channel shared with their group that
-    // they haven't accepted yet, so they can accept or decline from there.
-    // Gated to leaders — regular members never see a pending shared channel.
+    // 2c. Shared-invite fallback for leaders of the *invited* group. Covers two
+    // cases the membership-based fallback (2b) misses because the leader may not
+    // be a `chatChannelMember`:
+    //   - pending: they can open the info screen to accept/decline; or
+    //   - accepted: after accepting, `respondToChannelInvite` only flips the
+    //     sharedGroups status — it doesn't add the leader as a channel member —
+    //     so without this they'd land on "channel no longer available."
+    // Gated to leaders — regular members never see a channel via this path; they
+    // resolve accepted shared channels through 2b once they're channel members.
     if (!resolvedChannel) {
       const membershipForUrlGroup = await ctx.db
         .query("groupMembers")
@@ -625,14 +640,17 @@ export const getChannelBySlug = query({
 
         for (const candidate of sharedChannels) {
           if (candidate.isArchived) continue;
+          if (args.channelId && candidate._id !== args.channelId) continue;
           const candidateSlug = getChannelSlug(candidate);
           if (candidateSlug !== args.slug && candidate.slug !== args.slug) continue;
-          const pendingEntry = candidate.sharedGroups?.find(
-            (sg) => sg.groupId === args.groupId && sg.status === "pending"
+          const entry = candidate.sharedGroups?.find(
+            (sg) =>
+              sg.groupId === args.groupId &&
+              (sg.status === "pending" || sg.status === "accepted")
           );
-          if (pendingEntry) {
+          if (entry) {
             resolvedChannel = candidate;
-            pendingShareForGroup = true;
+            pendingShareForGroup = entry.status === "pending";
             break;
           }
         }

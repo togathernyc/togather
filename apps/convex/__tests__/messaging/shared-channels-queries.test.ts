@@ -626,6 +626,102 @@ describe("getChannelBySlug — pending shared-invite fallback", () => {
     expect(result).not.toBeNull();
     expect((result as Record<string, unknown>).pendingShareForGroup).toBe(false);
   });
+
+  test("leader of an ACCEPTED secondary group resolves the channel without channel membership", async () => {
+    // Regression for the accept-from-info flow: respondToChannelInvite only
+    // flips the sharedGroups status, it doesn't add the leader as a channel
+    // member. A leader who accepts must still be able to load the channel info
+    // screen afterwards rather than getting "channel no longer available".
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    const result = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!._id).toBe(data.sharedChannelId);
+    // Resolved via the leader fallback, not as a pending invite.
+    expect((result as Record<string, unknown>).pendingShareForGroup).toBe(false);
+    expect(result!.isMember).toBe(false);
+  });
+});
+
+// ============================================================================
+// getChannelBySlug — channelId disambiguates same-slug shared invites
+// ============================================================================
+
+describe("getChannelBySlug — channelId disambiguator", () => {
+  test("resolves the channel matching channelId when two pending invites share a slug", async () => {
+    const t = convexTest(schema, modules);
+    // Group A → "shared-events" pending to Group B.
+    const data = await seedSharedChannelData(t, "pending");
+    const leaderToken = await addSecondaryGroupLeader(t, data);
+
+    // A second primary group (Group C) owns a DIFFERENT channel that happens to
+    // use the same slug, also invited to Group B.
+    const groupCId = await t.run(async (ctx) => {
+      return await ctx.db.insert("groups", {
+        name: "Group C",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    const secondChannelId = await t.run(async (ctx) => {
+      return await ctx.db.insert("chatChannels", {
+        groupId: groupCId,
+        slug: "shared-events",
+        channelType: "custom",
+        name: "Other Events",
+        createdById: data.userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+        isShared: true,
+        sharedGroups: [
+          {
+            groupId: data.groupBId,
+            status: "pending",
+            invitedById: data.userId,
+            invitedAt: Date.now(),
+          },
+        ],
+      });
+    });
+
+    // channelId picks the exact channel, not just the first slug match.
+    const second = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: secondChannelId,
+      }
+    );
+    expect(second!._id).toBe(secondChannelId);
+
+    const first = await t.query(
+      api.functions.messaging.channels.getChannelBySlug,
+      {
+        token: leaderToken,
+        groupId: data.groupBId,
+        slug: "shared-events",
+        channelId: data.sharedChannelId,
+      }
+    );
+    expect(first!._id).toBe(data.sharedChannelId);
+  });
 });
 
 // ============================================================================
