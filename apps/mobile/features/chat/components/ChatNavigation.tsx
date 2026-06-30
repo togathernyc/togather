@@ -12,7 +12,7 @@ import {
   Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { ResourceIcon } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useRouter } from "expo-router";
 import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";

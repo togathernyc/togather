@@ -17,7 +17,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { ResourceIcon } from '@components/ui';
+import { ResourceIcon } from '@components/ui/ResourceIcon';
 import { useRouter } from 'expo-router';
 import { useQuery, api } from '@services/api/convex';
 import { DOMAIN_CONFIG } from '@togather/shared';

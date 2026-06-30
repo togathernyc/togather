@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { ResourceIcon } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserRoute } from "@components/guards/UserRoute";
 import { DragHandle } from "@components/ui/DragHandle";

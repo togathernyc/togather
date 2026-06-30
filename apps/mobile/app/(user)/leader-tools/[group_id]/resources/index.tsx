@@ -14,7 +14,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { ResourceIcon } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";

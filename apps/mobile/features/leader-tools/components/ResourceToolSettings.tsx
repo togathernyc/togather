@@ -35,8 +35,8 @@ import {
   ResourceIcon,
   RESOURCE_ICON_OPTIONS,
   DEFAULT_RESOURCE_ICON,
-  Switch,
-} from "@components/ui";
+} from "@components/ui/ResourceIcon";
+import { Switch } from "@components/ui/Switch";
 import { useTheme } from "@hooks/useTheme";
 
 // ============================================================================

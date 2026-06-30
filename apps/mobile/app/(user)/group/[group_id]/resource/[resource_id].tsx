@@ -25,7 +25,8 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { useCallback } from "react";
-import { ResourceSection, ResourceIcon } from "@components/ui";
+import { ResourceSection } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
 
