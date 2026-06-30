@@ -919,12 +919,17 @@ async function getActiveLeaderGroupIds(
     .query("groupMembers")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .collect();
-  return memberships
-    .filter(
-      (membership: any) =>
-        isActiveMembership(membership) && isLeaderRole(membership.role),
-    )
-    .map((membership: any) => membership.groupId);
+  const leaderMemberships = memberships.filter(
+    (membership: any) =>
+      isActiveMembership(membership) && isLeaderRole(membership.role),
+  );
+  const groupIds: Id<"groups">[] = [];
+  for (const membership of leaderMemberships) {
+    const group = await ctx.db.get(membership.groupId);
+    // Exclude archived groups — their people should not surface on the People page.
+    if (group && !group.isArchived) groupIds.push(membership.groupId);
+  }
+  return groupIds;
 }
 
 /**
@@ -959,6 +964,13 @@ export const listAssignedToMe = query({
     }
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise the per-doc groupId match below
+    // would bypass the leader-group scope for a stale/archived/arbitrary id.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
 
     // Use the assignee filter if provided, otherwise default to current user
     const assigneeId = args.assigneeFilter ?? userId;
@@ -1051,6 +1063,13 @@ export const searchAssignedToMe = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
 
     let results = ctx.db

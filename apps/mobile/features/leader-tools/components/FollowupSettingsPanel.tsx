@@ -907,9 +907,9 @@ export function FollowupSettingsPanel({
               </Text>
             </View>
             <View style={styles.scoreExplainer}>
-              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Togather (Score 3)</Text>
+              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Connection (Score 3)</Text>
               <Text style={[styles.scoreExplainerText, { color: colors.textTertiary }]}>
-                Composite engagement score combining attendance consistency and followup recency. Attendance starts at 100 and drops 15 points per consecutive miss. Followup score is based on the most recent contact: in-person (100), call (85), or text (70), decaying by 1 point per day. The two components are averaged.
+                How well leaders are connecting with this person. Attendance provides a base (up to 70 points, dropping 15 per consecutive missed meeting). The most recent follow-up fills the rest of the score: in-person fills 100% of the remaining points, a call 75%, a text 50%, fading over time. The less someone attends, the more follow-up matters.
               </Text>
             </View>
             <View style={[styles.subsectionDivider, { backgroundColor: colors.border }]} />

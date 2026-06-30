@@ -112,6 +112,11 @@ export function isActiveLeader<T extends SoftDeletableRecord & RoleRecord>(
  * value means the user is active. Archived users should be excluded from leader
  * lists, assignee pickers, and other surfaces that suggest people to act on.
  *
+ * NOTE: provisional placeholder users (no claimed account) are also created with
+ * `isActive: false`, so this also returns `true` for them. That's correct for
+ * leader/assignee surfaces (placeholders are never leaders), but be cautious if
+ * reusing this on a path that enumerates general members.
+ *
  * @example
  * if (isArchivedUser(user)) {
  *   // Skip — this person is no longer active
