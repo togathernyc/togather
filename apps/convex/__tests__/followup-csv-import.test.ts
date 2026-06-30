@@ -115,6 +115,81 @@ async function seedGroupWithLeader(
   });
 }
 
+/**
+ * Seeds a group whose custom field definitions live at the community level
+ * (`communities.peopleCustomFields`) rather than the legacy per-group
+ * `followupColumnConfig`. This mirrors communities that have migrated to the
+ * community-level People directory config, which is the source of truth the
+ * Add Person side panel and People directory render from.
+ */
+async function seedGroupWithCommunityCustomFields(
+  t: ReturnType<typeof convexTest>
+): Promise<SeededContext> {
+  return t.run(async (ctx) => {
+    const timestamp = Date.now();
+    const leaderId = await ctx.db.insert("users", {
+      firstName: "Leader",
+      lastName: "One",
+      phone: "+12025550100",
+      isActive: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    const communityId = await ctx.db.insert("communities", {
+      name: "Community Fields Community",
+      slug: "community-fields-community",
+      isPublic: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      peopleCustomFields: [
+        { slot: "customText1", name: "Neighborhood", type: "text" },
+        { slot: "customNum1", name: "Volunteer Level", type: "number" },
+        { slot: "customBool1", name: "Wants Prayer", type: "boolean" },
+      ],
+    });
+
+    const groupTypeId = await ctx.db.insert("groupTypes", {
+      communityId,
+      name: "Small Group",
+      slug: "small-group",
+      isActive: true,
+      createdAt: timestamp,
+      displayOrder: 1,
+    });
+
+    await ctx.db.insert("userCommunities", {
+      userId: leaderId,
+      communityId,
+      roles: 4,
+      status: 1,
+      createdAt: timestamp,
+    });
+
+    // Group intentionally has no followupColumnConfig.customFields — the only
+    // source of custom field definitions is the community-level config.
+    const groupId = await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Community Fields Group",
+      isArchived: false,
+      isPublic: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId: leaderId,
+      role: "leader",
+      joinedAt: timestamp,
+      notificationsEnabled: true,
+    });
+
+    return { leaderId, communityId, groupId };
+  });
+}
+
 describe("follow-up CSV import", () => {
   test("preview reports custom field update actions and ignored invalid values", async () => {
     const t = convexTest(schema, modules);
@@ -692,6 +767,56 @@ describe("follow-up CSV import", () => {
 
     expect(snapshot.usersWithPhone).toHaveLength(1);
     expect(snapshot.membership?._id).toBeTruthy();
+  });
+
+  test("quick add persists custom fields defined at the community level", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderId, communityId, groupId } =
+      await seedGroupWithCommunityCustomFields(t);
+    const token = (await generateTokens(leaderId, communityId)).accessToken;
+
+    const result = await t.mutation(api.functions.memberFollowups.quickAddRow, {
+      token,
+      groupId,
+      firstName: "Quick",
+      lastName: "Add",
+      phone: "(202) 555-0701",
+      customFieldValues: {
+        customText1: "South",
+        customNum1: "3",
+        customBool1: "true",
+      },
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(result.createdUser).toBe(true);
+
+    const score = await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_phone", (q) => q.eq("phone", "+12025550701"))
+        .first();
+      const membership = user
+        ? await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", groupId).eq("userId", user._id)
+          )
+          .first()
+        : null;
+      return membership
+        ? await ctx.db
+          .query("memberFollowupScores")
+          .withIndex("by_groupMember", (q) =>
+            q.eq("groupMemberId", membership._id)
+          )
+          .first()
+        : null;
+    });
+
+    expect(score?.customText1).toBe("South");
+    expect(score?.customNum1).toBe(3);
+    expect(score?.customBool1).toBe(true);
   });
 
   test("quick add enforces required first name + phone", async () => {
