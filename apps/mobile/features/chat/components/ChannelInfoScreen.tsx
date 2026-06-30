@@ -1350,42 +1350,47 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   roster is managed there, not from its chat channel. */}
 
               {/* Composer hint — guidance text shown as the message-box
-                  placeholder (e.g. "put experience updates here"). Available
-                  on any group channel; the backend gates edits to leaders. */}
-              <Pressable
-                onPress={() => {
-                  setHintValue(channel?.hint ?? "");
-                  setHintError(null);
-                  setHintVisible(true);
-                }}
-                style={({ pressed }) => [
-                  styles.actionRowFlat,
-                  {
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: colors.border,
-                  },
-                  pressed && { backgroundColor: colors.selectedBackground },
-                ]}
-              >
-                <Ionicons name="bulb-outline" size={20} color={colors.icon} />
-                <Text style={[styles.actionLabel, { color: colors.text }]}>
-                  Composer hint
-                </Text>
-                {channel?.hint ? (
-                  <Text
-                    style={[styles.actionRowValue, { color: colors.textSecondary }]}
-                    numberOfLines={1}
-                  >
-                    {channel.hint}
+                  placeholder (e.g. "put experience updates here"). Editing is
+                  authorized by `updateChannel` against the owning group, so we
+                  hide it for secondary-share viewers (a linked group's leader
+                  would otherwise open the modal only to hit "Not authorized").
+                  The owning group's leaders manage the shared hint. */}
+              {!isSecondaryShare && (
+                <Pressable
+                  onPress={() => {
+                    setHintValue(channel?.hint ?? "");
+                    setHintError(null);
+                    setHintVisible(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="bulb-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Composer hint
                   </Text>
-                ) : null}
-                <Ionicons
-                  name="chevron-forward"
-                  size={18}
-                  color={colors.textTertiary}
-                  style={{ marginLeft: channel?.hint ? 0 : "auto" }}
-                />
-              </Pressable>
+                  {channel?.hint ? (
+                    <Text
+                      style={[styles.actionRowValue, { color: colors.textSecondary }]}
+                      numberOfLines={1}
+                    >
+                      {channel.hint}
+                    </Text>
+                  ) : null}
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: channel?.hint ? 0 : "auto" }}
+                  />
+                </Pressable>
+              )}
 
               {/* Rename — custom channels only (backend gates the rest). */}
               {isCustom && (
