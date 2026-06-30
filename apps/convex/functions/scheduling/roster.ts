@@ -48,7 +48,12 @@ export const rosterMatrix = query({
     groupId: v.id("groups"),
     /** Event-column cap; clamped to [1, MAX_EVENTS]. */
     limit: v.optional(v.number()),
-    includePast: v.optional(v.boolean()),
+    /**
+     * How many previous plans to lead the grid with (most-recent first),
+     * clamped to [0, MAX_EVENTS]. The roster shows upcoming dates by default;
+     * the grid's "Previous dates" stepper bumps this to reveal past plans.
+     */
+    pastLimit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -58,16 +63,30 @@ export const rosterMatrix = query({
       1,
       Math.min(Math.floor(args.limit ?? MAX_EVENTS), MAX_EVENTS),
     );
+    // How many previous plans (most-recent first) to lead the grid with. The
+    // roster leads with upcoming dates; the "Previous dates" stepper bumps this
+    // to reveal past plans for review/copy. The column cap below still bounds
+    // the total, so adding previous dates trims the furthest-future ones.
+    const pastCount = Math.max(
+      0,
+      Math.min(Math.floor(args.pastLimit ?? 0), MAX_EVENTS),
+    );
     const cutoff = startOfTodayMs();
-    const plans = (
+    const allPlans = (
       await ctx.db
         .query("eventPlans")
         .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
         .collect()
-    )
-      .filter((p) => args.includePast || p.eventDate >= cutoff)
-      .sort((a, b) => a.eventDate - b.eventDate)
-      .slice(0, cap);
+    ).sort((a, b) => a.eventDate - b.eventDate);
+    const upcoming = allPlans.filter((p) => p.eventDate >= cutoff);
+    const past = allPlans.filter((p) => p.eventDate < cutoff);
+    // Lead with the `pastCount` most-recent past plans (kept in chronological
+    // order), then the upcoming plans, trimmed to the column cap from the
+    // oldest-shown end.
+    const plans = [
+      ...past.slice(Math.max(0, past.length - pastCount)),
+      ...upcoming,
+    ].slice(0, cap);
 
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(
