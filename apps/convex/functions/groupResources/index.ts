@@ -311,12 +311,19 @@ export const getInboxResourcesForUser = query({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
 
-    // All of the user's group memberships (active only).
+    // The user's admitted group memberships: active (not left) AND not a
+    // pending/declined join request. `isActiveMembership` only checks `leftAt`,
+    // so a pending request row would otherwise leak resource titles/links for a
+    // group the user hasn't joined — mirror the inbox channel query's filter.
     const memberships = await ctx.db
       .query("groupMembers")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    const activeMemberships = memberships.filter((m) => isActiveMembership(m));
+    const activeMemberships = memberships.filter(
+      (m) =>
+        isActiveMembership(m) &&
+        (m.requestStatus === undefined || m.requestStatus === "accepted")
+    );
 
     // Channel memberships are only needed when a resource uses
     // `channel_members` visibility; load them lazily and reuse across groups.

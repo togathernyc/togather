@@ -270,6 +270,40 @@ describe("groupResources: getInboxResourcesForUser", () => {
     expect(result).toHaveLength(0);
   });
 
+  test("excludes resources for groups with a pending join request", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+
+    // Member's join request is still pending (not yet admitted).
+    await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", f.groupId).eq("userId", f.memberId),
+        )
+        .first();
+      if (membership) {
+        await ctx.db.patch(membership._id, { requestStatus: "pending" });
+      }
+    });
+
+    await t.mutation(api.functions.groupResources.index.create, {
+      groupId: f.groupId,
+      title: "Give",
+      linkUrl: "https://example.com/give",
+      showInInbox: true,
+      visibility: { type: "everyone" },
+      token: f.leaderToken,
+    });
+
+    const result = await t.query(
+      api.functions.groupResources.index.getInboxResourcesForUser,
+      { communityId: f.communityId, token: f.memberToken },
+    );
+
+    expect(result).toHaveLength(0);
+  });
+
   test("scopes results to the requested community", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);
