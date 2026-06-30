@@ -502,6 +502,16 @@ export function GroupsAndChannels() {
           working immediately. Use that if a link was shared too widely — make a
           new one and the old one can&rsquo;t be used to join.
         </Callout>
+
+        <P>
+          Every channel also has an optional <Term>composer hint</Term>. From a
+          channel&rsquo;s info screen, under <strong>Leader controls</strong>,
+          tap <strong>Composer hint</strong> to set the placeholder text that
+          shows in the message box — for example &ldquo;put experience updates
+          here.&rdquo; It&rsquo;s a gentle nudge that steers people toward
+          posting the right kind of message in each thread. Leave it empty to
+          fall back to the default &ldquo;Message…&rdquo; placeholder.
+        </P>
       </Section>
 
       <Section id="leaders" title="Members & leaders">
@@ -523,7 +533,8 @@ export function GroupsAndChannels() {
             Post in the Announcements channel (members can only read it).
           </Step>
           <Step n={3}>
-            Manage channel invite links and approve or decline join requests.
+            Manage channel invite links and approve or decline join requests,
+            and set a composer hint to guide what members post in each channel.
           </Step>
           <Step n={4}>
             Add, remove, and promote members within the group.
