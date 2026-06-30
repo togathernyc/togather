@@ -14,6 +14,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
@@ -104,14 +105,7 @@ export default function ResourcesListScreen() {
             }
           >
             <View style={styles.resourceInfo}>
-              <Ionicons
-                name={
-                  (resource.icon ||
-                    "document-outline") as keyof typeof Ionicons.glyphMap
-                }
-                size={24}
-                color={colors.text}
-              />
+              <ResourceIcon name={resource.icon} size={24} color={colors.text} />
               <View style={styles.resourceText}>
                 <Text style={styles.resourceTitle}>{resource.title}</Text>
                 <Text style={styles.resourceMeta}>

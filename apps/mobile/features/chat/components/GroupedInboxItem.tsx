@@ -16,10 +16,12 @@ import {
   Alert,
   Platform,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui";
 import { useAuth } from "@providers/AuthProvider";
 import { AppImage } from "@components/ui";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
@@ -56,6 +58,14 @@ interface GroupData {
   isAnnouncementGroup: boolean | undefined;
 }
 
+// Inbox-flagged resources shown under a group (from getInboxResourcesForUser).
+interface InboxResourceData {
+  _id: Id<"groupResources">;
+  title: string;
+  icon?: string;
+  linkUrl?: string;
+}
+
 export interface GroupedInboxItemProps {
   group: GroupData;
   channels: ChannelData[];
@@ -64,6 +74,8 @@ export interface GroupedInboxItemProps {
   onToggleExpand?: () => void;
   activeGroupId?: string;
   activeChannelSlug?: string;
+  /** Resources flagged to show under this group in the inbox. */
+  resources?: InboxResourceData[];
 }
 
 // Helper to get badge colors dynamically for any group type ID
@@ -113,6 +125,7 @@ function GroupedInboxItemInner({
   onToggleExpand,
   activeGroupId,
   activeChannelSlug,
+  resources,
 }: GroupedInboxItemProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -258,6 +271,58 @@ function GroupedInboxItemInner({
     [canExpand, onToggleExpand]
   );
 
+  // Open a resource shown under the group: redirect to its link if it has one,
+  // otherwise open the resource detail page.
+  const handleResourcePress = useCallback(
+    (resource: InboxResourceData) => {
+      if (resource.linkUrl) {
+        Linking.openURL(resource.linkUrl).catch((err) => {
+          console.error("[GroupedInboxItem] Failed to open resource link:", err);
+        });
+        return;
+      }
+      router.push(`/(user)/group/${group._id}/resource/${resource._id}` as any);
+    },
+    [router, group._id]
+  );
+
+  // Resource sub-rows rendered under the group, styled like sub-channels with
+  // the same L-connector. Shared between the single- and multi-channel layouts.
+  const resourceRows =
+    resources && resources.length > 0 ? (
+      <View>
+        {resources.map((resource) => (
+          <View key={resource._id} style={styles.subChannelContainer}>
+            <View style={styles.connectorContainer}>
+              <View style={[styles.connectorVertical, { backgroundColor: colors.border }]} />
+              <View style={[styles.connectorHorizontal, { backgroundColor: colors.border }]} />
+            </View>
+            <Pressable
+              onPress={() => handleResourcePress(resource)}
+              style={({ pressed }) => [
+                styles.subChannelCard,
+                { backgroundColor: colors.surfaceSecondary, borderColor: "transparent" },
+                pressed && { backgroundColor: isDark ? colors.border : "#E8E8E8" },
+              ]}
+            >
+              <ResourceIcon name={resource.icon} size={16} color={colors.textSecondary} />
+              <Text
+                style={[styles.resourceRowTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {resource.title}
+              </Text>
+              <Ionicons
+                name={resource.linkUrl ? "open-outline" : "chevron-forward"}
+                size={14}
+                color={colors.textTertiary}
+              />
+            </Pressable>
+          </View>
+        ))}
+      </View>
+    ) : null;
+
   // Get the most recent channel for single-channel display
   const primaryChannel = channels[0];
 
@@ -266,7 +331,15 @@ function GroupedInboxItemInner({
     const hasUnread = primaryChannel.unreadCount > 0;
     const isActive = isActiveGroup && activeChannelSlug === primaryChannel.slug;
 
+    // When the group has inbox resources, wrap the row + resource sub-rows in a
+    // container so they read as one inbox item.
+    const SingleWrapper = resourceRows ? View : React.Fragment;
+    const singleWrapperProps = resourceRows
+      ? { style: [styles.groupedContainer, { backgroundColor: colors.surface }] }
+      : {};
+
     return (
+      <SingleWrapper {...(singleWrapperProps as any)}>
       <Pressable
         onPress={() => handleChannelPress(primaryChannel)}
         style={({ pressed }) => [
@@ -340,6 +413,8 @@ function GroupedInboxItemInner({
           </View>
         ) : null}
       </Pressable>
+      {resourceRows}
+      </SingleWrapper>
     );
   }
 
@@ -487,6 +562,9 @@ function GroupedInboxItemInner({
           </View>
         );
       })}
+
+      {/* Resource sub-rows */}
+      {resourceRows}
     </View>
   );
 }
@@ -684,6 +762,13 @@ const styles = StyleSheet.create({
   subChannelName: {
     fontSize: 13,
     fontWeight: "600",
+    marginRight: 8,
+  },
+  resourceRowTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    marginLeft: 8,
     marginRight: 8,
   },
   subChannelNameUnread: {

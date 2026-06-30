@@ -31,26 +31,13 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { ResourceSectionEditor } from "./ResourceSectionEditor";
 import { DragHandle } from "@components/ui/DragHandle";
+import {
+  ResourceIcon,
+  RESOURCE_ICON_OPTIONS,
+  DEFAULT_RESOURCE_ICON,
+  Switch,
+} from "@components/ui";
 import { useTheme } from "@hooks/useTheme";
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const ICON_OPTIONS = [
-  "document-outline",
-  "book-outline",
-  "people-outline",
-  "heart-outline",
-  "star-outline",
-  "school-outline",
-  "information-circle-outline",
-  "hand-right-outline",
-  "megaphone-outline",
-  "calendar-outline",
-] as const;
-
-type IconOption = (typeof ICON_OPTIONS)[number];
 
 // ============================================================================
 // Types
@@ -83,7 +70,12 @@ export function ResourceToolSettings() {
 
   // Form state
   const [title, setTitle] = useState("");
-  const [icon, setIcon] = useState<IconOption>("document-outline");
+  const [icon, setIcon] = useState<string>(DEFAULT_RESOURCE_ICON);
+  // Resource-level link redirect. When set, tapping the resource opens this URL
+  // instead of the detail page, letting it act as a pure link (e.g. "Give").
+  const [linkUrl, setLinkUrl] = useState("");
+  // Whether the resource is shown under its group's item in the chat inbox.
+  const [showInInbox, setShowInInbox] = useState(false);
   const [visibilityType, setVisibilityType] = useState<
     "everyone" | "joined_within" | "channel_members"
   >("everyone");
@@ -126,7 +118,9 @@ export function ResourceToolSettings() {
   useEffect(() => {
     if (existingResource) {
       setTitle(existingResource.title);
-      setIcon((existingResource.icon as IconOption) || "document-outline");
+      setIcon(existingResource.icon || DEFAULT_RESOURCE_ICON);
+      setLinkUrl(existingResource.linkUrl ?? "");
+      setShowInInbox(existingResource.showInInbox ?? false);
       setVisibilityType(existingResource.visibility.type);
       setDaysWithin(String(existingResource.visibility.daysWithin || 7));
       setSelectedChannelIds(
@@ -168,6 +162,8 @@ export function ResourceToolSettings() {
           groupId: group_id as Id<"groups">,
           title: title.trim(),
           icon,
+          linkUrl: linkUrl.trim(),
+          showInInbox,
           visibility,
           token,
         });
@@ -178,6 +174,8 @@ export function ResourceToolSettings() {
           resourceId: resource_id as Id<"groupResources">,
           title: title.trim(),
           icon,
+          linkUrl: linkUrl.trim(),
+          showInInbox,
           visibility,
           token,
         });
@@ -194,6 +192,8 @@ export function ResourceToolSettings() {
     group_id,
     title,
     icon,
+    linkUrl,
+    showInInbox,
     visibilityType,
     daysWithin,
     selectedChannelIds,
@@ -331,7 +331,7 @@ export function ResourceToolSettings() {
           style={styles.iconPicker}
           contentContainerStyle={styles.iconPickerContent}
         >
-          {ICON_OPTIONS.map((iconName) => (
+          {RESOURCE_ICON_OPTIONS.map((iconName) => (
             <Pressable
               key={iconName}
               style={[
@@ -344,7 +344,7 @@ export function ResourceToolSettings() {
               ]}
               onPress={() => setIcon(iconName)}
             >
-              <Ionicons
+              <ResourceIcon
                 name={iconName}
                 size={24}
                 color={icon === iconName ? themeColor : colors.textSecondary}
@@ -352,6 +352,36 @@ export function ResourceToolSettings() {
             </Pressable>
           ))}
         </ScrollView>
+
+        {/* Link redirect (optional) */}
+        <Text style={[styles.label, { color: colors.text }]}>Link (optional)</Text>
+        <TextInput
+          style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.inputBackground }]}
+          value={linkUrl}
+          onChangeText={setLinkUrl}
+          placeholder="https://example.com/give"
+          placeholderTextColor={colors.textTertiary}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+        <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+          When set, tapping this resource opens the link directly instead of a
+          content page.
+        </Text>
+
+        {/* Show in inbox */}
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleTextContainer}>
+            <Text style={[styles.label, styles.toggleLabel, { color: colors.text }]}>
+              Show in inbox
+            </Text>
+            <Text style={[styles.helperText, styles.toggleHelperText, { color: colors.textTertiary }]}>
+              Display this resource under the group in the chat inbox.
+            </Text>
+          </View>
+          <Switch value={showInInbox} onValueChange={setShowInInbox} />
+        </View>
 
         {/* Visibility */}
         <Text style={[styles.label, { color: colors.text }]}>Who can see this?</Text>
@@ -617,6 +647,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
+  },
+  helperText: {
+    fontSize: 13,
+    marginTop: 6,
+    lineHeight: 18,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 16,
+    gap: 12,
+  },
+  toggleTextContainer: {
+    flex: 1,
+  },
+  toggleLabel: {
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  toggleHelperText: {
+    marginTop: 4,
   },
   iconPicker: {
     marginBottom: 8,

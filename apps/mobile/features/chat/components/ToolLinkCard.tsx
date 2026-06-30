@@ -17,6 +17,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { ResourceIcon } from '@components/ui';
 import { useRouter } from 'expo-router';
 import { useQuery, api } from '@services/api/convex';
 import { DOMAIN_CONFIG } from '@togather/shared';
@@ -123,12 +124,12 @@ export function ToolLinkCard({
     return toolData.groupName || "Tool";
   };
 
-  // Get icon
-  const getIcon = (): keyof typeof Ionicons.glyphMap => {
+  // Get icon name (Ionicons name, or "mci:"-prefixed for resource icons).
+  const getIcon = (): string => {
     if (!toolData) return "link-outline";
     if (toolData.toolType === "runsheet") return "list-outline";
     if (toolData.toolType === "resource") {
-      return (toolData.resourceIcon as keyof typeof Ionicons.glyphMap) || "document-text-outline";
+      return toolData.resourceIcon || "document-text-outline";
     }
     return "link-outline";
   };
@@ -158,7 +159,7 @@ export function ToolLinkCard({
       delayLongPress={300}
     >
       <View style={styles.content}>
-        <Ionicons name={getIcon()} size={18} color="#555" style={styles.icon} />
+        <ResourceIcon name={getIcon()} size={18} color="#555" style={styles.icon} />
         <Text style={styles.label} numberOfLines={1}>
           {getDisplayName()}
         </Text>

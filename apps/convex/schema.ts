@@ -531,7 +531,15 @@ export default defineSchema({
   groupResources: defineTable({
     groupId: v.id("groups"),
     title: v.string(), // "Welcome", "Roles", "Resources", etc.
-    icon: v.optional(v.string()), // Ionicons icon name
+    icon: v.optional(v.string()), // Icon name. Plain string = Ionicons; "mci:<name>" = MaterialCommunityIcons.
+    // When set, tapping the resource opens this URL instead of the resource
+    // detail page. Lets a resource act as a pure link (e.g. a "Give" button
+    // that opens a donation page) with no sections/content of its own.
+    linkUrl: v.optional(v.string()),
+    // When true, the resource is shown under its group's item in the chat
+    // inbox. Independent of the toolbar (a resource can appear in the inbox
+    // without being added to the group's toolbar, and vice versa).
+    showInInbox: v.optional(v.boolean()),
     visibility: v.object({
       type: v.union(
         v.literal("everyone"),

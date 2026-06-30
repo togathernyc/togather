@@ -293,6 +293,95 @@ export const getVisibleForUser = query({
   },
 });
 
+/**
+ * Get inbox-flagged resources for the current user, grouped by group.
+ *
+ * Returns the resources that should appear under each group's item in the chat
+ * inbox (those with `showInInbox === true`), scoped to a single community and
+ * filtered by the same visibility rules as the toolbar. One batched query keeps
+ * the inbox to a single subscription instead of one per group.
+ *
+ * Shape: `[{ groupId, resources: [{ _id, title, icon, linkUrl }] }]`
+ */
+export const getInboxResourcesForUser = query({
+  args: {
+    communityId: v.id("communities"),
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // All of the user's group memberships (active only).
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const activeMemberships = memberships.filter((m) => isActiveMembership(m));
+
+    // Channel memberships are only needed when a resource uses
+    // `channel_members` visibility; load them lazily and reuse across groups.
+    let userChannelIds: Id<"chatChannels">[] | undefined;
+
+    const results: Array<{
+      groupId: Id<"groups">;
+      resources: Array<{
+        _id: Id<"groupResources">;
+        title: string;
+        icon?: string;
+        linkUrl?: string;
+      }>;
+    }> = [];
+
+    for (const membership of activeMemberships) {
+      const group = await ctx.db.get(membership.groupId);
+      // Skip groups outside this community or that are archived.
+      if (!group || group.communityId !== args.communityId || group.isArchived) {
+        continue;
+      }
+
+      const groupResources = await ctx.db
+        .query("groupResources")
+        .withIndex("by_group", (q) => q.eq("groupId", membership.groupId))
+        .collect();
+
+      const inboxResources = groupResources.filter(
+        (r) => r.showInInbox === true
+      );
+      if (inboxResources.length === 0) continue;
+
+      if (
+        userChannelIds === undefined &&
+        inboxResources.some((r) => r.visibility.type === "channel_members")
+      ) {
+        const channelMemberships = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .collect();
+        userChannelIds = channelMemberships.map((m) => m.channelId);
+      }
+
+      const visible = inboxResources
+        .filter((r) => isResourceVisibleToUser(r, membership, userChannelIds))
+        .sort((a, b) => a.order - b.order);
+
+      if (visible.length === 0) continue;
+
+      results.push({
+        groupId: membership.groupId,
+        resources: visible.map((r) => ({
+          _id: r._id,
+          title: r.title,
+          icon: r.icon,
+          linkUrl: r.linkUrl,
+        })),
+      });
+    }
+
+    return results;
+  },
+});
+
 // ============================================================================
 // Mutations
 // ============================================================================
@@ -309,6 +398,8 @@ export const create = mutation({
     groupId: v.id("groups"),
     title: v.string(),
     icon: v.optional(v.string()),
+    linkUrl: v.optional(v.string()),
+    showInInbox: v.optional(v.boolean()),
     visibility: v.object({
       type: v.union(
         v.literal("everyone"),
@@ -357,6 +448,10 @@ export const create = mutation({
       groupId: args.groupId,
       title: args.title,
       icon: args.icon,
+      // Normalize blank links to undefined so an empty input never turns a
+      // resource into a no-op redirect.
+      linkUrl: args.linkUrl?.trim() || undefined,
+      showInInbox: args.showInInbox,
       visibility: args.visibility,
       sections: [],
       order: maxOrder + 1,
@@ -379,6 +474,8 @@ export const update = mutation({
     resourceId: v.id("groupResources"),
     title: v.optional(v.string()),
     icon: v.optional(v.string()),
+    linkUrl: v.optional(v.string()),
+    showInInbox: v.optional(v.boolean()),
     visibility: v.optional(
       v.object({
         type: v.union(
@@ -425,6 +522,9 @@ export const update = mutation({
 
     if (args.title !== undefined) updates.title = args.title;
     if (args.icon !== undefined) updates.icon = args.icon;
+    // A blank link clears the redirect (patching `undefined` removes the field).
+    if (args.linkUrl !== undefined) updates.linkUrl = args.linkUrl.trim() || undefined;
+    if (args.showInInbox !== undefined) updates.showInInbox = args.showInInbox;
     if (args.visibility !== undefined) updates.visibility = args.visibility;
     if (args.order !== undefined) updates.order = args.order;
 

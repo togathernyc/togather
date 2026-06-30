@@ -24,4 +24,10 @@ export { CommunityWideBadge } from './CommunityWideBadge';
 export { ImageViewer } from './ImageViewer';
 export { ResourceSection } from './ResourceSection';
 export type { ResourceSectionData } from './ResourceSection';
+export {
+  ResourceIcon,
+  RESOURCE_ICON_OPTIONS,
+  DEFAULT_RESOURCE_ICON,
+} from './ResourceIcon';
+export type { ResourceIconProps } from './ResourceIcon';
 

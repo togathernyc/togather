@@ -22,7 +22,7 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
-import { ResourceSection } from "@components/ui";
+import { ResourceSection, ResourceIcon } from "@components/ui";
 import type { ResourceSectionData } from "@components/ui";
 import { RunSheetScreen } from "@features/leader-tools/components/RunSheetScreen";
 import type { RunSheet } from "@features/leader-tools/components/RunSheetScreen";
@@ -160,11 +160,11 @@ export default function ToolPageClient() {
     );
   }
 
-  // Get tool icon
-  const getToolIcon = (): keyof typeof Ionicons.glyphMap => {
+  // Get tool icon name (Ionicons name, or "mci:"-prefixed for resources).
+  const getToolIcon = (): string => {
     if (toolLink.toolType === "runsheet") return "list-outline";
     if (toolLink.toolType === "resource") {
-      return (toolLink.resourceIcon as keyof typeof Ionicons.glyphMap) || "document-text-outline";
+      return (toolLink.resourceIcon as string) || "document-text-outline";
     }
     return "link-outline";
   };
@@ -183,7 +183,7 @@ export default function ToolPageClient() {
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <ResourceIcon name={getToolIcon()} size={18} color={colors.textSecondary} />
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>
@@ -240,7 +240,7 @@ export default function ToolPageClient() {
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <ResourceIcon name={getToolIcon()} size={18} color={colors.textSecondary} />
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>

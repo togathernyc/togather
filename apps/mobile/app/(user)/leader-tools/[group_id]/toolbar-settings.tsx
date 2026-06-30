@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { UserRoute } from "@components/guards/UserRoute";
 import { DragHandle } from "@components/ui/DragHandle";
@@ -381,8 +382,8 @@ export default function ToolbarSettingsScreen() {
               {enabledItems.map((item, index) => (
                 <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
-                    <Ionicons
-                      name={item.icon as keyof typeof Ionicons.glyphMap}
+                    <ResourceIcon
+                      name={item.icon}
                       size={20}
                       color={colors.text}
                     />
@@ -440,8 +441,8 @@ export default function ToolbarSettingsScreen() {
               {disabledItems.map((item) => (
                 <View key={item.id} style={[styles.toolRow, { borderBottomColor: colors.borderLight }]}>
                   <View style={styles.toolInfo}>
-                    <Ionicons
-                      name={item.icon as keyof typeof Ionicons.glyphMap}
+                    <ResourceIcon
+                      name={item.icon}
                       size={20}
                       color={colors.textTertiary}
                     />
@@ -529,8 +530,8 @@ export default function ToolbarSettingsScreen() {
                     return (
                       <View key={item.id} style={[styles.toolVisibilityRow, { borderBottomColor: colors.borderLight }]}>
                         <View style={styles.toolVisibilityInfo}>
-                          <Ionicons
-                            name={item.icon as keyof typeof Ionicons.glyphMap}
+                          <ResourceIcon
+                            name={item.icon}
                             size={18}
                             color={colors.textSecondary}
                           />
