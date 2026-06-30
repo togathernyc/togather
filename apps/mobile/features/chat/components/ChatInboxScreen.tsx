@@ -55,12 +55,14 @@ import { EnableNotificationsBanner } from "@features/notifications/components/En
 // MIN_QUERY_LENGTH guard in the backend `searchMessages` query.
 const MIN_SEARCH_LENGTH = 2;
 
-// WhatsApp-style collapsing header geometry. The large title and search bar
-// collapse into the compact nav row over this scroll distance (px) — the sum of
-// the large-title row height and the search-bar block height below it.
-const LARGE_TITLE_HEIGHT = 44;
+// WhatsApp-style collapsing header geometry. The large title shares the nav row
+// with the compose button (it's overlaid there, not given its own row), so only
+// the search bar block occupies extra vertical space. COLLAPSE_DISTANCE is the
+// scroll distance (px) over which the large title fades into the small centered
+// title and the search bar collapses away.
+const NAV_ROW_HEIGHT = 44;
 const SEARCH_BLOCK_HEIGHT = 64;
-const COLLAPSE_DISTANCE = LARGE_TITLE_HEIGHT + SEARCH_BLOCK_HEIGHT;
+const COLLAPSE_DISTANCE = NAV_ROW_HEIGHT + SEARCH_BLOCK_HEIGHT;
 
 // Type for a channel as returned by getInboxChannels
 type InboxChannel = {
@@ -375,8 +377,9 @@ export function ChatInboxScreen({
     const p = collapseEnabled
       ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
       : 0;
+    // The large title is overlaid in the nav row, so it just fades and lifts on
+    // scroll — it has no flow height to collapse.
     return {
-      height: interpolate(p, [0, 1], [LARGE_TITLE_HEIGHT, 0]),
       opacity: interpolate(p, [0, 0.7], [1, 0], Extrapolation.CLAMP),
       transform: [{ translateY: interpolate(p, [0, 1], [0, -8]) }],
     };
@@ -408,15 +411,24 @@ export function ChatInboxScreen({
     return { opacity: interpolate(p, [0, 1], [0, 1]) };
   });
 
-  // Collapsing header for the populated inbox view. Compose button sits in the
-  // compact nav row (like WhatsApp), with the centered title fading in as the
-  // large title and search bar collapse away on scroll.
+  // Collapsing header for the populated inbox view. The large title and compose
+  // button share a single nav row (like the static header) — the large title is
+  // overlaid on the left and morphs into the centered small title on scroll,
+  // while the search bar below collapses away. Keeping the title and compose on
+  // one row avoids a wasteful empty nav row above the title.
   const renderCollapsingHeader = () => (
     <Animated.View style={[styles.collapsingHeader, { paddingTop: headerPaddingTop }]}>
       <View style={styles.navRow}>
+        <Animated.View
+          style={[styles.largeTitleWrap, largeTitleStyle]}
+          pointerEvents="none"
+        >
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+        </Animated.View>
         <Animated.Text
           style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
           numberOfLines={1}
+          pointerEvents="none"
         >
           Inbox
         </Animated.Text>
@@ -432,10 +444,6 @@ export function ChatInboxScreen({
           </Pressable>
         )}
       </View>
-
-      <Animated.View style={[styles.largeTitleWrap, largeTitleStyle]}>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-      </Animated.View>
 
       <Animated.View style={[styles.searchWrap, searchStyle]}>
         <SearchBar
@@ -1470,11 +1478,11 @@ const styles = StyleSheet.create({
   collapsingHeader: {
     paddingBottom: 8,
   },
-  // Compact nav row that stays put while the title + search collapse into it.
-  // Compose button sits at the trailing edge; the centered title fades in over
-  // it on scroll.
+  // Nav row holding the compose button at the trailing edge. The large title is
+  // overlaid on the left and the centered small title fades in on scroll; both
+  // are absolutely positioned so they share this row instead of adding rows.
   navRow: {
-    height: 44,
+    height: NAV_ROW_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
@@ -1489,10 +1497,11 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   largeTitleWrap: {
-    height: LARGE_TITLE_HEIGHT,
+    position: "absolute",
+    left: 16,
+    top: 0,
+    bottom: 0,
     justifyContent: "center",
-    paddingHorizontal: 16,
-    overflow: "hidden",
   },
   searchWrap: {
     height: SEARCH_BLOCK_HEIGHT,
