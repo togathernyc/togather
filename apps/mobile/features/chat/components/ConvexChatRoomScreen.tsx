@@ -87,6 +87,8 @@ type ChatRoomParams = {
   leadersChannelId?: string;
   isAnnouncementGroup?: string;
   externalChatLink?: string;
+  /** When arriving from inbox search, the message to scroll to and highlight. */
+  messageId?: string;
 };
 
 const ConvexChatRoomScreenInner: React.FC = () => {
@@ -1186,6 +1188,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   if (userId === currentUserId) return;
                   router.push(`/profile/${userId}` as any);
                 }}
+                highlightMessageId={
+                  params.messageId
+                    ? (params.messageId as Id<"chatMessages">)
+                    : null
+                }
               />
             </View>
 

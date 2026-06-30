@@ -103,7 +103,9 @@ export function InboxSearchResults({
       if (result.isAdHoc || !result.groupId) {
         router.push({
           pathname: `/inbox/dm/${result.channelId}` as any,
-          params: { groupName: resultHeaderLabel(result) },
+          // `messageId` tells the chat screen which message to scroll to and
+          // highlight on arrival.
+          params: { groupName: resultHeaderLabel(result), messageId: result.messageId },
         });
         return;
       }
@@ -113,6 +115,8 @@ export function InboxSearchResults({
         params: {
           groupName: result.groupName ?? "",
           channelId: result.channelId,
+          // Scroll to and highlight the matched message on arrival.
+          messageId: result.messageId,
         },
       });
     },

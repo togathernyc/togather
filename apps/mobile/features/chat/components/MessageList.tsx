@@ -110,6 +110,12 @@ interface MessageListProps {
   onDismissMessage?: (optimisticId: string) => void;
   /** Tap a user's avatar in the list → open their profile. */
   onAvatarPress?: (userId: Id<"users">) => void;
+  /**
+   * When set (e.g. from an inbox search result), the list auto-loads older
+   * pages until this message is in view, scrolls to center it, and flashes a
+   * highlight on it.
+   */
+  highlightMessageId?: Id<"chatMessages"> | null;
 }
 
 // Helper to format date as "Today", "Yesterday", or "Jan 15"
@@ -157,6 +163,7 @@ export function MessageList({
   onRetryMessage,
   onDismissMessage,
   onAvatarPress,
+  highlightMessageId,
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
@@ -185,10 +192,14 @@ export function MessageList({
   // Fetch messages with pagination (live query for updates)
   // Start immediately if we have prefetched data, otherwise wait for animation
   const shouldStartQuery = hasPrefetchedMessages || isAnimationComplete;
+  // Larger page size while jumping to a search result so the anchor catch-up
+  // reaches older messages in fewer round-trips.
+  const pageSize = highlightMessageId ? 40 : 20;
   const { messages: liveMessages, loadMore, hasMore, isLoading: liveIsLoading, isStale } = useMessages(
     shouldStartQuery ? channelId : null,
-    20,
-    groupId ?? null
+    pageSize,
+    groupId ?? null,
+    highlightMessageId ?? null
   );
 
   // Use prefetched messages while live query is loading
@@ -283,6 +294,36 @@ export function MessageList({
     // Reverse for inverted list (newest first)
     return items.reverse();
   }, [messages, optimisticMessages]);
+
+  // Scroll to and highlight a target message (e.g. tapped from inbox search).
+  // The hook auto-loads older pages until the message is present; this runs
+  // once it appears in listItems. Tracked per-anchor so it fires exactly once.
+  const scrolledAnchorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightMessageId) {
+      scrolledAnchorRef.current = null;
+      return;
+    }
+    if (scrolledAnchorRef.current === highlightMessageId) return;
+    const targetIndex = listItems.findIndex(
+      (it) => it.type === 'message' && it.data._id === highlightMessageId
+    );
+    if (targetIndex < 0) return; // not loaded yet — catch-up loop will fetch more
+
+    scrolledAnchorRef.current = highlightMessageId;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      try {
+        listRef.current?.scrollToIndex({
+          index: targetIndex,
+          viewPosition: 0.5,
+          animated: true,
+        });
+      } catch {
+        // onScrollToIndexFailed handles measurement gaps
+      }
+    });
+    return () => handle.cancel();
+  }, [highlightMessageId, listItems]);
 
   // Handle scroll to detect if user is near bottom (for scroll-to-bottom button)
   // In inverted list, "near bottom" means near index 0
@@ -380,10 +421,11 @@ export function MessageList({
           optimisticStatus={item.optimisticStatus as any}
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}
           onAvatarPress={onAvatarPress}
+          isHighlighted={highlightMessageId != null && message._id === highlightMessageId}
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, highlightMessageId]
   );
 
   // Key extractor
@@ -448,6 +490,25 @@ export function MessageList({
           // Viewability tracking for scroll-to-bottom button
           onViewableItemsChanged={handleViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
+          // When jumping to a not-yet-measured message, approximate the offset
+          // then retry the precise scroll once layout settles.
+          onScrollToIndexFailed={(info) => {
+            listRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: false,
+            });
+            setTimeout(() => {
+              try {
+                listRef.current?.scrollToIndex({
+                  index: info.index,
+                  viewPosition: 0.5,
+                  animated: true,
+                });
+              } catch {
+                // Give up silently — the message is at least loaded in the list
+              }
+            }, 300);
+          }}
           contentContainerStyle={styles.listContent}
           keyboardDismissMode="on-drag"
           // Performance optimizations
