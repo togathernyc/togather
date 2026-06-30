@@ -315,112 +315,248 @@ describe("getChannelBySlug — shared channel fallback", () => {
 });
 
 // ============================================================================
-// getInboxChannels — shared channels appear under secondary groups
+// getInboxChannels — shared channels are de-duplicated across groups
 // ============================================================================
 
-describe("getInboxChannels — shared channels in secondary groups", () => {
-  test("shared channel appears under the primary group section", async () => {
+type InboxEntry = {
+  group: { _id: Id<"groups"> };
+  channels: Array<{ _id: Id<"chatChannels">; isShared?: boolean }>;
+};
+
+/** Every (group, channel) pairing where the given channel appears. */
+function findChannelAppearances(
+  result: InboxEntry[],
+  channelId: Id<"chatChannels">
+): InboxEntry[] {
+  return result.filter((entry) =>
+    entry.channels.some((ch) => ch._id === channelId)
+  );
+}
+
+describe("getInboxChannels — shared channels are de-duplicated", () => {
+  test("a shared channel appears exactly once even when the user is in both groups", async () => {
     const t = convexTest(schema, modules);
     const data = await seedSharedChannelData(t, "accepted");
 
-    const result = await t.query(
+    const result = (await t.query(
       api.functions.messaging.channels.getInboxChannels,
       {
         token: data.accessToken,
         communityId: data.communityId,
       }
-    );
+    )) as InboxEntry[];
 
-    // Find Group A in the results
-    const groupAEntry = result.find(
-      (entry: { group: { _id: Id<"groups"> } }) =>
-        entry.group._id === data.groupAId
-    );
-    expect(groupAEntry).toBeDefined();
-
-    // The shared channel should appear under Group A
-    const sharedInA = groupAEntry!.channels.find(
-      (ch: { _id: Id<"chatChannels"> }) => ch._id === data.sharedChannelId
-    );
-    expect(sharedInA).toBeDefined();
+    // Previously the channel showed up under BOTH Group A and Group B. It must
+    // now render under a single group only.
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
   });
 
-  test("shared channel ALSO appears under secondary group section", async () => {
+  test("with no other activity the shared channel stays under its primary group", async () => {
     const t = convexTest(schema, modules);
     const data = await seedSharedChannelData(t, "accepted");
 
-    const result = await t.query(
+    const result = (await t.query(
       api.functions.messaging.channels.getInboxChannels,
       {
         token: data.accessToken,
         communityId: data.communityId,
       }
-    );
+    )) as InboxEntry[];
 
-    // Find Group B in the results
-    const groupBEntry = result.find(
-      (entry: { group: { _id: Id<"groups"> } }) =>
-        entry.group._id === data.groupBId
-    );
-    expect(groupBEntry).toBeDefined();
-
-    // The shared channel should also appear under Group B
-    const sharedInB = groupBEntry!.channels.find(
-      (ch: { _id: Id<"chatChannels"> }) => ch._id === data.sharedChannelId
-    );
-    expect(sharedInB).toBeDefined();
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    // Group A owns the channel and has no competing activity, so it wins the tie.
+    expect(appearances[0].group._id).toBe(data.groupAId);
   });
 
-  test("shared channel does NOT appear under group with pending status", async () => {
+  test("the most-recently-active group keeps the shared channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+
+    // Give Group B a recently-active General channel so Group B sorts ahead of
+    // Group A in the inbox. The shared channel should follow the user's most
+    // active group.
+    const groupBMainId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("chatChannels", {
+        groupId: data.groupBId,
+        slug: "group-b-general",
+        channelType: "main",
+        name: "General",
+        createdById: data.userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+        lastMessageAt: Date.now(),
+        lastMessagePreview: "Recent message in B",
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: id,
+        userId: data.userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return id;
+    });
+
+    const result = (await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      {
+        token: data.accessToken,
+        communityId: data.communityId,
+      }
+    )) as InboxEntry[];
+
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    expect(appearances[0].group._id).toBe(data.groupBId);
+    // Sanity check: Group B's own General channel is unaffected by the dedup.
+    expect(
+      result
+        .find((e) => e.group._id === data.groupBId)
+        ?.channels.some((ch) => ch._id === groupBMainId)
+    ).toBe(true);
+  });
+
+  test("groups are re-ordered by remaining visible activity after dedup", async () => {
+    // Regression: the shared channel's recency must not leave a group that
+    // *lost* the duplicate pinned above groups whose visible channels are newer.
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+    const now = Date.now();
+
+    // The shared channel (owned by Group A) is the most recent thing anywhere.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.sharedChannelId, { lastMessageAt: now });
+    });
+
+    // Group B shares the channel but its own General is the OLDEST activity.
+    await t.run(async (ctx) => {
+      const id = await ctx.db.insert("chatChannels", {
+        groupId: data.groupBId,
+        slug: "group-b-general",
+        channelType: "main",
+        name: "General",
+        createdById: data.userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        lastMessageAt: now - 60 * 60_000, // 1h ago
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: id,
+        userId: data.userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+    });
+
+    // Group C does NOT share the channel; its General is newer than Group B's
+    // but older than the shared channel.
+    const groupCId = await t.run(async (ctx) => {
+      const gid = await ctx.db.insert("groups", {
+        name: "Group C",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("groupMembers", {
+        userId: data.userId,
+        groupId: gid,
+        role: "member",
+        joinedAt: now,
+        notificationsEnabled: true,
+      });
+      const id = await ctx.db.insert("chatChannels", {
+        groupId: gid,
+        slug: "group-c-general",
+        channelType: "main",
+        name: "General",
+        createdById: data.userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        lastMessageAt: now - 10 * 60_000, // 10m ago
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: id,
+        userId: data.userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      return gid;
+    });
+
+    const result = (await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      {
+        token: data.accessToken,
+        communityId: data.communityId,
+      }
+    )) as InboxEntry[];
+
+    // Shared channel still appears once, under Group A (its most-recent home).
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    expect(appearances[0].group._id).toBe(data.groupAId);
+
+    // Final order must reflect visible channels: A (shared, now) > C (10m) > B
+    // (1h). Without the post-dedup re-sort, B would stay ahead of C.
+    const order = result.map((e) => e.group._id);
+    expect(order.indexOf(data.groupAId)).toBeLessThan(order.indexOf(groupCId));
+    expect(order.indexOf(groupCId)).toBeLessThan(order.indexOf(data.groupBId));
+  });
+
+  test("a pending secondary group never receives the shared channel", async () => {
     const t = convexTest(schema, modules);
     const data = await seedSharedChannelData(t, "pending");
 
-    const result = await t.query(
+    const result = (await t.query(
       api.functions.messaging.channels.getInboxChannels,
       {
         token: data.accessToken,
         communityId: data.communityId,
       }
-    );
+    )) as InboxEntry[];
 
-    // Group B should either not appear or should not contain the shared channel
-    const groupBEntry = result.find(
-      (entry: { group: { _id: Id<"groups"> } }) =>
-        entry.group._id === data.groupBId
-    );
-
-    if (groupBEntry) {
-      const sharedInB = groupBEntry.channels.find(
-        (ch: { _id: Id<"chatChannels"> }) => ch._id === data.sharedChannelId
-      );
-      expect(sharedInB).toBeUndefined();
-    }
+    // The owner group (A) still shows the channel — the user is a member there.
+    // The pending secondary group (B) must not, so it still appears only once.
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    expect(appearances[0].group._id).toBe(data.groupAId);
+    const groupBEntry = result.find((e) => e.group._id === data.groupBId);
+    expect(
+      groupBEntry?.channels.some((ch) => ch._id === data.sharedChannelId) ??
+        false
+    ).toBe(false);
   });
 
-  test("isShared flag is included in channel response", async () => {
+  test("isShared flag is included on the single channel response", async () => {
     const t = convexTest(schema, modules);
     const data = await seedSharedChannelData(t, "accepted");
 
-    const result = await t.query(
+    const result = (await t.query(
       api.functions.messaging.channels.getInboxChannels,
       {
         token: data.accessToken,
         communityId: data.communityId,
       }
-    );
+    )) as InboxEntry[];
 
-    // Check that the shared channel in Group B has isShared flag
-    const groupBEntry = result.find(
-      (entry: { group: { _id: Id<"groups"> } }) =>
-        entry.group._id === data.groupBId
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    const shared = appearances[0].channels.find(
+      (ch) => ch._id === data.sharedChannelId
     );
-    expect(groupBEntry).toBeDefined();
-
-    const sharedInB = groupBEntry!.channels.find(
-      (ch: { _id: Id<"chatChannels"> }) => ch._id === data.sharedChannelId
-    );
-    expect(sharedInB).toBeDefined();
-    expect((sharedInB as Record<string, unknown>).isShared).toBe(true);
+    expect(shared?.isShared).toBe(true);
   });
 });
 
