@@ -176,7 +176,7 @@ describe("groupResources: linkUrl + showInInbox fields", () => {
       "https://example.com/give",
     );
 
-    // An existing scheme is preserved (not double-prefixed).
+    // An allow-listed scheme is preserved (not double-prefixed).
     await t.mutation(api.functions.groupResources.index.update, {
       resourceId,
       linkUrl: "mailto:give@example.com",
@@ -184,6 +184,16 @@ describe("groupResources: linkUrl + showInInbox fields", () => {
     });
     expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
       "mailto:give@example.com",
+    );
+
+    // A disallowed/dangerous scheme is neutralized (prefixed, never preserved).
+    await t.mutation(api.functions.groupResources.index.update, {
+      resourceId,
+      linkUrl: "javascript:alert(1)",
+      token: f.leaderToken,
+    });
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "https://javascript:alert(1)",
     );
 
     // Update without a scheme is normalized too.

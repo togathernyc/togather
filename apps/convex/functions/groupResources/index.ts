@@ -95,18 +95,27 @@ function isResourceVisibleToUser(
   return false;
 }
 
+// Schemes a resource redirect may keep as-is. Anything else (e.g. a scheme-less
+// host, or a dangerous `javascript:`/`data:`/`file:` URL) gets an https:// prefix
+// so it can neither dead-tap on native nor execute script on the web build.
+const ALLOWED_LINK_SCHEMES = ["https", "http", "mailto", "tel"];
+
 /**
  * Normalize a resource redirect URL for storage.
  *
- * Trims the value and returns `undefined` for blanks (no redirect). If the URL
- * has no scheme (e.g. "example.com/give"), prefixes "https://" so the mobile
- * `Linking.openURL` handlers get a qualified URL instead of a dead tap. URLs
- * that already carry a scheme (https:, http:, mailto:, tel:, …) are preserved.
+ * Trims the value and returns `undefined` for blanks (no redirect). A URL with
+ * an allow-listed scheme (https/http/mailto/tel) is preserved; anything else —
+ * a scheme-less host like "example.com/give" or a disallowed scheme like
+ * "javascript:" — is prefixed with "https://" so the mobile `Linking.openURL`
+ * handlers always receive a safe, qualified URL.
  */
 function normalizeLinkUrl(raw: string | undefined): string | undefined {
   const trimmed = raw?.trim();
   if (!trimmed) return undefined;
-  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) return trimmed;
+  const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z\d+.-]*):/);
+  if (schemeMatch && ALLOWED_LINK_SCHEMES.includes(schemeMatch[1].toLowerCase())) {
+    return trimmed;
+  }
   return `https://${trimmed}`;
 }
 
