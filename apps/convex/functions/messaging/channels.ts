@@ -21,7 +21,10 @@ import { isCommunityAdmin } from "../../lib/permissions";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { internal } from "../../_generated/api";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
-import { updateChannelMemberCount } from "./helpers";
+import {
+  updateChannelMemberCount,
+  isCommunityAdminForGroup,
+} from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
@@ -440,6 +443,13 @@ export const getChannel = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
+    // Community admins get read-only oversight of any group's channels without
+    // joining (no groupMembers row). Only checked when they aren't already a
+    // member, so normal members never pay for the extra lookup.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, groupId, userId));
+
     // Cross-team channels draw their members from serving teams that may live
     // on other groups, so a synced member is often NOT in the channel's home
     // group. Their auto-synced membership row IS the authorization — grant
@@ -454,11 +464,13 @@ export const getChannel = query({
           recipientPending: false,
         };
       }
-      // Must be a group member to access any other channel
-      return null;
+      // Must be a group member — or a community admin viewer — for any other channel
+      if (!isAdminViewer) {
+        return null;
+      }
     }
 
-    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
+    const isLeaderOrAdmin = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     // Leader-disabled custom/PCO: members cannot open the channel
     if (
@@ -476,8 +488,8 @@ export const getChannel = query({
       }
     }
 
-    // For custom channels, must be a channel member
-    if (isCustomChannel(channel.channelType) && !membership) {
+    // For custom channels, must be a channel member (or a community admin viewer)
+    if (isCustomChannel(channel.channelType) && !membership && !isAdminViewer) {
       return null;
     }
 
@@ -679,7 +691,12 @@ export const getChannelBySlug = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!groupMembership) {
+    // Community admins get read-only oversight without joining the group.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, args.groupId, userId));
+
+    if (!groupMembership && !isAdminViewer) {
       return null;
     }
 
@@ -693,7 +710,7 @@ export const getChannelBySlug = query({
       .first();
 
     const isMember = !!channelMembership;
-    const isLeaderOrAdmin = isLeaderRole(groupMembership.role);
+    const isLeaderOrAdmin = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     // Access control based on channel type
     if (resolvedChannel.channelType === "leaders") {
@@ -742,7 +759,7 @@ export const getChannelBySlug = query({
       slug: getChannelSlug(resolvedChannel),
       isMember,
       role: channelMembership?.role,
-      userGroupRole: groupMembership.role,
+      userGroupRole: groupMembership?.role,
       pendingShareForGroup,
       primaryGroupName,
     };
@@ -771,7 +788,13 @@ export const getChannelsByGroup = query({
       .filter((q) => q.eq(q.field("leftAt"), undefined))
       .first();
 
-    if (!groupMembership) {
+    // Community admins can view any group's channels without joining (read-only
+    // oversight). Only looked up when they aren't already a member.
+    const isAdminViewer =
+      !groupMembership &&
+      (await isCommunityAdminForGroup(ctx, args.groupId, userId));
+
+    if (!groupMembership && !isAdminViewer) {
       return [];
     }
 
@@ -797,8 +820,8 @@ export const getChannelsByGroup = query({
       }
     }
 
-    // Filter based on role and membership
-    const isLeader = isLeaderRole(groupMembership.role);
+    // Filter based on role and membership (admin viewers see like a leader)
+    const isLeader = isAdminViewer || isLeaderRole(groupMembership?.role);
 
     const filteredChannels = channels.filter((channel) => {
       // Event channels are scoped to meetings, not surfaced on the group page.
