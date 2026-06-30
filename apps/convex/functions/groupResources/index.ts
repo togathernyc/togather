@@ -96,6 +96,21 @@ function isResourceVisibleToUser(
 }
 
 /**
+ * Normalize a resource redirect URL for storage.
+ *
+ * Trims the value and returns `undefined` for blanks (no redirect). If the URL
+ * has no scheme (e.g. "example.com/give"), prefixes "https://" so the mobile
+ * `Linking.openURL` handlers get a qualified URL instead of a dead tap. URLs
+ * that already carry a scheme (https:, http:, mailto:, tel:, …) are preserved.
+ */
+function normalizeLinkUrl(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+/**
  * Generate a unique ID for sections.
  * Uses timestamp + random characters for uniqueness.
  */
@@ -455,9 +470,8 @@ export const create = mutation({
       groupId: args.groupId,
       title: args.title,
       icon: args.icon,
-      // Normalize blank links to undefined so an empty input never turns a
-      // resource into a no-op redirect.
-      linkUrl: args.linkUrl?.trim() || undefined,
+      // Normalize the redirect: blank -> undefined; scheme-less -> https://.
+      linkUrl: normalizeLinkUrl(args.linkUrl),
       showInInbox: args.showInInbox,
       visibility: args.visibility,
       sections: [],
@@ -529,8 +543,9 @@ export const update = mutation({
 
     if (args.title !== undefined) updates.title = args.title;
     if (args.icon !== undefined) updates.icon = args.icon;
-    // A blank link clears the redirect (patching `undefined` removes the field).
-    if (args.linkUrl !== undefined) updates.linkUrl = args.linkUrl.trim() || undefined;
+    // A blank link clears the redirect (patching `undefined` removes the field);
+    // scheme-less URLs are normalized to https://.
+    if (args.linkUrl !== undefined) updates.linkUrl = normalizeLinkUrl(args.linkUrl);
     if (args.showInInbox !== undefined) updates.showInInbox = args.showInInbox;
     if (args.visibility !== undefined) updates.visibility = args.visibility;
     if (args.order !== undefined) updates.order = args.order;

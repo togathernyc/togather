@@ -157,6 +157,46 @@ describe("groupResources: linkUrl + showInInbox fields", () => {
     expect(resource?.linkUrl).toBeUndefined();
   });
 
+  test("normalizes a scheme-less linkUrl to https on create and update", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seed(t);
+
+    // No scheme -> https:// prefix added so Linking.openURL works on native.
+    const resourceId = await t.mutation(
+      api.functions.groupResources.index.create,
+      {
+        groupId: f.groupId,
+        title: "Give",
+        linkUrl: "example.com/give",
+        visibility: { type: "everyone" },
+        token: f.leaderToken,
+      },
+    );
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "https://example.com/give",
+    );
+
+    // An existing scheme is preserved (not double-prefixed).
+    await t.mutation(api.functions.groupResources.index.update, {
+      resourceId,
+      linkUrl: "mailto:give@example.com",
+      token: f.leaderToken,
+    });
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "mailto:give@example.com",
+    );
+
+    // Update without a scheme is normalized too.
+    await t.mutation(api.functions.groupResources.index.update, {
+      resourceId,
+      linkUrl: "donate.example.org",
+      token: f.leaderToken,
+    });
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "https://donate.example.org",
+    );
+  });
+
   test("update can set then clear linkUrl and toggle showInInbox", async () => {
     const t = convexTest(schema, modules);
     const f = await seed(t);
