@@ -89,6 +89,12 @@ type ChatRoomParams = {
   externalChatLink?: string;
   /** When arriving from inbox search, the message to scroll to and highlight. */
   messageId?: string;
+  /**
+   * When arriving from an inbox search hit on a thread reply, the parent
+   * message id whose thread should auto-open (so the matched reply is shown in
+   * context). `messageId` points at the same parent for scroll/highlight.
+   */
+  openThreadId?: string;
 };
 
 const ConvexChatRoomScreenInner: React.FC = () => {
@@ -1017,6 +1023,36 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     if (!activeChannelId) return;
     router.push(`/inbox/dm/${activeChannelId}/info` as any);
   }, [router, activeChannelId]);
+
+  // Auto-open the parent thread when arriving from an inbox search hit on a
+  // reply. Fire once, after the channel context resolves; the channel
+  // underneath keeps scrolling to and highlighting the parent (via
+  // `messageId`), so dismissing the thread lands on the highlighted parent.
+  const autoOpenedThreadRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedThreadRef.current) return;
+    const openThreadId = params.openThreadId;
+    if (!openThreadId || !activeChannelId) return;
+    if (!resolvedGroupId && !isAdHocChannel) return;
+    autoOpenedThreadRef.current = true;
+    if (resolvedGroupId) {
+      router.push({
+        pathname: `/inbox/${resolvedGroupId}/thread/${openThreadId}` as any,
+        params: { channelName: activeSlug },
+      });
+    } else {
+      router.push({
+        pathname: `/inbox/dm/${activeChannelId}/thread/${openThreadId}` as any,
+      });
+    }
+  }, [
+    params.openThreadId,
+    activeChannelId,
+    resolvedGroupId,
+    isAdHocChannel,
+    activeSlug,
+    router,
+  ]);
 
   const isEssentialDataReady =
     (resolvedGroupId || isAdHocChannel) && activeChannelId != null;

@@ -23,6 +23,8 @@ import type { Id } from "@services/api/convex";
 
 export type MessageSearchResult = {
   messageId: Id<"chatMessages">;
+  /** Set when the hit is a thread reply; null for top-level messages. */
+  parentMessageId: Id<"chatMessages"> | null;
   channelId: Id<"chatChannels">;
   channelName: string;
   channelType: string;
@@ -97,6 +99,14 @@ export function InboxSearchResults({
         router.push(`/e/${result.meetingShortId}?source=app` as any);
         return;
       }
+      // When the hit is a thread reply, the reply itself never appears in the
+      // main channel list (`getMessages` skips replies), so anchoring on its id
+      // would page backward forever and land at the top. Anchor on the parent
+      // (which is in the list) and flag the thread to auto-open so the matched
+      // reply is shown in context.
+      const anchorMessageId = result.parentMessageId ?? result.messageId;
+      const openThreadId = result.parentMessageId ?? undefined;
+
       // Ad-hoc DMs / group DMs have no owning group. `channelName` is often
       // empty for DMs (the title is computed client-side from members), so pass
       // a sensible header label rather than a blank one.
@@ -104,8 +114,13 @@ export function InboxSearchResults({
         router.push({
           pathname: `/inbox/dm/${result.channelId}` as any,
           // `messageId` tells the chat screen which message to scroll to and
-          // highlight on arrival.
-          params: { groupName: resultHeaderLabel(result), messageId: result.messageId },
+          // highlight on arrival; `openThreadId` (reply hits only) auto-opens
+          // the parent's thread.
+          params: {
+            groupName: resultHeaderLabel(result),
+            messageId: anchorMessageId,
+            ...(openThreadId ? { openThreadId } : {}),
+          },
         });
         return;
       }
@@ -116,7 +131,8 @@ export function InboxSearchResults({
           groupName: result.groupName ?? "",
           channelId: result.channelId,
           // Scroll to and highlight the matched message on arrival.
-          messageId: result.messageId,
+          messageId: anchorMessageId,
+          ...(openThreadId ? { openThreadId } : {}),
         },
       });
     },

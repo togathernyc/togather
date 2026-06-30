@@ -136,6 +136,7 @@ async function insertMessage(
     senderName?: string;
     contentType?: string;
     isDeleted?: boolean;
+    parentMessageId?: Id<"chatMessages">;
   } = {},
 ): Promise<Id<"chatMessages">> {
   return await t.run(async (ctx) => {
@@ -156,6 +157,7 @@ async function insertMessage(
       contentType: opts.contentType ?? "text",
       createdAt: Date.now(),
       isDeleted: opts.isDeleted ?? false,
+      ...(opts.parentMessageId ? { parentMessageId: opts.parentMessageId } : {}),
     });
   });
 }
@@ -179,6 +181,35 @@ describe("searchMessages", () => {
     expect(results).toHaveLength(1);
     expect(results[0].content).toContain("picnic");
     expect(results[0].channelId).toBe(channelId);
+  });
+
+  test("populates parentMessageId for thread replies and null for top-level hits", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "reply");
+    const { userId, accessToken } = await createUser(t, communityId, "Alice");
+    const { channelId } = await createGroupWithChannel(t, communityId, userId);
+
+    // A top-level message and a reply to it, both matching the query.
+    const parentId = await insertMessage(t, channelId, "Top-level picnic plan");
+    await insertMessage(t, channelId, "Reply: bring the picnic blanket", {
+      parentMessageId: parentId,
+    });
+
+    const { results } = await t.query(api.functions.messaging.search.searchMessages, {
+      token: accessToken,
+      communityId,
+      query: "picnic",
+    });
+
+    expect(results).toHaveLength(2);
+    const byContent = Object.fromEntries(results.map((r) => [r.content, r]));
+    // Top-level hit carries no parent.
+    expect(byContent["Top-level picnic plan"].parentMessageId).toBeNull();
+    // Reply hit points back at its parent so the UI can anchor on the parent
+    // (replies never load into the main channel list) and auto-open the thread.
+    expect(byContent["Reply: bring the picnic blanket"].parentMessageId).toBe(
+      parentId,
+    );
   });
 
   test("does not return messages from channels the user cannot access", async () => {
