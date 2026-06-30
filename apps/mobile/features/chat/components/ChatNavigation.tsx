@@ -96,10 +96,10 @@ export const ChatTabBar = memo(function ChatTabBar({
           // most of a phone-width tab bar. Accessibility label still reads
           // the channel name for screen readers.
           const isAnnouncements = channel.channelType === "announcements";
-          // Active tab is a filled pill (primary color background) so it stands
-          // out clearly from inactive tabs even when many teams are listed.
-          // Content sits on the brand color, so it switches to white — matching
-          // how primary buttons render their label elsewhere in the app.
+          // Active tab is a filled rectangle (primary color background) so it
+          // stands out clearly from inactive tabs even when many teams are
+          // listed. Content sits on the brand color, so it switches to white —
+          // matching how primary buttons render their label elsewhere.
           const tabColor = isActive ? ACTIVE_TAB_CONTENT_COLOR : themeColors.textSecondary;
 
           return (
@@ -446,7 +446,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     marginRight: 8,
-    borderRadius: 18,
+    // Sharp rectangular highlight (no rounding) for the active tab.
+    borderRadius: 0,
   },
   tabContent: {
     flexDirection: "row",
