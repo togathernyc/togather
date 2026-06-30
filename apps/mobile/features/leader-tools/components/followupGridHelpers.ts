@@ -314,13 +314,13 @@ export function getFollowupSearchSuggestions(
         id: "score-min-sys_service",
         label: "service:>50",
         insertText: "service:>",
-        helperText: "Service greater than value",
+        helperText: "Serving greater than value",
       },
       {
         id: "score-max-sys_service",
         label: "service:<30",
         insertText: "service:<",
-        helperText: "Service less than value",
+        helperText: "Serving less than value",
       },
       {
         id: "score-min-sys_attendance",
