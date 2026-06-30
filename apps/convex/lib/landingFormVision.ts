@@ -16,6 +16,8 @@
  * read off the card; anything illegible or absent is simply omitted.
  */
 
+import { ConvexError } from "convex/values";
+
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o";
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -175,7 +177,10 @@ export async function extractLandingFields(
 ): Promise<ExtractedLandingFields> {
   const apiKey = process.env.OPENAI_SECRET_KEY;
   if (!apiKey) {
-    throw new Error("OPENAI_SECRET_KEY not configured");
+    console.error("[landingFormVision] OPENAI_SECRET_KEY not configured");
+    // ConvexError so the admin sees a real message (plain Errors are redacted
+    // to a generic "Server Error" on the client in production).
+    throw new ConvexError("Photo autofill is unavailable right now.");
   }
 
   const controller = new AbortController();
@@ -210,8 +215,11 @@ export async function extractLandingFields(
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => "");
-      throw new Error(
-        `OpenAI vision error ${response.status}: ${errBody.slice(0, 300)}`
+      console.error(
+        `[landingFormVision] OpenAI vision error ${response.status}: ${errBody.slice(0, 300)}`
+      );
+      throw new ConvexError(
+        "Couldn't read the card. Please try again with a clearer photo."
       );
     }
 

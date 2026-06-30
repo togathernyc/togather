@@ -381,10 +381,20 @@ export const extractFormFromImage = action({
   }),
   handler: async (ctx, args) => {
     // Auth — must be an admin of the community that owns this landing page.
-    const userId = await requireAuthFromTokenAction(ctx, args.token);
+    // Resolve the token subject to a real users id first: legacy-migrated
+    // users carry a non-Convex-id subject (a numeric legacyId string), which a
+    // v.id("users") validator would reject.
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
+    const resolved = await ctx.runQuery(
+      internal.functions.users.resolveUserIdInternal,
+      { tokenUserId }
+    );
+    if (!resolved) {
+      throw new ConvexError("Not authenticated");
+    }
     const isAdmin = await ctx.runQuery(
       internal.functions.communityLandingPage.isAdminForSlugInternal,
-      { slug: args.slug, userId: userId as Id<"users"> }
+      { slug: args.slug, userId: resolved.userId }
     );
     if (!isAdmin) {
       throw new ConvexError("Not authorized: community admin required");
