@@ -15,12 +15,18 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
-  FlatList,
   ScrollView,
   Pressable,
   Linking,
   Platform,
 } from "react-native";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  useAnimatedScrollHandler,
+  interpolate,
+  Extrapolation,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -47,6 +53,13 @@ import { EnableNotificationsBanner } from "@features/notifications/components/En
 // Minimum query length before the inbox search query runs. Mirrors the
 // MIN_QUERY_LENGTH guard in the backend `searchMessages` query.
 const MIN_SEARCH_LENGTH = 2;
+
+// WhatsApp-style collapsing header geometry. The large title and search bar
+// collapse into the compact nav row over this scroll distance (px) — the sum of
+// the large-title row height and the search-bar block height below it.
+const LARGE_TITLE_HEIGHT = 44;
+const SEARCH_BLOCK_HEIGHT = 64;
+const COLLAPSE_DISTANCE = LARGE_TITLE_HEIGHT + SEARCH_BLOCK_HEIGHT;
 
 // Type for a channel as returned by getInboxChannels
 type InboxChannel = {
@@ -322,6 +335,106 @@ export function ChatInboxScreen({
 
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
+
+  // --- WhatsApp-style collapsing header -------------------------------------
+  // The large title + search bar live *above* the list (not inside it) so the
+  // single SearchBar instance stays mounted when the list swaps to search
+  // results below — typing and keyboard focus are never interrupted. Collapse
+  // is driven off the list's scroll offset and disabled while searching, so the
+  // search field is always reachable in that mode.
+  const scrollY = useSharedValue(0);
+  const onListScroll = useAnimatedScrollHandler((event) => {
+    scrollY.value = event.contentOffset.y;
+  });
+  const collapseEnabled = !isSearching;
+
+  // Reset to the expanded state whenever we leave search mode: the list below
+  // remounts scrolled to the top, so the cached scroll offset would otherwise
+  // leave the header stuck in its collapsed state.
+  useEffect(() => {
+    if (!isSearching) scrollY.value = 0;
+  }, [isSearching, scrollY]);
+
+  const largeTitleStyle = useAnimatedStyle(() => {
+    const p = collapseEnabled
+      ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
+      : 0;
+    return {
+      height: interpolate(p, [0, 1], [LARGE_TITLE_HEIGHT, 0]),
+      opacity: interpolate(p, [0, 0.7], [1, 0], Extrapolation.CLAMP),
+      transform: [{ translateY: interpolate(p, [0, 1], [0, -8]) }],
+    };
+  });
+
+  const searchStyle = useAnimatedStyle(() => {
+    const p = collapseEnabled
+      ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
+      : 0;
+    return {
+      height: interpolate(p, [0, 1], [SEARCH_BLOCK_HEIGHT, 0]),
+      opacity: interpolate(p, [0, 0.6], [1, 0], Extrapolation.CLAMP),
+    };
+  });
+
+  const smallTitleStyle = useAnimatedStyle(() => {
+    const p = collapseEnabled
+      ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
+      : 0;
+    // Fade the centered nav title in over the back half of the collapse so it
+    // hands off cleanly from the large title fading out.
+    return { opacity: interpolate(p, [0.4, 1], [0, 1], Extrapolation.CLAMP) };
+  });
+
+  const hairlineStyle = useAnimatedStyle(() => {
+    const p = collapseEnabled
+      ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
+      : 0;
+    return { opacity: interpolate(p, [0, 1], [0, 1]) };
+  });
+
+  // Collapsing header for the populated inbox view. Compose button sits in the
+  // compact nav row (like WhatsApp), with the centered title fading in as the
+  // large title and search bar collapse away on scroll.
+  const renderCollapsingHeader = () => (
+    <Animated.View style={[styles.collapsingHeader, { paddingTop: headerPaddingTop }]}>
+      <View style={styles.navRow}>
+        <Animated.Text
+          style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
+          numberOfLines={1}
+        >
+          Inbox
+        </Animated.Text>
+        {dmsEnabled && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Start a new chat"
+            onPress={() => router.push("/inbox/new" as any)}
+            style={styles.headerActionButton}
+            hitSlop={12}
+          >
+            <Ionicons name="create-outline" size={24} color={colors.text} />
+          </Pressable>
+        )}
+      </View>
+
+      <Animated.View style={[styles.largeTitleWrap, largeTitleStyle]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+      </Animated.View>
+
+      <Animated.View style={[styles.searchWrap, searchStyle]}>
+        <SearchBar
+          placeholder="Search messages"
+          onSearch={setSearchTerm}
+          onClear={() => setSearchTerm("")}
+        />
+      </Animated.View>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.headerHairline, { backgroundColor: colors.border }, hairlineStyle]}
+      />
+    </Animated.View>
+  );
 
   // The same header is rendered above the list and the three empty/loading
   // states below; centralizing it here keeps the "+" button placement (and the
@@ -612,14 +725,7 @@ export function ChatInboxScreen({
   return (
     <Wrapper>
       <View style={[styles.container, { backgroundColor: colors.surface }]}>
-        {renderHeader(true)}
-        <View style={styles.searchBarContainer}>
-          <SearchBar
-            placeholder="Search messages"
-            onSearch={setSearchTerm}
-            onClear={() => setSearchTerm("")}
-          />
-        </View>
+        {renderCollapsingHeader()}
         {isSearching ? (
           <InboxSearchResults
             query={trimmedSearch}
@@ -629,12 +735,14 @@ export function ChatInboxScreen({
         ) : (
           <>
             <EnableNotificationsBanner />
-            <FlatList
+            <Animated.FlatList
               data={listItemsWithDm}
               renderItem={renderItem}
               keyExtractor={keyExtractor}
               contentContainerStyle={styles.listContainer}
               style={styles.list}
+              onScroll={onListScroll}
+              scrollEventThrottle={16}
             />
           </>
         )}
@@ -1323,6 +1431,42 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // --- Collapsing (WhatsApp-style) header ---
+  collapsingHeader: {
+    paddingBottom: 8,
+  },
+  // Compact nav row that stays put while the title + search collapse into it.
+  // Compose button sits at the trailing edge; the centered title fades in over
+  // it on scroll.
+  navRow: {
+    height: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingHorizontal: 16,
+  },
+  smallTitle: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "600",
+  },
+  largeTitleWrap: {
+    height: LARGE_TITLE_HEIGHT,
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    overflow: "hidden",
+  },
+  searchWrap: {
+    height: SEARCH_BLOCK_HEIGHT,
+    paddingHorizontal: 16,
+    overflow: "hidden",
+  },
+  headerHairline: {
+    height: StyleSheet.hairlineWidth,
+  },
   requestsLinkRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1423,10 +1567,6 @@ const styles = StyleSheet.create({
   },
   listContainer: {
     paddingVertical: 8,
-  },
-  searchBarContainer: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
   },
 
   // Events section
