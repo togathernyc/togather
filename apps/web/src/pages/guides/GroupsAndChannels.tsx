@@ -463,6 +463,17 @@ export function GroupsAndChannels() {
           Announcements is enabled, its row reads &ldquo;Tap to enable — leaders
           post, members read.&rdquo;
         </Callout>
+
+        <P>
+          <strong>Community admins</strong> can look inside any group&rsquo;s
+          channels — including Leaders — <strong>without joining</strong>. Open a
+          group you&rsquo;re not a member of and a <Term>Channels</Term> section
+          appears; tap any channel to read the conversation. This is{" "}
+          <strong>read-only</strong>: instead of the message box you&rsquo;ll see
+          &ldquo;You&rsquo;re viewing as a community admin. Join the group to
+          post.&rdquo; Browsing this way doesn&rsquo;t add you to the group or its
+          roster, so members aren&rsquo;t notified and your inbox stays clear.
+        </P>
       </Section>
 
       <Section id="custom-channels" title="Custom channels & invite links">

@@ -253,23 +253,9 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     : null;
   const effectiveGroupChannels = groupChannels ?? cachedGroupChannels;
 
-  // Build channel tabs from the query result (or cache) — member + leader-enabled (tab bar)
-  const channelTabs: ChannelTab[] = useMemo(() => {
-    if (!effectiveGroupChannels) return [];
-
-    return effectiveGroupChannels
-      .filter(
-        (channel: any) =>
-          channel.isMember && channel.isEnabled !== false
-      )
-      .map((channel: any) => ({
-        slug: channel.slug,
-        channelType: channel.channelType,
-        name: channel.name,
-        unreadCount: channel.unreadCount,
-        isShared: channel.isShared || undefined,
-      }));
-  }, [effectiveGroupChannels]);
+  // `channelTabs` is defined further down, once `isAdminViewer` has resolved
+  // from the group role — admin browsers are shown the group's full channel
+  // set, regular members only the channels they belong to.
 
   // Get Convex channel IDs for main and leaders
   const mainChannelId = useConvexChannelFromGroup(resolvedGroupId, "main");
@@ -413,6 +399,43 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const hasGroup = !!resolvedGroupId;
   // Get user role for toolbar visibility
   const userRole = (groupDetails?.userRole || groupData?.userRole) as "admin" | "leader" | "member" | undefined;
+
+  // Community admin viewing a group whose membership isn't confirmed yet. This
+  // covers BOTH the role-loading window and a settled non-member: the channel
+  // lookup can resolve before groups.getById, so if we waited for the role to
+  // settle the composer would briefly mount as sendable for a non-member (whose
+  // send the server then rejects — the exact bug this change removes). Members
+  // have a role ("member"/"leader"), so this flips false the moment that lands.
+  const isCommunityAdminGroupView =
+    isCommunityAdmin && hasGroup && userRole === undefined;
+  // Confirmed admin viewer: role has settled and they're definitely not a
+  // member. Drives the channel-tab expansion and the explanatory banner copy
+  // (kept distinct so we don't show "viewing as admin" to a member-admin during
+  // the brief loading window).
+  const isAdminViewer = isCommunityAdminGroupView && !isRoleLoading;
+
+  // Build channel tabs from the query result (or cache). Admin viewers get the
+  // group's full enabled channel set so they can browse every channel; members
+  // only get the channels they belong to.
+  const channelTabs: ChannelTab[] = useMemo(() => {
+    if (!effectiveGroupChannels) return [];
+
+    return effectiveGroupChannels
+      .filter((channel: any) => {
+        if (channel.isEnabled === false) return false;
+        // Admin viewers browse every readable channel. Skip reach_out — it's a
+        // leader workflow surface (ReachOutScreen), not a conversation to read.
+        if (isAdminViewer) return channel.channelType !== "reach_out";
+        return channel.isMember;
+      })
+      .map((channel: any) => ({
+        slug: channel.slug,
+        channelType: channel.channelType,
+        name: channel.name,
+        unreadCount: channel.unreadCount,
+        isShared: channel.isShared || undefined,
+      }));
+  }, [effectiveGroupChannels, isAdminViewer]);
   // Type for group with visibility settings
   type GroupWithVisibility = typeof groupDetails & {
     showToolbarToMembers?: boolean;
@@ -462,7 +485,12 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // (server-enforced in sendMessage), for every group including the
   // community-wide announcement group. The announcement group's general
   // channel is open to everyone, just like any other group's general channel.
-  const canSendMessages = !isAnnouncementsChannel || isUserLeader;
+  // Admin viewers are read-only everywhere (they haven't joined); otherwise
+  // only Announcements restricts posting to leaders. Gated on the broader
+  // "group view" flag so the composer never mounts for a community admin while
+  // their membership role is still resolving.
+  const canSendMessages =
+    !isCommunityAdminGroupView && (!isAnnouncementsChannel || isUserLeader);
 
   // UI state
   const [menuVisible, setMenuVisible] = useState(false);
@@ -1323,9 +1351,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
                 <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
-                  {isAnnouncementsChannel
-                    ? "Only leaders can post in Announcements. You can react to messages."
-                    : "Only admins can post in this channel. You can react to messages."}
+                  {isCommunityAdminGroupView
+                    ? isRoleLoading
+                      ? "Checking your access…"
+                      : "You're viewing as a community admin. Join the group to post."
+                    : isAnnouncementsChannel
+                      ? "Only leaders can post in Announcements. You can react to messages."
+                      : "Only admins can post in this channel. You can react to messages."}
                 </Text>
               </View>
             )}

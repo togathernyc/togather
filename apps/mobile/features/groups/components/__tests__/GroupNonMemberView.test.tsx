@@ -96,6 +96,20 @@ jest.mock("../HighlightsGrid", () => {
   };
 });
 
+// ChannelsSection pulls in Convex query hooks; stub it so this unit test stays
+// focused on GroupNonMemberView's own gating. Expose onChannelPress as a
+// tappable handle so we can assert the admin browse route is wired up.
+jest.mock("../ChannelsSection", () => {
+  const { Text } = require("react-native");
+  return {
+    ChannelsSection: ({ onChannelPress }: any) => (
+      <Text testID="channels-section" onPress={() => onChannelPress?.("general")}>
+        Channels
+      </Text>
+    ),
+  };
+});
+
 jest.mock("../JoinGroupButton", () => {
   const { Text } = require("react-native");
   return {
@@ -183,6 +197,52 @@ describe("GroupNonMemberView", () => {
       login: jest.fn(),
       logout: jest.fn(),
     });
+  });
+
+  it("does NOT show the channels section to non-admin non-members", () => {
+    const onJoinPress = jest.fn();
+
+    render(<GroupNonMemberView group={mockGroup} onJoinPress={onJoinPress} />);
+
+    expect(screen.queryByTestId("channels-section")).toBeNull();
+  });
+
+  it("shows the channels section to community admins and routes taps to chat", () => {
+    const onJoinPress = jest.fn();
+    const push = jest.fn();
+    const { useRouter } = require("expo-router");
+    useRouter.mockReturnValue({ push, back: jest.fn(), replace: jest.fn() });
+
+    const { useAuth } = require("@providers/AuthProvider");
+    useAuth.mockReturnValue({
+      user: { id: 1, first_name: "Admin", last_name: "User", is_admin: true },
+      isAuthenticated: true,
+      isLoading: false,
+      church: null,
+      login: jest.fn(),
+      logout: jest.fn(),
+    });
+
+    render(<GroupNonMemberView group={mockGroup} onJoinPress={onJoinPress} />);
+
+    const channels = screen.getByTestId("channels-section");
+    expect(channels).toBeTruthy();
+
+    // Tapping a channel opens the read-only chat (not the info/settings screen).
+    fireEvent.press(channels);
+    expect(push).toHaveBeenCalledWith(
+      expect.objectContaining({ pathname: "/inbox/group_1/general" })
+    );
+
+    useAuth.mockReturnValue({
+      user: { id: 1, first_name: "Test", last_name: "User" },
+      isAuthenticated: true,
+      isLoading: false,
+      church: null,
+      login: jest.fn(),
+      logout: jest.fn(),
+    });
+    useRouter.mockReturnValue({ push: jest.fn(), back: jest.fn(), replace: jest.fn() });
   });
 
   it("calls onJoinPress when join button is pressed", () => {
