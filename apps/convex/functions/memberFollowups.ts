@@ -32,7 +32,7 @@ import { addUserToAnnouncementGroup } from "./communities";
 import { requireAuth } from "../lib/auth";
 import { parseDateOptional } from "../lib/validation";
 import { isCommunityAdmin } from "../lib/permissions";
-import { isActiveMembership, isLeaderRole } from "../lib/helpers";
+import { isActiveMembership, isArchivedUser, isLeaderRole } from "../lib/helpers";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
 import {
   DEFAULT_SCORE_CONFIG,
@@ -919,12 +919,17 @@ async function getActiveLeaderGroupIds(
     .query("groupMembers")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .collect();
-  return memberships
-    .filter(
-      (membership: any) =>
-        isActiveMembership(membership) && isLeaderRole(membership.role),
-    )
-    .map((membership: any) => membership.groupId);
+  const leaderMemberships = memberships.filter(
+    (membership: any) =>
+      isActiveMembership(membership) && isLeaderRole(membership.role),
+  );
+  const groupIds: Id<"groups">[] = [];
+  for (const membership of leaderMemberships) {
+    const group = await ctx.db.get(membership.groupId);
+    // Exclude archived groups — their people should not surface on the People page.
+    if (group && !group.isArchived) groupIds.push(membership.groupId);
+  }
+  return groupIds;
 }
 
 /**
@@ -959,6 +964,13 @@ export const listAssignedToMe = query({
     }
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise the per-doc groupId match below
+    // would bypass the leader-group scope for a stale/archived/arbitrary id.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
 
     // Use the assignee filter if provided, otherwise default to current user
     const assigneeId = args.assigneeFilter ?? userId;
@@ -1051,6 +1063,13 @@ export const searchAssignedToMe = query({
     if (leaderGroupIds.length === 0) return [];
 
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
 
     let results = ctx.db
@@ -1133,15 +1152,21 @@ export const getCrossGroupConfig = query({
 
     const groups = await Promise.all(leaderGroupIds.map((id) => ctx.db.get(id)));
 
-    // Find the announcement group among the leader's groups
-    const announcementGroup = groups.find((g) => g?.isAnnouncementGroup);
+    // Exclude archived groups — their leaders should not be suggested as
+    // assignees and their members should not appear on the People page.
+    const activeGroups = groups.filter(
+      (g): g is NonNullable<typeof g> => !!g && !g.isArchived,
+    );
+    const activeLeaderGroupIds = activeGroups.map((g) => g._id);
+
+    // Find the announcement group among the leader's active groups
+    const announcementGroup = activeGroups.find((g) => g.isAnnouncementGroup);
     const announcementGroupId = announcementGroup?._id.toString() ?? null;
 
     // Use the score config from the first group that has one
     // (cross-group view uses a single score config for sorting)
     let scoreConfigScores: Array<{ id: string; name: string }> = [];
-    for (const group of groups) {
-      if (!group) continue;
+    for (const group of activeGroups) {
       const sc: ScoreConfig = group.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
       if (sc.scores.length > 0) {
         scoreConfigScores = sc.scores.map((s) => ({ id: s.id, name: s.name }));
@@ -1150,13 +1175,14 @@ export const getCrossGroupConfig = query({
     }
 
     // Build leader groups list
-    const leaderGroupsList = groups
-      .filter((g): g is NonNullable<typeof g> => !!g)
-      .map((g) => ({ _id: g._id.toString(), name: g.name ?? "Unnamed Group" }));
+    const leaderGroupsList = activeGroups.map((g) => ({
+      _id: g._id.toString(),
+      name: g.name ?? "Unnamed Group",
+    }));
 
-    // Collect all unique leaders across groups
+    // Collect all unique leaders across active groups
     const allLeaderMemberships = await Promise.all(
-      leaderGroupIds.map((gid) =>
+      activeLeaderGroupIds.map((gid) =>
         ctx.db
           .query("groupMembers")
           .withIndex("by_group_user", (q: any) => q.eq("groupId", gid))
@@ -1166,7 +1192,7 @@ export const getCrossGroupConfig = query({
 
     const leadersByUserId = new Map<string, { userId: string; firstName: string; lastName: string; profilePhoto?: string; groupIds: string[] }>();
     for (let i = 0; i < allLeaderMemberships.length; i++) {
-      const gid = leaderGroupIds[i].toString();
+      const gid = activeLeaderGroupIds[i].toString();
       for (const m of allLeaderMemberships[i]) {
         if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
         const uid = m.userId.toString();
@@ -1176,7 +1202,8 @@ export const getCrossGroupConfig = query({
           continue;
         }
         const user = await ctx.db.get(m.userId);
-        if (user) {
+        // Exclude archived (deactivated) users from the assignee picker.
+        if (user && !isArchivedUser(user)) {
           leadersByUserId.set(uid, {
             userId: uid,
             firstName: user.firstName ?? "",

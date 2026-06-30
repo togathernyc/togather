@@ -82,7 +82,7 @@ export function CheckIn() {
           headline follow-up score — a composite of recent attendance and how
           recently someone reached out, decaying over time so it cools off if no
           one's been in touch. <Term>Attendance</Term> is the percentage of
-          meetings attended, and <Term>Service</Term> reflects how they're
+          meetings attended, and <Term>Serving</Term> reflects how they're
           serving.
         </P>
         <P>
@@ -202,7 +202,7 @@ function MemberCard({ m }: { m: Member }) {
             {m.service}%
           </div>
           <div className="text-[9px] uppercase tracking-wide text-neutral-400">
-            Service
+            Serving
           </div>
         </div>
       </div>

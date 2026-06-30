@@ -98,7 +98,10 @@ async function getLeaderGroupIdsInCommunity(
   for (const m of memberships) {
     if (!isActiveMembership(m) || !isLeaderRole(m.role)) continue;
     const group = await ctx.db.get(m.groupId);
-    if (group?.communityId === communityId) result.push(m.groupId);
+    // Skip archived groups — their people should not appear on the People page.
+    if (group?.communityId === communityId && !group.isArchived) {
+      result.push(m.groupId);
+    }
   }
   return result;
 }
@@ -659,12 +662,12 @@ export const listAllForCsvExport = action({
 
     const customFields = csvData.customFields as Array<{ slot: string; name: string; type: string }>;
 
-    // Build column keys and labels
-    const SCORE_COLUMNS = [
-      { slot: "score1", name: "Service" },
-      { slot: "score2", name: "Attendance" },
-      { slot: "score3", name: "Connection" },
-    ];
+    // Build column keys and labels. Source score names from SYSTEM_SCORES so the
+    // CSV headers stay in sync with the canonical labels (e.g. "Serving").
+    const SCORE_COLUMNS = SYSTEM_SCORES.map((s) => ({
+      slot: s.slot,
+      name: s.name,
+    }));
     const columnKeys = [
       "addedAt", "firstName", "lastName", "email", "phone", "zipCode", "dateOfBirth",
       ...SCORE_COLUMNS.map((s) => s.slot),
@@ -1094,6 +1097,13 @@ export const listAssignedToMe = query({
     }
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
 
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups. A stale/deep-linked or archived group id
+    // must not surface its people, so short-circuit to an empty page.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
     const scoreFilterField = (args.scoreField ?? "score1") as
       | "score1"
@@ -1218,6 +1228,12 @@ export const searchAssignedToMe = query({
     if (leaderGroupIds.length === 0) return [];
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
 
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
 
     // Search by community; filter by assigneeIds (array) so users appear when
@@ -1328,6 +1344,12 @@ export const countAssignedToMe = query({
     );
     if (leaderGroupIds.length === 0) return 0;
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise count nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return 0;
+    }
 
     const assigneeId = args.assigneeFilter ?? userId;
 

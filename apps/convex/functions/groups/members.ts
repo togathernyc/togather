@@ -20,7 +20,7 @@ import { query } from "../../_generated/server";
 import { getMediaUrl } from "../../lib/utils";
 import { getOptionalAuth } from "../../lib/auth";
 import { isCommunityAdmin } from "../../lib/permissions";
-import { isLeaderRole } from "../../lib/helpers";
+import { isArchivedUser, isLeaderRole } from "../../lib/helpers";
 
 /**
  * Get group leaders
@@ -88,11 +88,12 @@ export const getLeaders = query({
         .map((u) => [u._id, u])
     );
 
-    // Build result using the map for O(1) lookup
+    // Build result using the map for O(1) lookup.
+    // Exclude archived (deactivated) users so they don't appear as leaders.
     return memberships
       .map((membership) => {
         const user = userMap.get(membership.userId);
-        return user
+        return user && !isArchivedUser(user)
           ? {
               ...user,
               role: membership.role,

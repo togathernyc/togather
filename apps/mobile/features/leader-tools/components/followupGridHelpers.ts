@@ -127,7 +127,8 @@ export function parseFollowupQuerySyntax(
   });
 
   const systemScoreNames: Record<string, string> = {
-    service: "score1",
+    serving: "score1",
+    service: "score1", // legacy alias (column was renamed Service → Serving)
     attendance: "score2",
     connection: "score3",
     togather: "score3", // legacy alias
@@ -160,6 +161,11 @@ export function parseFollowupQuerySyntax(
       );
       if (scoreIndex !== -1) {
         matchedField = `score${scoreIndex + 1}`;
+      } else {
+        // Fall back to the stable system-score aliases so legacy tokens like
+        // `service:` keep working even after the display label changed to
+        // "Serving" (the desktop table parses by score name).
+        matchedField = systemScoreNames[lowerName];
       }
     }
 
@@ -314,13 +320,13 @@ export function getFollowupSearchSuggestions(
         id: "score-min-sys_service",
         label: "service:>50",
         insertText: "service:>",
-        helperText: "Service greater than value",
+        helperText: "Serving greater than value",
       },
       {
         id: "score-max-sys_service",
         label: "service:<30",
         insertText: "service:<",
-        helperText: "Service less than value",
+        helperText: "Serving less than value",
       },
       {
         id: "score-min-sys_attendance",

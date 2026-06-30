@@ -103,6 +103,8 @@ export default GroupsScreen;
 
 **Key Hooks:** `useRecentAttendanceStats`, `useMeetingDates`, `useGroupMembers`, `useAttendanceReport`, `useLeaderGroups`, `useLeaderGroupMemberCounts`
 
+**Related docs:** [Follow-Up Page Scores](./followup-scores.md) — what the Serving / Attendance / Connection scores mean and how to improve them.
+
 ---
 
 ### 6. [Profile](./profile.md)

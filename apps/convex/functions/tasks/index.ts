@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { isActiveMembership, isLeaderRole } from "../../lib/helpers";
+import { isActiveMembership, isArchivedUser, isLeaderRole } from "../../lib/helpers";
 import { searchCommunityMembersInternal } from "../../lib/memberSearch";
 import { normalizePhone } from "../../lib/phoneNormalize";
 import { now } from "../../lib/utils";
@@ -834,6 +834,10 @@ export const listAssignableLeaders = query({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
+    // Archived groups have no assignable leaders.
+    const group = await ctx.db.get(args.groupId);
+    if (!group || group.isArchived) return [];
+
     const memberships = await ctx.db
       .query("groupMembers")
       .withIndex("by_group", (q: any) => q.eq("groupId", args.groupId))
@@ -848,7 +852,8 @@ export const listAssignableLeaders = query({
 
     return users
       .map((user) => {
-        if (!user) return null;
+        // Exclude archived (deactivated) users from the assignee list.
+        if (!user || isArchivedUser(user)) return null;
         const name = [user.firstName, user.lastName].filter(Boolean).join(" ");
         return {
           userId: user._id,
@@ -891,7 +896,8 @@ async function searchGroupMembers(
 
   return users
     .map((user) => {
-      if (!user) return null;
+      // Exclude archived (deactivated) users from leader/member search results.
+      if (!user || isArchivedUser(user)) return null;
       const fullName = [user.firstName, user.lastName]
         .filter(Boolean)
         .join(" ");
@@ -930,6 +936,11 @@ export const searchAssignableLeaders = query({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
+
+    // Archived groups have no assignable leaders — keep search consistent with
+    // listAssignableLeaders so typing can't surface leaders from an archived group.
+    const group = await ctx.db.get(args.groupId);
+    if (!group || group.isArchived) return [];
 
     return searchGroupMembers(ctx, args.groupId, args.searchText, {
       limit: Math.min(args.limit ?? 25, 100),

@@ -12,7 +12,7 @@ export type FollowupMemberForScore = {
  * Used when the `system_scores` feature flag is enabled.
  */
 export const SYSTEM_SCORE_COLUMNS = [
-  { id: "sys_service", name: "Service", slot: "score1" as const },
+  { id: "sys_service", name: "Serving", slot: "score1" as const },
   { id: "sys_attendance", name: "Attendance", slot: "score2" as const },
   { id: "sys_togather", name: "Connection", slot: "score3" as const },
 ] as const;
