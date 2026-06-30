@@ -132,6 +132,11 @@ interface MessageItemProps {
    * are rendered) or for bot/system messages (senderId will be missing).
    */
   onAvatarPress?: (userId: Id<"users">) => void;
+  /**
+   * When true, the row briefly flashes a highlight background. Used when the
+   * user jumps to this message from inbox search so it stands out on arrival.
+   */
+  isHighlighted?: boolean;
 }
 
 /**
@@ -191,9 +196,29 @@ function MessageItemInner({
   optimisticStatus,
   onRetry,
   onAvatarPress,
+  isHighlighted,
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
+
+  // Flash a highlight background when this message is the jump target from
+  // inbox search. Animates in quickly, holds, then fades out.
+  const highlightAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!isHighlighted) return;
+    highlightAnim.setValue(0);
+    const animation = Animated.sequence([
+      Animated.timing(highlightAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
+      Animated.delay(1400),
+      Animated.timing(highlightAnim, { toValue: 0, duration: 700, useNativeDriver: false }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [isHighlighted, highlightAnim]);
+  const highlightBackground = highlightAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['transparent', 'rgba(255, 204, 0, 0.28)'],
+  });
 
   // Slide-up from keyboard + bounce animation for new messages
   const isNewMessage = isOptimistic && optimisticStatus === 'sending';
@@ -1002,11 +1027,13 @@ function MessageItemInner({
   return (
     <Animated.View style={{ transform: [{ translateY: slideAnim }, { scale: scaleAnim }] }}>
     <Pressable ref={containerRef} onPress={handlePress} onLongPress={handleLongPress} delayLongPress={300}>
-      <View
+      <Animated.View
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
+          isHighlighted && styles.highlightedContainer,
+          { backgroundColor: highlightBackground },
         ]}
       >
         {/* Avatar (only for others' messages).
@@ -1177,7 +1204,7 @@ function MessageItemInner({
                 : renderOptimisticStatus())
             : renderReadReceipts()}
         </View>
-      </View>
+      </Animated.View>
 
       {/* Image Gallery Viewer */}
       <ImageViewer
@@ -1213,6 +1240,9 @@ const styles = StyleSheet.create({
   },
   otherMessageContainer: {
     justifyContent: 'flex-start',
+  },
+  highlightedContainer: {
+    borderRadius: 12,
   },
   avatarContainer: {
     width: 24,

@@ -47,6 +47,13 @@ const NON_SEARCHABLE_CONTENT_TYPES = new Set(["system"]);
 
 type SearchResult = {
   messageId: Id<"chatMessages">;
+  /**
+   * Parent message id when this hit is a thread reply; null for top-level
+   * messages. Reply hits are routed to the parent (which is the message that
+   * actually appears in the channel list) so the UI can scroll to it and
+   * auto-open the thread.
+   */
+  parentMessageId: Id<"chatMessages"> | null;
   channelId: Id<"chatChannels">;
   channelName: string;
   channelType: string;
@@ -385,6 +392,7 @@ export const searchMessages = query({
 
         results.push({
           messageId: message._id,
+          parentMessageId: message.parentMessageId ?? null,
           channelId: message.channelId,
           channelName: channel.name,
           channelType: channel.channelType,

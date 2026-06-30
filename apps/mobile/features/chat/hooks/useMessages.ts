@@ -25,19 +25,37 @@ interface UseMessagesResult {
   isLoading: boolean;
   isStale: boolean;
   cursor: string | undefined;
+  /**
+   * True once the requested `anchorMessageId` is present in the loaded
+   * messages. When no anchor is requested this is always false.
+   */
+  anchorFound: boolean;
 }
+
+/**
+ * Maximum number of older-message pages the anchor catch-up will auto-load
+ * before giving up. With a bumped page size while jumping, this covers a deep
+ * slice of history; very old anchors stop here and the list simply shows as far
+ * back as it got.
+ */
+const ANCHOR_MAX_PAGES = 25;
 
 /**
  * Subscribe to messages for a channel with pagination
  *
  * @param channelId - The channel ID to fetch messages from, or null to skip
  * @param limit - Number of messages to fetch per page (default: 20)
+ * @param viewingGroupId - Group context for access checks (shared channels)
+ * @param anchorMessageId - When set, older pages are auto-loaded (using the
+ *   existing backward pagination) until this message is in the list, so the
+ *   caller can scroll to it. Used for "jump to message" from inbox search.
  * @returns Messages array, pagination functions, and loading state
  */
 export function useMessages(
   channelId: Id<"chatChannels"> | null,
   limit: number = 20,
-  viewingGroupId?: Id<"groups"> | null
+  viewingGroupId?: Id<"groups"> | null,
+  anchorMessageId?: Id<"chatMessages"> | null
 ): UseMessagesResult {
   const token = useStoredAuthToken();
   const { getChannelMessages, setChannelMessages, clearChannel } = useMessageCache();
@@ -64,6 +82,13 @@ export function useMessages(
   // Store the last known cursor for loadMore
   const lastCursorRef = useRef<string | undefined>(undefined);
 
+  // Anchor catch-up: how many pages we've auto-loaded chasing the current
+  // anchorMessageId. Reset whenever the anchor (or channel) changes.
+  const anchorAttemptsRef = useRef<{ id: Id<"chatMessages"> | null; count: number }>({
+    id: null,
+    count: 0,
+  });
+
   // Reset when channelId changes
   const prevChannelIdRef = useRef<Id<"chatChannels"> | null>(null);
   if (channelId !== prevChannelIdRef.current) {
@@ -75,6 +100,7 @@ export function useMessages(
     olderMessagesRef.current = { channelId: null, messages: [] };
     lastCursorRef.current = undefined;
     liveMessagesSnapshotRef.current = [];
+    anchorAttemptsRef.current = { id: null, count: 0 };
   }
 
   // Skip query if no channelId or no token
@@ -215,6 +241,29 @@ export function useMessages(
     setCursor(lastCursorRef.current);
   }, []);
 
+  // Whether the requested anchor message is loaded yet.
+  const anchorFound = useMemo(
+    () => (anchorMessageId ? mergedMessages.some((m) => m._id === anchorMessageId) : false),
+    [anchorMessageId, mergedMessages]
+  );
+
+  // Anchor catch-up driver: when a jump target is requested but not yet loaded,
+  // page backward (reusing the existing pagination) one page at a time until it
+  // appears. Each loaded page changes `mergedMessages`, re-running this effect
+  // to load the next — a self-chaining loop bounded by ANCHOR_MAX_PAGES.
+  useEffect(() => {
+    if (!anchorMessageId) return;
+    if (anchorAttemptsRef.current.id !== anchorMessageId) {
+      anchorAttemptsRef.current = { id: anchorMessageId, count: 0 };
+    }
+    if (anchorFound) return;
+    if (!hasMore) return;
+    if (isLoadingMoreRef.current) return;
+    if (anchorAttemptsRef.current.count >= ANCHOR_MAX_PAGES) return;
+    anchorAttemptsRef.current.count += 1;
+    loadMore();
+  }, [anchorMessageId, anchorFound, hasMore, mergedMessages, loadMore]);
+
   // Determine loading state
   const isQueryLoading = result === undefined && !shouldSkip;
   const isPaginating = isLoadingMoreRef.current;
@@ -253,5 +302,6 @@ export function useMessages(
     isLoading,
     isStale,
     cursor: lastCursorRef.current,
+    anchorFound,
   };
 }
