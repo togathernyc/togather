@@ -350,6 +350,46 @@ describe("Admin view access — reading messages", () => {
     expect(result.messages).toEqual([]);
   });
 
+  test("admin can read a poll in a channel without joining; outsider cannot", async () => {
+    const t = convexTest(schema, modules);
+    const f = await seedCommunity(t);
+    const admin = await createAdminViewer(t, f.communityId);
+    const outsider = await createOutsider(t, f.communityId);
+
+    const pollId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("polls", {
+        channelId: f.mainChannelId,
+        authorId: f.leaderUserId,
+        question: "Favorite night?",
+        options: [
+          { id: "a", text: "Tuesday" },
+          { id: "b", text: "Thursday" },
+        ],
+        allowMultiple: false,
+        isAnonymous: false,
+        status: "active",
+        voteCount: 0,
+        voterCount: 0,
+        editCount: 0,
+        createdAt: now,
+      });
+    });
+
+    const adminPoll = await t.query(api.functions.messaging.polls.getPoll, {
+      token: admin.token,
+      pollId,
+    });
+    const outsiderPoll = await t.query(api.functions.messaging.polls.getPoll, {
+      token: outsider.token,
+      pollId,
+    });
+
+    expect(adminPoll).not.toBeNull();
+    expect(adminPoll?.question).toBe("Favorite night?");
+    expect(outsiderPoll).toBeNull();
+  });
+
   test("admin from a DIFFERENT community cannot read messages", async () => {
     const t = convexTest(schema, modules);
     const f = await seedCommunity(t);
