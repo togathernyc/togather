@@ -1582,6 +1582,12 @@ export default defineSchema({
     channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements" | "cross_team"
     name: v.string(),
     description: v.optional(v.string()),
+    /**
+     * Optional per-channel hint shown as the composer placeholder (e.g.
+     * "put experience updates here"). Guides members to post the right kind of
+     * content in this thread. Editable by leaders on the channel info screen.
+     */
+    hint: v.optional(v.string()),
     createdById: v.id("users"),
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms

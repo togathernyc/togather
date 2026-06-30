@@ -79,6 +79,12 @@ interface MessageInputProps {
    * still sends. Sourced from `channels.getChannel` → `recipientPending`.
    */
   recipientPending?: boolean;
+  /**
+   * Composer placeholder text. Defaults to "Message...". Channels can set a
+   * custom hint (e.g. "put experience updates here") on the channel info screen
+   * to guide members on what to post in this thread.
+   */
+  placeholder?: string;
 }
 
 interface ChannelMember {
@@ -130,7 +136,7 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
   );
 };
 
-export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false }: MessageInputProps) {
+export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false, placeholder }: MessageInputProps) {
   const { colors: themeColors } = useTheme();
   const { isKnicksMode } = useCommunityTheme();
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
@@ -1224,7 +1230,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
             setNativeScrollEnabled(contentHeight >= maxContentHeight);
           }}
-          placeholder="Message..."
+          placeholder={placeholder || "Message..."}
           placeholderTextColor={themeColors.textTertiary}
           multiline
           scrollEnabled={isWeb ? true : nativeScrollEnabled}

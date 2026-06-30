@@ -1203,6 +1203,7 @@ export const listGroupChannels = query({
     channelType: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
+    hint: v.optional(v.string()),
     memberCount: v.number(),
     isArchived: v.boolean(),
     isMember: v.boolean(),
@@ -1392,6 +1393,7 @@ export const listGroupChannels = query({
           channelType: channel.channelType,
           name: channel.name,
           description: channel.description,
+          hint: channel.hint,
           memberCount: channel.memberCount,
           isArchived: channel.isArchived,
           isMember,
@@ -2047,6 +2049,8 @@ export const updateChannel = mutation({
     channelId: v.id("chatChannels"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    /** Composer placeholder hint. Pass "" to clear it. */
+    hint: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -2087,6 +2091,7 @@ export const updateChannel = mutation({
     const updates: Partial<{
       name: string;
       description: string;
+      hint: string | undefined;
       updatedAt: number;
     }> = {
       updatedAt: Date.now(),
@@ -2097,6 +2102,11 @@ export const updateChannel = mutation({
     }
     if (args.description !== undefined) {
       updates.description = args.description;
+    }
+    if (args.hint !== undefined) {
+      // Empty string clears the hint so it falls back to the default placeholder.
+      const trimmedHint = args.hint.trim();
+      updates.hint = trimmedHint.length > 0 ? trimmedHint : undefined;
     }
 
     await ctx.db.patch(args.channelId, updates);

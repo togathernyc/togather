@@ -740,6 +740,39 @@ describe("Channel Updates", () => {
 
     expect(afterUpdate?.updatedAt).toBeGreaterThan(beforeUpdate?.updatedAt || 0);
   });
+
+  test("should set and clear the composer hint", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, communityId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    // Set a hint (and confirm surrounding whitespace is trimmed).
+    await t.mutation(api.functions.messaging.channels.updateChannel, {
+      token: leaderToken,
+      channelId,
+      hint: "  put experience updates here  ",
+    });
+
+    let channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBe("put experience updates here");
+
+    // An empty/whitespace value clears the hint back to undefined.
+    await t.mutation(api.functions.messaging.channels.updateChannel, {
+      token: leaderToken,
+      channelId,
+      hint: "   ",
+    });
+
+    channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBeUndefined();
+  });
 });
 
 // ============================================================================
