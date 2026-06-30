@@ -1871,7 +1871,27 @@ export const getInboxChannels = query({
       return bLastMessage - aLastMessage;
     });
 
-    return result;
+    // Collapse shared-channel duplicates. A channel shared across several of the
+    // user's groups would otherwise render once under every group it's shared
+    // with — e.g. a "Leaders" channel shared across three sibling groups shows
+    // up three times in the inbox. Show each shared channel exactly once,
+    // attached to the group the user is most actively engaged with. `result` is
+    // already sorted so the most-recently-active group comes first, so we keep
+    // the first occurrence and drop the channel from later groups. Unread counts
+    // are per-channel, so collapsing the row collapses the duplicated badge too.
+    const seenSharedChannelIds = new Set<Id<"chatChannels">>();
+    for (const groupEntry of result) {
+      groupEntry.channels = groupEntry.channels.filter((ch) => {
+        if (!ch.isShared) return true;
+        if (seenSharedChannelIds.has(ch._id)) return false;
+        seenSharedChannelIds.add(ch._id);
+        return true;
+      });
+    }
+
+    // Drop any group left empty once its only channel(s) were shared duplicates
+    // shown elsewhere, so the inbox doesn't render an empty group header.
+    return result.filter((groupEntry) => groupEntry.channels.length > 0);
   },
 });
 
