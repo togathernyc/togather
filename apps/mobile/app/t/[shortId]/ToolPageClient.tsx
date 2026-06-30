@@ -12,6 +12,7 @@ import {
   Platform,
   Alert,
   Share,
+  Linking,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useAction, api } from "@services/api/convex";
@@ -23,6 +24,7 @@ import { useTheme } from "@hooks/useTheme";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import * as Clipboard from "expo-clipboard";
 import { ResourceSection } from "@components/ui";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import type { ResourceSectionData } from "@components/ui";
 import { RunSheetScreen } from "@features/leader-tools/components/RunSheetScreen";
 import type { RunSheet } from "@features/leader-tools/components/RunSheetScreen";
@@ -160,11 +162,11 @@ export default function ToolPageClient() {
     );
   }
 
-  // Get tool icon
-  const getToolIcon = (): keyof typeof Ionicons.glyphMap => {
+  // Get tool icon name (Ionicons name, or "mci:"-prefixed for resources).
+  const getToolIcon = (): string => {
     if (toolLink.toolType === "runsheet") return "list-outline";
     if (toolLink.toolType === "resource") {
-      return (toolLink.resourceIcon as keyof typeof Ionicons.glyphMap) || "document-text-outline";
+      return (toolLink.resourceIcon as string) || "document-text-outline";
     }
     return "link-outline";
   };
@@ -183,7 +185,7 @@ export default function ToolPageClient() {
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <ResourceIcon name={getToolIcon()} size={18} color={colors.textSecondary} />
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>
@@ -240,7 +242,7 @@ export default function ToolPageClient() {
             <View style={{ width: 40 }} />
           )}
           <View style={styles.headerTitleContainer}>
-            <Ionicons name={getToolIcon()} size={18} color={colors.textSecondary} />
+            <ResourceIcon name={getToolIcon()} size={18} color={colors.textSecondary} />
             <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
               {getToolDisplayName()}
             </Text>
@@ -288,21 +290,33 @@ export default function ToolPageClient() {
         {/* Resource header */}
         <View style={styles.resourceHeader}>
           {resourceData.icon && (
-            <Ionicons
-              name={resourceData.icon as keyof typeof Ionicons.glyphMap}
-              size={28}
-              color={colors.text}
-            />
+            <ResourceIcon name={resourceData.icon} size={28} color={colors.text} />
           )}
           <Text style={[styles.resourceTitle, { color: colors.text }]}>{resourceData.title}</Text>
         </View>
+
+        {/* Link redirect — for link-only resources shared via short link */}
+        {resourceData.linkUrl && (
+          <TouchableOpacity
+            style={[styles.openLinkButton, { backgroundColor: colors.link }]}
+            onPress={() => {
+              Linking.openURL(resourceData.linkUrl as string).catch((err) => {
+                console.error("[ToolPageClient] Failed to open link:", err);
+                Alert.alert("Error", "Couldn't open this link.");
+              });
+            }}
+          >
+            <Ionicons name="open-outline" size={18} color="#fff" />
+            <Text style={styles.openLinkButtonText}>Open Link</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Sections */}
         {sortedSections.map((section: ResourceSectionData) => (
           <ResourceSection key={section.id} section={section} />
         ))}
 
-        {sortedSections.length === 0 && (
+        {sortedSections.length === 0 && !resourceData.linkUrl && (
           <View style={styles.emptyContainer}>
             <Ionicons name="document-text-outline" size={48} color={colors.iconSecondary} />
             <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No content yet</Text>
@@ -420,6 +434,20 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "bold",
     flex: 1,
+  },
+  openLinkButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  openLinkButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
   emptyContainer: {
     alignItems: "center",

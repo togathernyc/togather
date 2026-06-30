@@ -95,6 +95,32 @@ function isResourceVisibleToUser(
   return false;
 }
 
+// Schemes a resource redirect may keep as-is. Anything else (e.g. a scheme-less
+// host, or a dangerous `javascript:`/`data:`/`file:` URL) gets an https:// prefix
+// so it can neither dead-tap on native nor execute script on the web build.
+const ALLOWED_LINK_SCHEMES = ["https", "http", "mailto", "tel"];
+
+/**
+ * Normalize a resource redirect URL for storage.
+ *
+ * Trims the value and returns `undefined` for blanks (no redirect). A URL with
+ * an allow-listed scheme (https/http/mailto/tel) is preserved; anything else —
+ * a scheme-less host like "example.com/give" or a disallowed scheme like
+ * "javascript:" — is prefixed with "https://" so the mobile `Linking.openURL`
+ * handlers always receive a safe, qualified URL.
+ */
+function normalizeLinkUrl(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z\d+.-]*):/);
+  if (schemeMatch && ALLOWED_LINK_SCHEMES.includes(schemeMatch[1].toLowerCase())) {
+    return trimmed;
+  }
+  // Strip any leading slashes (e.g. a protocol-relative "//example.com") so the
+  // prefix never produces a malformed "https:////..." URL.
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
+
 /**
  * Generate a unique ID for sections.
  * Uses timestamp + random characters for uniqueness.
@@ -293,6 +319,102 @@ export const getVisibleForUser = query({
   },
 });
 
+/**
+ * Get inbox-flagged resources for the current user, grouped by group.
+ *
+ * Returns the resources that should appear under each group's item in the chat
+ * inbox (those with `showInInbox === true`), scoped to a single community and
+ * filtered by the same visibility rules as the toolbar. One batched query keeps
+ * the inbox to a single subscription instead of one per group.
+ *
+ * Shape: `[{ groupId, resources: [{ _id, title, icon, linkUrl }] }]`
+ */
+export const getInboxResourcesForUser = query({
+  args: {
+    communityId: v.id("communities"),
+    token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // The user's admitted group memberships: active (not left) AND not a
+    // pending/declined join request. `isActiveMembership` only checks `leftAt`,
+    // so a pending request row would otherwise leak resource titles/links for a
+    // group the user hasn't joined — mirror the inbox channel query's filter.
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    const activeMemberships = memberships.filter(
+      (m) =>
+        isActiveMembership(m) &&
+        (m.requestStatus === undefined || m.requestStatus === "accepted")
+    );
+
+    // Channel memberships are only needed when a resource uses
+    // `channel_members` visibility; load them lazily and reuse across groups.
+    let userChannelIds: Id<"chatChannels">[] | undefined;
+
+    const results: Array<{
+      groupId: Id<"groups">;
+      resources: Array<{
+        _id: Id<"groupResources">;
+        title: string;
+        icon?: string;
+        linkUrl?: string;
+      }>;
+    }> = [];
+
+    for (const membership of activeMemberships) {
+      const group = await ctx.db.get(membership.groupId);
+      // Skip groups outside this community or that are archived.
+      if (!group || group.communityId !== args.communityId || group.isArchived) {
+        continue;
+      }
+
+      const groupResources = await ctx.db
+        .query("groupResources")
+        .withIndex("by_group", (q) => q.eq("groupId", membership.groupId))
+        .collect();
+
+      const inboxResources = groupResources.filter(
+        (r) => r.showInInbox === true
+      );
+      if (inboxResources.length === 0) continue;
+
+      if (
+        userChannelIds === undefined &&
+        inboxResources.some((r) => r.visibility.type === "channel_members")
+      ) {
+        const channelMemberships = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .collect();
+        userChannelIds = channelMemberships.map((m) => m.channelId);
+      }
+
+      const visible = inboxResources
+        .filter((r) => isResourceVisibleToUser(r, membership, userChannelIds))
+        .sort((a, b) => a.order - b.order);
+
+      if (visible.length === 0) continue;
+
+      results.push({
+        groupId: membership.groupId,
+        resources: visible.map((r) => ({
+          _id: r._id,
+          title: r.title,
+          icon: r.icon,
+          linkUrl: r.linkUrl,
+        })),
+      });
+    }
+
+    return results;
+  },
+});
+
 // ============================================================================
 // Mutations
 // ============================================================================
@@ -309,6 +431,8 @@ export const create = mutation({
     groupId: v.id("groups"),
     title: v.string(),
     icon: v.optional(v.string()),
+    linkUrl: v.optional(v.string()),
+    showInInbox: v.optional(v.boolean()),
     visibility: v.object({
       type: v.union(
         v.literal("everyone"),
@@ -357,6 +481,9 @@ export const create = mutation({
       groupId: args.groupId,
       title: args.title,
       icon: args.icon,
+      // Normalize the redirect: blank -> undefined; scheme-less -> https://.
+      linkUrl: normalizeLinkUrl(args.linkUrl),
+      showInInbox: args.showInInbox,
       visibility: args.visibility,
       sections: [],
       order: maxOrder + 1,
@@ -379,6 +506,8 @@ export const update = mutation({
     resourceId: v.id("groupResources"),
     title: v.optional(v.string()),
     icon: v.optional(v.string()),
+    linkUrl: v.optional(v.string()),
+    showInInbox: v.optional(v.boolean()),
     visibility: v.optional(
       v.object({
         type: v.union(
@@ -425,6 +554,10 @@ export const update = mutation({
 
     if (args.title !== undefined) updates.title = args.title;
     if (args.icon !== undefined) updates.icon = args.icon;
+    // A blank link clears the redirect (patching `undefined` removes the field);
+    // scheme-less URLs are normalized to https://.
+    if (args.linkUrl !== undefined) updates.linkUrl = normalizeLinkUrl(args.linkUrl);
+    if (args.showInInbox !== undefined) updates.showInInbox = args.showInInbox;
     if (args.visibility !== undefined) updates.visibility = args.visibility;
     if (args.order !== undefined) updates.order = args.order;
 

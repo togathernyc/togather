@@ -194,6 +194,20 @@ export function ChatInboxScreen({
     token ? { token } : "skip",
   );
 
+  // Resources flagged to show under their group in the inbox. One batched
+  // subscription returns them grouped by groupId; we index into it per row.
+  const inboxResources = useQuery(
+    api.functions.groupResources.index.getInboxResourcesForUser,
+    token && communityId ? { token, communityId } : "skip",
+  );
+  const resourcesByGroup = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof inboxResources>[number]["resources"]>();
+    for (const entry of inboxResources ?? []) {
+      map.set(entry.groupId, entry.resources);
+    }
+    return map;
+  }, [inboxResources]);
+
   // Inbox message search. SearchBar debounces input, so `searchTerm` only
   // updates after the user pauses typing — keeping the reactive query from
   // firing on every keystroke. A search is only run once the term is long
@@ -318,10 +332,11 @@ export function ChatInboxScreen({
           onToggleExpand={() => toggleGroupExpanded(item.item.group._id)}
           activeGroupId={sidebarMode ? activeGroupId : undefined}
           activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
+          resources={resourcesByGroup.get(item.item.group._id)}
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup]
   );
 
   // Key extractor for FlatList

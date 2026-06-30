@@ -9,8 +9,10 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
 import { useRouter } from "expo-router";
 import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
@@ -182,6 +184,8 @@ type ToolbarItem = {
   label: string;
   isResource: boolean;
   resourceId?: string;
+  /** When set, tapping the resource opens this URL instead of its detail page. */
+  linkUrl?: string;
 };
 
 export const ChatToolbar = memo(function ChatToolbar({
@@ -243,6 +247,7 @@ export const ChatToolbar = memo(function ChatToolbar({
             label: resource.title,
             isResource: true,
             resourceId: resource._id,
+            linkUrl: resource.linkUrl || undefined,
           };
         }
 
@@ -305,8 +310,15 @@ export const ChatToolbar = memo(function ChatToolbar({
     toolDisplayNames,
   ]);
 
-  // Handle tool press - navigate to resource page or call onToolPress
+  // Handle tool press - open a link redirect, navigate to the resource page,
+  // or call onToolPress for built-in tools.
   const handleToolPress = (item: ToolbarItem) => {
+    if (item.isResource && item.linkUrl) {
+      Linking.openURL(item.linkUrl).catch((err) => {
+        console.error("[ChatToolbar] Failed to open resource link:", err);
+      });
+      return;
+    }
     if (item.isResource && item.resourceId) {
       router.push(`/(user)/group/${groupId}/resource/${item.resourceId}`);
     } else {
@@ -331,8 +343,8 @@ export const ChatToolbar = memo(function ChatToolbar({
             style={[styles.toolbarItem, { borderColor: themeColors.border, backgroundColor: themeColors.surface }]}
             onPress={() => handleToolPress(item)}
           >
-            <Ionicons
-              name={item.icon as keyof typeof Ionicons.glyphMap}
+            <ResourceIcon
+              name={item.icon}
               size={18}
               color={themeColors.text}
             />
