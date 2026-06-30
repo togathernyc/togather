@@ -446,7 +446,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
     marginRight: 8,
-    borderRadius: 18,
+    // Boxy rounded-rectangle highlight (not a full pill) for the active tab.
+    borderRadius: 8,
   },
   tabContent: {
     flexDirection: "row",
