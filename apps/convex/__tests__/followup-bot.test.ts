@@ -21,7 +21,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, beforeEach, afterEach } from "vitest";
+import { expect, test, describe } from "vitest";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -29,9 +29,12 @@ import type { Id } from "../_generated/dataModel";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
-// Scheduled functions triggered by message inserts (mentions, etc.) can reject
-// in the test environment because external APIs aren't available. Swallow those
-// expected rejections so they don't fail unrelated assertions.
+// Posting a bot message schedules downstream jobs (mention notifications) that
+// drain asynchronously, after the triggering action has resolved. In the
+// convex-test sandbox these reject with "Write outside of transaction" once the
+// test's transaction context is gone. They're a harness artifact, not a product
+// bug, and can fire between/after tests — so the handler stays attached for the
+// whole file rather than per-test. Unexpected rejections still propagate.
 const unhandledRejectionHandler = (reason: unknown) => {
   const errorMessage = String(reason);
   if (
@@ -42,16 +45,9 @@ const unhandledRejectionHandler = (reason: unknown) => {
   }
   throw reason;
 };
+process.on("unhandledRejection", unhandledRejectionHandler);
 
 describe("Followup Bot", () => {
-  beforeEach(() => {
-    process.on("unhandledRejection", unhandledRejectionHandler);
-  });
-
-  afterEach(() => {
-    process.off("unhandledRejection", unhandledRejectionHandler);
-  });
-
   describe("Bot Definition", () => {
     test("is registered as an event bot with a round-robin default", async () => {
       const t = convexTest(schema, modules);
@@ -87,35 +83,78 @@ describe("Followup Bot", () => {
     });
   });
 
-  describe("Config lookup", () => {
-    test("returns the config when enabled", async () => {
+  describe("Assignment preparation (atomic resolve + advance)", () => {
+    test("resolves an assignment when enabled", async () => {
       const t = convexTest(schema, modules);
-      const { groupId, communityName, groupName } = await seedFollowupGroup(t, {
-        enabled: true,
-      });
+      const { groupId, leaderAId, leaderBId, groupName } =
+        await seedFollowupGroup(t, {
+          enabled: true,
+          assignmentMode: "round_robin",
+        });
 
-      const config = await t.query(
-        internal.functions.scheduledJobs.getFollowupBotConfig,
-        { groupId },
+      const newMember = await addUser(t, "Casey", "+15555550100");
+      const result = await t.mutation(
+        internal.functions.scheduledJobs.prepareFollowupAssignment,
+        { groupId, userId: newMember },
       );
 
-      expect(config).not.toBeNull();
-      expect(config?.enabled).toBe(true);
-      expect(config?.groupName).toBe(groupName);
-      expect(config?.communityName).toBe(communityName);
-      expect(config?.assignmentMode).toBe("round_robin");
+      expect(result.skipped).toBe(false);
+      if (!result.skipped) {
+        expect([leaderAId, leaderBId]).toContain(result.assignedLeaderId);
+        expect(result.targetChannelSlug).toBe("leaders");
+        expect(result.message).toContain(groupName);
+      }
     });
 
-    test("returns null when disabled", async () => {
+    test("skips when disabled", async () => {
       const t = convexTest(schema, modules);
       const { groupId } = await seedFollowupGroup(t, { enabled: false });
 
-      const config = await t.query(
-        internal.functions.scheduledJobs.getFollowupBotConfig,
-        { groupId },
+      const newMember = await addUser(t, "Casey", "+15555550101");
+      const result = await t.mutation(
+        internal.functions.scheduledJobs.prepareFollowupAssignment,
+        { groupId, userId: newMember },
       );
 
-      expect(config).toBeNull();
+      expect(result).toMatchObject({
+        skipped: true,
+        reason: "bot_not_enabled",
+      });
+    });
+
+    test("inserts \"$\" sequences in names literally (no replace-pattern bug)", async () => {
+      const t = convexTest(schema, modules);
+      const { groupId, leaderAId } = await seedFollowupGroup(t, {
+        enabled: true,
+        assignmentMode: "specific_leader",
+        specificLeaderId: "A",
+        message: "Hi [[leader_name]], welcome [[member_name]]",
+      });
+
+      // A member whose name contains "$&" — a special String.replace pattern.
+      const trickyMember = await t.run(async (ctx) => {
+        return await ctx.db.insert("users", {
+          firstName: "$&Dollar",
+          lastName: "$1Name",
+          phone: "+15555550102",
+          phoneVerified: true,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      });
+
+      const result = await t.mutation(
+        internal.functions.scheduledJobs.prepareFollowupAssignment,
+        { groupId, userId: trickyMember },
+      );
+
+      expect(result.skipped).toBe(false);
+      if (!result.skipped) {
+        expect(result.assignedLeaderId).toBe(leaderAId);
+        expect(result.message).toBe(
+          "Hi Alice Leader, welcome $&Dollar $1Name",
+        );
+      }
     });
   });
 
