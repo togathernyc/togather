@@ -2238,21 +2238,30 @@ async function analyzeCsvImportRows(
   rowReports: CsvImportRowReport[];
   preparedRows: PreparedCsvImportRow[];
 }> {
-  const customFieldDefs = ((group.followupColumnConfig as any)?.customFields ?? []) as Array<{
-    slot: string;
-    type: string;
-    options?: string[];
-  }>;
+  // Custom field definitions now live at the community level
+  // (`communities.peopleCustomFields`) — that's the source of truth the People
+  // directory and Add Person side panel render from. Older communities may
+  // still only have the legacy per-group `followupColumnConfig.customFields`,
+  // so merge both with the community config taking precedence. Without this,
+  // community-level fields are dropped as "unknown_custom_field_slot_ignored".
+  type CustomFieldDef = { slot: string; type: string; options?: string[] };
+  const legacyCustomFieldDefs = ((group.followupColumnConfig as any)?.customFields ??
+    []) as CustomFieldDef[];
+  let communityCustomFieldDefs: CustomFieldDef[] = [];
+  if (group.communityId) {
+    const community = await ctx.db.get(group.communityId);
+    communityCustomFieldDefs = ((community as any)?.peopleCustomFields ??
+      []) as CustomFieldDef[];
+  }
   const assigneeLookup = await buildCsvAssigneeLookup(ctx, group._id);
-  const customFieldDefsBySlot = new Map(
-    customFieldDefs.map((field) => [
-      field.slot,
-      {
-        type: field.type,
-        options: field.options,
-      },
-    ])
-  );
+  const customFieldDefsBySlot = new Map<string, { type: string; options?: string[] }>();
+  // Legacy first so community definitions override on slot collisions.
+  for (const field of [...legacyCustomFieldDefs, ...communityCustomFieldDefs]) {
+    customFieldDefsBySlot.set(field.slot, {
+      type: field.type,
+      options: field.options,
+    });
+  }
 
   const normalizedRows = rows.map(getNormalizedRow);
 
