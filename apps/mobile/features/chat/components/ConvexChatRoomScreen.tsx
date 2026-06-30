@@ -339,6 +339,19 @@ const ConvexChatRoomScreenInner: React.FC = () => {
       ? defaultChannelFallback.slug
       : routeActiveSlug;
 
+  // Per-channel composer hint (e.g. "put experience updates here"), configured
+  // by leaders on the channel info screen. Resolve from the active channel doc;
+  // custom channels come through channelBySlug, the rest through the group list.
+  const activeChannelHint = useMemo(() => {
+    if (isCustomChannel && channelBySlug?._id === activeChannelId) {
+      return channelBySlug?.hint ?? undefined;
+    }
+    const active = effectiveGroupChannels?.find(
+      (ch: any) => ch._id === activeChannelId
+    );
+    return active?.hint ?? undefined;
+  }, [isCustomChannel, channelBySlug, activeChannelId, effectiveGroupChannels]);
+
   // Fetch group details for display (with token to get user's role)
   const groupDetailsRaw = useQuery(
     api.functions.groups.index.getById,
@@ -1255,6 +1268,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 onCancelReply={handleCancelReply}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
+                placeholder={activeChannelHint}
                 // Ad-hoc DM where recipient hasn't accepted yet — strip
                 // attachment UI client-side. Backend rejects (messages.ts);
                 // hiding here means the user never triggers the failure path

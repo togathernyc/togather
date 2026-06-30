@@ -1203,6 +1203,7 @@ export const listGroupChannels = query({
     channelType: v.string(),
     name: v.string(),
     description: v.optional(v.string()),
+    hint: v.optional(v.string()),
     memberCount: v.number(),
     isArchived: v.boolean(),
     isMember: v.boolean(),
@@ -1392,6 +1393,7 @@ export const listGroupChannels = query({
           channelType: channel.channelType,
           name: channel.name,
           description: channel.description,
+          hint: channel.hint,
           memberCount: channel.memberCount,
           isArchived: channel.isArchived,
           isMember,
@@ -2039,6 +2041,13 @@ export const createChannel = mutation({
 });
 
 /**
+ * Max length for a channel's composer hint. Mirrors the `maxLength` on the
+ * channel info editor so a modified client can't persist an oversized
+ * placeholder that `listGroupChannels` would then ship to every member.
+ */
+const CHANNEL_HINT_MAX_LENGTH = 100;
+
+/**
  * Update channel details.
  */
 export const updateChannel = mutation({
@@ -2047,6 +2056,8 @@ export const updateChannel = mutation({
     channelId: v.id("chatChannels"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    /** Composer placeholder hint. Pass "" to clear it. */
+    hint: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -2087,6 +2098,7 @@ export const updateChannel = mutation({
     const updates: Partial<{
       name: string;
       description: string;
+      hint: string | undefined;
       updatedAt: number;
     }> = {
       updatedAt: Date.now(),
@@ -2097,6 +2109,16 @@ export const updateChannel = mutation({
     }
     if (args.description !== undefined) {
       updates.description = args.description;
+    }
+    if (args.hint !== undefined) {
+      const trimmedHint = args.hint.trim();
+      if (trimmedHint.length > CHANNEL_HINT_MAX_LENGTH) {
+        throw new Error(
+          `Hint must be ${CHANNEL_HINT_MAX_LENGTH} characters or fewer`,
+        );
+      }
+      // Empty string clears the hint so it falls back to the default placeholder.
+      updates.hint = trimmedHint.length > 0 ? trimmedHint : undefined;
     }
 
     await ctx.db.patch(args.channelId, updates);

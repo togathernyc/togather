@@ -226,6 +226,10 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const [renameValue, setRenameValue] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [hintVisible, setHintVisible] = useState(false);
+  const [hintValue, setHintValue] = useState("");
+  const [hintSubmitting, setHintSubmitting] = useState(false);
+  const [hintError, setHintError] = useState<string | null>(null);
   const [leaveVisible, setLeaveVisible] = useState(false);
   const [archiveVisible, setArchiveVisible] = useState(false);
   const [pendingResponding, setPendingResponding] = useState<
@@ -618,6 +622,24 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       setRenameSubmitting(false);
     }
   }, [renameValue, channel?._id, updateChannelMutation]);
+
+  const handleSaveHint = useCallback(async () => {
+    if (!channel?._id) return;
+    setHintSubmitting(true);
+    try {
+      // Empty value clears the hint (composer falls back to "Message...").
+      await updateChannelMutation({
+        channelId: channel._id,
+        hint: hintValue.trim(),
+      });
+      setHintVisible(false);
+      setHintError(null);
+    } catch (e: any) {
+      setHintError(e?.message || "Could not save hint");
+    } finally {
+      setHintSubmitting(false);
+    }
+  }, [hintValue, channel?._id, updateChannelMutation]);
 
   if (channel === undefined) {
     return (
@@ -1327,6 +1349,49 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   the Rostering hub via `createServingTeam`, and a team's
                   roster is managed there, not from its chat channel. */}
 
+              {/* Composer hint — guidance text shown as the message-box
+                  placeholder (e.g. "put experience updates here"). Editing is
+                  authorized by `updateChannel` against the owning group, so we
+                  hide it for secondary-share viewers (a linked group's leader
+                  would otherwise open the modal only to hit "Not authorized").
+                  The owning group's leaders manage the shared hint. */}
+              {!isSecondaryShare && (
+                <Pressable
+                  onPress={() => {
+                    setHintValue(channel?.hint ?? "");
+                    setHintError(null);
+                    setHintVisible(true);
+                  }}
+                  style={({ pressed }) => [
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Ionicons name="bulb-outline" size={20} color={colors.icon} />
+                  <Text style={[styles.actionLabel, { color: colors.text }]}>
+                    Composer hint
+                  </Text>
+                  {channel?.hint ? (
+                    <Text
+                      style={[styles.actionRowValue, { color: colors.textSecondary }]}
+                      numberOfLines={1}
+                    >
+                      {channel.hint}
+                    </Text>
+                  ) : null}
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textTertiary}
+                    style={{ marginLeft: channel?.hint ? 0 : "auto" }}
+                  />
+                </Pressable>
+              )}
+
               {/* Rename — custom channels only (backend gates the rest). */}
               {isCustom && (
                 <Pressable
@@ -1506,6 +1571,77 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
               ]}
             >
               {renameSubmitting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Text style={[styles.modalButtonText, { color: "#ffffff" }]}>
+                  Save
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </CustomModal>
+
+      {/* Composer hint modal */}
+      <CustomModal
+        visible={hintVisible}
+        onClose={() => {
+          if (!hintSubmitting) {
+            setHintVisible(false);
+            setHintError(null);
+          }
+        }}
+        title="Composer hint"
+      >
+        <View>
+          <Text style={[styles.helperText, { color: colors.textSecondary, marginBottom: 12 }]}>
+            Shown as the message-box placeholder to guide what people post here.
+            Leave empty to use the default.
+          </Text>
+          <TextInput
+            value={hintValue}
+            onChangeText={setHintValue}
+            placeholder="e.g. put experience updates here"
+            placeholderTextColor={colors.textSecondary}
+            maxLength={100}
+            autoFocus
+            style={[
+              styles.renameInput,
+              {
+                color: colors.text,
+                backgroundColor: colors.inputBackground,
+                borderColor: colors.inputBorder,
+              },
+            ]}
+          />
+          {hintError ? (
+            <Text style={[styles.errorText, { color: colors.destructive, marginTop: 8 }]}>
+              {hintError}
+            </Text>
+          ) : null}
+          <View style={styles.modalButtonRow}>
+            <TouchableOpacity
+              onPress={() => {
+                setHintVisible(false);
+                setHintError(null);
+              }}
+              disabled={hintSubmitting}
+              style={[styles.modalButton, { backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Text style={[styles.modalButtonText, { color: colors.text }]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleSaveHint}
+              disabled={hintSubmitting}
+              style={[
+                styles.modalButton,
+                { backgroundColor: primaryColor },
+                hintSubmitting && { opacity: 0.6 },
+              ]}
+            >
+              {hintSubmitting ? (
                 <ActivityIndicator size="small" color="#ffffff" />
               ) : (
                 <Text style={[styles.modalButtonText, { color: "#ffffff" }]}>
