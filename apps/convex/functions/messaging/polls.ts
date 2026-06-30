@@ -27,6 +27,7 @@ import {
 } from "../../lib/helpers";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { canAccessEventChannel } from "./eventChat";
+import { isCommunityAdminForChannel } from "./helpers";
 import { generateMessagePreview } from "./messages";
 import { checkRateLimit } from "../../lib/rateLimit";
 
@@ -794,7 +795,8 @@ export const getPoll = query({
     const channel = await ctx.db.get(poll.channelId);
     if (!channel) return null;
 
-    // Same channel-visibility gate as message reads.
+    // Same channel-visibility gate as message reads: members can read, and so
+    // can community admins (read-only oversight) without joining.
     if (channel.channelType === "event") {
       if (!(await canAccessEventChannel(ctx, userId, channel))) return null;
     } else {
@@ -805,7 +807,9 @@ export const getPoll = query({
         )
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
-      if (!m) return null;
+      if (!m && !(await isCommunityAdminForChannel(ctx, channel, userId))) {
+        return null;
+      }
     }
 
     const allVotes = await ctx.db
@@ -958,7 +962,10 @@ export const getPollVoters = query({
         )
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
-      if (!m) return null;
+      // Community admins get read-only oversight without joining.
+      if (!m && !(await isCommunityAdminForChannel(ctx, channel, userId))) {
+        return null;
+      }
     }
 
     const isAuthor = poll.authorId === userId;

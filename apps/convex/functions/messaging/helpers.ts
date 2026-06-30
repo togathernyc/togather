@@ -4,8 +4,47 @@
  * Shared utilities for messaging functions (channels, messages, etc.)
  */
 
-import type { MutationCtx } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { isCommunityAdmin } from "../../lib/permissions";
+
+/**
+ * Whether `userId` may view this group's channels purely on community-admin
+ * standing — i.e. without joining the group.
+ *
+ * Community admins get read-only "oversight" access to any group's channels in
+ * their community without a `groupMembers` (or `chatChannelMembers`) row, so
+ * they never show up in rosters or pick up inbox / notification entries. This
+ * grants VIEW access only; the send / manage mutations keep their own
+ * membership gates, so an admin viewer can read but not post or alter a group
+ * they haven't joined.
+ *
+ * Callers fold this into their existing membership checks as an extra escape
+ * hatch. Mirrors the admin bypass already baked into `listGroupChannels`.
+ */
+export async function isCommunityAdminForGroup(
+  ctx: QueryCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">
+): Promise<boolean> {
+  const group = await ctx.db.get(groupId);
+  if (!group) return false;
+  return isCommunityAdmin(ctx, group.communityId, userId);
+}
+
+/**
+ * Channel-keyed convenience wrapper around {@link isCommunityAdminForGroup}.
+ * Ad-hoc DM/group_dm channels have no owning group, so admin oversight never
+ * applies to them.
+ */
+export async function isCommunityAdminForChannel(
+  ctx: QueryCtx,
+  channel: Doc<"chatChannels">,
+  userId: Id<"users">
+): Promise<boolean> {
+  if (!channel.groupId) return false;
+  return isCommunityAdminForGroup(ctx, channel.groupId, userId);
+}
 
 /**
  * Recomputes and updates the member count for a channel from actual membership records.

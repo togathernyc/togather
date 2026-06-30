@@ -26,6 +26,7 @@ import {
 import { checkRateLimit } from "../../lib/rateLimit";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { canAccessEventChannel } from "./eventChat";
+import { isCommunityAdminForChannel } from "./helpers";
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
 
@@ -256,7 +257,12 @@ export const getMessage = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      if (!membership) {
+      // Community admins may read messages in their community's group channels
+      // without joining (read-only oversight).
+      if (
+        !membership &&
+        !(channel && (await isCommunityAdminForChannel(ctx, channel, userId)))
+      ) {
         return null;
       }
 
@@ -346,13 +352,21 @@ export const getMessages = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      // If not a channel member, only group leaders/admins may load messages.
-      // Return empty instead of throwing — `getMessages` is a reactive query and
-      // a throw crashes the chat screen via ErrorBoundary when membership is
-      // lost mid-session (e.g. user confirms a Leave Group alert while the
-      // chat screen is still mounted). The screen's own navigation flow handles
-      // the redirect; we just need to stop replying with messages.
-      if (!channelMembership && !isLeaderRole(groupMembership?.role)) {
+      // Community admins get read-only oversight of any group's channels
+      // without joining. Checked only when they aren't a channel member or
+      // group leader, so the common paths skip the extra lookup.
+      const isAdminViewer =
+        !channelMembership &&
+        !isLeaderRole(groupMembership?.role) &&
+        (await isCommunityAdminForChannel(ctx, channel, userId));
+
+      // If not a channel member, only group leaders/admins (or community admins)
+      // may load messages. Return empty instead of throwing — `getMessages` is a
+      // reactive query and a throw crashes the chat screen via ErrorBoundary when
+      // membership is lost mid-session (e.g. user confirms a Leave Group alert
+      // while the chat screen is still mounted). The screen's own navigation flow
+      // handles the redirect; we just need to stop replying with messages.
+      if (!channelMembership && !isLeaderRole(groupMembership?.role) && !isAdminViewer) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
 
@@ -384,7 +398,8 @@ export const getMessages = query({
           channel.channelType === "announcements") &&
         !effectiveEnabled &&
         !isOwningGroupLeader &&
-        !isLinkedGroupLeader
+        !isLinkedGroupLeader &&
+        !isAdminViewer
       ) {
         return { messages: [], hasMore: false, cursor: undefined };
       }
@@ -565,7 +580,12 @@ export const getThreadReplies = query({
         .filter((q) => q.eq(q.field("leftAt"), undefined))
         .first();
 
-      if (!membership) {
+      // Community admins may read threads in their community's group channels
+      // without joining (read-only oversight).
+      if (
+        !membership &&
+        !(channel && (await isCommunityAdminForChannel(ctx, channel, userId)))
+      ) {
         throw new Error("Not a member of this channel");
       }
     }
