@@ -3439,10 +3439,18 @@ export const addChannelMembers = mutation({
               notificationsEnabled: true,
             });
 
-            // Trigger welcome message for NEW group members only
+            // Trigger welcome + followup bots for NEW group members only
             await ctx.scheduler.runAfter(
               0,
               internal.functions.scheduledJobs.sendWelcomeMessage,
+              {
+                groupId,
+                userId,
+              }
+            );
+            await ctx.scheduler.runAfter(
+              0,
+              internal.functions.scheduledJobs.assignNewMemberFollowup,
               {
                 groupId,
                 userId,
