@@ -1759,6 +1759,7 @@ export const insertBotMessage = internalMutation({
     const botNames: Record<string, string> = {
       birthday: "Birthday Bot 🎂",
       welcome: "Welcome Bot 👋",
+      followup: "Followup Bot 🤝",
       task_reminder: "Task Reminder 📋",
       communication: "Communication Bot 💬",
       dev_assistant: "Togather Bot 🤖",
@@ -2212,6 +2213,170 @@ export const getUserById = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     return await ctx.db.get(userId);
+  },
+});
+
+// ============================================================================
+// FOLLOWUP BOT
+// ============================================================================
+
+/**
+ * Get the followup bot config for a group, or null when it is missing or
+ * disabled. Mirrors getWelcomeBotConfig but also surfaces the assignment
+ * strategy and the round-robin pointer from the config's saved state.
+ */
+export const getFollowupBotConfig = internalQuery({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, { groupId }) => {
+    const config = await ctx.db
+      .query("groupBotConfigs")
+      .withIndex("by_group_botType", (q) =>
+        q.eq("groupId", groupId).eq("botType", "followup"),
+      )
+      .first();
+
+    if (!config || !config.enabled) {
+      return null;
+    }
+
+    const group = await ctx.db.get(groupId);
+    if (!group) return null;
+
+    const community = await ctx.db.get(group.communityId);
+
+    const configData = (config.config as Record<string, unknown>) || {};
+    const state = (config.state as Record<string, unknown>) || {};
+
+    return {
+      configId: config._id,
+      groupId,
+      enabled: config.enabled,
+      groupName: group.name,
+      communityName: community?.name || "Community",
+      message:
+        (configData.message as string) ||
+        "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!",
+      assignmentMode: (configData.assignmentMode as string) || "round_robin",
+      specificLeaderId:
+        (configData.specificLeaderId as Id<"users"> | undefined) || undefined,
+      targetChannelSlug: (configData.targetChannelSlug as string) || undefined,
+      lastLeaderIndex:
+        typeof state.lastLeaderIndex === "number"
+          ? (state.lastLeaderIndex as number)
+          : undefined,
+    };
+  },
+});
+
+/**
+ * Assign a leader to follow up with a newly-joined member.
+ *
+ * Called by the scheduler when a new member joins a group (event-triggered,
+ * mirrors the Welcome Bot). The assigned leader is chosen by the configured
+ * strategy — a single specific leader, or round-robin across the group's
+ * active leaders — and is notified via an @mention in the target channel,
+ * which fans out to push/email like any other mention.
+ */
+export const assignNewMemberFollowup = internalAction({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { groupId, userId },
+  ): Promise<
+    | { skipped: true; reason: string }
+    | { success: true; assignedLeaderId: Id<"users">; message: string }
+    | { success: false; error: string }
+  > => {
+    const config = await ctx.runQuery(
+      internal.functions.scheduledJobs.getFollowupBotConfig,
+      { groupId },
+    );
+
+    if (!config) {
+      return { skipped: true, reason: "bot_not_enabled" };
+    }
+
+    const member = await ctx.runQuery(
+      internal.functions.scheduledJobs.getUserById,
+      { userId },
+    );
+
+    if (!member) {
+      return { skipped: true, reason: "member_not_found" };
+    }
+
+    // Reuse the shared active-leaders query. Exclude the new member so a
+    // leader who joins is never assigned to follow up with themselves.
+    const allLeaders = await ctx.runQuery(
+      internal.functions.scheduledJobs.getBirthdayBotLeaders,
+      { groupId },
+    );
+    const leaders = allLeaders.filter((leader) => leader.userId !== userId);
+
+    if (leaders.length === 0) {
+      return { skipped: true, reason: "no_leaders" };
+    }
+
+    // Reuse the shared resolver: specific leader when configured, else
+    // round-robin from the saved pointer.
+    const assignedLeader = resolveBirthdayReminderLeader({
+      leaders,
+      assignmentMode: config.assignmentMode,
+      specificLeaderId: config.specificLeaderId,
+      lastLeaderIndex: config.lastLeaderIndex,
+    });
+
+    if (!assignedLeader) {
+      return { skipped: true, reason: "no_leader_resolved" };
+    }
+
+    const memberName =
+      [member.firstName, member.lastName].filter(Boolean).join(" ") ||
+      member.firstName ||
+      "a new member";
+
+    const message = config.message
+      .replace(/\[\[leader_name\]\]/g, assignedLeader.displayName)
+      .replace(/\[\[member_name\]\]/g, memberName)
+      .replace(/\[\[group_name\]\]/g, config.groupName)
+      .replace(/\[\[community_name\]\]/g, config.communityName);
+
+    try {
+      await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
+        groupId,
+        message,
+        targetChannelSlug: config.targetChannelSlug || "leaders",
+        botType: "followup",
+        mentionedUserIds: [assignedLeader.userId],
+      });
+    } catch (error) {
+      console.error(`[FollowupBot] Error sending assignment:`, error);
+      return { success: false, error: String(error) };
+    }
+
+    // Advance the round-robin pointer only when rotating leaders, so the next
+    // new member is assigned to the following leader. We store the index of the
+    // leader we actually picked; specific-leader mode keeps a fixed assignee.
+    if (config.assignmentMode !== "specific_leader") {
+      const assignedIndex = leaders.findIndex(
+        (leader) => leader.userId === assignedLeader.userId,
+      );
+      if (assignedIndex !== -1) {
+        await ctx.runMutation(internal.functions.scheduledJobs.updateBotState, {
+          configId: config.configId,
+          stateUpdates: { lastLeaderIndex: assignedIndex },
+        });
+      }
+    }
+
+    return {
+      success: true,
+      assignedLeaderId: assignedLeader.userId,
+      message,
+    };
   },
 });
 

@@ -137,6 +137,54 @@ const botDefinitions: Record<string, BotDefinition> = {
       },
     ],
   },
+  followup: {
+    id: "followup",
+    name: "Followup Bot",
+    description: "Assigns a leader to follow up with each new member",
+    icon: "🤝",
+    triggerType: "event",
+    defaultConfig: {
+      message:
+        "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!",
+      assignmentMode: "round_robin",
+      targetChannelSlug: "leaders",
+    },
+    configFields: [
+      {
+        key: "message",
+        label: "Followup Message",
+        type: "textarea",
+        placeholder:
+          "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!",
+        helpText:
+          "Available placeholders: [[leader_name]], [[member_name]], [[group_name]], [[community_name]]",
+      },
+      {
+        key: "assignmentMode",
+        label: "Leader Assignment",
+        type: "select",
+        options: [
+          { value: "round_robin", label: "Rotate leaders" },
+          { value: "specific_leader", label: "Specific leader" },
+        ],
+        helpText: "How to choose which leader follows up with new members",
+      },
+      {
+        key: "specificLeaderId",
+        label: "Select Leader",
+        type: "leader_select",
+        helpText: "Choose which leader should follow up with new members",
+        showWhen: { field: "assignmentMode", value: "specific_leader" },
+      },
+      {
+        key: "targetChannelSlug",
+        label: "Target Channel",
+        type: "channel_select",
+        helpText:
+          "Select which channel the assignment is posted to. Defaults to Leaders if not set.",
+      },
+    ],
+  },
   "task-reminder": {
     id: "task-reminder",
     name: "Task Reminder Bot",
