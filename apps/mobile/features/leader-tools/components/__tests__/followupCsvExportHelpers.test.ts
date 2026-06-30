@@ -41,7 +41,7 @@ describe("followupCsvExportHelpers", () => {
   };
 
   it("headerLabelForColumn uses system score names", () => {
-    expect(headerLabelForColumn("score1", {})).toBe("Service");
+    expect(headerLabelForColumn("score1", {})).toBe("Serving");
     expect(headerLabelForColumn("score2", {})).toBe("Attendance");
     expect(headerLabelForColumn("score3", {})).toBe("Connection");
   });

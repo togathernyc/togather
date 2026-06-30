@@ -609,7 +609,7 @@ function MemberCard({
 
         <View style={styles.scoreCol}>
           <Text style={[styles.scoreLabel, { color: colors.textTertiary }]}>
-            Service
+            Serving
           </Text>
           <Text
             style={[

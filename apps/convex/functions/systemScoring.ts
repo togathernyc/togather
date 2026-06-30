@@ -5,7 +5,7 @@
  * These scores are computed at the community level (across all groups).
  *
  * Score slots:
- *   score1 = Service (PCO serving frequency)
+ *   score1 = Serving (PCO serving frequency)
  *   score2 = Attendance (cross-group attendance %)
  *   score3 = Connection (leader outreach effectiveness — the primary triage score)
  *
@@ -75,7 +75,7 @@ export const SYSTEM_SCORES: SystemScoreDefinition[] = [
   {
     id: "sys_service",
     slot: "score1",
-    name: "Service",
+    name: "Serving",
     description:
       "PCO serving frequency in past 2 months (20pts per service, max 100)",
     variables: [

@@ -895,7 +895,7 @@ export function FollowupSettingsPanel({
         {scoresOpen && (
           <View style={[styles.sectionBody, { borderBottomColor: colors.borderLight }]}>
             <View style={styles.scoreExplainer}>
-              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Service (Score 1)</Text>
+              <Text style={[styles.scoreExplainerTitle, { color: colors.textSecondary }]}>Serving (Score 1)</Text>
               <Text style={[styles.scoreExplainerText, { color: colors.textTertiary }]}>
                 Measures PCO serving engagement over the past 2 months. Each service adds 20 points (max 100 at 5+ services).
               </Text>
