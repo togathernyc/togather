@@ -470,20 +470,27 @@ export function ChatInboxScreen({
     // Only auto-select if we're on the bare /inbox/ route
     if (pathname !== "/inbox" && pathname !== "/inbox/") return;
 
-    const firstGroup = inboxChannels[0];
-    // Open the channel that actually occupies the group's main spot (which now
-    // follows updates), so the right pane matches the channel highlighted in the row.
-    // Match the row's channel set: the inbox splits event channels into their own
-    // rows and hides disabled ones (see listItems below), so select from the same
-    // enabled, non-event channels — otherwise an unread event channel could be
-    // auto-opened even though it never occupies the visible main spot.
-    const firstChannel =
-      firstGroup &&
-      selectMainChannel(
-        firstGroup.channels.filter(
+    // Auto-select the main-spot channel of the first group that actually renders a
+    // row. The inbox splits event channels into their own rows and hides disabled
+    // ones (see listItems below), so we match that set (enabled, non-event) and run
+    // the same selectMainChannel used by the row. We scan rather than only checking
+    // inboxChannels[0] because the first backend group may contain only event/disabled
+    // channels — in that case it renders no main row, and the pane should fall through
+    // to the next group with a visible conversation instead of staying blank.
+    let firstGroup: (typeof inboxChannels)[number] | undefined;
+    let firstChannel: (typeof inboxChannels)[number]["channels"][number] | undefined;
+    for (const group of inboxChannels) {
+      const candidate = selectMainChannel(
+        group.channels.filter(
           (ch) => ch.isEnabled !== false && ch.channelType !== "event"
         )
       );
+      if (candidate) {
+        firstGroup = group;
+        firstChannel = candidate;
+        break;
+      }
+    }
     if (!firstGroup || !firstChannel) return;
 
     hasAutoSelected.current = true;
