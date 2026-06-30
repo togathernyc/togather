@@ -1097,6 +1097,13 @@ export const listAssignedToMe = query({
     }
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
 
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups. A stale/deep-linked or archived group id
+    // must not surface its people, so short-circuit to an empty page.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
     const scoreFilterField = (args.scoreField ?? "score1") as
       | "score1"
@@ -1221,6 +1228,12 @@ export const searchAssignedToMe = query({
     if (leaderGroupIds.length === 0) return [];
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
 
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise return nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return [];
+    }
+
     const assigneeId = args.assigneeFilter ?? userId;
 
     // Search by community; filter by assigneeIds (array) so users appear when
@@ -1331,6 +1344,12 @@ export const countAssignedToMe = query({
     );
     if (leaderGroupIds.length === 0) return 0;
     const leaderGroupIdSet = new Set(leaderGroupIds.map((id) => id.toString()));
+
+    // An explicit groupFilter must reference one of the caller's active
+    // (non-archived) leader groups; otherwise count nothing.
+    if (args.groupFilter && !leaderGroupIdSet.has(args.groupFilter.toString())) {
+      return 0;
+    }
 
     const assigneeId = args.assigneeFilter ?? userId;
 
