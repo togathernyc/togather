@@ -38,6 +38,7 @@ import { InboxSearchResults } from "./InboxSearchResults";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
+import { selectMainChannel } from "../utils/selectMainChannel";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
@@ -470,7 +471,9 @@ export function ChatInboxScreen({
     if (pathname !== "/inbox" && pathname !== "/inbox/") return;
 
     const firstGroup = inboxChannels[0];
-    const firstChannel = firstGroup.channels[0];
+    // Open the channel that actually occupies the group's main spot (which now
+    // follows updates), so the right pane matches the channel highlighted in the row.
+    const firstChannel = firstGroup && selectMainChannel(firstGroup.channels);
     if (!firstGroup || !firstChannel) return;
 
     hasAutoSelected.current = true;

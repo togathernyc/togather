@@ -354,9 +354,14 @@ function GroupedInboxItemInner({
     return null;
   }
 
-  // Show secondary channels if expanded OR if they have unread messages
+  // Show secondary channels if expanded, if they have unread messages, or if one is
+  // the channel the user is currently viewing. The active check keeps the selected
+  // channel visible when another channel is promoted into the main spot, so the
+  // currently-open channel never silently disappears from the row.
   const secondaryChannels = channels.filter(
-    (ch) => ch._id !== mainChannel._id && (isExpanded || ch.unreadCount > 0)
+    (ch) =>
+      ch._id !== mainChannel._id &&
+      (isExpanded || ch.unreadCount > 0 || (isActiveGroup && activeChannelSlug === ch.slug))
   );
   const mainHasUnread = mainChannel.unreadCount > 0;
 
