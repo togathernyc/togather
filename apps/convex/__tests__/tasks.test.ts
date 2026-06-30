@@ -751,6 +751,49 @@ describe("tasks functions", () => {
     expect(leaders.every((leader) => leader.name.length > 0)).toBe(true);
   });
 
+  test("listAssignableLeaders excludes archived (deactivated) users", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken, secondLeaderId } = await seedData(t);
+
+    // Archive the second leader.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(secondLeaderId, { isActive: false });
+    });
+
+    const leaders = await t.query(
+      api.functions.tasks.index.listAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+      },
+    );
+
+    expect(leaders.length).toBe(1);
+    expect(
+      leaders.some((leader) => leader.userId === secondLeaderId),
+    ).toBe(false);
+  });
+
+  test("listAssignableLeaders returns no leaders for an archived group", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    // Archive the group itself.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    const leaders = await t.query(
+      api.functions.tasks.index.listAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+      },
+    );
+
+    expect(leaders.length).toBe(0);
+  });
+
   test("task detail, history, and search helpers support task editing flows", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, leaderId, memberId } = await seedData(t);

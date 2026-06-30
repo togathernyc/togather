@@ -102,6 +102,28 @@ export function isActiveLeader<T extends SoftDeletableRecord & RoleRecord>(
 }
 
 // ============================================================================
+// User Helpers
+// ============================================================================
+
+/**
+ * Check if a user record has been archived (deactivated).
+ *
+ * Users are archived by setting `isActive` to `false`; an undefined or `true`
+ * value means the user is active. Archived users should be excluded from leader
+ * lists, assignee pickers, and other surfaces that suggest people to act on.
+ *
+ * @example
+ * if (isArchivedUser(user)) {
+ *   // Skip — this person is no longer active
+ * }
+ */
+export function isArchivedUser(
+  user: { isActive?: boolean } | null | undefined
+): boolean {
+  return user?.isActive === false;
+}
+
+// ============================================================================
 // Channel Type Helpers
 // ============================================================================
 
