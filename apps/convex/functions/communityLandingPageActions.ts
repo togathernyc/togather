@@ -5,10 +5,15 @@
  * and follow-up data setup. Queries and mutations live in communityLandingPage.ts.
  */
 
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { action, internalAction, type ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
+import { requireAuthFromTokenAction } from "../lib/auth";
+import {
+  extractLandingFields,
+  type CustomFieldSpec,
+} from "../lib/landingFormVision";
 
 /**
  * Submit the landing page form.
@@ -332,5 +337,77 @@ export const sendAutoReplySmsAndAudit = internalAction({
       );
     }
     return null;
+  },
+});
+
+/**
+ * Extract connect-card fields from a photo (admin-only autofill).
+ *
+ * A community admin photographs a paper connect card; we run OpenAI vision to
+ * read the fields and return suggested values. The client pre-fills the form
+ * for the admin to review — this NEVER submits the form. Gated to admins of the
+ * community that owns the landing page because each call bills OpenAI.
+ */
+export const extractFormFromImage = action({
+  args: {
+    token: v.string(),
+    slug: v.string(),
+    /** Base64-encoded image bytes (no data: prefix). */
+    imageBase64: v.string(),
+    /** Image MIME type, e.g. "image/jpeg". */
+    mimeType: v.string(),
+    /** The community's configured custom fields, so we can read those too. */
+    customFields: v.optional(
+      v.array(
+        v.object({
+          slot: v.optional(v.string()),
+          label: v.string(),
+          type: v.string(),
+          options: v.optional(v.array(v.string())),
+        })
+      )
+    ),
+  },
+  returns: v.object({
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    email: v.optional(v.string()),
+    zipCode: v.optional(v.string()),
+    dateOfBirth: v.optional(v.string()),
+    customFields: v.optional(
+      v.array(v.object({ label: v.string(), value: v.string() }))
+    ),
+  }),
+  handler: async (ctx, args) => {
+    // Auth — must be an admin of the community that owns this landing page.
+    // Resolve the token subject to a real users id first: legacy-migrated
+    // users carry a non-Convex-id subject (a numeric legacyId string), which a
+    // v.id("users") validator would reject.
+    const tokenUserId = await requireAuthFromTokenAction(ctx, args.token);
+    const resolved = await ctx.runQuery(
+      internal.functions.users.resolveUserIdInternal,
+      { tokenUserId }
+    );
+    if (!resolved) {
+      throw new ConvexError("Not authenticated");
+    }
+    const isAdmin = await ctx.runQuery(
+      internal.functions.communityLandingPage.isAdminForSlugInternal,
+      { slug: args.slug, userId: resolved.userId }
+    );
+    if (!isAdmin) {
+      throw new ConvexError("Not authorized: community admin required");
+    }
+
+    const mimeType = args.mimeType.startsWith("image/")
+      ? args.mimeType
+      : "image/jpeg";
+    const imageDataUrl = `data:${mimeType};base64,${args.imageBase64}`;
+
+    return await extractLandingFields(
+      imageDataUrl,
+      (args.customFields ?? []) as CustomFieldSpec[]
+    );
   },
 });

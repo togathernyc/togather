@@ -14,7 +14,14 @@ import {
   Linking,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery, useAction, api } from "@services/api/convex";
+import * as ImagePicker from "expo-image-picker";
+import {
+  useQuery,
+  useAction,
+  useAuthenticatedAction,
+  api,
+} from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppImage } from "@components/ui";
@@ -50,6 +57,107 @@ const openExternalUrl = async (url: string) => {
   await Linking.openURL(url);
 };
 
+/** Fields the camera autofill returns from the connect-card photo. */
+type ExtractedFields = {
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  email?: string;
+  zipCode?: string;
+  dateOfBirth?: string;
+  customFields?: Array<{ label: string; value: string }>;
+};
+
+/**
+ * Coerce a string the model read off the card into the value shape a given
+ * custom field expects. Returns undefined when the value can't be applied
+ * (e.g. a dropdown value that doesn't match any option) so we never set junk.
+ */
+function coerceCustomFieldValue(
+  field: FormField,
+  rawValue: string
+): string | number | boolean | string[] | undefined {
+  const value = rawValue.trim();
+  if (!value) return undefined;
+
+  switch (field.type) {
+    case "boolean": {
+      const truthy = ["true", "yes", "y", "1", "checked", "x"].includes(
+        value.toLowerCase()
+      );
+      // Only check the box on an affirmative read; never uncheck.
+      return truthy ? true : undefined;
+    }
+    case "number": {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : undefined;
+    }
+    case "dropdown": {
+      return (field.options || []).find(
+        (o) => o.toLowerCase() === value.toLowerCase()
+      );
+    }
+    case "multiselect": {
+      const parts = value
+        .split(/[;,]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const matched = parts
+        .map((p) =>
+          (field.options || []).find((o) => o.toLowerCase() === p.toLowerCase())
+        )
+        .filter((o): o is string => !!o);
+      return matched.length > 0 ? matched : undefined;
+    }
+    default:
+      return value;
+  }
+}
+
+/** Load an image element from a data URL (web only). */
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+/**
+ * Keep the uploaded image small. expo-image-picker compresses via `quality` on
+ * native, but on web it returns the original file, so a phone photo can be many
+ * MB. Downscale large web images with a canvas before sending to the action.
+ */
+async function prepareImageForUpload(
+  base64: string,
+  mimeType: string
+): Promise<{ base64: string; mimeType: string }> {
+  if (Platform.OS !== "web" || typeof document === "undefined") {
+    return { base64, mimeType };
+  }
+  try {
+    const img = await loadImageElement(`data:${mimeType};base64,${base64}`);
+    const MAX_EDGE = 1600;
+    const longest = Math.max(img.width, img.height);
+    if (longest <= MAX_EDGE) return { base64, mimeType };
+
+    const scale = MAX_EDGE / longest;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { base64, mimeType };
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+    const comma = dataUrl.indexOf(",");
+    if (comma === -1) return { base64, mimeType };
+    return { base64: dataUrl.slice(comma + 1), mimeType: "image/jpeg" };
+  } catch {
+    return { base64, mimeType };
+  }
+}
+
 export default function CommunityLandingPageClient() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -65,6 +173,16 @@ export default function CommunityLandingPageClient() {
   const submitFormAction = useAction(
     api.functions.communityLandingPageActions.submitForm
   );
+
+  // Admin-only camera autofill: photograph a paper connect card and let the
+  // backend OCR it to pre-fill the form (the admin still reviews + submits).
+  const { user } = useAuth();
+  const isAdmin = user?.is_admin === true;
+  const extractFormFromImage = useAuthenticatedAction(
+    api.functions.communityLandingPageActions.extractFormFromImage
+  );
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [autofillNotice, setAutofillNotice] = useState<string | null>(null);
 
   // Form state
   const [firstName, setFirstName] = useState("");
@@ -98,6 +216,121 @@ export default function CommunityLandingPageClient() {
 
   const updateCustomField = (fieldKey: string, value: any) => {
     setCustomFieldValues((prev) => ({ ...prev, [fieldKey]: value }));
+  };
+
+  // Apply extracted values to the form. Only fills fields we actually read;
+  // never clears anything the admin already typed for an unread field.
+  const applyExtractedFields = (extracted: ExtractedFields) => {
+    let filled = 0;
+    if (extracted.firstName) {
+      setFirstName(extracted.firstName);
+      filled++;
+    }
+    if (extracted.lastName) {
+      setLastName(extracted.lastName);
+      filled++;
+    }
+    if (extracted.phone) {
+      setPhone(extracted.phone);
+      filled++;
+    }
+    if (extracted.email) {
+      setEmail(extracted.email);
+      filled++;
+    }
+    if (extracted.zipCode) {
+      setZipCode(extracted.zipCode);
+      filled++;
+    }
+    if (extracted.dateOfBirth) {
+      setDateOfBirth(extracted.dateOfBirth);
+      filled++;
+    }
+
+    if (extracted.customFields?.length) {
+      const updates: Record<string, string | number | boolean | string[]> = {};
+      for (const { label, value } of extracted.customFields) {
+        const field = visibleFormFields.find(
+          (f) => f.label === label && shouldCollectFieldResponse(f)
+        );
+        if (!field) continue;
+        const coerced = coerceCustomFieldValue(field, value);
+        if (coerced !== undefined) {
+          updates[field.slot || field.label] = coerced;
+          filled++;
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        setCustomFieldValues((prev) => ({ ...prev, ...updates }));
+      }
+    }
+
+    setSubmitError(null);
+    setAutofillNotice(
+      filled > 0
+        ? "Fields autofilled from your photo. Please review everything before submitting."
+        : "We couldn't read any fields from that photo. Try a clearer picture or enter the details manually."
+    );
+  };
+
+  // Pick/take a photo of a connect card and autofill the form from it.
+  const handleAutofillFromPhoto = async () => {
+    if (!slug || !data || isExtracting) return;
+    try {
+      // Native needs library permission; web uses a file input (no prompt).
+      if (Platform.OS !== "web") {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          setSubmitError(
+            "Photo access is required to autofill from a photo. Please enable it in settings."
+          );
+          return;
+        }
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        base64: true,
+        quality: 0.5,
+        allowsMultipleSelection: false,
+      });
+      if (result.canceled || !result.assets?.[0]?.base64) return;
+
+      setIsExtracting(true);
+      setSubmitError(null);
+      setAutofillNotice(null);
+
+      const asset = result.assets[0];
+      const { base64, mimeType } = await prepareImageForUpload(
+        asset.base64 as string,
+        asset.mimeType ?? "image/jpeg"
+      );
+
+      const customFields = visibleFormFields
+        .filter((f) => shouldCollectFieldResponse(f))
+        .map((f) => ({
+          slot: f.slot || undefined,
+          label: f.label,
+          type: f.type,
+          options: f.options,
+        }));
+
+      const extracted = await extractFormFromImage({
+        slug,
+        imageBase64: base64,
+        mimeType,
+        customFields,
+      });
+
+      applyExtractedFields(extracted);
+    } catch (error: any) {
+      setSubmitError(
+        error?.message ||
+          "Couldn't autofill from that photo. Please try again or enter the details manually."
+      );
+    } finally {
+      setIsExtracting(false);
+    }
   };
 
   // Format birthday input as MM/DD/YYYY with auto-slashes
@@ -409,6 +642,21 @@ export default function CommunityLandingPageClient() {
               <TouchableOpacity style={styles.heroCloseButton} onPress={handleClose}>
                 <Ionicons name="close" size={22} color="#fff" />
               </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity
+                  style={styles.heroCameraButton}
+                  onPress={handleAutofillFromPhoto}
+                  disabled={isExtracting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Autofill form from a photo"
+                >
+                  {isExtracting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="camera" size={22} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
             {data.community?.logo ? (
               <AppImage
@@ -431,6 +679,21 @@ export default function CommunityLandingPageClient() {
 
           {/* Form Card */}
           <View style={[styles.formCard, { backgroundColor: colors.surface }]}>
+            {/* Admin autofill notice */}
+            {autofillNotice && (
+              <View
+                style={[
+                  styles.autofillBanner,
+                  { backgroundColor: primaryColor + "15" },
+                ]}
+              >
+                <Ionicons name="sparkles" size={16} color={primaryColor} />
+                <Text style={[styles.autofillBannerText, { color: colors.text }]}>
+                  {autofillNotice}
+                </Text>
+              </View>
+            )}
+
             {/* Built-in fields */}
             <View style={styles.fieldRow}>
               <View style={styles.fieldHalf}>
@@ -854,10 +1117,19 @@ const styles = StyleSheet.create({
   heroCloseRow: {
     alignSelf: "stretch",
     flexDirection: "row",
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingBottom: 8,
   },
   heroCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  heroCameraButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -1019,6 +1291,20 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+  },
+
+  // Admin autofill notice
+  autofillBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    gap: 8,
+  },
+  autofillBannerText: {
+    fontSize: 14,
+    flex: 1,
   },
 
   // Error
