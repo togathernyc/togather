@@ -794,6 +794,37 @@ describe("tasks functions", () => {
     expect(leaders.length).toBe(0);
   });
 
+  test("searchAssignableLeaders returns no leaders for an archived group", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, leaderToken } = await seedData(t);
+
+    // Sanity check: the search returns leaders while the group is active.
+    const before = await t.query(
+      api.functions.tasks.index.searchAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+        searchText: "leader",
+      },
+    );
+    expect(before.length).toBeGreaterThan(0);
+
+    // Archive the group — search must not surface its leaders.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupId, { isArchived: true });
+    });
+
+    const after = await t.query(
+      api.functions.tasks.index.searchAssignableLeaders,
+      {
+        token: leaderToken,
+        groupId,
+        searchText: "leader",
+      },
+    );
+    expect(after.length).toBe(0);
+  });
+
   test("task detail, history, and search helpers support task editing flows", async () => {
     const t = convexTest(schema, modules);
     const { groupId, leaderToken, leaderId, memberId } = await seedData(t);

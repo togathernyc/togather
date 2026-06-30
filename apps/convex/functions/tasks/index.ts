@@ -937,6 +937,11 @@ export const searchAssignableLeaders = query({
     const userId = await requireAuth(ctx, args.token);
     await getLeaderMembership(ctx, args.groupId, userId);
 
+    // Archived groups have no assignable leaders — keep search consistent with
+    // listAssignableLeaders so typing can't surface leaders from an archived group.
+    const group = await ctx.db.get(args.groupId);
+    if (!group || group.isArchived) return [];
+
     return searchGroupMembers(ctx, args.groupId, args.searchText, {
       limit: Math.min(args.limit ?? 25, 100),
       requireLeaderRole: true,
