@@ -126,6 +126,46 @@ describe("rosterMatrix", () => {
     expect(adminRow?.availableCount).toBe(1);
   });
 
+  it("windows columns: upcoming by default, pastLimit leads with recent past", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // Two past plans (older + recent) and two upcoming plans.
+    await createPlan(t, leader, world.groupId, "Past old", Date.now() - 21 * DAY);
+    await createPlan(t, leader, world.groupId, "Past recent", Date.now() - 7 * DAY);
+    await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
+    await createPlan(t, leader, world.groupId, "Later", Date.now() + 21 * DAY);
+
+    // Default: upcoming only, chronological.
+    const def = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    expect(def.events.map((e) => e.title)).toEqual(["Soon", "Later"]);
+
+    // pastLimit 1: lead with the single most-recent past plan, then upcoming.
+    const one = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+      pastLimit: 1,
+    });
+    expect(one.events.map((e) => e.title)).toEqual(["Past recent", "Soon", "Later"]);
+
+    // pastLimit beyond the available past plans includes them all (recent-first
+    // order preserved chronologically), never duplicating or erroring.
+    const many = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+      pastLimit: 5,
+    });
+    expect(many.events.map((e) => e.title)).toEqual([
+      "Past old",
+      "Past recent",
+      "Soon",
+      "Later",
+    ]);
+  });
+
   it("pendingCount counts assignments orphaned by a removed needed role", async () => {
     const { t, world } = await setup();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;

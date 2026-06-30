@@ -317,6 +317,15 @@ export function EventPlans() {
           whether they've since confirmed, declined, or been removed — and{" "}
           <Term>Resend</Term> from there too.
         </P>
+
+        <P>
+          Tap a role's name in the left column to rename it right there in the
+          grid — the edit saves on its own, no menu or separate screen. The grid
+          leads with upcoming plans, but the <Term>⋯</Term> menu's{" "}
+          <Term>Previous dates</Term> stepper brings past plans back in as extra
+          columns on the left, so you can review or copy how a role was staffed
+          on earlier weeks.
+        </P>
       </Section>
 
       <Section id="crossteam" title="Cross-team channels">

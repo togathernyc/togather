@@ -65,6 +65,14 @@ import { TeamChannelToggle } from "./TeamChannelToggle";
 // ---------------------------------------------------------------------------
 // Backend contract (mirrors scheduling.roster.rosterMatrix)
 // ---------------------------------------------------------------------------
+
+/**
+ * Upper bound for the "Previous dates" stepper. Mirrors the backend's
+ * MAX_EVENTS column cap so the stepper can't ask for more past columns than the
+ * grid will ever render.
+ */
+const MAX_PAST_DATES = 10;
+
 type Availability = "available" | "unavailable" | "no_response";
 type AssignmentStatus = "confirmed" | "unconfirmed" | "declined";
 
@@ -294,13 +302,14 @@ export function RosterGridScreen() {
   const MIN_CELL_W = isWide ? 150 : 76;
 
   // Past dates are normally hidden (the grid leads with upcoming). The ⋯
-  // overflow's "Include past" toggle flips this so leaders can reach and
-  // re-run past plans — replacing the old Schedule list's "Past plans" section.
-  const [includePast, setIncludePast] = useState(false);
+  // overflow's "Previous dates" stepper bumps how many past plans lead the grid
+  // so leaders can reach and re-run them — replacing the old Schedule list's
+  // "Past plans" section. 0 = upcoming only.
+  const [pastLimit, setPastLimit] = useState(0);
 
   const data = useAuthenticatedQuery(
     api.functions.scheduling.roster.rosterMatrix,
-    groupId ? { groupId, includePast } : "skip",
+    groupId ? { groupId, pastLimit } : "skip",
   ) as RosterMatrix | undefined;
 
   const assignRole = useAuthenticatedMutation(
@@ -1617,14 +1626,14 @@ export function RosterGridScreen() {
               },
             ]}
           >
-            <View style={styles.nameTextWrap}>
-              <Text style={[styles.nameText, { color: colors.text }]} numberOfLines={1}>
-                {role.roleName}
-              </Text>
-              <Text style={[styles.subCount, { color: colors.textTertiary }]}>
-                covered {coveredCount}/{events.length}
-              </Text>
-            </View>
+            <RoleNameCell
+              roleId={role.roleId}
+              roleName={role.roleName}
+              coveredCount={coveredCount}
+              total={events.length}
+              colors={colors}
+              onRename={updateRole}
+            />
           </Pressable>
         );
       })}
@@ -2241,7 +2250,7 @@ export function RosterGridScreen() {
       {overflowOpen && (
         <OverflowMenu
           colors={colors}
-          includePast={includePast}
+          pastLimit={pastLimit}
           sharingLink={sharingLink}
           onTeams={() => {
             setOverflowOpen(false);
@@ -2255,7 +2264,9 @@ export function RosterGridScreen() {
             setOverflowOpen(false);
             void handleShareLink();
           }}
-          onToggleIncludePast={() => setIncludePast((v) => !v)}
+          onChangePastLimit={(delta) =>
+            setPastLimit((n) => Math.max(0, Math.min(n + delta, MAX_PAST_DATES)))
+          }
           onClose={() => setOverflowOpen(false)}
         />
       )}
@@ -3112,26 +3123,27 @@ function PublishMenu({
 
 /**
  * ⋯ overflow menu — secondary rostering surfaces that no longer have a tab:
- * Teams, Cross-team, Collect availability, plus the "Include past" toggle that
- * flips the grid's rosterMatrix({ includePast }) arg.
+ * Teams, Cross-team, Collect availability, plus the "Previous dates" stepper
+ * that sets the grid's rosterMatrix({ pastLimit }) arg.
  */
 function OverflowMenu({
   colors,
-  includePast,
+  pastLimit,
   sharingLink,
   onTeams,
   onCrossTeam,
   onCollectAvailability,
-  onToggleIncludePast,
+  onChangePastLimit,
   onClose,
 }: {
   colors: Colors;
-  includePast: boolean;
+  pastLimit: number;
   sharingLink: boolean;
   onTeams: () => void;
   onCrossTeam: () => void;
   onCollectAvailability: () => void;
-  onToggleIncludePast: () => void;
+  /** Step the number of previous dates shown by ±1 (clamped by the caller). */
+  onChangePastLimit: (delta: number) => void;
   onClose: () => void;
 }) {
   return (
@@ -3174,22 +3186,173 @@ function OverflowMenu({
             Collect availability
           </Text>
         </Pressable>
-        <Pressable
-          onPress={onToggleIncludePast}
-          style={[styles.menuRow, { borderBottomColor: colors.border }]}
-          accessibilityRole="button"
-        >
-          <Ionicons
-            name={includePast ? "checkbox" : "square-outline"}
-            size={20}
-            color={includePast ? colors.link : colors.text}
-          />
+        <View style={[styles.menuRow, { borderBottomColor: colors.border }]}>
+          <Ionicons name="time-outline" size={20} color={colors.text} />
           <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
-            Include past dates
+            Previous dates
           </Text>
-        </Pressable>
+          <View style={styles.stepper}>
+            <TouchableOpacity
+              onPress={() => onChangePastLimit(-1)}
+              disabled={pastLimit <= 0}
+              hitSlop={8}
+              style={styles.stepperBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Show fewer previous dates"
+            >
+              <Ionicons
+                name="remove"
+                size={18}
+                color={pastLimit <= 0 ? colors.textTertiary : colors.link}
+              />
+            </TouchableOpacity>
+            <Text style={[styles.stepperValue, { color: colors.text }]}>
+              {pastLimit}
+            </Text>
+            <TouchableOpacity
+              onPress={() => onChangePastLimit(1)}
+              disabled={pastLimit >= MAX_PAST_DATES}
+              hitSlop={8}
+              style={styles.stepperBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Show more previous dates"
+            >
+              <Ionicons
+                name="add"
+                size={18}
+                color={pastLimit >= MAX_PAST_DATES ? colors.textTertiary : colors.link}
+              />
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
     </ModalShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Frozen-column role label
+// ---------------------------------------------------------------------------
+
+/**
+ * The frozen-column role label — tap the name to rename it inline (debounced
+ * auto-save + blur/unmount flush, mirroring the date-column header's title
+ * editor so an in-flight rename is never lost). The "covered X/Y" tally sits
+ * beneath. Long-press / right-click the row still opens the Rename · Delete
+ * menu (handled by the parent Pressable), so the menu rename stays as a
+ * fallback.
+ */
+function RoleNameCell({
+  roleId,
+  roleName,
+  coveredCount,
+  total,
+  colors,
+  onRename,
+}: {
+  roleId: Id<"teamRoles">;
+  roleName: string;
+  coveredCount: number;
+  total: number;
+  colors: Colors;
+  onRename: (args: { roleId: Id<"teamRoles">; name: string }) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(roleName);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<string | null>(null);
+
+  const flush = useCallback(async () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    const next = pending.current;
+    pending.current = null;
+    if (next == null) return;
+    const trimmed = next.trim();
+    // Never persist an empty role name (the backend rejects it) or a no-op;
+    // snap back to the last saved value so the row keeps its label.
+    if (!trimmed || trimmed === roleName) {
+      setDraft(roleName);
+      return;
+    }
+    try {
+      await onRename({ roleId, name: trimmed });
+    } catch (e) {
+      setDraft(roleName);
+      const err = e as { data?: { message?: string }; message?: string };
+      notify("Couldn't rename role", err?.data?.message ?? err?.message ?? "Please try again.");
+    }
+  }, [roleName, roleId, onRename]);
+
+  const handleChange = useCallback(
+    (text: string) => {
+      setDraft(text);
+      pending.current = text;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => void flush(), 600);
+    },
+    [flush],
+  );
+
+  // Keep the draft synced with upstream when we're not mid-edit (e.g. another
+  // device renamed the role).
+  useEffect(() => {
+    if (pending.current == null && !editing) setDraft(roleName);
+  }, [roleName, editing]);
+
+  // Flush any pending rename on unmount (row reorder/removal, screen swap).
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => void flushRef.current(), []);
+
+  return (
+    <View style={styles.nameTextWrap}>
+      {editing ? (
+        <TextInput
+          value={draft}
+          onChangeText={handleChange}
+          onBlur={() => {
+            setEditing(false);
+            void flush();
+          }}
+          onSubmitEditing={() => {
+            setEditing(false);
+            void flush();
+          }}
+          autoFocus
+          maxLength={80}
+          autoCapitalize="words"
+          autoCorrect={false}
+          returnKeyType="done"
+          placeholder="Role name"
+          placeholderTextColor={colors.textTertiary}
+          accessibilityLabel="Role name"
+          style={[
+            styles.nameText,
+            styles.nameInput,
+            { color: colors.text, borderColor: colors.inputBorder },
+          ]}
+        />
+      ) : (
+        <Pressable
+          onPress={() => {
+            setDraft(roleName);
+            setEditing(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Rename ${roleName}`}
+        >
+          <Text style={[styles.nameText, { color: colors.text }]} numberOfLines={1}>
+            {roleName}
+          </Text>
+        </Pressable>
+      )}
+      <Text style={[styles.subCount, { color: colors.textTertiary }]}>
+        covered {coveredCount}/{total}
+      </Text>
+    </View>
   );
 }
 
@@ -3759,6 +3922,12 @@ const styles = StyleSheet.create({
   nameTextWrap: { flex: 1, minWidth: 0 },
   nameInline: { flexDirection: "row", alignItems: "center", gap: 6 },
   nameText: { fontSize: 14, fontWeight: "500", flexShrink: 1 },
+  nameInput: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
   leaderTag: { fontSize: 10 },
   subCount: { fontSize: 11, fontWeight: "600", marginTop: 1 },
   cell: {
@@ -3871,6 +4040,14 @@ const styles = StyleSheet.create({
   menuRowText: { flex: 1, minWidth: 0 },
   menuRowSub: { fontSize: 11, marginTop: 1 },
   menuRowCount: { fontSize: 13, fontWeight: "600" },
+  stepper: { flexDirection: "row", alignItems: "center", gap: 12 },
+  stepperBtn: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  stepperValue: {
+    fontSize: 15,
+    fontWeight: "600",
+    minWidth: 16,
+    textAlign: "center",
+  },
   publishBar: {
     paddingHorizontal: 16,
     paddingTop: 12,

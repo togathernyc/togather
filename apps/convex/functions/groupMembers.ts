@@ -555,11 +555,19 @@ export const add = mutation({
       notificationsEnabled: true,
     });
 
-    // Trigger welcome bot for NEW members only (non-blocking)
+    // Trigger welcome + followup bots for NEW members only (non-blocking)
     // Returning members are handled in the if-block above (they don't reach this code)
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduledJobs.sendWelcomeMessage,
+      {
+        groupId: args.groupId,
+        userId: args.userId,
+      }
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduledJobs.assignNewMemberFollowup,
       {
         groupId: args.groupId,
         userId: args.userId,
@@ -1162,6 +1170,11 @@ export const addByPcoPersonId = mutation({
     await ctx.scheduler.runAfter(
       0,
       internal.functions.scheduledJobs.sendWelcomeMessage,
+      { groupId: args.groupId, userId }
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.scheduledJobs.assignNewMemberFollowup,
       { groupId: args.groupId, userId }
     );
 
