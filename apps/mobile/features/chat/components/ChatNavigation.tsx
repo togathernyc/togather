@@ -26,6 +26,13 @@ import {
 } from "../constants/toolbarTools";
 
 /**
+ * Text/icon color for the active (filled) tab. The active tab background is the
+ * community primary color, so its label/icons render in white for contrast —
+ * the same pairing used by primary buttons across the app.
+ */
+const ACTIVE_TAB_CONTENT_COLOR = "#ffffff";
+
+/**
  * Represents a channel tab that can be displayed in the tab bar.
  * This structure matches the output from listGroupChannels query.
  */
@@ -89,12 +96,16 @@ export const ChatTabBar = memo(function ChatTabBar({
           // most of a phone-width tab bar. Accessibility label still reads
           // the channel name for screen readers.
           const isAnnouncements = channel.channelType === "announcements";
-          const tabColor = isActive ? primaryColor : themeColors.textSecondary;
+          // Active tab is a filled pill (primary color background) so it stands
+          // out clearly from inactive tabs even when many teams are listed.
+          // Content sits on the brand color, so it switches to white — matching
+          // how primary buttons render their label elsewhere in the app.
+          const tabColor = isActive ? ACTIVE_TAB_CONTENT_COLOR : themeColors.textSecondary;
 
           return (
             <TouchableOpacity
               key={channel.slug}
-              style={[styles.tab, isActive && { borderBottomColor: primaryColor }]}
+              style={[styles.tab, isActive && { backgroundColor: primaryColor }]}
               onPress={() => onTabChange(channel.slug)}
               onLongPress={() => onTabLongPress?.(channel)}
               delayLongPress={300}
@@ -106,7 +117,7 @@ export const ChatTabBar = memo(function ChatTabBar({
                   <Ionicons
                     name="link"
                     size={12}
-                    color={isActive ? primaryColor : "#8B5CF6"}
+                    color={isActive ? ACTIVE_TAB_CONTENT_COLOR : "#8B5CF6"}
                     style={styles.sharedTabIcon}
                   />
                 )}
@@ -118,7 +129,7 @@ export const ChatTabBar = memo(function ChatTabBar({
                   />
                 ) : (
                   <Text
-                    style={[styles.tabText, { color: themeColors.textSecondary }, isActive && { color: primaryColor }]}
+                    style={[styles.tabText, { color: tabColor }]}
                     numberOfLines={1}
                   >
                     {displayName}
@@ -432,11 +443,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   tab: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     marginRight: 8,
-    borderBottomWidth: 2,
-    borderBottomColor: "transparent",
+    borderRadius: 18,
   },
   tabContent: {
     flexDirection: "row",
