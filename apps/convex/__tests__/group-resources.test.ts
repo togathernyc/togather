@@ -205,6 +205,26 @@ describe("groupResources: linkUrl + showInInbox fields", () => {
     expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
       "https://donate.example.org",
     );
+
+    // A host with an explicit port is not mistaken for a scheme.
+    await t.mutation(api.functions.groupResources.index.update, {
+      resourceId,
+      linkUrl: "example.com:8080/give",
+      token: f.leaderToken,
+    });
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "https://example.com:8080/give",
+    );
+
+    // A protocol-relative URL is normalized without producing extra slashes.
+    await t.mutation(api.functions.groupResources.index.update, {
+      resourceId,
+      linkUrl: "//example.com/give",
+      token: f.leaderToken,
+    });
+    expect((await t.run((ctx) => ctx.db.get(resourceId)))?.linkUrl).toBe(
+      "https://example.com/give",
+    );
   });
 
   test("update can set then clear linkUrl and toggle showInInbox", async () => {

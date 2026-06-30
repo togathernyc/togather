@@ -116,7 +116,9 @@ function normalizeLinkUrl(raw: string | undefined): string | undefined {
   if (schemeMatch && ALLOWED_LINK_SCHEMES.includes(schemeMatch[1].toLowerCase())) {
     return trimmed;
   }
-  return `https://${trimmed}`;
+  // Strip any leading slashes (e.g. a protocol-relative "//example.com") so the
+  // prefix never produces a malformed "https:////..." URL.
+  return `https://${trimmed.replace(/^\/+/, "")}`;
 }
 
 /**
