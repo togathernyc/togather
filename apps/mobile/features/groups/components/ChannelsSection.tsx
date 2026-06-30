@@ -46,6 +46,14 @@ import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
 interface ChannelsSectionProps {
   groupId: string;
   userRole?: string | null; // 'member', 'leader', or 'admin'
+  /**
+   * Overrides where a channel row navigates. Defaults to the per-channel
+   * info screen (the member/leader management surface). Community admins
+   * browsing a group they haven't joined pass a handler that opens the
+   * read-only chat instead, so "view inside the channel" lands on messages
+   * rather than settings.
+   */
+  onChannelPress?: (slug: string, channelId?: string) => void;
 }
 
 interface Channel {
@@ -66,7 +74,7 @@ interface Channel {
   isEnabled: boolean;
 }
 
-export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
+export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsSectionProps) {
   const router = useRouter();
   const { token } = useAuth();
   const { primaryColor } = useCommunityTheme();
@@ -147,7 +155,13 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
     // channelId disambiguates shared channels: slugs are only unique within the
     // owning group, so a group invited to two same-slug channels needs the id to
     // open the right one. Plain group channels omit it and route by path alone.
-    (slug: string, channelId?: string) =>
+    (slug: string, channelId?: string) => {
+      // Admin browsers (onChannelPress provided) open the read-only chat;
+      // everyone else lands on the per-channel info/management screen.
+      if (onChannelPress) {
+        onChannelPress(slug, channelId);
+        return;
+      }
       router.push(
         channelId
           ? ({
@@ -155,8 +169,9 @@ export function ChannelsSection({ groupId, userRole }: ChannelsSectionProps) {
               params: { channelId },
             } as any)
           : (`/inbox/${groupId}/${slug}/info` as any)
-      ),
-    [router, groupId]
+      );
+    },
+    [router, groupId, onChannelPress]
   );
 
   const handleCreateChannel = useCallback(() => {
