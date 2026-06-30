@@ -27,6 +27,7 @@ import { useTheme } from "@hooks/useTheme";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import type { Id } from "@services/api/convex";
 import { useAwaitPrefetch, useTriggerPrefetch } from "../hooks/usePrefetchChannel";
+import { selectMainChannel } from "../utils/selectMainChannel";
 
 // Type for channel data from getInboxChannels query
 interface ChannelData {
@@ -344,8 +345,9 @@ function GroupedInboxItemInner({
   }
 
   // Multiple channels display - main channel as full card, sub-channels below with L-connector
-  // Find the main channel and secondary channels (only show secondary if unread)
-  const mainChannel = channels.find((ch) => ch.channelType === "main") || channels[0];
+  // The main spot follows updates: a channel with unread messages takes it, and the
+  // General channel reclaims it whenever it has its own update (see selectMainChannel).
+  const mainChannel = selectMainChannel(channels);
 
   // Guard against empty channels array (shouldn't happen, but be safe)
   if (!mainChannel) {
