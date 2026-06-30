@@ -1855,30 +1855,41 @@ export const getInboxChannels = query({
       });
     }
 
-    // Sort by most recent message across all channels in each group
-    result.sort((a, b) => {
-      // Announcement groups always first
+    // Order groups by most recent message across their visible channels.
+    // Announcement groups always anchor the top.
+    const byMostRecentActivity = (
+      a: (typeof result)[number],
+      b: (typeof result)[number]
+    ) => {
       if (a.group.isAnnouncementGroup && !b.group.isAnnouncementGroup) return -1;
       if (!a.group.isAnnouncementGroup && b.group.isAnnouncementGroup) return 1;
 
-      // Then by most recent message
-      const aLastMessage = Math.max(...a.channels.map((c) => c.lastMessageAt || 0));
-      const bLastMessage = Math.max(...b.channels.map((c) => c.lastMessageAt || 0));
+      const aLastMessage = Math.max(
+        0,
+        ...a.channels.map((c) => c.lastMessageAt || 0)
+      );
+      const bLastMessage = Math.max(
+        0,
+        ...b.channels.map((c) => c.lastMessageAt || 0)
+      );
 
       if (!aLastMessage && !bLastMessage) return 0;
       if (!aLastMessage) return 1;
       if (!bLastMessage) return -1;
       return bLastMessage - aLastMessage;
-    });
+    };
+
+    // Sort first so the dedup below attaches each shared channel to the group
+    // the user is most actively engaged with (the first group it appears under).
+    result.sort(byMostRecentActivity);
 
     // Collapse shared-channel duplicates. A channel shared across several of the
     // user's groups would otherwise render once under every group it's shared
     // with — e.g. a "Leaders" channel shared across three sibling groups shows
     // up three times in the inbox. Show each shared channel exactly once,
-    // attached to the group the user is most actively engaged with. `result` is
-    // already sorted so the most-recently-active group comes first, so we keep
-    // the first occurrence and drop the channel from later groups. Unread counts
-    // are per-channel, so collapsing the row collapses the duplicated badge too.
+    // attached to the most-active group above; keep the first occurrence and
+    // drop the channel from later groups. Unread counts are per-channel, so
+    // collapsing the row collapses the duplicated badge too.
     const seenSharedChannelIds = new Set<Id<"chatChannels">>();
     for (const groupEntry of result) {
       groupEntry.channels = groupEntry.channels.filter((ch) => {
@@ -1891,7 +1902,16 @@ export const getInboxChannels = query({
 
     // Drop any group left empty once its only channel(s) were shared duplicates
     // shown elsewhere, so the inbox doesn't render an empty group header.
-    return result.filter((groupEntry) => groupEntry.channels.length > 0);
+    const dedupedResult = result.filter(
+      (groupEntry) => groupEntry.channels.length > 0
+    );
+
+    // Re-sort after dedup: a group that lost its most recent channel to the
+    // collapse must fall back to the recency of its remaining visible channels,
+    // otherwise it keeps the (now stale) position from the first sort and the
+    // inbox is no longer ordered by most-recent visible activity.
+    dedupedResult.sort(byMostRecentActivity);
+    return dedupedResult;
   },
 });
 

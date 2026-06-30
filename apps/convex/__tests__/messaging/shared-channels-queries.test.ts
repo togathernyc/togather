@@ -420,6 +420,101 @@ describe("getInboxChannels — shared channels are de-duplicated", () => {
     ).toBe(true);
   });
 
+  test("groups are re-ordered by remaining visible activity after dedup", async () => {
+    // Regression: the shared channel's recency must not leave a group that
+    // *lost* the duplicate pinned above groups whose visible channels are newer.
+    const t = convexTest(schema, modules);
+    const data = await seedSharedChannelData(t, "accepted");
+    const now = Date.now();
+
+    // The shared channel (owned by Group A) is the most recent thing anywhere.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.sharedChannelId, { lastMessageAt: now });
+    });
+
+    // Group B shares the channel but its own General is the OLDEST activity.
+    await t.run(async (ctx) => {
+      const id = await ctx.db.insert("chatChannels", {
+        groupId: data.groupBId,
+        slug: "group-b-general",
+        channelType: "main",
+        name: "General",
+        createdById: data.userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        lastMessageAt: now - 60 * 60_000, // 1h ago
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: id,
+        userId: data.userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+    });
+
+    // Group C does NOT share the channel; its General is newer than Group B's
+    // but older than the shared channel.
+    const groupCId = await t.run(async (ctx) => {
+      const gid = await ctx.db.insert("groups", {
+        name: "Group C",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isArchived: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("groupMembers", {
+        userId: data.userId,
+        groupId: gid,
+        role: "member",
+        joinedAt: now,
+        notificationsEnabled: true,
+      });
+      const id = await ctx.db.insert("chatChannels", {
+        groupId: gid,
+        slug: "group-c-general",
+        channelType: "main",
+        name: "General",
+        createdById: data.userId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 1,
+        lastMessageAt: now - 10 * 60_000, // 10m ago
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: id,
+        userId: data.userId,
+        role: "member",
+        joinedAt: now,
+        isMuted: false,
+      });
+      return gid;
+    });
+
+    const result = (await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      {
+        token: data.accessToken,
+        communityId: data.communityId,
+      }
+    )) as InboxEntry[];
+
+    // Shared channel still appears once, under Group A (its most-recent home).
+    const appearances = findChannelAppearances(result, data.sharedChannelId);
+    expect(appearances).toHaveLength(1);
+    expect(appearances[0].group._id).toBe(data.groupAId);
+
+    // Final order must reflect visible channels: A (shared, now) > C (10m) > B
+    // (1h). Without the post-dedup re-sort, B would stay ahead of C.
+    const order = result.map((e) => e.group._id);
+    expect(order.indexOf(data.groupAId)).toBeLessThan(order.indexOf(groupCId));
+    expect(order.indexOf(groupCId)).toBeLessThan(order.indexOf(data.groupBId));
+  });
+
   test("a pending secondary group never receives the shared channel", async () => {
     const t = convexTest(schema, modules);
     const data = await seedSharedChannelData(t, "pending");
