@@ -333,6 +333,21 @@ export const onMessageSent = internalMutation({
           `[onMessageSent] Scheduling ad-hoc notifications: ${pendingRecipients.length} pending, ${acceptedRecipients.length} accepted`,
         );
 
+        // The request email is "first-message-of-request" copy, so it should
+        // only fire for the message that opened the request. Senders can send
+        // legitimate follow-ups while the recipient is still pending, and each
+        // of those re-runs this fanout — without this guard every follow-up
+        // would email a pending recipient again. The opening message is the
+        // earliest in the channel.
+        const firstMessage = await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_createdAt", (q) =>
+            q.eq("channelId", args.channelId),
+          )
+          .order("asc")
+          .first();
+        const isInitialRequestMessage = firstMessage?._id === args.messageId;
+
         await ctx.scheduler.runAfter(
           0,
           internal.functions.messaging.events.sendAdHocMessageNotifications,
@@ -345,6 +360,7 @@ export const onMessageSent = internalMutation({
             communityId: channel.communityId,
             pendingRecipients,
             acceptedRecipients,
+            isInitialRequestMessage,
           },
         );
       } else {
@@ -530,6 +546,13 @@ export const sendAdHocMessageNotifications = internalAction({
     pendingRecipients: v.array(v.id("users")),
     /** Members whose membership row is `accepted` (or legacy/undefined). */
     acceptedRecipients: v.array(v.id("users")),
+    /**
+     * True when this is the opening message of the request (the earliest in
+     * the channel). Only then do pending recipients get the request email —
+     * follow-up messages before acceptance stay push-only so a pending
+     * conversation doesn't email on every message.
+     */
+    isInitialRequestMessage: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     console.log(
@@ -585,40 +608,51 @@ export const sendAdHocMessageNotifications = internalAction({
     };
 
     // Pending recipients: first-message-of-a-request copy.
-    // For each recipient, build a personalized email-fallback payload so that
-    // recipients without a live push token still hear about the request.
+    // On the opening message of the request, build a personalized email payload
+    // that is sent in conjunction with the push so users hear about a new
+    // message request even when they aren't actively using the app. Follow-up
+    // messages sent while the recipient is still pending stay push-only.
     if (args.pendingRecipients.length > 0) {
       const pendingTitle = args.senderName;
       const pendingBody = `would like to chat: ${previewBody}`;
       const isGroupChat = channelType === "group_dm";
       for (const userId of args.pendingRecipients) {
-        const userInfo = await ctx.runQuery(
-          internal.functions.notifications.internal.getUserEmailInfo,
-          { userId },
-        );
-        const emailHtml = chatRequestEmail({
-          senderName: args.senderName,
-          isGroupChat,
-          channelName: isGroupChat ? channelName : undefined,
-          messagePreview: args.messagePreview,
-          firstName: userInfo?.firstName,
-        });
-        const emailSubject = isGroupChat
-          ? channelName.trim().length > 0
-            ? `${args.senderName} added you to ${channelName.trim()}`
-            : `${args.senderName} added you to a group chat`
-          : `${args.senderName} would like to chat`;
+        // Only the opening message of the request carries an email — build the
+        // personalized payload just for that case so follow-ups skip the extra
+        // lookup and HTML render entirely.
+        let requestEmail:
+          | { subject: string; htmlBody: string; notificationType: string }
+          | undefined;
+        if (args.isInitialRequestMessage) {
+          const userInfo = await ctx.runQuery(
+            internal.functions.notifications.internal.getUserEmailInfo,
+            { userId },
+          );
+          const emailHtml = chatRequestEmail({
+            senderName: args.senderName,
+            isGroupChat,
+            channelName: isGroupChat ? channelName : undefined,
+            messagePreview: args.messagePreview,
+            firstName: userInfo?.firstName,
+          });
+          const emailSubject = isGroupChat
+            ? channelName.trim().length > 0
+              ? `${args.senderName} added you to ${channelName.trim()}`
+              : `${args.senderName} added you to a group chat`
+            : `${args.senderName} would like to chat`;
+          requestEmail = {
+            subject: emailSubject,
+            htmlBody: emailHtml,
+            notificationType: "chat_request",
+          };
+        }
         await sendAdHocPushToUser(ctx, {
           userId,
           title: pendingTitle,
           body: pendingBody,
           data: { ...baseData, requestState: "pending" },
           communityId: args.communityId,
-          emailFallback: {
-            subject: emailSubject,
-            htmlBody: emailHtml,
-            notificationType: "chat_request",
-          },
+          requestEmail,
         });
       }
     }
@@ -683,11 +717,14 @@ async function sendAdHocPushToUser(
     data: Record<string, unknown>;
     communityId?: Id<"communities">;
     /**
-     * Optional email fallback fired when the recipient has no active push
-     * tokens, OR when the push send fails. Used for chat requests so a
-     * recipient who isn't reachable via push still hears about the request.
+     * Optional email sent in conjunction with the push. Used for chat requests
+     * so the recipient hears about a new message request by email even when
+     * they aren't actively using the app — independent of whether push lands.
+     * Respects the recipient's `emailNotificationsEnabled` preference. Only
+     * requests pass this; accepted-chat messages stay push-only so the inbox
+     * doesn't double-notify on every reply.
      */
-    emailFallback?: {
+    requestEmail?: {
       subject: string;
       htmlBody: string;
       notificationType: string;
@@ -729,10 +766,11 @@ async function sendAdHocPushToUser(
     );
   }
 
-  // Cascade to email when push is unreachable (no tokens or send failed).
-  // Only requests get an email fallback — accepted-chat messages stay
+  // Email the recipient in conjunction with the push (not only as a fallback)
+  // so a new message request reaches them even when they aren't actively using
+  // the app. Only requests pass `requestEmail` — accepted-chat messages stay
   // push-only so the inbox doesn't double-notify on every reply.
-  if (!pushOk && args.emailFallback) {
+  if (args.requestEmail) {
     const userInfo = await ctx.runQuery(
       internal.functions.notifications.internal.getUserEmailInfo,
       { userId: args.userId },
@@ -742,13 +780,13 @@ async function sendAdHocPushToUser(
         internal.functions.notifications.internal.sendEmailNotification,
         {
           to: userInfo.email,
-          subject: args.emailFallback.subject,
-          htmlBody: args.emailFallback.htmlBody,
-          notificationType: args.emailFallback.notificationType,
+          subject: args.requestEmail.subject,
+          htmlBody: args.requestEmail.htmlBody,
+          notificationType: args.requestEmail.notificationType,
         },
       );
       console.log(
-        `[sendAdHocMessageNotifications] Email fallback sent to ${userInfo.email} (push unreachable)`,
+        `[sendAdHocMessageNotifications] Request email sent to ${userInfo.email}`,
       );
     }
   }
@@ -762,7 +800,7 @@ async function sendAdHocPushToUser(
       title: args.title,
       body: args.body,
       data: notificationData,
-      status: pushOk || args.emailFallback ? "sent" : "failed",
+      status: pushOk || args.requestEmail ? "sent" : "failed",
       trackingId,
     },
   );
