@@ -256,11 +256,19 @@ export const reviewPendingRequest = mutation({
       // joinedAt is preserved, so joinedAt !== requestedAt indicates a returning member.
       const isReturningMember = request.joinedAt !== request.requestedAt;
 
-      // Only trigger welcome bot for NEW members, not returning members (non-blocking)
+      // Only trigger welcome + followup bots for NEW members, not returning members (non-blocking)
       if (!isReturningMember) {
         await ctx.scheduler.runAfter(
           0,
           internal.functions.scheduledJobs.sendWelcomeMessage,
+          {
+            groupId: request.groupId,
+            userId: request.userId,
+          }
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.scheduledJobs.assignNewMemberFollowup,
           {
             groupId: request.groupId,
             userId: request.userId,

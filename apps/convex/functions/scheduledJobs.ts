@@ -1759,6 +1759,7 @@ export const insertBotMessage = internalMutation({
     const botNames: Record<string, string> = {
       birthday: "Birthday Bot 🎂",
       welcome: "Welcome Bot 👋",
+      followup: "Followup Bot 🤝",
       task_reminder: "Task Reminder 📋",
       communication: "Communication Bot 💬",
       dev_assistant: "Togather Bot 🤖",
@@ -2212,6 +2213,215 @@ export const getUserById = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
     return await ctx.db.get(userId);
+  },
+});
+
+// ============================================================================
+// FOLLOWUP BOT
+// ============================================================================
+
+/**
+ * Resolve (and persist) the followup assignment for a newly-joined member,
+ * atomically.
+ *
+ * This runs as a single mutation so the read of the round-robin pointer and
+ * the write that advances it happen in one transaction. The bot is
+ * event-triggered, so two members can join almost simultaneously (or a batch
+ * add can schedule many assignments at once); resolving-and-advancing here
+ * lets Convex's serializable mutations rotate leaders correctly instead of
+ * racing on a pointer read/write split across separate transactions.
+ *
+ * Returns a skip reason, or the resolved assignment (message + target channel +
+ * the leader to mention) for the calling action to deliver.
+ */
+export const prepareFollowupAssignment = internalMutation({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { groupId, userId },
+  ): Promise<
+    | { skipped: true; reason: string }
+    | {
+        skipped: false;
+        assignedLeaderId: Id<"users">;
+        targetChannelSlug: string;
+        message: string;
+      }
+  > => {
+    const config = await ctx.db
+      .query("groupBotConfigs")
+      .withIndex("by_group_botType", (q) =>
+        q.eq("groupId", groupId).eq("botType", "followup"),
+      )
+      .first();
+
+    if (!config || !config.enabled) {
+      return { skipped: true, reason: "bot_not_enabled" };
+    }
+
+    const group = await ctx.db.get(groupId);
+    if (!group) return { skipped: true, reason: "group_not_found" };
+
+    const member = await ctx.db.get(userId);
+    if (!member) return { skipped: true, reason: "member_not_found" };
+
+    const community = await ctx.db.get(group.communityId);
+
+    // Active leaders for the group, excluding the new member so a leader who
+    // joins is never assigned to follow up with themselves.
+    const leaderMemberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", groupId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.eq(q.field("role"), "leader"),
+        ),
+      )
+      .take(100);
+
+    const resolvedLeaders = await Promise.all(
+      leaderMemberships
+        .filter((m) => m.userId !== userId)
+        .map(async (m) => {
+          const user = await ctx.db.get(m.userId);
+          if (!user) return null;
+          const displayName =
+            [user.firstName, user.lastName].filter(Boolean).join(" ") ||
+            "leader";
+          return { userId: m.userId, displayName };
+        }),
+    );
+    const leaders = resolvedLeaders.filter(
+      (leader): leader is BirthdayReminderLeader => leader !== null,
+    );
+
+    if (leaders.length === 0) {
+      return { skipped: true, reason: "no_leaders" };
+    }
+
+    const configData = (config.config as Record<string, unknown>) || {};
+    const state = (config.state as Record<string, unknown>) || {};
+    const assignmentMode =
+      (configData.assignmentMode as string) || "round_robin";
+    const specificLeaderId =
+      (configData.specificLeaderId as Id<"users"> | undefined) || undefined;
+    const lastLeaderIndex =
+      typeof state.lastLeaderIndex === "number"
+        ? (state.lastLeaderIndex as number)
+        : undefined;
+
+    // Reuse the shared resolver: specific leader when configured & present,
+    // else round-robin from the saved pointer.
+    const assignedLeader = resolveBirthdayReminderLeader({
+      leaders,
+      assignmentMode,
+      specificLeaderId,
+      lastLeaderIndex,
+    });
+
+    if (!assignedLeader) {
+      return { skipped: true, reason: "no_leader_resolved" };
+    }
+
+    // Advance the pointer whenever the assignment came from round-robin — i.e.
+    // unless we actually pinned the configured specific leader. This also keeps
+    // the rotation moving when a specific leader is no longer an active leader
+    // and the resolver falls back to round-robin.
+    const usedSpecificLeader =
+      assignmentMode === "specific_leader" &&
+      !!specificLeaderId &&
+      assignedLeader.userId === specificLeaderId;
+
+    if (!usedSpecificLeader) {
+      const assignedIndex = leaders.findIndex(
+        (leader) => leader.userId === assignedLeader.userId,
+      );
+      await ctx.db.patch(config._id, {
+        state: { ...state, lastLeaderIndex: assignedIndex },
+        updatedAt: now(),
+      });
+    }
+
+    const messageTemplate =
+      (configData.message as string) ||
+      "🤝 Hey [[leader_name]], please follow up with [[member_name]] who just joined [[group_name]]!";
+    const memberName =
+      [member.firstName, member.lastName].filter(Boolean).join(" ") ||
+      member.firstName ||
+      "a new member";
+    const communityName = community?.name || "Community";
+
+    // Use replacer functions so "$" sequences in the substituted values
+    // (names, group, community) are inserted literally — String.replace treats
+    // "$&", "$1", … in a string replacement specially.
+    const message = messageTemplate
+      .replace(/\[\[leader_name\]\]/g, () => assignedLeader.displayName)
+      .replace(/\[\[member_name\]\]/g, () => memberName)
+      .replace(/\[\[group_name\]\]/g, () => group.name)
+      .replace(/\[\[community_name\]\]/g, () => communityName);
+
+    return {
+      skipped: false,
+      assignedLeaderId: assignedLeader.userId,
+      targetChannelSlug: (configData.targetChannelSlug as string) || "leaders",
+      message,
+    };
+  },
+});
+
+/**
+ * Assign a leader to follow up with a newly-joined member.
+ *
+ * Called by the scheduler when a new member joins a group (event-triggered,
+ * mirrors the Welcome Bot). The leader is resolved — and the round-robin
+ * pointer advanced — atomically by prepareFollowupAssignment; this action then
+ * notifies the assigned leader via an @mention in the target channel, which
+ * fans out to push/email like any other mention.
+ */
+export const assignNewMemberFollowup = internalAction({
+  args: {
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (
+    ctx,
+    { groupId, userId },
+  ): Promise<
+    | { skipped: true; reason: string }
+    | { success: true; assignedLeaderId: Id<"users">; message: string }
+    | { success: false; error: string }
+  > => {
+    const assignment = await ctx.runMutation(
+      internal.functions.scheduledJobs.prepareFollowupAssignment,
+      { groupId, userId },
+    );
+
+    if (assignment.skipped) {
+      return { skipped: true, reason: assignment.reason };
+    }
+
+    try {
+      await ctx.runAction(internal.functions.scheduledJobs.sendBotMessage, {
+        groupId,
+        message: assignment.message,
+        targetChannelSlug: assignment.targetChannelSlug,
+        botType: "followup",
+        mentionedUserIds: [assignment.assignedLeaderId],
+      });
+    } catch (error) {
+      console.error(`[FollowupBot] Error sending assignment:`, error);
+      return { success: false, error: String(error) };
+    }
+
+    return {
+      success: true,
+      assignedLeaderId: assignment.assignedLeaderId,
+      message: assignment.message,
+    };
   },
 });
 
