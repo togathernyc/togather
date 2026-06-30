@@ -773,6 +773,30 @@ describe("Channel Updates", () => {
     channel = await t.run(async (ctx) => ctx.db.get(channelId));
     expect(channel?.hint).toBeUndefined();
   });
+
+  test("should reject a composer hint longer than 100 characters", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, communityId } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const channelId = await t.mutation(api.functions.messaging.channels.createChannel, {
+      token: leaderToken,
+      groupId,
+      channelType: "main",
+      name: "General",
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.updateChannel, {
+        token: leaderToken,
+        channelId,
+        hint: "x".repeat(101),
+      }),
+    ).rejects.toThrow(/100 characters or fewer/);
+
+    const channel = await t.run(async (ctx) => ctx.db.get(channelId));
+    expect(channel?.hint).toBeUndefined();
+  });
 });
 
 // ============================================================================

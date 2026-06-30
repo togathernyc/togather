@@ -2041,6 +2041,13 @@ export const createChannel = mutation({
 });
 
 /**
+ * Max length for a channel's composer hint. Mirrors the `maxLength` on the
+ * channel info editor so a modified client can't persist an oversized
+ * placeholder that `listGroupChannels` would then ship to every member.
+ */
+const CHANNEL_HINT_MAX_LENGTH = 100;
+
+/**
  * Update channel details.
  */
 export const updateChannel = mutation({
@@ -2104,8 +2111,13 @@ export const updateChannel = mutation({
       updates.description = args.description;
     }
     if (args.hint !== undefined) {
-      // Empty string clears the hint so it falls back to the default placeholder.
       const trimmedHint = args.hint.trim();
+      if (trimmedHint.length > CHANNEL_HINT_MAX_LENGTH) {
+        throw new Error(
+          `Hint must be ${CHANNEL_HINT_MAX_LENGTH} characters or fewer`,
+        );
+      }
+      // Empty string clears the hint so it falls back to the default placeholder.
       updates.hint = trimmedHint.length > 0 ? trimmedHint : undefined;
     }
 
