@@ -6,6 +6,7 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
 import { DesktopSideNav } from '@components/DesktopSideNav';
+import { useEventModeStore } from '@/stores/eventModeStore';
 
 export default function TabsLayout() {
   const { user, community } = useAuth();
@@ -19,6 +20,16 @@ export default function TabsLayout() {
   // won't cause tab config oscillation. The old useState+useEffect pattern
   // was over-engineered and introduced a stale render frame.
   const hasCommunity = !!community?.id;
+
+  // Serving mode collapses the tab bar to a focused set (Inbox, Runsheet,
+  // Tasks, Profile, Exit) for the duration of an event. Gated on the community
+  // opting into the Event Tasks feature so communities without it never see
+  // serving tabs even if a stale persisted flag lingers.
+  const eventTasksEnabled =
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled === true;
+  const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const inServingMode = isServingMode && eventTasksEnabled;
 
   const tabs = (
     <Tabs
@@ -52,10 +63,12 @@ export default function TabsLayout() {
       />
 
       {/* Visible tabs - Order: Groups, Events, Inbox, (Admin for admins), Profile */}
+      {/* Groups/Events are hidden while serving mode is active. */}
       <Tabs.Screen
         name="search"
         options={{
           title: 'Groups',
+          href: inServingMode ? null : '/(tabs)/search',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'map' : 'map-outline'}
@@ -69,6 +82,7 @@ export default function TabsLayout() {
         name="events"
         options={{
           title: 'Events',
+          href: inServingMode ? null : '/(tabs)/events',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'calendar' : 'calendar-outline'}
@@ -138,8 +152,9 @@ export default function TabsLayout() {
           title: 'Prayer',
           // Visible only when the active community has opted into the church
           // prayer feature. Gated on community.churchFeatures.prayerEnabled.
+          // Hidden while serving mode is active.
           href:
-            hasCommunity && community?.churchFeatures?.prayerEnabled
+            !inServingMode && hasCommunity && community?.churchFeatures?.prayerEnabled
               ? '/(tabs)/prayer'
               : null,
           tabBarIcon: ({ color, focused }) => (
@@ -155,11 +170,59 @@ export default function TabsLayout() {
         name="admin"
         options={{
           title: 'Admin',
-          // Show Admin tab for community admins within a community OR Togather internal users.
-          href: (isAdmin && hasCommunity) || isInternalUser ? '/(tabs)/admin' : null,
+          // Show Admin tab for community admins within a community OR Togather
+          // internal users. Hidden while serving mode is active.
+          href:
+            !inServingMode && ((isAdmin && hasCommunity) || isInternalUser)
+              ? '/(tabs)/admin'
+              : null,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'shield-checkmark' : 'shield-checkmark-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      {/* Serving-mode tabs — only visible while serving mode is active. */}
+      <Tabs.Screen
+        name="serving-runsheet"
+        options={{
+          title: 'Runsheet',
+          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'list' : 'list-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="serving-tasks"
+        options={{
+          title: 'Tasks',
+          href: inServingMode ? '/(tabs)/serving-tasks' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="serving-exit"
+        options={{
+          title: 'Exit',
+          href: inServingMode ? '/(tabs)/serving-exit' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'exit' : 'exit-outline'}
               size={24}
               color={color}
             />

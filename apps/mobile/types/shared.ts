@@ -88,6 +88,7 @@ export interface Community {
    */
   churchFeatures?: {
     prayerEnabled: boolean;
+    eventTasksEnabled?: boolean;
   };
   [key: string]: any; // Allow additional community properties
 }
