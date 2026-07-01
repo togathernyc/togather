@@ -41,11 +41,14 @@ const MAX_INVITE_RECIPIENTS = 20;
 // single bounded page off the group index — neither fans reads out across the
 // whole group the way the old collect-everything implementation did.
 const MEMBER_PICKER_LIMIT = 50;
-// How many raw group-member rows to read for the empty (default) picker view
-// before filtering to active members in memory. A DB `.filter()` would still
-// read (and count against the limit) every leftAt-set row it scans past, so a
-// high-churn group could re-trip the read limit; this caps the read instead.
-const DEFAULT_MEMBER_SCAN_LIMIT = 300;
+// Hard upper bound on group-member rows scanned for the empty (default) picker
+// view. We iterate the by_group index lazily and stop as soon as `limit` active
+// members are found, so the common case reads only a handful of rows; this cap
+// only bites in a high-churn group where many departed/pending rows precede the
+// active ones. Kept well under the 4096 read limit so the per-member hydration
+// below still fits. A DB `.filter()` (or a fixed-size page then filter) would
+// instead read past every leftAt-set row or stop before reaching active members.
+const DEFAULT_MEMBER_SCAN_LIMIT = 2000;
 // How many full-text matches to scan before narrowing to group members. The
 // users search index is global (not group-scoped), so we over-fetch and then
 // filter to members. 500 matches the cap used by admin People search and
@@ -191,18 +194,21 @@ export const listGroupMembersForInvite = query({
         }
       }
     } else {
-      // Empty search: read a BOUNDED page of raw rows off the index, then
-      // filter to active members in memory. Filtering in the DB query would
-      // still read every leftAt-set row it scans past (counting against the
-      // read limit), so a group with lots of departed members could re-trip
-      // the exact error this change prevents.
-      const memberships = await ctx.db
+      // Empty search: lazily scan the group index, collecting active members
+      // until we have `limit` of them. Stopping after a fixed raw page could
+      // return a near-empty roster in a high-churn group where departed/pending
+      // rows precede the active ones; iterating with an early break keeps the
+      // common case cheap while DEFAULT_MEMBER_SCAN_LIMIT bounds the reads.
+      let scanned = 0;
+      for await (const m of ctx.db
         .query("groupMembers")
-        .withIndex("by_group", (q) => q.eq("groupId", groupId))
-        .take(DEFAULT_MEMBER_SCAN_LIMIT);
-      for (const m of memberships) {
-        if (memberIds.size >= limit) break;
-        if (isActiveMembership(m)) memberIds.add(m.userId);
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))) {
+        scanned++;
+        if (isActiveMembership(m)) {
+          memberIds.add(m.userId);
+          if (memberIds.size >= limit) break;
+        }
+        if (scanned >= DEFAULT_MEMBER_SCAN_LIMIT) break;
       }
       // Always surface the caller (test-invite-to-self) even in a group large
       // enough that they fall outside the first page.
