@@ -459,6 +459,9 @@ export const getPlanTaskReadiness = query({
       const validCompletions = completions.filter((c) => {
         if (!expectedUserIds.has(c.userId as string)) return false;
         if (task.segment === "during") {
+          // No configured times => a single unlabeled slot (mirrors
+          // getMyServingTasks), so accept the null-label completion.
+          if (plan.times.length === 0) return c.timeLabel == null;
           return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
         }
         return true;
@@ -584,14 +587,18 @@ export const getMyServingTasks = query({
       };
 
       if (task.segment === "during") {
-        // One entry per service time.
-        for (const time of plan.times) {
+        // One entry per service time. A plan with no configured times still
+        // gets a single unlabeled slot so the task remains completable (and its
+        // readiness expectation, which also uses one slot, can be met).
+        const slots: (string | undefined)[] =
+          plan.times.length > 0 ? plan.times.map((t) => t.label) : [undefined];
+        for (const label of slots) {
           result.during.push({
-            key: `${task._id}::${time.label}`,
+            key: `${task._id}::${label ?? ""}`,
             taskId: task._id as string,
             ...base,
-            timeLabel: time.label,
-            completed: completed.has(completionKey(task._id, time.label)),
+            timeLabel: label,
+            completed: completed.has(completionKey(task._id, label)),
           });
         }
       } else {
