@@ -144,6 +144,7 @@ import type * as functions_scheduling_availability from "../functions/scheduling
 import type * as functions_scheduling_crossTeamChannels from "../functions/scheduling/crossTeamChannels.js";
 import type * as functions_scheduling_deletion from "../functions/scheduling/deletion.js";
 import type * as functions_scheduling_eventItems from "../functions/scheduling/eventItems.js";
+import type * as functions_scheduling_eventTasks from "../functions/scheduling/eventTasks.js";
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
@@ -154,6 +155,7 @@ import type * as functions_scheduling_publicAvailability from "../functions/sche
 import type * as functions_scheduling_quickStart from "../functions/scheduling/quickStart.js";
 import type * as functions_scheduling_roles from "../functions/scheduling/roles.js";
 import type * as functions_scheduling_roster from "../functions/scheduling/roster.js";
+import type * as functions_scheduling_serving from "../functions/scheduling/serving.js";
 import type * as functions_scheduling_songs from "../functions/scheduling/songs.js";
 import type * as functions_scheduling_starterRoles from "../functions/scheduling/starterRoles.js";
 import type * as functions_scheduling_teamChannelSync from "../functions/scheduling/teamChannelSync.js";
@@ -364,6 +366,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/crossTeamChannels": typeof functions_scheduling_crossTeamChannels;
   "functions/scheduling/deletion": typeof functions_scheduling_deletion;
   "functions/scheduling/eventItems": typeof functions_scheduling_eventItems;
+  "functions/scheduling/eventTasks": typeof functions_scheduling_eventTasks;
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
@@ -374,6 +377,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/quickStart": typeof functions_scheduling_quickStart;
   "functions/scheduling/roles": typeof functions_scheduling_roles;
   "functions/scheduling/roster": typeof functions_scheduling_roster;
+  "functions/scheduling/serving": typeof functions_scheduling_serving;
   "functions/scheduling/songs": typeof functions_scheduling_songs;
   "functions/scheduling/starterRoles": typeof functions_scheduling_starterRoles;
   "functions/scheduling/teamChannelSync": typeof functions_scheduling_teamChannelSync;

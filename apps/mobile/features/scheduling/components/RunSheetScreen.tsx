@@ -146,6 +146,12 @@ export function RunSheetScreen() {
   }>();
   const planId = plan_id as Id<"eventPlans">;
   const communityId = community?.id ?? "";
+  // Whether to surface the Event Tasks entry point in the header. Read
+  // defensively — the mobile Community type only enumerates `prayerEnabled`.
+  const eventTasksEnabled = Boolean(
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled,
+  );
 
   const event = useAuthenticatedQuery(
     api.functions.scheduling.events.getEvent,
@@ -357,7 +363,24 @@ export function RunSheetScreen() {
           <Ionicons name="chevron-back" size={28} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Run sheet</Text>
-        <View style={styles.headerBtn} />
+        {/* Entry point to the leader Event Tasks "database view" for this plan.
+            Shown only when the community has opted into Event Tasks; the Tasks
+            screen itself re-checks the flag + leader role. */}
+        {eventTasksEnabled ? (
+          <TouchableOpacity
+            onPress={() =>
+              router.push(`/rostering/${group_id}/tasks/${planId}` as never)
+            }
+            hitSlop={12}
+            style={styles.headerBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Event tasks"
+          >
+            <Ionicons name="checkbox-outline" size={24} color={colors.text} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerBtn} />
+        )}
       </View>
 
       {loading ? (

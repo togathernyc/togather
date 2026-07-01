@@ -241,6 +241,36 @@ export const duplicateEvent = mutation({
       ),
     );
 
+    // Copy the shared event-tasks template (Event Tasks feature) onto the new
+    // plan. Per-user completions (`eventTaskCompletions`) and personal ad-hoc
+    // tasks (`personalServingTasks`) are deliberately NOT copied — a duplicate
+    // starts with an empty completion state and no personal tasks.
+    const tasks = await ctx.db
+      .query("eventTasks")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+    await Promise.all(
+      tasks.map((task) =>
+        ctx.db.insert("eventTasks", {
+          planId: newPlanId,
+          communityId: task.communityId,
+          teamId: task.teamId,
+          roleId: task.roleId,
+          segment: task.segment,
+          title: task.title,
+          howToType: task.howToType,
+          howToText: task.howToText,
+          howToUrl: task.howToUrl,
+          howToMediaPath: task.howToMediaPath,
+          howToDoc: task.howToDoc,
+          sortOrder: task.sortOrder,
+          createdById: userId,
+          createdAt: nowMs,
+          updatedAt: nowMs,
+        }),
+      ),
+    );
+
     return { planId: newPlanId };
   },
 });
@@ -342,7 +372,14 @@ export const deleteEvent = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requirePlanScheduler(ctx, args.planId, userId);
 
-    const [neededRoles, assignments, items] = await Promise.all([
+    const [
+      neededRoles,
+      assignments,
+      items,
+      tasks,
+      taskCompletions,
+      personalTasks,
+    ] = await Promise.all([
       ctx.db
         .query("neededRoles")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
@@ -355,6 +392,19 @@ export const deleteEvent = mutation({
       ctx.db
         .query("eventItems")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      // Event tasks, their completions, and personal serving tasks cascade too.
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("personalServingTasks")
+        .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
         .collect(),
     ]);
 
@@ -373,6 +423,9 @@ export const deleteEvent = mutation({
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
       ...assignments.map((row) => ctx.db.delete(row._id)),
       ...items.map((row) => ctx.db.delete(row._id)),
+      ...tasks.map((row) => ctx.db.delete(row._id)),
+      ...taskCompletions.map((row) => ctx.db.delete(row._id)),
+      ...personalTasks.map((row) => ctx.db.delete(row._id)),
     ]);
     await ctx.db.delete(args.planId);
 

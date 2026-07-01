@@ -45,6 +45,7 @@ import { Avatar } from "@components/ui/Avatar";
 import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
+import { useEventModeStore } from "@/stores/eventModeStore";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -158,13 +159,31 @@ export function ChatInboxScreen({
     });
   }
 
+  // Serving mode: when active, the inbox is filtered to the active plan's
+  // serving channels (flat) by passing `servingPlanId` to getInboxChannels.
+  const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const activePlanId = useEventModeStore((s) => s.activePlanId);
+  const eventTasksEnabled =
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled === true;
+  // Only filter when the feature is actually enabled — a stale persisted
+  // serving flag (feature since disabled for this community) must not leave the
+  // normal inbox filtered to an old plan, since the serving tabs/Exit are hidden.
+  const inServingMode = isServingMode && eventTasksEnabled;
+
   // Fetch inbox channels using the new grouped query
   const inboxQueryArgs = useMemo(() => {
     if (!userId || !communityId || !token) {
       return "skip" as const;
     }
-    return { token, communityId };
-  }, [userId, communityId, token]);
+    const servingPlanId =
+      inServingMode && activePlanId
+        ? (activePlanId as Id<"eventPlans">)
+        : undefined;
+    return servingPlanId
+      ? { token, communityId, servingPlanId }
+      : { token, communityId };
+  }, [userId, communityId, token, inServingMode, activePlanId]);
 
   const inboxChannels = useQuery(
     api.functions.messaging.channels.getInboxChannels,
@@ -209,6 +228,47 @@ export function ChatInboxScreen({
     }
     return map;
   }, [inboxResources]);
+
+  // Serving mode re-entry. When the community has the Event Tasks feature and
+  // the user is eligible to serve an active plan, offer a chip to (re)enter
+  // serving mode. `autoEnter` lets the backend jump the user straight in — but
+  // only once per session and never if they manually exited this session, so a
+  // volunteer who intentionally left isn't yanked back in.
+  const enterServingMode = useEventModeStore((s) => s.enter);
+  const servingEligibility = useQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    token && eventTasksEnabled ? { token } : "skip",
+  ) as
+    | {
+        eligible: boolean;
+        autoEnter: boolean;
+        activePlan: { planId: string } | null;
+      }
+    | undefined;
+
+  // Tracks whether serving mode was auto-entered this app session, so we don't
+  // repeatedly re-enter after a manual exit within the same session.
+  const autoEnteredThisSessionRef = useRef(false);
+  useEffect(() => {
+    if (!servingEligibility?.eligible) return;
+    const planId = servingEligibility.activePlan?.planId;
+    if (!planId) return;
+    // Already in serving mode → nothing to do.
+    if (isServingMode) return;
+    // Auto-enter only when the backend asks for it and we haven't already done
+    // so (a manual exit flips isServingMode false but leaves the ref set, so
+    // we won't bounce the user straight back in).
+    if (servingEligibility.autoEnter && !autoEnteredThisSessionRef.current) {
+      autoEnteredThisSessionRef.current = true;
+      enterServingMode(planId);
+    }
+  }, [servingEligibility, isServingMode, enterServingMode]);
+
+  // Show the manual re-entry chip when eligible but not currently serving.
+  const showServingChip =
+    !!servingEligibility?.eligible &&
+    !isServingMode &&
+    !!servingEligibility.activePlan?.planId;
 
   // Inbox message search. SearchBar debounces input, so `searchTerm` only
   // updates after the user pauses typing — keeping the reactive query from
@@ -777,6 +837,25 @@ export function ChatInboxScreen({
           />
         ) : (
           <>
+            {showServingChip ? (
+              <Pressable
+                onPress={() => {
+                  const planId = servingEligibility?.activePlan?.planId;
+                  if (planId) enterServingMode(planId);
+                }}
+                style={[
+                  styles.servingChip,
+                  { backgroundColor: primaryColor + "14", borderColor: primaryColor },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Enter serving mode"
+              >
+                <Ionicons name="rocket-outline" size={18} color={primaryColor} />
+                <Text style={[styles.servingChipText, { color: primaryColor }]}>
+                  Enter serving mode
+                </Text>
+              </Pressable>
+            ) : null}
             <EnableNotificationsBanner />
             <Animated.FlatList
               data={listItemsWithDm}
@@ -1447,6 +1526,25 @@ function NotificationsInboxRow({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  // "Enter serving mode" re-entry chip shown above the inbox list when the
+  // user is eligible to serve but not currently in serving mode.
+  servingChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  servingChipText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   // Bell-icon avatar for the synthetic Notifications row — sized to match the
   // 56pt avatars used by DM / event rows so it lines up in the mixed list.

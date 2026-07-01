@@ -74,10 +74,17 @@ type EventRole = {
 export function NativeRunSheetView({
   groupId,
   canEdit,
+  initialPlanId,
 }: {
   groupId: Id<"groups">;
   /** Show the "Edit in Rostering" shortcut (group leaders / admins). */
   canEdit: boolean;
+  /**
+   * Plan to select by default (e.g. serving mode focuses the plan the user is
+   * serving, rather than the group's soonest upcoming event). The user can
+   * still switch tabs. Falls back to the first plan when unset.
+   */
+  initialPlanId?: Id<"eventPlans">;
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -98,7 +105,8 @@ export function NativeRunSheetView({
   ) as PlanSummary[] | undefined;
 
   const [selectedId, setSelectedId] = useState<Id<"eventPlans"> | null>(null);
-  const activePlanId = selectedId ?? plans?.[0]?._id ?? null;
+  const activePlanId =
+    selectedId ?? initialPlanId ?? plans?.[0]?._id ?? null;
 
   if (plans === undefined) {
     return (
