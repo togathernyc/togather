@@ -41,17 +41,19 @@ const MAX_INVITE_RECIPIENTS = 20;
 // single bounded page off the group index — neither fans reads out across the
 // whole group the way the old collect-everything implementation did.
 const MEMBER_PICKER_LIMIT = 50;
-// Hard upper bound on group-member rows scanned for the empty (default) picker
-// view. We iterate the by_group index lazily and stop as soon as `limit`
-// invite-eligible members are found, so the common case reads only a handful of
-// rows; this cap only bites in a high-churn group where many departed/pending
-// rows precede the active ones.
-const DEFAULT_MEMBER_SCAN_LIMIT = 2000;
-// Hard upper bound on members we HYDRATE (user + push-token + invite + RSVP
-// reads) in the default view before giving up on reaching `limit` eligible
-// ones. Bounds reads even when a big group's leading rows are all already
-// invited / RSVP'd / unreachable. Scan + hydration reads stay well under 4096.
-const DEFAULT_MEMBER_HYDRATE_CAP = 200;
+// Read budget for the empty (default) picker view. We iterate the by_group
+// index lazily and stop as soon as `limit` invite-eligible members are found,
+// so the common case reads only a handful of rows. These two caps are the hard
+// backstop for pathological groups and are sized so the WORST case
+// (SCAN rows read + 4 reads per hydrated member) stays comfortably under
+// Convex's 4096-read-per-execution limit: 1500 + 4*350 = 2900.
+//
+// This is a deliberate, bounded scan — not exhaustive. Exhaustive reach into an
+// arbitrarily large group is fundamentally incompatible with the read limit
+// this whole change exists to respect; the picker's search field (server-side,
+// full-text) is the escape hatch for any member past the default window.
+const DEFAULT_MEMBER_SCAN_LIMIT = 1500; // max group-member rows scanned
+const DEFAULT_MEMBER_HYDRATE_CAP = 350; // max members hydrated (user+push+invite+rsvp)
 // How many full-text matches to scan before narrowing to group members. The
 // users search index is global (not group-scoped), so we over-fetch and then
 // filter to members. 500 matches the cap used by admin People search and
@@ -251,9 +253,11 @@ export const listGroupMembersForInvite = query({
       // Empty search: lazily scan the group index, hydrating active members and
       // continuing until we have `limit` INVITE-ELIGIBLE ones — not just active
       // ones. A group whose leading rows are all already-invited / RSVP'd /
-      // unreachable (which happens naturally after a few 20-person invite
-      // batches) would otherwise show an empty picker even though later members
-      // can still be invited. Both caps keep the reads bounded.
+      // unreachable would otherwise show an empty picker even though later
+      // members can still be invited. Both caps keep the reads bounded; a member
+      // past the scan window (e.g. behind hundreds of already-invited rows) is
+      // reached via the search field rather than by scanning the whole group,
+      // which the read limit forbids.
       let scanned = 0;
       let eligibleCount = 0;
       for await (const m of ctx.db
