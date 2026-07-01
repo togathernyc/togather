@@ -29,6 +29,31 @@ const REINVITE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 // Twilio SMS hard cap.
 const SMS_MAX_LEN = 1600;
 
+// Max recipients accepted by a single initiate/reinvite call. Keeps Twilio
+// spend bounded and — together with the bounded picker query below — prevents
+// the "too many reads in a single function execution" failures that large
+// groups used to trigger. Keep in sync with MAX_INVITE_RECIPIENTS in
+// apps/mobile/features/leader-tools/components/InviteGroupMembersSheet.tsx.
+const MAX_INVITE_RECIPIENTS = 20;
+
+// The invite picker returns at most this many members per query. A search hits
+// the users full-text index (O(matches)); the empty default view reads a
+// single bounded page off the group index — neither fans reads out across the
+// whole group the way the old collect-everything implementation did.
+const MEMBER_PICKER_LIMIT = 50;
+// How many full-text matches to scan before narrowing to group members.
+const USER_SEARCH_SCAN_LIMIT = 100;
+
+/** An active, fully-joined group membership (not left, not a pending request). */
+function isActiveMembership(m: Doc<"groupMembers">): boolean {
+  return (
+    m.leftAt === undefined &&
+    (!m.requestStatus ||
+      m.requestStatus === "accepted" ||
+      m.requestStatus === "approved")
+  );
+}
+
 // ============================================================================
 // Queries
 // ============================================================================
@@ -94,18 +119,27 @@ export const list = query({
 /**
  * Group member roster for the invite recipient picker.
  *
- * Returns each active member of the meeting's parent group, annotated with:
+ * Returns members of the meeting's parent group, annotated with:
  *   - hasPhone: whether the user has a phone we can SMS
  *   - alreadyInvited: existing eventInvites row for this meeting+user
  *   - alreadyRsvped: existing RSVP for this meeting+user (any option)
  *
- * Includes the caller themselves — handy for sending a test invite to your
- * own number/push token to preview what recipients will see.
+ * The result is bounded to `limit` (<= MEMBER_PICKER_LIMIT) members so the
+ * query stays well under Convex's per-execution read limit no matter how big
+ * the group is — the old implementation fetched a user row and a push-token
+ * query for *every* member, which blew past the 4096-read cap in large groups.
+ *
+ * Search is performed server-side against the users full-text index so the
+ * picker can find any member by name/phone, not just those on the first page.
+ * When there is no search term the caller is always included so a host can
+ * send a test invite to themselves.
  */
 export const listGroupMembersForInvite = query({
   args: {
     token: v.string(),
     meetingId: v.id("meetings"),
+    search: v.optional(v.string()),
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -114,75 +148,110 @@ export const listGroupMembersForInvite = query({
     if (!meeting) return [];
     if (!(await canEditMeeting(ctx, userId, meeting))) return [];
 
-    const members = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", meeting.groupId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    const accepted = members.filter(
-      (m) => !m.requestStatus || m.requestStatus === "accepted" || m.requestStatus === "approved",
+    const groupId = meeting.groupId;
+    const search = args.search?.trim();
+    const limit = Math.min(
+      Math.max(args.limit ?? MEMBER_PICKER_LIMIT, 1),
+      MEMBER_PICKER_LIMIT,
     );
 
-    const memberUserIds = accepted.map((m) => m.userId);
+    // --- Resolve a BOUNDED set of candidate member userIds -------------------
+    // Never touch more than ~limit members. A search hits the users full-text
+    // index (O(matches)) and confirms membership per hit; the empty default
+    // view reads a single bounded page off the group index.
+    const memberIds = new Set<Id<"users">>();
 
-    // Batch fetch users
-    const users = await Promise.all(memberUserIds.map((id) => ctx.db.get(id)));
+    if (search) {
+      const matches = await ctx.db
+        .query("users")
+        .withSearchIndex("search_users", (q) =>
+          q.search("searchText", search),
+        )
+        .take(USER_SEARCH_SCAN_LIMIT);
+      for (const user of matches) {
+        if (memberIds.size >= limit) break;
+        const membership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", groupId).eq("userId", user._id),
+          )
+          .first();
+        if (membership && isActiveMembership(membership)) {
+          memberIds.add(user._id);
+        }
+      }
+    } else {
+      // Empty search: a bounded page of active members. Take some slack so
+      // left/pending rows filtered out below don't shrink the page too far.
+      const memberships = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .take(limit * 3);
+      for (const m of memberships) {
+        if (memberIds.size >= limit) break;
+        if (isActiveMembership(m)) memberIds.add(m.userId);
+      }
+      // Always surface the caller (test-invite-to-self) even in a group large
+      // enough that they fall outside the first page.
+      if (!memberIds.has(userId)) {
+        const selfMembership = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_group_user", (q) =>
+            q.eq("groupId", groupId).eq("userId", userId),
+          )
+          .first();
+        if (selfMembership && isActiveMembership(selfMembership)) {
+          memberIds.add(userId);
+        }
+      }
+    }
 
-    // Existing invites & RSVPs (one read each per recipient is fine — group sizes
-    // are bounded; matches the pattern in groupMembers.list).
-    const existingInvites = await ctx.db
-      .query("eventInvites")
-      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .collect();
-    const inviteByUser = new Map(
-      existingInvites.map((inv) => [inv.recipientUserId, inv]),
-    );
-
-    const rsvps = await ctx.db
-      .query("meetingRsvps")
-      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .collect();
-    const rsvpUserIds = new Set(rsvps.map((r) => r.userId));
-
-    // Active push tokens per user, scoped to current environment. Mirrors the
-    // `getActiveTokensForUsers` internalQuery so a member with no phone but a
-    // live push token isn't falsely shown as uninvitable.
+    // --- Hydrate each candidate (bounded per-recipient reads) ----------------
+    // `.first()` existence checks instead of collecting whole tables keeps this
+    // to a handful of reads per member.
     const environment = getCurrentEnvironment();
-    const tokenCounts = await Promise.all(
-      memberUserIds.map(async (id) => {
-        const tokens = await ctx.db
+    const rows = await Promise.all(
+      [...memberIds].map(async (id) => {
+        const user = await ctx.db.get(id);
+        if (!user) return null;
+
+        const pushToken = await ctx.db
           .query("pushTokens")
           .withIndex("by_user", (q) => q.eq("userId", id))
           .filter((q) => q.eq(q.field("environment"), environment))
-          .collect();
-        return [id, tokens.length] as const;
-      }),
-    );
-    const hasPushByUser = new Map(
-      tokenCounts.map(([id, n]) => [id, n > 0]),
-    );
+          .first();
+        const existing = await ctx.db
+          .query("eventInvites")
+          .withIndex("by_meeting_recipient", (q) =>
+            q.eq("meetingId", args.meetingId).eq("recipientUserId", id),
+          )
+          .first();
+        const rsvp = await ctx.db
+          .query("meetingRsvps")
+          .withIndex("by_meeting_user", (q) =>
+            q.eq("meetingId", args.meetingId).eq("userId", id),
+          )
+          .first();
 
-    return users
-      .map((user, i) => {
-        if (!user) return null;
-        const id = memberUserIds[i];
-        const existing = inviteByUser.get(id);
         return {
           userId: id,
           firstName: user.firstName ?? null,
           lastName: user.lastName ?? null,
           profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
           hasPhone: !!user.phone,
-          hasPushTokens: hasPushByUser.get(id) ?? false,
+          hasPushTokens: !!pushToken,
           alreadyInvited: !!existing,
           inviteStatus: existing?.status ?? null,
           inviteRound: existing?.inviteRound ?? 0,
           lastSentAt: existing?.lastSentAt ?? null,
-          alreadyRsvped: rsvpUserIds.has(id),
+          alreadyRsvped: !!rsvp,
           isSelf: id === userId,
         };
-      })
+      }),
+    );
+
+    return rows
       .filter((m): m is NonNullable<typeof m> => m !== null)
       .sort((a, b) => {
         // Self first (for the "test invite to me" workflow), then
@@ -229,6 +298,12 @@ export const initiate = mutation({
     if (!(await canEditMeeting(ctx, userId, meeting))) {
       throw new Error(
         "Only the event creator, group leaders, or community admins can invite members",
+      );
+    }
+
+    if (new Set(args.recipientUserIds).size > MAX_INVITE_RECIPIENTS) {
+      throw new Error(
+        `You can invite up to ${MAX_INVITE_RECIPIENTS} people at a time.`,
       );
     }
 
@@ -350,6 +425,12 @@ export const reinvite = mutation({
     if (!(await canEditMeeting(ctx, userId, meeting))) {
       throw new Error(
         "Only the event creator, group leaders, or community admins can re-invite members",
+      );
+    }
+
+    if (new Set(args.recipientUserIds).size > MAX_INVITE_RECIPIENTS) {
+      throw new Error(
+        `You can re-invite up to ${MAX_INVITE_RECIPIENTS} people at a time.`,
       );
     }
 
