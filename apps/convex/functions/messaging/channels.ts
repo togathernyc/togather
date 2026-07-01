@@ -28,6 +28,7 @@ import {
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import { resolveServingChannelIds } from "../scheduling/serving";
 
 // ============================================================================
 // Constants
@@ -1447,10 +1448,24 @@ export const getInboxChannels = query({
   args: {
     token: v.string(),
     communityId: v.optional(v.id("communities")),
+    /**
+     * When set, the inbox is restricted to the serving context of this event
+     * plan (the plan's team + linked meeting channels, via
+     * `resolveServingChannelIds`) and returned FLAT — every allowed channel is
+     * its own primary inbox item, with no nested sub-channel grouping. Used by
+     * the mobile inbox while in serving mode.
+     */
+    servingPlanId: v.optional(v.id("eventPlans")),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const inboxQueryNow = Date.now();
+
+    // In serving mode, resolve the allowed channel-id set up front. `null`
+    // means "no filtering" (normal inbox); a Set means "restrict + flatten".
+    const servingChannelIds = args.servingPlanId
+      ? await resolveServingChannelIds(ctx, args.servingPlanId)
+      : null;
 
     // Get all active group memberships for this user
     const groupMemberships = await ctx.db
@@ -1936,6 +1951,28 @@ export const getInboxChannels = query({
     // otherwise it keeps the (now stale) position from the first sort and the
     // inbox is no longer ordered by most-recent visible activity.
     dedupedResult.sort(byMostRecentActivity);
+
+    // Serving mode: restrict to the plan's serving channels and FLATTEN. Every
+    // allowed channel becomes its own primary inbox item (one channel per
+    // returned entry) — no nested sub-channel grouping — so the serving inbox
+    // reads as a flat list of the channels relevant to the event. Ordered by
+    // most-recent activity across the (now single-channel) entries.
+    if (servingChannelIds) {
+      const flattened: typeof dedupedResult = [];
+      for (const groupEntry of dedupedResult) {
+        for (const channel of groupEntry.channels) {
+          if (!servingChannelIds.has(channel._id)) continue;
+          flattened.push({
+            group: groupEntry.group,
+            channels: [channel],
+            userRole: groupEntry.userRole,
+          });
+        }
+      }
+      flattened.sort(byMostRecentActivity);
+      return flattened;
+    }
+
     return dedupedResult;
   },
 });

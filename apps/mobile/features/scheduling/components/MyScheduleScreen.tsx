@@ -28,6 +28,9 @@ import { useTheme } from "@hooks/useTheme";
 import { EmptyState } from "@components/ui/EmptyState";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useEventModeStore } from "@/stores/eventModeStore";
 import {
   formatDateHeading,
   dateKey,
@@ -63,6 +66,37 @@ export function MyScheduleScreen() {
   const { respond, declineWith, busyId } = useRespondToAssignment();
   const [declineTarget, setDeclineTarget] =
     useState<Id<"roleAssignments"> | null>(null);
+
+  // Serving-mode entry point. Mirrors the inbox re-entry chip: only offered when
+  // the backend says the user is eligible (a confirmed assignment on an event
+  // within the serving window) and they aren't already in serving mode.
+  const { community } = useAuth();
+  const { primaryColor } = useCommunityTheme();
+  const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const enterServingMode = useEventModeStore((s) => s.enter);
+  const eventTasksEnabled =
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled === true;
+  const servingEligibility = useAuthenticatedQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    eventTasksEnabled ? {} : "skip",
+  ) as
+    | {
+        plans: { planId: string; title: string; startsAt: number }[];
+      }
+    | undefined;
+  // One entry button per eligible plan so the volunteer can see which event
+  // they're entering (each has its own runsheet + tasks). Hidden while already
+  // serving.
+  const servingPlans = isServingMode ? [] : servingEligibility?.plans ?? [];
+
+  const handleEnterServing = useCallback(
+    (planId: string) => {
+      enterServingMode(planId);
+      router.replace("/(tabs)/serving-tasks" as never);
+    },
+    [enterServingMode, router],
+  );
 
   // Pending requests pinned at top; the rest grouped by calendar day.
   const { pending, dateGroups } = useMemo(() => {
@@ -126,6 +160,35 @@ export function MyScheduleScreen() {
         </Text>
         <View style={styles.headerSpacer} />
       </View>
+
+      {servingPlans.length > 0 ? (
+        <View style={styles.servingBannerGroup}>
+          {servingPlans.map((plan) => (
+            <Pressable
+              key={plan.planId}
+              onPress={() => handleEnterServing(plan.planId)}
+              style={({ pressed }) => [
+                styles.servingBanner,
+                { backgroundColor: primaryColor },
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Enter serving mode for ${plan.title}`}
+            >
+              <Ionicons name="rocket-outline" size={20} color="#fff" />
+              <View style={styles.servingBannerTextWrap}>
+                <Text style={styles.servingBannerTitle} numberOfLines={1}>
+                  {plan.title}
+                </Text>
+                <Text style={styles.servingBannerSub}>
+                  {formatDateHeading(plan.startsAt)} · Enter serving mode
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#fff" />
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {assignments === undefined ? (
         <View style={styles.centered}>
@@ -381,6 +444,33 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  servingBannerGroup: {
+    gap: 8,
+    marginTop: 12,
+  },
+  servingBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  servingBannerTextWrap: {
+    flex: 1,
+  },
+  servingBannerTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  servingBannerSub: {
+    fontSize: 13,
+    color: "#fff",
+    opacity: 0.9,
+    marginTop: 2,
   },
   scrollContent: {
     padding: 16,
