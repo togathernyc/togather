@@ -41,6 +41,11 @@ const MAX_INVITE_RECIPIENTS = 20;
 // single bounded page off the group index — neither fans reads out across the
 // whole group the way the old collect-everything implementation did.
 const MEMBER_PICKER_LIMIT = 50;
+// How many raw group-member rows to read for the empty (default) picker view
+// before filtering to active members in memory. A DB `.filter()` would still
+// read (and count against the limit) every leftAt-set row it scans past, so a
+// high-churn group could re-trip the read limit; this caps the read instead.
+const DEFAULT_MEMBER_SCAN_LIMIT = 300;
 // How many full-text matches to scan before narrowing to group members. The
 // users search index is global (not group-scoped), so we over-fetch and then
 // filter to members. 500 matches the cap used by admin People search and
@@ -186,13 +191,15 @@ export const listGroupMembersForInvite = query({
         }
       }
     } else {
-      // Empty search: a bounded page of active members. Take some slack so
-      // left/pending rows filtered out below don't shrink the page too far.
+      // Empty search: read a BOUNDED page of raw rows off the index, then
+      // filter to active members in memory. Filtering in the DB query would
+      // still read every leftAt-set row it scans past (counting against the
+      // read limit), so a group with lots of departed members could re-trip
+      // the exact error this change prevents.
       const memberships = await ctx.db
         .query("groupMembers")
         .withIndex("by_group", (q) => q.eq("groupId", groupId))
-        .filter((q) => q.eq(q.field("leftAt"), undefined))
-        .take(limit * 3);
+        .take(DEFAULT_MEMBER_SCAN_LIMIT);
       for (const m of memberships) {
         if (memberIds.size >= limit) break;
         if (isActiveMembership(m)) memberIds.add(m.userId);
@@ -448,8 +455,14 @@ export const reinvite = mutation({
     let onCooldown = 0;
     let notFound = 0;
     const inviteIdsToSend: Id<"eventInvites">[] = [];
+    // Dedupe so a direct caller passing the same id repeatedly (which slips
+    // past the Set-based cap above) can't re-send to one recipient many times.
+    const seen = new Set<string>();
 
     for (const recipientUserId of args.recipientUserIds) {
+      if (seen.has(recipientUserId)) continue;
+      seen.add(recipientUserId);
+
       const existing = await ctx.db
         .query("eventInvites")
         .withIndex("by_meeting_recipient", (q) =>

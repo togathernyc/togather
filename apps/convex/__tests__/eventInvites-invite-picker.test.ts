@@ -194,6 +194,30 @@ describe("listGroupMembersForInvite (bounded picker query)", () => {
     expect(self?.isSelf).toBe(true);
   });
 
+  test("excludes members who have left the group from the default view", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    // Mark one member as having left the group.
+    const leftMember = data.memberIds[0];
+    await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", data.groupId).eq("userId", leftMember),
+        )
+        .first();
+      await ctx.db.patch(membership!._id, { leftAt: Date.now() });
+    });
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    expect(rows.map((r) => r.userId)).not.toContain(leftMember);
+  });
+
   test("a member beyond the first page is absent by default but found via server-side search", async () => {
     const t = convexTest(schema, modules);
     const data = await seedLargeGroupWithMeeting(t);
@@ -324,5 +348,41 @@ describe("initiate recipient cap", () => {
       skippedNotMember: 1,
       skippedRsvped: 1,
     });
+  });
+});
+
+describe("reinvite recipient handling", () => {
+  test("dedupes duplicate ids so a recipient is only re-sent once", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const target = data.memberIds[0];
+    await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      // Existing invite, last sent well outside the re-invite cooldown window.
+      await ctx.db.insert("eventInvites", {
+        meetingId: data.meetingId,
+        groupId: data.groupId,
+        communityId: group!.communityId,
+        sentById: data.leaderId,
+        recipientUserId: target,
+        channels: ["push", "sms"],
+        status: "sent",
+        inviteRound: 1,
+        lastSentAt: ts - 25 * 60 * 60 * 1000,
+        createdAt: ts - 25 * 60 * 60 * 1000,
+      });
+    });
+
+    // Same id submitted many times (a direct, non-UI caller) must collapse to
+    // a single re-invite — otherwise the send action texts them once per entry.
+    const result = await t.mutation(api.functions.eventInvites.reinvite, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+      recipientUserIds: [target, target, target, target, target],
+    });
+
+    expect(result.reinvited).toBe(1);
   });
 });
