@@ -326,6 +326,53 @@ describe("listGroupMembersForInvite (bounded picker query)", () => {
     expect(rows.every((r) => r.userId === seeded.leaderId || r.userId === seeded.activeId)).toBe(true);
   });
 
+  test("surfaces invite-eligible members even when the leading rows are all already invited", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    // Invite the first 55 members directly, so the leading active rows in the
+    // group index are all already-invited. Only the tail is still eligible.
+    const alreadyInvited = data.memberIds.slice(0, 55);
+    const stillEligible = data.memberIds.slice(55);
+    expect(stillEligible.length).toBeGreaterThan(0);
+
+    await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      for (const uid of alreadyInvited) {
+        await ctx.db.insert("eventInvites", {
+          meetingId: data.meetingId,
+          groupId: data.groupId,
+          communityId: group!.communityId,
+          sentById: data.leaderId,
+          recipientUserId: uid,
+          channels: ["push", "sms"],
+          status: "sent",
+          inviteRound: 1,
+          lastSentAt: ts,
+          createdAt: ts,
+        });
+      }
+    });
+
+    const rows = await t.query(
+      api.functions.eventInvites.listGroupMembersForInvite,
+      { token: data.leaderToken, meetingId: data.meetingId },
+    );
+
+    // The default picker must still show invitable members, not just a page of
+    // disabled already-invited rows.
+    const eligible = rows.filter(
+      (r) => r.hasPhone && !r.alreadyInvited && !r.alreadyRsvped && !r.isSelf,
+    );
+    expect(eligible.length).toBeGreaterThan(0);
+    // Every still-eligible member should be reachable through the default view.
+    const returnedEligibleIds = new Set(eligible.map((r) => r.userId));
+    for (const id of stillEligible) {
+      expect(returnedEligibleIds.has(id)).toBe(true);
+    }
+  });
+
   test("a member beyond the first page is absent by default but found via server-side search", async () => {
     const t = convexTest(schema, modules);
     const data = await seedLargeGroupWithMeeting(t);
