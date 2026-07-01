@@ -86,9 +86,14 @@ export function EventBlastSheet({
         >
           <TouchableOpacity
             activeOpacity={1}
-            // Tapping anywhere on the sheet outside the input (grabber, header,
-            // padding) dismisses the keyboard without closing the sheet.
-            onPress={() => Keyboard.dismiss()}
+            // Tapping the sheet outside the input (grabber, header, padding)
+            // dismisses the keyboard. Stop propagation so the press doesn't
+            // bubble to the backdrop's onClose (RN Web bubbles press events)
+            // and close the sheet out from under the user.
+            onPress={(e) => {
+              e.stopPropagation();
+              Keyboard.dismiss();
+            }}
             style={[styles.sheet, { backgroundColor: colors.surface }]}
           >
             {/* Grabber — visual affordance that this is a draggable tray */}
