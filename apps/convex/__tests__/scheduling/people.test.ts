@@ -2,7 +2,8 @@
  * Tests for `searchCommunityPeople` — the AssignSheet "search by name" leg
  * of the assign-from-community flow. Covers sort order (in-group first,
  * alpha within bucket), case-insensitive substring matching, caller
- * exclusion, placeholder visibility, the limit cap, and auth gating.
+ * inclusion (leaders can assign themselves), placeholder visibility, the
+ * limit cap, and auth gating.
  */
 
 import { describe, it, expect } from "vitest";
@@ -33,7 +34,8 @@ describe("searchCommunityPeople", () => {
     );
 
     // In-group bucket: channel admin/moderator/member + placeholder (added
-    // by `inviteAndAssign` in fixtures). Group leader excluded as caller.
+    // by `inviteAndAssign` in fixtures) + the group leader themselves (the
+    // caller is now included so leaders can assign themselves).
     const inGroup = results.filter((r) => r.inGroup);
     const outOfGroup = results.filter((r) => !r.inGroup);
 
@@ -75,17 +77,19 @@ describe("searchCommunityPeople", () => {
     }
   });
 
-  it("excludes the caller from results", async () => {
+  it("includes the caller so they can assign themselves", async () => {
     const { t, world } = await setupSchedulingWorld();
-    // Use channelAdmin as the caller — they're a community member, so they
-    // would otherwise appear in results.
+    // Use channelAdmin as the caller — an in-group community member who must be
+    // able to roster themselves.
     const callerToken = (await generateTokens(world.channelAdminId)).accessToken;
 
     const results = await t.query(
       api.functions.scheduling.people.searchCommunityPeople,
       { token: callerToken, groupId: world.groupId, search: "" },
     );
-    expect(results.find((r) => r.userId === world.channelAdminId)).toBeUndefined();
+    const self = results.find((r) => r.userId === world.channelAdminId);
+    expect(self).toBeDefined();
+    expect(self!.inGroup).toBe(true);
   });
 
   it("includes placeholders with isPlaceholder: true and correct inGroup", async () => {
@@ -123,7 +127,7 @@ describe("searchCommunityPeople", () => {
       { token: leaderToken, groupId: world.groupId, search: "", limit: 2 },
     );
 
-    // Both must contain every active group member (caller excluded).
+    // Both must contain every active group member (caller included).
     const inGroupFull = full.filter((r) => r.inGroup).map((r) => r.userId);
     const inGroupTiny = tinyLimit.filter((r) => r.inGroup).map((r) => r.userId);
     expect(new Set(inGroupTiny)).toEqual(new Set(inGroupFull));
@@ -304,7 +308,7 @@ describe("searchCommunityPeople", () => {
       { token: leaderToken, groupId, search: "" },
     );
 
-    // 1) Completeness: EVERY group member appears (caller excluded), each
+    // 1) Completeness: EVERY group member appears (caller included), each
     //    flagged inGroup. Recency-bounded fallbacks would have dropped these
     //    (oldest lastLogin), so their presence proves the group union.
     const inGroupIds = new Set(
@@ -343,7 +347,7 @@ describe("searchCommunityPeople", () => {
       api.functions.scheduling.people.searchCommunityPeople,
       { token: adminToken, groupId: world.groupId, search: "" },
     );
-    // No throw, and the caller (community admin) is excluded.
-    expect(results.find((r) => r.userId === world.communityAdminId)).toBeUndefined();
+    // No throw — a community admin who isn't a group member may still search.
+    expect(Array.isArray(results)).toBe(true);
   });
 });

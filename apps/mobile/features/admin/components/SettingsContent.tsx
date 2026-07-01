@@ -252,12 +252,15 @@ export function SettingsContent() {
   };
 
   const handleToggleChurchFeature = async (
-    feature: "prayerEnabled",
+    feature: "prayerEnabled" | "eventTasksEnabled",
     value: boolean,
   ) => {
     setIsSavingChurchFeatures(true);
     try {
-      const current = settings?.churchFeatures ?? { prayerEnabled: false };
+      const current = settings?.churchFeatures ?? {
+        prayerEnabled: false,
+        eventTasksEnabled: false,
+      };
       await updateSettings({
         churchFeatures: { ...current, [feature]: value },
       });
@@ -680,6 +683,20 @@ export function SettingsContent() {
             <Switch
               value={settings?.churchFeatures?.prayerEnabled ?? false}
               onValueChange={(v) => handleToggleChurchFeature("prayerEnabled", v)}
+              disabled={isSavingChurchFeatures}
+            />
+          </View>
+
+          <View style={styles.churchFeatureRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.churchFeatureName, { color: colors.text }]}>Event Tasks</Text>
+              <Text style={[styles.churchFeatureHint, { color: colors.textTertiary }]}>
+                Leaders define serving tasks per event; volunteers see their tasks in Serving Mode.
+              </Text>
+            </View>
+            <Switch
+              value={settings?.churchFeatures?.eventTasksEnabled ?? false}
+              onValueChange={(v) => handleToggleChurchFeature("eventTasksEnabled", v)}
               disabled={isSavingChurchFeatures}
             />
           </View>

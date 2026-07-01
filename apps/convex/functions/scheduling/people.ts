@@ -54,8 +54,8 @@ function buildDisplayName(
 
 /**
  * Search active members of a group's community by name, flagging in-group
- * status. The caller is excluded — you cannot assign yourself through this
- * sheet, and listing yourself in the candidate set would be noise.
+ * status. The caller IS included — leaders often serve on their own teams, so
+ * they must be able to assign themselves through this sheet.
  *
  * Sort: in-group candidates first (alpha by display name), then
  * community-only candidates (alpha by display name). Capped at `limit`.
@@ -101,7 +101,6 @@ export const searchCommunityPeople = query({
     const rows = await searchCommunityMembersInternal(ctx, {
       communityId: group.communityId,
       search: args.search,
-      excludeUserIds: [callerId],
       annotateGroupId: args.groupId,
       limit: isEmptySearch ? GROUP_FULL_LIST_LIMIT : MAX_LIMIT,
       fallbackToRecentWhenEmpty: true,
