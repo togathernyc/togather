@@ -31,6 +31,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '@hooks/useTheme';
 import { useImageUpload } from '@features/chat/hooks/useImageUpload';
+import { useFileUpload } from '@features/chat/hooks/useFileUpload';
 import { Markdown } from './Markdown';
 import { MarkdownToolbar, type MarkdownAction } from './MarkdownToolbar';
 
@@ -99,6 +100,7 @@ function atLineStartPrefix(source: string, pos: number): string {
 export function MarkdownEditor({ value, onChange }: MarkdownEditorProps) {
   const { colors } = useTheme();
   const { uploadImage } = useImageUpload();
+  const { uploadFile } = useFileUpload();
   const inputRef = useRef<TextInput>(null);
 
   const [selection, setSelection] = useState<Selection>({ start: 0, end: 0 });
@@ -156,15 +158,31 @@ export function MarkdownEditor({ value, onChange }: MarkdownEditorProps) {
       const asset = result.assets[0];
       setBusyAction(action);
       try {
-        const upload = await uploadImage(asset.uri);
-        if (upload.error || !upload.url) {
-          Alert.alert('Upload failed', upload.error || 'Please try again.');
+        // Images go through the image uploader; videos must use the general
+        // file uploader (the image path forces an `image/*` content type, which
+        // the R2 backend rejects for video files).
+        let url: string | undefined;
+        let error: string | undefined;
+        if (action === 'video') {
+          const res = await uploadFile({
+            uri: asset.uri,
+            name: asset.fileName ?? 'video.mp4',
+            size: asset.fileSize ?? 0,
+            mimeType: asset.mimeType ?? 'video/mp4',
+          });
+          url = res.storagePath;
+          error = res.error;
+        } else {
+          const res = await uploadImage(asset.uri);
+          url = res.url;
+          error = res.error;
+        }
+        if (error || !url) {
+          Alert.alert('Upload failed', error || 'Please try again.');
           return;
         }
         const token =
-          action === 'video'
-            ? `!video[](${upload.url})`
-            : `![](${upload.url})`;
+          action === 'video' ? `!video[](${url})` : `![](${url})`;
         const prefix = atLineStartPrefix(value, selection.start);
         applySplice(
           replaceSelection(value, selection, `${prefix}${token}\n`),
@@ -173,7 +191,7 @@ export function MarkdownEditor({ value, onChange }: MarkdownEditorProps) {
         setBusyAction(null);
       }
     },
-    [uploadImage, value, selection, applySplice],
+    [uploadImage, uploadFile, value, selection, applySplice],
   );
 
   const handleAction = useCallback(

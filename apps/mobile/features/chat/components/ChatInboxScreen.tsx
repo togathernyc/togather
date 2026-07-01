@@ -163,6 +163,13 @@ export function ChatInboxScreen({
   // serving channels (flat) by passing `servingPlanId` to getInboxChannels.
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const activePlanId = useEventModeStore((s) => s.activePlanId);
+  const eventTasksEnabled =
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled === true;
+  // Only filter when the feature is actually enabled — a stale persisted
+  // serving flag (feature since disabled for this community) must not leave the
+  // normal inbox filtered to an old plan, since the serving tabs/Exit are hidden.
+  const inServingMode = isServingMode && eventTasksEnabled;
 
   // Fetch inbox channels using the new grouped query
   const inboxQueryArgs = useMemo(() => {
@@ -170,13 +177,13 @@ export function ChatInboxScreen({
       return "skip" as const;
     }
     const servingPlanId =
-      isServingMode && activePlanId
+      inServingMode && activePlanId
         ? (activePlanId as Id<"eventPlans">)
         : undefined;
     return servingPlanId
       ? { token, communityId, servingPlanId }
       : { token, communityId };
-  }, [userId, communityId, token, isServingMode, activePlanId]);
+  }, [userId, communityId, token, inServingMode, activePlanId]);
 
   const inboxChannels = useQuery(
     api.functions.messaging.channels.getInboxChannels,
@@ -228,9 +235,6 @@ export function ChatInboxScreen({
   // only once per session and never if they manually exited this session, so a
   // volunteer who intentionally left isn't yanked back in.
   const enterServingMode = useEventModeStore((s) => s.enter);
-  const eventTasksEnabled =
-    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
-      ?.eventTasksEnabled === true;
   const servingEligibility = useQuery(
     api.functions.scheduling.serving.getServingEligibility,
     token && eventTasksEnabled ? { token } : "skip",

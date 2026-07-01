@@ -372,7 +372,14 @@ export const deleteEvent = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requirePlanScheduler(ctx, args.planId, userId);
 
-    const [neededRoles, assignments, items] = await Promise.all([
+    const [
+      neededRoles,
+      assignments,
+      items,
+      tasks,
+      taskCompletions,
+      personalTasks,
+    ] = await Promise.all([
       ctx.db
         .query("neededRoles")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
@@ -385,6 +392,19 @@ export const deleteEvent = mutation({
       ctx.db
         .query("eventItems")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      // Event tasks, their completions, and personal serving tasks cascade too.
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("personalServingTasks")
+        .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
         .collect(),
     ]);
 
@@ -403,6 +423,9 @@ export const deleteEvent = mutation({
       ...neededRoles.map((row) => ctx.db.delete(row._id)),
       ...assignments.map((row) => ctx.db.delete(row._id)),
       ...items.map((row) => ctx.db.delete(row._id)),
+      ...tasks.map((row) => ctx.db.delete(row._id)),
+      ...taskCompletions.map((row) => ctx.db.delete(row._id)),
+      ...personalTasks.map((row) => ctx.db.delete(row._id)),
     ]);
     await ctx.db.delete(args.planId);
 

@@ -437,8 +437,11 @@ export const getPlanTaskReadiness = query({
 
     for (const task of tasks) {
       const expected = assigneesForTask(assignments, task);
-      const expectedPeople = expected.length;
+      // Distinct users: a volunteer confirmed for two roles on the same team is
+      // one expected completer for a team-level task, not two (and
+      // getMyServingTasks shows it to them once), so dedupe before counting.
       const expectedUserIds = new Set(expected.map((a) => a.userId as string));
+      const expectedPeople = expectedUserIds.size;
       const total =
         task.segment === "during"
           ? expectedPeople * timesCount
