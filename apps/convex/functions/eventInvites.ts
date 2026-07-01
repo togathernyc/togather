@@ -41,8 +41,13 @@ const MAX_INVITE_RECIPIENTS = 20;
 // single bounded page off the group index — neither fans reads out across the
 // whole group the way the old collect-everything implementation did.
 const MEMBER_PICKER_LIMIT = 50;
-// How many full-text matches to scan before narrowing to group members.
-const USER_SEARCH_SCAN_LIMIT = 100;
+// How many full-text matches to scan before narrowing to group members. The
+// users search index is global (not group-scoped), so we over-fetch and then
+// filter to members. 500 matches the cap used by admin People search and
+// lib/memberSearch.ts; leaders narrow the query further to reach a member who
+// ranks past it. Bounded so the membership checks below stay well under the
+// per-execution read limit.
+const USER_SEARCH_SCAN_LIMIT = 500;
 
 /** An active, fully-joined group membership (not left, not a pending request). */
 function isActiveMembership(m: Doc<"groupMembers">): boolean {
@@ -317,35 +322,6 @@ export const initiate = mutation({
     if (!group) throw new Error("Group not found");
     const communityId = group.communityId;
 
-    // Active members of the meeting's group
-    const memberships = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group", (q) => q.eq("groupId", meeting.groupId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-    const memberSet = new Set(
-      memberships
-        .filter((m) => !m.requestStatus || m.requestStatus === "accepted" || m.requestStatus === "approved")
-        .map((m) => m.userId),
-    );
-
-    const existing = await ctx.db
-      .query("eventInvites")
-      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .collect();
-    const existingSet = new Set(existing.map((inv) => inv.recipientUserId));
-
-    // Server-side RSVP guard. The picker disables already-RSVP'd rows, but
-    // the seed is computed once and a member can RSVP between sheet open
-    // and confirm; direct API callers also bypass the UI entirely. The
-    // intended path for messaging attendees is Text Blast, so skip them
-    // here rather than silently double-texting.
-    const rsvps = await ctx.db
-      .query("meetingRsvps")
-      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
-      .collect();
-    const rsvpSet = new Set(rsvps.map((r) => r.userId));
-
     let invited = 0;
     let alreadyInvited = 0;
     let skippedNotMember = 0;
@@ -354,19 +330,49 @@ export const initiate = mutation({
     const ts = now();
     const seen = new Set<string>();
 
+    // Validate each requested recipient with INDEXED point lookups instead of
+    // materializing the whole group / all invites / all RSVPs. Recipients are
+    // capped at MAX_INVITE_RECIPIENTS above, so this is a small, bounded number
+    // of reads even in very large groups — collecting the whole group/meeting
+    // state (the previous approach) could still blow Convex's per-execution
+    // read limit when sending into a group with thousands of members.
     for (const recipientUserId of args.recipientUserIds) {
       if (seen.has(recipientUserId)) continue;
       seen.add(recipientUserId);
 
-      if (!memberSet.has(recipientUserId)) {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", meeting.groupId).eq("userId", recipientUserId),
+        )
+        .first();
+      if (!membership || !isActiveMembership(membership)) {
         skippedNotMember++;
         continue;
       }
-      if (rsvpSet.has(recipientUserId)) {
+
+      // Server-side RSVP guard. The picker disables already-RSVP'd rows, but a
+      // member can RSVP between sheet open and confirm, and direct API callers
+      // bypass the UI entirely. The intended path for messaging attendees is
+      // Text Blast, so skip them here rather than silently double-texting.
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", args.meetingId).eq("userId", recipientUserId),
+        )
+        .first();
+      if (rsvp) {
         skippedRsvped++;
         continue;
       }
-      if (existingSet.has(recipientUserId)) {
+
+      const existing = await ctx.db
+        .query("eventInvites")
+        .withIndex("by_meeting_recipient", (q) =>
+          q.eq("meetingId", args.meetingId).eq("recipientUserId", recipientUserId),
+        )
+        .first();
+      if (existing) {
         alreadyInvited++;
         continue;
       }

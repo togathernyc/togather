@@ -267,4 +267,62 @@ describe("initiate recipient cap", () => {
 
     expect(result.invited).toBe(20);
   });
+
+  // Locks in the indexed per-recipient validation (no whole-group / whole-
+  // meeting collection): non-members, RSVP'd members, and already-invited
+  // members are each classified correctly.
+  test("validates each requested recipient with indexed lookups", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedLargeGroupWithMeeting(t);
+
+    const rsvpdMember = data.memberIds[0];
+    const invitedMember = data.memberIds[1];
+    const freshMember = data.memberIds[2];
+
+    const outsiderId = await t.run(async (ctx) => {
+      const ts = Date.now();
+      const group = await ctx.db.get(data.groupId);
+      // A member already RSVP'd — should be skipped, not re-texted.
+      await ctx.db.insert("meetingRsvps", {
+        meetingId: data.meetingId,
+        userId: rsvpdMember,
+        rsvpOptionId: 1,
+        createdAt: ts,
+        updatedAt: ts,
+      });
+      // A member already invited — should be counted as alreadyInvited.
+      await ctx.db.insert("eventInvites", {
+        meetingId: data.meetingId,
+        groupId: data.groupId,
+        communityId: group!.communityId,
+        sentById: data.leaderId,
+        recipientUserId: invitedMember,
+        channels: ["push", "sms"],
+        status: "pending",
+        inviteRound: 1,
+        lastSentAt: ts,
+        createdAt: ts,
+      });
+      // A user who is not a member of the group at all.
+      return await ctx.db.insert("users", {
+        firstName: "Not",
+        lastName: "AMember",
+        createdAt: ts,
+        updatedAt: ts,
+      });
+    });
+
+    const result = await t.mutation(api.functions.eventInvites.initiate, {
+      token: data.leaderToken,
+      meetingId: data.meetingId,
+      recipientUserIds: [rsvpdMember, invitedMember, freshMember, outsiderId],
+    });
+
+    expect(result).toEqual({
+      invited: 1,
+      alreadyInvited: 1,
+      skippedNotMember: 1,
+      skippedRsvped: 1,
+    });
+  });
 });
