@@ -101,6 +101,7 @@ export default defineSchema({
     churchFeatures: v.optional(
       v.object({
         prayerEnabled: v.boolean(),
+        eventTasksEnabled: v.optional(v.boolean()),
       }),
     ),
     // Community-level custom field definitions for People tab
@@ -2879,6 +2880,84 @@ export default defineSchema({
     .index("by_plan", ["planId"])
     // Scan items referencing a song so deleteSong can null them out (ADR-027).
     .index("by_song", ["songId"]),
+
+  /**
+   * Per-plan serving tasks (Event Tasks feature). A task is a high-level thing
+   * a team (or a specific role on that team) needs to do for an event, tagged
+   * with when it happens ("before" | "during" | "after"). Optional "how to"
+   * guidance can be plain text, a link, an R2 media asset, or a markdown doc.
+   */
+  eventTasks: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    teamId: v.id("teams"),
+    roleId: v.optional(v.id("teamRoles")), // null => team-level task
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(), // short high-level description
+    howToType: v.union(
+      v.literal("none"),
+      v.literal("text"),
+      v.literal("link"),
+      v.literal("media"),
+      v.literal("doc"),
+    ),
+    howToText: v.optional(v.string()),
+    howToUrl: v.optional(v.string()),
+    howToMediaPath: v.optional(v.string()), // r2: path
+    howToDoc: v.optional(v.string()), // markdown source
+    sortOrder: v.number(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_plan", ["planId"])
+    .index("by_plan_team", ["planId", "teamId"])
+    .index("by_plan_segment", ["planId", "segment"]),
+
+  /**
+   * A per-user completion record for an event task. "during" tasks are
+   * completed per service time, so `timeLabel` distinguishes those; "before" /
+   * "after" tasks leave it unset.
+   */
+  eventTaskCompletions: defineTable({
+    taskId: v.id("eventTasks"),
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    timeLabel: v.optional(v.string()), // set only for "during" tasks (per service time)
+    completedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_task_user", ["taskId", "userId"])
+    .index("by_plan_user", ["planId", "userId"]),
+
+  /**
+   * Ad-hoc, single-user serving tasks a user adds for themselves in serving
+   * mode. These are personal-only: they never affect the shared template
+   * (`eventTasks`) and are NOT copied when a plan is duplicated. Completion is
+   * inline (`completedAt`) since only one user ever sees the row.
+   */
+  personalServingTasks: defineTable({
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    userId: v.id("users"),
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(),
+    note: v.optional(v.string()),
+    timeLabel: v.optional(v.string()), // for "during" tasks at a specific service time
+    sortOrder: v.number(),
+    completedAt: v.optional(v.number()), // inline completion (single user, no separate table)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_plan_user", ["planId", "userId"]),
 
   /**
    * Per-community song library (ADR-027). A song lives once and is referenced
