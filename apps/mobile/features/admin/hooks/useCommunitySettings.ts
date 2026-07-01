@@ -49,7 +49,7 @@ export function useCommunitySettings() {
       logo?: string;
       exploreDefaultGroupTypes?: Id<"groupTypes">[];
       exploreDefaultMeetingType?: number;
-      churchFeatures?: { prayerEnabled: boolean };
+      churchFeatures?: { prayerEnabled: boolean; eventTasksEnabled?: boolean };
     }) => {
       if (!community?.id || !user?.id || !token) {
         throw new Error("Not authenticated");
