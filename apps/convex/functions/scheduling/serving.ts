@@ -118,11 +118,28 @@ async function servingChannelArrays(
   };
 }
 
+/** The client-facing shape of one plan the user can serve on. */
+type ServingPlan = {
+  planId: string;
+  groupId: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  teamIds: string[];
+  teamChannelIds: string[];
+  meetingChannelIds: string[];
+};
+
 /**
- * Whether the current user can enter Serving Mode and, if so, the soonest
- * active plan they'd serve on. A plan is a candidate when the user has a
- * `confirmed` role assignment on it and "now" falls inside the plan's serving
- * window. `autoEnter` is true only inside the tighter (2h before → end) window.
+ * Every plan the current user can currently enter Serving Mode for. A plan is a
+ * candidate when the user has a `confirmed` role assignment on it and "now"
+ * falls inside the plan's serving window; multiple plans can be active at once
+ * (e.g. two campuses on the same morning), so the client can render one entry
+ * per event and the volunteer picks which one they're serving. `plans` is sorted
+ * soonest-first; `activePlan` is the soonest (kept for the inbox chip / runsheet
+ * consumers). `autoEnter` is true only when exactly one plan is active and it's
+ * inside the tighter (2h before → end) window — with multiple active plans the
+ * choice is ambiguous, so we never auto-enter.
  *
  * Auth: any authenticated user.
  */
@@ -132,103 +149,76 @@ export const getServingEligibility = query({
     const userId = await requireAuth(ctx, args.token);
     const now = Date.now();
 
-    // All plans the user is confirmed for.
+    // All plans the user is confirmed for (may hold multiple roles per plan).
     const confirmed = await ctx.db
       .query("roleAssignments")
       .withIndex("by_user_status", (q) =>
         q.eq("userId", userId).eq("status", "confirmed"),
       )
       .collect();
+    const planIds = [...new Set(confirmed.map((a) => a.planId as string))];
 
-    const seenPlans = new Set<string>();
-    let best: {
-      plan: Doc<"eventPlans">;
-      startsAt: number;
-      endsAt: number;
-      teamIds: Set<string>;
-      autoEnter: boolean;
-    } | null = null;
+    const entries: (ServingPlan & { autoEnter: boolean })[] = [];
 
-    for (const assignment of confirmed) {
-      const planKey = assignment.planId as string;
-      const plan = await ctx.db.get(assignment.planId);
+    for (const planIdStr of planIds) {
+      const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
       if (!plan) continue;
 
       const startsAt = planStartsAt(plan);
       const endsAt = planEndsAt(plan);
-      const autoWindowStart = startsAt - AUTO_ENTER_LEAD_MS;
       const sameDayStart = startsAt - SAME_DAY_LEAD_MS;
 
       // Must be within the broader same-day window to be eligible at all.
       if (now < sameDayStart || now > endsAt) continue;
 
-      const autoEnter = now >= autoWindowStart && now <= endsAt;
+      const autoEnter = now >= startsAt - AUTO_ENTER_LEAD_MS && now <= endsAt;
 
-      if (!seenPlans.has(planKey)) {
-        seenPlans.add(planKey);
-      }
+      // Team ids the user is confirmed for on this plan.
+      const planAssignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+        .filter((q) => q.eq(q.field("userId"), userId))
+        .collect();
+      const teamIds = [
+        ...new Set(
+          planAssignments
+            .filter((a) => a.status === "confirmed")
+            .map((a) => a.teamId as string),
+        ),
+      ];
 
-      // Prefer the soonest-starting active plan.
-      if (best === null || startsAt < best.startsAt) {
-        best = {
-          plan,
-          startsAt,
-          endsAt,
-          teamIds: new Set<string>(),
-          autoEnter,
-        };
-      }
-    }
+      const { teamChannelIds, meetingChannelIds } = await servingChannelArrays(
+        ctx,
+        plan,
+      );
 
-    if (best === null) {
-      return {
-        eligible: false,
-        autoEnter: false,
-        activePlan: null as null | {
-          planId: string;
-          groupId: string;
-          title: string;
-          startsAt: number;
-          endsAt: number;
-          teamIds: string[];
-          teamChannelIds: string[];
-          meetingChannelIds: string[];
-        },
-      };
-    }
-
-    // Team ids the user is confirmed for on the chosen plan.
-    const planAssignments = await ctx.db
-      .query("roleAssignments")
-      .withIndex("by_plan", (q) => q.eq("planId", best!.plan._id))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .collect();
-    const teamIds = [
-      ...new Set(
-        planAssignments
-          .filter((a) => a.status === "confirmed")
-          .map((a) => a.teamId as string),
-      ),
-    ];
-
-    const { teamChannelIds, meetingChannelIds } = await servingChannelArrays(
-      ctx,
-      best.plan,
-    );
-
-    return {
-      eligible: true,
-      autoEnter: best.autoEnter,
-      activePlan: {
-        planId: best.plan._id as string,
-        groupId: best.plan.groupId as string,
-        title: best.plan.title,
-        startsAt: best.startsAt,
-        endsAt: best.endsAt,
+      entries.push({
+        planId: plan._id as string,
+        groupId: plan.groupId as string,
+        title: plan.title,
+        startsAt,
+        endsAt,
         teamIds,
         teamChannelIds,
         meetingChannelIds,
-      },
+        autoEnter,
+      });
+    }
+
+    // Soonest-first so the first entry is the natural default.
+    entries.sort((a, b) => a.startsAt - b.startsAt);
+
+    const plans: ServingPlan[] = entries.map(
+      ({ autoEnter: _autoEnter, ...plan }) => plan,
+    );
+    const activePlan: ServingPlan | null = plans[0] ?? null;
+    const autoEnter = entries.length === 1 && entries[0].autoEnter;
+
+    return {
+      eligible: plans.length > 0,
+      autoEnter,
+      activePlan,
+      plans,
     };
   },
 });
