@@ -80,7 +80,13 @@ export function ServingRunsheetScreen() {
       ]}
     >
       <ServingPlanSwitcher />
-      <NativeRunSheetView groupId={groupId} canEdit={false} />
+      <NativeRunSheetView
+        groupId={groupId}
+        canEdit={false}
+        initialPlanId={
+          (activePlanId as Id<"eventPlans"> | null) ?? undefined
+        }
+      />
     </View>
   );
 }

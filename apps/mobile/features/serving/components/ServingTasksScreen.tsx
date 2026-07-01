@@ -39,6 +39,8 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ProgressBar } from "@components/ui/ProgressBar";
 import { Markdown } from "@components/ui/Markdown";
+import { AppImage } from "@components/ui/AppImage";
+import { getMediaUrl } from "@/utils/media";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 
@@ -59,6 +61,9 @@ type HowToType = "none" | "text" | "link" | "media" | "doc";
  * the correct toggle mutation (and edit/delete affordances) can be used.
  */
 type ServingTask = {
+  /** Unique per row (a "during" task expands to one row per service time). */
+  key: string;
+  /** Real task id, passed to completion mutations. */
   taskId: string;
   title: string;
   segment: Segment;
@@ -210,19 +215,19 @@ export function ServingTasksScreen() {
             <View style={styles.taskList}>
               {segmentTasks.map((task) => (
                 <TaskRow
-                  key={task.taskId}
+                  key={task.key}
                   task={task}
                   colors={colors}
                   primaryColor={primaryColor}
-                  expanded={expandedId === task.taskId}
-                  editing={editingId === task.taskId}
+                  expanded={expandedId === task.key}
+                  editing={editingId === task.key}
                   onToggle={() => toggle(task)}
                   onPress={() =>
                     setExpandedId((cur) =>
-                      cur === task.taskId ? null : task.taskId,
+                      cur === task.key ? null : task.key,
                     )
                   }
-                  onEdit={() => setEditingId(task.taskId)}
+                  onEdit={() => setEditingId(task.key)}
                   onCancelEdit={() => setEditingId(null)}
                   onSaveEdit={async (patch) => {
                     try {
@@ -490,11 +495,18 @@ function HowTo({
         </Text>
       );
     case "media":
-      return task.howToUrl ? (
-        <Pressable onPress={() => Linking.openURL(task.howToUrl as string)}>
-          <Text style={[styles.howToLink, { color: primaryColor }]}>
-            Open attachment
-          </Text>
+      return task.howToMediaPath ? (
+        <Pressable
+          onPress={() => {
+            const url = getMediaUrl(task.howToMediaPath as string);
+            if (url) Linking.openURL(url);
+          }}
+        >
+          <AppImage
+            source={task.howToMediaPath}
+            style={styles.howToMedia}
+            resizeMode="cover"
+          />
         </Pressable>
       ) : (
         <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
@@ -643,6 +655,7 @@ const styles = StyleSheet.create({
   taskDetail: { paddingLeft: 36, paddingTop: 8 },
   howToText: { fontSize: 14, lineHeight: 20 },
   howToLink: { fontSize: 14, textDecorationLine: "underline" },
+  howToMedia: { width: "100%", height: 180, borderRadius: 8, marginTop: 2 },
   howToEmpty: { fontSize: 13, fontStyle: "italic" },
   markdownWrap: { marginTop: 2 },
   personalActions: { flexDirection: "row", gap: 16, marginTop: 10 },

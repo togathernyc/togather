@@ -475,7 +475,10 @@ export const getPlanTaskReadiness = query({
 
 /** A serving-task item as returned to the current user, per segment. */
 type ServingTaskItem = {
-  id: string;
+  /** Unique per row — a "during" template task expands to one row per time. */
+  key: string;
+  /** The real eventTasks / personalServingTasks id, for completion mutations. */
+  taskId: string;
   title: string;
   segment: "before" | "during" | "after";
   isPersonal: boolean;
@@ -563,7 +566,8 @@ export const getMyServingTasks = query({
         // One entry per service time.
         for (const time of plan.times) {
           result.during.push({
-            id: `${task._id}::${time.label}`,
+            key: `${task._id}::${time.label}`,
+            taskId: task._id as string,
             ...base,
             timeLabel: time.label,
             completed: completed.has(completionKey(task._id, time.label)),
@@ -571,7 +575,8 @@ export const getMyServingTasks = query({
         }
       } else {
         result[task.segment].push({
-          id: task._id as string,
+          key: task._id as string,
+          taskId: task._id as string,
           ...base,
           completed: completed.has(completionKey(task._id, undefined)),
         });
@@ -587,7 +592,8 @@ export const getMyServingTasks = query({
       .collect();
     for (const p of personal) {
       result[p.segment].push({
-        id: p._id as string,
+        key: p._id as string,
+        taskId: p._id as string,
         title: p.title,
         segment: p.segment,
         isPersonal: true,
