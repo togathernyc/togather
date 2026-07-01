@@ -1,7 +1,28 @@
-// Stub signatures for the Event Tasks feature — real logic lands in Agent A's pass.
+/**
+ * Scheduling — Event Tasks + personal serving tasks
+ *
+ * Event tasks (`eventTasks`) are the shared, leader-authored checklist for a
+ * plan: a team (or a specific role on that team) needs to do X "before" /
+ * "during" / "after" the event. Completion is per-serving-person
+ * (`eventTaskCompletions`); "during" tasks are completed once per service time.
+ *
+ * Personal serving tasks (`personalServingTasks`) are ad-hoc, single-user rows
+ * a volunteer adds for themselves in serving mode. They never touch the shared
+ * template, are excluded from readiness rollups, and are not copied on
+ * duplication.
+ *
+ * Auth note: this module is part of the token-based Convex auth scheme used
+ * across the backend (there is no ambient `ctx.auth` identity — see
+ * `lib/auth.ts`), so every function takes a JWT `token` and resolves the
+ * current user via `requireAuth`.
+ */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { requireAuth } from "../../lib/auth";
+import { requireGroupMember, requirePlanScheduler } from "./permissions";
 
 /** When a task happens relative to the event's service times. */
 const segmentValidator = v.union(
@@ -19,20 +40,131 @@ const howToTypeValidator = v.union(
   v.literal("doc"),
 );
 
+/** before < during < after ordering rank for a task/segment. */
+const SEGMENT_RANK: Record<string, number> = { before: 0, during: 1, after: 2 };
+
 /**
- * List all tasks for a plan (across teams/segments). Real hydration (team/role
- * names, completion state) lands in Agent A's pass.
+ * Load a plan or throw. Shared by task functions that key off a `planId`.
+ */
+async function requirePlan(
+  ctx: QueryCtx | MutationCtx,
+  planId: Id<"eventPlans">,
+): Promise<Doc<"eventPlans">> {
+  const plan = await ctx.db.get(planId);
+  if (!plan) {
+    throw new ConvexError("Event not found");
+  }
+  return plan;
+}
+
+/**
+ * Confirmed assignees of a role (or, for a team-level task with no role, of the
+ * whole team) on a plan. Used both for readiness "expected completions" and to
+ * decide whether the current user is on the hook for a template task.
+ */
+function assigneesForTask(
+  assignments: Doc<"roleAssignments">[],
+  task: Pick<Doc<"eventTasks">, "teamId" | "roleId">,
+): Doc<"roleAssignments">[] {
+  return assignments.filter((a) => {
+    if (a.status !== "confirmed") return false;
+    if (task.roleId) return a.roleId === task.roleId;
+    // Team-level task (no roleId): any confirmed role on that team.
+    return a.teamId === task.teamId;
+  });
+}
+
+/**
+ * List all tasks for a plan, ordered by (segment, then sortOrder), each
+ * enriched with its `teamName` and `roleName` (null for team-level tasks).
+ *
+ * Auth: an active member of the plan's community.
  */
 export const listPlanTasks = query({
-  args: { planId: v.id("eventPlans") },
-  handler: async (_ctx, _args) => {
-    return [];
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    // Community membership is the read gate — everyone serving on the plan can
+    // see the shared checklist. Group membership implies community membership.
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const tasks = await ctx.db
+      .query("eventTasks")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+
+    tasks.sort(
+      (a, b) =>
+        (SEGMENT_RANK[a.segment] ?? 1) - (SEGMENT_RANK[b.segment] ?? 1) ||
+        a.sortOrder - b.sortOrder,
+    );
+
+    const teamNames = new Map<string, string>();
+    const roleNames = new Map<string, string>();
+    return Promise.all(
+      tasks.map(async (task) => {
+        if (!teamNames.has(task.teamId)) {
+          const team = await ctx.db.get(task.teamId);
+          teamNames.set(task.teamId, team?.name ?? "Team");
+        }
+        let roleName: string | null = null;
+        if (task.roleId) {
+          if (!roleNames.has(task.roleId)) {
+            const role = await ctx.db.get(task.roleId);
+            roleNames.set(task.roleId, role?.name ?? "Role");
+          }
+          roleName = roleNames.get(task.roleId)!;
+        }
+        return {
+          _id: task._id,
+          planId: task.planId,
+          teamId: task.teamId,
+          roleId: task.roleId ?? null,
+          teamName: teamNames.get(task.teamId)!,
+          roleName,
+          segment: task.segment,
+          title: task.title,
+          howToType: task.howToType,
+          howToText: task.howToText,
+          howToUrl: task.howToUrl,
+          howToMediaPath: task.howToMediaPath,
+          howToDoc: task.howToDoc,
+          sortOrder: task.sortOrder,
+        };
+      }),
+    );
   },
 });
 
-/** Create a task on a plan. */
+/**
+ * Next append `sortOrder` within a (plan, team, segment) bucket.
+ */
+async function nextTaskSortOrder(
+  ctx: MutationCtx,
+  planId: Id<"eventPlans">,
+  teamId: Id<"teams">,
+  segment: "before" | "during" | "after",
+): Promise<number> {
+  const siblings = await ctx.db
+    .query("eventTasks")
+    .withIndex("by_plan_team", (q) =>
+      q.eq("planId", planId).eq("teamId", teamId),
+    )
+    .collect();
+  const inSegment = siblings.filter((t) => t.segment === segment);
+  if (inSegment.length === 0) return 0;
+  return Math.max(...inSegment.map((t) => t.sortOrder)) + 1;
+}
+
+/**
+ * Create a task on a plan.
+ *
+ * Auth: group leader / community admin for the plan's group.
+ */
 export const createTask = mutation({
   args: {
+    token: v.string(),
     planId: v.id("eventPlans"),
     teamId: v.id("teams"),
     roleId: v.optional(v.id("teamRoles")),
@@ -44,14 +176,64 @@ export const createTask = mutation({
     howToMediaPath: v.optional(v.string()),
     howToDoc: v.optional(v.string()),
   },
-  handler: async (_ctx, _args) => {
-    return null;
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
+
+    const team = await ctx.db.get(args.teamId);
+    if (!team || team.groupId !== plan.groupId) {
+      throw new ConvexError("Team does not belong to this event's group");
+    }
+    if (args.roleId) {
+      const role = await ctx.db.get(args.roleId);
+      if (!role || role.teamId !== args.teamId) {
+        throw new ConvexError("Role does not belong to the specified team");
+      }
+    }
+
+    const title = args.title.trim();
+    if (!title) {
+      throw new ConvexError("Task title cannot be empty");
+    }
+
+    const nowMs = Date.now();
+    const sortOrder = await nextTaskSortOrder(
+      ctx,
+      args.planId,
+      args.teamId,
+      args.segment,
+    );
+
+    const taskId = await ctx.db.insert("eventTasks", {
+      planId: args.planId,
+      communityId: plan.communityId,
+      teamId: args.teamId,
+      roleId: args.roleId,
+      segment: args.segment,
+      title,
+      howToType: args.howToType,
+      howToText: args.howToText,
+      howToUrl: args.howToUrl,
+      howToMediaPath: args.howToMediaPath,
+      howToDoc: args.howToDoc,
+      sortOrder,
+      createdById: userId,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    });
+
+    return { taskId };
   },
 });
 
-/** Update a task's editable fields. Only provided fields change. */
+/**
+ * Update a task's editable fields. Only provided fields change.
+ *
+ * Auth: group leader / community admin for the plan's group.
+ */
 export const updateTask = mutation({
   args: {
+    token: v.string(),
     taskId: v.id("eventTasks"),
     title: v.optional(v.string()),
     roleId: v.optional(v.id("teamRoles")),
@@ -62,80 +244,360 @@ export const updateTask = mutation({
     howToMediaPath: v.optional(v.string()),
     howToDoc: v.optional(v.string()),
   },
-  handler: async (_ctx, _args) => {
-    return null;
-  },
-});
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new ConvexError("Task not found");
+    }
+    await requirePlanScheduler(ctx, task.planId, userId);
 
-/** Delete a single task. */
-export const deleteTask = mutation({
-  args: { taskId: v.id("eventTasks") },
-  handler: async (_ctx, _args) => {
-    return null;
-  },
-});
+    if (args.roleId !== undefined) {
+      const role = await ctx.db.get(args.roleId);
+      if (!role || role.teamId !== task.teamId) {
+        throw new ConvexError("Role does not belong to the task's team");
+      }
+    }
 
-/** Reorder a plan's tasks by supplying the full ordered id list. */
-export const reorderTasks = mutation({
-  args: {
-    planId: v.id("eventPlans"),
-    orderedIds: v.array(v.id("eventTasks")),
-  },
-  handler: async (_ctx, _args) => {
-    return null;
+    const patch: Partial<Doc<"eventTasks">> = { updatedAt: Date.now() };
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      if (!title) {
+        throw new ConvexError("Task title cannot be empty");
+      }
+      patch.title = title;
+    }
+    if (args.roleId !== undefined) patch.roleId = args.roleId;
+    if (args.segment !== undefined) patch.segment = args.segment;
+    if (args.howToType !== undefined) patch.howToType = args.howToType;
+    if (args.howToText !== undefined) patch.howToText = args.howToText;
+    if (args.howToUrl !== undefined) patch.howToUrl = args.howToUrl;
+    if (args.howToMediaPath !== undefined)
+      patch.howToMediaPath = args.howToMediaPath;
+    if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
+
+    await ctx.db.patch(args.taskId, patch);
+    return { taskId: args.taskId };
   },
 });
 
 /**
- * Toggle the current user's completion of a task. `timeLabel` is set only for
- * "during" tasks (per service time).
+ * Delete a single task and its completion records.
+ *
+ * Auth: group leader / community admin for the plan's group.
+ */
+export const deleteTask = mutation({
+  args: { token: v.string(), taskId: v.id("eventTasks") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new ConvexError("Task not found");
+    }
+    await requirePlanScheduler(ctx, task.planId, userId);
+
+    const completions = await ctx.db
+      .query("eventTaskCompletions")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .collect();
+    await Promise.all(completions.map((c) => ctx.db.delete(c._id)));
+    await ctx.db.delete(args.taskId);
+
+    return { deletedCompletions: completions.length };
+  },
+});
+
+/**
+ * Reorder a plan's tasks by index over `orderedIds`. Ids that don't belong to
+ * the plan are ignored so a stale client list can't rewrite foreign rows.
+ *
+ * Auth: group leader / community admin for the plan's group.
+ */
+export const reorderTasks = mutation({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+    orderedIds: v.array(v.id("eventTasks")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requirePlanScheduler(ctx, args.planId, userId);
+
+    const nowMs = Date.now();
+    let index = 0;
+    for (const taskId of args.orderedIds) {
+      const task = await ctx.db.get(taskId);
+      if (!task || task.planId !== args.planId) continue;
+      await ctx.db.patch(taskId, { sortOrder: index, updatedAt: nowMs });
+      index += 1;
+    }
+    return { reordered: index };
+  },
+});
+
+/**
+ * Toggle the current user's completion of a task. `timeLabel` is meaningful
+ * only for "during" tasks (one completion per service time).
+ *
+ * Auth: any authenticated user (completion is personal). We still verify the
+ * caller can see the plan.
  */
 export const toggleTaskCompletion = mutation({
   args: {
+    token: v.string(),
     taskId: v.id("eventTasks"),
     timeLabel: v.optional(v.string()),
     completed: v.boolean(),
   },
-  handler: async (_ctx, _args) => {
-    return null;
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new ConvexError("Task not found");
+    }
+    const plan = await requirePlan(ctx, task.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    // timeLabel is only meaningful for "during" tasks; ignore it otherwise so
+    // "before"/"after" completions are keyed purely on (task, user).
+    const timeLabel = task.segment === "during" ? args.timeLabel : undefined;
+
+    const existingRows = await ctx.db
+      .query("eventTaskCompletions")
+      .withIndex("by_task_user", (q) =>
+        q.eq("taskId", args.taskId).eq("userId", userId),
+      )
+      .collect();
+    const match = existingRows.find((r) => r.timeLabel === timeLabel);
+
+    if (args.completed) {
+      if (!match) {
+        await ctx.db.insert("eventTaskCompletions", {
+          taskId: args.taskId,
+          planId: task.planId,
+          communityId: task.communityId,
+          userId,
+          timeLabel,
+          completedAt: Date.now(),
+        });
+      }
+    } else if (match) {
+      await ctx.db.delete(match._id);
+    }
+
+    return { taskId: args.taskId, completed: args.completed };
   },
 });
 
 /**
- * Aggregate readiness for a plan: overall done/total, per-segment, and per-team.
+ * Aggregate readiness for a plan: overall done/total, per-segment, and
+ * per-team. "Expected completions" for a task is the number of confirmed
+ * assignees of its role (team-level tasks => confirmed assignees of the team).
+ * A "during" task multiplies that expectation by the number of service times.
+ * Personal serving tasks are excluded entirely.
+ *
+ * Auth: an active member of the plan's community.
  */
 export const getPlanTaskReadiness = query({
-  args: { planId: v.id("eventPlans") },
-  handler: async (_ctx, _args) => {
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const [tasks, assignments] = await Promise.all([
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+    ]);
+
+    const timesCount = Math.max(1, plan.times.length);
+
+    const overall = { done: 0, total: 0 };
+    const bySegment = {
+      before: { done: 0, total: 0 },
+      during: { done: 0, total: 0 },
+      after: { done: 0, total: 0 },
+    };
+    const byTeam = new Map<
+      string,
+      { teamId: string; teamName: string; done: number; total: number }
+    >();
+
+    for (const task of tasks) {
+      const expectedPeople = assigneesForTask(assignments, task).length;
+      const total =
+        task.segment === "during"
+          ? expectedPeople * timesCount
+          : expectedPeople;
+
+      // Actual completions for this task, capped so an over-eager completion
+      // (e.g. someone no longer confirmed) can't push done past total.
+      const completions = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .collect();
+      const done = Math.min(completions.length, total);
+
+      overall.total += total;
+      overall.done += done;
+      bySegment[task.segment].total += total;
+      bySegment[task.segment].done += done;
+
+      const teamKey = task.teamId as string;
+      let teamEntry = byTeam.get(teamKey);
+      if (!teamEntry) {
+        const team = await ctx.db.get(task.teamId);
+        teamEntry = {
+          teamId: teamKey,
+          teamName: team?.name ?? "Team",
+          done: 0,
+          total: 0,
+        };
+        byTeam.set(teamKey, teamEntry);
+      }
+      teamEntry.total += total;
+      teamEntry.done += done;
+    }
+
     return {
-      overall: { done: 0, total: 0 },
-      bySegment: {
-        before: { done: 0, total: 0 },
-        during: { done: 0, total: 0 },
-        after: { done: 0, total: 0 },
-      },
-      byTeam: [] as Array<{
-        teamId: string;
-        teamName: string;
-        done: number;
-        total: number;
-      }>,
+      overall,
+      bySegment,
+      byTeam: Array.from(byTeam.values()),
     };
   },
 });
 
+/** A serving-task item as returned to the current user, per segment. */
+type ServingTaskItem = {
+  id: string;
+  title: string;
+  segment: "before" | "during" | "after";
+  isPersonal: boolean;
+  howToType?: string;
+  howToText?: string;
+  howToUrl?: string;
+  howToMediaPath?: string;
+  howToDoc?: string;
+  note?: string;
+  timeLabel?: string;
+  completed: boolean;
+};
+
 /**
- * The current user's serving tasks for a plan, grouped by segment. "during"
- * entries will later be expanded per `timeLabel`.
+ * The current user's serving tasks for a plan, grouped by segment. Merges:
+ *   (a) template tasks (`eventTasks`) whose role the user is confirmed for on
+ *       this plan (team-level tasks => any confirmed role on that team), and
+ *   (b) the user's personal serving tasks (`personalServingTasks`).
  *
- * Returned items will later carry an `isPersonal` boolean flag so personal
- * (`personalServingTasks`) and assigned (`eventTasks`) tasks can be merged per
- * segment in the serving UI.
+ * "during" template tasks expand to one entry per service time (timeLabel set),
+ * with `completed` resolved per (task, user, timeLabel). Personal "during"
+ * tasks keep their own timeLabel.
+ *
+ * Auth: an active member of the plan's community.
  */
 export const getMyServingTasks = query({
-  args: { planId: v.id("eventPlans") },
-  handler: async (_ctx, _args) => {
-    return { before: [], during: [], after: [] };
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const result: Record<
+      "before" | "during" | "after",
+      ServingTaskItem[]
+    > = { before: [], during: [], after: [] };
+
+    // The roles / teams the user is confirmed for on this plan.
+    const myAssignments = await ctx.db
+      .query("roleAssignments")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .filter((q) => q.eq(q.field("userId"), userId))
+      .collect();
+    const myConfirmed = myAssignments.filter((a) => a.status === "confirmed");
+    const confirmedRoleIds = new Set(myConfirmed.map((a) => a.roleId as string));
+    const confirmedTeamIds = new Set(myConfirmed.map((a) => a.teamId as string));
+
+    // (a) Assigned template tasks.
+    const tasks = await ctx.db
+      .query("eventTasks")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+
+    // Completions for this user on this plan, indexed by (taskId, timeLabel).
+    const myCompletions = await ctx.db
+      .query("eventTaskCompletions")
+      .withIndex("by_plan_user", (q) =>
+        q.eq("planId", args.planId).eq("userId", userId),
+      )
+      .collect();
+    const completionKey = (taskId: string, timeLabel?: string) =>
+      `${taskId}::${timeLabel ?? ""}`;
+    const completed = new Set(
+      myCompletions.map((c) => completionKey(c.taskId, c.timeLabel)),
+    );
+
+    for (const task of tasks) {
+      const mine = task.roleId
+        ? confirmedRoleIds.has(task.roleId as string)
+        : confirmedTeamIds.has(task.teamId as string);
+      if (!mine) continue;
+
+      const base = {
+        title: task.title,
+        segment: task.segment,
+        isPersonal: false as const,
+        howToType: task.howToType,
+        howToText: task.howToText,
+        howToUrl: task.howToUrl,
+        howToMediaPath: task.howToMediaPath,
+        howToDoc: task.howToDoc,
+      };
+
+      if (task.segment === "during") {
+        // One entry per service time.
+        for (const time of plan.times) {
+          result.during.push({
+            id: `${task._id}::${time.label}`,
+            ...base,
+            timeLabel: time.label,
+            completed: completed.has(completionKey(task._id, time.label)),
+          });
+        }
+      } else {
+        result[task.segment].push({
+          id: task._id as string,
+          ...base,
+          completed: completed.has(completionKey(task._id, undefined)),
+        });
+      }
+    }
+
+    // (b) Personal serving tasks for this user on this plan.
+    const personal = await ctx.db
+      .query("personalServingTasks")
+      .withIndex("by_plan_user", (q) =>
+        q.eq("planId", args.planId).eq("userId", userId),
+      )
+      .collect();
+    for (const p of personal) {
+      result[p.segment].push({
+        id: p._id as string,
+        title: p.title,
+        segment: p.segment,
+        isPersonal: true,
+        note: p.note,
+        timeLabel: p.timeLabel,
+        completed: p.completedAt !== undefined,
+      });
+    }
+
+    return result;
   },
 });
 
@@ -143,48 +605,130 @@ export const getMyServingTasks = query({
 // Personal (ad-hoc, single-user) serving tasks — never part of the template.
 // ============================================================================
 
+/**
+ * Load a personal task and assert the current user owns it.
+ */
+async function requireOwnedPersonalTask(
+  ctx: MutationCtx,
+  taskId: Id<"personalServingTasks">,
+  userId: Id<"users">,
+): Promise<Doc<"personalServingTasks">> {
+  const task = await ctx.db.get(taskId);
+  if (!task) {
+    throw new ConvexError("Task not found");
+  }
+  if (task.userId !== userId) {
+    throw new ConvexError("You can only manage your own personal tasks");
+  }
+  return task;
+}
+
 /** Add a personal serving task for the current user on a plan. */
 export const addPersonalTask = mutation({
   args: {
+    token: v.string(),
     planId: v.id("eventPlans"),
     segment: segmentValidator,
     title: v.string(),
     note: v.optional(v.string()),
     timeLabel: v.optional(v.string()),
   },
-  handler: async (_ctx, _args) => {
-    return null;
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const title = args.title.trim();
+    if (!title) {
+      throw new ConvexError("Task title cannot be empty");
+    }
+
+    // Append order within this user's tasks on the plan.
+    const existing = await ctx.db
+      .query("personalServingTasks")
+      .withIndex("by_plan_user", (q) =>
+        q.eq("planId", args.planId).eq("userId", userId),
+      )
+      .collect();
+    const sortOrder =
+      existing.length === 0
+        ? 0
+        : Math.max(...existing.map((t) => t.sortOrder)) + 1;
+
+    const nowMs = Date.now();
+    const taskId = await ctx.db.insert("personalServingTasks", {
+      planId: args.planId,
+      communityId: plan.communityId,
+      userId,
+      segment: args.segment,
+      title,
+      note: args.note,
+      timeLabel: args.segment === "during" ? args.timeLabel : undefined,
+      sortOrder,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    });
+
+    return { taskId };
   },
 });
 
-/** Update a personal task's editable fields. */
+/** Update a personal task's editable fields (owner only). */
 export const updatePersonalTask = mutation({
   args: {
+    token: v.string(),
     taskId: v.id("personalServingTasks"),
     title: v.optional(v.string()),
     note: v.optional(v.string()),
     segment: v.optional(segmentValidator),
   },
-  handler: async (_ctx, _args) => {
-    return null;
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireOwnedPersonalTask(ctx, args.taskId, userId);
+
+    const patch: Partial<Doc<"personalServingTasks">> = {
+      updatedAt: Date.now(),
+    };
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      if (!title) {
+        throw new ConvexError("Task title cannot be empty");
+      }
+      patch.title = title;
+    }
+    if (args.note !== undefined) patch.note = args.note;
+    if (args.segment !== undefined) patch.segment = args.segment;
+
+    await ctx.db.patch(args.taskId, patch);
+    return { taskId: args.taskId };
   },
 });
 
-/** Delete a personal task. */
+/** Delete a personal task (owner only). */
 export const deletePersonalTask = mutation({
-  args: { taskId: v.id("personalServingTasks") },
-  handler: async (_ctx, _args) => {
-    return null;
+  args: { token: v.string(), taskId: v.id("personalServingTasks") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireOwnedPersonalTask(ctx, args.taskId, userId);
+    await ctx.db.delete(args.taskId);
+    return { taskId: args.taskId };
   },
 });
 
-/** Toggle inline completion of a personal task for the current user. */
+/** Toggle inline completion of a personal task for the current user (owner). */
 export const togglePersonalTask = mutation({
   args: {
+    token: v.string(),
     taskId: v.id("personalServingTasks"),
     completed: v.boolean(),
   },
-  handler: async (_ctx, _args) => {
-    return null;
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireOwnedPersonalTask(ctx, args.taskId, userId);
+    await ctx.db.patch(args.taskId, {
+      completedAt: args.completed ? Date.now() : undefined,
+      updatedAt: Date.now(),
+    });
+    return { taskId: args.taskId, completed: args.completed };
   },
 });

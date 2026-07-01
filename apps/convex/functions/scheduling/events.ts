@@ -241,6 +241,36 @@ export const duplicateEvent = mutation({
       ),
     );
 
+    // Copy the shared event-tasks template (Event Tasks feature) onto the new
+    // plan. Per-user completions (`eventTaskCompletions`) and personal ad-hoc
+    // tasks (`personalServingTasks`) are deliberately NOT copied — a duplicate
+    // starts with an empty completion state and no personal tasks.
+    const tasks = await ctx.db
+      .query("eventTasks")
+      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+      .collect();
+    await Promise.all(
+      tasks.map((task) =>
+        ctx.db.insert("eventTasks", {
+          planId: newPlanId,
+          communityId: task.communityId,
+          teamId: task.teamId,
+          roleId: task.roleId,
+          segment: task.segment,
+          title: task.title,
+          howToType: task.howToType,
+          howToText: task.howToText,
+          howToUrl: task.howToUrl,
+          howToMediaPath: task.howToMediaPath,
+          howToDoc: task.howToDoc,
+          sortOrder: task.sortOrder,
+          createdById: userId,
+          createdAt: nowMs,
+          updatedAt: nowMs,
+        }),
+      ),
+    );
+
     return { planId: newPlanId };
   },
 });
