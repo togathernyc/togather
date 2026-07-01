@@ -94,7 +94,7 @@ export function EventTasksScreen() {
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { community } = useAuth();
+  const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
     plan_id: string;
     group_id: string;
@@ -116,8 +116,13 @@ export function EventTasksScreen() {
     api.functions.groups.queries.getById,
     group_id ? { groupId } : "skip",
   ) as { userRole?: string } | null | undefined;
+  // Community admins can manage event tasks even when they aren't a member/leader
+  // of this group (matching the backend scheduler permission), so `getById`
+  // returns no `userRole` for them.
   const isLeader =
-    groupData?.userRole === "leader" || groupData?.userRole === "admin";
+    groupData?.userRole === "leader" ||
+    groupData?.userRole === "admin" ||
+    user?.is_admin === true;
 
   const canView = eventTasksEnabled && isLeader;
 
@@ -434,10 +439,14 @@ export function EventTasksScreen() {
           emptyOption={{ label: "Team-level (no role)" }}
           onSelect={(id) => {
             if (rolePickerTask) {
-              // `updateTask.roleId` is optional; passing undefined clears it.
-              handlePatch(rolePickerTask._id, {
-                roleId: (id as Id<"teamRoles">) ?? undefined,
-              });
+              // "Team-level (no role)" sends no id → clear the role explicitly
+              // (an omitted roleId can't be distinguished from a clear intent).
+              handlePatch(
+                rolePickerTask._id,
+                id
+                  ? { roleId: id as Id<"teamRoles"> }
+                  : { clearRole: true },
+              );
             }
             setRolePickerTask(null);
           }}

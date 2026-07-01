@@ -238,6 +238,10 @@ export const updateTask = mutation({
     title: v.optional(v.string()),
     roleId: v.optional(v.id("teamRoles")),
     segment: v.optional(segmentValidator),
+    // Set true to convert a role-scoped task back to a team-level task. Needed
+    // because an omitted `roleId` and a "clear the role" intent both look like
+    // `undefined` on the wire.
+    clearRole: v.optional(v.boolean()),
     howToType: v.optional(howToTypeValidator),
     howToText: v.optional(v.string()),
     howToUrl: v.optional(v.string()),
@@ -267,7 +271,8 @@ export const updateTask = mutation({
       }
       patch.title = title;
     }
-    if (args.roleId !== undefined) patch.roleId = args.roleId;
+    if (args.clearRole) patch.roleId = undefined;
+    else if (args.roleId !== undefined) patch.roleId = args.roleId;
     if (args.segment !== undefined) patch.segment = args.segment;
     if (args.howToType !== undefined) patch.howToType = args.howToType;
     if (args.howToText !== undefined) patch.howToText = args.howToText;
@@ -417,6 +422,7 @@ export const getPlanTaskReadiness = query({
     ]);
 
     const timesCount = Math.max(1, plan.times.length);
+    const validTimeLabels = new Set(plan.times.map((t) => t.label));
 
     const overall = { done: 0, total: 0 };
     const bySegment = {
@@ -430,19 +436,31 @@ export const getPlanTaskReadiness = query({
     >();
 
     for (const task of tasks) {
-      const expectedPeople = assigneesForTask(assignments, task).length;
+      const expected = assigneesForTask(assignments, task);
+      const expectedPeople = expected.length;
+      const expectedUserIds = new Set(expected.map((a) => a.userId as string));
       const total =
         task.segment === "during"
           ? expectedPeople * timesCount
           : expectedPeople;
 
-      // Actual completions for this task, capped so an over-eager completion
-      // (e.g. someone no longer confirmed) can't push done past total.
+      // Count only completions from people who are currently expected to do
+      // this task (a since-removed assignee, or anyone calling the mutation
+      // directly, must not push readiness forward), and — for "during" tasks —
+      // only completions tagged with a real service time. Capped at total as a
+      // final guard against duplicate rows.
       const completions = await ctx.db
         .query("eventTaskCompletions")
         .withIndex("by_task", (q) => q.eq("taskId", task._id))
         .collect();
-      const done = Math.min(completions.length, total);
+      const validCompletions = completions.filter((c) => {
+        if (!expectedUserIds.has(c.userId as string)) return false;
+        if (task.segment === "during") {
+          return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+        }
+        return true;
+      });
+      const done = Math.min(validCompletions.length, total);
 
       overall.total += total;
       overall.done += done;

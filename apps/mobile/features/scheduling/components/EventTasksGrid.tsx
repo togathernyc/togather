@@ -69,6 +69,8 @@ export type RoleOption = { _id: Id<"teamRoles">; name: string; color?: string };
 export type TaskPatch = {
   title?: string;
   roleId?: Id<"teamRoles">;
+  /** Convert a role-scoped task back to team-level (see updateTask). */
+  clearRole?: boolean;
   segment?: Segment;
 } & HowToPatch;
 
