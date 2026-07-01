@@ -18,25 +18,30 @@ import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { NativeRunSheetView } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 
 export function ServingRunsheetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const activePlanId = useEventModeStore((s) => s.activePlanId);
 
   // The owning group id isn't stored client-side; resolve it from serving
-  // eligibility (which returns the active plan's groupId).
+  // eligibility. Prefer the plan the user has switched to (activePlanId), so the
+  // run sheet follows the ServingPlanSwitcher; fall back to the soonest plan.
   const eligibility = useAuthenticatedQuery(
     api.functions.scheduling.serving.getServingEligibility,
     isServingMode ? {} : "skip",
   ) as
-    | { activePlan: { groupId: string } | null }
+    | {
+        activePlan: { groupId: string } | null;
+        plans: { planId: string; groupId: string }[];
+      }
     | null
     | undefined;
 
-  const groupId = eligibility?.activePlan?.groupId as
-    | Id<"groups">
-    | undefined;
+  const groupId = (eligibility?.plans?.find((p) => p.planId === activePlanId)
+    ?.groupId ?? eligibility?.activePlan?.groupId) as Id<"groups"> | undefined;
 
   if (!isServingMode) {
     return (
@@ -74,6 +79,7 @@ export function ServingRunsheetScreen() {
         { backgroundColor: colors.background, paddingTop: insets.top },
       ]}
     >
+      <ServingPlanSwitcher />
       <NativeRunSheetView groupId={groupId} canEdit={false} />
     </View>
   );

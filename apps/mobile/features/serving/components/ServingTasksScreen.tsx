@@ -40,6 +40,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ProgressBar } from "@components/ui/ProgressBar";
 import { Markdown } from "@components/ui/Markdown";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 
 type Segment = "before" | "during" | "after";
 
@@ -170,14 +171,6 @@ export function ServingTasksScreen() {
     );
   }
 
-  if (tasks === undefined) {
-    return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
-  }
-
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -186,9 +179,15 @@ export function ServingTasksScreen() {
         paddingBottom: insets.bottom + 32,
       }}
     >
+      <ServingPlanSwitcher />
       <Text style={[styles.screenTitle, { color: colors.text }]}>My tasks</Text>
 
-      {SEGMENTS.map(({ key, label }) => {
+      {tasks === undefined ? (
+        <View style={styles.inlineLoading}>
+          <ActivityIndicator size="small" color={colors.text} />
+        </View>
+      ) : (
+        SEGMENTS.map(({ key, label }) => {
         const segmentTasks = tasks[key] ?? [];
         const done = segmentTasks.filter((t) => t.completed).length;
         const total = segmentTasks.length;
@@ -284,7 +283,8 @@ export function ServingTasksScreen() {
             )}
           </View>
         );
-      })}
+        })
+      )}
     </ScrollView>
   );
 }
@@ -613,6 +613,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyText: { fontSize: 15, textAlign: "center" },
+  inlineLoading: { paddingVertical: 48, alignItems: "center" },
   screenTitle: {
     fontSize: 28,
     fontWeight: "700",
