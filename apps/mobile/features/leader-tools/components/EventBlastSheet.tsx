@@ -9,6 +9,8 @@ import {
   Alert,
   Modal,
   KeyboardAvoidingView,
+  Keyboard,
+  ScrollView,
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -84,9 +86,21 @@ export function EventBlastSheet({
         >
           <TouchableOpacity
             activeOpacity={1}
-            onPress={(e) => e.stopPropagation()}
+            // Tapping the sheet outside the input (grabber, header, padding)
+            // dismisses the keyboard. Stop propagation so the press doesn't
+            // bubble to the backdrop's onClose (RN Web bubbles press events)
+            // and close the sheet out from under the user.
+            onPress={(e) => {
+              e.stopPropagation();
+              Keyboard.dismiss();
+            }}
             style={[styles.sheet, { backgroundColor: colors.surface }]}
           >
+            {/* Grabber — visual affordance that this is a draggable tray */}
+            <View style={styles.grabberContainer}>
+              <View style={[styles.grabber, { backgroundColor: colors.border }]} />
+            </View>
+
             {/* Header */}
             <View style={[styles.header, { borderBottomColor: colors.border }]}>
               <Text style={[styles.title, { color: colors.text }]}>
@@ -97,7 +111,14 @@ export function EventBlastSheet({
               </TouchableOpacity>
             </View>
 
-            <View style={styles.body}>
+            {/* Scrollable body so the Send CTA stays reachable even when a long
+                message expands the input to the sheet's 80% height cap. */}
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.body}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+            >
               <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
                 Text everyone going to or interested in {eventTitle}. The message will also post to the event's Activity feed.
               </Text>
@@ -140,7 +161,7 @@ export function EventBlastSheet({
                   <Text style={styles.sendButtonText}>Send Text Blast</Text>
                 )}
               </TouchableOpacity>
-            </View>
+            </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>
       </KeyboardAvoidingView>
@@ -157,6 +178,21 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "80%",
+  },
+  grabberContainer: {
+    alignItems: "center",
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+  },
+  scroll: {
+    // Shrink within the sheet's 80% height cap so the body scrolls instead of
+    // pushing the Send CTA off-screen when the message is long.
+    flexShrink: 1,
   },
   header: {
     flexDirection: "row",
@@ -182,6 +218,9 @@ const styles = StyleSheet.create({
     padding: 14,
     fontSize: 16,
     minHeight: 100,
+    // Cap growth so a long message expands the scrollable body rather than an
+    // ever-taller input; the body scrolls to keep the CTA reachable.
+    maxHeight: 200,
   },
   charCount: {
     fontSize: 12,
