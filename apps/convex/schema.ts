@@ -1689,6 +1689,15 @@ export default defineSchema({
     // Denormalized user info for display
     displayName: v.optional(v.string()),
     profilePhoto: v.optional(v.string()),
+    /**
+     * Manually pinned member. When true, the auto-sync reconcile
+     * (`teamChannelSync.ts`) never soft-removes this row — a leader added them
+     * by hand and they stay in the channel even when off-roster. Independent of
+     * `syncSource`: a row can be BOTH `isPermanent` and role-synced
+     * (`syncSource === "event_plan"`), in which case they render in both the
+     * "Permanent" and "Synced by role" sections of a cross-team Channel Info page.
+     */
+    isPermanent: v.optional(v.boolean()),
     // Auto-sync tracking (for auto channels like PCO Services)
     syncSource: v.optional(v.string()), // "pco_services" | "event_rsvp" | null (manual)
     syncEventId: v.optional(v.string()), // External event/plan ID that added them
