@@ -335,6 +335,96 @@ describe("cross-team permanent members — removePermanentMemberFromChannel", ()
     expect(rows[0].isPermanent).toBe(false);
   });
 
+  it("soft-removes a synced+pinned member who has dropped off the roster", async () => {
+    // Regression: the decision must come from the LIVE roster, not the stale
+    // syncSource tag. A pinned member keeps syncSource="event_plan" after the
+    // reconcile guard preserves them off-window — removing must still evict.
+    const { t, world } = await setupWorld();
+    const { accessToken } = await generateTokens(world.groupLeaderId);
+
+    const assignmentId = await roster(t, world, {
+      userId: world.worshipUserId,
+      roleId: world.roleId,
+    });
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
+      { channelId: world.crossChannelId },
+    );
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels.addPermanentMemberToChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+
+    // Move the event out of the window — they're no longer role-matched.
+    await t.run((ctx) =>
+      ctx.db.patch(assignmentId, { eventDate: Date.now() - 5 * DAY }),
+    );
+
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels
+        .removePermanentMemberFromChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+
+    const rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows.length).toBe(1);
+    expect(rows[0].leftAt).toBeDefined();
+    expect(rows[0].isPermanent).toBe(false);
+  });
+
+  it("only unpins a purely-permanent member who is now live-rostered", async () => {
+    // A purely-permanent member (no syncSource) who is later rostered keeps
+    // syncSource=undefined, but is currently role-matched — removing must only
+    // unpin, leaving them in via their role.
+    const { t, world } = await setupWorld();
+    const { accessToken } = await generateTokens(world.groupLeaderId);
+
+    // Pin first (purely permanent), then roster + reconcile.
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels.addPermanentMemberToChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+    await roster(t, world, {
+      userId: world.worshipUserId,
+      roleId: world.roleId,
+    });
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
+      { channelId: world.crossChannelId },
+    );
+    // Reconcile leaves the existing active row untouched — still no syncSource.
+    let rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows[0].syncSource).toBeUndefined();
+
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels
+        .removePermanentMemberFromChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+
+    rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows.length).toBe(1);
+    // Still live-rostered → stays active, just unpinned.
+    expect(rows[0].leftAt).toBeUndefined();
+    expect(rows[0].isPermanent).toBe(false);
+  });
+
   it("throws when the user is not a permanent member", async () => {
     const { t, world } = await setupWorld();
     const { accessToken } = await generateTokens(world.groupLeaderId);

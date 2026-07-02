@@ -602,10 +602,16 @@ export const addPermanentMemberToChannel = mutation({
 /**
  * Unpin a permanent member from a cross-team channel.
  *
- * Clears `isPermanent` on the user's active row. If that row was ONLY
- * permanent (`syncSource === undefined`) it is soft-removed; if it is still a
- * live synced member (`syncSource === "event_plan"`) the row stays active — the
- * person simply stops being pinned and remains in the channel via their role.
+ * Clears `isPermanent` on the user's active row, then decides whether they stay
+ * in the channel based on their LIVE roster status — NOT the stale `syncSource`
+ * tag. If they are still role-matched (`computeCrossTeamRoleMembers`), the row
+ * stays active and they remain via their role; otherwise the row is soft-
+ * removed and they leave the channel.
+ *
+ * (`syncSource` is unreliable here: the reconcile guard preserves a pinned row
+ * with `syncSource === "event_plan"` long after the user left the roster window,
+ * and a purely-permanent member can be live-rostered while keeping
+ * `syncSource === undefined`. Only the live selector pass is authoritative.)
  *
  * Throws `ConvexError` if the user has no active row or is not permanent.
  * Auth: a leader of the channel's home group.
@@ -623,15 +629,24 @@ export const removePermanentMemberFromChannel = mutation({
   }),
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireCrossTeamChannelLeader(ctx, args.channelId, callerId);
+    const channel = await requireCrossTeamChannelLeader(
+      ctx,
+      args.channelId,
+      callerId,
+    );
 
     const active = await activeMembership(ctx, args.channelId, args.userId);
     if (!active || active.isPermanent !== true) {
       throw new ConvexError("That person is not a permanent member.");
     }
 
-    if (active.syncSource === undefined) {
-      // Purely permanent — unpinning removes them from the channel entirely.
+    const roleMembers = await computeCrossTeamRoleMembers(ctx, channel);
+    const stillRoleMatched = roleMembers.some(
+      (m) => m.userId === args.userId,
+    );
+
+    if (!stillRoleMatched) {
+      // No live role match — unpinning removes them from the channel entirely.
       await ctx.db.patch(active._id, { isPermanent: false, leftAt: Date.now() });
     } else {
       // Still a live synced member — just unpin, leave the row active.
