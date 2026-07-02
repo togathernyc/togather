@@ -76,57 +76,9 @@ export function DatePicker({
     });
   };
 
-  const handleDateSelect = (selectedDate: Date) => {
-    onChange(selectedDate);
-    setModalVisible(false);
-  };
-
-  // For web, use native HTML date input
-  if (Platform.OS === 'web') {
-    return (
-      <View style={[styles.container, style]}>
-        {label && (
-          <Text style={[styles.label, { color: colors.text }]}>
-            {label}
-            {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
-          </Text>
-        )}
-        <input
-          type={mode === 'time' ? 'time' : mode === 'datetime' ? 'datetime-local' : 'date'}
-          value={value ? (mode === 'time' ? value.toTimeString().slice(0, 5) : value.toISOString().slice(0, mode === 'datetime' ? 16 : 10)) : ''}
-          onChange={(e) => {
-            if (e.target.value) {
-              const date = new Date(e.target.value);
-              // Validate the date before calling onChange
-              if (!isNaN(date.getTime())) {
-                onChange(date);
-              } else {
-                console.warn('Invalid date value from input:', e.target.value);
-                onChange(null);
-              }
-            } else {
-              onChange(null);
-            }
-          }}
-          min={minimumDate ? minimumDate.toISOString().slice(0, 10) : undefined}
-          max={maximumDate ? maximumDate.toISOString().slice(0, 10) : undefined}
-          disabled={disabled}
-          style={{
-            width: '100%',
-            padding: '12px 16px',
-            fontSize: '16px',
-            border: error ? `2px solid ${colors.error}` : `2px solid ${colors.border}`,
-            borderRadius: '8px',
-            backgroundColor: disabled ? colors.surfaceSecondary : colors.inputBackground,
-            outline: 'none',
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            color: colors.text,
-          }}
-        />
-        {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
-      </View>
-    );
-  }
+  // The web/desktop implementation lives in DatePicker.web.tsx (MUI Desktop
+  // Date Picker); Metro resolves it for the web bundle. This file handles the
+  // native iOS/Android pickers only.
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
