@@ -301,11 +301,20 @@ export const deleteTask = mutation({
     }
     await requirePlanScheduler(ctx, task.planId, userId);
 
-    const completions = await ctx.db
-      .query("eventTaskCompletions")
-      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
-      .collect();
-    await Promise.all(completions.map((c) => ctx.db.delete(c._id)));
+    const [completions, sharedCompletions] = await Promise.all([
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect(),
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect(),
+    ]);
+    await Promise.all([
+      ...completions.map((c) => ctx.db.delete(c._id)),
+      ...sharedCompletions.map((c) => ctx.db.delete(c._id)),
+    ]);
     await ctx.db.delete(args.taskId);
 
     return { deletedCompletions: completions.length };
@@ -632,6 +641,542 @@ export const getMyServingTasks = query({
     }
 
     return result;
+  },
+});
+
+// ============================================================================
+// Serving-mode read surfaces (Phase 2): Shared / Crew / All-teams.
+//
+// These sit alongside `getMyServingTasks` (the personal "mine" list). Where the
+// personal + readiness views count completion, they reuse the existing
+// semantics:
+//   • Assigned (role) tasks are completed PER-USER via `eventTaskCompletions`
+//     (one row per user, per task, per service time for "during" tasks).
+//   • Team-level tasks (roleId == null) additionally get a TEAM-WIDE shared
+//     completion via `sharedTaskCompletions` (one row per task — see below).
+// ============================================================================
+
+/** Resolve a user's display name, matching the roster convention. */
+async function resolveUserName(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<string> {
+  const u = await ctx.db.get(userId);
+  return `${u?.firstName ?? ""} ${u?.lastName ?? ""}`.trim() || "Someone";
+}
+
+/** The current user's confirmed role assignments on a plan. */
+async function myConfirmedAssignments(
+  ctx: QueryCtx | MutationCtx,
+  planId: Id<"eventPlans">,
+  userId: Id<"users">,
+): Promise<Doc<"roleAssignments">[]> {
+  const rows = await ctx.db
+    .query("roleAssignments")
+    .withIndex("by_plan", (q) => q.eq("planId", planId))
+    .filter((q) => q.eq(q.field("userId"), userId))
+    .collect();
+  return rows.filter((a) => a.status === "confirmed");
+}
+
+/**
+ * A team-level (whole-team, no assignee) shared task with its team-wide
+ * completion state. Reuses the `ServingTaskItem` How-To fields.
+ */
+type SharedTeamTaskItem = {
+  taskId: string;
+  teamId: string;
+  teamName: string;
+  title: string;
+  segment: "before" | "during" | "after";
+  howToType: string;
+  howToText?: string;
+  howToUrl?: string;
+  howToMediaPath?: string;
+  howToDoc?: string;
+  /** Team-wide: true if ANY teammate has marked this task done. */
+  completed: boolean;
+  /** Who last flipped it done (only set when `completed`). */
+  completedByName?: string;
+  completedAt?: number;
+};
+
+/**
+ * The "Shared" surface: team-level tasks (roleId == null) for the CURRENT
+ * user's confirmed team(s) on a plan. These are "the whole team is responsible,
+ * no single assignee" — so completion is TEAM-WIDE (`sharedTaskCompletions`),
+ * not per-user: any confirmed teammate marking it done marks it done for
+ * everyone. Returned as a flat array (each item carries its `segment`), ordered
+ * before → during → after, then by the task's sortOrder.
+ *
+ * Auth: an active member of the plan's group (community read gate). Only the
+ * user's own confirmed teams are included.
+ */
+export const getSharedTeamTasks = query({
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args): Promise<SharedTeamTaskItem[]> => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
+    const myTeamIds = new Set(confirmed.map((a) => a.teamId as string));
+    if (myTeamIds.size === 0) return [];
+
+    const [tasks, sharedRows] = await Promise.all([
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+    ]);
+    const completionByTask = new Map(
+      sharedRows.map((r) => [r.taskId as string, r]),
+    );
+
+    // Team-level tasks (no role) on a team the user is confirmed for.
+    const teamTasks = tasks.filter(
+      (t) => !t.roleId && myTeamIds.has(t.teamId as string),
+    );
+    teamTasks.sort(
+      (a, b) =>
+        (SEGMENT_RANK[a.segment] ?? 1) - (SEGMENT_RANK[b.segment] ?? 1) ||
+        a.sortOrder - b.sortOrder,
+    );
+
+    const teamNames = new Map<string, string>();
+    const userNames = new Map<string, string>();
+    const items: SharedTeamTaskItem[] = [];
+    for (const task of teamTasks) {
+      const teamKey = task.teamId as string;
+      if (!teamNames.has(teamKey)) {
+        const team = await ctx.db.get(task.teamId);
+        teamNames.set(teamKey, team?.name ?? "Team");
+      }
+      const completion = completionByTask.get(task._id as string);
+      let completedByName: string | undefined;
+      if (completion) {
+        const uKey = completion.completedByUserId as string;
+        if (!userNames.has(uKey)) {
+          userNames.set(
+            uKey,
+            await resolveUserName(ctx, completion.completedByUserId),
+          );
+        }
+        completedByName = userNames.get(uKey);
+      }
+      items.push({
+        taskId: task._id as string,
+        teamId: teamKey,
+        teamName: teamNames.get(teamKey)!,
+        title: task.title,
+        segment: task.segment,
+        howToType: task.howToType,
+        howToText: task.howToText,
+        howToUrl: task.howToUrl,
+        howToMediaPath: task.howToMediaPath,
+        howToDoc: task.howToDoc,
+        completed: !!completion,
+        completedByName,
+        completedAt: completion?.completedAt,
+      });
+    }
+    return items;
+  },
+});
+
+/**
+ * Toggle the TEAM-WIDE shared completion of a team-level task. Any confirmed
+ * member of the task's team may flip it; the state is shared (one row per task
+ * in `sharedTaskCompletions`, not per-user). For a "during" team-level task
+ * this is a single whole-task state (it is deliberately NOT split per service
+ * time — the Shared surface tracks "the team handled this", not per-slot).
+ *
+ * Auth: the caller must be a confirmed member of the task's team on the plan.
+ */
+export const toggleSharedTeamTask = mutation({
+  args: {
+    token: v.string(),
+    planId: v.id("eventPlans"),
+    taskId: v.id("eventTasks"),
+    completed: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task || task.planId !== args.planId) {
+      throw new ConvexError("Task not found");
+    }
+    if (task.roleId) {
+      throw new ConvexError(
+        "Only team-level tasks can be completed for the whole team",
+      );
+    }
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    // Gate: the caller must be a confirmed member of THIS task's team.
+    const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
+    const onTeam = confirmed.some((a) => a.teamId === task.teamId);
+    if (!onTeam) {
+      throw new ConvexError("You must be serving on this team to update it");
+    }
+
+    const existing = await ctx.db
+      .query("sharedTaskCompletions")
+      .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+      .unique();
+
+    if (args.completed) {
+      if (existing) {
+        // Refresh who/when so the "completed by" label reflects the latest tap.
+        await ctx.db.patch(existing._id, {
+          completedByUserId: userId,
+          completedAt: Date.now(),
+        });
+      } else {
+        await ctx.db.insert("sharedTaskCompletions", {
+          taskId: args.taskId,
+          planId: task.planId,
+          communityId: task.communityId,
+          completedByUserId: userId,
+          completedAt: Date.now(),
+        });
+      }
+    } else if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+
+    return { taskId: args.taskId, completed: args.completed };
+  },
+});
+
+/** A teammate (or the current user) and their assigned work, for the Crew tab. */
+type CrewMemberEntry = {
+  userId: string;
+  name: string;
+  roleId: string;
+  roleName: string;
+  teamId: string;
+  teamName: string;
+  /** True for the current viewer's own row. */
+  isCurrentUser: boolean;
+  /** Completed / total completion "slots" (per-user, matching the personal view). */
+  done: number;
+  total: number;
+  tasks: Array<{
+    taskId: string;
+    title: string;
+    segment: "before" | "during" | "after";
+    /** For "during" tasks: true only when every service-time slot is done. */
+    completed: boolean;
+    howToType: string;
+  }>;
+};
+
+/**
+ * The "Crew" surface: the current user's confirmed teammates (and the user
+ * themselves) on a plan, with each person's ROLE-assigned tasks, READ-ONLY.
+ * One entry per (member, role). "Assigned tasks" are the plan's role tasks
+ * (`eventTasks.roleId` set) whose role the member is confirmed for — team-level
+ * tasks live on the Shared surface, not here.
+ *
+ * `done`/`total` count completion the same way the personal `getMyServingTasks`
+ * view does: per-user `eventTaskCompletions`, with "during" tasks counted once
+ * per service time (so a member serving one "during" task across two services
+ * has total 2). A task's `completed` flag is true only when all of its slots
+ * are done.
+ *
+ * Auth: an active member of the plan's group. Only teams the current user is
+ * confirmed for are included.
+ */
+export const getCrewTasks = query({
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args): Promise<CrewMemberEntry[]> => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const myConfirmed = await myConfirmedAssignments(ctx, args.planId, userId);
+    const myTeamIds = new Set(myConfirmed.map((a) => a.teamId as string));
+    if (myTeamIds.size === 0) return [];
+
+    const [allAssignments, tasks] = await Promise.all([
+      ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+    ]);
+
+    // Role tasks grouped by roleId (team-level tasks excluded — Shared surface).
+    const tasksByRole = new Map<string, Doc<"eventTasks">[]>();
+    for (const t of tasks) {
+      if (!t.roleId) continue;
+      const key = t.roleId as string;
+      const list = tasksByRole.get(key) ?? [];
+      list.push(t);
+      tasksByRole.set(key, list);
+    }
+
+    const timesCount = Math.max(1, plan.times.length);
+
+    // Crew = confirmed assignments on a team the current user is confirmed for.
+    const crew = allAssignments.filter(
+      (a) => a.status === "confirmed" && myTeamIds.has(a.teamId as string),
+    );
+
+    const teamNames = new Map<string, string>();
+    const roleNames = new Map<string, string>();
+    const userNames = new Map<string, string>();
+    // Per-user completion keys ("taskId::timeLabel"), fetched once per member.
+    const completionsByUser = new Map<string, Set<string>>();
+    const completionKey = (taskId: string, timeLabel?: string) =>
+      `${taskId}::${timeLabel ?? ""}`;
+
+    const entries = new Map<string, CrewMemberEntry>();
+    for (const a of crew) {
+      const memberKey = `${a.userId}::${a.roleId}`;
+      if (entries.has(memberKey)) continue; // one entry per (member, role)
+
+      const teamKey = a.teamId as string;
+      if (!teamNames.has(teamKey)) {
+        const team = await ctx.db.get(a.teamId);
+        teamNames.set(teamKey, team?.name ?? "Team");
+      }
+      const roleKey = a.roleId as string;
+      if (!roleNames.has(roleKey)) {
+        const role = await ctx.db.get(a.roleId);
+        roleNames.set(roleKey, role?.name ?? "Role");
+      }
+      const userKey = a.userId as string;
+      if (!userNames.has(userKey)) {
+        userNames.set(userKey, await resolveUserName(ctx, a.userId));
+      }
+      if (!completionsByUser.has(userKey)) {
+        const rows = await ctx.db
+          .query("eventTaskCompletions")
+          .withIndex("by_plan_user", (q) =>
+            q.eq("planId", args.planId).eq("userId", a.userId),
+          )
+          .collect();
+        completionsByUser.set(
+          userKey,
+          new Set(rows.map((r) => completionKey(r.taskId, r.timeLabel))),
+        );
+      }
+      const done = completionsByUser.get(userKey)!;
+
+      const roleTasks = tasksByRole.get(roleKey) ?? [];
+      roleTasks.sort(
+        (x, y) =>
+          (SEGMENT_RANK[x.segment] ?? 1) - (SEGMENT_RANK[y.segment] ?? 1) ||
+          x.sortOrder - y.sortOrder,
+      );
+
+      let doneCount = 0;
+      let totalCount = 0;
+      const taskList: CrewMemberEntry["tasks"] = [];
+      for (const t of roleTasks) {
+        if (t.segment === "during") {
+          const slots: (string | undefined)[] =
+            plan.times.length > 0
+              ? plan.times.map((s) => s.label)
+              : [undefined];
+          let slotDone = 0;
+          for (const label of slots) {
+            if (done.has(completionKey(t._id as string, label))) slotDone += 1;
+          }
+          totalCount += timesCount;
+          doneCount += slotDone;
+          taskList.push({
+            taskId: t._id as string,
+            title: t.title,
+            segment: t.segment,
+            completed: slotDone === slots.length,
+            howToType: t.howToType,
+          });
+        } else {
+          const isDone = done.has(completionKey(t._id as string, undefined));
+          totalCount += 1;
+          if (isDone) doneCount += 1;
+          taskList.push({
+            taskId: t._id as string,
+            title: t.title,
+            segment: t.segment,
+            completed: isDone,
+            howToType: t.howToType,
+          });
+        }
+      }
+
+      entries.set(memberKey, {
+        userId: userKey,
+        name: userNames.get(userKey)!,
+        roleId: roleKey,
+        roleName: roleNames.get(roleKey)!,
+        teamId: teamKey,
+        teamName: teamNames.get(teamKey)!,
+        isCurrentUser: a.userId === userId,
+        done: doneCount,
+        total: totalCount,
+        tasks: taskList,
+      });
+    }
+
+    // Current user first, then by name for a stable, useful ordering.
+    return Array.from(entries.values()).sort((x, y) => {
+      if (x.isCurrentUser !== y.isCurrentUser) return x.isCurrentUser ? -1 : 1;
+      return x.name.localeCompare(y.name);
+    });
+  },
+});
+
+/** A team's task rollup for the All-teams overview. */
+type AllTeamsEntry = {
+  teamId: string;
+  teamName: string;
+  taskCount: number;
+  done: number;
+  total: number;
+  tasks: Array<{
+    taskId: string;
+    title: string;
+    segment: "before" | "during" | "after";
+    roleName: string | null;
+    completed: boolean;
+    howToType: string;
+  }>;
+};
+
+/**
+ * The "All-teams" surface: a READ-ONLY overview of every team on the plan and
+ * its tasks, so a volunteer can see the whole event's shape and progress.
+ *
+ * `done`/`total` here use the plan-wide READINESS semantics (same as
+ * `getPlanTaskReadiness`): a task's `total` is the number of confirmed
+ * assignees expected to complete it (× the number of service times for
+ * "during" tasks), and `done` counts valid completions from those assignees. A
+ * task's `completed` flag is true when it is fully satisfied (done >= total,
+ * total > 0). Team-level tasks additionally count their team-wide shared
+ * completion as satisfying the whole task.
+ *
+ * Auth: an active member of the plan's group (any serving participant).
+ */
+export const getAllTeamsTasks = query({
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args): Promise<AllTeamsEntry[]> => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await requirePlan(ctx, args.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const [tasks, assignments, sharedRows] = await Promise.all([
+      ctx.db
+        .query("eventTasks")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+    ]);
+    const sharedByTask = new Set(sharedRows.map((r) => r.taskId as string));
+
+    tasks.sort(
+      (a, b) =>
+        (SEGMENT_RANK[a.segment] ?? 1) - (SEGMENT_RANK[b.segment] ?? 1) ||
+        a.sortOrder - b.sortOrder,
+    );
+
+    const timesCount = Math.max(1, plan.times.length);
+    const validTimeLabels = new Set(plan.times.map((t) => t.label));
+
+    const teamNames = new Map<string, string>();
+    const roleNames = new Map<string, string>();
+    const byTeam = new Map<string, AllTeamsEntry>();
+
+    for (const task of tasks) {
+      // Readiness "expected completers" for this task.
+      const expected = assigneesForTask(assignments, task);
+      const expectedUserIds = new Set(expected.map((a) => a.userId as string));
+      const expectedPeople = expectedUserIds.size;
+      const total =
+        task.segment === "during"
+          ? expectedPeople * timesCount
+          : expectedPeople;
+
+      const completions = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .collect();
+      const validCompletions = completions.filter((c) => {
+        if (!expectedUserIds.has(c.userId as string)) return false;
+        if (task.segment === "during") {
+          if (plan.times.length === 0) return c.timeLabel == null;
+          return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+        }
+        return true;
+      });
+      const done = Math.min(validCompletions.length, total);
+
+      // A team-level task the team marked shared-done counts as fully complete.
+      const sharedDone = !task.roleId && sharedByTask.has(task._id as string);
+      const completed = sharedDone || (total > 0 && done >= total);
+
+      const teamKey = task.teamId as string;
+      if (!teamNames.has(teamKey)) {
+        const team = await ctx.db.get(task.teamId);
+        teamNames.set(teamKey, team?.name ?? "Team");
+      }
+      let entry = byTeam.get(teamKey);
+      if (!entry) {
+        entry = {
+          teamId: teamKey,
+          teamName: teamNames.get(teamKey)!,
+          taskCount: 0,
+          done: 0,
+          total: 0,
+          tasks: [],
+        };
+        byTeam.set(teamKey, entry);
+      }
+
+      let roleName: string | null = null;
+      if (task.roleId) {
+        const roleKey = task.roleId as string;
+        if (!roleNames.has(roleKey)) {
+          const role = await ctx.db.get(task.roleId);
+          roleNames.set(roleKey, role?.name ?? "Role");
+        }
+        roleName = roleNames.get(roleKey)!;
+      }
+
+      entry.taskCount += 1;
+      entry.total += total;
+      entry.done += done;
+      entry.tasks.push({
+        taskId: task._id as string,
+        title: task.title,
+        segment: task.segment,
+        roleName,
+        completed,
+        howToType: task.howToType,
+      });
+    }
+
+    return Array.from(byTeam.values()).sort((a, b) =>
+      a.teamName.localeCompare(b.teamName),
+    );
   },
 });
 
