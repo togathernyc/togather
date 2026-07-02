@@ -334,6 +334,11 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const isReachOut = channelType === "reach_out";
   const isPco = channelType === "pco_services";
   const isCrossTeam = channelType === "cross_team";
+  // Renameable types: plain custom, serving-team (which is a `custom` channel
+  // flagged isServingTeam — renaming it also renames the team, backend-side),
+  // and cross-team. NOT pco_services or system channels (main/leaders/
+  // announcements/reach_out).
+  const isRenameable = isCustom || isCrossTeam;
 
   // This channel's saved cross-team selectors, sourced BY CHANNEL ID from
   // getChannelBySlug (the raw `crossTeamSync.selectors`). Reading it off the
@@ -681,6 +686,12 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     [channelDisplayName, groupData?.name, groupData?.shortId],
   );
 
+  const openRename = useCallback(() => {
+    setRenameValue(channelDisplayName);
+    setRenameError(null);
+    setRenameVisible(true);
+  }, [channelDisplayName]);
+
   const handleRename = useCallback(async () => {
     const trimmed = renameValue.trim();
     if (!trimmed) {
@@ -791,9 +802,36 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           <View style={[styles.heroIconCircle, { backgroundColor: iconCfg.bg }]}>
             <Ionicons name={iconCfg.icon} size={48} color={iconCfg.color} />
           </View>
-          <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={2}>
-            {isCustom || isPco ? `#${channelDisplayName}` : channelDisplayName}
-          </Text>
+          {isRenameable && isLeader ? (
+            <TouchableOpacity
+              activeOpacity={0.6}
+              onPress={openRename}
+              accessibilityRole="button"
+              accessibilityLabel="Rename channel"
+            >
+              <View style={styles.heroTitleRow}>
+                <Text
+                  style={[styles.heroName, { color: colors.text, marginTop: 0 }]}
+                  numberOfLines={2}
+                >
+                  {isCustom ? `#${channelDisplayName}` : channelDisplayName}
+                </Text>
+                <Ionicons
+                  name="create-outline"
+                  size={18}
+                  color={colors.textSecondary}
+                  style={styles.heroTitlePencil}
+                />
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <Text
+              style={[styles.heroName, { color: colors.text }]}
+              numberOfLines={2}
+            >
+              {isCustom || isPco ? `#${channelDisplayName}` : channelDisplayName}
+            </Text>
+          )}
           <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
             {totalMemberCount} {totalMemberCount === 1 ? "member" : "members"}
           </Text>
@@ -1495,14 +1533,11 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                 </Pressable>
               )}
 
-              {/* Rename — custom channels only (backend gates the rest). */}
-              {isCustom && (
+              {/* Rename — custom, serving-team, and cross-team channels
+                  (backend gates the rest, and mirrors serving-team → team). */}
+              {isRenameable && (
                 <Pressable
-                  onPress={() => {
-                    setRenameValue(channelDisplayName);
-                    setRenameError(null);
-                    setRenameVisible(true);
-                  }}
+                  onPress={openRename}
                   style={({ pressed }) => [
                     styles.actionRowFlat,
                     {
@@ -2257,6 +2292,15 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "700",
     textAlign: "center",
+  },
+  heroTitleRow: {
+    marginTop: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroTitlePencil: {
+    marginLeft: 6,
   },
   heroSubtitle: {
     marginTop: 4,
