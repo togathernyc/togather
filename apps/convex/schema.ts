@@ -681,7 +681,7 @@ export default defineSchema({
       ),
     ),
     // When true, attendees can RSVP but the count is hidden from non-leaders.
-    // Leaders/host still see the count with a "Leaders only" badge.
+    // Leaders/host still see the count with a "Visible to leaders only" badge.
     hideRsvpCount: v.optional(v.boolean()),
 
     // Visibility

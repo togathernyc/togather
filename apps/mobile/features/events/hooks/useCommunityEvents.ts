@@ -54,7 +54,7 @@ export interface CommunityEvent {
       profileImage: string | null;
     }>;
   };
-  /** When true, RSVP count is hidden from non-leaders. Leaders still see it with a "Leaders only" badge. */
+  /** When true, RSVP count is hidden from non-leaders. Leaders still see it with a "Visible to leaders only" badge. */
   hideRsvpCount: boolean;
   createdById: string | null;
   /** True when the viewer is a leader of the hosting group or the event creator. */

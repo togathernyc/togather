@@ -161,7 +161,7 @@ export function CreateEventScreen() {
   const [rsvpOptions, setRsvpOptions] =
     useState<RsvpOption[]>(DEFAULT_RSVP_OPTIONS);
   // When true, RSVP count/list is hidden from non-leaders on the event page
-  // and in chat cards. Leaders still see the count with a "Leaders only" badge.
+  // and in chat cards. Leaders still see the count with a "Visible to leaders only" badge.
   const [hideRsvpCount, setHideRsvpCount] = useState(false);
   // Hosts own the event for notifications / chat admin. Defaults to the
   // current user on create (can be edited); in edit mode we read it from
