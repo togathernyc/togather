@@ -31,9 +31,9 @@ import {
   internalQuery,
   mutation,
 } from "../../_generated/server";
-import type { MutationCtx } from "../../_generated/server";
+import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { updateChannelMemberCount } from "../messaging/helpers";
@@ -53,7 +53,7 @@ export const ADD_DAYS_BEFORE = 5;
 export const REMOVE_DAYS_AFTER = 1;
 
 /** This sync engine's `syncSource` tag on `chatChannelMembers`. */
-const SYNC_SOURCE = "event_plan";
+export const SYNC_SOURCE = "event_plan";
 
 /** Outcome of a reconcile pass. `skipped` marks a channel-less team no-op. */
 type ReconcileResult = {
@@ -254,6 +254,10 @@ async function reconcileChannelMembership(
   // --- Remove synced members no longer in the window -------------------
   for (const member of syncedMembers) {
     if (member.leftAt !== undefined) continue; // already gone
+    // A manually pinned member stays in the channel even when off-roster. A
+    // row can be BOTH synced (`syncSource === "event_plan"`) and permanent —
+    // never soft-remove it; the member's role cards are derived live.
+    if (member.isPermanent === true) continue;
     if (desired.has(member.userId)) continue; // still wanted
     await ctx.db.patch(member._id, {
       leftAt: now,
@@ -347,33 +351,34 @@ export async function reconcileTeamChannelImpl(
 }
 
 /**
- * Shared cross-team reconcile implementation.
+ * Compute a cross-team channel's role-matched assignments from live
+ * `roleAssignments`. Returns EVERY in-window, non-declined assignment matching
+ * any of the channel's `crossTeamSync.selectors` — each selector pulls everyone
+ * assigned `roleId` on `sourceTeamId`, or every role there when `roleId` is
+ * omitted. Source-team assignments are read via the `by_team_eventDate` index,
+ * bounded to the rotation window; archived source teams are skipped.
  *
- * Reconcile a single cross-team channel (`channelType === "cross_team"`).
- * Desired members come from `roleAssignments` across the source serving teams
- * named in `crossTeamSync.selectors` — each selector pulls everyone assigned
- * `roleId` on `sourceTeamId`, or every role there when `roleId` is omitted.
+ * The result is NOT deduped — a user assigned two matching roles yields two
+ * entries. `reconcileChannelMembership` collapses them per-user for the chat
+ * roster, while `getCrossTeamChannelMembership` dedupes by (userId, roleId) to
+ * render one "Synced by role" card per matched role. Sharing this one selector
+ * pass keeps membership sync and the Channel Info UI in exact agreement.
  *
- * Source-team assignments are read via the `by_team_eventDate` index, bounded
- * to the rotation window and with `declined` assignments excluded.
+ * Read-only, so it accepts a `QueryCtx` or `MutationCtx`.
  */
-export async function reconcileCrossTeamChannelImpl(
-  ctx: MutationCtx,
-  channelId: Id<"chatChannels">,
-): Promise<ReconcileResult> {
-  const channel = await ctx.db.get(channelId);
+export async function computeCrossTeamRoleMembers(
+  ctx: QueryCtx | MutationCtx,
+  channel: Doc<"chatChannels">,
+): Promise<WindowAssignment[]> {
   if (
-    !channel ||
     channel.channelType !== "cross_team" ||
     channel.crossTeamSync === undefined
   ) {
-    return { added: 0, removed: 0, desiredCount: 0, skipped: true };
+    return [];
   }
 
   const { start, end } = rotationWindow(Date.now());
 
-  // Assignments across each selector's source serving team, optionally
-  // filtered to a single role.
   const assignmentsInWindow: WindowAssignment[] = [];
   for (const selector of channel.crossTeamSync.selectors) {
     // Archived source teams are out of rotation — skip them so an archived
@@ -404,6 +409,31 @@ export async function reconcileCrossTeamChannelImpl(
       });
     }
   }
+
+  return assignmentsInWindow;
+}
+
+/**
+ * Shared cross-team reconcile implementation.
+ *
+ * Reconcile a single cross-team channel (`channelType === "cross_team"`).
+ * Desired members come from `computeCrossTeamRoleMembers` — the same live
+ * selector pass the Channel Info page uses.
+ */
+export async function reconcileCrossTeamChannelImpl(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+): Promise<ReconcileResult> {
+  const channel = await ctx.db.get(channelId);
+  if (
+    !channel ||
+    channel.channelType !== "cross_team" ||
+    channel.crossTeamSync === undefined
+  ) {
+    return { added: 0, removed: 0, desiredCount: 0, skipped: true };
+  }
+
+  const assignmentsInWindow = await computeCrossTeamRoleMembers(ctx, channel);
 
   return await reconcileChannelMembership(
     ctx,

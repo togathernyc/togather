@@ -11,11 +11,17 @@ export type {
   CrossTeamSelector,
   CrossTeamChannel,
   EnrichedCrossTeamSelector,
+  CrossTeamPermanentMember,
+  CrossTeamSyncedRoleMember,
+  CrossTeamChannelMembership,
 } from "./api/crossTeamChannels";
 export {
   createCrossTeamChannelRef,
   updateCrossTeamChannelRef,
   listCrossTeamChannelsRef,
+  getCrossTeamChannelMembershipRef,
+  addPermanentMemberToChannelRef,
+  removePermanentMemberFromChannelRef,
 } from "./api/crossTeamChannels";
 export { EventEditorScreen } from "./components/EventEditorScreen";
 export { EventEditorPanel } from "./components/EventEditorPanel";

@@ -70,3 +70,45 @@ export const listCrossTeamChannelsRef = makeFunctionReference<
   { token: string; groupId: Id<"groups"> },
   CrossTeamChannel[]
 >("functions/scheduling/crossTeamChannels:listCrossTeamChannels");
+
+/** A manually pinned ("Permanent") member of a cross-team channel. */
+export type CrossTeamPermanentMember = {
+  userId: Id<"users">;
+  name: string;
+  avatarUrl?: string;
+};
+
+/** A live role-matched ("Synced by role") member — one per (user, role). */
+export type CrossTeamSyncedRoleMember = {
+  userId: Id<"users">;
+  name: string;
+  avatarUrl?: string;
+  roleId: Id<"teamRoles">;
+  roleName: string;
+  teamId: Id<"teams">;
+  teamName: string;
+};
+
+/** The two-section Channel Info membership for a cross-team channel. */
+export type CrossTeamChannelMembership = {
+  permanentMembers: CrossTeamPermanentMember[];
+  syncedRoleMembers: CrossTeamSyncedRoleMember[];
+};
+
+export const getCrossTeamChannelMembershipRef = makeFunctionReference<
+  "query",
+  { token: string; channelId: Id<"chatChannels"> },
+  CrossTeamChannelMembership
+>("functions/scheduling/crossTeamChannels:getCrossTeamChannelMembership");
+
+export const addPermanentMemberToChannelRef = makeFunctionReference<
+  "mutation",
+  { token: string; channelId: Id<"chatChannels">; userId: Id<"users"> },
+  { channelId: Id<"chatChannels">; userId: Id<"users">; added: boolean }
+>("functions/scheduling/crossTeamChannels:addPermanentMemberToChannel");
+
+export const removePermanentMemberFromChannelRef = makeFunctionReference<
+  "mutation",
+  { token: string; channelId: Id<"chatChannels">; userId: Id<"users"> },
+  { channelId: Id<"chatChannels">; userId: Id<"users">; removed: boolean }
+>("functions/scheduling/crossTeamChannels:removePermanentMemberFromChannel");

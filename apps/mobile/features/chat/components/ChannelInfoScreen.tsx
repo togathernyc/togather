@@ -46,10 +46,15 @@ import { AdminViewNote } from "@components/ui/AdminViewNote";
 import { ConfirmModal } from "@components/ui/ConfirmModal";
 import { CustomModal } from "@components/ui/Modal";
 import { AutoChannelSettings } from "@features/channels";
+import { MemberSearch, type CommunityMember } from "@components/ui/MemberSearch";
 import {
   CrossTeamSelectorPicker,
   updateCrossTeamChannelRef,
+  getCrossTeamChannelMembershipRef,
+  addPermanentMemberToChannelRef,
+  removePermanentMemberFromChannelRef,
   type CrossTeamSelector,
+  type CrossTeamChannelMembership,
 } from "@features/scheduling";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
@@ -95,7 +100,20 @@ type ChannelIconConfig = {
 function getChannelIconConfig(
   channelType: string,
   brand: string,
+  isServingTeam?: boolean,
 ): ChannelIconConfig {
+  // A serving-team channel is a `custom` channel flagged `isServingTeam`. It
+  // gets the green calendar glyph used for serving-team rows in the group
+  // channels list, so the icon persists into Channel Info (plain custom
+  // channels keep the chat bubble).
+  if (channelType === "custom" && isServingTeam) {
+    return {
+      icon: "calendar-outline",
+      color: "#10B981",
+      bg: "#10B98115",
+      defaultName: "Serving Team",
+    };
+  }
   switch (channelType) {
     case "main":
       return { icon: "chatbubbles", color: brand, bg: brand + "15", defaultName: "General" };
@@ -140,6 +158,16 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     api.functions.messaging.channels.getChannelMembers,
     token && channel
       ? { token, channelId: channel._id, limit: 50 }
+      : "skip",
+  );
+
+  // Cross-team channels split membership into two sections — manually pinned
+  // "Permanent" members and live "Synced by role" cards (one per matched role).
+  // Backend gates by group membership.
+  const crossTeamMembership = useQuery(
+    getCrossTeamChannelMembershipRef,
+    token && channel?._id && channel.channelType === "cross_team"
+      ? { token, channelId: channel._id }
       : "skip",
   );
 
@@ -209,6 +237,12 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const updateCrossTeamChannel = useAuthenticatedMutation(
     updateCrossTeamChannelRef,
   );
+  const addPermanentMemberToChannel = useAuthenticatedMutation(
+    addPermanentMemberToChannelRef,
+  );
+  const removePermanentMemberFromChannel = useAuthenticatedMutation(
+    removePermanentMemberFromChannelRef,
+  );
 
   const [renameVisible, setRenameVisible] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -231,6 +265,12 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const [crossTeamEditVisible, setCrossTeamEditVisible] = useState(false);
   const [crossTeamDraft, setCrossTeamDraft] = useState<CrossTeamSelector[]>([]);
   const [crossTeamSaving, setCrossTeamSaving] = useState(false);
+  const [addPermanentVisible, setAddPermanentVisible] = useState(false);
+  const [pendingRemovePermanent, setPendingRemovePermanent] = useState<{
+    userId: Id<"users">;
+    name: string;
+  } | null>(null);
+  const [removingPermanent, setRemovingPermanent] = useState(false);
   const [requestInFlight, setRequestInFlight] = useState<string | null>(null);
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
     string | null
@@ -330,7 +370,11 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     }
   }, [crossTeamEditVisible]);
 
-  const iconCfg = getChannelIconConfig(channelType, primaryColor);
+  const iconCfg = getChannelIconConfig(
+    channelType,
+    primaryColor,
+    (channel as { isServingTeam?: boolean } | undefined)?.isServingTeam,
+  );
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
 
   const sharedGroupCount = useMemo(() => {
@@ -537,6 +581,39 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       setCrossTeamSaving(false);
     }
   }, [channel?._id, crossTeamSaving, crossTeamDraft, updateCrossTeamChannel]);
+
+  // Pin a permanent member on a cross-team channel. The modal stays open; the
+  // reactive membership query drops the person from the picker once added.
+  const handleAddPermanentMember = useCallback(
+    async (member: CommunityMember) => {
+      if (!channel?._id) return;
+      try {
+        await addPermanentMemberToChannel({
+          channelId: channel._id,
+          userId: member.user_id as Id<"users">,
+        });
+      } catch (e: any) {
+        Alert.alert("Couldn't add member", e?.message || "Please try again.");
+      }
+    },
+    [channel?._id, addPermanentMemberToChannel],
+  );
+
+  const handleRemovePermanentMember = useCallback(async () => {
+    if (!channel?._id || !pendingRemovePermanent) return;
+    setRemovingPermanent(true);
+    try {
+      await removePermanentMemberFromChannel({
+        channelId: channel._id,
+        userId: pendingRemovePermanent.userId,
+      });
+      setPendingRemovePermanent(null);
+    } catch (e: any) {
+      Alert.alert("Couldn't remove member", e?.message || "Please try again.");
+    } finally {
+      setRemovingPermanent(false);
+    }
+  }, [channel?._id, pendingRemovePermanent, removePermanentMemberFromChannel]);
 
   const handleAddUnmatchedToGroup = useCallback(
     async (person: UnsyncedPerson) => {
@@ -910,8 +987,27 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           </>
         )}
 
+        {/* Cross-team members — two sections that distinguish role-synced from
+            manually pinned members. Replaces the flat Members list above for
+            cross-team channels. A person who is both appears in both sections. */}
+        {isCrossTeam && (
+          <CrossTeamMembersSections
+            membership={crossTeamMembership}
+            colors={colors}
+            primaryColor={primaryColor}
+            canManage={isLeader}
+            onAdd={() => setAddPermanentVisible(true)}
+            onRemove={(userId, name) =>
+              setPendingRemovePermanent({ userId, name })
+            }
+            onOpenProfile={(userId) =>
+              router.push(`/profile/${userId}` as any)
+            }
+          />
+        )}
+
         {/* Members */}
-        {memberRows.length > 0 && (
+        {!isCrossTeam && memberRows.length > 0 && (
           <>
             <SectionHeader colors={colors} label="Members" />
             <View style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}>
@@ -1131,14 +1227,18 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           </>
         )}
 
-        {/* Add people — for now this routes to the existing manage-members
-            sub-route. TODO: fold the in-screen picker (mirror of DM
-            ChatInfoScreen.AddPeopleModal) inline once we have a
-            channel-scoped search query. General's membership is the group
-            itself, so there's nothing to add here. */}
+        {/* Add people — for a cross-team channel this opens the in-screen
+            people picker to pin a PERMANENT member (its roster is otherwise
+            auto-synced, so there's no manage-members sub-route). Other channel
+            types route to the existing manage-members screen. General's
+            membership is the group itself, so there's nothing to add here. */}
         {isLeader && !isMain && (
           <Pressable
-            onPress={handleManageMembers}
+            onPress={
+              isCrossTeam
+                ? () => setAddPermanentVisible(true)
+                : handleManageMembers
+            }
             style={({ pressed }) => [
               styles.actionCard,
               {
@@ -1777,6 +1877,82 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Add permanent members — cross-team channels. Tapping a person pins
+          them immediately; the reactive membership query removes them from the
+          list. */}
+      <Modal
+        visible={addPermanentVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setAddPermanentVisible(false)}
+      >
+        <View
+          style={[
+            styles.container,
+            { paddingTop: insets.top, backgroundColor: colors.surface },
+          ]}
+        >
+          <View
+            style={[
+              styles.headerBar,
+              {
+                backgroundColor: colors.surface,
+                borderBottomColor: colors.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              onPress={() => setAddPermanentVisible(false)}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Ionicons name="close" size={26} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>
+              Add members
+            </Text>
+            <TouchableOpacity
+              onPress={() => setAddPermanentVisible(false)}
+              style={styles.headerBackButton}
+              hitSlop={12}
+            >
+              <Text style={[styles.crossTeamSaveLabel, { color: primaryColor }]}>
+                Done
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <MemberSearch
+            mode="single"
+            groupId={groupId}
+            excludeUserIds={(crossTeamMembership?.permanentMembers ?? []).map(
+              (m) => m.userId as string,
+            )}
+            onSelect={handleAddPermanentMember}
+            placeholder="Search group members to add..."
+            showEmptyState
+            showActionButton
+            actionIcon="add-circle-outline"
+            clearOnSelect={false}
+            style={styles.scroll}
+          />
+        </View>
+      </Modal>
+
+      <ConfirmModal
+        visible={pendingRemovePermanent !== null}
+        title="Remove member"
+        message={
+          pendingRemovePermanent
+            ? `Remove ${pendingRemovePermanent.name} from this channel? If they're still on the roster they'll stay via their role.`
+            : ""
+        }
+        onConfirm={handleRemovePermanentMember}
+        onCancel={() => setPendingRemovePermanent(null)}
+        confirmText="Remove"
+        destructive
+        isLoading={removingPermanent}
+      />
     </View>
   );
 }
@@ -1818,6 +1994,205 @@ function SectionHeader({
     <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
       {label.toUpperCase()}
     </Text>
+  );
+}
+
+/**
+ * Cross-team channel membership, rendered as two sections:
+ *   - "Synced by role" — one read-only card per (person, role) they currently
+ *     match from the roster (Team · Role), managed via Edit synced roles.
+ *   - "Permanent" — manually pinned members ("Added manually"), each with a
+ *     remove action; a header [+ Add] opens the people picker.
+ * A person who is both pinned AND role-matched appears in both sections.
+ */
+function CrossTeamMembersSections({
+  membership,
+  colors,
+  primaryColor,
+  canManage,
+  onAdd,
+  onRemove,
+  onOpenProfile,
+}: {
+  membership: CrossTeamChannelMembership | undefined;
+  colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+  canManage: boolean;
+  onAdd: () => void;
+  onRemove: (userId: Id<"users">, name: string) => void;
+  onOpenProfile: (userId: Id<"users">) => void;
+}) {
+  const syncedRoleMembers = membership?.syncedRoleMembers ?? [];
+  const permanentMembers = membership?.permanentMembers ?? [];
+
+  return (
+    <>
+      {syncedRoleMembers.length > 0 && (
+        <>
+          <SectionHeader colors={colors} label="Synced by role" />
+          <View
+            style={[
+              styles.sectionGroup,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            {syncedRoleMembers.map((m, idx) => (
+              <Pressable
+                key={`${m.userId}:${m.roleId}`}
+                onPress={() => onOpenProfile(m.userId)}
+                style={({ pressed }) => [
+                  styles.memberRow,
+                  idx > 0 && {
+                    borderTopWidth: StyleSheet.hairlineWidth,
+                    borderTopColor: colors.border,
+                  },
+                  pressed && { backgroundColor: colors.selectedBackground },
+                ]}
+              >
+                <Avatar name={m.name} imageUrl={m.avatarUrl} size={40} />
+                <View style={styles.memberRowText}>
+                  <Text
+                    style={[styles.memberRowName, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {m.name}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.memberRowSubtitle,
+                      {
+                        color: colors.textSecondary,
+                        textTransform: "none",
+                        letterSpacing: 0,
+                        fontWeight: "500",
+                      },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {m.teamName} · {m.roleName}
+                  </Text>
+                </View>
+                <Ionicons name="sync" size={16} color={colors.textTertiary} />
+              </Pressable>
+            ))}
+          </View>
+        </>
+      )}
+
+      {/* Permanent section — always shown for leaders so they can add. */}
+      {(permanentMembers.length > 0 || canManage) && (
+        <>
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              paddingHorizontal: 20,
+              marginTop: 24,
+              marginBottom: 8,
+            }}
+          >
+            <Text
+              style={[styles.sectionHeader, { color: colors.textSecondary, paddingHorizontal: 0, marginTop: 0, marginBottom: 0 }]}
+            >
+              PERMANENT
+            </Text>
+            {canManage && (
+              <TouchableOpacity
+                onPress={onAdd}
+                style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
+                hitSlop={8}
+              >
+                <Ionicons name="add" size={18} color={primaryColor} />
+                <Text
+                  style={{ fontSize: 14, fontWeight: "600", color: primaryColor }}
+                >
+                  Add
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {permanentMembers.length > 0 ? (
+            <View
+              style={[
+                styles.sectionGroup,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {permanentMembers.map((m, idx) => (
+                <Pressable
+                  key={m.userId}
+                  onPress={() => onOpenProfile(m.userId)}
+                  style={({ pressed }) => [
+                    styles.memberRow,
+                    idx > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                    pressed && { backgroundColor: colors.selectedBackground },
+                  ]}
+                >
+                  <Avatar name={m.name} imageUrl={m.avatarUrl} size={40} />
+                  <View style={styles.memberRowText}>
+                    <Text
+                      style={[styles.memberRowName, { color: colors.text }]}
+                      numberOfLines={1}
+                    >
+                      {m.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.memberRowSubtitle,
+                        {
+                          color: colors.textSecondary,
+                          textTransform: "none",
+                          letterSpacing: 0,
+                          fontWeight: "500",
+                        },
+                      ]}
+                    >
+                      Added manually
+                    </Text>
+                  </View>
+                  {canManage && (
+                    <TouchableOpacity
+                      onPress={() => onRemove(m.userId, m.name)}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 14,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: colors.surface,
+                      }}
+                      hitSlop={8}
+                    >
+                      <Ionicons
+                        name="remove"
+                        size={18}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text
+              style={{
+                paddingHorizontal: 20,
+                paddingVertical: 4,
+                fontSize: 13,
+                color: colors.textTertiary,
+              }}
+            >
+              No permanent members yet. Add people who should always be in this
+              channel.
+            </Text>
+          )}
+        </>
+      )}
+    </>
   );
 }
 

@@ -17,13 +17,19 @@
 
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "../../_generated/server";
-import type { MutationCtx } from "../../_generated/server";
-import type { Id } from "../../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
+import { getDisplayName, getMediaUrl } from "../../lib/utils";
+import { updateChannelMemberCount } from "../messaging/helpers";
 import { requireGroupMember, requireGroupScheduler } from "./permissions";
-import { reconcileCrossTeamChannelImpl } from "./teamChannelSync";
+import {
+  computeCrossTeamRoleMembers,
+  reconcileCrossTeamChannelImpl,
+  SYNC_SOURCE,
+} from "./teamChannelSync";
 
 /** Validator for a single cross-team membership selector. */
 const selectorValidator = v.object({
@@ -325,5 +331,363 @@ export const listCrossTeamChannels = query({
         };
       }),
     );
+  },
+});
+
+// ============================================================================
+// Permanent members — manually pinned members of a cross-team channel
+// ============================================================================
+//
+// A cross-team channel's roster is otherwise entirely auto-synced from event-
+// plan role assignments (see `computeCrossTeamRoleMembers`). "Permanent"
+// members are `chatChannelMembers` rows a leader pinned by hand
+// (`isPermanent === true`); the reconcile engine never removes them. These
+// mirror the team-keyed `addPermanentMember` / `removePermanentMember` in
+// `teams.ts`, but are keyed on the cross-team `channelId` (which owns no
+// `teams` row).
+
+/**
+ * Resolve a cross-team channel for a group leader, throwing `ConvexError` if
+ * the channel is missing, not a cross-team channel, has no home group, or the
+ * caller does not lead that group. Mirrors `createCrossTeamChannel`'s gate.
+ */
+async function requireCrossTeamChannelLeader(
+  ctx: MutationCtx,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannels">> {
+  const channel = await ctx.db.get(channelId);
+  if (!channel) {
+    throw new ConvexError("Channel not found");
+  }
+  if (channel.channelType !== "cross_team") {
+    throw new ConvexError("Channel is not a cross-team channel");
+  }
+  const groupId = channel.groupId;
+  if (!groupId) {
+    throw new ConvexError(
+      "Cross-team channel is not attached to a campus group.",
+    );
+  }
+  const groupMembership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", groupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  if (!groupMembership || !isLeaderRole(groupMembership.role)) {
+    throw new ConvexError(
+      "Only group leaders can manage cross-team channel members.",
+    );
+  }
+  return channel;
+}
+
+/**
+ * The active membership row for `(channelId, userId)`, or null. There is at
+ * most one active (non-left) row per pair by construction.
+ */
+async function activeMembership(
+  ctx: QueryCtx | MutationCtx,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+): Promise<Doc<"chatChannelMembers"> | null> {
+  return ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_user", (q) =>
+      q.eq("channelId", channelId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+}
+
+/**
+ * Channel Info membership for a cross-team channel, split into two sections:
+ *
+ *   - `permanentMembers`: active rows with `isPermanent === true` — the
+ *     manually pinned members ("Added manually", removable).
+ *   - `syncedRoleMembers`: derived live from `computeCrossTeamRoleMembers`,
+ *     ONE entry per (user, role) they currently match ("Team · Role",
+ *     read-only). A user matching two roles yields two entries.
+ *
+ * A member who is both pinned AND currently role-matched appears in BOTH lists
+ * (the UI renders a card in each section). Auth: an active member of the
+ * channel's home group, or a community admin.
+ */
+export const getCrossTeamChannelMembership = query({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  returns: v.object({
+    permanentMembers: v.array(
+      v.object({
+        userId: v.id("users"),
+        name: v.string(),
+        avatarUrl: v.optional(v.string()),
+      }),
+    ),
+    syncedRoleMembers: v.array(
+      v.object({
+        userId: v.id("users"),
+        name: v.string(),
+        avatarUrl: v.optional(v.string()),
+        roleId: v.id("teamRoles"),
+        roleName: v.string(),
+        teamId: v.id("teams"),
+        teamName: v.string(),
+      }),
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
+    if (channel.channelType !== "cross_team") {
+      throw new ConvexError("Channel is not a cross-team channel");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError(
+        "Cross-team channel is not attached to a campus group.",
+      );
+    }
+    await requireGroupMember(ctx, channel.groupId, userId);
+
+    // --- Permanent (manually pinned) members ---------------------------
+    const activeRows = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+
+    const permanentMembers = await Promise.all(
+      activeRows
+        .filter((row) => row.isPermanent === true)
+        .map(async (row) => {
+          const user = await ctx.db.get(row.userId);
+          return {
+            userId: row.userId,
+            name: user
+              ? getDisplayName(user.firstName, user.lastName)
+              : (row.displayName ?? "Unknown"),
+            avatarUrl: user
+              ? getMediaUrl(user.profilePhoto)
+              : row.profilePhoto,
+          };
+        }),
+    );
+
+    // --- Synced-by-role members — one card per (user, role) ------------
+    const assignments = await computeCrossTeamRoleMembers(ctx, channel);
+    const seen = new Set<string>();
+    const syncedRoleMembers: Array<{
+      userId: Id<"users">;
+      name: string;
+      avatarUrl: string | undefined;
+      roleId: Id<"teamRoles">;
+      roleName: string;
+      teamId: Id<"teams">;
+      teamName: string;
+    }> = [];
+    for (const assignment of assignments) {
+      const key = `${assignment.userId}:${assignment.roleId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const [user, role, team] = await Promise.all([
+        ctx.db.get(assignment.userId),
+        ctx.db.get(assignment.roleId),
+        ctx.db.get(assignment.teamId),
+      ]);
+      syncedRoleMembers.push({
+        userId: assignment.userId,
+        name: user
+          ? getDisplayName(user.firstName, user.lastName)
+          : "Unknown",
+        avatarUrl: user ? getMediaUrl(user.profilePhoto) : undefined,
+        roleId: assignment.roleId,
+        roleName: role?.name ?? "Unknown role",
+        teamId: assignment.teamId,
+        teamName: team?.name ?? "Unknown team",
+      });
+    }
+
+    return { permanentMembers, syncedRoleMembers };
+  },
+});
+
+/**
+ * Pin a permanent member on a cross-team channel.
+ *
+ * Idempotent. If the user already has an active row (synced or manual) it is
+ * flagged `isPermanent: true` — a role-synced member becomes ALSO permanent
+ * without duplicating rows. A soft-left row is revived as a plain permanent
+ * member; otherwise a fresh manual row is inserted.
+ *
+ * Auth: a leader of the channel's home group.
+ */
+export const addPermanentMemberToChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    userId: v.id("users"),
+  },
+  returns: v.object({
+    channelId: v.id("chatChannels"),
+    userId: v.id("users"),
+    added: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    const channel = await requireCrossTeamChannelLeader(
+      ctx,
+      args.channelId,
+      callerId,
+    );
+
+    const user = await ctx.db.get(args.userId);
+    if (!user) {
+      throw new ConvexError("User not found");
+    }
+
+    // Cross-team channels can span multiple groups, so gate on COMMUNITY
+    // membership: a direct call must not pin an arbitrary unrelated user. The
+    // picker already scopes to group members; this closes the direct-call hole.
+    const group = channel.groupId ? await ctx.db.get(channel.groupId) : null;
+    if (!group) {
+      throw new ConvexError("Channel's group not found");
+    }
+    const targetMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", group.communityId),
+      )
+      .first();
+    if (!targetMembership || targetMembership.status !== 1) {
+      throw new ConvexError("That person is not a member of this community.");
+    }
+
+    const displayName = getDisplayName(user.firstName, user.lastName);
+    const profilePhoto = getMediaUrl(user.profilePhoto);
+
+    const active = await activeMembership(ctx, args.channelId, args.userId);
+    if (active) {
+      // Already in the channel (synced or manual) — just pin them. Leaves any
+      // `syncSource`/metadata intact so a synced member stays role-matched.
+      await ctx.db.patch(active._id, { isPermanent: true });
+      await updateChannelMemberCount(ctx, args.channelId);
+      return { channelId: args.channelId, userId: args.userId, added: true };
+    }
+
+    // Revive a prior soft-left row as a plain permanent member, else insert.
+    const softLeft = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", args.userId),
+      )
+      .first();
+    if (softLeft) {
+      await ctx.db.patch(softLeft._id, {
+        leftAt: undefined,
+        isPermanent: true,
+        role: "member",
+        syncSource: undefined,
+        syncEventId: undefined,
+        scheduledRemovalAt: undefined,
+        syncMetadata: undefined,
+        joinedAt: Date.now(),
+        isMuted: false,
+        displayName,
+        profilePhoto,
+      });
+    } else {
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: args.channelId,
+        userId: args.userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+        isPermanent: true,
+        displayName,
+        profilePhoto,
+      });
+    }
+
+    await updateChannelMemberCount(ctx, args.channelId);
+    return { channelId: args.channelId, userId: args.userId, added: true };
+  },
+});
+
+/**
+ * Unpin a permanent member from a cross-team channel.
+ *
+ * Clears `isPermanent` on the user's active row, then decides whether they stay
+ * in the channel based on their LIVE roster status — NOT the stale `syncSource`
+ * tag. If they are still role-matched (`computeCrossTeamRoleMembers`), the row
+ * is handed back to the auto-sync engine — `isPermanent: false` plus
+ * `syncSource: "event_plan"` — so the reconcile keeps it while rostered and
+ * evicts it normally once the roster ends. If they are NOT role-matched the row
+ * is soft-removed and they leave the channel.
+ *
+ * Stamping `syncSource` is what prevents a "ghost" row: a user pinned BEFORE
+ * being rostered keeps `syncSource === undefined` (the reconcile add-loop skips
+ * already-active rows), so without this a still-rostered unpin would leave a row
+ * owned by neither engine — never evicted, invisible to both Channel Info
+ * sections. `syncSource` alone is unreliable for the stay/leave decision (the
+ * reconcile guard preserves a pinned `event_plan` row long after the window),
+ * so only the live selector pass is authoritative.
+ *
+ * Throws `ConvexError` if the user has no active row or is not permanent.
+ * Auth: a leader of the channel's home group.
+ */
+export const removePermanentMemberFromChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    userId: v.id("users"),
+  },
+  returns: v.object({
+    channelId: v.id("chatChannels"),
+    userId: v.id("users"),
+    removed: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    const channel = await requireCrossTeamChannelLeader(
+      ctx,
+      args.channelId,
+      callerId,
+    );
+
+    const active = await activeMembership(ctx, args.channelId, args.userId);
+    if (!active || active.isPermanent !== true) {
+      throw new ConvexError("That person is not a permanent member.");
+    }
+
+    const roleMembers = await computeCrossTeamRoleMembers(ctx, channel);
+    const stillRoleMatched = roleMembers.some(
+      (m) => m.userId === args.userId,
+    );
+
+    if (!stillRoleMatched) {
+      // No live role match — unpinning removes them from the channel entirely.
+      await ctx.db.patch(active._id, { isPermanent: false, leftAt: Date.now() });
+    } else {
+      // Still role-matched — hand the row back to the auto-sync engine so it is
+      // reconciled (and eventually evicted) like any synced member. Stamping
+      // syncSource is required: a row pinned before rostering has none, and
+      // leaving it unset would strand it as a ghost owned by neither engine.
+      await ctx.db.patch(active._id, {
+        isPermanent: false,
+        syncSource: SYNC_SOURCE,
+      });
+    }
+
+    await updateChannelMemberCount(ctx, args.channelId);
+    return { channelId: args.channelId, userId: args.userId, removed: true };
   },
 });
