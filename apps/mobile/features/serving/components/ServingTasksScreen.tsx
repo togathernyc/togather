@@ -12,8 +12,10 @@
  *   - Personal (ad-hoc) tasks the user added — toggled via `togglePersonalTask`,
  *     and editable / deletable. These carry an "added by you" marker.
  *
- * Tapping a task expands its detail: the "How-To" guidance, rendered from
- * `howToDoc` (markdown) / `howToText` / `howToUrl` / media per `howToType`.
+ * How-To guidance: short `text` guidance renders inline (quiet secondary text);
+ * heavier kinds (`link` / `media` / `doc`) show a compact "How-To →" chip that
+ * opens the full-screen read-only `HowToViewer`. Personal tasks show their note
+ * inline and expand (on tap) to Edit / Delete affordances.
  *
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
@@ -27,7 +29,6 @@ import {
   Pressable,
   TextInput,
   ActivityIndicator,
-  Linking,
   Alert,
   Platform,
 } from "react-native";
@@ -38,11 +39,9 @@ import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ProgressBar } from "@components/ui/ProgressBar";
-import { Markdown } from "@components/ui/Markdown";
-import { AppImage } from "@components/ui/AppImage";
-import { getMediaUrl } from "@/utils/media";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
+import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
 
 type Segment = "before" | "during" | "after";
 
@@ -107,6 +106,14 @@ export function ServingTasksScreen() {
     planId ? { planId } : "skip",
   ) as MyServingTasks | undefined;
 
+  // Header context (event title + when). Reuses the already-cheap serving
+  // eligibility query — no extra fetch specific to this screen.
+  const eligibility = useAuthenticatedQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    planId ? {} : "skip",
+  ) as { plans: Array<{ planId: string; title: string; startsAt: number }> } | null | undefined;
+  const activePlan = eligibility?.plans.find((p) => p.planId === planId) ?? null;
+
   const toggleTaskCompletion = useAuthenticatedMutation(
     api.functions.scheduling.eventTasks.toggleTaskCompletion,
   );
@@ -128,6 +135,8 @@ export function ServingTasksScreen() {
   const [addingSegment, setAddingSegment] = useState<Segment | null>(null);
   // The personal task currently being edited (null = none).
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The how-to guidance currently open in the full-screen viewer (null = none).
+  const [viewerContent, setViewerContent] = useState<HowToViewerContent | null>(null);
 
   const toggle = useCallback(
     async (task: ServingTask) => {
@@ -176,121 +185,237 @@ export function ServingTasksScreen() {
     );
   }
 
+  // Overall readiness across every segment.
+  const allTasks = tasks
+    ? [...tasks.before, ...tasks.during, ...tasks.after]
+    : [];
+  const overallDone = allTasks.filter((t) => t.completed).length;
+  const overallTotal = allTasks.length;
+
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={{
-        paddingTop: insets.top + 12,
-        paddingBottom: insets.bottom + 32,
-      }}
-    >
-      <ServingPlanSwitcher />
-      <Text style={[styles.screenTitle, { color: colors.text }]}>My tasks</Text>
+    <>
+      <ScrollView
+        style={[styles.container, { backgroundColor: colors.background }]}
+        contentContainerStyle={{
+          paddingTop: insets.top + 12,
+          paddingBottom: insets.bottom + 40,
+        }}
+      >
+        <ServingPlanSwitcher />
 
-      {tasks === undefined ? (
-        <View style={styles.inlineLoading}>
-          <ActivityIndicator size="small" color={colors.text} />
-        </View>
-      ) : (
-        SEGMENTS.map(({ key, label }) => {
-        const segmentTasks = tasks[key] ?? [];
-        const done = segmentTasks.filter((t) => t.completed).length;
-        const total = segmentTasks.length;
-        const progress = total > 0 ? done / total : 0;
+        <ServingHeader
+          title={activePlan?.title ?? "My tasks"}
+          startsAt={activePlan?.startsAt}
+          done={overallDone}
+          total={overallTotal}
+          loading={tasks === undefined}
+          colors={colors}
+          primaryColor={primaryColor}
+        />
 
-        return (
-          <View key={key} style={styles.segment}>
-            <View style={styles.segmentHeader}>
-              <Text style={[styles.segmentTitle, { color: colors.text }]}>
-                {label}
-              </Text>
-              <Text
-                style={[styles.segmentCount, { color: colors.textSecondary }]}
-              >
-                {done}/{total}
-              </Text>
-            </View>
-            <ProgressBar progress={progress} color={primaryColor} />
-
-            <View style={styles.taskList}>
-              {segmentTasks.map((task) => (
-                <TaskRow
-                  key={task.key}
-                  task={task}
-                  colors={colors}
-                  primaryColor={primaryColor}
-                  expanded={expandedId === task.key}
-                  editing={editingId === task.key}
-                  onToggle={() => toggle(task)}
-                  onPress={() =>
-                    setExpandedId((cur) =>
-                      cur === task.key ? null : task.key,
-                    )
-                  }
-                  onEdit={() => setEditingId(task.key)}
-                  onCancelEdit={() => setEditingId(null)}
-                  onSaveEdit={async (patch) => {
-                    try {
-                      await updatePersonalTask({
-                        taskId: task.taskId as Id<"personalServingTasks">,
-                        ...patch,
-                      });
-                      setEditingId(null);
-                    } catch (err) {
-                      notify(
-                        "Couldn't save task",
-                        String((err as Error)?.message ?? err),
-                      );
-                    }
-                  }}
-                  onDelete={() => remove(task.taskId)}
-                />
-              ))}
-            </View>
-
-            {addingSegment === key ? (
-              <AddTaskForm
-                segment={key}
-                colors={colors}
-                primaryColor={primaryColor}
-                onCancel={() => setAddingSegment(null)}
-                onSubmit={async ({ title, note, timeLabel }) => {
-                  if (!planId) return;
-                  try {
-                    await addPersonalTask({
-                      planId,
-                      segment: key,
-                      title,
-                      note: note || undefined,
-                      timeLabel: timeLabel || undefined,
-                    });
-                    setAddingSegment(null);
-                  } catch (err) {
-                    notify(
-                      "Couldn't add task",
-                      String((err as Error)?.message ?? err),
-                    );
-                  }
-                }}
-              />
-            ) : (
-              <Pressable
-                onPress={() => setAddingSegment(key)}
-                style={styles.addButton}
-                accessibilityRole="button"
-                accessibilityLabel={`Add a ${label} task`}
-              >
-                <Ionicons name="add" size={18} color={primaryColor} />
-                <Text style={[styles.addButtonText, { color: primaryColor }]}>
-                  Add task
-                </Text>
-              </Pressable>
-            )}
+        {tasks === undefined ? (
+          <View style={styles.inlineLoading}>
+            <ActivityIndicator size="small" color={colors.text} />
           </View>
-        );
-        })
-      )}
-    </ScrollView>
+        ) : (
+          SEGMENTS.map(({ key, label }) => {
+            const segmentTasks = tasks[key] ?? [];
+            const done = segmentTasks.filter((t) => t.completed).length;
+            const total = segmentTasks.length;
+            const progress = total > 0 ? done / total : 0;
+
+            return (
+              <View key={key} style={styles.segment}>
+                <View style={styles.segmentHeader}>
+                  <Text style={[styles.segmentTitle, { color: colors.textSecondary }]}>
+                    {label.toUpperCase()}
+                  </Text>
+                  <Text
+                    style={[styles.segmentCount, { color: colors.textTertiary }]}
+                  >
+                    {done}/{total}
+                  </Text>
+                </View>
+                <ProgressBar
+                  progress={progress}
+                  color={primaryColor}
+                  height={4}
+                />
+
+                <View
+                  style={[
+                    styles.card,
+                    { backgroundColor: colors.surface, borderColor: colors.border },
+                  ]}
+                >
+                  {segmentTasks.length === 0 ? (
+                    <Text
+                      style={[styles.cardEmpty, { color: colors.textTertiary }]}
+                    >
+                      Nothing here yet.
+                    </Text>
+                  ) : (
+                    segmentTasks.map((task, i) => (
+                      <TaskRow
+                        key={task.key}
+                        task={task}
+                        first={i === 0}
+                        colors={colors}
+                        primaryColor={primaryColor}
+                        expanded={expandedId === task.key}
+                        editing={editingId === task.key}
+                        onToggle={() => toggle(task)}
+                        onOpenHowTo={() =>
+                          setViewerContent({
+                            title: task.title,
+                            howToType: task.howToType ?? "none",
+                            howToUrl: task.howToUrl,
+                            howToMediaPath: task.howToMediaPath,
+                            howToDoc: task.howToDoc,
+                          })
+                        }
+                        onToggleExpand={() =>
+                          setExpandedId((cur) =>
+                            cur === task.key ? null : task.key,
+                          )
+                        }
+                        onEdit={() => setEditingId(task.key)}
+                        onCancelEdit={() => setEditingId(null)}
+                        onSaveEdit={async (patch) => {
+                          try {
+                            await updatePersonalTask({
+                              taskId: task.taskId as Id<"personalServingTasks">,
+                              ...patch,
+                            });
+                            setEditingId(null);
+                          } catch (err) {
+                            notify(
+                              "Couldn't save task",
+                              String((err as Error)?.message ?? err),
+                            );
+                          }
+                        }}
+                        onDelete={() => remove(task.taskId)}
+                      />
+                    ))
+                  )}
+                </View>
+
+                {addingSegment === key ? (
+                  <AddTaskForm
+                    segment={key}
+                    colors={colors}
+                    primaryColor={primaryColor}
+                    onCancel={() => setAddingSegment(null)}
+                    onSubmit={async ({ title, note, timeLabel }) => {
+                      if (!planId) return;
+                      try {
+                        await addPersonalTask({
+                          planId,
+                          segment: key,
+                          title,
+                          note: note || undefined,
+                          timeLabel: timeLabel || undefined,
+                        });
+                        setAddingSegment(null);
+                      } catch (err) {
+                        notify(
+                          "Couldn't add task",
+                          String((err as Error)?.message ?? err),
+                        );
+                      }
+                    }}
+                  />
+                ) : (
+                  <Pressable
+                    onPress={() => setAddingSegment(key)}
+                    style={styles.addButton}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add a ${label} task`}
+                  >
+                    <Ionicons name="add" size={17} color={primaryColor} />
+                    <Text style={[styles.addButtonText, { color: primaryColor }]}>
+                      Add my own task
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })
+        )}
+      </ScrollView>
+
+      <HowToViewer
+        visible={viewerContent !== null}
+        content={viewerContent}
+        onClose={() => setViewerContent(null)}
+      />
+    </>
+  );
+}
+
+// ============================================================================
+// Header
+// ============================================================================
+
+/** Format a plan start timestamp as e.g. "Sun, Jul 6 · 9:00 AM". */
+function formatWhen(startsAt: number): string {
+  const d = new Date(startsAt);
+  const day = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${day} · ${time}`;
+}
+
+function ServingHeader({
+  title,
+  startsAt,
+  done,
+  total,
+  loading,
+  colors,
+  primaryColor,
+}: {
+  title: string;
+  startsAt?: number;
+  done: number;
+  total: number;
+  loading: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  const allDone = total > 0 && done === total;
+  return (
+    <View style={styles.header}>
+      <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={2}>
+        {title}
+      </Text>
+      {startsAt ? (
+        <Text style={[styles.headerWhen, { color: colors.textSecondary }]}>
+          {formatWhen(startsAt)}
+        </Text>
+      ) : null}
+
+      {!loading && total > 0 ? (
+        <View style={styles.readiness}>
+          <View style={styles.readinessLabelRow}>
+            <Text style={[styles.readinessLabel, { color: colors.textSecondary }]}>
+              {allDone ? "You're all set" : "Your readiness"}
+            </Text>
+            <Text style={[styles.readinessCount, { color: colors.text }]}>
+              {done} of {total}
+            </Text>
+          </View>
+          <ProgressBar progress={done / total} color={primaryColor} height={8} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -302,26 +427,40 @@ type ThemeColors = ReturnType<typeof useTheme>["colors"];
 
 interface TaskRowProps {
   task: ServingTask;
+  first: boolean;
   colors: ThemeColors;
   primaryColor: string;
   expanded: boolean;
   editing: boolean;
   onToggle: () => void;
-  onPress: () => void;
+  onOpenHowTo: () => void;
+  onToggleExpand: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
   onSaveEdit: (patch: { title?: string; note?: string }) => void;
   onDelete: () => void;
 }
 
+/** How-to kinds that open the full-screen viewer rather than rendering inline. */
+const VIEWER_HOW_TO_ICONS: Record<
+  "link" | "media" | "doc",
+  keyof typeof Ionicons.glyphMap
+> = {
+  link: "link-outline",
+  media: "image-outline",
+  doc: "document-text-outline",
+};
+
 function TaskRow({
   task,
+  first,
   colors,
   primaryColor,
   expanded,
   editing,
   onToggle,
-  onPress,
+  onOpenHowTo,
+  onToggleExpand,
   onEdit,
   onCancelEdit,
   onSaveEdit,
@@ -330,24 +469,54 @@ function TaskRow({
   const [editTitle, setEditTitle] = useState(task.title);
   const [editNote, setEditNote] = useState(task.note ?? "");
 
+  const howToType = task.howToType ?? "none";
+  // Short text guidance renders inline; personal notes render inline too.
+  const inlineText = task.isPersonal
+    ? task.note
+    : howToType === "text"
+      ? task.howToText
+      : null;
+  // link / media / doc open the viewer via a compact affordance.
+  const viewerType =
+    !task.isPersonal && (howToType === "link" || howToType === "media" || howToType === "doc")
+      ? howToType
+      : null;
+
   return (
-    <View style={[styles.taskRow, { borderColor: colors.border }]}>
+    <View
+      style={[
+        styles.taskRow,
+        !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+      ]}
+    >
       <View style={styles.taskRowMain}>
         <Pressable
           onPress={onToggle}
-          hitSlop={8}
+          hitSlop={10}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: task.completed }}
           accessibilityLabel={task.title}
+          style={styles.checkboxPress}
         >
-          <Ionicons
-            name={task.completed ? "checkbox" : "square-outline"}
-            size={24}
-            color={task.completed ? primaryColor : colors.textTertiary}
-          />
+          <View
+            style={[
+              styles.checkbox,
+              task.completed
+                ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                : { borderColor: colors.textTertiary },
+            ]}
+          >
+            {task.completed ? (
+              <Ionicons name="checkmark" size={15} color="#fff" />
+            ) : null}
+          </View>
         </Pressable>
 
-        <Pressable style={styles.taskTitleWrap} onPress={onPress}>
+        <Pressable
+          style={styles.taskBody}
+          onPress={task.isPersonal ? onToggleExpand : undefined}
+          disabled={!task.isPersonal}
+        >
           <Text
             style={[
               styles.taskTitle,
@@ -357,6 +526,7 @@ function TaskRow({
           >
             {task.title}
           </Text>
+
           <View style={styles.taskMetaRow}>
             {task.timeLabel ? (
               <Text style={[styles.taskMeta, { color: colors.textSecondary }]}>
@@ -369,12 +539,45 @@ function TaskRow({
               </Text>
             ) : null}
           </View>
+
+          {inlineText ? (
+            <Text
+              style={[
+                styles.inlineHowTo,
+                { color: colors.textSecondary },
+                task.completed && styles.inlineHowToDone,
+              ]}
+              numberOfLines={2}
+            >
+              {inlineText}
+            </Text>
+          ) : null}
+
+          {viewerType ? (
+            <Pressable
+              onPress={onOpenHowTo}
+              hitSlop={6}
+              style={[styles.howToChip, { borderColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Open how-to for ${task.title}`}
+            >
+              <Ionicons
+                name={VIEWER_HOW_TO_ICONS[viewerType]}
+                size={13}
+                color={primaryColor}
+              />
+              <Text style={[styles.howToChipText, { color: primaryColor }]}>
+                How-To
+              </Text>
+              <Ionicons name="arrow-forward" size={13} color={primaryColor} />
+            </Pressable>
+          ) : null}
         </Pressable>
       </View>
 
-      {expanded ? (
+      {expanded && task.isPersonal ? (
         <View style={styles.taskDetail}>
-          {editing && task.isPersonal ? (
+          {editing ? (
             <View style={styles.editForm}>
               <TextInput
                 value={editTitle}
@@ -418,109 +621,19 @@ function TaskRow({
               </View>
             </View>
           ) : (
-            <>
-              <HowTo task={task} colors={colors} primaryColor={primaryColor} />
-              {task.isPersonal ? (
-                <View style={styles.personalActions}>
-                  <Pressable onPress={onEdit} style={styles.textButton}>
-                    <Text style={{ color: primaryColor }}>Edit</Text>
-                  </Pressable>
-                  <Pressable onPress={onDelete} style={styles.textButton}>
-                    <Text style={{ color: colors.error ?? "#c00" }}>Delete</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-            </>
+            <View style={styles.personalActions}>
+              <Pressable onPress={onEdit} style={styles.textButton}>
+                <Text style={{ color: primaryColor }}>Edit</Text>
+              </Pressable>
+              <Pressable onPress={onDelete} style={styles.textButton}>
+                <Text style={{ color: colors.error ?? "#c00" }}>Delete</Text>
+              </Pressable>
+            </View>
           )}
         </View>
       ) : null}
     </View>
   );
-}
-
-// ============================================================================
-// How-To detail
-// ============================================================================
-
-function HowTo({
-  task,
-  colors,
-  primaryColor,
-}: {
-  task: ServingTask;
-  colors: ThemeColors;
-  primaryColor: string;
-}) {
-  const howToType = task.howToType ?? "none";
-
-  if (task.isPersonal) {
-    return task.note ? (
-      <Text style={[styles.howToText, { color: colors.textSecondary }]}>
-        {task.note}
-      </Text>
-    ) : (
-      <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
-        No note.
-      </Text>
-    );
-  }
-
-  switch (howToType) {
-    case "doc":
-      return task.howToDoc ? (
-        <View style={styles.markdownWrap}>
-          <Markdown source={task.howToDoc} />
-        </View>
-      ) : (
-        <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
-          No details.
-        </Text>
-      );
-    case "text":
-      return (
-        <Text style={[styles.howToText, { color: colors.textSecondary }]}>
-          {task.howToText ?? ""}
-        </Text>
-      );
-    case "link":
-      return task.howToUrl ? (
-        <Pressable onPress={() => Linking.openURL(task.howToUrl as string)}>
-          <Text style={[styles.howToLink, { color: primaryColor }]}>
-            {task.howToUrl}
-          </Text>
-        </Pressable>
-      ) : (
-        <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
-          No link.
-        </Text>
-      );
-    case "media":
-      return task.howToMediaPath ? (
-        <Pressable
-          onPress={() => {
-            const url = getMediaUrl(task.howToMediaPath as string);
-            if (url) Linking.openURL(url);
-          }}
-        >
-          <AppImage
-            source={task.howToMediaPath}
-            style={styles.howToMedia}
-            resizeMode="cover"
-          />
-        </Pressable>
-      ) : (
-        <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
-          No attachment.
-        </Text>
-      );
-    case "none":
-    default:
-      return (
-        <Text style={[styles.howToEmpty, { color: colors.textTertiary }]}>
-          No details.
-        </Text>
-      );
-  }
 }
 
 // ============================================================================
@@ -626,12 +739,21 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 15, textAlign: "center" },
   inlineLoading: { paddingVertical: 48, alignItems: "center" },
-  screenTitle: {
-    fontSize: 28,
-    fontWeight: "700",
-    paddingHorizontal: 16,
-    marginBottom: 12,
+
+  // Header
+  header: { paddingHorizontal: 16, marginBottom: 20 },
+  headerTitle: { fontSize: 26, fontWeight: "700", letterSpacing: -0.4 },
+  headerWhen: { fontSize: 14, marginTop: 4 },
+  readiness: { marginTop: 16, gap: 8 },
+  readinessLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
+  readinessLabel: { fontSize: 13, fontWeight: "500" },
+  readinessCount: { fontSize: 13, fontWeight: "700" },
+
+  // Segments
   segment: { paddingHorizontal: 16, marginBottom: 24 },
   segmentHeader: {
     flexDirection: "row",
@@ -639,39 +761,62 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 6,
   },
-  segmentTitle: { fontSize: 17, fontWeight: "600" },
-  segmentCount: { fontSize: 13 },
-  taskList: { marginTop: 8 },
-  taskRow: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 10,
+  segmentTitle: { fontSize: 12, fontWeight: "700", letterSpacing: 0.8 },
+  segmentCount: { fontSize: 12, fontWeight: "600" },
+  card: {
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
   },
+  cardEmpty: { fontSize: 14, fontStyle: "italic", padding: 16 },
+
+  // Task rows
+  taskRow: { paddingHorizontal: 14, paddingVertical: 12 },
   taskRowMain: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
-  taskTitleWrap: { flex: 1 },
-  taskTitle: { fontSize: 15, lineHeight: 20 },
-  taskTitleDone: { textDecorationLine: "line-through", opacity: 0.6 },
-  taskMetaRow: { flexDirection: "row", gap: 8, marginTop: 2 },
+  checkboxPress: { paddingTop: 1 },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  taskBody: { flex: 1 },
+  taskTitle: { fontSize: 15, lineHeight: 20, fontWeight: "500" },
+  taskTitleDone: { textDecorationLine: "line-through", opacity: 0.5 },
+  taskMetaRow: { flexDirection: "row", gap: 8, marginTop: 3 },
   taskMeta: { fontSize: 12 },
-  taskDetail: { paddingLeft: 36, paddingTop: 8 },
-  howToText: { fontSize: 14, lineHeight: 20 },
-  howToLink: { fontSize: 14, textDecorationLine: "underline" },
-  howToMedia: { width: "100%", height: 180, borderRadius: 8, marginTop: 2 },
-  howToEmpty: { fontSize: 13, fontStyle: "italic" },
-  markdownWrap: { marginTop: 2 },
-  personalActions: { flexDirection: "row", gap: 16, marginTop: 10 },
+  inlineHowTo: { fontSize: 13, lineHeight: 18, marginTop: 6 },
+  inlineHowToDone: { opacity: 0.5 },
+  howToChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 5,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  howToChipText: { fontSize: 12, fontWeight: "600" },
+  taskDetail: { paddingLeft: 34, paddingTop: 10 },
+  personalActions: { flexDirection: "row", gap: 16 },
   addButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     paddingVertical: 10,
-    marginTop: 4,
+    marginTop: 6,
   },
-  addButtonText: { fontSize: 15, fontWeight: "500" },
+  addButtonText: { fontSize: 14, fontWeight: "600" },
   addForm: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 10,
     padding: 12,
-    marginTop: 8,
+    marginTop: 10,
     gap: 8,
   },
   editForm: { gap: 8 },

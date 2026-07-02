@@ -21,10 +21,10 @@ export default function TabsLayout() {
   // was over-engineered and introduced a stale render frame.
   const hasCommunity = !!community?.id;
 
-  // Serving mode collapses the tab bar to a focused set (Inbox, Runsheet,
-  // Tasks, Profile, Exit) for the duration of an event. Gated on the community
-  // opting into the Event Tasks feature so communities without it never see
-  // serving tabs even if a stale persisted flag lingers.
+  // Serving mode collapses the tab bar to a focused set — ordered
+  // Runsheet · Inbox · Tasks · Exit (no Profile) — for the duration of an event.
+  // Gated on the community opting into the Event Tasks feature so communities
+  // without it never see serving tabs even if a stale persisted flag lingers.
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
@@ -123,6 +123,23 @@ export default function TabsLayout() {
           ),
         }}
       />
+      {/* Serving-mode Runsheet sits immediately before Inbox so the serving
+          tab order reads Runsheet · Inbox · Tasks · Exit. Normal mode hides the
+          serving tabs (href: null), so its order is unaffected. */}
+      <Tabs.Screen
+        name="serving-runsheet"
+        options={{
+          title: 'Runsheet',
+          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'list' : 'list-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="chat"
         options={{
@@ -140,6 +157,35 @@ export default function TabsLayout() {
                     ? 'chatbubbles'
                     : 'chatbubbles-outline'
               }
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      {/* Serving-mode Tasks + Exit sit immediately after Inbox. */}
+      <Tabs.Screen
+        name="serving-tasks"
+        options={{
+          title: 'Tasks',
+          href: inServingMode ? '/(tabs)/serving-tasks' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="serving-exit"
+        options={{
+          title: 'Exit',
+          href: inServingMode ? '/(tabs)/serving-exit' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'exit' : 'exit-outline'}
               size={24}
               color={color}
             />
@@ -185,54 +231,13 @@ export default function TabsLayout() {
           ),
         }}
       />
-
-      {/* Serving-mode tabs — only visible while serving mode is active. */}
-      <Tabs.Screen
-        name="serving-runsheet"
-        options={{
-          title: 'Runsheet',
-          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'list' : 'list-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="serving-tasks"
-        options={{
-          title: 'Tasks',
-          href: inServingMode ? '/(tabs)/serving-tasks' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="serving-exit"
-        options={{
-          title: 'Exit',
-          href: inServingMode ? '/(tabs)/serving-exit' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'exit' : 'exit-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
+          // Hidden while serving mode is active to keep the serving tab bar to
+          // Runsheet · Inbox · Tasks · Exit.
+          href: inServingMode ? null : '/(tabs)/profile',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'person' : 'person-outline'}

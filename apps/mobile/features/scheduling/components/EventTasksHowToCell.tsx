@@ -34,6 +34,13 @@ import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 /** Extensions we treat as video when deciding how to preview a stored media path. */
 const VIDEO_EXT_RE = /\.(mp4|mov|m4v|webm|qt)(\?|$)/i;
 
+/**
+ * Cap for inline `text` how-to guidance. Short instructions belong inline; once
+ * a leader needs more room they should switch to a `doc` (which the hint nudges
+ * toward as they approach the limit).
+ */
+const HOW_TO_TEXT_MAX = 140;
+
 /** Whether a stored `howToMediaPath` points at a video (vs an image). */
 function isVideoPath(path: string): boolean {
   return VIDEO_EXT_RE.test(path);
@@ -259,14 +266,22 @@ export function EventTasksHowToCell({
   return (
     <View style={styles.row}>
       {howToType === "text" ? (
-        <InlineText
-          value={howToText ?? ""}
-          onSave={(t) => onPatch({ howToText: t })}
-          placeholder="Short instruction…"
-          multiline
-          accessibilityLabel="How-to text"
-          style={[styles.valueInput, { color: colors.text, borderColor: colors.border }]}
-        />
+        <View style={styles.textWrap}>
+          <InlineText
+            value={howToText ?? ""}
+            onSave={(t) => onPatch({ howToText: t })}
+            placeholder="Short instruction…"
+            multiline
+            maxLength={HOW_TO_TEXT_MAX}
+            accessibilityLabel="How-to text"
+            style={[styles.valueInput, { color: colors.text, borderColor: colors.border }]}
+          />
+          {(howToText?.length ?? 0) >= HOW_TO_TEXT_MAX * 0.8 ? (
+            <Text style={[styles.textHint, { color: colors.textTertiary }]}>
+              Getting long — consider a Doc instead.
+            </Text>
+          ) : null}
+        </View>
       ) : null}
 
       {howToType === "link" ? (
@@ -395,6 +410,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   addChipText: { fontSize: 13, fontWeight: "600" },
+  textWrap: { flex: 1, gap: 2 },
+  textHint: { fontSize: 11, fontStyle: "italic" },
   valueInput: {
     flex: 1,
     fontSize: 13,
