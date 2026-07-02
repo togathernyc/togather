@@ -367,6 +367,7 @@ export function EventTasksGrid({
         ListHeaderComponent={listHeader ?? undefined}
         ListFooterComponent={footer}
         contentContainerStyle={styles.listContent}
+        dense
       />
 
       {/* Phase menu (Pre / During / Post) — an anchored dropdown at the pill. */}
@@ -423,10 +424,17 @@ function PhasePill({
 }
 
 /**
- * A cell that renders a wrapping set of removable chips (teams or roles) plus a
- * compact "+ Add" pill that measures its own window rect so the parent can
- * anchor a multi-select menu to it. When there are no chips, an optional
- * `emptyPlaceholder` label renders on the add pill (e.g. "Team-level").
+ * A cell that renders a wrapping set of removable chips (teams or roles) plus an
+ * add affordance that measures its own window rect so the parent can anchor a
+ * multi-select menu to it. The chips and the add control sit INLINE on one row
+ * (wrapping only when they overflow the column), so the common case — a single
+ * team / role — is a single line.
+ *
+ * When there are chips, the add control is a compact icon-only "+" button placed
+ * right after the last chip. When there are none and an `emptyPlaceholder` is
+ * given (the role column's team-level case), it renders as a single dashed
+ * "+ Team-level" chip that opens the same picker — so team-level rows are also
+ * one line and still read as "no role = team-level".
  */
 function ChipCell({
   chips,
@@ -447,6 +455,8 @@ function ChipCell({
   primaryColor: string;
 }) {
   const addRef = React.useRef<View>(null);
+  // Empty + a placeholder label => the team-level dashed chip (role column).
+  const showPlaceholder = chips.length === 0 && !!emptyPlaceholder;
   return (
     <View style={styles.chipWrap}>
       {chips.map((chip) => (
@@ -479,22 +489,36 @@ function ChipCell({
           ) : null}
         </View>
       ))}
-      <Pressable
-        ref={addRef}
-        onPress={() => measureAnchor(addRef.current, onAdd)}
-        style={[styles.chipAdd, { borderColor: primaryColor }]}
-        accessibilityRole="button"
-        accessibilityLabel={
-          chips.length === 0 && emptyPlaceholder
-            ? emptyPlaceholder
-            : `Add ${addLabel.toLowerCase()}`
-        }
-      >
-        <Ionicons name="add" size={13} color={primaryColor} />
-        <Text style={[styles.chipAddText, { color: primaryColor }]}>
-          {chips.length === 0 && emptyPlaceholder ? emptyPlaceholder : addLabel}
-        </Text>
-      </Pressable>
+      {showPlaceholder ? (
+        // Team-level: a single dashed placeholder chip that opens the role picker.
+        <Pressable
+          ref={addRef}
+          onPress={() => measureAnchor(addRef.current, onAdd)}
+          style={[styles.chipAdd, { borderColor: primaryColor }]}
+          accessibilityRole="button"
+          accessibilityLabel={emptyPlaceholder}
+        >
+          <Ionicons name="add" size={13} color={primaryColor} />
+          <Text style={[styles.chipAddText, { color: primaryColor }]}>
+            {emptyPlaceholder}
+          </Text>
+        </Pressable>
+      ) : (
+        // Compact icon-only add, inline after the last chip to keep one line.
+        <Pressable
+          ref={addRef}
+          onPress={() => measureAnchor(addRef.current, onAdd)}
+          hitSlop={8}
+          style={[
+            styles.chipAddCompact,
+            { borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`Add ${addLabel.toLowerCase()}`}
+        >
+          <Ionicons name="add" size={15} color={colors.textSecondary} />
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -609,6 +633,16 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   chipAddText: { fontSize: 12, fontWeight: "600" },
+  // Compact icon-only add: a small muted circle that hugs the chip on one line.
+  // Visually ~24px; hitSlop widens the touch target to a comfortable size.
+  chipAddCompact: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   optionScroll: { maxHeight: 360 },
   optionRow: {
     flexDirection: "row",
