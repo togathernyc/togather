@@ -21,6 +21,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { requireGroupMember, requireGroupScheduler } from "./permissions";
 import { getHydratedSongForJoin } from "./songs";
+import { propagateRunSheetTemplate } from "./planTemplates";
 
 /** Run sheet item types — mirrors PCO vocabulary. */
 const ITEM_TYPES = new Set(["song", "header", "media", "item"]);
@@ -408,6 +409,8 @@ export const addRunSheetTemplateItem = mutation({
       createdById: userId,
       updatedAt: nowMs,
     });
+    // Propagate the new item forward to future linked plans (Phase 3).
+    await propagateRunSheetTemplate(ctx, args.templateId, userId);
     return { itemId };
   },
 });
@@ -496,6 +499,8 @@ export const updateRunSheetTemplateItem = mutation({
     }
 
     await ctx.db.patch(args.itemId, patch);
+    // Propagate the edit forward to future linked plans (Phase 3).
+    await propagateRunSheetTemplate(ctx, item.templateId, userId);
     return { itemId: args.itemId };
   },
 });
@@ -512,8 +517,11 @@ export const deleteRunSheetTemplateItem = mutation({
   returns: v.object({ deleted: v.boolean() }),
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireItemScheduler(ctx, args.itemId, userId);
+    const { item } = await requireItemScheduler(ctx, args.itemId, userId);
+    const templateId = item.templateId;
     await ctx.db.delete(args.itemId);
+    // Propagate the deletion forward to future linked plans (Phase 3).
+    await propagateRunSheetTemplate(ctx, templateId, userId);
     return { deleted: true };
   },
 });
@@ -572,6 +580,8 @@ export const duplicateRunSheetTemplateItem = mutation({
       ),
     );
 
+    // Propagate the new item + resequence forward to future linked plans.
+    await propagateRunSheetTemplate(ctx, item.templateId, userId);
     return { itemId: newItemId };
   },
 });
@@ -632,6 +642,8 @@ export const reorderRunSheetTemplateItems = mutation({
       }),
     );
 
+    // Propagate the new ordering forward to future linked plans (Phase 3).
+    await propagateRunSheetTemplate(ctx, args.templateId, userId);
     return { reordered: args.orderedItems.length };
   },
 });

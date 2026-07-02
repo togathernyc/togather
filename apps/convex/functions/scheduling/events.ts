@@ -191,6 +191,13 @@ export const duplicateEvent = mutation({
       times: source.times.map((t) => ({ ...t, startsAt: t.startsAt + dateDelta })),
       status: "draft",
       notes: source.notes,
+      // Event-templates linkage (Phase 3): a duplicated upcoming plan stays
+      // linked to the same template(s), carrying its detached sets so
+      // propagation treats it exactly like the source.
+      taskTemplateId: source.taskTemplateId,
+      runSheetTemplateId: source.runSheetTemplateId,
+      detachedTaskTemplateItemIds: source.detachedTaskTemplateItemIds,
+      detachedRunSheetTemplateItemIds: source.detachedRunSheetTemplateItemIds,
       createdAt: nowMs,
       createdById: userId,
       updatedAt: nowMs,
@@ -235,6 +242,9 @@ export const duplicateEvent = mutation({
           assignments: item.assignments,
           songDetails: item.songDetails,
           songId: item.songId,
+          // Carry the run-sheet template linkage so the copy stays synced.
+          sourceTemplateItemId: item.sourceTemplateItemId,
+          templateDetached: item.templateDetached,
           createdAt: nowMs,
           createdById: userId,
           updatedAt: nowMs,
@@ -265,6 +275,9 @@ export const duplicateEvent = mutation({
           howToMediaPath: task.howToMediaPath,
           howToDoc: task.howToDoc,
           sortOrder: task.sortOrder,
+          // Carry the task template linkage so the copy stays synced.
+          sourceTemplateItemId: task.sourceTemplateItemId,
+          templateDetached: task.templateDetached,
           createdById: userId,
           createdAt: nowMs,
           updatedAt: nowMs,

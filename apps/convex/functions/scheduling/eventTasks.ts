@@ -97,6 +97,39 @@ function isTeamLevel(
 }
 
 /**
+ * Delete all completion state cascading from a task — per-user
+ * `eventTaskCompletions`, the team-level `sharedTaskCompletions`, and per-user
+ * `howToDocChecks`. Shared by `deleteTask` and by the event-templates
+ * propagation (which deletes synced task rows when their template item is
+ * removed). Returns the per-user completion count (for `deleteTask`'s result).
+ */
+export async function cascadeTaskCompletions(
+  ctx: MutationCtx,
+  taskId: Id<"eventTasks">,
+): Promise<number> {
+  const [completions, sharedCompletions, docChecks] = await Promise.all([
+    ctx.db
+      .query("eventTaskCompletions")
+      .withIndex("by_task", (q) => q.eq("taskId", taskId))
+      .collect(),
+    ctx.db
+      .query("sharedTaskCompletions")
+      .withIndex("by_task", (q) => q.eq("taskId", taskId))
+      .collect(),
+    ctx.db
+      .query("howToDocChecks")
+      .withIndex("by_task", (q) => q.eq("taskId", taskId))
+      .collect(),
+  ]);
+  await Promise.all([
+    ...completions.map((c) => ctx.db.delete(c._id)),
+    ...sharedCompletions.map((c) => ctx.db.delete(c._id)),
+    ...docChecks.map((c) => ctx.db.delete(c._id)),
+  ]);
+  return completions.length;
+}
+
+/**
  * Load a plan or throw. Shared by task functions that key off a `planId`.
  */
 async function requirePlan(
@@ -390,6 +423,36 @@ export const updateTask = mutation({
       patch.howToMediaPath = args.howToMediaPath;
     if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
 
+    // Event-templates linkage (Phase 3): a local edit that ACTUALLY changes a
+    // content field detaches a template-sourced task, so forward propagation
+    // stops overwriting the user's change. A no-op edit (e.g. a Phase-4
+    // autosave that resends unchanged values) must NOT silently detach it.
+    // No-op for tasks with no template source (unlinked plans unaffected).
+    if (task.sourceTemplateItemId && !task.templateDetached) {
+      const contentPairs: Array<[unknown, unknown]> = [];
+      if (patch.title !== undefined) contentPairs.push([patch.title, task.title]);
+      if (patch.teamIds !== undefined)
+        contentPairs.push([patch.teamIds, taskTeamIds(task)]);
+      if (patch.roleIds !== undefined)
+        contentPairs.push([patch.roleIds, taskRoleIds(task)]);
+      if (patch.segment !== undefined)
+        contentPairs.push([patch.segment, task.segment]);
+      if (patch.howToType !== undefined)
+        contentPairs.push([patch.howToType, task.howToType]);
+      if (patch.howToText !== undefined)
+        contentPairs.push([patch.howToText, task.howToText]);
+      if (patch.howToUrl !== undefined)
+        contentPairs.push([patch.howToUrl, task.howToUrl]);
+      if (patch.howToMediaPath !== undefined)
+        contentPairs.push([patch.howToMediaPath, task.howToMediaPath]);
+      if (patch.howToDoc !== undefined)
+        contentPairs.push([patch.howToDoc, task.howToDoc]);
+      const contentChanged = contentPairs.some(
+        ([next, cur]) => JSON.stringify(next ?? null) !== JSON.stringify(cur ?? null),
+      );
+      if (contentChanged) patch.templateDetached = true;
+    }
+
     // Completion cleanup — kept symmetric so a task can be converted back and
     // forth without resurrecting stale "done" state from the other model. The
     // two completion models are single-source per task kind: role tasks use
@@ -465,31 +528,29 @@ export const deleteTask = mutation({
     if (!task) {
       throw new ConvexError("Task not found");
     }
-    await requirePlanScheduler(ctx, task.planId, userId);
+    const { plan } = await requirePlanScheduler(ctx, task.planId, userId);
 
-    const [completions, sharedCompletions, docChecks] = await Promise.all([
-      ctx.db
-        .query("eventTaskCompletions")
-        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
-        .collect(),
-      ctx.db
-        .query("sharedTaskCompletions")
-        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
-        .collect(),
-      // Per-user "doc" How-To checklist state also cascades with the task.
-      ctx.db
-        .query("howToDocChecks")
-        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
-        .collect(),
-    ]);
-    await Promise.all([
-      ...completions.map((c) => ctx.db.delete(c._id)),
-      ...sharedCompletions.map((c) => ctx.db.delete(c._id)),
-      ...docChecks.map((c) => ctx.db.delete(c._id)),
-    ]);
+    // Event-templates linkage (Phase 3): deleting a template-sourced task on a
+    // linked plan records the removal so forward propagation won't re-add it.
+    // No-op for tasks with no template source, so unlinked plans are unaffected.
+    if (task.sourceTemplateItemId) {
+      const detached = new Set(
+        (plan.detachedTaskTemplateItemIds ?? []).map((id) => id as string),
+      );
+      if (!detached.has(task.sourceTemplateItemId as string)) {
+        await ctx.db.patch(plan._id, {
+          detachedTaskTemplateItemIds: [
+            ...(plan.detachedTaskTemplateItemIds ?? []),
+            task.sourceTemplateItemId,
+          ],
+        });
+      }
+    }
+
+    const deletedCompletions = await cascadeTaskCompletions(ctx, args.taskId);
     await ctx.db.delete(args.taskId);
 
-    return { deletedCompletions: completions.length };
+    return { deletedCompletions };
   },
 });
 
@@ -514,7 +575,21 @@ export const reorderTasks = mutation({
     for (const taskId of args.orderedIds) {
       const task = await ctx.db.get(taskId);
       if (!task || task.planId !== args.planId) continue;
-      await ctx.db.patch(taskId, { sortOrder: index, updatedAt: nowMs });
+      const patch: Partial<Doc<"eventTasks">> = {
+        sortOrder: index,
+        updatedAt: nowMs,
+      };
+      // Event-templates linkage (Phase 3): a manual reorder that actually moves
+      // a template-sourced task detaches it, so propagation stops rewriting its
+      // order. Rows that don't move (and non-template rows) are left synced.
+      if (
+        task.sourceTemplateItemId &&
+        !task.templateDetached &&
+        task.sortOrder !== index
+      ) {
+        patch.templateDetached = true;
+      }
+      await ctx.db.patch(taskId, patch);
       index += 1;
     }
     return { reordered: index };

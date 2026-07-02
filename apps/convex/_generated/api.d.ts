@@ -149,6 +149,7 @@ import type * as functions_scheduling_events from "../functions/scheduling/event
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
 import type * as functions_scheduling_people from "../functions/scheduling/people.js";
+import type * as functions_scheduling_planTemplates from "../functions/scheduling/planTemplates.js";
 import type * as functions_scheduling_runSheetTemplates from "../functions/scheduling/runSheetTemplates.js";
 import type * as functions_scheduling_taskTemplates from "../functions/scheduling/taskTemplates.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
@@ -373,6 +374,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
   "functions/scheduling/people": typeof functions_scheduling_people;
+  "functions/scheduling/planTemplates": typeof functions_scheduling_planTemplates;
   "functions/scheduling/runSheetTemplates": typeof functions_scheduling_runSheetTemplates;
   "functions/scheduling/taskTemplates": typeof functions_scheduling_taskTemplates;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
