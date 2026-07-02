@@ -567,6 +567,98 @@ describe("run-sheet templates CRUD", () => {
     ).rejects.toThrow();
   });
 
+  it("nulls a template item's songId when the linked song is deleted", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { templateId } = await t.mutation(
+      api.functions.scheduling.runSheetTemplates.createRunSheetTemplate,
+      { token: leaderToken, groupId: world.groupId, name: "Flow" },
+    );
+    const { itemId } = await t.mutation(
+      api.functions.scheduling.runSheetTemplates.addRunSheetTemplateItem,
+      {
+        token: leaderToken,
+        templateId,
+        type: "song",
+        title: "Doxology",
+        segment: "during",
+        durationSec: 120,
+      },
+    );
+
+    const songId = await t.mutation(
+      api.functions.scheduling.songs.createSong,
+      {
+        token: leaderToken,
+        communityId: world.communityId,
+        input: { title: "Doxology" },
+      },
+    );
+    await t.mutation(
+      api.functions.scheduling.runSheetTemplates.updateRunSheetTemplateItem,
+      { token: leaderToken, itemId, songId },
+    );
+
+    // Deleting the song must null the template item's songId (no dangling ref).
+    const result = await t.mutation(
+      api.functions.scheduling.songs.deleteSong,
+      { token: leaderToken, songId },
+    );
+    expect(result.unlinkedTemplateItems).toBe(1);
+
+    const list = await t.query(
+      api.functions.scheduling.runSheetTemplates.listRunSheetTemplateItems,
+      { token: leaderToken, templateId },
+    );
+    expect(list[0].songId).toBeNull();
+    expect(list[0].song).toBeNull();
+    // The item itself survives, falling back to its title.
+    expect(list[0].title).toBe("Doxology");
+  });
+
+  it("rejects a stale/partial run-sheet reorder set", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { templateId } = await t.mutation(
+      api.functions.scheduling.runSheetTemplates.createRunSheetTemplate,
+      { token: leaderToken, groupId: world.groupId, name: "Flow" },
+    );
+    const a = await t.mutation(
+      api.functions.scheduling.runSheetTemplates.addRunSheetTemplateItem,
+      {
+        token: leaderToken,
+        templateId,
+        type: "item",
+        title: "A",
+        segment: "during",
+        durationSec: 60,
+      },
+    );
+    await t.mutation(
+      api.functions.scheduling.runSheetTemplates.addRunSheetTemplateItem,
+      {
+        token: leaderToken,
+        templateId,
+        type: "item",
+        title: "B",
+        segment: "during",
+        durationSec: 60,
+      },
+    );
+
+    // Partial set (only one of two items) is stale → rejected.
+    await expect(
+      t.mutation(
+        api.functions.scheduling.runSheetTemplates.reorderRunSheetTemplateItems,
+        {
+          token: leaderToken,
+          templateId,
+          orderedItems: [{ id: a.itemId, segment: "during" }],
+        },
+      ),
+    ).rejects.toThrow();
+  });
+
   it("validates run-sheet item role assignments against the template's group", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
