@@ -53,7 +53,7 @@ export const ADD_DAYS_BEFORE = 5;
 export const REMOVE_DAYS_AFTER = 1;
 
 /** This sync engine's `syncSource` tag on `chatChannelMembers`. */
-const SYNC_SOURCE = "event_plan";
+export const SYNC_SOURCE = "event_plan";
 
 /** Outcome of a reconcile pass. `skipped` marks a channel-less team no-op. */
 type ReconcileResult = {

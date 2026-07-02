@@ -87,6 +87,19 @@ async function setupWorld(): Promise<{
         createdAt: ts(),
         updatedAt: ts(),
       });
+      // `addPermanentMemberToChannel` gates the target on community membership,
+      // so the users these tests pin (worshipUser + the base fixture's
+      // outsider, who otherwise has no memberships) must be community members.
+      for (const userId of [worshipUserId, base.outsiderId]) {
+        await ctx.db.insert("userCommunities", {
+          communityId: base.communityId,
+          userId,
+          roles: 1,
+          status: 1,
+          createdAt: ts(),
+          updatedAt: ts(),
+        });
+      }
       return { worshipRoleId, worshipUserId };
     },
   );
@@ -480,6 +493,80 @@ describe("cross-team permanent members — reconcile interaction", () => {
     expect(rows.length).toBe(1);
     expect(rows[0].leftAt).toBeUndefined();
     expect(rows[0].isPermanent).toBe(true);
+  });
+
+  it("no ghost: unpinning a still-rostered member lets reconcile evict them once the roster ends", async () => {
+    // The regression that finding 1 describes: pin BEFORE rostering (row has
+    // syncSource=undefined), roster, unpin while matched, then let the roster
+    // end. Without the syncSource stamp on unpin the row would be owned by
+    // neither engine and never evicted.
+    const { t, world } = await setupWorld();
+    const { accessToken } = await generateTokens(world.groupLeaderId);
+
+    // 1. Pin before rostering → active manual row, no syncSource.
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels.addPermanentMemberToChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+
+    // 2. Roster + reconcile → row stays active but keeps syncSource=undefined
+    //    (the add-loop skips already-active rows).
+    const assignmentId = await roster(t, world, {
+      userId: world.worshipUserId,
+      roleId: world.roleId,
+    });
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
+      { channelId: world.crossChannelId },
+    );
+    let rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows[0].syncSource).toBeUndefined();
+    expect(rows[0].isPermanent).toBe(true);
+
+    // 3. Unpin while still role-matched → handed to the sync engine.
+    await t.mutation(
+      api.functions.scheduling.crossTeamChannels
+        .removePermanentMemberFromChannel,
+      {
+        token: accessToken,
+        channelId: world.crossChannelId,
+        userId: world.worshipUserId,
+      },
+    );
+    rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows[0].leftAt).toBeUndefined();
+    expect(rows[0].isPermanent).toBe(false);
+    expect(rows[0].syncSource).toBe("event_plan");
+
+    // Still rostered + unpinned → shows in the synced-by-role section only.
+    const membership = await t.query(
+      api.functions.scheduling.crossTeamChannels.getCrossTeamChannelMembership,
+      { token: accessToken, channelId: world.crossChannelId },
+    );
+    expect(
+      membership.syncedRoleMembers.some(
+        (m) => m.userId === world.worshipUserId,
+      ),
+    ).toBe(true);
+    expect(
+      membership.permanentMembers.some((m) => m.userId === world.worshipUserId),
+    ).toBe(false);
+
+    // 4. Roster ends → reconcile evicts the row (no ghost left behind).
+    await t.run((ctx) =>
+      ctx.db.patch(assignmentId, { eventDate: Date.now() - 5 * DAY }),
+    );
+    const result = await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
+      { channelId: world.crossChannelId },
+    );
+    expect(result.removed).toBe(1);
+    rows = await rowsFor(t, world, world.worshipUserId);
+    expect(rows[0].leftAt).toBeDefined();
   });
 });
 

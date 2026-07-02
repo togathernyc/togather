@@ -28,6 +28,7 @@ import { requireGroupMember, requireGroupScheduler } from "./permissions";
 import {
   computeCrossTeamRoleMembers,
   reconcileCrossTeamChannelImpl,
+  SYNC_SOURCE,
 } from "./teamChannelSync";
 
 /** Validator for a single cross-team membership selector. */
@@ -542,12 +543,34 @@ export const addPermanentMemberToChannel = mutation({
   }),
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireCrossTeamChannelLeader(ctx, args.channelId, callerId);
+    const channel = await requireCrossTeamChannelLeader(
+      ctx,
+      args.channelId,
+      callerId,
+    );
 
     const user = await ctx.db.get(args.userId);
     if (!user) {
       throw new ConvexError("User not found");
     }
+
+    // Cross-team channels can span multiple groups, so gate on COMMUNITY
+    // membership: a direct call must not pin an arbitrary unrelated user. The
+    // picker already scopes to group members; this closes the direct-call hole.
+    const group = channel.groupId ? await ctx.db.get(channel.groupId) : null;
+    if (!group) {
+      throw new ConvexError("Channel's group not found");
+    }
+    const targetMembership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", args.userId).eq("communityId", group.communityId),
+      )
+      .first();
+    if (!targetMembership || targetMembership.status !== 1) {
+      throw new ConvexError("That person is not a member of this community.");
+    }
+
     const displayName = getDisplayName(user.firstName, user.lastName);
     const profilePhoto = getMediaUrl(user.profilePhoto);
 
@@ -605,13 +628,18 @@ export const addPermanentMemberToChannel = mutation({
  * Clears `isPermanent` on the user's active row, then decides whether they stay
  * in the channel based on their LIVE roster status — NOT the stale `syncSource`
  * tag. If they are still role-matched (`computeCrossTeamRoleMembers`), the row
- * stays active and they remain via their role; otherwise the row is soft-
- * removed and they leave the channel.
+ * is handed back to the auto-sync engine — `isPermanent: false` plus
+ * `syncSource: "event_plan"` — so the reconcile keeps it while rostered and
+ * evicts it normally once the roster ends. If they are NOT role-matched the row
+ * is soft-removed and they leave the channel.
  *
- * (`syncSource` is unreliable here: the reconcile guard preserves a pinned row
- * with `syncSource === "event_plan"` long after the user left the roster window,
- * and a purely-permanent member can be live-rostered while keeping
- * `syncSource === undefined`. Only the live selector pass is authoritative.)
+ * Stamping `syncSource` is what prevents a "ghost" row: a user pinned BEFORE
+ * being rostered keeps `syncSource === undefined` (the reconcile add-loop skips
+ * already-active rows), so without this a still-rostered unpin would leave a row
+ * owned by neither engine — never evicted, invisible to both Channel Info
+ * sections. `syncSource` alone is unreliable for the stay/leave decision (the
+ * reconcile guard preserves a pinned `event_plan` row long after the window),
+ * so only the live selector pass is authoritative.
  *
  * Throws `ConvexError` if the user has no active row or is not permanent.
  * Auth: a leader of the channel's home group.
@@ -649,8 +677,14 @@ export const removePermanentMemberFromChannel = mutation({
       // No live role match — unpinning removes them from the channel entirely.
       await ctx.db.patch(active._id, { isPermanent: false, leftAt: Date.now() });
     } else {
-      // Still a live synced member — just unpin, leave the row active.
-      await ctx.db.patch(active._id, { isPermanent: false });
+      // Still role-matched — hand the row back to the auto-sync engine so it is
+      // reconciled (and eventually evicted) like any synced member. Stamping
+      // syncSource is required: a row pinned before rostering has none, and
+      // leaving it unset would strand it as a ghost owned by neither engine.
+      await ctx.db.patch(active._id, {
+        isPermanent: false,
+        syncSource: SYNC_SOURCE,
+      });
     }
 
     await updateChannelMemberCount(ctx, args.channelId);
