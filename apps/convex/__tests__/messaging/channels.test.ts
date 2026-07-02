@@ -2078,6 +2078,61 @@ describe("listGroupChannels", () => {
     expect(leaderChannels.find((c) => c._id === customResult.channelId)).toBeDefined();
   });
 
+  test("cross-team channels are membership-gated for members, always visible to leaders", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId,
+    );
+
+    const crossChannelId = await t.run((ctx) =>
+      ctx.db.insert("chatChannels", {
+        groupId,
+        communityId,
+        slug: "service-leads",
+        channelType: "cross_team",
+        name: "Service Leads",
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 0,
+      }),
+    );
+
+    // A non-synced regular member does NOT see the cross-team channel.
+    const before = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: accessToken, groupId },
+    );
+    expect(before.find((c) => c._id === crossChannelId)).toBeUndefined();
+
+    // A leader always sees it (to manage its synced roles).
+    const leaderChannels = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: leaderToken, groupId },
+    );
+    expect(leaderChannels.find((c) => c._id === crossChannelId)).toBeDefined();
+
+    // Once auto-synced in as a member, the regular member sees it too.
+    await t.run((ctx) =>
+      ctx.db.insert("chatChannelMembers", {
+        channelId: crossChannelId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      }),
+    );
+    const after = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      { token: accessToken, groupId },
+    );
+    expect(after.find((c) => c._id === crossChannelId)).toBeDefined();
+  });
+
   test("sorts: main first, leaders second, custom alphabetically", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);

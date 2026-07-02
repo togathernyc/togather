@@ -114,6 +114,7 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
     (c: Channel) => c.channelType === "announcements"
   );
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
+  const crossTeamChannels = channels?.filter((c: Channel) => c.channelType === "cross_team") ?? [];
   const customChannels = channels?.filter((c: Channel) => c.channelType === "custom") ?? [];
 
   // A channel is inactive if it's archived OR a leader hid it (isEnabled ===
@@ -331,6 +332,29 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
       name: channel.name,
       subtitle: enabled
         ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""} · PCO Synced`
+        : "Disabled",
+      enabled,
+      onPress: () => navigateToChannelInfo(channel.slug),
+      unreadCount: channel.unreadCount,
+      pinned: channel.isPinned,
+      archived: !enabled,
+    });
+  });
+
+  // Cross-team channels auto-sync their membership from serving-team role
+  // assignments. They surface here (mirroring PCO synced rows) so a leader can
+  // tap through to Channel Info → "Edit synced roles". Without this branch the
+  // TYPE ALLOWLIST above silently drops them from the group's channel list.
+  crossTeamChannels.forEach((channel: Channel) => {
+    const enabled = channel.isEnabled && !channel.isArchived;
+    rows.push({
+      key: channel._id,
+      icon: "git-merge-outline",
+      iconColor: "#7C3AED",
+      iconBg: "#7C3AED15",
+      name: channel.name,
+      subtitle: enabled
+        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""} · Synced`
         : "Disabled",
       enabled,
       onPress: () => navigateToChannelInfo(channel.slug),

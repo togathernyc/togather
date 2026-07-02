@@ -1352,8 +1352,14 @@ export const listGroupChannels = query({
       if (ch.channelType === "reach_out") {
         return true;
       }
-      // Regular members can only see custom/PCO channels they're members of
-      const requiresMembership = isCustomChannel(ch.channelType) || ch.channelType === "pco_services";
+      // Regular members can only see custom/PCO/cross-team channels they're
+      // members of. Cross-team membership is auto-synced from serving-role
+      // assignments, so a rostered member is a member and sees it; everyone
+      // else doesn't. Leaders/admins already returned true above.
+      const requiresMembership =
+        isCustomChannel(ch.channelType) ||
+        ch.channelType === "pco_services" ||
+        ch.channelType === "cross_team";
       if (requiresMembership && !userChannelMemberships.has(ch._id)) {
         return false;
       }
