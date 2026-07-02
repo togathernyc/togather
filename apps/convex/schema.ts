@@ -2960,6 +2960,20 @@ export default defineSchema({
   }).index("by_plan_user", ["planId", "userId"]),
 
   /**
+   * Per-user checked state for the interactive checklist inside a serving
+   * task's "doc" How-To. One row per (user, task) holding the set of checked
+   * checklist-item indices (positional, in document order). This is personal —
+   * each volunteer sees only their own checks — and never mutates the shared
+   * `howToDoc` markdown itself.
+   */
+  howToDocChecks: defineTable({
+    userId: v.id("users"),
+    taskId: v.id("eventTasks"),
+    checkedIndices: v.array(v.number()), // 0-based checklist-item indices, in doc order
+    updatedAt: v.number(),
+  }).index("by_user_task", ["userId", "taskId"]),
+
+  /**
    * Per-community song library (ADR-027). A song lives once and is referenced
    * by run sheet `eventItems` via `songId`, so editing its charts/metadata
    * updates every plan that uses it (no copied-string drift). `ccliNumber` is

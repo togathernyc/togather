@@ -13,7 +13,7 @@
  * Presented as a slide-up `Modal` (matching `EventTasksHowToDocEditor`). The
  * header carries the task title and a close button. Nothing here mutates state.
  */
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -31,12 +31,20 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Markdown } from "@components/ui/Markdown";
 import { AppImage } from "@components/ui/AppImage";
 import { getMediaUrl } from "@/utils/media";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
+import type { Id } from "@services/api/convex";
 
 /** How-to guidance kind (mirrors the backend `howToType` validator). */
 export type HowToType = "none" | "text" | "link" | "media" | "doc";
 
 /** The how-to fields the viewer renders (a subset of a serving task). */
 export type HowToViewerContent = {
+  /** The `eventTasks` id — keys the per-user checklist state for a `doc`. */
+  taskId: string;
   title: string;
   howToType: HowToType;
   howToUrl?: string | null;
@@ -116,7 +124,12 @@ function HowToBody({
   switch (content.howToType) {
     case "doc":
       return content.howToDoc && content.howToDoc.trim().length > 0 ? (
-        <Markdown source={content.howToDoc} />
+        <InteractiveDoc
+          taskId={content.taskId}
+          source={content.howToDoc}
+          colors={colors}
+          primaryColor={primaryColor}
+        />
       ) : (
         <EmptyState colors={colors} label="No details yet." />
       );
@@ -181,6 +194,182 @@ function HowToBody({
   }
 }
 
+/**
+ * A markdown task-list line, e.g. `- [ ] Step 1` or `* [x] Done`.
+ * Capture 1 is the box state (` `, `x`, or `X`); capture 2 is the label text.
+ */
+const TASK_ITEM_RE = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
+
+/** A parsed doc segment: either a run of plain markdown, or a checklist item. */
+type DocSegment =
+  | { kind: "md"; text: string }
+  | { kind: "item"; index: number; label: string };
+
+/**
+ * Split a How-To doc into ordered segments: contiguous non-checklist lines
+ * become `md` blocks (rendered through the shared `Markdown`), and each
+ * `- [ ] …` line becomes an `item` with a 0-based positional `index`.
+ */
+function parseDoc(source: string): DocSegment[] {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const segments: DocSegment[] = [];
+  let buffer: string[] = [];
+  let itemIndex = 0;
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const text = buffer.join("\n");
+    if (text.trim().length > 0) segments.push({ kind: "md", text });
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    const match = line.match(TASK_ITEM_RE);
+    if (match) {
+      flushBuffer();
+      segments.push({
+        kind: "item",
+        index: itemIndex++,
+        label: match[2].trim(),
+      });
+    } else {
+      buffer.push(line);
+    }
+  }
+  flushBuffer();
+  return segments;
+}
+
+/**
+ * Renders a `doc` How-To as an interactive checklist. Non-checklist prose is
+ * rendered via the shared `Markdown`; each `- [ ]` line is a tappable row whose
+ * checked state is per-user (from `getHowToDocChecks`) and OVERRIDES the doc's
+ * literal `[x]`. Toggling updates optimistically, then the reactive query
+ * confirms.
+ *
+ * NOTE (positional indices): a user's saved checks map to checklist items by
+ * position in the document. If a leader later reorders or edits the doc's
+ * checklist, previously-saved checks map by position (acceptable for now).
+ */
+function InteractiveDoc({
+  taskId,
+  source,
+  colors,
+  primaryColor,
+}: {
+  taskId: string;
+  source: string;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  const segments = useMemo(() => parseDoc(source), [source]);
+  const hasItems = segments.some((s) => s.kind === "item");
+
+  const serverChecks = useAuthenticatedQuery(
+    api.functions.scheduling.eventTasks.getHowToDocChecks,
+    taskId ? { taskId: taskId as Id<"eventTasks"> } : "skip",
+  ) as number[] | undefined;
+
+  const setCheck = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.setHowToDocCheck,
+  );
+
+  const checkedSet = useMemo(
+    () => new Set(serverChecks ?? []),
+    [serverChecks],
+  );
+
+  // Pending optimistic overrides, keyed by itemIndex. An entry wins over the
+  // server value until the reactive query catches up (then it's reconciled).
+  const [pending, setPending] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    // Drop optimistic entries the server now agrees with.
+    setPending((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        const i = Number(key);
+        if (checkedSet.has(i) === next[i]) {
+          delete next[i];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [checkedSet]);
+
+  const isChecked = useCallback(
+    (index: number) =>
+      index in pending ? pending[index] : checkedSet.has(index),
+    [pending, checkedSet],
+  );
+
+  const onToggle = useCallback(
+    async (index: number) => {
+      if (!taskId) return;
+      const next = !isChecked(index);
+      setPending((prev) => ({ ...prev, [index]: next }));
+      try {
+        await setCheck({
+          taskId: taskId as Id<"eventTasks">,
+          itemIndex: index,
+          checked: next,
+        });
+      } catch {
+        // Revert the optimistic flip on failure.
+        setPending((prev) => {
+          const revert = { ...prev };
+          delete revert[index];
+          return revert;
+        });
+      }
+    },
+    [taskId, isChecked, setCheck],
+  );
+
+  // No checklist items → nothing interactive to do; render the doc as-is.
+  if (!hasItems) return <Markdown source={source} />;
+
+  return (
+    <View>
+      {segments.map((segment, i) => {
+        if (segment.kind === "md") {
+          return <Markdown key={`md-${i}`} source={segment.text} />;
+        }
+        const checked = isChecked(segment.index);
+        return (
+          <TouchableOpacity
+            key={`item-${segment.index}`}
+            activeOpacity={0.6}
+            onPress={() => void onToggle(segment.index)}
+            style={styles.checkRow}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked }}
+            accessibilityLabel={segment.label}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                checked
+                  ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                  : { borderColor: colors.border },
+              ]}
+            >
+              {checked ? (
+                <Ionicons name="checkmark" size={16} color="#fff" />
+              ) : null}
+            </View>
+            <Text style={[styles.checkLabel, { color: colors.text }]}>
+              {segment.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
 function EmptyState({
   colors,
   label,
@@ -207,6 +396,23 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
   bodyContent: { padding: 20 },
   empty: { fontSize: 15, fontStyle: "italic" },
+  // Interactive checklist
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    paddingVertical: 12,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  checkLabel: { flex: 1, fontSize: 16, lineHeight: 24 },
   // Link
   linkWrap: { gap: 16 },
   linkUrl: { fontSize: 15, lineHeight: 22 },

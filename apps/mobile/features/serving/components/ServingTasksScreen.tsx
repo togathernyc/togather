@@ -31,6 +31,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -267,6 +268,7 @@ export function ServingTasksScreen() {
                         onToggle={() => toggle(task)}
                         onOpenHowTo={() =>
                           setViewerContent({
+                            taskId: task.taskId,
                             title: task.title,
                             howToType: task.howToType ?? "none",
                             howToUrl: task.howToUrl,
@@ -527,18 +529,13 @@ function TaskRow({
             {task.title}
           </Text>
 
-          <View style={styles.taskMetaRow}>
-            {task.timeLabel ? (
-              <Text style={[styles.taskMeta, { color: colors.textSecondary }]}>
-                {task.timeLabel}
-              </Text>
-            ) : null}
-            {task.isPersonal ? (
+          {task.isPersonal ? (
+            <View style={styles.taskMetaRow}>
               <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
                 Added by you
               </Text>
-            ) : null}
-          </View>
+            </View>
+          ) : null}
 
           {inlineText ? (
             <Text
@@ -552,27 +549,43 @@ function TaskRow({
               {inlineText}
             </Text>
           ) : null}
-
-          {viewerType ? (
-            <Pressable
-              onPress={onOpenHowTo}
-              hitSlop={6}
-              style={[styles.howToChip, { borderColor: colors.border }]}
-              accessibilityRole="button"
-              accessibilityLabel={`Open how-to for ${task.title}`}
-            >
-              <Ionicons
-                name={VIEWER_HOW_TO_ICONS[viewerType]}
-                size={13}
-                color={primaryColor}
-              />
-              <Text style={[styles.howToChipText, { color: primaryColor }]}>
-                How-To
-              </Text>
-              <Ionicons name="arrow-forward" size={13} color={primaryColor} />
-            </Pressable>
-          ) : null}
         </Pressable>
+
+        {/* How-To sits on the same line as the title (row-level, right side).
+            `link` opens the URL directly; `media`/`doc` open the viewer. */}
+        {viewerType ? (
+          <Pressable
+            onPress={() => {
+              if (howToType === "link" && task.howToUrl) {
+                void Linking.openURL(task.howToUrl).catch(() => {});
+              } else {
+                onOpenHowTo();
+              }
+            }}
+            hitSlop={6}
+            style={[styles.howToChip, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              howToType === "link"
+                ? `Open link for ${task.title}`
+                : `Open how-to for ${task.title}`
+            }
+          >
+            <Ionicons
+              name={VIEWER_HOW_TO_ICONS[viewerType]}
+              size={13}
+              color={primaryColor}
+            />
+            <Text style={[styles.howToChipText, { color: primaryColor }]}>
+              How-To
+            </Text>
+            <Ionicons
+              name={howToType === "link" ? "open-outline" : "arrow-forward"}
+              size={13}
+              color={primaryColor}
+            />
+          </Pressable>
+        ) : null}
       </View>
 
       {expanded && task.isPersonal ? (
@@ -794,8 +807,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
+    flexShrink: 0,
     gap: 5,
-    marginTop: 8,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 999,

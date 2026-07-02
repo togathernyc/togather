@@ -636,6 +636,89 @@ export const getMyServingTasks = query({
 });
 
 // ============================================================================
+// Interactive "doc" How-To checklist — per-user checked state.
+// ============================================================================
+
+/**
+ * The current user's checked checklist-item indices for a task's "doc" How-To.
+ * Returns `[]` when nothing is checked, or when the task/plan no longer exists
+ * (so a stale viewer degrades to an all-unchecked checklist rather than
+ * erroring).
+ *
+ * Auth: an active member of the task's plan's group.
+ */
+export const getHowToDocChecks = query({
+  args: { token: v.string(), taskId: v.id("eventTasks") },
+  handler: async (ctx, args): Promise<number[]> => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) return [];
+    const plan = await ctx.db.get(task.planId);
+    if (!plan) return [];
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const row = await ctx.db
+      .query("howToDocChecks")
+      .withIndex("by_user_task", (q) =>
+        q.eq("userId", userId).eq("taskId", args.taskId),
+      )
+      .unique();
+    return row?.checkedIndices ?? [];
+  },
+});
+
+/**
+ * Toggle a single checklist item in a task's "doc" How-To for the current user.
+ * Upserts the (user, task) row and adds/removes `itemIndex` from its set.
+ *
+ * Auth: an active member of the task's plan's group (same read gate as viewing
+ * the task).
+ */
+export const setHowToDocCheck = mutation({
+  args: {
+    token: v.string(),
+    taskId: v.id("eventTasks"),
+    itemIndex: v.number(),
+    checked: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new ConvexError("Task not found");
+    }
+    const plan = await requirePlan(ctx, task.planId);
+    await requireGroupMember(ctx, plan.groupId, userId);
+
+    const row = await ctx.db
+      .query("howToDocChecks")
+      .withIndex("by_user_task", (q) =>
+        q.eq("userId", userId).eq("taskId", args.taskId),
+      )
+      .unique();
+
+    const current = new Set(row?.checkedIndices ?? []);
+    if (args.checked) current.add(args.itemIndex);
+    else current.delete(args.itemIndex);
+    const checkedIndices = Array.from(current).sort((a, b) => a - b);
+
+    const nowMs = Date.now();
+    if (row) {
+      await ctx.db.patch(row._id, { checkedIndices, updatedAt: nowMs });
+    } else {
+      await ctx.db.insert("howToDocChecks", {
+        userId,
+        taskId: args.taskId,
+        checkedIndices,
+        updatedAt: nowMs,
+      });
+    }
+
+    return { taskId: args.taskId, itemIndex: args.itemIndex, checked: args.checked };
+  },
+});
+
+// ============================================================================
 // Personal (ad-hoc, single-user) serving tasks — never part of the template.
 // ============================================================================
 
