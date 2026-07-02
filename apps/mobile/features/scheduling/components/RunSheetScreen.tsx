@@ -53,16 +53,16 @@ import { GridScrollList, OptionTag, type GridColumn } from "./GridScrollList";
 import { AnchoredMenu, type AnchorRect } from "./AnchoredMenu";
 import { CustomModal } from "@components/ui/Modal";
 import { PlanTemplateToolbar } from "./PlanTemplateToolbar";
+import { listRunSheetTemplatesRef } from "../api/eventTemplates";
 import {
   getPlanTemplateStateRef,
-  listRunSheetTemplatesRef,
   setPlanRunSheetTemplateRef,
   saveRunSheetTemplateFromPlanRef,
   revertPlanRunSheetTemplateEditsRef,
   type PlanTemplateState,
   type TemplateCarryover,
   type SaveTemplateStrategy,
-} from "../api/eventTemplates";
+} from "../api/planTemplates";
 import type { Song } from "@features/songs/types";
 import {
   WhenPill,
@@ -129,13 +129,26 @@ export function RunSheetScreen() {
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { community } = useAuth();
+  const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
     plan_id: string;
     group_id: string;
   }>();
   const planId = plan_id as Id<"eventPlans">;
   const communityId = community?.id ?? "";
+
+  // Leader gate — same authoritative source EventTasksScreen uses. The run sheet
+  // editor's cell edits are already reachable only from leader entry points, but
+  // the template toolbar's controls are leader-only, so gate them explicitly:
+  // a non-leader should never see the picker / save / revert affordances.
+  const groupData = useAuthenticatedQuery(
+    api.functions.groups.queries.getById,
+    group_id ? { groupId: group_id as Id<"groups"> } : "skip",
+  ) as { userRole?: string } | null | undefined;
+  const isLeader =
+    groupData?.userRole === "leader" ||
+    groupData?.userRole === "admin" ||
+    user?.is_admin === true;
   // Whether to surface the Event Tasks entry point in the header. Read
   // defensively — the mobile Community type only enumerates `prayerEnabled`.
   const eventTasksEnabled = Boolean(
@@ -173,11 +186,11 @@ export function RunSheetScreen() {
   // carries both task and run-sheet slices; this screen reads the run-sheet one.
   const templateState = useAuthenticatedQuery(
     getPlanTemplateStateRef,
-    planId ? { planId } : "skip",
+    isLeader && planId ? { planId } : "skip",
   ) as PlanTemplateState | undefined;
   const runSheetTemplates = useAuthenticatedQuery(
     listRunSheetTemplatesRef,
-    group_id ? { groupId: group_id as Id<"groups"> } : "skip",
+    isLeader && group_id ? { groupId: group_id as Id<"groups"> } : "skip",
   );
   const setPlanRunSheetTemplate = useAuthenticatedMutation(
     setPlanRunSheetTemplateRef,
@@ -529,16 +542,18 @@ export function RunSheetScreen() {
                   {formatServiceRanges(times, duringTotalSec)}
                 </Text>
               ) : null}
-              <PlanTemplateToolbar
-                label="Run-sheet template"
-                itemNoun="run-sheet items"
-                state={templateSlice}
-                templates={templateOptions}
-                onSetTemplate={handleSetTemplate}
-                onSaveNew={handleSaveNewTemplate}
-                onSaveExisting={handleSaveExistingTemplate}
-                onRevert={handleRevertTemplate}
-              />
+              {isLeader ? (
+                <PlanTemplateToolbar
+                  label="Run-sheet template"
+                  itemNoun="run-sheet items"
+                  state={templateSlice}
+                  templates={templateOptions}
+                  onSetTemplate={handleSetTemplate}
+                  onSaveNew={handleSaveNewTemplate}
+                  onSaveExisting={handleSaveExistingTemplate}
+                  onRevert={handleRevertTemplate}
+                />
+              ) : null}
             </View>
           );
 

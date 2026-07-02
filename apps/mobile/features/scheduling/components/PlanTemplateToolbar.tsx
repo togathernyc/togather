@@ -43,7 +43,7 @@ import { ConfirmModal } from "@components/ui/ConfirmModal";
 import type {
   TemplateCarryover,
   SaveTemplateStrategy,
-} from "../api/eventTemplates";
+} from "../api/planTemplates";
 
 /** A template as listed for the picker (task or run-sheet). */
 export type TemplateSummary = { _id: string; name: string; itemCount: number };
@@ -100,12 +100,17 @@ export function PlanTemplateToolbar({
     anchor: AnchorRect;
   } | null>(null);
 
-  // The switch-with-carryover prompt: the template we're switching TO (null =
-  // unlink) plus its display name, held until the leader chooses copy/discard.
+  // The switch-with-carryover prompt: the template we're switching TO (always a
+  // real template — unlink has its own confirm) plus its display name, held
+  // until the leader chooses copy/discard.
   const [carryoverPrompt, setCarryoverPrompt] = useState<{
-    targetId: string | null;
+    targetId: string;
     targetName: string;
   } | null>(null);
+
+  // Unlinking ("None") gets a plain confirm — the backend ignores `carryover`
+  // on the unlink branch (rows just become regular local items).
+  const [unlinkConfirm, setUnlinkConfirm] = useState(false);
 
   // The Replace/Merge prompt for "Add to existing".
   const [strategyPrompt, setStrategyPrompt] = useState<{
@@ -136,6 +141,11 @@ export function PlanTemplateToolbar({
   const handlePick = (id: string | null) => {
     setMenu(null);
     if (id === linkedId) return; // no-op: same template chosen
+    if (id === null) {
+      // Unlink — carryover is ignored on this branch; just confirm.
+      setUnlinkConfirm(true);
+      return;
+    }
     if (hasEdits) {
       // Diverged from the linked template — ask what to do with the edits
       // before we replace the list.
@@ -277,15 +287,20 @@ export function PlanTemplateToolbar({
               </Text>
             </TouchableOpacity>
           ) : null}
-          <TouchableOpacity
-            onPress={() => setConfirm("revert")}
-            style={styles.editedAction}
-            accessibilityRole="button"
-          >
-            <Text style={[styles.editedActionText, { color: colors.textSecondary }]}>
-              Revert to template
-            </Text>
-          </TouchableOpacity>
+          {/* Revert rewrites the (now frozen) plan — the backend rejects it on
+              a past event, so hide it there. Save-to-template stays (it writes
+              to the TEMPLATE, not the plan). */}
+          {!isPast ? (
+            <TouchableOpacity
+              onPress={() => setConfirm("revert")}
+              style={styles.editedAction}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.editedActionText, { color: colors.textSecondary }]}>
+                Revert to template
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : null}
 
@@ -343,10 +358,7 @@ export function PlanTemplateToolbar({
         options={[
           {
             key: "copy",
-            label:
-              carryoverPrompt?.targetId == null
-                ? "Keep my edited list"
-                : `Copy my edits into "${carryoverPrompt?.targetName ?? ""}"`,
+            label: `Copy my edits into "${carryoverPrompt?.targetName ?? ""}"`,
           },
           { key: "discard", label: "Discard my edits" },
         ]}
@@ -361,6 +373,19 @@ export function PlanTemplateToolbar({
           setCarryoverPrompt(null);
         }}
         onCancel={() => setCarryoverPrompt(null)}
+      />
+
+      {/* Unlink confirm — "None (unlink)". */}
+      <ConfirmModal
+        visible={unlinkConfirm}
+        title="Unlink template"
+        message={`Your current ${itemNoun} stay on this event as regular ${itemNoun}.`}
+        confirmText="Unlink"
+        onConfirm={() => {
+          onSetTemplate(null, "discard");
+          setUnlinkConfirm(false);
+        }}
+        onCancel={() => setUnlinkConfirm(false)}
       />
 
       {/* Replace / Merge prompt for "Add to existing". */}

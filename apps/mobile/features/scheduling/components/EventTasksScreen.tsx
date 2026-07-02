@@ -58,16 +58,16 @@ import {
 import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import { EventTasksHowToDocEditor } from "./EventTasksHowToDocEditor";
 import { PlanTemplateToolbar } from "./PlanTemplateToolbar";
+import { listTaskTemplatesRef } from "../api/eventTemplates";
 import {
   getPlanTemplateStateRef,
-  listTaskTemplatesRef,
   setPlanTaskTemplateRef,
   saveTaskTemplateFromPlanRef,
   revertPlanTaskTemplateEditsRef,
   type PlanTemplateState,
   type TemplateCarryover,
   type SaveTemplateStrategy,
-} from "../api/eventTemplates";
+} from "../api/planTemplates";
 
 /** Show a one-button error (Alert.alert is a no-op on web in this codebase). */
 function notifyError(title: string, message: string) {
