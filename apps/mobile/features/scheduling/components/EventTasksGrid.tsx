@@ -2,30 +2,30 @@
  * EventTasksGrid
  *
  * The database/grid body of the leader Event Tasks screen. Renders one plan's
- * tasks grouped by segment (Pre / During / Post = before / during / after) and,
- * within each segment, ordered by team → role. Each task is a row with inline
- * columns:
+ * tasks as a single continuous bordered table (modelled on the events-os Run of
+ * Show table): a header row of column labels over dividered task rows. There are
+ * NO Pre/During/Post section-heading rows breaking the table up — the phase is
+ * just another column (a pill you tap to change).
  *
- *   - Title  → short high-level description (inline text edit).
- *   - Team   → picker (required).
- *   - Role   → picker (optional; empty = a team-level task).
- *   - How-To → the key column (see EventTasksHowToCell).
- *
- * Rows drag-to-reorder within the whole plan via `RunSheetDragList` (the same
- * cross-platform list the run sheet uses); dragging a row past a segment heading
- * moves it into that segment. Each segment has its own "Add task" affordance,
- * and every row can be deleted.
+ * Columns (after the auto drag-grip): Task, Phase, Team, Role, How-To, and a
+ * delete action. Tasks are still sorted within each segment by team → role, then
+ * flattened in Pre → During → Post order. Rows drag-to-reorder within the whole
+ * plan; the segment now changes via the Phase column, not by dragging past a
+ * heading, so reorder is a plain id reorder.
  *
  * This component is presentational + interaction only — data fetching, the
  * readiness header, and mutation wiring live in EventTasksScreen.
  */
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import type { Id } from "@services/api/convex";
 import { InlineText } from "./InlineText";
-import { RunSheetDragList } from "./RunSheetDragList";
+import { GridScrollList, OptionTag, type GridColumn } from "./GridScrollList";
+import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import {
   EventTasksHowToCell,
   type HowToType,
@@ -40,6 +40,31 @@ export const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
   { key: "during", label: "During" },
   { key: "after", label: "Post" },
 ];
+
+/**
+ * A small palette of pleasant, distinct hexes for team tags (events-os style —
+ * Flower pink, Food & Bev amber, Welcome blue…). Teams have no color field, so a
+ * team's color is derived by hashing its id into this palette — stable per team.
+ */
+const TEAM_COLORS = [
+  "#EC4899", // pink
+  "#F59E0B", // amber
+  "#3B82F6", // blue
+  "#10B981", // emerald
+  "#8B5CF6", // violet
+  "#EF4444", // red
+  "#14B8A6", // teal
+  "#F97316", // orange
+];
+
+/** Stable color for a team, derived by hashing its id into the palette. */
+function teamColor(teamId: string): string {
+  let hash = 0;
+  for (let i = 0; i < teamId.length; i++) {
+    hash = (hash * 31 + teamId.charCodeAt(i)) >>> 0;
+  }
+  return TEAM_COLORS[hash % TEAM_COLORS.length];
+}
 
 /**
  * A hydrated task row (mirrors `listPlanTasks`). `teamName` / `roleName` are the
@@ -74,16 +99,13 @@ export type TaskPatch = {
   segment?: Segment;
 } & HowToPatch;
 
-type Row =
-  | { kind: "header"; segment: Segment; key: string }
-  | { kind: "task"; task: PlanTask; key: string };
-
 export function EventTasksGrid({
   tasks,
   teams,
   rolesByTeam,
   onPatch,
   onDelete,
+  onDuplicate,
   onAdd,
   onReorder,
   onPickTeam,
@@ -98,18 +120,42 @@ export function EventTasksGrid({
   rolesByTeam: Record<string, RoleOption[] | undefined>;
   onPatch: (taskId: Id<"eventTasks">, patch: TaskPatch) => void;
   onDelete: (task: PlanTask) => void;
+  /** Create a copy of a task (same team/role/segment/title/how-to). */
+  onDuplicate: (task: PlanTask) => void;
   onAdd: (segment: Segment) => void;
   onReorder: (orderedIds: Array<Id<"eventTasks">>) => void;
-  /** Open the team picker for a task (parent owns the modal). */
-  onPickTeam: (task: PlanTask) => void;
-  /** Open the role picker for a task (parent owns the modal). */
-  onPickRole: (task: PlanTask) => void;
+  /** Open the team picker for a task, anchored to its pill (parent owns the menu). */
+  onPickTeam: (task: PlanTask, anchor: AnchorRect) => void;
+  /** Open the role picker for a task, anchored to its pill (parent owns the menu). */
+  onPickRole: (task: PlanTask, anchor: AnchorRect) => void;
   /** Open the full-screen doc editor for a task. */
   onOpenDoc: (task: PlanTask) => void;
   listHeader?: React.ReactElement | null;
   listFooter?: React.ReactElement | null;
 }) {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const insets = useSafeAreaInsets();
+
+  // Phase menu (Pre / During / Post) for one task — an anchored dropdown next to
+  // the pill. Held locally; the parent owns the team/role menus, but phase lives
+  // entirely in the grid.
+  const [phaseMenu, setPhaseMenu] = useState<{
+    task: PlanTask;
+    anchor: AnchorRect;
+  } | null>(null);
+
+  const columns = useMemo<GridColumn[]>(
+    () => [
+      { key: "task", label: "Task", width: 220, flex: 3 },
+      { key: "phase", label: "Phase", width: 104 },
+      { key: "team", label: "Team", width: 160 },
+      { key: "role", label: "Role", width: 160 },
+      { key: "howto", label: "How-To", width: 260, flex: 3 },
+      { key: "actions", label: "", width: 84, align: "center" },
+    ],
+    [],
+  );
 
   // Sort tasks within each segment by team → role so the grid reads as a
   // grouped database. Backend order (from reorder) is preserved as the tiebreak
@@ -138,227 +184,253 @@ export function EventTasksGrid({
     return groups;
   }, [tasks, teams]);
 
-  // Flat rows for the drag list: each segment heading followed by its tasks.
-  const rows = useMemo<Row[]>(() => {
-    const out: Row[] = [];
-    for (const seg of SEGMENT_OPTIONS) {
-      out.push({ kind: "header", segment: seg.key, key: `seg:${seg.key}` });
-      for (const t of tasksBySegment[seg.key]) {
-        out.push({ kind: "task", task: t, key: t._id as string });
-      }
-    }
-    return out;
-  }, [tasksBySegment]);
+  // Flat task list for the table, in Pre → During → Post order.
+  const flatTasks = useMemo<PlanTask[]>(
+    () =>
+      tasksBySegment.before.concat(tasksBySegment.during, tasksBySegment.after),
+    [tasksBySegment],
+  );
 
-  // After a drag, walk the new key order: each heading switches the running
-  // segment; each task takes the current one (so dragging past a heading changes
-  // its segment). We emit the flat ordered id list to `reorderTasks` and patch
-  // any task whose segment changed.
+  // Segments now change via the Phase column, so drag is a plain id reorder.
   const handleReorder = (orderedKeys: string[]) => {
-    const orderedIds: Array<Id<"eventTasks">> = [];
-    let current: Segment = "before";
-    const byId = new Map(tasks.map((t) => [t._id as string, t]));
-    for (const key of orderedKeys) {
-      if (key.startsWith("seg:")) {
-        current = key.slice(4) as Segment;
-      } else {
-        orderedIds.push(key as Id<"eventTasks">);
-        const t = byId.get(key);
-        if (t && t.segment !== current) {
-          onPatch(t._id, { segment: current });
-        }
-      }
-    }
+    const byId = new Map(tasks.map((t) => [t._id as string, t._id]));
+    const orderedIds = orderedKeys
+      .map((k) => byId.get(k))
+      .filter((id): id is Id<"eventTasks"> => id !== undefined);
     onReorder(orderedIds);
   };
 
-  const renderHeaderRow = (segment: Segment) => (
-    <View style={styles.segHeaderRow}>
-      <Text style={[styles.segLabel, { color: colors.textSecondary }]}>
-        {SEGMENT_OPTIONS.find((s) => s.key === segment)?.label.toUpperCase()}
-      </Text>
-      <Pressable
-        onPress={() => onAdd(segment)}
-        hitSlop={8}
-        style={styles.addTaskBtn}
-        accessibilityRole="button"
-        accessibilityLabel={`Add a task to ${segment}`}
-      >
-        <Ionicons name="add" size={16} color={colors.buttonPrimary} />
-        <Text style={[styles.addTaskText, { color: colors.buttonPrimary }]}>Add task</Text>
-      </Pressable>
-    </View>
-  );
-
-  return (
-    <RunSheetDragList
-      data={rows}
-      keyExtractor={(r) => r.key}
-      onReorder={handleReorder}
-      ListHeaderComponent={listHeader ?? undefined}
-      ListFooterComponent={listFooter ?? undefined}
-      contentContainerStyle={styles.listContent}
-      renderRow={({ item: row, Handle, isActive }) =>
-        row.kind === "header" ? (
-          renderHeaderRow(row.segment)
-        ) : (
-          <TaskRow
-            task={row.task}
-            teamName={
-              row.task.teamName ??
-              teams.find((t) => t._id === row.task.teamId)?.name
-            }
-            roleOptionsForTeam={rolesByTeam[row.task.teamId as string]}
-            isActive={isActive}
-            Handle={Handle}
-            onPatch={(patch) => onPatch(row.task._id, patch)}
-            onDelete={() => onDelete(row.task)}
-            onPickTeam={() => onPickTeam(row.task)}
-            onPickRole={() => onPickRole(row.task)}
-            onOpenDoc={() => onOpenDoc(row.task)}
-          />
-        )
-      }
-    />
-  );
-}
-
-/** One inline-editable task row. */
-function TaskRow({
-  task,
-  teamName,
-  roleOptionsForTeam,
-  isActive,
-  Handle,
-  onPatch,
-  onDelete,
-  onPickTeam,
-  onPickRole,
-  onOpenDoc,
-}: {
-  task: PlanTask;
-  teamName?: string;
-  roleOptionsForTeam?: RoleOption[];
-  isActive: boolean;
-  Handle: React.ComponentType<{ children: React.ReactNode }>;
-  onPatch: (patch: TaskPatch) => void;
-  onDelete: () => void;
-  onPickTeam: () => void;
-  onPickRole: () => void;
-  onOpenDoc: () => void;
-}) {
-  const { colors } = useTheme();
-
-  const roleLabel =
-    task.roleName ??
-    roleOptionsForTeam?.find((r) => r._id === task.roleId)?.name;
-
-  return (
-    <View
-      style={[
-        styles.row,
-        {
-          backgroundColor: colors.surfaceSecondary,
-          borderColor: colors.border,
-          opacity: isActive ? 0.6 : 1,
-        },
-      ]}
-    >
-      <View style={styles.rowTop}>
-        <Handle>
-          <View style={styles.grip} accessibilityLabel="Drag to reorder" hitSlop={10}>
-            <Ionicons name="reorder-three" size={20} color={colors.textTertiary} />
-          </View>
-        </Handle>
-
-        <View style={styles.titleCol}>
+  const renderCell = (task: PlanTask, key: string) => {
+    switch (key) {
+      case "task":
+        return (
           <InlineText
             value={task.title}
-            onSave={(t) => onPatch({ title: t })}
+            onSave={(t) => onPatch(task._id, { title: t })}
             placeholder="Task title"
             required
             maxLength={140}
             accessibilityLabel="Task title"
             style={[styles.titleInput, { color: colors.text }]}
           />
-        </View>
+        );
+      case "phase": {
+        const label =
+          SEGMENT_OPTIONS.find((s) => s.key === task.segment)?.label ?? "Pre";
+        return (
+          <PhasePill
+            label={label}
+            colors={colors}
+            primaryColor={primaryColor}
+            onOpen={(anchor) => setPhaseMenu({ task, anchor })}
+          />
+        );
+      }
+      case "team": {
+        const teamName =
+          task.teamName ?? teams.find((t) => t._id === task.teamId)?.name;
+        return (
+          <PickerPill
+            value={teamName}
+            placeholder="Pick team"
+            color={teamName ? teamColor(task.teamId as string) : undefined}
+            onPress={(anchor) => onPickTeam(task, anchor)}
+            colors={colors}
+            primaryColor={primaryColor}
+          />
+        );
+      }
+      case "role": {
+        const role = rolesByTeam[task.teamId as string]?.find(
+          (rl) => rl._id === task.roleId,
+        );
+        const roleLabel = task.roleName ?? role?.name;
+        return (
+          <PickerPill
+            value={roleLabel}
+            placeholder="Team-level"
+            dotColor={role?.color}
+            onPress={(anchor) => onPickRole(task, anchor)}
+            colors={colors}
+            primaryColor={primaryColor}
+          />
+        );
+      }
+      case "howto":
+        return (
+          <EventTasksHowToCell
+            howToType={task.howToType}
+            howToText={task.howToText}
+            howToUrl={task.howToUrl}
+            howToMediaPath={task.howToMediaPath}
+            howToDoc={task.howToDoc}
+            onPatch={(patch) => onPatch(task._id, patch)}
+            onOpenDoc={() => onOpenDoc(task)}
+          />
+        );
+      case "actions":
+        return (
+          <View style={styles.actionsCell}>
+            <Pressable
+              onPress={() => onDuplicate(task)}
+              hitSlop={6}
+              style={styles.actionBtn}
+              accessibilityLabel="Duplicate task"
+            >
+              <Ionicons name="copy-outline" size={18} color={colors.textSecondary} />
+            </Pressable>
+            <Pressable
+              onPress={() => onDelete(task)}
+              hitSlop={6}
+              style={styles.actionBtn}
+              accessibilityLabel="Delete task"
+            >
+              <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+            </Pressable>
+          </View>
+        );
+      default:
+        return null;
+    }
+  };
 
-        <Pressable onPress={onDelete} hitSlop={6} style={styles.deleteBtn} accessibilityLabel="Delete task">
-          <Ionicons name="close" size={18} color={colors.textTertiary} />
-        </Pressable>
-      </View>
-
-      {/* Team + Role pickers. */}
-      <View style={styles.pickerRow}>
-        <PickerPill
-          label="Team"
-          value={teamName}
-          placeholder="Pick team"
-          onPress={onPickTeam}
-          colors={colors}
-        />
-        <PickerPill
-          label="Role"
-          value={roleLabel}
-          placeholder="Team-level"
-          onPress={onPickRole}
-          colors={colors}
-        />
-      </View>
-
-      {/* How-To column. */}
-      <View style={styles.howToWrap}>
-        <Text style={[styles.colLabel, { color: colors.textTertiary }]}>HOW-TO</Text>
-        <EventTasksHowToCell
-          howToType={task.howToType}
-          howToText={task.howToText}
-          howToUrl={task.howToUrl}
-          howToMediaPath={task.howToMediaPath}
-          howToDoc={task.howToDoc}
-          onPatch={onPatch}
-          onOpenDoc={onOpenDoc}
-        />
-      </View>
+  // Add-task bar below the table. Sections are gone, so a new task starts in Pre
+  // and the leader reassigns its phase via the Phase column.
+  const footer = (
+    <View style={{ paddingBottom: insets.bottom + 8 }}>
+      <Pressable
+        onPress={() => onAdd("before")}
+        style={[
+          styles.addTaskBar,
+          { borderColor: primaryColor, backgroundColor: primaryColor + "0D" },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Add a task"
+      >
+        <Ionicons name="add" size={18} color={primaryColor} />
+        <Text style={[styles.addTaskText, { color: primaryColor }]}>Add task</Text>
+      </Pressable>
+      {listFooter}
     </View>
+  );
+
+  // Re-derive the live task so a deleted row closes the phase menu.
+  const livePhaseTask = phaseMenu
+    ? tasks.find((t) => t._id === phaseMenu.task._id) ?? null
+    : null;
+
+  return (
+    <>
+      <GridScrollList
+        data={flatTasks}
+        keyExtractor={(t) => t._id as string}
+        onReorder={handleReorder}
+        columns={columns}
+        renderCell={(item, columnKey) => renderCell(item, columnKey)}
+        ListHeaderComponent={listHeader ?? undefined}
+        ListFooterComponent={footer}
+        contentContainerStyle={styles.listContent}
+      />
+
+      {/* Phase menu (Pre / During / Post) — an anchored dropdown at the pill. */}
+      {phaseMenu && livePhaseTask ? (
+        <AnchoredMenu
+          anchor={phaseMenu.anchor}
+          options={SEGMENT_OPTIONS.map((s) => ({ id: s.key, name: s.label }))}
+          selectedId={livePhaseTask.segment}
+          onSelect={(id) => {
+            if (id) onPatch(livePhaseTask._id, { segment: id as Segment });
+            setPhaseMenu(null);
+          }}
+          onClose={() => setPhaseMenu(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
-function PickerPill({
+/**
+ * The Phase pill (Pre / During / Post). Measures its own window rect on press so
+ * the parent can anchor the dropdown to it — the table card clips overflow, so
+ * the menu can't live inside the cell.
+ */
+function PhasePill({
   label,
+  colors,
+  primaryColor,
+  onOpen,
+}: {
+  label: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+  onOpen: (anchor: AnchorRect) => void;
+}) {
+  const ref = React.useRef<View>(null);
+  return (
+    <Pressable
+      ref={ref}
+      onPress={() => measureAnchor(ref.current, onOpen)}
+      style={styles.tagPressable}
+      accessibilityRole="button"
+      accessibilityLabel={`Phase: ${label}. Tap to change.`}
+    >
+      <OptionTag
+        label={label}
+        colors={colors}
+        primaryColor={primaryColor}
+        tinted
+        chevron
+      />
+    </Pressable>
+  );
+}
+
+export function PickerPill({
   value,
   placeholder,
   onPress,
   colors,
+  primaryColor,
+  color,
+  dotColor,
 }: {
-  label: string;
   value?: string;
   placeholder: string;
-  onPress: () => void;
+  /** Called with the pill's measured window rect so the caller can anchor a menu. */
+  onPress: (anchor: AnchorRect) => void;
   colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+  /** Full tag color (hex) — soft tinted background + readable text (teams). */
+  color?: string;
+  /** Optional leading swatch (role color). */
+  dotColor?: string;
 }) {
   const filled = !!value;
+  const ref = React.useRef<View>(null);
   return (
     <Pressable
-      onPress={onPress}
-      style={[styles.pickerPill, { borderColor: colors.border }]}
+      ref={ref}
+      onPress={() => measureAnchor(ref.current, onPress)}
+      style={styles.tagPressable}
       accessibilityRole="button"
-      accessibilityLabel={`${label}: ${value ?? placeholder}`}
+      accessibilityLabel={`${value ?? placeholder}. Tap to change.`}
     >
-      <Text style={[styles.pickerPillLabel, { color: colors.textTertiary }]}>{label}</Text>
-      <Text
-        style={[styles.pickerPillValue, { color: filled ? colors.text : colors.textTertiary }]}
-        numberOfLines={1}
-      >
-        {value ?? placeholder}
-      </Text>
-      <Ionicons name="chevron-down" size={12} color={colors.textTertiary} />
+      <OptionTag
+        label={value ?? placeholder}
+        colors={colors}
+        primaryColor={primaryColor}
+        color={filled ? color : undefined}
+        dotColor={filled ? dotColor : undefined}
+        chevron
+        placeholder={!filled}
+      />
     </Pressable>
   );
 }
 
 /**
  * A shared picker modal body — a scrollable option list. The screen renders this
- * inside a CustomModal for both the team and role pickers.
+ * inside a CustomModal for the team, role, and phase pickers.
  */
 export function TaskOptionList({
   options,
@@ -415,44 +487,31 @@ export function TaskOptionList({
 }
 
 const styles = StyleSheet.create({
-  listContent: { padding: 16, paddingBottom: 120 },
-  segHeaderRow: {
+  listContent: { paddingBottom: 24 },
+  titleInput: { fontSize: 15, fontWeight: "600", width: "100%" },
+  actionsCell: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 16,
-    marginBottom: 8,
+    justifyContent: "center",
+    gap: 8,
   },
-  segLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.8 },
-  addTaskBtn: { flexDirection: "row", alignItems: "center", gap: 2, padding: 4 },
-  addTaskText: { fontSize: 13, fontWeight: "600" },
-  row: {
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 10,
-  },
-  rowTop: { flexDirection: "row", alignItems: "center", gap: 6 },
-  grip: { paddingHorizontal: 2, paddingVertical: 6, justifyContent: "center" },
-  titleCol: { flex: 1 },
-  titleInput: { fontSize: 15, fontWeight: "600" },
-  deleteBtn: { padding: 4 },
-  pickerRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingLeft: 30 },
-  pickerPill: {
+  actionBtn: { padding: 4, alignItems: "center", justifyContent: "center" },
+  // Wraps an OptionTag that opens an anchored menu (self-aligned so it hugs its
+  // content and can be measured for the dropdown anchor).
+  tagPressable: { alignSelf: "flex-start", maxWidth: "100%" },
+  // Add-task bar below the table card — a clear, tappable dashed button.
+  addTaskBar: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    maxWidth: "100%",
+    paddingVertical: 12,
+    marginTop: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
   },
-  pickerPillLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
-  pickerPillValue: { fontSize: 13, fontWeight: "500", flexShrink: 1, maxWidth: 160 },
-  howToWrap: { paddingLeft: 30, gap: 4 },
-  colLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
+  addTaskText: { fontSize: 15, fontWeight: "600" },
   optionScroll: { maxHeight: 360 },
   optionRow: {
     flexDirection: "row",

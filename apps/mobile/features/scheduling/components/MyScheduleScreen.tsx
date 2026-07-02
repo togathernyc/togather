@@ -283,6 +283,11 @@ export function MyScheduleScreen() {
                   key={a._id}
                   assignment={a}
                   onPress={() => openDetail(a._id)}
+                  onOpenEvent={
+                    eventTasksEnabled
+                      ? () => handleEnterServing(a.planId as string)
+                      : undefined
+                  }
                 />
               ))}
             </View>
@@ -377,43 +382,67 @@ function PendingRow({
 function UpcomingRow({
   assignment,
   onPress,
+  onOpenEvent,
 }: {
   assignment: MyAssignment;
   onPress: () => void;
+  /**
+   * Enter event (serving) mode for this plan. Provided only when Event Tasks is
+   * enabled. Unlike the day-of banner, this is always available on the row so a
+   * leader can open + preview the event view ahead of the serving window.
+   */
+  onOpenEvent?: () => void;
 }) {
   const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const isDeclined = assignment.status === "declined";
   const statusColor = isDeclined ? colors.destructive : colors.success;
+  // The row is a View (not one big Pressable) so the "Open event" button and the
+  // main tap target (open assignment detail) don't fire each other.
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.upcomingRow,
-        { backgroundColor: colors.surfaceSecondary },
-        pressed && { opacity: 0.8 },
-      ]}
-    >
-      <View
-        style={[
-          styles.dot,
-          { backgroundColor: assignment.roleColor ?? DEFAULT_ROLE_COLOR },
-        ]}
-      />
-      <View style={styles.upcomingTextWrap}>
-        <Text style={[styles.roleName, { color: colors.text }]}>
-          {assignment.roleName}
-        </Text>
-        <Text style={[styles.subLine, { color: colors.textSecondary }]}>
-          {assignment.eventTitle} · {assignment.teamName}
-          {assignment.timeLabel ? ` · ${assignment.timeLabel}` : ""}
-        </Text>
-      </View>
+    <View style={[styles.upcomingRow, { backgroundColor: colors.surfaceSecondary }]}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.upcomingMain, pressed && { opacity: 0.7 }]}
+      >
+        <View
+          style={[
+            styles.dot,
+            { backgroundColor: assignment.roleColor ?? DEFAULT_ROLE_COLOR },
+          ]}
+        />
+        <View style={styles.upcomingTextWrap}>
+          <Text style={[styles.roleName, { color: colors.text }]}>
+            {assignment.roleName}
+          </Text>
+          <Text style={[styles.subLine, { color: colors.textSecondary }]}>
+            {assignment.eventTitle} · {assignment.teamName}
+            {assignment.timeLabel ? ` · ${assignment.timeLabel}` : ""}
+          </Text>
+        </View>
+      </Pressable>
+      {onOpenEvent && !isDeclined ? (
+        <Pressable
+          onPress={onOpenEvent}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={`Open event view for ${assignment.eventTitle}`}
+          style={({ pressed }) => [
+            styles.openEventBtn,
+            { borderColor: primaryColor },
+            pressed && { opacity: 0.6 },
+          ]}
+        >
+          <Ionicons name="open-outline" size={14} color={primaryColor} />
+          <Text style={[styles.openEventText, { color: primaryColor }]}>Open event</Text>
+        </Pressable>
+      ) : null}
       <View style={[styles.statusPill, { backgroundColor: statusColor + "22" }]}>
         <Text style={[styles.statusPillText, { color: statusColor }]}>
           {isDeclined ? "Declined" : "Confirmed"}
         </Text>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
@@ -569,8 +598,27 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 8,
   },
+  upcomingMain: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
   upcomingTextWrap: {
     flex: 1,
+  },
+  openEventBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  openEventText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   statusPill: {
     paddingHorizontal: 10,

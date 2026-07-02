@@ -6,8 +6,10 @@
  * the exact order-of-service their leaders authored in Rostering. It's strictly
  * read-only here (`canEdit={false}`) — editing lives in Rostering.
  *
- * The owning group id comes from `getServingEligibility().activePlan`; the
- * active plan itself is tracked in `useEventModeStore`.
+ * The active plan is tracked in `useEventModeStore.activePlanId`; the owning
+ * group id is resolved directly from that plan via `getEvent`, independent of
+ * the serving-eligibility window (so previewing an event outside the ~12h
+ * window still shows its run sheet).
  */
 import React from "react";
 import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
@@ -26,22 +28,21 @@ export function ServingRunsheetScreen() {
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const activePlanId = useEventModeStore((s) => s.activePlanId);
 
-  // The owning group id isn't stored client-side; resolve it from serving
-  // eligibility. Prefer the plan the user has switched to (activePlanId), so the
-  // run sheet follows the ServingPlanSwitcher; fall back to the soonest plan.
-  const eligibility = useAuthenticatedQuery(
-    api.functions.scheduling.serving.getServingEligibility,
-    isServingMode ? {} : "skip",
+  // Resolve the owning group directly from the active plan — NOT from the
+  // serving-eligibility window, which only surfaces plans within ~12h of the
+  // event. The volunteer is a confirmed group member, so `getEvent` passes
+  // `requireGroupMember` and returns the plan's `groupId` regardless of window.
+  const event = useAuthenticatedQuery(
+    api.functions.scheduling.events.getEvent,
+    isServingMode && activePlanId
+      ? { planId: activePlanId as Id<"eventPlans"> }
+      : "skip",
   ) as
-    | {
-        activePlan: { groupId: string } | null;
-        plans: { planId: string; groupId: string }[];
-      }
+    | { groupId: string; items: unknown[] }
     | null
     | undefined;
 
-  const groupId = (eligibility?.plans?.find((p) => p.planId === activePlanId)
-    ?.groupId ?? eligibility?.activePlan?.groupId) as Id<"groups"> | undefined;
+  const groupId = event?.groupId as Id<"groups"> | undefined;
 
   if (!isServingMode) {
     return (
@@ -53,7 +54,8 @@ export function ServingRunsheetScreen() {
     );
   }
 
-  if (eligibility === undefined) {
+  // Still loading the plan (only while we actually have a plan to load).
+  if (activePlanId && event === undefined) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="small" color={colors.text} />
@@ -61,7 +63,10 @@ export function ServingRunsheetScreen() {
     );
   }
 
-  if (!groupId) {
+  // Genuinely nothing to show: no active plan, the plan was deleted, or it has
+  // no run sheet items — as opposed to merely being outside the serving window.
+  const hasItems = !!event && event.items.length > 0;
+  if (!groupId || !hasItems) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />

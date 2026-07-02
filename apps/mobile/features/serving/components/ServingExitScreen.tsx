@@ -23,8 +23,22 @@ export function ServingExitScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      exit();
+      // Navigate off the Exit tab to Inbox — a tab visible in BOTH serving and
+      // normal mode — before dropping serving mode. Flipping the store while
+      // still focused on the Exit tab (which then becomes `href: null`) leaves
+      // the Tabs navigator focused on a now-hidden route and the tab bar stuck
+      // in the serving layout. Deferring the store update to the next tick lets
+      // the navigation commit first, so the store-driven re-render of the tab
+      // bar re-evaluates every href with Inbox already focused and cleanly
+      // restores the normal tab bar.
+      // Navigate to Inbox first, then drop serving mode on the next frame so the
+      // tab bar re-renders to normal. Note: no cleanup that clears this — an
+      // earlier version cancelled the exit when `router.replace` blurred the
+      // screen, so serving mode never actually exited. (The Exit tab now also
+      // handles this via a tabPress listener; this stays as a direct-nav
+      // fallback.)
       router.replace("/(tabs)/chat");
+      requestAnimationFrame(() => exit());
     }, [exit, router]),
   );
 

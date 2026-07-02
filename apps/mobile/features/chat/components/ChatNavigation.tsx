@@ -2,7 +2,7 @@
  * Chat Navigation Component
  * Contains TabBar (dynamic channel tabs) and Toolbar (quick actions).
  */
-import React, { memo, useMemo } from "react";
+import React, { memo, useMemo, useRef, useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -73,6 +73,29 @@ export const ChatTabBar = memo(function ChatTabBar({
   const { colors: themeColors } = useTheme();
   const externalChatInfo = externalChatLink ? getExternalChatInfo(externalChatLink) : null;
 
+  // Keep the ACTIVE channel tab visible in the horizontal bar no matter how the
+  // room was opened (inbox, notification, deep link, tab tap). We remember each
+  // tab's measured x/width and the viewport width, then scroll the active tab to
+  // center whenever the active slug changes (or its layout first arrives).
+  const scrollRef = useRef<ScrollView>(null);
+  const tabLayoutsRef = useRef<Record<string, { x: number; width: number }>>({});
+  const [viewportW, setViewportW] = useState(0);
+
+  const scrollActiveIntoView = useCallback(
+    (animated: boolean) => {
+      const layout = tabLayoutsRef.current[activeSlug];
+      if (!layout || viewportW === 0) return;
+      // Center it; RN clamps the offset to the scrollable range for us.
+      const x = layout.x - (viewportW - layout.width) / 2;
+      scrollRef.current?.scrollTo({ x: Math.max(0, x), animated });
+    },
+    [activeSlug, viewportW],
+  );
+
+  useEffect(() => {
+    scrollActiveIntoView(true);
+  }, [scrollActiveIntoView]);
+
   // Helper to get display name for a channel
   const getDisplayName = (channel: ChannelTab): string => {
     if (channel.channelType === "main") return "General";
@@ -85,9 +108,11 @@ export const ChatTabBar = memo(function ChatTabBar({
   return (
     <View style={[styles.tabBar, { backgroundColor: themeColors.surface, borderBottomColor: themeColors.border }]}>
       <ScrollView
+        ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.tabBarScrollContent}
+        onLayout={(e) => setViewportW(e.nativeEvent.layout.width)}
       >
         {channels.map((channel) => {
           const isActive = channel.slug === activeSlug;
@@ -113,6 +138,12 @@ export const ChatTabBar = memo(function ChatTabBar({
               delayLongPress={300}
               activeOpacity={0.7}
               accessibilityLabel={displayName}
+              onLayout={(e) => {
+                const { x, width } = e.nativeEvent.layout;
+                tabLayoutsRef.current[channel.slug] = { x, width };
+                // First time the active tab is measured, snap it into view.
+                if (channel.slug === activeSlug) scrollActiveIntoView(false);
+              }}
             >
               <View style={styles.tabContent}>
                 {channel.isShared && (

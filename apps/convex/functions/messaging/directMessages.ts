@@ -1364,6 +1364,9 @@ export const getDirectInbox = query({
       lastMessageSenderNotificationsDisabled: boolean;
       unreadCount: number;
       isMuted: boolean;
+      /** Channel creation timestamp — serving-mode inbox filters DMs to those
+       * created on the event day. */
+      createdAt: number;
     }> = [];
 
     for (const row of acceptedRows) {
@@ -1446,6 +1449,7 @@ export const getDirectInbox = query({
           : false,
         unreadCount,
         isMuted: row.isMuted,
+        createdAt: channel.createdAt ?? channel._creationTime,
       });
     }
 

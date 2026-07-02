@@ -2960,6 +2960,42 @@ export default defineSchema({
   }).index("by_plan_user", ["planId", "userId"]),
 
   /**
+   * Per-user checked state for the interactive checklist inside a serving
+   * task's "doc" How-To. One row per (user, task) holding the set of checked
+   * checklist-item indices (positional, in document order). This is personal —
+   * each volunteer sees only their own checks — and never mutates the shared
+   * `howToDoc` markdown itself.
+   */
+  howToDocChecks: defineTable({
+    userId: v.id("users"),
+    taskId: v.id("eventTasks"),
+    // Content-based keys for the checked items (a stable hash of the item's
+    // text + its occurrence, so checks survive reordering the doc). Replaces the
+    // old positional-index scheme.
+    checkedKeys: v.array(v.string()),
+    updatedAt: v.number(),
+  }).index("by_user_task", ["userId", "taskId"]),
+
+  /**
+   * Team-WIDE completion of a team-level event task (the "Shared" serving
+   * surface). Unlike `eventTaskCompletions` (per-user), this is a single shared
+   * state per task: any confirmed member of the task's team may mark the task
+   * done for the whole team, and a row's mere existence means "done". Only used
+   * for team-level tasks (`eventTasks.roleId == null`); one row per task, keyed
+   * by `taskId`. `completedByUserId` records who last flipped it done (for a
+   * "completed by …" label). Deleting the row un-completes the task.
+   */
+  sharedTaskCompletions: defineTable({
+    taskId: v.id("eventTasks"),
+    planId: v.id("eventPlans"),
+    communityId: v.id("communities"),
+    completedByUserId: v.id("users"),
+    completedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_plan", ["planId"]),
+
+  /**
    * Per-community song library (ADR-027). A song lives once and is referenced
    * by run sheet `eventItems` via `songId`, so editing its charts/metadata
    * updates every plan that uses it (no copied-string drift). `ccliNumber` is

@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
@@ -21,18 +21,27 @@ export default function TabsLayout() {
   // was over-engineered and introduced a stale render frame.
   const hasCommunity = !!community?.id;
 
-  // Serving mode collapses the tab bar to a focused set (Inbox, Runsheet,
-  // Tasks, Profile, Exit) for the duration of an event. Gated on the community
-  // opting into the Event Tasks feature so communities without it never see
-  // serving tabs even if a stale persisted flag lingers.
+  // Serving mode collapses the tab bar to a focused set — ordered
+  // Runsheet · Inbox · Tasks · Exit (no Profile) — for the duration of an event.
+  // Gated on the community opting into the Event Tasks feature so communities
+  // without it never see serving tabs even if a stale persisted flag lingers.
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
   const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const exitServingMode = useEventModeStore((s) => s.exit);
   const inServingMode = isServingMode && eventTasksEnabled;
+  const router = useRouter();
 
   const tabs = (
     <Tabs
+      // Expo Router's Tabs computes its visible tab set from `href` at mount and
+      // doesn't reliably re-render the bar when hrefs flip at runtime — so
+      // entering/leaving serving mode left the OLD tabs on screen until a
+      // refresh. Keying the navigator on the mode remounts it on that (rare)
+      // transition, recomputing the tab set. Stable within each mode, so normal
+      // navigation is unaffected.
+      key={inServingMode ? 'serving' : 'normal'}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
@@ -123,6 +132,23 @@ export default function TabsLayout() {
           ),
         }}
       />
+      {/* Serving-mode Runsheet sits immediately before Inbox so the serving
+          tab order reads Runsheet · Inbox · Tasks · Exit. Normal mode hides the
+          serving tabs (href: null), so its order is unaffected. */}
+      <Tabs.Screen
+        name="serving-runsheet"
+        options={{
+          title: 'Runsheet',
+          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'list' : 'list-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="chat"
         options={{
@@ -144,6 +170,48 @@ export default function TabsLayout() {
               color={color}
             />
           ),
+        }}
+      />
+      {/* Serving-mode Tasks + Exit sit immediately after Inbox. */}
+      <Tabs.Screen
+        name="serving-tasks"
+        options={{
+          title: 'Tasks',
+          href: inServingMode ? '/(tabs)/serving-tasks' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="serving-exit"
+        options={{
+          title: 'Exit',
+          href: inServingMode ? '/(tabs)/serving-exit' : null,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'exit' : 'exit-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+        }}
+        listeners={{
+          // Exit is an action, not a destination: intercept the tap so we never
+          // focus the (about-to-be-hidden) serving-exit route. Navigate to Inbox
+          // (visible in both modes) first, then drop serving mode so the tab bar
+          // re-renders to the normal layout. Doing it here avoids the focus/blur
+          // race a screen-side effect hit (its cleanup cancelled the exit).
+          tabPress: (e) => {
+            if (!inServingMode) return;
+            e.preventDefault();
+            router.replace('/(tabs)/chat');
+            requestAnimationFrame(() => exitServingMode());
+          },
         }}
       />
       <Tabs.Screen
@@ -185,54 +253,13 @@ export default function TabsLayout() {
           ),
         }}
       />
-
-      {/* Serving-mode tabs — only visible while serving mode is active. */}
-      <Tabs.Screen
-        name="serving-runsheet"
-        options={{
-          title: 'Runsheet',
-          href: inServingMode ? '/(tabs)/serving-runsheet' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'list' : 'list-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="serving-tasks"
-        options={{
-          title: 'Tasks',
-          href: inServingMode ? '/(tabs)/serving-tasks' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'checkmark-done' : 'checkmark-done-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="serving-exit"
-        options={{
-          title: 'Exit',
-          href: inServingMode ? '/(tabs)/serving-exit' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'exit' : 'exit-outline'}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
+          // Hidden while serving mode is active to keep the serving tab bar to
+          // Runsheet · Inbox · Tasks · Exit.
+          href: inServingMode ? null : '/(tabs)/profile',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'person' : 'person-outline'}
