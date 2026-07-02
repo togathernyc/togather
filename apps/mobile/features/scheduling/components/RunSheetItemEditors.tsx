@@ -20,6 +20,7 @@ import {
   StyleSheet,
   Pressable,
   Platform,
+  ActivityIndicator,
   type TextStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -205,10 +206,17 @@ export function WhoModalBody({
   item,
   roleOptions,
   onPatch,
+  emptyStateText = "No roles are defined yet.",
+  loading = false,
 }: {
   item: RunSheetItemLike;
   roleOptions: RoleOption[];
   onPatch: (patch: ItemPatch) => void;
+  /** Message shown when there are no roles to pick — worded per surface. */
+  emptyStateText?: string;
+  /** While the role sources are still loading, show a spinner instead of the
+   *  empty message so it doesn't flash "no roles" before they resolve. */
+  loading?: boolean;
 }) {
   const { colors } = useTheme();
   const [linked, setLinked] = useState<Set<string>>(
@@ -226,9 +234,16 @@ export function WhoModalBody({
   };
 
   if (roleOptions.length === 0) {
+    if (loading) {
+      return (
+        <View style={styles.rolesLoading}>
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+        </View>
+      );
+    }
     return (
       <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-        No roles are defined for this group yet.
+        {emptyStateText}
       </Text>
     );
   }
@@ -505,6 +520,7 @@ export function NotesEditor({
 
 const styles = StyleSheet.create({
   emptyText: { fontSize: 14, lineHeight: 20, marginTop: 24 },
+  rolesLoading: { paddingVertical: 24, alignItems: "center" },
   timingToggle: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   timingPressable: { borderRadius: 999 },
   timingChip: {

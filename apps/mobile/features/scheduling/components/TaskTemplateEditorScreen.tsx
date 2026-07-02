@@ -218,6 +218,15 @@ export function TaskTemplateEditorScreen() {
 
   const handleAdd = useCallback(
     async (segment: Segment) => {
+      // Distinguish "teams still loading" from "genuinely no teams" so a tap
+      // before listTeams resolves doesn't wrongly claim there are none.
+      if (teamsData === undefined) {
+        notifyError(
+          "Just a moment",
+          "Teams are still loading — try again in a second.",
+        );
+        return;
+      }
       const teamId = teams[0]?._id;
       if (!teamId) {
         notifyError(
@@ -239,7 +248,7 @@ export function TaskTemplateEditorScreen() {
         notifyError("Couldn't add task", errMsg(e));
       }
     },
-    [addItem, templateId, teams],
+    [addItem, templateId, teams, teamsData],
   );
 
   const handleDelete = useCallback(

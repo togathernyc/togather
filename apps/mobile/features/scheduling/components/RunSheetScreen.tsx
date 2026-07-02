@@ -712,6 +712,7 @@ export function RunSheetScreen() {
             item={whoLive}
             roleOptions={roleOptions}
             onPatch={(patch) => patchItem(whoLive._id, patch)}
+            emptyStateText="No roles are defined for this event yet."
           />
         ) : null}
       </CustomModal>

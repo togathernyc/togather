@@ -190,6 +190,14 @@ export function RunSheetTemplateEditorScreen() {
     return [...byId.values()];
   }, [rolesByTeam]);
 
+  // Roles are fetched per team via RoleLoader; until every team has reported
+  // (or there are no teams), treat the (empty) role list as still loading so the
+  // Who picker doesn't flash "no roles" before the loaders resolve.
+  const rolesLoading =
+    teamsData === undefined ||
+    (teamsData.length > 0 &&
+      Object.keys(rolesByTeam).length < teamsData.length);
+
   const [focusId, setFocusId] = useState<string | null>(null);
   const [addSegment, setAddSegment] = useState<Segment>("during");
   const [whoItem, setWhoItem] = useState<RunSheetTemplateItem | null>(null);
@@ -682,6 +690,8 @@ export function RunSheetTemplateEditorScreen() {
             item={toItemLike(whoLive)}
             roleOptions={roleOptions}
             onPatch={(patch) => void patchItem(whoLive._id, patch)}
+            emptyStateText="No roles are defined for this template yet."
+            loading={rolesLoading}
           />
         ) : null}
       </CustomModal>
