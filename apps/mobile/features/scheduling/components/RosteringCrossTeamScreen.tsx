@@ -48,6 +48,17 @@ export function RosteringCrossTeamScreen() {
     router.push(`/inbox/${groupId}/create` as never);
   }, [router, groupId]);
 
+  // Tap a channel → its Channel Info screen, where the existing
+  // "Edit synced roles" control reopens the selector picker and saves via
+  // updateCrossTeamChannel. Reuses the shared channel-info route; no new editor.
+  const handleOpenChannel = useCallback(
+    (slug?: string) => {
+      if (!slug) return;
+      router.push(`/inbox/${groupId}/${slug}/info` as never);
+    },
+    [router, groupId],
+  );
+
   if (channels === undefined) {
     return (
       <View style={[styles.root, { backgroundColor: colors.surface }]}>
@@ -91,9 +102,11 @@ export function RosteringCrossTeamScreen() {
         </View>
       ) : (
         channels.map((channel) => (
-          <View
+          <Pressable
             key={channel._id}
+            onPress={() => handleOpenChannel(channel.slug)}
             style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}
+            accessibilityRole="button"
           >
             <View style={styles.cardTop}>
               <Ionicons
@@ -111,6 +124,11 @@ export function RosteringCrossTeamScreen() {
                 {channel.memberCount}{" "}
                 {channel.memberCount === 1 ? "member" : "members"}
               </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={colors.textTertiary}
+              />
             </View>
             <Text
               style={[styles.cardSub, { color: colors.textTertiary }]}
@@ -127,7 +145,7 @@ export function RosteringCrossTeamScreen() {
                     .join(", ")}`
                 : ""}
             </Text>
-          </View>
+          </Pressable>
         ))
       )}
       </CenteredColumn>

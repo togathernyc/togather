@@ -19,6 +19,7 @@ import { modules } from "../../test.setup";
 import { api, internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { generateTokens } from "../../lib/auth";
+import { resolveServingChannelIds } from "../../functions/scheduling/serving";
 import { buildSchedulingWorld, ts, type SchedulingWorld } from "./fixtures";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -722,5 +723,59 @@ describe("cross-team channel — reconcileCrossTeamChannelsForSource", () => {
       { sourceTeamId: unrelatedTeamId },
     );
     expect(result.processed).toBe(0);
+  });
+});
+
+describe("cross-team channel — serving-mode inbox resolution", () => {
+  it("includes a cross-team channel whose selector references a team on the plan", async () => {
+    const { t, world } = await setupCrossTeamWorld();
+    const planId = await insertPlan(t, world, 3);
+    // An assignment on the tech team ties that team to the plan; the
+    // cross-team channel selects from the tech team, so it must resolve into
+    // the serving-channel set (the event-mode inbox intersects against this).
+    await insertAssignment(t, world, {
+      planId,
+      teamId: world.techTeamId,
+      roleId: world.techRoleId,
+      userId: world.techUserId,
+      eventDate: Date.now() + 3 * DAY,
+    });
+
+    // t.run can't serialize a Set return value, so flatten to an array.
+    const ids = await t.run(async (ctx) => [
+      ...(await resolveServingChannelIds(ctx, planId)),
+    ]);
+    expect(ids).toContain(world.crossChannelId);
+  });
+
+  it("omits the cross-team channel when no selected team is on the plan", async () => {
+    const { t, world } = await setupCrossTeamWorld();
+    // Plan with no needed roles or assignments → no teams tied to it.
+    const planId = await insertPlan(t, world, 3);
+
+    const ids = await t.run(async (ctx) => [
+      ...(await resolveServingChannelIds(ctx, planId)),
+    ]);
+    expect(ids).not.toContain(world.crossChannelId);
+  });
+
+  it("omits an archived cross-team channel even when a team matches", async () => {
+    const { t, world } = await setupCrossTeamWorld();
+    const planId = await insertPlan(t, world, 3);
+    await insertAssignment(t, world, {
+      planId,
+      teamId: world.techTeamId,
+      roleId: world.techRoleId,
+      userId: world.techUserId,
+      eventDate: Date.now() + 3 * DAY,
+    });
+    await t.run((ctx) =>
+      ctx.db.patch(world.crossChannelId, { isArchived: true }),
+    );
+
+    const ids = await t.run(async (ctx) => [
+      ...(await resolveServingChannelIds(ctx, planId)),
+    ]);
+    expect(ids).not.toContain(world.crossChannelId);
   });
 });

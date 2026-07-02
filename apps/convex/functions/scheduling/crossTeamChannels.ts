@@ -21,7 +21,7 @@ import type { MutationCtx } from "../../_generated/server";
 import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
-import { generateChannelSlug } from "../../lib/slugs";
+import { generateChannelSlug, getChannelSlug } from "../../lib/slugs";
 import { requireGroupMember, requireGroupScheduler } from "./permissions";
 import { reconcileCrossTeamChannelImpl } from "./teamChannelSync";
 
@@ -316,6 +316,7 @@ export const listCrossTeamChannels = query({
         );
         return {
           _id: channel._id,
+          slug: getChannelSlug(channel),
           name: channel.name,
           description: channel.description,
           channelType: channel.channelType,
