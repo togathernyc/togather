@@ -1,5 +1,5 @@
 import { View } from 'react-native';
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
@@ -29,7 +29,9 @@ export default function TabsLayout() {
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
   const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const exitServingMode = useEventModeStore((s) => s.exit);
   const inServingMode = isServingMode && eventTasksEnabled;
+  const router = useRouter();
 
   const tabs = (
     <Tabs
@@ -190,6 +192,19 @@ export default function TabsLayout() {
               color={color}
             />
           ),
+        }}
+        listeners={{
+          // Exit is an action, not a destination: intercept the tap so we never
+          // focus the (about-to-be-hidden) serving-exit route. Navigate to Inbox
+          // (visible in both modes) first, then drop serving mode so the tab bar
+          // re-renders to the normal layout. Doing it here avoids the focus/blur
+          // race a screen-side effect hit (its cleanup cancelled the exit).
+          tabPress: (e) => {
+            if (!inServingMode) return;
+            e.preventDefault();
+            router.replace('/(tabs)/chat');
+            requestAnimationFrame(() => exitServingMode());
+          },
         }}
       />
       <Tabs.Screen

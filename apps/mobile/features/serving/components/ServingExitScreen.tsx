@@ -31,9 +31,14 @@ export function ServingExitScreen() {
       // the navigation commit first, so the store-driven re-render of the tab
       // bar re-evaluates every href with Inbox already focused and cleanly
       // restores the normal tab bar.
+      // Navigate to Inbox first, then drop serving mode on the next frame so the
+      // tab bar re-renders to normal. Note: no cleanup that clears this — an
+      // earlier version cancelled the exit when `router.replace` blurred the
+      // screen, so serving mode never actually exited. (The Exit tab now also
+      // handles this via a tabPress listener; this stays as a direct-nav
+      // fallback.)
       router.replace("/(tabs)/chat");
-      const t = setTimeout(() => exit(), 0);
-      return () => clearTimeout(t);
+      requestAnimationFrame(() => exit());
     }, [exit, router]),
   );
 
