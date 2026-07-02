@@ -448,10 +448,11 @@ export function ChatInboxScreen({
           activeGroupId={sidebarMode ? activeGroupId : undefined}
           activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
           resources={resourcesByGroup.get(item.item.group._id)}
+          servingMode={inServingMode}
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup, inServingMode]
   );
 
   // Key extractor for FlatList

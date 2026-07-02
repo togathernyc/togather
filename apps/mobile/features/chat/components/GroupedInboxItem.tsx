@@ -77,6 +77,51 @@ export interface GroupedInboxItemProps {
   activeChannelSlug?: string;
   /** Resources flagged to show under this group in the inbox. */
   resources?: InboxResourceData[];
+  /**
+   * Serving mode flattens each of a team's channels into its own inbox row, so
+   * they'd otherwise all render with the same team name (e.g. three "Worship
+   * Team" rows). When true, the row title becomes a distinguishing
+   * `#team-channel` label derived from the channel's identity instead.
+   */
+  servingMode?: boolean;
+}
+
+/**
+ * Lowercase, hyphenate, and strip a string down to a `#channel-name`-safe slug.
+ */
+function slugifyChannelLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+}
+
+/**
+ * Build a distinguishing `#team-channel` label for a serving-mode inbox row.
+ *
+ * Team channels are commonly named after the team, so a raw name can't tell the
+ * rows apart. Disambiguate the well-known channel types by their role, and fall
+ * back to the channel's own (already meaningful) name for custom channels.
+ */
+function getServingChannelLabel(teamName: string, channel: ChannelData): string {
+  const teamSlug = slugifyChannelLabel(teamName);
+  switch (channel.channelType) {
+    case "main":
+      return `#${teamSlug}-general`;
+    case "leaders":
+      return `#${teamSlug}-leaders`;
+    case "announcements":
+      return `#${teamSlug}-announcements`;
+    case "cross_team":
+      return `#${teamSlug}-cross-team`;
+    default: {
+      // Custom / pco_services / reach_out channels carry their own distinct
+      // name from the backend — prefer it since it's already meaningful.
+      const nameSlug = channel.name ? slugifyChannelLabel(channel.name) : "";
+      return nameSlug ? `#${nameSlug}` : `#${teamSlug}-channel`;
+    }
+  }
 }
 
 // Helper to get badge colors dynamically for any group type ID
@@ -127,6 +172,7 @@ function GroupedInboxItemInner({
   activeGroupId,
   activeChannelSlug,
   resources,
+  servingMode = false,
 }: GroupedInboxItemProps) {
   const router = useRouter();
   const { user } = useAuth();
@@ -331,6 +377,12 @@ function GroupedInboxItemInner({
   if (isSingleChannel && primaryChannel) {
     const hasUnread = primaryChannel.unreadCount > 0;
     const isActive = isActiveGroup && activeChannelSlug === primaryChannel.slug;
+    // In serving mode a team's channels are flattened into separate rows, so
+    // title each by its own `#team-channel` identity rather than the shared
+    // team name. Normal mode keeps the team name unchanged.
+    const rowTitle = servingMode
+      ? getServingChannelLabel(group.name, primaryChannel)
+      : group.name;
 
     // When the group has inbox resources, wrap the row + resource sub-rows in a
     // container so they read as one inbox item.
@@ -375,7 +427,7 @@ function GroupedInboxItemInner({
           {/* Top row: Name + Badge */}
           <View style={styles.topRow}>
             <Text style={[styles.groupName, { color: colors.text }, hasUnread && styles.groupNameUnread]} numberOfLines={1}>
-              {group.name}
+              {rowTitle}
             </Text>
             {primaryChannel.isShared && (
               <Ionicons name="link" size={14} color="#8B5CF6" style={styles.sharedIcon} />
