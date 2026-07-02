@@ -20,6 +20,7 @@ import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { requireGroupMember, requireGroupScheduler } from "./permissions";
+import { propagateTaskTemplate } from "./planTemplates";
 
 /** When a task happens relative to the event's service times. */
 const segmentValidator = v.union(
@@ -395,6 +396,8 @@ export const addTaskTemplateItem = mutation({
       createdAt: nowMs,
       updatedAt: nowMs,
     });
+    // Propagate the new item forward to future linked plans (Phase 3).
+    await propagateTaskTemplate(ctx, args.templateId, userId);
     return { itemId };
   },
 });
@@ -491,6 +494,8 @@ export const updateTaskTemplateItem = mutation({
     if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
 
     await ctx.db.patch(args.itemId, patch);
+    // Propagate the edit forward to future linked plans (Phase 3).
+    await propagateTaskTemplate(ctx, item.templateId, userId);
     return { itemId: args.itemId };
   },
 });
@@ -510,7 +515,11 @@ export const deleteTaskTemplateItem = mutation({
       throw new ConvexError("Task template item not found");
     }
     await requireTaskTemplateScheduler(ctx, item.templateId, userId);
+    const templateId = item.templateId;
     await ctx.db.delete(args.itemId);
+    // Propagate the deletion forward to future linked plans (Phase 3): their
+    // synced rows for this item are removed (completions cascaded).
+    await propagateTaskTemplate(ctx, templateId, userId);
     return { deleted: true };
   },
 });
@@ -541,6 +550,8 @@ export const reorderTaskTemplateItems = mutation({
       await ctx.db.patch(itemId, { sortOrder: index, updatedAt: nowMs });
       index += 1;
     }
+    // Propagate the new ordering forward to future linked plans (Phase 3).
+    await propagateTaskTemplate(ctx, args.templateId, userId);
     return { reordered: index };
   },
 });
