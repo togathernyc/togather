@@ -12,7 +12,7 @@ import { convexTest } from "convex-test";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { generateTokens } from "../../lib/auth";
-import { api } from "../../_generated/api";
+import { api, internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { buildSchedulingWorld } from "./fixtures";
 
@@ -98,7 +98,7 @@ describe("eventTasks CRUD + reorder", () => {
     const after = await t.mutation(api.functions.scheduling.eventTasks.createTask, {
       token: leaderToken,
       planId,
-      teamId: world.teamId,
+      teamIds: [world.teamId],
       segment: "after",
       title: "Tear down",
       howToType: "none",
@@ -106,8 +106,8 @@ describe("eventTasks CRUD + reorder", () => {
     const before1 = await t.mutation(api.functions.scheduling.eventTasks.createTask, {
       token: leaderToken,
       planId,
-      teamId: world.teamId,
-      roleId: world.roleId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
       segment: "before",
       title: "Set up drums",
       howToType: "text",
@@ -116,7 +116,7 @@ describe("eventTasks CRUD + reorder", () => {
     const before2 = await t.mutation(api.functions.scheduling.eventTasks.createTask, {
       token: leaderToken,
       planId,
-      teamId: world.teamId,
+      teamIds: [world.teamId],
       segment: "before",
       title: "Sound check",
       howToType: "none",
@@ -131,11 +131,11 @@ describe("eventTasks CRUD + reorder", () => {
       "Sound check",
       "Tear down",
     ]);
-    // Role name is hydrated; team-level task has null roleName.
+    // Role names are hydrated; team-level task has an empty roleNames array.
     const setUp = list.find((x) => x.title === "Set up drums")!;
-    expect(setUp.roleName).toBe("Drums");
-    expect(setUp.teamName).toBe("Worship Team");
-    expect(list.find((x) => x.title === "Sound check")!.roleName).toBeNull();
+    expect(setUp.roleNames).toEqual(["Drums"]);
+    expect(setUp.teamNames).toEqual(["Worship Team"]);
+    expect(list.find((x) => x.title === "Sound check")!.roleNames).toEqual([]);
 
     // Reorder: put "Sound check" before "Set up drums".
     await t.mutation(api.functions.scheduling.eventTasks.reorderTasks, {
@@ -164,7 +164,7 @@ describe("eventTasks CRUD + reorder", () => {
       t.mutation(api.functions.scheduling.eventTasks.createTask, {
         token: memberToken,
         planId,
-        teamId: world.teamId,
+        teamIds: [world.teamId],
         segment: "before",
         title: "Nope",
         howToType: "none",
@@ -184,8 +184,8 @@ describe("eventTasks CRUD + reorder", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "before",
         title: "Set up",
         howToType: "none",
@@ -225,8 +225,8 @@ describe("per-person completion toggle", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "before",
         title: "Set up",
         howToType: "none",
@@ -287,8 +287,8 @@ describe("per-person completion toggle", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "during",
         title: "Play",
         howToType: "none",
@@ -336,8 +336,8 @@ describe("getPlanTaskReadiness rollup math", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "before",
         title: "Set up",
         howToType: "none",
@@ -349,8 +349,8 @@ describe("getPlanTaskReadiness rollup math", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "during",
         title: "Play",
         howToType: "none",
@@ -418,8 +418,8 @@ describe("getMyServingTasks merges assigned + personal", () => {
     await t.mutation(api.functions.scheduling.eventTasks.createTask, {
       token: leaderToken,
       planId,
-      teamId: world.teamId,
-      roleId: world.roleId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
       segment: "before",
       title: "Set up",
       howToType: "text",
@@ -430,8 +430,8 @@ describe("getMyServingTasks merges assigned + personal", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "during",
         title: "Play",
         howToType: "none",
@@ -484,8 +484,8 @@ describe("getMyServingTasks merges assigned + personal", () => {
     await t.mutation(api.functions.scheduling.eventTasks.createTask, {
       token: leaderToken,
       planId,
-      teamId: world.teamId,
-      roleId: world.roleId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
       segment: "before",
       title: "Set up",
       howToType: "none",
@@ -543,8 +543,8 @@ describe("duplicateEvent copies tasks but not completions/personal", () => {
       {
         token: leaderToken,
         planId,
-        teamId: world.teamId,
-        roleId: world.roleId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
         segment: "before",
         title: "Set up",
         howToType: "text",
@@ -597,6 +597,340 @@ describe("duplicateEvent copies tasks but not completions/personal", () => {
         .collect(),
     );
     expect(personal).toHaveLength(0);
+  });
+});
+
+/**
+ * Insert a second serving team (+ one role) in the world's group, so
+ * multi-team / multi-role tasks can be exercised. Assignment only needs a valid
+ * team/role pair in the group + an active group member, so no channel/needed
+ * roles are required.
+ */
+async function addSecondTeam(
+  t: ReturnType<typeof convexTest>,
+  world: Awaited<ReturnType<typeof buildSchedulingWorld>>,
+) {
+  return t.run(async (ctx) => {
+    const now = Date.now();
+    const teamId = await ctx.db.insert("teams", {
+      groupId: world.groupId,
+      communityId: world.communityId,
+      name: "Hospitality",
+      isArchived: false,
+      createdAt: now,
+      createdById: world.groupLeaderId,
+      updatedAt: now,
+    });
+    const roleId = await ctx.db.insert("teamRoles", {
+      teamId,
+      communityId: world.communityId,
+      name: "Greeter",
+      sortOrder: 0,
+      defaultNeeded: 1,
+      isArchived: false,
+      createdAt: now,
+      createdById: world.groupLeaderId,
+    });
+    return { teamId, roleId };
+  });
+}
+
+/** Assign a user to an arbitrary team/role on a plan and confirm them. */
+async function assignConfirm(
+  t: ReturnType<typeof convexTest>,
+  leaderToken: string,
+  planId: Id<"eventPlans">,
+  teamId: Id<"teams">,
+  roleId: Id<"teamRoles">,
+  userId: Id<"users">,
+) {
+  const { assignmentId } = await t.mutation(
+    api.functions.scheduling.assignments.assignRole,
+    { token: leaderToken, planId, teamId, roleId, userId },
+  );
+  await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+    token: (await generateTokens(userId)).accessToken,
+    assignmentId,
+    status: "confirmed",
+  });
+}
+
+describe("multi-team / multi-role event tasks", () => {
+  it("shows a 2-role/2-team task in Mine for people in either role, per-person", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const modToken = (await generateTokens(world.channelModeratorId)).accessToken;
+    const adminToken = (await generateTokens(world.channelAdminId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    const team2 = await addSecondTeam(t, world);
+
+    // Member confirmed for Drums (team1); Moderator confirmed for Greeter (team2).
+    await assignConfirm(t, leaderToken, planId, world.teamId, world.roleId, world.channelMemberId);
+    await assignConfirm(t, leaderToken, planId, team2.teamId, team2.roleId, world.channelModeratorId);
+
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId, team2.teamId],
+        roleIds: [world.roleId, team2.roleId],
+        segment: "before",
+        title: "Grab your gear",
+        howToType: "none",
+      },
+    );
+
+    // Both confirmed people see it; the unassigned admin does not.
+    const mineMember = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    const mineMod = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: modToken, planId },
+    );
+    const mineAdmin = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: adminToken, planId },
+    );
+    expect(mineMember.before.map((x) => x.title)).toContain("Grab your gear");
+    expect(mineMod.before.map((x) => x.title)).toContain("Grab your gear");
+    expect(mineAdmin.before).toHaveLength(0);
+
+    // Per-person completion: each toggles independently.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleTaskCompletion, {
+      token: memberToken,
+      taskId,
+      completed: true,
+    });
+    const rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(world.channelMemberId);
+
+    // The moderator's Mine still shows it incomplete (per-person, not shared).
+    const modAfter = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: modToken, planId },
+    );
+    expect(modAfter.before.find((x) => x.title === "Grab your gear")!.completed).toBe(false);
+  });
+
+  it("treats a 2-team team-level task as ONE shared completion any teammate can toggle", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const modToken = (await generateTokens(world.channelModeratorId)).accessToken;
+    const adminToken = (await generateTokens(world.channelAdminId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    const team2 = await addSecondTeam(t, world);
+
+    await assignConfirm(t, leaderToken, planId, world.teamId, world.roleId, world.channelMemberId);
+    await assignConfirm(t, leaderToken, planId, team2.teamId, team2.roleId, world.channelModeratorId);
+
+    // Team-level (no roles) task spanning BOTH teams.
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId, team2.teamId],
+        roleIds: [],
+        segment: "before",
+        title: "Lock the doors",
+        howToType: "none",
+      },
+    );
+
+    // A member of EITHER team sees the single shared task.
+    const sharedMember = await t.query(
+      api.functions.scheduling.eventTasks.getSharedTeamTasks,
+      { token: memberToken, planId },
+    );
+    const sharedMod = await t.query(
+      api.functions.scheduling.eventTasks.getSharedTeamTasks,
+      { token: modToken, planId },
+    );
+    expect(sharedMember).toHaveLength(1);
+    expect(sharedMod).toHaveLength(1);
+    expect([...sharedMember[0].teamIds].sort()).toEqual(
+      [world.teamId as string, team2.teamId as string].sort(),
+    );
+    // It's excluded from Mine (team-level lives on the Shared surface).
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    expect(mine.before).toHaveLength(0);
+
+    // Member (team1) marks it done → exactly one shared row.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: memberToken,
+      planId,
+      taskId,
+      completed: true,
+    });
+    let shared = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(shared).toHaveLength(1);
+    // Moderator (team2) now sees it as done — one shared state across teams.
+    const sharedModDone = await t.query(
+      api.functions.scheduling.eventTasks.getSharedTeamTasks,
+      { token: modToken, planId },
+    );
+    expect(sharedModDone[0].completed).toBe(true);
+
+    // Moderator (the OTHER team) can toggle the same shared checkbox off.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: modToken,
+      planId,
+      taskId,
+      completed: false,
+    });
+    shared = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(shared).toHaveLength(0);
+
+    // Someone on neither team cannot toggle it.
+    await expect(
+      t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+        token: adminToken,
+        planId,
+        taskId,
+        completed: true,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("keeps readiness counts sane across multi-team role + team-level tasks", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    const team2 = await addSecondTeam(t, world);
+
+    await assignConfirm(t, leaderToken, planId, world.teamId, world.roleId, world.channelMemberId);
+    await assignConfirm(t, leaderToken, planId, team2.teamId, team2.roleId, world.channelModeratorId);
+
+    // A "before" role task across both roles/teams: 1 person per team → total 2.
+    const roleTask = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId, team2.teamId],
+        roleIds: [world.roleId, team2.roleId],
+        segment: "before",
+        title: "Setup",
+        howToType: "none",
+      },
+    );
+    // A team-level task across both teams: a single shared slot.
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId, team2.teamId],
+      roleIds: [],
+      segment: "before",
+      title: "Sweep",
+      howToType: "none",
+    });
+
+    let readiness = await t.query(
+      api.functions.scheduling.eventTasks.getPlanTaskReadiness,
+      { token: leaderToken, planId },
+    );
+    // Role task (2) + team-level task (1) = 3 total slots overall.
+    expect(readiness.overall.total).toBe(3);
+    expect(readiness.overall.done).toBe(0);
+    // Per-team: role task splits 1+1 by team; team-level credits 1 to EACH team.
+    const t1 = readiness.byTeam.find((x) => x.teamId === (world.teamId as string))!;
+    const t2 = readiness.byTeam.find((x) => x.teamId === (team2.teamId as string))!;
+    expect(t1.total).toBe(2);
+    expect(t2.total).toBe(2);
+
+    // Member (team1) completes the role task → overall +1, team1 +1.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleTaskCompletion, {
+      token: memberToken,
+      taskId: roleTask.taskId,
+      completed: true,
+    });
+    readiness = await t.query(
+      api.functions.scheduling.eventTasks.getPlanTaskReadiness,
+      { token: leaderToken, planId },
+    );
+    expect(readiness.overall.done).toBe(1);
+    expect(
+      readiness.byTeam.find((x) => x.teamId === (world.teamId as string))!.done,
+    ).toBe(1);
+    expect(
+      readiness.byTeam.find((x) => x.teamId === (team2.teamId as string))!.done,
+    ).toBe(0);
+  });
+
+  it("backfillTaskAssignmentArrays populates arrays from legacy columns", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Insert a LEGACY-shaped task directly (single teamId/roleId, no arrays).
+    const legacyRoleTaskId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("eventTasks", {
+        planId,
+        communityId: world.communityId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        segment: "before",
+        title: "Legacy role task",
+        howToType: "none",
+        sortOrder: 0,
+        createdById: world.groupLeaderId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const legacyTeamTaskId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("eventTasks", {
+        planId,
+        communityId: world.communityId,
+        teamId: world.teamId,
+        segment: "before",
+        title: "Legacy team task",
+        howToType: "none",
+        sortOrder: 1,
+        createdById: world.groupLeaderId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(
+      internal.functions.scheduling.eventTasks.backfillTaskAssignmentArrays,
+      {},
+    );
+
+    const role = await t.run(async (ctx) => ctx.db.get(legacyRoleTaskId));
+    const team = await t.run(async (ctx) => ctx.db.get(legacyTeamTaskId));
+    expect(role!.teamIds).toEqual([world.teamId]);
+    expect(role!.roleIds).toEqual([world.roleId]);
+    expect(team!.teamIds).toEqual([world.teamId]);
+    expect(team!.roleIds).toEqual([]);
   });
 });
 
