@@ -19,6 +19,7 @@ import {
   Pressable,
   Linking,
   Platform,
+  Alert,
 } from "react-native";
 import Animated, {
   useSharedValue,
@@ -111,6 +112,15 @@ type InboxGroup = {
   };
   channels: InboxChannel[];
   userRole: "leader" | "member";
+};
+
+// A "coming soon" serving channel the user will be added to but isn't yet a
+// member of. Returned by getServingUpcomingChannels; rendered as a ghost card.
+type UpcomingChannel = {
+  channelId: Id<"chatChannels">;
+  name: string;
+  kind: "team" | "cross_team";
+  availableAt: number;
 };
 
 // An event row combines the channel with its owning group (for avatar + nav)
@@ -228,6 +238,17 @@ export function ChatInboxScreen({
       : "skip",
   ) as { eventDate: number } | null | undefined;
 
+  // Serving mode "coming soon" channels: the plan's team + cross-team channels
+  // the user WILL be added to (via the rotation engine) but isn't yet a member
+  // of, so they don't appear as real rows. Rendered as non-tappable ghost cards
+  // at the bottom of the serving inbox showing when each channel opens.
+  const upcomingChannels = useQuery(
+    api.functions.scheduling.serving.getServingUpcomingChannels,
+    inServingMode && activePlanId && token
+      ? { token, planId: activePlanId as Id<"eventPlans"> }
+      : "skip",
+  ) as UpcomingChannel[] | undefined;
+
   // Event-day window (device-local day of `eventDate`, matching how event rows
   // format "Today"). Null outside serving mode or before the plan loads.
   const servingDmWindow = useMemo<{ start: number; end: number } | null>(() => {
@@ -338,6 +359,7 @@ export function ChatInboxScreen({
     | { kind: "event"; item: EventInboxRow }
     | { kind: "dm"; item: DirectInboxRow }
     | { kind: "notifications"; item: NotificationsRow }
+    | { kind: "ghost"; item: UpcomingChannel }
     | { kind: "requests-link"; count: number };
 
   // Render a single inbox row (group, event, dm, section header, or
@@ -403,6 +425,9 @@ export function ChatInboxScreen({
           />
         );
       }
+      if (item.kind === "ghost") {
+        return <GhostChannelCard channel={item.item} />;
+      }
       if (item.kind === "event") {
         return (
           <EventInboxRowItem
@@ -433,6 +458,7 @@ export function ChatInboxScreen({
   const keyExtractor = useCallback((item: InboxListItem) => {
     if (item.kind === "requests-link") return "requests-link";
     if (item.kind === "notifications") return "notifications";
+    if (item.kind === "ghost") return `ghost:${item.item.channelId}`;
     if (item.kind === "dm") return `dm:${item.item.channelId}`;
     return item.kind === "event"
       ? `event:${item.item.channel._id}`
@@ -741,7 +767,15 @@ export function ChatInboxScreen({
         )
         .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
         .map((row) => ({ kind: "dm" as const, item: row }));
-      return [...listItems, ...dayDmItems];
+      // "Coming soon" ghost cards, grouped together at the bottom. Past-due
+      // ghosts (availableAt already elapsed but the user still isn't a member —
+      // a rotation edge case) are hidden to keep the list clean.
+      const now = Date.now();
+      const ghostItems: InboxListItem[] = (upcomingChannels ?? [])
+        .filter((c) => c.availableAt > now)
+        .sort((a, b) => a.availableAt - b.availableAt)
+        .map((c) => ({ kind: "ghost" as const, item: c }));
+      return [...listItems, ...dayDmItems, ...ghostItems];
     }
 
     const dmItems: InboxListItem[] = dmRows.map((row) => ({
@@ -812,6 +846,7 @@ export function ChatInboxScreen({
     notificationsItem,
     inServingMode,
     servingDmWindow,
+    upcomingChannels,
   ]);
   const hasInboxItems = listItemsWithDm.length > 0;
 
@@ -1590,6 +1625,84 @@ function NotificationsInboxRow({
   );
 }
 
+// ============================================================================
+// Ghost (coming-soon) channel card
+// ============================================================================
+
+/**
+ * Format a channel's `availableAt` as "Mon, Aug 26 · 7:00 AM" — the app's
+ * standard weekday + date + time shape.
+ */
+function formatOpensAt(ts: number): string {
+  const d = new Date(ts);
+  const date = d.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  const time = d.toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${date} · ${time}`;
+}
+
+/**
+ * A non-tappable "coming soon" inbox card for a serving channel the user will
+ * be added to but isn't a member of yet. Rendered muted/greyed with a dashed
+ * lock avatar and a "Opens {date}" subtitle; tapping just explains when it
+ * opens rather than navigating (there's nothing to open yet).
+ */
+function GhostChannelCard({ channel }: { channel: UpcomingChannel }) {
+  const { colors } = useTheme();
+  const opensLabel = formatOpensAt(channel.availableAt);
+  const tagLabel = channel.kind === "cross_team" ? "Cross-team" : "Team";
+
+  return (
+    <Pressable
+      onPress={() =>
+        Alert.alert(
+          "Not open yet",
+          `${channel.name} opens ${opensLabel}.`,
+        )
+      }
+      style={[styles.ghostRow, { opacity: 0.75 }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${channel.name}, ${tagLabel} channel, opens ${opensLabel}`}
+    >
+      <View style={[styles.ghostAvatar, { borderColor: colors.border }]}>
+        <Ionicons name="lock-closed" size={22} color={colors.textTertiary} />
+      </View>
+      <View style={styles.ghostContent}>
+        <View style={styles.ghostTopLine}>
+          <Text
+            numberOfLines={1}
+            style={[styles.ghostName, { color: colors.textSecondary }]}
+          >
+            {channel.name}
+          </Text>
+          <View
+            style={[styles.ghostTag, { backgroundColor: colors.surfaceSecondary }]}
+          >
+            <Text style={[styles.ghostTagText, { color: colors.textTertiary }]}>
+              {tagLabel}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.ghostSubtitleRow}>
+          <Ionicons name="time-outline" size={13} color={colors.textTertiary} />
+          <Text
+            numberOfLines={1}
+            style={[styles.ghostSubtitle, { color: colors.textTertiary }]}
+          >
+            Opens {opensLabel}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1963,5 +2076,58 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 12,
     fontWeight: "700",
+  },
+
+  // --- Ghost (coming-soon) channel card ---
+  ghostRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  // Dashed, empty circle with a lock icon — signals "not yet available".
+  ghostAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ghostContent: {
+    flex: 1,
+    marginLeft: 12,
+    minWidth: 0,
+  },
+  ghostTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  ghostName: {
+    fontSize: 16,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
+  ghostTag: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  ghostTagText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+  },
+  ghostSubtitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 3,
+  },
+  ghostSubtitle: {
+    fontSize: 13,
+    flexShrink: 1,
   },
 });
