@@ -383,6 +383,14 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const displayType =
     groupType || groupDetails?.groupTypeName || groupData?.groupTypeName || "";
   const displayImage = imageUrl || groupDetails?.preview || groupData?.preview || "";
+  // Cross-team tabs are their own room, not the group — when one is active the
+  // header must show the channel's identity (name / "Cross-team" / its own
+  // member count), not the host group's name/type/member-count. Every other tab
+  // keeps the group header unchanged.
+  const activeChannel = effectiveGroupChannels?.find(
+    (ch: any) => ch._id === activeChannelId
+  );
+  const activeIsCrossTeam = activeChannel?.channelType === "cross_team";
   // Determine leader status from backend data - this is the source of truth for authorization.
   // While loading, use channelTypeParam as a hint to avoid UI flash (if navigating to leaders
   // channel, user must be a leader since notifications only go to leaders).
@@ -1172,15 +1180,19 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           />
         ) : (
           <ChatHeader
-            displayName={displayName}
-            displayType={displayType}
+            displayName={activeIsCrossTeam ? activeChannel.name : displayName}
+            displayType={activeIsCrossTeam ? "Cross-team" : displayType}
             displayImage={displayImage}
             groupTypeId={groupTypeId}
             // Announcement groups auto-include everyone in the community, so
             // surfacing a count next to them reads as noise ("9225 members" on
             // every post) rather than signal. Hide for those only.
             memberCount={
-              isAnnouncementGroup ? undefined : groupDetails?.memberCount
+              isAnnouncementGroup
+                ? undefined
+                : activeIsCrossTeam
+                  ? activeChannel.memberCount
+                  : groupDetails?.memberCount
             }
             onBack={handleBack}
             onInfoPress={handleOpenChannelInfo}
