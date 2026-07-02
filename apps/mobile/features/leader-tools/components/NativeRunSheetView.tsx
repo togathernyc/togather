@@ -295,8 +295,8 @@ function PlanRunSheet({
   }, []);
 
   // Collapsible sections: header ids whose following items are hidden.
-  // Persisted to AsyncStorage per group, matching the PCO run sheet so the
-  // collapse state carries across both surfaces / reopens.
+  // Persisted to AsyncStorage per group (native-specific key so it never
+  // collides with the PCO viewer's collapse state) and restored on reopen.
   const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(
     () => new Set(),
   );
@@ -310,7 +310,7 @@ function PlanRunSheet({
     });
   }, []);
 
-  const collapsedStorageKey = `runsheet_collapsed_${groupId}`;
+  const collapsedStorageKey = `native_runsheet_collapsed_${groupId}`;
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -342,12 +342,19 @@ function PlanRunSheet({
   // Live "current item": tick a clock every 30s and match the item whose
   // computed [start, start + durationSec) window contains now. Same logic as
   // the PCO renderer, but sourced from client-computed clock times.
+  // TODO(followup): clock times are anchored to the earliest service time, so
+  // on a multi-service plan only the earliest service ever highlights. To
+  // support later services we'd need a service-time selector (like PCO's) and
+  // re-base clockTimes to the chosen window before matching.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(interval);
   }, []);
   const currentItemId = useMemo(() => {
+    // Without real service times the clocks are anchored to `now` (see
+    // earliestStart fallback), which would spuriously highlight the first item.
+    if (times.length === 0) return null;
     const list = items ?? [];
     for (let i = list.length - 1; i >= 0; i--) {
       const it = list[i];
@@ -358,7 +365,7 @@ function PlanRunSheet({
       if (now >= start && now < end) return it._id;
     }
     return null;
-  }, [items, clockTimes, now]);
+  }, [items, clockTimes, now, times.length]);
 
   if (event === undefined || items === undefined) {
     return (
@@ -614,6 +621,27 @@ function ReadOnlyRow({
             })}
           </View>
         ) : null}
+        {/* Collapsed preview — a truncated description + note teaser so the
+            content stays glanceable without expanding (mirrors the PCO
+            renderer's collapsed row). Full text + rich link previews render
+            once expanded. */}
+        {!isExpanded && hasDescription ? (
+          <Text
+            style={[styles.desc, { color: colors.textSecondary }]}
+            numberOfLines={2}
+          >
+            {item.description}
+          </Text>
+        ) : null}
+        {!isExpanded && hasNotes ? (
+          <Text
+            style={[styles.notePreview, { color: colors.textTertiary }]}
+            numberOfLines={2}
+          >
+            {item.notes[0].category ? `${item.notes[0].category}: ` : ""}
+            {item.notes[0].content}
+          </Text>
+        ) : null}
         {/* Expanded content lives OUTSIDE the Pressable so links stay tappable
             and text stays selectable (same pattern as the PCO renderer). */}
         {isExpanded ? (
@@ -683,6 +711,7 @@ const styles = StyleSheet.create({
   itemTitle: { fontSize: 15, fontWeight: "600", flex: 1 },
   meta: { fontSize: 12 },
   expanded: { marginTop: 4, gap: 6 },
+  notePreview: { fontSize: 12, lineHeight: 16, fontStyle: "italic" },
   noteBlock: { gap: 2 },
   noteCategory: {
     fontSize: 11,
