@@ -20,7 +20,7 @@
  *   - CHANNEL ACTIONS (Share invite link, Leave channel)
  *   - LEADER CONTROLS (Active state, Rename, Share with groups, Archive)
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -312,13 +312,23 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     [channel],
   );
 
-  // Re-seed the picker draft whenever the edit modal opens or the saved
-  // selectors resolve/change. A one-shot copy at button-tap missed the case
-  // where the channel query hadn't resolved yet (draft stuck at []).
+  // Seed the picker draft ONLY on the modal open transition — read the latest
+  // saved selectors from a ref so the effect doesn't depend on them. The saved
+  // selectors come off the reactive `channel`, whose object identity changes on
+  // every incoming message (lastMessageAt is patched). Depending on them here
+  // would re-fire mid-edit and silently clobber the leader's unsaved picker
+  // selection. The selectors are always available at open time (they're read
+  // off the already-loaded `channel` the screen can't render without), so the
+  // old late-arrival problem no longer applies.
+  const savedSelectorsRef = useRef(savedCrossTeamSelectors);
   useEffect(() => {
-    if (!crossTeamEditVisible) return;
-    setCrossTeamDraft(savedCrossTeamSelectors);
-  }, [crossTeamEditVisible, savedCrossTeamSelectors]);
+    savedSelectorsRef.current = savedCrossTeamSelectors;
+  }, [savedCrossTeamSelectors]);
+  useEffect(() => {
+    if (crossTeamEditVisible) {
+      setCrossTeamDraft(savedSelectorsRef.current);
+    }
+  }, [crossTeamEditVisible]);
 
   const iconCfg = getChannelIconConfig(channelType, primaryColor);
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
