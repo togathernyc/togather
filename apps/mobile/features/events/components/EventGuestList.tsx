@@ -42,7 +42,7 @@ interface GuestListPreviewProps {
   onViewAll: () => void;
   /** When true, the RSVP count is considered private. */
   hideRsvpCount?: boolean;
-  /** When true, the viewer is a leader/host and sees the count + "Leaders only" badge. */
+  /** When true, the viewer is a leader/host and sees the count + "Visible to leaders only" badge. */
   canSeeCount?: boolean;
 }
 
@@ -128,7 +128,7 @@ export function GuestListPreview({
             <Text style={[styles.title, { color: colors.text }]}>Guest List</Text>
             {hideRsvpCount && canSeeCount && (
               <View style={[styles.leaderBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                <Text style={[styles.leaderBadgeText, { color: colors.textSecondary }]}>Leaders only</Text>
+                <Text style={[styles.leaderBadgeText, { color: colors.textSecondary }]}>Visible to leaders only</Text>
               </View>
             )}
           </View>

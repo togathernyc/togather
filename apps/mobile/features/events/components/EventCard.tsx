@@ -176,7 +176,7 @@ export function EventCard({ event, onPress }: EventCardProps) {
             )}
             {event.hideRsvpCount && event.viewerIsLeader && (
               <View style={styles.leaderBadge}>
-                <Text style={styles.leaderBadgeText}>Leaders only</Text>
+                <Text style={styles.leaderBadgeText}>Visible to leaders only</Text>
               </View>
             )}
           </View>
