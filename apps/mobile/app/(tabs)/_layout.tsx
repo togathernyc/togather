@@ -35,6 +35,13 @@ export default function TabsLayout() {
 
   const tabs = (
     <Tabs
+      // Expo Router's Tabs computes its visible tab set from `href` at mount and
+      // doesn't reliably re-render the bar when hrefs flip at runtime — so
+      // entering/leaving serving mode left the OLD tabs on screen until a
+      // refresh. Keying the navigator on the mode remounts it on that (rare)
+      // transition, recomputing the tab set. Stable within each mode, so normal
+      // navigation is unaffected.
+      key={inServingMode ? 'serving' : 'normal'}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
