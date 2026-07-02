@@ -3,8 +3,15 @@
  *
  * Event tasks (`eventTasks`) are the shared, leader-authored checklist for a
  * plan: a team (or a specific role on that team) needs to do X "before" /
- * "during" / "after" the event. Completion is per-serving-person
- * (`eventTaskCompletions`); "during" tasks are completed once per service time.
+ * "during" / "after" the event. Completion has two models, keyed on whether the
+ * task is scoped to a role:
+ *   • Role tasks (`roleId != null`) are completed PER-USER
+ *     (`eventTaskCompletions`); "during" tasks are completed once per service
+ *     time. They surface in each assignee's "Mine" list.
+ *   • Team-level tasks (`roleId == null`) are TEAM-WIDE, single-source on
+ *     `sharedTaskCompletions` (one row per task): any confirmed teammate
+ *     completes it for the whole team. They surface on the Shared tab and count
+ *     as one slot in readiness / all-teams rollups.
  *
  * Personal serving tasks (`personalServingTasks`) are ad-hoc, single-user rows
  * a volunteer adds for themselves in serving mode. They never touch the shared
@@ -405,9 +412,14 @@ export const toggleTaskCompletion = mutation({
 
 /**
  * Aggregate readiness for a plan: overall done/total, per-segment, and
- * per-team. "Expected completions" for a task is the number of confirmed
- * assignees of its role (team-level tasks => confirmed assignees of the team).
- * A "during" task multiplies that expectation by the number of service times.
+ * per-team. Two completion models, one per task kind:
+ *   • Role tasks (`roleId != null`): completion is PER-USER
+ *     (`eventTaskCompletions`). "Expected completions" is the number of
+ *     confirmed assignees of the role, × the number of service times for
+ *     "during" tasks; `done` counts valid completions from those assignees.
+ *   • Team-level tasks (`roleId == null`): completion is TEAM-WIDE
+ *     (`sharedTaskCompletions`, surfaced on the Shared tab). Counted as a
+ *     single slot: `total += 1`, `done += 1` iff a shared completion exists.
  * Personal serving tasks are excluded entirely.
  *
  * Auth: an active member of the plan's community.
@@ -419,7 +431,7 @@ export const getPlanTaskReadiness = query({
     const plan = await requirePlan(ctx, args.planId);
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    const [tasks, assignments] = await Promise.all([
+    const [tasks, assignments, sharedRows] = await Promise.all([
       ctx.db
         .query("eventTasks")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
@@ -428,7 +440,13 @@ export const getPlanTaskReadiness = query({
         .query("roleAssignments")
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
         .collect(),
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
     ]);
+    // Team-wide completion for team-level tasks (one row per task).
+    const sharedDoneByTask = new Set(sharedRows.map((r) => r.taskId as string));
 
     const timesCount = Math.max(1, plan.times.length);
     const validTimeLabels = new Set(plan.times.map((t) => t.label));
@@ -445,37 +463,47 @@ export const getPlanTaskReadiness = query({
     >();
 
     for (const task of tasks) {
-      const expected = assigneesForTask(assignments, task);
-      // Distinct users: a volunteer confirmed for two roles on the same team is
-      // one expected completer for a team-level task, not two (and
-      // getMyServingTasks shows it to them once), so dedupe before counting.
-      const expectedUserIds = new Set(expected.map((a) => a.userId as string));
-      const expectedPeople = expectedUserIds.size;
-      const total =
-        task.segment === "during"
-          ? expectedPeople * timesCount
-          : expectedPeople;
+      let total: number;
+      let done: number;
+      if (!task.roleId) {
+        // Team-level task: a single TEAM-WIDE slot, completed once for the whole
+        // team via `sharedTaskCompletions` (the Shared surface), regardless of
+        // how many teammates are confirmed.
+        total = 1;
+        done = sharedDoneByTask.has(task._id as string) ? 1 : 0;
+      } else {
+        // Role task: PER-USER completion via `eventTaskCompletions`.
+        const expected = assigneesForTask(assignments, task);
+        const expectedUserIds = new Set(
+          expected.map((a) => a.userId as string),
+        );
+        const expectedPeople = expectedUserIds.size;
+        total =
+          task.segment === "during"
+            ? expectedPeople * timesCount
+            : expectedPeople;
 
-      // Count only completions from people who are currently expected to do
-      // this task (a since-removed assignee, or anyone calling the mutation
-      // directly, must not push readiness forward), and — for "during" tasks —
-      // only completions tagged with a real service time. Capped at total as a
-      // final guard against duplicate rows.
-      const completions = await ctx.db
-        .query("eventTaskCompletions")
-        .withIndex("by_task", (q) => q.eq("taskId", task._id))
-        .collect();
-      const validCompletions = completions.filter((c) => {
-        if (!expectedUserIds.has(c.userId as string)) return false;
-        if (task.segment === "during") {
-          // No configured times => a single unlabeled slot (mirrors
-          // getMyServingTasks), so accept the null-label completion.
-          if (plan.times.length === 0) return c.timeLabel == null;
-          return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
-        }
-        return true;
-      });
-      const done = Math.min(validCompletions.length, total);
+        // Count only completions from people who are currently expected to do
+        // this task (a since-removed assignee, or anyone calling the mutation
+        // directly, must not push readiness forward), and — for "during" tasks —
+        // only completions tagged with a real service time. Capped at total as a
+        // final guard against duplicate rows.
+        const completions = await ctx.db
+          .query("eventTaskCompletions")
+          .withIndex("by_task", (q) => q.eq("taskId", task._id))
+          .collect();
+        const validCompletions = completions.filter((c) => {
+          if (!expectedUserIds.has(c.userId as string)) return false;
+          if (task.segment === "during") {
+            // No configured times => a single unlabeled slot (mirrors
+            // getMyServingTasks), so accept the null-label completion.
+            if (plan.times.length === 0) return c.timeLabel == null;
+            return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+          }
+          return true;
+        });
+        done = Math.min(validCompletions.length, total);
+      }
 
       overall.total += total;
       overall.done += done;
@@ -527,9 +555,14 @@ type ServingTaskItem = {
 
 /**
  * The current user's serving tasks for a plan, grouped by segment. Merges:
- *   (a) template tasks (`eventTasks`) whose role the user is confirmed for on
- *       this plan (team-level tasks => any confirmed role on that team), and
+ *   (a) ROLE-assigned template tasks (`eventTasks.roleId` set) whose role the
+ *       user is confirmed for on this plan — completed PER-USER via
+ *       `eventTaskCompletions`, and
  *   (b) the user's personal serving tasks (`personalServingTasks`).
+ *
+ * Team-level tasks (`roleId == null`) are deliberately EXCLUDED here: they are
+ * team-wide (single-source on `sharedTaskCompletions`) and are surfaced on the
+ * Shared tab only, not in this personal "Mine" list.
  *
  * "during" template tasks expand to one entry per service time (timeLabel set),
  * with `completed` resolved per (task, user, timeLabel). Personal "during"
@@ -562,7 +595,6 @@ export const getMyServingTasks = query({
       .collect();
     const myConfirmed = myAssignments.filter((a) => a.status === "confirmed");
     const confirmedRoleIds = new Set(myConfirmed.map((a) => a.roleId as string));
-    const confirmedTeamIds = new Set(myConfirmed.map((a) => a.teamId as string));
 
     // (a) Assigned template tasks.
     const tasks = await ctx.db
@@ -584,10 +616,12 @@ export const getMyServingTasks = query({
     );
 
     for (const task of tasks) {
-      const mine = task.roleId
-        ? confirmedRoleIds.has(task.roleId as string)
-        : confirmedTeamIds.has(task.teamId as string);
-      if (!mine) continue;
+      // Team-level tasks (roleId == null) are team-wide, single-source on
+      // `sharedTaskCompletions`, and belong to the Shared surface only — they
+      // are no longer listed in this personal "Mine" view. Only role-assigned
+      // tasks the user is confirmed for appear here (plus their personal tasks).
+      if (!task.roleId) continue;
+      if (!confirmedRoleIds.has(task.roleId as string)) continue;
 
       const base = {
         title: task.title,
@@ -657,8 +691,9 @@ export const getMyServingTasks = query({
 // semantics:
 //   • Assigned (role) tasks are completed PER-USER via `eventTaskCompletions`
 //     (one row per user, per task, per service time for "during" tasks).
-//   • Team-level tasks (roleId == null) additionally get a TEAM-WIDE shared
-//     completion via `sharedTaskCompletions` (one row per task — see below).
+//   • Team-level tasks (roleId == null) are TEAM-WIDE, single-source on
+//     `sharedTaskCompletions` (one row per task — see below): completing one on
+//     the Shared surface marks it done everywhere it's counted.
 // ============================================================================
 
 /** Resolve a user's display name, matching the roster convention. */
@@ -1073,12 +1108,15 @@ type AllTeamsEntry = {
  * its tasks, so a volunteer can see the whole event's shape and progress.
  *
  * `done`/`total` here use the plan-wide READINESS semantics (same as
- * `getPlanTaskReadiness`): a task's `total` is the number of confirmed
- * assignees expected to complete it (× the number of service times for
- * "during" tasks), and `done` counts valid completions from those assignees. A
- * task's `completed` flag is true when it is fully satisfied (done >= total,
- * total > 0). Team-level tasks additionally count their team-wide shared
- * completion as satisfying the whole task.
+ * `getPlanTaskReadiness`), one model per task kind:
+ *   • Role tasks (`roleId != null`): PER-USER — `total` is the number of
+ *     confirmed assignees expected to complete it (× the number of service
+ *     times for "during" tasks), `done` counts valid completions from those
+ *     assignees, and `completed` is true when fully satisfied (done >= total,
+ *     total > 0).
+ *   • Team-level tasks (`roleId == null`): TEAM-WIDE — a single slot
+ *     (`total = 1`) completed via `sharedTaskCompletions` (the Shared tab), so
+ *     `done`/`completed` reflect whether the team marked it shared-done.
  *
  * Auth: an active member of the plan's group (any serving participant).
  */
@@ -1123,37 +1161,46 @@ export const getAllTeamsTasks = query({
     const byTeam = new Map<string, AllTeamsEntry>();
 
     for (const task of tasks) {
-      // Readiness "expected completers" for this task.
-      const expected = assigneesForTask(assignments, task);
-      const expectedUserIds = new Set(expected.map((a) => a.userId as string));
-      const expectedPeople = expectedUserIds.size;
-      const total =
-        task.segment === "during"
-          ? expectedPeople * timesCount
-          : expectedPeople;
+      let total: number;
+      let doneForEntry: number;
+      let completed: boolean;
+      if (!task.roleId) {
+        // Team-level task: a single TEAM-WIDE slot completed via
+        // `sharedTaskCompletions` (the Shared surface), matching the readiness
+        // semantics — one slot total, done iff the team marked it shared-done.
+        const sharedDone = sharedByTask.has(task._id as string);
+        total = 1;
+        doneForEntry = sharedDone ? 1 : 0;
+        completed = sharedDone;
+      } else {
+        // Role task: PER-USER readiness — confirmed assignees expected to
+        // complete it (× service times for "during"), done counts their valid
+        // completions. `completed` when fully satisfied.
+        const expected = assigneesForTask(assignments, task);
+        const expectedUserIds = new Set(
+          expected.map((a) => a.userId as string),
+        );
+        const expectedPeople = expectedUserIds.size;
+        total =
+          task.segment === "during"
+            ? expectedPeople * timesCount
+            : expectedPeople;
 
-      const completions = await ctx.db
-        .query("eventTaskCompletions")
-        .withIndex("by_task", (q) => q.eq("taskId", task._id))
-        .collect();
-      const validCompletions = completions.filter((c) => {
-        if (!expectedUserIds.has(c.userId as string)) return false;
-        if (task.segment === "during") {
-          if (plan.times.length === 0) return c.timeLabel == null;
-          return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
-        }
-        return true;
-      });
-      const done = Math.min(validCompletions.length, total);
-
-      // A team-level task the team marked shared-done counts as fully complete.
-      const sharedDone = !task.roleId && sharedByTask.has(task._id as string);
-      const completed = sharedDone || (total > 0 && done >= total);
-      // Keep the aggregate consistent with the row's checkmark: a shared-done
-      // team-level task is fully satisfied, so contribute its full slot count to
-      // the team's `done` (not the sparse per-user completions) — otherwise the
-      // row shows done while the team card reads e.g. 0/6.
-      const doneForEntry = sharedDone ? total : done;
+        const completions = await ctx.db
+          .query("eventTaskCompletions")
+          .withIndex("by_task", (q) => q.eq("taskId", task._id))
+          .collect();
+        const validCompletions = completions.filter((c) => {
+          if (!expectedUserIds.has(c.userId as string)) return false;
+          if (task.segment === "during") {
+            if (plan.times.length === 0) return c.timeLabel == null;
+            return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+          }
+          return true;
+        });
+        doneForEntry = Math.min(validCompletions.length, total);
+        completed = total > 0 && doneForEntry >= total;
+      }
 
       const teamKey = task.teamId as string;
       if (!teamNames.has(teamKey)) {
