@@ -423,11 +423,34 @@ export const updateTask = mutation({
       patch.howToMediaPath = args.howToMediaPath;
     if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
 
-    // Event-templates linkage (Phase 3): a local edit to a template-sourced task
-    // detaches it so forward propagation stops overwriting the user's change.
+    // Event-templates linkage (Phase 3): a local edit that ACTUALLY changes a
+    // content field detaches a template-sourced task, so forward propagation
+    // stops overwriting the user's change. A no-op edit (e.g. a Phase-4
+    // autosave that resends unchanged values) must NOT silently detach it.
     // No-op for tasks with no template source (unlinked plans unaffected).
     if (task.sourceTemplateItemId && !task.templateDetached) {
-      patch.templateDetached = true;
+      const contentPairs: Array<[unknown, unknown]> = [];
+      if (patch.title !== undefined) contentPairs.push([patch.title, task.title]);
+      if (patch.teamIds !== undefined)
+        contentPairs.push([patch.teamIds, taskTeamIds(task)]);
+      if (patch.roleIds !== undefined)
+        contentPairs.push([patch.roleIds, taskRoleIds(task)]);
+      if (patch.segment !== undefined)
+        contentPairs.push([patch.segment, task.segment]);
+      if (patch.howToType !== undefined)
+        contentPairs.push([patch.howToType, task.howToType]);
+      if (patch.howToText !== undefined)
+        contentPairs.push([patch.howToText, task.howToText]);
+      if (patch.howToUrl !== undefined)
+        contentPairs.push([patch.howToUrl, task.howToUrl]);
+      if (patch.howToMediaPath !== undefined)
+        contentPairs.push([patch.howToMediaPath, task.howToMediaPath]);
+      if (patch.howToDoc !== undefined)
+        contentPairs.push([patch.howToDoc, task.howToDoc]);
+      const contentChanged = contentPairs.some(
+        ([next, cur]) => JSON.stringify(next ?? null) !== JSON.stringify(cur ?? null),
+      );
+      if (contentChanged) patch.templateDetached = true;
     }
 
     // Completion cleanup — kept symmetric so a task can be converted back and

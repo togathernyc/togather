@@ -248,6 +248,9 @@ export async function propagateTaskTemplate(
   templateId: Id<"eventTaskTemplates">,
   actorId?: Id<"users">,
 ): Promise<void> {
+  // TODO(followup): this reconcile is O(futurePlans × rows) per template-item
+  // mutation. Fine for a handful of linked plans; revisit (batching / a
+  // scheduled fan-out job) if a template accrues many future linked plans.
   const template = await ctx.db.get(templateId);
   if (!template) return;
   const now = Date.now();
@@ -305,6 +308,9 @@ export async function propagateTaskTemplate(
     }
 
     // Delete synced rows whose template item no longer exists.
+    // TODO(followup): an OVERRIDDEN row (templateDetached) keeps a dangling
+    // sourceTemplateItemId after its template item is deleted — harmless (it's
+    // skipped everywhere) but the stale pointer could be cleared for tidiness.
     for (const t of tasks) {
       if (!t.sourceTemplateItemId || t.templateDetached) continue;
       if (itemIds.has(t.sourceTemplateItemId as string)) continue;
@@ -576,6 +582,210 @@ export const setPlanRunSheetTemplate = mutation({
 // Save a plan's current list AS a template
 // ============================================================================
 
+/** Editable task-template-item fields taken from a plan's task row. */
+function taskTemplateItemFieldsFromTask(task: Doc<"eventTasks">) {
+  return {
+    teamIds: taskTeamIds(task),
+    roleIds: taskRoleIds(task),
+    segment: task.segment,
+    title: task.title,
+    howToType: task.howToType,
+    howToText: task.howToText,
+    howToUrl: task.howToUrl,
+    howToMediaPath: task.howToMediaPath,
+    howToDoc: task.howToDoc,
+  };
+}
+
+/** Editable run-sheet-template-item fields taken from a plan's run-sheet row. */
+function runSheetTemplateItemFieldsFromRow(row: Doc<"eventItems">) {
+  return {
+    segment: row.segment ?? "during",
+    type: row.type,
+    title: row.title,
+    description: row.description,
+    durationSec: row.durationSec,
+    notes: row.notes,
+    assignments: row.assignments,
+    songDetails: row.songDetails,
+    songId: row.songId,
+  };
+}
+
+/**
+ * REPLACE a task template's items from a plan's current list, PRESERVING item
+ * ids so other future linked plans get clean field patches (never delete +
+ * reinsert, which would destroy their completions and duplicate onto
+ * overridden siblings).
+ *
+ * - source plan linked to the target → map each plan row to its template item
+ *   via `sourceTemplateItemId` and UPDATE in place; local rows (no source)
+ *   INSERT; template items with no matching plan row DELETE.
+ * - source plan NOT linked → POSITIONAL reconcile: update existing item[i] from
+ *   row[i], insert extras, delete surplus (ids still preserved).
+ *
+ * Finally re-syncs the SOURCE plan's rows to the resulting item ids. Returns
+ * nothing — the caller runs forward propagation to the template's other plans.
+ */
+async function reconcileTaskTemplateFromPlan(
+  ctx: MutationCtx,
+  plan: Doc<"eventPlans">,
+  templateId: Id<"eventTaskTemplates">,
+  tasks: Doc<"eventTasks">[],
+  userId: Id<"users">,
+  now: number,
+): Promise<void> {
+  const existingItems = await ctx.db
+    .query("eventTaskTemplateItems")
+    .withIndex("by_template", (q) => q.eq("templateId", templateId))
+    .collect();
+  const existingById = new Map(existingItems.map((i) => [i._id as string, i]));
+  const usedItemIds = new Set<string>();
+  const rowToItem = new Map<string, Id<"eventTaskTemplateItems">>();
+
+  const insertNew = (task: Doc<"eventTasks">) =>
+    ctx.db.insert("eventTaskTemplateItems", {
+      templateId,
+      communityId: plan.communityId,
+      ...taskTemplateItemFieldsFromTask(task),
+      sortOrder: task.sortOrder,
+      createdById: userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+  if (plan.taskTemplateId === templateId) {
+    // Linked: match rows to their template items by source id.
+    for (const task of tasks) {
+      const src = task.sourceTemplateItemId as string | undefined;
+      if (src && existingById.has(src) && !usedItemIds.has(src)) {
+        await ctx.db.patch(src as Id<"eventTaskTemplateItems">, {
+          ...taskTemplateItemFieldsFromTask(task),
+          sortOrder: task.sortOrder,
+          updatedAt: now,
+        });
+        usedItemIds.add(src);
+        rowToItem.set(task._id as string, src as Id<"eventTaskTemplateItems">);
+      } else {
+        rowToItem.set(task._id as string, await insertNew(task));
+      }
+    }
+  } else {
+    // Not linked: positional reconcile against a stable ordering.
+    const orderedExisting = [...existingItems].sort(
+      (a, b) =>
+        (SEGMENT_RANK[a.segment] ?? 1) - (SEGMENT_RANK[b.segment] ?? 1) ||
+        a.sortOrder - b.sortOrder,
+    );
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      const ex = orderedExisting[i];
+      if (ex) {
+        await ctx.db.patch(ex._id, {
+          ...taskTemplateItemFieldsFromTask(task),
+          sortOrder: task.sortOrder,
+          updatedAt: now,
+        });
+        usedItemIds.add(ex._id as string);
+        rowToItem.set(task._id as string, ex._id);
+      } else {
+        rowToItem.set(task._id as string, await insertNew(task));
+      }
+    }
+  }
+
+  // Delete surplus template items (removed from the plan's list).
+  for (const ex of existingItems) {
+    if (!usedItemIds.has(ex._id as string)) await ctx.db.delete(ex._id);
+  }
+  // Re-sync the source plan's rows to the resulting item ids (clean synced).
+  for (const task of tasks) {
+    await ctx.db.patch(task._id, {
+      sourceTemplateItemId: rowToItem.get(task._id as string)!,
+      templateDetached: false,
+      updatedAt: now,
+    });
+  }
+}
+
+/** Run-sheet sibling of `reconcileTaskTemplateFromPlan` (ids preserved). */
+async function reconcileRunSheetTemplateFromPlan(
+  ctx: MutationCtx,
+  plan: Doc<"eventPlans">,
+  templateId: Id<"runSheetTemplates">,
+  rows: Doc<"eventItems">[],
+  userId: Id<"users">,
+  now: number,
+): Promise<void> {
+  const existingItems = await ctx.db
+    .query("runSheetTemplateItems")
+    .withIndex("by_template", (q) => q.eq("templateId", templateId))
+    .collect();
+  const existingById = new Map(existingItems.map((i) => [i._id as string, i]));
+  const usedItemIds = new Set<string>();
+  const rowToItem = new Map<string, Id<"runSheetTemplateItems">>();
+
+  const insertNew = (row: Doc<"eventItems">) =>
+    ctx.db.insert("runSheetTemplateItems", {
+      templateId,
+      communityId: plan.communityId,
+      ...runSheetTemplateItemFieldsFromRow(row),
+      sequence: row.sequence,
+      createdById: userId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+  if (plan.runSheetTemplateId === templateId) {
+    for (const row of rows) {
+      const src = row.sourceTemplateItemId as string | undefined;
+      if (src && existingById.has(src) && !usedItemIds.has(src)) {
+        await ctx.db.patch(src as Id<"runSheetTemplateItems">, {
+          ...runSheetTemplateItemFieldsFromRow(row),
+          sequence: row.sequence,
+          updatedAt: now,
+        });
+        usedItemIds.add(src);
+        rowToItem.set(row._id as string, src as Id<"runSheetTemplateItems">);
+      } else {
+        rowToItem.set(row._id as string, await insertNew(row));
+      }
+    }
+  } else {
+    const orderedExisting = [...existingItems].sort(
+      (a, b) =>
+        (SEGMENT_RANK[a.segment ?? "during"] ?? 1) -
+          (SEGMENT_RANK[b.segment ?? "during"] ?? 1) || a.sequence - b.sequence,
+    );
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const ex = orderedExisting[i];
+      if (ex) {
+        await ctx.db.patch(ex._id, {
+          ...runSheetTemplateItemFieldsFromRow(row),
+          sequence: row.sequence,
+          updatedAt: now,
+        });
+        usedItemIds.add(ex._id as string);
+        rowToItem.set(row._id as string, ex._id);
+      } else {
+        rowToItem.set(row._id as string, await insertNew(row));
+      }
+    }
+  }
+
+  for (const ex of existingItems) {
+    if (!usedItemIds.has(ex._id as string)) await ctx.db.delete(ex._id);
+  }
+  for (const row of rows) {
+    await ctx.db.patch(row._id, {
+      sourceTemplateItemId: rowToItem.get(row._id as string)!,
+      templateDetached: false,
+      updatedAt: now,
+    });
+  }
+}
+
 const taskSaveModeValidator = v.union(
   v.object({ kind: v.literal("new"), name: v.string() }),
   v.object({
@@ -678,19 +888,9 @@ export const saveTaskTemplateFromPlan = mutation({
     }
 
     if (args.mode.strategy === "replace") {
-      const existingItems = await ctx.db
-        .query("eventTaskTemplateItems")
-        .withIndex("by_template", (q) => q.eq("templateId", templateId))
-        .collect();
-      await Promise.all(existingItems.map((i) => ctx.db.delete(i._id)));
-      for (const task of tasks) {
-        const itemId = await insertItem(templateId, task, task.sortOrder);
-        await ctx.db.patch(task._id, {
-          sourceTemplateItemId: itemId,
-          templateDetached: false,
-          updatedAt: now,
-        });
-      }
+      // Id-preserving reconcile so the template's OTHER future plans get clean
+      // field patches on their synced rows (completions preserved, no dupes).
+      await reconcileTaskTemplateFromPlan(ctx, plan, templateId, tasks, userId, now);
       await ctx.db.patch(plan._id, {
         taskTemplateId: templateId,
         detachedTaskTemplateItemIds: [],
@@ -703,7 +903,12 @@ export const saveTaskTemplateFromPlan = mutation({
       return { templateId };
     }
 
-    // merge — append the plan's tasks as new items.
+    // merge — append only the plan's genuinely-LOCAL rows (not rows already
+    // synced from THIS template), so siblings aren't duplicated.
+    const linkedToTarget = plan.taskTemplateId === templateId;
+    const localTasks = linkedToTarget
+      ? tasks.filter((t) => !t.sourceTemplateItemId)
+      : tasks;
     const existingItems = await ctx.db
       .query("eventTaskTemplateItems")
       .withIndex("by_template", (q) => q.eq("templateId", templateId))
@@ -716,22 +921,22 @@ export const saveTaskTemplateFromPlan = mutation({
     for (const it of existingItems) {
       maxBySegment[it.segment] = Math.max(maxBySegment[it.segment], it.sortOrder);
     }
-    const newItemIds: Id<"eventTaskTemplateItems">[] = [];
-    for (const task of tasks) {
+    const appended = new Map<string, Id<"eventTaskTemplateItems">>();
+    for (const task of localTasks) {
       const sortOrder = ++maxBySegment[task.segment];
-      newItemIds.push(await insertItem(templateId, task, sortOrder));
+      appended.set(task._id as string, await insertItem(templateId, task, sortOrder));
     }
     await ctx.db.patch(templateId, { updatedAt: now });
-    // If the SOURCE plan is itself linked to this template, mark the appended
-    // copies as locally-removed for it so propagation doesn't add them back as
-    // duplicate rows (they came from this plan). Merge does not relink.
-    if (plan.taskTemplateId === templateId) {
-      await ctx.db.patch(plan._id, {
-        detachedTaskTemplateItemIds: [
-          ...(plan.detachedTaskTemplateItemIds ?? []),
-          ...newItemIds,
-        ],
-      });
+    // If the source plan is linked to this template, relink its just-appended
+    // local rows so propagation treats them as synced (never duplicates them).
+    if (linkedToTarget) {
+      for (const task of localTasks) {
+        await ctx.db.patch(task._id, {
+          sourceTemplateItemId: appended.get(task._id as string)!,
+          templateDetached: false,
+          updatedAt: now,
+        });
+      }
     }
     await propagateTaskTemplate(ctx, templateId, userId);
     return { templateId };
@@ -827,19 +1032,8 @@ export const saveRunSheetTemplateFromPlan = mutation({
     }
 
     if (args.mode.strategy === "replace") {
-      const existingItems = await ctx.db
-        .query("runSheetTemplateItems")
-        .withIndex("by_template", (q) => q.eq("templateId", templateId))
-        .collect();
-      await Promise.all(existingItems.map((i) => ctx.db.delete(i._id)));
-      for (const row of rows) {
-        const itemId = await insertItem(templateId, row, row.sequence);
-        await ctx.db.patch(row._id, {
-          sourceTemplateItemId: itemId,
-          templateDetached: false,
-          updatedAt: now,
-        });
-      }
+      // Id-preserving reconcile (see reconcileRunSheetTemplateFromPlan).
+      await reconcileRunSheetTemplateFromPlan(ctx, plan, templateId, rows, userId, now);
       await ctx.db.patch(plan._id, {
         runSheetTemplateId: templateId,
         detachedRunSheetTemplateItemIds: [],
@@ -850,7 +1044,11 @@ export const saveRunSheetTemplateFromPlan = mutation({
       return { templateId };
     }
 
-    // merge.
+    // merge — append only the plan's genuinely-LOCAL rows.
+    const linkedToTarget = plan.runSheetTemplateId === templateId;
+    const localRows = linkedToTarget
+      ? rows.filter((r) => !r.sourceTemplateItemId)
+      : rows;
     const existingItems = await ctx.db
       .query("runSheetTemplateItems")
       .withIndex("by_template", (q) => q.eq("templateId", templateId))
@@ -864,19 +1062,20 @@ export const saveRunSheetTemplateFromPlan = mutation({
       const s = it.segment ?? "during";
       maxBySegment[s] = Math.max(maxBySegment[s], it.sequence);
     }
-    const newItemIds: Id<"runSheetTemplateItems">[] = [];
-    for (const row of rows) {
+    const appended = new Map<string, Id<"runSheetTemplateItems">>();
+    for (const row of localRows) {
       const sequence = ++maxBySegment[seg(row)];
-      newItemIds.push(await insertItem(templateId, row, sequence));
+      appended.set(row._id as string, await insertItem(templateId, row, sequence));
     }
     await ctx.db.patch(templateId, { updatedAt: now });
-    if (plan.runSheetTemplateId === templateId) {
-      await ctx.db.patch(plan._id, {
-        detachedRunSheetTemplateItemIds: [
-          ...(plan.detachedRunSheetTemplateItemIds ?? []),
-          ...newItemIds,
-        ],
-      });
+    if (linkedToTarget) {
+      for (const row of localRows) {
+        await ctx.db.patch(row._id, {
+          sourceTemplateItemId: appended.get(row._id as string)!,
+          templateDetached: false,
+          updatedAt: now,
+        });
+      }
     }
     await propagateRunSheetTemplate(ctx, templateId, userId);
     return { templateId };
@@ -900,6 +1099,9 @@ export const revertPlanTaskTemplateEdits = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
+    if (isPastPlan(plan)) {
+      throw new ConvexError("Past events are frozen and cannot be reverted.");
+    }
     if (!plan.taskTemplateId) return { reverted: false };
     const template = await ctx.db.get(plan.taskTemplateId);
     if (!template) return { reverted: false };
@@ -934,6 +1136,9 @@ export const revertPlanRunSheetTemplateEdits = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
+    if (isPastPlan(plan)) {
+      throw new ConvexError("Past events are frozen and cannot be reverted.");
+    }
     if (!plan.runSheetTemplateId) return { reverted: false };
     const template = await ctx.db.get(plan.runSheetTemplateId);
     if (!template) return { reverted: false };

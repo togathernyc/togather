@@ -338,11 +338,32 @@ export const updateItem = mutation({
       }
     }
 
-    // Event-templates linkage (Phase 3): a local edit to a template-sourced item
-    // detaches it so forward propagation stops overwriting the user's change.
+    // Event-templates linkage (Phase 3): a local edit that ACTUALLY changes a
+    // content field detaches a template-sourced item, so forward propagation
+    // stops overwriting the user's change. A no-op edit (e.g. a Phase-4
+    // autosave that resends unchanged values) must NOT silently detach it.
     // No-op for items with no template source (unlinked plans unaffected).
     if (item.sourceTemplateItemId && !item.templateDetached) {
-      patch.templateDetached = true;
+      const contentPairs: Array<[unknown, unknown]> = [];
+      if (patch.type !== undefined) contentPairs.push([patch.type, item.type]);
+      if (patch.title !== undefined) contentPairs.push([patch.title, item.title]);
+      if (patch.segment !== undefined)
+        contentPairs.push([patch.segment, itemSegment(item)]);
+      if (patch.durationSec !== undefined)
+        contentPairs.push([patch.durationSec, item.durationSec]);
+      if (patch.description !== undefined)
+        contentPairs.push([patch.description, item.description]);
+      if (patch.notes !== undefined) contentPairs.push([patch.notes, item.notes]);
+      if (patch.assignments !== undefined)
+        contentPairs.push([patch.assignments, item.assignments]);
+      if (patch.songDetails !== undefined)
+        contentPairs.push([patch.songDetails, item.songDetails]);
+      if (patch.songId !== undefined)
+        contentPairs.push([patch.songId, item.songId]);
+      const contentChanged = contentPairs.some(
+        ([next, cur]) => JSON.stringify(next ?? null) !== JSON.stringify(cur ?? null),
+      );
+      if (contentChanged) patch.templateDetached = true;
     }
 
     await ctx.db.patch(args.itemId, patch);
@@ -426,6 +447,10 @@ export const duplicateItem = mutation({
 
     // Rebuild contiguous sequences WITHIN the source's segment, with the copy
     // directly after the source. Other segments are untouched.
+    // TODO(followup): this resequences template-synced siblings without
+    // detaching them, so the next propagation may reset their order — an
+    // ordering-only glitch on a linked plan (no data loss). Detach-on-move
+    // would fix it, at the cost of detaching siblings the user didn't edit.
     const all = await ctx.db
       .query("eventItems")
       .withIndex("by_plan", (q) => q.eq("planId", item.planId))

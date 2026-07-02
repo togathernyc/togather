@@ -721,3 +721,190 @@ describe("run-sheet template linkage", () => {
     expect(rows[0].title).toBe("Item A"); // frozen
   });
 });
+
+// ============================================================================
+// Save-to-template correctness (Phase 3 review fixes)
+// ============================================================================
+
+/** Assign + confirm a user to the world's Drums role on a plan. */
+async function assignConfirm(
+  t: T,
+  world: World,
+  leaderToken: string,
+  planId: Id<"eventPlans">,
+  userId: Id<"users">,
+) {
+  await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+    token: leaderToken,
+    planId,
+    roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+  });
+  const { assignmentId } = await t.mutation(
+    api.functions.scheduling.assignments.assignRole,
+    { token: leaderToken, planId, teamId: world.teamId, roleId: world.roleId, userId },
+  );
+  await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+    token: (await generateTokens(userId)).accessToken,
+    assignmentId,
+    status: "confirmed",
+  });
+}
+
+async function taskCompletions(t: T, taskId: Id<"eventTasks">) {
+  return t.run(async (ctx) =>
+    ctx.db
+      .query("eventTaskCompletions")
+      .withIndex("by_task", (q) => q.eq("taskId", taskId))
+      .collect(),
+  );
+}
+
+async function templateItems(t: T, templateId: Id<"eventTaskTemplates">) {
+  return t.run(async (ctx) =>
+    ctx.db
+      .query("eventTaskTemplateItems")
+      .withIndex("by_template", (q) => q.eq("templateId", templateId))
+      .collect(),
+  );
+}
+
+describe("save-to-template is id-preserving (Phase 3 fixes)", () => {
+  it("REPLACE preserves the other linked plan's row id + completions (patch, not delete+reinsert)", async () => {
+    const { t, world, leaderToken } = await setupWorld();
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const templateId = await createTaskTemplate(t, world, leaderToken, "T");
+    const itemId = await addTaskItem(t, world, leaderToken, templateId, "Original", {
+      roleIds: [world.roleId],
+    });
+
+    // A SECOND future plan linked to the template, with a completion.
+    const p2 = await createPlan(t, world, leaderToken, 14);
+    await assignConfirm(t, world, leaderToken, p2, world.channelMemberId);
+    await t.mutation(
+      api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+      { token: leaderToken, planId: p2, templateId, carryover: "discard" },
+    );
+    const [p2Task] = await planTasks(t, p2);
+    await t.mutation(api.functions.scheduling.eventTasks.toggleTaskCompletion, {
+      token: memberToken,
+      taskId: p2Task._id,
+      completed: true,
+    });
+    expect(await taskCompletions(t, p2Task._id)).toHaveLength(1);
+
+    // Source plan P1, linked; edit its row, then REPLACE the template from it.
+    const p1 = await createPlan(t, world, leaderToken, 7);
+    await t.mutation(
+      api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+      { token: leaderToken, planId: p1, templateId, carryover: "discard" },
+    );
+    const [p1Task] = await planTasks(t, p1);
+    await t.mutation(api.functions.scheduling.eventTasks.updateTask, {
+      token: leaderToken,
+      taskId: p1Task._id,
+      title: "Renamed",
+    });
+
+    await t.mutation(
+      api.functions.scheduling.planTemplates.saveTaskTemplateFromPlan,
+      { token: leaderToken, planId: p1, mode: { kind: "existing", templateId, strategy: "replace" } },
+    );
+
+    // Template item id is STABLE (updated in place, not recreated).
+    const items = await templateItems(t, templateId);
+    expect(items).toHaveLength(1);
+    expect(items[0]._id).toBe(itemId);
+    expect(items[0].title).toBe("Renamed");
+
+    // P2's synced row is the SAME row (id stable) and its completion survives.
+    const p2After = await planTasks(t, p2);
+    expect(p2After).toHaveLength(1);
+    expect(p2After[0]._id).toBe(p2Task._id);
+    expect(p2After[0].title).toBe("Renamed");
+    expect(await taskCompletions(t, p2Task._id)).toHaveLength(1);
+  });
+
+  it("MERGE appends only genuinely-local rows (no duplication of already-synced rows)", async () => {
+    const { t, world, leaderToken } = await setupWorld();
+    const templateId = await createTaskTemplate(t, world, leaderToken, "T");
+    await addTaskItem(t, world, leaderToken, templateId, "Original");
+    const planId = await createPlan(t, world, leaderToken, 7);
+    await t.mutation(
+      api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+      { token: leaderToken, planId, templateId, carryover: "discard" },
+    );
+    // Add one genuinely-local task alongside the synced "Original".
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      segment: "before",
+      title: "Local",
+      howToType: "none",
+    });
+
+    await t.mutation(
+      api.functions.scheduling.planTemplates.saveTaskTemplateFromPlan,
+      { token: leaderToken, planId, mode: { kind: "existing", templateId, strategy: "merge" } },
+    );
+
+    // "Original" is NOT re-appended; only "Local" is added.
+    const items = await t.query(
+      api.functions.scheduling.taskTemplates.listTaskTemplateItems,
+      { token: leaderToken, templateId },
+    );
+    expect(items.map((i) => i.title)).toEqual(["Original", "Local"]);
+    // The source plan is not duplicated either.
+    expect((await planTasks(t, planId)).map((r) => r.title).sort()).toEqual(["Local", "Original"]);
+  });
+});
+
+describe("no-op-safe detach + revert past guard (Phase 3 fixes)", () => {
+  it("a no-op updateTask does NOT detach a synced row", async () => {
+    const { t, world, leaderToken } = await setupWorld();
+    const templateId = await createTaskTemplate(t, world, leaderToken, "T");
+    const itemId = await addTaskItem(t, world, leaderToken, templateId, "Same");
+    const planId = await createPlan(t, world, leaderToken, 7);
+    await t.mutation(
+      api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+      { token: leaderToken, planId, templateId, carryover: "discard" },
+    );
+    const [task] = await planTasks(t, planId);
+
+    // Re-send the SAME title — must not silently detach.
+    await t.mutation(api.functions.scheduling.eventTasks.updateTask, {
+      token: leaderToken,
+      taskId: task._id,
+      title: "Same",
+    });
+    expect((await planTasks(t, planId))[0].templateDetached).toBe(false);
+
+    // Still synced: a template edit propagates to it.
+    await t.mutation(
+      api.functions.scheduling.taskTemplates.updateTaskTemplateItem,
+      { token: leaderToken, itemId, title: "Changed" },
+    );
+    expect((await planTasks(t, planId))[0].title).toBe("Changed");
+  });
+
+  it("revert throws on a PAST plan", async () => {
+    const { t, world, leaderToken } = await setupWorld();
+    const templateId = await createTaskTemplate(t, world, leaderToken, "T");
+    await addTaskItem(t, world, leaderToken, templateId, "One");
+    const planId = await createPlan(t, world, leaderToken, 7);
+    await t.mutation(
+      api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+      { token: leaderToken, planId, templateId, carryover: "discard" },
+    );
+    await t.run(async (ctx) =>
+      ctx.db.patch(planId, { eventDate: Date.now() - 7 * DAY }),
+    );
+
+    await expect(
+      t.mutation(
+        api.functions.scheduling.planTemplates.revertPlanTaskTemplateEdits,
+        { token: leaderToken, planId },
+      ),
+    ).rejects.toThrow(/frozen/i);
+  });
+});
