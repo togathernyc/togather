@@ -316,6 +316,7 @@ export const listCrossTeamChannels = query({
         );
         return {
           _id: channel._id,
+          slug: channel.slug,
           name: channel.name,
           description: channel.description,
           channelType: channel.channelType,
