@@ -2969,7 +2969,10 @@ export default defineSchema({
   howToDocChecks: defineTable({
     userId: v.id("users"),
     taskId: v.id("eventTasks"),
-    checkedIndices: v.array(v.number()), // 0-based checklist-item indices, in doc order
+    // Content-based keys for the checked items (a stable hash of the item's
+    // text + its occurrence, so checks survive reordering the doc). Replaces the
+    // old positional-index scheme.
+    checkedKeys: v.array(v.string()),
     updatedAt: v.number(),
   }).index("by_user_task", ["userId", "taskId"]),
 

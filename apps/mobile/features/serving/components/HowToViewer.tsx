@@ -203,18 +203,22 @@ const TASK_ITEM_RE = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
 /** A parsed doc segment: either a run of plain markdown, or a checklist item. */
 type DocSegment =
   | { kind: "md"; text: string }
-  | { kind: "item"; index: number; label: string };
+  | { kind: "item"; key: string; label: string };
 
 /**
  * Split a How-To doc into ordered segments: contiguous non-checklist lines
  * become `md` blocks (rendered through the shared `Markdown`), and each
- * `- [ ] …` line becomes an `item` with a 0-based positional `index`.
+ * `- [ ] …` line becomes an `item` with a CONTENT-BASED `key`.
+ *
+ * The key is `${occurrence}:${normalized label}` — so a saved check follows its
+ * item when the doc is reordered, and only detaches if the item's text is
+ * edited. The occurrence prefix disambiguates two identical checklist lines.
  */
 function parseDoc(source: string): DocSegment[] {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const segments: DocSegment[] = [];
   let buffer: string[] = [];
-  let itemIndex = 0;
+  const seen = new Map<string, number>();
 
   const flushBuffer = () => {
     if (buffer.length === 0) return;
@@ -227,11 +231,11 @@ function parseDoc(source: string): DocSegment[] {
     const match = line.match(TASK_ITEM_RE);
     if (match) {
       flushBuffer();
-      segments.push({
-        kind: "item",
-        index: itemIndex++,
-        label: match[2].trim(),
-      });
+      const label = match[2].trim();
+      const normalized = label.replace(/\s+/g, " ").toLowerCase();
+      const occ = seen.get(normalized) ?? 0;
+      seen.set(normalized, occ + 1);
+      segments.push({ kind: "item", key: `${occ}:${normalized}`, label });
     } else {
       buffer.push(line);
     }
@@ -247,9 +251,9 @@ function parseDoc(source: string): DocSegment[] {
  * literal `[x]`. Toggling updates optimistically, then the reactive query
  * confirms.
  *
- * NOTE (positional indices): a user's saved checks map to checklist items by
- * position in the document. If a leader later reorders or edits the doc's
- * checklist, previously-saved checks map by position (acceptable for now).
+ * NOTE (content keys): a user's saved checks map to checklist items by their
+ * text (see `parseDoc`). Reordering the doc keeps checks attached; editing an
+ * item's text detaches its check (it becomes a new item).
  */
 function InteractiveDoc({
   taskId,
@@ -268,7 +272,7 @@ function InteractiveDoc({
   const serverChecks = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getHowToDocChecks,
     taskId ? { taskId: taskId as Id<"eventTasks"> } : "skip",
-  ) as number[] | undefined;
+  ) as string[] | undefined;
 
   const setCheck = useAuthenticatedMutation(
     api.functions.scheduling.eventTasks.setHowToDocCheck,
@@ -279,9 +283,9 @@ function InteractiveDoc({
     [serverChecks],
   );
 
-  // Pending optimistic overrides, keyed by itemIndex. An entry wins over the
+  // Pending optimistic overrides, keyed by item key. An entry wins over the
   // server value until the reactive query catches up (then it's reconciled).
-  const [pending, setPending] = useState<Record<number, boolean>>({});
+  const [pending, setPending] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     // Drop optimistic entries the server now agrees with.
@@ -289,9 +293,8 @@ function InteractiveDoc({
       let changed = false;
       const next = { ...prev };
       for (const key of Object.keys(next)) {
-        const i = Number(key);
-        if (checkedSet.has(i) === next[i]) {
-          delete next[i];
+        if (checkedSet.has(key) === next[key]) {
+          delete next[key];
           changed = true;
         }
       }
@@ -300,27 +303,26 @@ function InteractiveDoc({
   }, [checkedSet]);
 
   const isChecked = useCallback(
-    (index: number) =>
-      index in pending ? pending[index] : checkedSet.has(index),
+    (key: string) => (key in pending ? pending[key] : checkedSet.has(key)),
     [pending, checkedSet],
   );
 
   const onToggle = useCallback(
-    async (index: number) => {
+    async (key: string) => {
       if (!taskId) return;
-      const next = !isChecked(index);
-      setPending((prev) => ({ ...prev, [index]: next }));
+      const next = !isChecked(key);
+      setPending((prev) => ({ ...prev, [key]: next }));
       try {
         await setCheck({
           taskId: taskId as Id<"eventTasks">,
-          itemIndex: index,
+          itemKey: key,
           checked: next,
         });
       } catch {
         // Revert the optimistic flip on failure.
         setPending((prev) => {
           const revert = { ...prev };
-          delete revert[index];
+          delete revert[key];
           return revert;
         });
       }
@@ -337,12 +339,12 @@ function InteractiveDoc({
         if (segment.kind === "md") {
           return <Markdown key={`md-${i}`} source={segment.text} />;
         }
-        const checked = isChecked(segment.index);
+        const checked = isChecked(segment.key);
         return (
           <TouchableOpacity
-            key={`item-${segment.index}`}
+            key={`item-${segment.key}`}
             activeOpacity={0.6}
-            onPress={() => void onToggle(segment.index)}
+            onPress={() => void onToggle(segment.key)}
             style={styles.checkRow}
             accessibilityRole="checkbox"
             accessibilityState={{ checked }}

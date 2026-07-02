@@ -649,7 +649,7 @@ export const getMyServingTasks = query({
  */
 export const getHowToDocChecks = query({
   args: { token: v.string(), taskId: v.id("eventTasks") },
-  handler: async (ctx, args): Promise<number[]> => {
+  handler: async (ctx, args): Promise<string[]> => {
     const userId = await requireAuth(ctx, args.token);
     const task = await ctx.db.get(args.taskId);
     if (!task) return [];
@@ -663,7 +663,7 @@ export const getHowToDocChecks = query({
         q.eq("userId", userId).eq("taskId", args.taskId),
       )
       .unique();
-    return row?.checkedIndices ?? [];
+    return row?.checkedKeys ?? [];
   },
 });
 
@@ -678,7 +678,7 @@ export const setHowToDocCheck = mutation({
   args: {
     token: v.string(),
     taskId: v.id("eventTasks"),
-    itemIndex: v.number(),
+    itemKey: v.string(),
     checked: v.boolean(),
   },
   handler: async (ctx, args) => {
@@ -697,24 +697,24 @@ export const setHowToDocCheck = mutation({
       )
       .unique();
 
-    const current = new Set(row?.checkedIndices ?? []);
-    if (args.checked) current.add(args.itemIndex);
-    else current.delete(args.itemIndex);
-    const checkedIndices = Array.from(current).sort((a, b) => a - b);
+    const current = new Set(row?.checkedKeys ?? []);
+    if (args.checked) current.add(args.itemKey);
+    else current.delete(args.itemKey);
+    const checkedKeys = Array.from(current).sort();
 
     const nowMs = Date.now();
     if (row) {
-      await ctx.db.patch(row._id, { checkedIndices, updatedAt: nowMs });
+      await ctx.db.patch(row._id, { checkedKeys, updatedAt: nowMs });
     } else {
       await ctx.db.insert("howToDocChecks", {
         userId,
         taskId: args.taskId,
-        checkedIndices,
+        checkedKeys,
         updatedAt: nowMs,
       });
     }
 
-    return { taskId: args.taskId, itemIndex: args.itemIndex, checked: args.checked };
+    return { taskId: args.taskId, itemKey: args.itemKey, checked: args.checked };
   },
 });
 
