@@ -251,6 +251,42 @@ describe("updateTeam", () => {
   });
 });
 
+describe("updateChannel on a serving-team channel", () => {
+  it("mirrors the channel rename onto the underlying team", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await t.mutation(api.functions.messaging.channels.updateChannel, {
+      token: leaderToken,
+      channelId: world.channelId,
+      name: "  Renamed From Channel  ",
+    });
+
+    await t.run(async (ctx) => {
+      const channel = await ctx.db.get(world.channelId);
+      // Name is trimmed and applied to the channel...
+      expect(channel?.name).toBe("Renamed From Channel");
+
+      // ...and mirrored onto the linked team so the two stay in sync.
+      const team = await ctx.db.get(world.teamId);
+      expect(team?.name).toBe("Renamed From Channel");
+    });
+  });
+
+  it("rejects an empty / whitespace-only name with a ConvexError", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.updateChannel, {
+        token: leaderToken,
+        channelId: world.channelId,
+        name: "   ",
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+});
+
 describe("archiveTeam", () => {
   it("archives the team and its channel, purging synced members", async () => {
     const { t, world } = await setupSchedulingWorld();

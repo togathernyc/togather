@@ -2173,7 +2173,18 @@ export const updateChannel = mutation({
     };
 
     if (args.name !== undefined) {
-      updates.name = args.name;
+      // Validate: trim, 1-50 chars, must contain a letter or number. Mirrors
+      // `createCustomChannel` / `updateTeam` so a rename can't blank out a name.
+      const trimmedName = args.name.trim();
+      if (trimmedName.length < 1 || trimmedName.length > 50) {
+        throw new ConvexError("Channel name must be 1-50 characters.");
+      }
+      if (!/[a-zA-Z0-9]/.test(trimmedName)) {
+        throw new ConvexError(
+          "Channel name must contain at least one letter or number."
+        );
+      }
+      updates.name = trimmedName;
     }
     if (args.description !== undefined) {
       updates.description = args.description;
@@ -2190,6 +2201,22 @@ export const updateChannel = mutation({
     }
 
     await ctx.db.patch(args.channelId, updates);
+
+    // Serving-team channels back a `teams` record. Keep the team name in sync
+    // with the channel name so the roster and the conversation stay labelled
+    // consistently everywhere (mirrors `updateTeam` in scheduling/teams.ts).
+    if (channel.isServingTeam && updates.name !== undefined) {
+      const team = await ctx.db
+        .query("teams")
+        .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
+        .first();
+      if (team) {
+        await ctx.db.patch(team._id, {
+          name: updates.name,
+          updatedAt: Date.now(),
+        });
+      }
+    }
   },
 });
 

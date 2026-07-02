@@ -87,42 +87,45 @@ export interface GroupedInboxItemProps {
 }
 
 /**
- * Lowercase, hyphenate, and strip a string down to a `#channel-name`-safe slug.
+ * Turn a slug-ish string into a readable, title-cased label
+ * (e.g. "worship-team" → "Worship Team").
  */
-function slugifyChannelLabel(value: string): string {
+function humanize(value: string): string {
   return value
-    .toLowerCase()
     .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "");
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 /**
- * Build a distinguishing `#team-channel` label for a serving-mode inbox row.
+ * Build a readable DISPLAY NAME for a serving-mode inbox row.
  *
- * Team channels are commonly named after the team, so a raw name can't tell the
- * rows apart. Disambiguate the well-known channel types by their role, and fall
- * back to the channel's own (already meaningful) name for custom channels.
+ * Serving mode flattens each of a team's channels into its own row, so the
+ * title must distinguish them without ever falling back to a raw `#slug`.
+ * Always prefer the channel's own name; for the well-known system channels
+ * (which rarely surface in serving mode) fall back to a humanized team-scoped
+ * label.
  */
 function getServingChannelLabel(teamName: string, channel: ChannelData): string {
-  const teamSlug = slugifyChannelLabel(teamName);
+  const name = channel.name?.trim();
   switch (channel.channelType) {
     case "main":
-      return `#${teamSlug}-general`;
+      return name || `${humanize(teamName)} General`;
     case "leaders":
-      return `#${teamSlug}-leaders`;
+      return name || `${humanize(teamName)} Leaders`;
     case "announcements":
-      return `#${teamSlug}-announcements`;
+      return name || `${humanize(teamName)} Announcements`;
     case "cross_team":
       // Cross-team channels always carry a distinct 1-50 char name; prefer it.
-      // The slug is only a fallback for the rare unnamed channel.
-      return channel.name && channel.name.trim() ? channel.name : `#${teamSlug}-cross-team`;
-    default: {
+      return name || humanize(teamName);
+    default:
       // Custom / pco_services / reach_out channels carry their own distinct
       // name from the backend — prefer it since it's already meaningful.
-      const nameSlug = channel.name ? slugifyChannelLabel(channel.name) : "";
-      return nameSlug ? `#${nameSlug}` : `#${teamSlug}-channel`;
-    }
+      return name || humanize(teamName);
   }
 }
 
@@ -446,6 +449,17 @@ function GroupedInboxItemInner({
             </View>
           </View>
 
+          {/* Serving mode: the title is the channel name, so name the parent
+              group underneath to keep flattened team rows distinguishable. */}
+          {servingMode && (
+            <Text
+              style={[styles.groupSubtext, { color: colors.textTertiary }]}
+              numberOfLines={1}
+            >
+              in {group.name}
+            </Text>
+          )}
+
           {/* Bottom row: Last message preview */}
           <View style={styles.bottomRow}>
             <Text
@@ -682,6 +696,11 @@ const styles = StyleSheet.create({
   },
   groupNameUnread: {
     fontWeight: "700",
+  },
+  groupSubtext: {
+    fontSize: 12,
+    marginTop: 1,
+    marginBottom: 2,
   },
   badge: {
     paddingHorizontal: 8,
