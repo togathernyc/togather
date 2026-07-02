@@ -34,6 +34,8 @@ export type EnrichedCrossTeamSelector = {
 
 export type CrossTeamChannel = {
   _id: Id<"chatChannels">;
+  /** Channel slug — used to route into Channel Info to edit synced roles. */
+  slug?: string;
   name: string;
   description?: string;
   channelType: string;
