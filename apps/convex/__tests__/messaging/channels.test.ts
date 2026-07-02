@@ -2041,6 +2041,73 @@ describe("listGroupChannels", () => {
     expect(customChannel?.isMember).toBe(true);
   });
 
+  test("surfaces isServingTeam so serving-team custom channels are distinguishable", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+
+    // A plain, manually-created custom channel.
+    const plainId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "directors",
+        channelType: "custom",
+        name: "Directors",
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    // A serving-team custom channel (auto-created from an event plan).
+    const servingId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "sunday-band",
+        channelType: "custom",
+        name: "Sunday Band",
+        isServingTeam: true,
+        createdById: leaderId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    const plain = channels.find((c) => c._id === plainId);
+    const serving = channels.find((c) => c._id === servingId);
+
+    expect(plain?.channelType).toBe("custom");
+    expect(plain?.isServingTeam).toBeUndefined();
+
+    expect(serving?.channelType).toBe("custom");
+    expect(serving?.isServingTeam).toBe(true);
+  });
+
   test("hides leader-disabled custom channels from members (group page list)", async () => {
     const t = convexTest(schema, modules);
     const { userId, communityId, groupId, accessToken } = await seedTestData(t);
