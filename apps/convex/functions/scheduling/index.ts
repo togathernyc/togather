@@ -63,6 +63,33 @@ export {
 } from "./eventItems";
 
 // ============================================================================
+// Event templates — reusable per-group task + run-sheet templates (Phase 1)
+// ============================================================================
+export {
+  createTaskTemplate,
+  renameTaskTemplate,
+  deleteTaskTemplate,
+  listTaskTemplates,
+  listTaskTemplateItems,
+  addTaskTemplateItem,
+  updateTaskTemplateItem,
+  deleteTaskTemplateItem,
+  reorderTaskTemplateItems,
+} from "./taskTemplates";
+export {
+  createRunSheetTemplate,
+  renameRunSheetTemplate,
+  deleteRunSheetTemplate,
+  listRunSheetTemplates,
+  listRunSheetTemplateItems,
+  addRunSheetTemplateItem,
+  updateRunSheetTemplateItem,
+  deleteRunSheetTemplateItem,
+  duplicateRunSheetTemplateItem,
+  reorderRunSheetTemplateItems,
+} from "./runSheetTemplates";
+
+// ============================================================================
 // Assignments & lifecycle
 // ============================================================================
 export {
