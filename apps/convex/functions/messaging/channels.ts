@@ -1237,6 +1237,7 @@ export const listGroupChannels = query({
     lastMessageAt: v.optional(v.number()),
     isShared: v.optional(v.boolean()),
     isEnabled: v.boolean(),
+    isServingTeam: v.optional(v.boolean()),
   })),
   handler: async (ctx, args) => {
     // 1. Authenticate user
@@ -1433,6 +1434,7 @@ export const listGroupChannels = query({
           lastMessageAt: channel.lastMessageAt,
           isShared: channel.isShared || undefined,
           isEnabled: channelEffectiveEnabledForGroup(channel, args.groupId),
+          isServingTeam: channel.isServingTeam ?? undefined,
         };
       })
     );
