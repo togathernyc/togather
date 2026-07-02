@@ -11,7 +11,7 @@
  * native editor. This view only reads existing native queries (listEvents /
  * getEvent / eventItems.listItems) — no new backend.
  */
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
@@ -34,6 +35,12 @@ import {
   formatServiceRanges,
   totalDurationSec,
 } from "@features/scheduling/utils/runSheetTiming";
+import { renderTextWithLinks } from "../utils/runSheetLinks";
+
+/** Current-item highlight, mirroring the PCO run sheet (RunSheetScreen). */
+const CURRENT_ITEM_BG_LIGHT = "#FFF9E6";
+const CURRENT_ITEM_BG_DARK = "#2a2700";
+const CURRENT_ITEM_BORDER = "#D4A017";
 
 /** When an item happens relative to the event's service times. */
 type Segment = "before" | "during" | "after";
@@ -190,6 +197,7 @@ export function NativeRunSheetView({
 
 function PlanRunSheet({
   planId,
+  groupId,
   canEdit,
   onEdit,
   onRehearse,
@@ -201,7 +209,7 @@ function PlanRunSheet({
   /** Open the read-only musician rehearsal view for this plan (all members). */
   onRehearse: () => void;
 }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
 
   const event = useAuthenticatedQuery(
@@ -272,6 +280,92 @@ function PlanRunSheet({
     () => (items ?? []).some((it) => it.type === "song"),
     [items],
   );
+
+  // Expandable rows: which items have their description/notes revealed.
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleItemExpanded = useCallback((itemId: string) => {
+    setExpandedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }, []);
+
+  // Collapsible sections: header ids whose following items are hidden.
+  // Persisted to AsyncStorage per group (native-specific key so it never
+  // collides with the PCO viewer's collapse state) and restored on reopen.
+  const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [collapsedHeadersLoaded, setCollapsedHeadersLoaded] = useState(false);
+  const toggleHeaderCollapsed = useCallback((headerId: string) => {
+    setCollapsedHeaders((prev) => {
+      const next = new Set(prev);
+      if (next.has(headerId)) next.delete(headerId);
+      else next.add(headerId);
+      return next;
+    });
+  }, []);
+
+  const collapsedStorageKey = `native_runsheet_collapsed_${groupId}`;
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(collapsedStorageKey);
+        if (!cancelled && saved) {
+          setCollapsedHeaders(new Set(JSON.parse(saved)));
+        }
+      } catch (err) {
+        console.error("Failed to load collapsed state:", err);
+      } finally {
+        if (!cancelled) setCollapsedHeadersLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [collapsedStorageKey]);
+  useEffect(() => {
+    // Don't persist until the initial load finishes, to avoid clobbering
+    // saved state with the empty default on first render.
+    if (!collapsedHeadersLoaded) return;
+    AsyncStorage.setItem(
+      collapsedStorageKey,
+      JSON.stringify(Array.from(collapsedHeaders)),
+    ).catch((err) => console.error("Failed to save collapsed state:", err));
+  }, [collapsedHeaders, collapsedHeadersLoaded, collapsedStorageKey]);
+
+  // Live "current item": tick a clock every 30s and match the item whose
+  // computed [start, start + durationSec) window contains now. Same logic as
+  // the PCO renderer, but sourced from client-computed clock times.
+  // TODO(followup): clock times are anchored to the earliest service time, so
+  // on a multi-service plan only the earliest service ever highlights. To
+  // support later services we'd need a service-time selector (like PCO's) and
+  // re-base clockTimes to the chosen window before matching.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+  const currentItemId = useMemo(() => {
+    // Without real service times the clocks are anchored to `now` (see
+    // earliestStart fallback), which would spuriously highlight the first item.
+    if (times.length === 0) return null;
+    const list = items ?? [];
+    for (let i = list.length - 1; i >= 0; i--) {
+      const it = list[i];
+      if (it.type === "header") continue;
+      const start = clockTimes[it._id];
+      if (start == null) continue;
+      const end = start + Math.max(0, it.durationSec) * 1000;
+      if (now >= start && now < end) return it._id;
+    }
+    return null;
+  }, [items, clockTimes, now, times.length]);
 
   if (event === undefined || items === undefined) {
     return (
@@ -344,18 +438,27 @@ function PlanRunSheet({
         SEGMENT_OPTIONS.map((seg) => {
           const segItems = itemsBySegment[seg.key];
           if (segItems.length === 0) return null;
+          // Hide items that follow a collapsed header (positional: a header
+          // owns the rows after it until the next header in the segment).
+          const visibleItems = filterVisible(segItems, collapsedHeaders);
           return (
             <View key={seg.key}>
               <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
                 {seg.label.toUpperCase()}
               </Text>
-              {segItems.map((item) => (
+              {visibleItems.map((item) => (
                 <ReadOnlyRow
                   key={item._id}
                   item={item}
                   clockMs={clockTimes[item._id]}
                   peopleByRole={peopleByRole}
                   colors={colors}
+                  isDark={isDark}
+                  isCurrent={item._id === currentItemId}
+                  isExpanded={expandedItemIds.has(item._id)}
+                  onToggleExpand={() => toggleItemExpanded(item._id)}
+                  isCollapsed={collapsedHeaders.has(item._id)}
+                  onToggleCollapse={() => toggleHeaderCollapsed(item._id)}
                 />
               ))}
             </View>
@@ -366,24 +469,72 @@ function PlanRunSheet({
   );
 }
 
+/**
+ * Drop items that follow a collapsed header. Headers are always kept; a
+ * collapsed header hides every non-header row until the next header. The
+ * association is positional within the segment's ordered item list.
+ */
+function filterVisible(
+  segItems: RunSheetItem[],
+  collapsedHeaders: Set<string>,
+): RunSheetItem[] {
+  const out: RunSheetItem[] = [];
+  let hidden = false;
+  for (const it of segItems) {
+    if (it.type === "header") {
+      hidden = collapsedHeaders.has(it._id as string);
+      out.push(it);
+    } else if (!hidden) {
+      out.push(it);
+    }
+  }
+  return out;
+}
+
 function ReadOnlyRow({
   item,
   clockMs,
   peopleByRole,
   colors,
+  isDark,
+  isCurrent,
+  isExpanded,
+  onToggleExpand,
+  isCollapsed,
+  onToggleCollapse,
 }: {
   item: RunSheetItem;
   clockMs: number | null;
   peopleByRole: Record<string, string[]>;
   colors: ReturnType<typeof useTheme>["colors"];
+  isDark: boolean;
+  isCurrent: boolean;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  isCollapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
   const isHeader = item.type === "header";
   const duration = formatDuration(item.durationSec);
 
   if (isHeader) {
+    // Collapsible section header — tap the chevron/title to fold its rows.
     return (
-      <View style={styles.headerRow}>
-        <Text style={[styles.headerText, { color: colors.textSecondary }]} numberOfLines={1}>
+      <Pressable
+        onPress={onToggleCollapse}
+        style={styles.headerRow}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !isCollapsed }}
+      >
+        <Ionicons
+          name={isCollapsed ? "chevron-forward" : "chevron-down"}
+          size={16}
+          color={colors.textSecondary}
+        />
+        <Text
+          style={[styles.headerText, { color: colors.textSecondary }]}
+          numberOfLines={1}
+        >
           {item.title.toUpperCase()}
         </Text>
         {clockMs != null ? (
@@ -391,12 +542,26 @@ function ReadOnlyRow({
             {formatClockTime(clockMs)}
           </Text>
         ) : null}
-      </View>
+      </Pressable>
     );
   }
 
+  const hasNotes = item.notes.length > 0;
+  const hasDescription = !!item.description && item.description.trim().length > 0;
+  const hasExpandableContent = hasDescription || hasNotes;
+
   return (
-    <View style={[styles.row, { backgroundColor: colors.surfaceSecondary }]}>
+    <View
+      style={[
+        styles.row,
+        { backgroundColor: colors.surfaceSecondary },
+        isCurrent && {
+          backgroundColor: isDark ? CURRENT_ITEM_BG_DARK : CURRENT_ITEM_BG_LIGHT,
+          borderLeftColor: CURRENT_ITEM_BORDER,
+          borderLeftWidth: 4,
+        },
+      ]}
+    >
       <View style={styles.timeCol}>
         <Text style={[styles.timeText, { color: colors.text }]}>
           {clockMs != null ? formatClockTime(clockMs) : "—"}
@@ -408,7 +573,26 @@ function ReadOnlyRow({
         ) : null}
       </View>
       <View style={styles.content}>
-        <Text style={[styles.itemTitle, { color: colors.text }]}>{item.title}</Text>
+        {/* Summary row — tapping toggles the description/notes when present. */}
+        <Pressable
+          onPress={hasExpandableContent ? onToggleExpand : undefined}
+          style={styles.titleRow}
+          accessibilityRole={hasExpandableContent ? "button" : undefined}
+          accessibilityState={
+            hasExpandableContent ? { expanded: isExpanded } : undefined
+          }
+        >
+          <Text style={[styles.itemTitle, { color: colors.text }]}>
+            {item.title}
+          </Text>
+          {hasExpandableContent ? (
+            <Ionicons
+              name={isExpanded ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={colors.textTertiary}
+            />
+          ) : null}
+        </Pressable>
         {item.type === "song" && item.songDetails?.key ? (
           <Text style={[styles.meta, { color: colors.textSecondary }]}>
             Key {item.songDetails.key}
@@ -437,15 +621,54 @@ function ReadOnlyRow({
             })}
           </View>
         ) : null}
-        {item.description ? (
-          <Text style={[styles.desc, { color: colors.textSecondary }]}>{item.description}</Text>
-        ) : null}
-        {item.notes.map((n, i) => (
-          <Text key={i} style={[styles.note, { color: colors.textSecondary }]}>
-            {n.category ? `${n.category}: ` : ""}
-            {n.content}
+        {/* Collapsed preview — a truncated description + note teaser so the
+            content stays glanceable without expanding (mirrors the PCO
+            renderer's collapsed row). Full text + rich link previews render
+            once expanded. */}
+        {!isExpanded && hasDescription ? (
+          <Text
+            style={[styles.desc, { color: colors.textSecondary }]}
+            numberOfLines={2}
+          >
+            {item.description}
           </Text>
-        ))}
+        ) : null}
+        {!isExpanded && hasNotes ? (
+          <Text
+            style={[styles.notePreview, { color: colors.textTertiary }]}
+            numberOfLines={2}
+          >
+            {item.notes[0].category ? `${item.notes[0].category}: ` : ""}
+            {item.notes[0].content}
+          </Text>
+        ) : null}
+        {/* Expanded content lives OUTSIDE the Pressable so links stay tappable
+            and text stays selectable (same pattern as the PCO renderer). */}
+        {isExpanded ? (
+          <View style={styles.expanded}>
+            {hasDescription
+              ? renderTextWithLinks(
+                  item.description!,
+                  [styles.desc, { color: colors.textSecondary }],
+                  colors.link,
+                )
+              : null}
+            {item.notes.map((n, i) => (
+              <View key={i} style={styles.noteBlock}>
+                {n.category ? (
+                  <Text style={[styles.noteCategory, { color: colors.textTertiary }]}>
+                    {n.category}
+                  </Text>
+                ) : null}
+                {renderTextWithLinks(
+                  n.content,
+                  [styles.note, { color: colors.textSecondary }],
+                  colors.link,
+                )}
+              </View>
+            ))}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -479,8 +702,23 @@ const styles = StyleSheet.create({
   timeText: { fontSize: 14, fontWeight: "700" },
   durationText: { fontSize: 11, marginTop: 1 },
   content: { flex: 1, gap: 4 },
-  itemTitle: { fontSize: 15, fontWeight: "600" },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  itemTitle: { fontSize: 15, fontWeight: "600", flex: 1 },
   meta: { fontSize: 12 },
+  expanded: { marginTop: 4, gap: 6 },
+  notePreview: { fontSize: 12, lineHeight: 16, fontStyle: "italic" },
+  noteBlock: { gap: 2 },
+  noteCategory: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
   assignWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 },
   assignChip: {
     flexDirection: "row",
@@ -498,11 +736,11 @@ const styles = StyleSheet.create({
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 6,
     marginTop: 10,
     marginBottom: 2,
     paddingHorizontal: 4,
   },
-  headerText: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, flexShrink: 1 },
+  headerText: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, flex: 1 },
   headerTime: { fontSize: 11, fontWeight: "600" },
 });
