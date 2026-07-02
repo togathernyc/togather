@@ -244,7 +244,9 @@ export const updateSong = mutation({
 /**
  * Delete a song. First null out `songId` on every run sheet item that
  * references it — the item survives, falling back to its `songDetails`/title —
- * then delete the song (ADR-027). Uses the `eventItems.by_song` index.
+ * then delete the song (ADR-027). Covers both real run sheets (`eventItems`) and
+ * run-sheet TEMPLATE items (`runSheetTemplateItems`), each via its `by_song`
+ * index, so a deleted song never leaves a dangling reference on either.
  *
  * Auth: community admin for the song's community.
  */
@@ -257,18 +259,34 @@ export const deleteSong = mutation({
     const userId = await requireAuth(ctx, args.token);
     await requireSongAdmin(ctx, args.songId, userId);
 
+    const nowMs = Date.now();
+
     const referencing = await ctx.db
       .query("eventItems")
       .withIndex("by_song", (q) => q.eq("songId", args.songId))
       .collect();
     await Promise.all(
       referencing.map((item) =>
-        ctx.db.patch(item._id, { songId: undefined, updatedAt: Date.now() }),
+        ctx.db.patch(item._id, { songId: undefined, updatedAt: nowMs }),
+      ),
+    );
+
+    const referencingTemplateItems = await ctx.db
+      .query("runSheetTemplateItems")
+      .withIndex("by_song", (q) => q.eq("songId", args.songId))
+      .collect();
+    await Promise.all(
+      referencingTemplateItems.map((item) =>
+        ctx.db.patch(item._id, { songId: undefined, updatedAt: nowMs }),
       ),
     );
 
     await ctx.db.delete(args.songId);
-    return { deleted: true, unlinkedItems: referencing.length };
+    return {
+      deleted: true,
+      unlinkedItems: referencing.length,
+      unlinkedTemplateItems: referencingTemplateItems.length,
+    };
   },
 });
 

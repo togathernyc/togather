@@ -3027,6 +3027,117 @@ export default defineSchema({
     .index("by_plan", ["planId"]),
 
   /**
+   * A reusable, per-GROUP event-task template — a named, saved checklist of
+   * `eventTaskTemplateItems` a leader can keep for a location and later apply to
+   * a plan's `eventTasks`. Named `eventTaskTemplates` (not `taskTemplates`, which
+   * is a separate feature) to avoid a table collision. Scoped to one campus group
+   * (mirrors how cross-team channels / teams are group-scoped); `communityId` is
+   * denormalized for the community read gate. Phase 1 stores the template only —
+   * there is no plan linkage or propagation yet.
+   */
+  eventTaskTemplates: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_group", ["groupId"]),
+
+  /**
+   * A single item on an `eventTaskTemplates` template — the template mirror of
+   * `eventTasks` MINUS `planId` (keyed by `templateId` instead) and using ONLY
+   * the multi-assign array model (`teamIds` >= 0, `roleIds` empty => a
+   * team-level task). No legacy single-value `teamId` / `roleId` columns, and no
+   * completion records (templates are never "done" — they seed a plan's tasks).
+   * `sortOrder` orders items WITHIN a segment.
+   */
+  eventTaskTemplateItems: defineTable({
+    templateId: v.id("eventTaskTemplates"),
+    communityId: v.id("communities"),
+    teamIds: v.array(v.id("teams")),
+    roleIds: v.array(v.id("teamRoles")),
+    segment: v.union(
+      v.literal("before"),
+      v.literal("during"),
+      v.literal("after"),
+    ),
+    title: v.string(),
+    howToType: v.union(
+      v.literal("none"),
+      v.literal("text"),
+      v.literal("link"),
+      v.literal("media"),
+      v.literal("doc"),
+    ),
+    howToText: v.optional(v.string()),
+    howToUrl: v.optional(v.string()),
+    howToMediaPath: v.optional(v.string()), // r2: path
+    howToDoc: v.optional(v.string()), // markdown source
+    sortOrder: v.number(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_template", ["templateId"])
+    .index("by_template_segment", ["templateId", "segment"]),
+
+  /**
+   * A reusable, per-GROUP run-sheet template — a named, saved order-of-items of
+   * `runSheetTemplateItems` a leader can keep for a location and later apply to a
+   * plan's `eventItems`. Group-scoped, with `communityId` denormalized for the
+   * community read gate. Phase 1 stores the template only (no plan linkage or
+   * propagation yet).
+   */
+  runSheetTemplates: defineTable({
+    groupId: v.id("groups"),
+    communityId: v.id("communities"),
+    name: v.string(),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_group", ["groupId"]),
+
+  /**
+   * A single item on a `runSheetTemplates` template — the template mirror of
+   * `eventItems` MINUS `planId` (keyed by `templateId` instead). Same segment +
+   * `sequence` ordering, notes, role `assignments`, and library `songId` join as
+   * a real run sheet item. Clock times are never stored (durations cascade
+   * client-side), matching `eventItems`.
+   */
+  runSheetTemplateItems: defineTable({
+    templateId: v.id("runSheetTemplates"),
+    communityId: v.id("communities"),
+    /** "before" | "during" | "after"; optional, treated as "during" if absent. */
+    segment: v.optional(v.string()),
+    /** Ordering within the segment; reordering rewrites these. */
+    sequence: v.number(),
+    /** "song" | "header" | "media" | "item" (mirrors PCO vocabulary). */
+    type: v.string(),
+    title: v.string(),
+    description: v.optional(v.string()),
+    durationSec: v.number(),
+    notes: v.optional(
+      v.array(v.object({ category: v.string(), content: v.string() })),
+    ),
+    assignments: v.optional(v.array(v.object({ roleId: v.id("teamRoles") }))),
+    songDetails: v.optional(
+      v.object({
+        key: v.optional(v.string()),
+        bpm: v.optional(v.number()),
+        author: v.optional(v.string()),
+      }),
+    ),
+    songId: v.optional(v.id("songs")),
+    createdById: v.id("users"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_template", ["templateId"])
+    // Scan items referencing a song so deleteSong can null them out (ADR-027).
+    .index("by_song", ["songId"]),
+
+  /**
    * Per-community song library (ADR-027). A song lives once and is referenced
    * by run sheet `eventItems` via `songId`, so editing its charts/metadata
    * updates every plan that uses it (no copied-string drift). `ccliNumber` is

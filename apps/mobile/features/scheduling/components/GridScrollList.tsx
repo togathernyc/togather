@@ -55,6 +55,9 @@ const GRIP_W = 34;
 // with content top-aligned (not vertically centered) so multi-line cells read
 // cleanly against the shorter ones. The header is compact above it.
 const ROW_MIN_HEIGHT = 46;
+// Tighter floor for one-line-per-cell grids (Event Tasks). Rows still grow past
+// this when a cell wraps, so wrapped content is never clipped.
+const DENSE_ROW_MIN_HEIGHT = 38;
 const HEADER_MIN_HEIGHT = 38;
 
 interface Props<T> {
@@ -74,6 +77,12 @@ interface Props<T> {
   ListFooterComponent?: React.ReactElement | null;
   /** Vertical padding only — never horizontal, or rows misalign with the header. */
   contentContainerStyle?: StyleProp<ViewStyle>;
+  /**
+   * Tighter row min-height + cell padding for cells that are one line in the
+   * common case (e.g. the Event Tasks grid). Rows still grow when a cell wraps,
+   * so this never clips multi-line content — it only lowers the floor.
+   */
+  dense?: boolean;
 }
 
 export function GridScrollList<T>({
@@ -85,9 +94,11 @@ export function GridScrollList<T>({
   ListHeaderComponent,
   ListFooterComponent,
   contentContainerStyle,
+  dense = false,
 }: Props<T>) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const rowMinHeight = dense ? DENSE_ROW_MIN_HEIGHT : ROW_MIN_HEIGHT;
 
   // The card's measured inner size. Width drives the slack distribution; height
   // bounds the inner content so the drag list's vertical scroll works while it
@@ -118,7 +129,7 @@ export function GridScrollList<T>({
   const cellFrame = (i: number): ViewStyle => ({
     width: effWidths[i],
     paddingHorizontal: 10,
-    paddingVertical: 9,
+    paddingVertical: dense ? 6 : 9,
     // Top-align content (events-os `items-start`) so a 2-line cell doesn't push
     // its 1-line neighbours off-centre. The row stretches every cell to the same
     // height, so the vertical dividers still run the full row.
@@ -191,6 +202,7 @@ export function GridScrollList<T>({
                     style={[
                       styles.row,
                       {
+                        minHeight: rowMinHeight,
                         borderBottomColor: colors.border,
                         backgroundColor: isActive
                           ? colors.surfaceSecondary
