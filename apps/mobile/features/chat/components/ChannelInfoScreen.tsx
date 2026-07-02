@@ -100,7 +100,20 @@ type ChannelIconConfig = {
 function getChannelIconConfig(
   channelType: string,
   brand: string,
+  isServingTeam?: boolean,
 ): ChannelIconConfig {
+  // A serving-team channel is a `custom` channel flagged `isServingTeam`. It
+  // gets the green calendar glyph used for serving-team rows in the group
+  // channels list, so the icon persists into Channel Info (plain custom
+  // channels keep the chat bubble).
+  if (channelType === "custom" && isServingTeam) {
+    return {
+      icon: "calendar-outline",
+      color: "#10B981",
+      bg: "#10B98115",
+      defaultName: "Serving Team",
+    };
+  }
   switch (channelType) {
     case "main":
       return { icon: "chatbubbles", color: brand, bg: brand + "15", defaultName: "General" };
@@ -357,7 +370,11 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     }
   }, [crossTeamEditVisible]);
 
-  const iconCfg = getChannelIconConfig(channelType, primaryColor);
+  const iconCfg = getChannelIconConfig(
+    channelType,
+    primaryColor,
+    (channel as { isServingTeam?: boolean } | undefined)?.isServingTeam,
+  );
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
 
   const sharedGroupCount = useMemo(() => {
