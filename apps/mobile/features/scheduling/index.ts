@@ -33,3 +33,4 @@ export { RosterGridScreen } from "./components/RosterGridScreen";
 export { AssignmentDetailScreen } from "./components/AssignmentDetailScreen";
 export { RosteringTeamsScreen } from "./components/RosteringTeamsScreen";
 export { RosteringCrossTeamScreen } from "./components/RosteringCrossTeamScreen";
+export { TemplatesLibraryScreen } from "./components/TemplatesLibraryScreen";
