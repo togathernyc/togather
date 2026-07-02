@@ -2260,6 +2260,10 @@ export function RosterGridScreen() {
             setOverflowOpen(false);
             router.push(`/rostering/${groupId}/cross-team` as never);
           }}
+          onTemplates={() => {
+            setOverflowOpen(false);
+            router.push(`/rostering/${groupId}/templates` as never);
+          }}
           onCollectAvailability={() => {
             setOverflowOpen(false);
             void handleShareLink();
@@ -3132,6 +3136,7 @@ function OverflowMenu({
   sharingLink,
   onTeams,
   onCrossTeam,
+  onTemplates,
   onCollectAvailability,
   onChangePastLimit,
   onClose,
@@ -3141,6 +3146,7 @@ function OverflowMenu({
   sharingLink: boolean;
   onTeams: () => void;
   onCrossTeam: () => void;
+  onTemplates: () => void;
   onCollectAvailability: () => void;
   /** Step the number of previous dates shown by ±1 (clamped by the caller). */
   onChangePastLimit: (delta: number) => void;
@@ -3168,6 +3174,17 @@ function OverflowMenu({
           <Ionicons name="git-merge-outline" size={20} color={colors.text} />
           <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
             Cross-team
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </Pressable>
+        <Pressable
+          onPress={onTemplates}
+          style={[styles.menuRow, { borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="documents-outline" size={20} color={colors.text} />
+          <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+            Templates
           </Text>
           <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
         </Pressable>
