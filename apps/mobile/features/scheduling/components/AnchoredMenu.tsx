@@ -67,8 +67,10 @@ export function AnchoredMenu({
   anchor,
   options,
   selectedId,
+  selectedIds,
   emptyOption,
   onSelect,
+  onToggle,
   onClose,
   minWidth = 168,
   maxWidth = 300,
@@ -76,15 +78,26 @@ export function AnchoredMenu({
   anchor: AnchorRect;
   options: AnchoredMenuOption[];
   selectedId?: string | null;
+  /**
+   * Multi-select mode: the set of currently-selected ids. When provided, rows
+   * TOGGLE (via `onToggle`) and the menu stays open — an outside press (the
+   * backdrop) closes it. `emptyOption` / `selectedId` / `onSelect` are ignored.
+   */
+  selectedIds?: string[];
   /** Prepend a "clear" row that reports `null` (e.g. "Team-level (no role)"). */
   emptyOption?: { label: string };
   onSelect: (id: string | null) => void;
+  /** Row press handler in multi-select mode (see `selectedIds`). */
+  onToggle?: (id: string) => void;
   onClose: () => void;
   minWidth?: number;
   maxWidth?: number;
 }) {
   const { colors } = useTheme();
   const { width: winW, height: winH } = useWindowDimensions();
+
+  const multi = selectedIds !== undefined;
+  const selectedSet = new Set(selectedIds ?? []);
 
   const menuWidth = Math.min(
     Math.max(anchor.width, minWidth),
@@ -139,7 +152,7 @@ export function AnchoredMenu({
             bounces={false}
             keyboardShouldPersistTaps="handled"
           >
-            {emptyOption ? (
+            {emptyOption && !multi ? (
               <Pressable
                 onPress={() => onSelect(null)}
                 style={[
@@ -167,11 +180,15 @@ export function AnchoredMenu({
               </Text>
             ) : (
               options.map((o) => {
-                const active = o.id === selectedId;
+                const active = multi
+                  ? selectedSet.has(o.id)
+                  : o.id === selectedId;
                 return (
                   <Pressable
                     key={o.id}
-                    onPress={() => onSelect(o.id)}
+                    onPress={() =>
+                      multi ? onToggle?.(o.id) : onSelect(o.id)
+                    }
                     style={[
                       styles.row,
                       active && { backgroundColor: colors.surfaceSecondary },

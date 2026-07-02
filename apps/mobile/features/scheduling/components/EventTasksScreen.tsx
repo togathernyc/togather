@@ -183,7 +183,8 @@ export function EventTasksScreen() {
 
   const referencedTeamIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const t of tasks ?? []) ids.add(t.teamId as string);
+    for (const t of tasks ?? [])
+      for (const id of t.teamIds) ids.add(id as string);
     return [...ids];
   }, [tasks]);
 
@@ -227,8 +228,8 @@ export function EventTasksScreen() {
     () =>
       (tasks ?? []).filter((t) => {
         if (phaseFilter && t.segment !== phaseFilter) return false;
-        if (teamFilter && t.teamId !== teamFilter) return false;
-        if (roleFilter && t.roleId !== roleFilter) return false;
+        if (teamFilter && !t.teamIds.includes(teamFilter)) return false;
+        if (roleFilter && !t.roleIds.includes(roleFilter)) return false;
         return true;
       }),
     [tasks, phaseFilter, teamFilter, roleFilter],
@@ -274,8 +275,8 @@ export function EventTasksScreen() {
       try {
         await createTask({
           planId,
-          teamId,
-          ...(roleMatches ? { roleId: roleFilter } : {}),
+          teamIds: [teamId],
+          roleIds: roleMatches ? [roleFilter as Id<"teamRoles">] : [],
           segment: seg,
           title: "New task",
           howToType: "none",
@@ -298,18 +299,15 @@ export function EventTasksScreen() {
     [deleteTask],
   );
 
-  // Duplicate a task — copy every editable field (team/role/segment/title +
-  // How-To) onto a new task under the same team. Stays within the create API.
+  // Duplicate a task — copy every editable field (teams/roles/segment/title +
+  // How-To) onto a new task. Stays within the create API.
   const handleDuplicate = useCallback(
     async (task: PlanTask) => {
       try {
         await createTask({
           planId,
-          teamId: task.teamId,
-          // Only include roleId when the source task has a role — the validator
-          // is v.optional(v.id(...)), which rejects an explicit null (a
-          // team-level task).
-          ...(task.roleId ? { roleId: task.roleId } : {}),
+          teamIds: task.teamIds,
+          roleIds: task.roleIds,
           segment: task.segment,
           title: task.title,
           howToType: task.howToType,
@@ -339,32 +337,30 @@ export function EventTasksScreen() {
     [reorderTasks, planId, phaseFilter, teamFilter, roleFilter],
   );
 
-  // `updateTask` (final API) has no `teamId` arg — a task's team is fixed at
-  // creation. Reassigning team is therefore a recreate: carry every editable
-  // field onto a new task under the chosen team, drop the role (it belonged to
-  // the old team), then delete the original. Stays entirely within the exposed
-  // create/delete API.
-  const handleReassignTeam = useCallback(
-    async (task: PlanTask, teamId: Id<"teams">) => {
-      if (task.teamId === teamId) return;
-      try {
-        await createTask({
-          planId,
-          teamId,
-          segment: task.segment,
-          title: task.title,
-          howToType: task.howToType,
-          howToText: task.howToText,
-          howToUrl: task.howToUrl,
-          howToMediaPath: task.howToMediaPath,
-          howToDoc: task.howToDoc,
-        });
-        await deleteTask({ taskId: task._id });
-      } catch (e: any) {
-        notifyError("Couldn't change team", e?.data?.message ?? e?.message ?? "Please try again.");
-      }
+  // Teams and roles are now multi-select edits via `updateTask` (a task can
+  // belong to several teams/roles). Toggling a team on/off keeps at least one
+  // team; toggling a role on/off freely (empty roles => a team-level task).
+  const handleToggleTeam = useCallback(
+    (task: PlanTask, teamId: Id<"teams">) => {
+      const has = task.teamIds.includes(teamId);
+      const next = has
+        ? task.teamIds.filter((t) => t !== teamId)
+        : [...task.teamIds, teamId];
+      if (next.length === 0) return; // a task must keep at least one team
+      handlePatch(task._id, { teamIds: next });
     },
-    [createTask, deleteTask, planId],
+    [handlePatch],
+  );
+
+  const handleToggleRole = useCallback(
+    (task: PlanTask, roleId: Id<"teamRoles">) => {
+      const has = task.roleIds.includes(roleId);
+      const next = has
+        ? task.roleIds.filter((r) => r !== roleId)
+        : [...task.roleIds, roleId];
+      handlePatch(task._id, { roleIds: next });
+    },
+    [handlePatch],
   );
 
   const handleBack = useCallback(() => {
@@ -460,13 +456,15 @@ export function EventTasksScreen() {
       {referencedTeamIds.map((tid) => (
         <RoleLoader key={tid} teamId={tid as Id<"teams">} onLoaded={setRolesForTeam} />
       ))}
-      {rolePicker ? (
-        <RoleLoader
-          key={`picker-${rolePicker.task.teamId}`}
-          teamId={rolePicker.task.teamId}
-          onLoaded={setRolesForTeam}
-        />
-      ) : null}
+      {rolePicker
+        ? rolePicker.task.teamIds.map((tid) => (
+            <RoleLoader
+              key={`picker-${tid}`}
+              teamId={tid}
+              onLoaded={setRolesForTeam}
+            />
+          ))
+        : null}
 
       {loading ? (
         <View style={styles.centered}>
@@ -512,42 +510,62 @@ export function EventTasksScreen() {
         />
       )}
 
-      {/* Team picker — anchored dropdown next to the pill. Changing team recreates
-          the task via handleReassignTeam (a task's team is fixed at creation). */}
-      {teamPicker ? (
-        <AnchoredMenu
-          anchor={teamPicker.anchor}
-          options={teams.map((t) => ({ id: t._id as string, name: t.name }))}
-          selectedId={teamPicker.task.teamId as string}
-          onSelect={(id) => {
-            if (id) void handleReassignTeam(teamPicker.task, id as Id<"teams">);
-            setTeamPicker(null);
-          }}
-          onClose={() => setTeamPicker(null)}
-        />
-      ) : null}
-
-      {/* Role picker — anchored dropdown with a "Team-level (no role)" clear row. */}
-      {rolePicker ? (
-        <AnchoredMenu
-          anchor={rolePicker.anchor}
-          options={(rolesByTeam[rolePicker.task.teamId as string] ?? []).map(
-            (r) => ({ id: r._id as string, name: r.name, color: r.color }),
-          )}
-          selectedId={rolePicker.task.roleId as string | undefined}
-          emptyOption={{ label: "Team-level (no role)" }}
-          onSelect={(id) => {
-            // "Team-level (no role)" sends no id → clear the role explicitly
-            // (an omitted roleId can't be distinguished from a clear intent).
-            handlePatch(
-              rolePicker.task._id,
-              id ? { roleId: id as Id<"teamRoles"> } : { clearRole: true },
+      {/* Team picker — a multi-select dropdown; a task can belong to several
+          teams. Toggling stays open (the backdrop closes it). Reads the LIVE
+          task so its checkmarks reflect each toggle. */}
+      {teamPicker
+        ? (() => {
+            const live =
+              (tasks ?? []).find((t) => t._id === teamPicker.task._id) ??
+              teamPicker.task;
+            return (
+              <AnchoredMenu
+                anchor={teamPicker.anchor}
+                options={teams.map((t) => ({ id: t._id as string, name: t.name }))}
+                selectedIds={live.teamIds as string[]}
+                onToggle={(id) => handleToggleTeam(live, id as Id<"teams">)}
+                onSelect={() => {}}
+                onClose={() => setTeamPicker(null)}
+              />
             );
-            setRolePicker(null);
-          }}
-          onClose={() => setRolePicker(null)}
-        />
-      ) : null}
+          })()
+        : null}
+
+      {/* Role picker — a multi-select dropdown over the union of roles across the
+          task's teams. No selected roles => a team-level (whole-team) task. */}
+      {rolePicker
+        ? (() => {
+            const live =
+              (tasks ?? []).find((t) => t._id === rolePicker.task._id) ??
+              rolePicker.task;
+            // Union of roles across all of the task's teams (deduped by id).
+            const roleOptions = new Map<
+              string,
+              { id: string; name: string; color?: string }
+            >();
+            for (const tid of live.teamIds) {
+              for (const r of rolesByTeam[tid as string] ?? []) {
+                roleOptions.set(r._id as string, {
+                  id: r._id as string,
+                  name: r.name,
+                  color: r.color,
+                });
+              }
+            }
+            return (
+              <AnchoredMenu
+                anchor={rolePicker.anchor}
+                options={[...roleOptions.values()]}
+                selectedIds={live.roleIds as string[]}
+                onToggle={(id) =>
+                  handleToggleRole(live, id as Id<"teamRoles">)
+                }
+                onSelect={() => {}}
+                onClose={() => setRolePicker(null)}
+              />
+            );
+          })()
+        : null}
 
       {/* Full-screen How-To doc editor. */}
       <EventTasksHowToDocEditor
