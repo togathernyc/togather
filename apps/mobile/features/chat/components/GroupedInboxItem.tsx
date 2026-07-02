@@ -114,7 +114,9 @@ function getServingChannelLabel(teamName: string, channel: ChannelData): string 
     case "announcements":
       return `#${teamSlug}-announcements`;
     case "cross_team":
-      return `#${teamSlug}-cross-team`;
+      // Cross-team channels always carry a distinct 1-50 char name; prefer it.
+      // The slug is only a fallback for the rare unnamed channel.
+      return channel.name && channel.name.trim() ? channel.name : `#${teamSlug}-cross-team`;
     default: {
       // Custom / pco_services / reach_out channels carry their own distinct
       // name from the backend — prefer it since it's already meaningful.
@@ -383,6 +385,11 @@ function GroupedInboxItemInner({
     const rowTitle = servingMode
       ? getServingChannelLabel(group.name, primaryChannel)
       : group.name;
+    // Cross-team channels aren't "Team" rooms — badge them as "Cross-team".
+    // Key on channelType, not the isShared heuristic: same-campus cross-team
+    // channels have isShared=false but should still read "Cross-team".
+    const badgeLabel =
+      primaryChannel.channelType === "cross_team" ? "Cross-team" : group.groupTypeName;
 
     // When the group has inbox resources, wrap the row + resource sub-rows in a
     // container so they read as one inbox item.
@@ -434,7 +441,7 @@ function GroupedInboxItemInner({
             )}
             <View style={[styles.badge, { backgroundColor: badgeColors.bg }]}>
               <Text style={[styles.badgeText, { color: badgeColors.text }]}>
-                {group.groupTypeName}
+                {badgeLabel}
               </Text>
             </View>
           </View>
