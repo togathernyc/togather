@@ -100,11 +100,12 @@ const SECTIONS: Array<{ key: Section; label: string }> = [
   { key: "allTeams", label: "All teams" },
 ];
 
-/** A whole-team task (from `getSharedTeamTasks`). Completion is team-wide. */
+/** A whole-team task (from `getSharedTeamTasks`). Completion is team-wide. A
+ *  team-level task may span multiple teams (still one shared checkbox). */
 type SharedTask = {
   taskId: string;
-  teamId: string;
-  teamName: string;
+  teamIds: string[];
+  teamNames: string[];
   title: string;
   segment: Segment;
   howToType: HowToType;
@@ -145,7 +146,8 @@ type TeamTask = {
   taskId: string;
   title: string;
   segment: Segment;
-  roleName: string | null;
+  /** Role(s) responsible on this team; empty => team-level. */
+  roleNames: string[];
   completed: boolean;
   howToType: HowToType;
 };
@@ -1547,7 +1549,7 @@ function TeamRow({
               <ReadOnlyTaskItem
                 key={t.taskId}
                 title={t.title}
-                meta={t.roleName ?? undefined}
+                meta={t.roleNames.length > 0 ? t.roleNames.join(", ") : undefined}
                 completed={t.completed}
                 howToType={t.howToType}
                 colors={colors}

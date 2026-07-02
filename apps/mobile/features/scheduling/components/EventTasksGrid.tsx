@@ -67,17 +67,18 @@ function teamColor(teamId: string): string {
 }
 
 /**
- * A hydrated task row (mirrors `listPlanTasks`). `teamName` / `roleName` are the
- * hydrated display labels the backend attaches; they may be absent until Agent
- * A's real hydration lands, so treat them as optional.
+ * A hydrated task row (mirrors `listPlanTasks`). A task targets one or more
+ * teams (`teamIds`, always >= 1) and zero or more roles (`roleIds`); an empty
+ * `roleIds` means a team-level task. `teamNames` / `roleNames` are the hydrated
+ * display labels, parallel to the id arrays.
  */
 export type PlanTask = {
   _id: Id<"eventTasks">;
   planId: Id<"eventPlans">;
-  teamId: Id<"teams">;
-  teamName?: string;
-  roleId?: Id<"teamRoles">;
-  roleName?: string;
+  teamIds: Id<"teams">[];
+  teamNames: string[];
+  roleIds: Id<"teamRoles">[];
+  roleNames: string[];
   segment: Segment;
   title: string;
   howToType: HowToType;
@@ -93,9 +94,10 @@ export type RoleOption = { _id: Id<"teamRoles">; name: string; color?: string };
 /** Fields a row can patch through `updateTask`. */
 export type TaskPatch = {
   title?: string;
-  roleId?: Id<"teamRoles">;
-  /** Convert a role-scoped task back to team-level (see updateTask). */
-  clearRole?: boolean;
+  /** Replace the task's team(s). Must stay non-empty. */
+  teamIds?: Id<"teams">[];
+  /** Replace the task's role(s). Empty => team-level. */
+  roleIds?: Id<"teamRoles">[];
   segment?: Segment;
 } & HowToPatch;
 
@@ -164,18 +166,22 @@ export function EventTasksGrid({
     const groups: Record<Segment, PlanTask[]> = { before: [], during: [], after: [] };
     for (const t of tasks) (groups[t.segment] ?? groups.during).push(t);
     const teamRank = new Map(teams.map((t, i) => [t._id as string, i]));
+    // Group by the task's first team (multi-team tasks sort by their leading
+    // team) so the grid still reads as a grouped database.
     for (const seg of Object.keys(groups) as Segment[]) {
       groups[seg] = groups[seg]
         .map((t, i) => ({ t, i }))
         .sort((a, b) => {
-          const ta = teamRank.get(a.t.teamId as string) ?? 999;
-          const tb = teamRank.get(b.t.teamId as string) ?? 999;
+          const ta = teamRank.get(a.t.teamIds[0] as string) ?? 999;
+          const tb = teamRank.get(b.t.teamIds[0] as string) ?? 999;
           if (ta !== tb) return ta - tb;
-          // Team-level tasks (no role) sort before role-scoped ones.
-          const ra = a.t.roleId ? 1 : 0;
-          const rb = b.t.roleId ? 1 : 0;
+          // Team-level tasks (no roles) sort before role-scoped ones.
+          const ra = a.t.roleIds.length > 0 ? 1 : 0;
+          const rb = b.t.roleIds.length > 0 ? 1 : 0;
           if (ra !== rb) return ra - rb;
-          const na = (a.t.roleName ?? "").localeCompare(b.t.roleName ?? "");
+          const na = (a.t.roleNames[0] ?? "").localeCompare(
+            b.t.roleNames[0] ?? "",
+          );
           if (na !== 0) return na;
           return a.i - b.i;
         })
@@ -227,30 +233,61 @@ export function EventTasksGrid({
         );
       }
       case "team": {
-        const teamName =
-          task.teamName ?? teams.find((t) => t._id === task.teamId)?.name;
+        const chips = task.teamIds.map((id, i) => ({
+          id: id as string,
+          label:
+            task.teamNames[i] ??
+            teams.find((t) => t._id === id)?.name ??
+            "Team",
+          color: teamColor(id as string),
+        }));
         return (
-          <PickerPill
-            value={teamName}
-            placeholder="Pick team"
-            color={teamName ? teamColor(task.teamId as string) : undefined}
-            onPress={(anchor) => onPickTeam(task, anchor)}
+          <ChipCell
+            chips={chips}
+            addLabel="Team"
+            // A task must keep at least one team — block removing the last.
+            onRemove={
+              task.teamIds.length > 1
+                ? (id) =>
+                    onPatch(task._id, {
+                      teamIds: task.teamIds.filter((t) => (t as string) !== id),
+                    })
+                : undefined
+            }
+            onAdd={(anchor) => onPickTeam(task, anchor)}
             colors={colors}
             primaryColor={primaryColor}
           />
         );
       }
       case "role": {
-        const role = rolesByTeam[task.teamId as string]?.find(
-          (rl) => rl._id === task.roleId,
-        );
-        const roleLabel = task.roleName ?? role?.name;
+        // Resolve each role's color from the loaded roles across the task's
+        // teams (roles are fetched per team into `rolesByTeam`).
+        const roleColor = (roleId: string): string | undefined => {
+          for (const tid of task.teamIds) {
+            const found = rolesByTeam[tid as string]?.find(
+              (rl) => (rl._id as string) === roleId,
+            );
+            if (found) return found.color;
+          }
+          return undefined;
+        };
+        const chips = task.roleIds.map((id, i) => ({
+          id: id as string,
+          label: task.roleNames[i] ?? "Role",
+          dotColor: roleColor(id as string),
+        }));
         return (
-          <PickerPill
-            value={roleLabel}
-            placeholder="Team-level"
-            dotColor={role?.color}
-            onPress={(anchor) => onPickRole(task, anchor)}
+          <ChipCell
+            chips={chips}
+            addLabel="Role"
+            emptyPlaceholder="Team-level"
+            onRemove={(id) =>
+              onPatch(task._id, {
+                roleIds: task.roleIds.filter((r) => (r as string) !== id),
+              })
+            }
+            onAdd={(anchor) => onPickRole(task, anchor)}
             colors={colors}
             primaryColor={primaryColor}
           />
@@ -385,46 +422,80 @@ function PhasePill({
   );
 }
 
-export function PickerPill({
-  value,
-  placeholder,
-  onPress,
+/**
+ * A cell that renders a wrapping set of removable chips (teams or roles) plus a
+ * compact "+ Add" pill that measures its own window rect so the parent can
+ * anchor a multi-select menu to it. When there are no chips, an optional
+ * `emptyPlaceholder` label renders on the add pill (e.g. "Team-level").
+ */
+function ChipCell({
+  chips,
+  addLabel,
+  emptyPlaceholder,
+  onRemove,
+  onAdd,
   colors,
   primaryColor,
-  color,
-  dotColor,
 }: {
-  value?: string;
-  placeholder: string;
-  /** Called with the pill's measured window rect so the caller can anchor a menu. */
-  onPress: (anchor: AnchorRect) => void;
+  chips: Array<{ id: string; label: string; color?: string; dotColor?: string }>;
+  addLabel: string;
+  emptyPlaceholder?: string;
+  /** Omit to disable removal (e.g. can't remove a task's last team). */
+  onRemove?: (id: string) => void;
+  onAdd: (anchor: AnchorRect) => void;
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
-  /** Full tag color (hex) — soft tinted background + readable text (teams). */
-  color?: string;
-  /** Optional leading swatch (role color). */
-  dotColor?: string;
 }) {
-  const filled = !!value;
-  const ref = React.useRef<View>(null);
+  const addRef = React.useRef<View>(null);
   return (
-    <Pressable
-      ref={ref}
-      onPress={() => measureAnchor(ref.current, onPress)}
-      style={styles.tagPressable}
-      accessibilityRole="button"
-      accessibilityLabel={`${value ?? placeholder}. Tap to change.`}
-    >
-      <OptionTag
-        label={value ?? placeholder}
-        colors={colors}
-        primaryColor={primaryColor}
-        color={filled ? color : undefined}
-        dotColor={filled ? dotColor : undefined}
-        chevron
-        placeholder={!filled}
-      />
-    </Pressable>
+    <View style={styles.chipWrap}>
+      {chips.map((chip) => (
+        <View
+          key={chip.id}
+          style={[
+            styles.chip,
+            chip.color
+              ? { backgroundColor: chip.color + "22", borderColor: chip.color + "55" }
+              : { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+          ]}
+        >
+          {chip.dotColor ? (
+            <View style={[styles.chipDot, { backgroundColor: chip.dotColor }]} />
+          ) : null}
+          <Text
+            style={[styles.chipText, { color: colors.text }]}
+            numberOfLines={1}
+          >
+            {chip.label}
+          </Text>
+          {onRemove ? (
+            <Pressable
+              onPress={() => onRemove(chip.id)}
+              hitSlop={6}
+              accessibilityLabel={`Remove ${chip.label}`}
+            >
+              <Ionicons name="close" size={13} color={colors.textSecondary} />
+            </Pressable>
+          ) : null}
+        </View>
+      ))}
+      <Pressable
+        ref={addRef}
+        onPress={() => measureAnchor(addRef.current, onAdd)}
+        style={[styles.chipAdd, { borderColor: primaryColor }]}
+        accessibilityRole="button"
+        accessibilityLabel={
+          chips.length === 0 && emptyPlaceholder
+            ? emptyPlaceholder
+            : `Add ${addLabel.toLowerCase()}`
+        }
+      >
+        <Ionicons name="add" size={13} color={primaryColor} />
+        <Text style={[styles.chipAddText, { color: primaryColor }]}>
+          {chips.length === 0 && emptyPlaceholder ? emptyPlaceholder : addLabel}
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -512,6 +583,32 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   addTaskText: { fontSize: 15, fontWeight: "600" },
+  // Multi-chip team/role cells.
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingLeft: 8,
+    paddingRight: 6,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxWidth: "100%",
+  },
+  chipDot: { width: 8, height: 8, borderRadius: 4 },
+  chipText: { fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  chipAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
+  },
+  chipAddText: { fontSize: 12, fontWeight: "600" },
   optionScroll: { maxHeight: 360 },
   optionRow: {
     flexDirection: "row",
