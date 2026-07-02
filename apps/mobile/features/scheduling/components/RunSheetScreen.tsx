@@ -8,15 +8,16 @@
  * toggle: rows show clock times from the earliest start, and the header shows
  * every service as a start–end range that grows as items/durations change.
  *
- * Editing is spreadsheet-style and inline: title, duration, description, and
- * song key are edited in place (debounced autosave via `updateItem`); rows
- * expand for role links and notes. Reordering is drag-and-drop from a grip
- * handle (web + native, see `RunSheetDragList`). Each row can be duplicated or
- * deleted. There is no modal sub-page.
+ * Editing is spreadsheet-style: the run sheet is one continuous `GridScrollList`
+ * table (Item / When / Time / Dur / Owner-Role / Notes / Song / actions) modelled
+ * on the events-os Run of Show. There are no segment-heading rows — a row's phase
+ * is the "When" column. Duration and title edit inline; When, Who, Notes, and Song
+ * open focused modals. Reordering is drag-and-drop from a grip in the first cell
+ * (web + native). Each row can be duplicated or deleted from the actions column.
  *
  * Route: /rostering/[group_id]/run-sheet/[plan_id]
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -27,6 +28,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  type TextStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -43,22 +45,23 @@ import { DEFAULT_ROLE_COLOR, formatEventDateLong } from "../utils/format";
 import {
   computeSegmentedClockTimes,
   formatClockTime,
-  formatDuration,
   formatServiceRanges,
   totalDurationSec,
 } from "../utils/runSheetTiming";
 import { useAuth } from "@providers/AuthProvider";
 import { InlineText } from "./InlineText";
-import { RunSheetDragList } from "./RunSheetDragList";
+import { GridScrollList, OptionTag, type GridColumn } from "./GridScrollList";
+import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import { SongPicker } from "./SongPicker";
+import { CustomModal } from "@components/ui/Modal";
 import type { Song } from "@features/songs/types";
 
 /** When an item happens relative to the event's service times. */
 type Segment = "before" | "during" | "after";
-const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
-  { key: "before", label: "Before event" },
-  { key: "during", label: "During event" },
-  { key: "after", label: "After event" },
+const SEGMENT_OPTIONS: Array<{ key: Segment; label: string; short: string }> = [
+  { key: "before", label: "Before event", short: "Before" },
+  { key: "during", label: "During event", short: "During" },
+  { key: "after", label: "After event", short: "After" },
 ];
 
 /**
@@ -184,6 +187,36 @@ export function RunSheetScreen() {
   // Which phase the "Add" buttons create into.
   const [addSegment, setAddSegment] = useState<Segment>("during");
 
+  // Cell-tap modals. Each holds the item whose Who / Notes / Song is being
+  // edited; the live item is re-derived from `items` at render so a deleted or
+  // moved row closes its modal instead of showing stale data.
+  const [whoItem, setWhoItem] = useState<RunSheetItem | null>(null);
+  const [notesItem, setNotesItem] = useState<RunSheetItem | null>(null);
+  const [songItem, setSongItem] = useState<RunSheetItem | null>(null);
+  // The "When" picker is an anchored dropdown next to its pill (not a modal), so
+  // it tracks both the item and the pill's measured window rect.
+  const [whenMenu, setWhenMenu] = useState<{
+    item: RunSheetItem;
+    anchor: AnchorRect;
+  } | null>(null);
+
+  // One continuous events-os-style table (after the auto drag-grip). Widths are
+  // fixed pixels; the table scrolls horizontally when it overflows the card, and
+  // the flex columns (Item / Notes) absorb any leftover slack when it fits.
+  const columns: GridColumn[] = useMemo(
+    () => [
+      { key: "item", label: "Item", width: 220, flex: 3 },
+      { key: "when", label: "When", width: 104 },
+      { key: "time", label: "Time", width: 96, align: "center" },
+      { key: "dur", label: "Dur", width: 84, align: "center" },
+      { key: "who", label: "Owner / Role", width: 176 },
+      { key: "notes", label: "Notes", width: 240, flex: 3 },
+      { key: "song", label: "Song", width: 150 },
+      { key: "actions", label: "", width: 64, align: "center" },
+    ],
+    [],
+  );
+
   const handleBack = useCallback(() => {
     if (router.canGoBack()) router.back();
   }, [router]);
@@ -242,16 +275,14 @@ export function RunSheetScreen() {
       })),
     [event?.roles],
   );
-  const peopleByRole = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    for (const r of roleOptions) map[r.roleId as string] = r.people;
-    return map;
-  }, [roleOptions]);
 
   const patchItem = useCallback(
     (itemId: Id<"eventItems">, patch: ItemPatch) =>
       updateItem({ itemId, ...patch }).catch((e: any) =>
-        notifyError("Couldn't save", e?.data?.message ?? e?.message ?? "Please try again."),
+        notifyError(
+          "Couldn't save",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
       ),
     [updateItem],
   );
@@ -305,46 +336,51 @@ export function RunSheetScreen() {
     [deleteItem],
   );
 
-  // The unified list interleaves phase-header rows (keyed `seg:<phase>`) with
-  // item rows. After a drag, walk the new key order: each header switches the
-  // running phase, and every item that follows takes it — so dragging an item
-  // past a header moves it into that phase.
+  // Flat rows for the single table, ordered by phase (before → during → after)
+  // then existing sequence. There are no heading rows: a row's phase lives in the
+  // "When" column and is changed there, not by dragging.
+  const rows = useMemo(
+    () =>
+      itemsBySegment.before.concat(itemsBySegment.during, itemsBySegment.after),
+    [itemsBySegment],
+  );
+
+  // Drag only reorders within the existing phases — each row keeps its current
+  // segment (phase is changed via the When column instead).
   const handleReorder = useCallback(
     (orderedKeys: string[]) => {
-      const orderedItems: Array<{ id: Id<"eventItems">; segment: Segment }> = [];
-      let current: Segment = "before";
-      for (const key of orderedKeys) {
-        if (key.startsWith("seg:")) {
-          current = key.slice(4) as Segment;
-        } else {
-          orderedItems.push({ id: key as Id<"eventItems">, segment: current });
-        }
-      }
+      const byId = new Map(rows.map((it) => [it._id as string, it]));
+      const orderedItems = orderedKeys
+        .map((id) => byId.get(id))
+        .filter((it): it is RunSheetItem => it != null)
+        .map((it) => ({
+          id: it._id,
+          segment: (it.segment as Segment) ?? "during",
+        }));
       return reorderItems({ planId, orderedItems }).catch((e: any) =>
         notifyError("Couldn't reorder", e?.message ?? "Please try again."),
       );
     },
-    [reorderItems, planId],
+    [reorderItems, planId, rows],
   );
 
-  // Flat rows for the single drag list: each phase's header followed by its
-  // items. Phase headers are always present so an empty phase is still a drop
-  // target — you can drag the first item into it.
-  const rows = useMemo(() => {
-    type Row =
-      | { kind: "header"; segment: Segment; key: string }
-      | { kind: "item"; item: RunSheetItem; key: string };
-    const out: Row[] = [];
-    for (const seg of SEGMENT_OPTIONS) {
-      out.push({ kind: "header", segment: seg.key, key: `seg:${seg.key}` });
-      for (const it of itemsBySegment[seg.key]) {
-        out.push({ kind: "item", item: it, key: it._id as string });
-      }
-    }
-    return out;
-  }, [itemsBySegment]);
-
   const loading = event === undefined || items === undefined;
+
+  // Re-derive each modal's live item from the current `items` so a row that was
+  // deleted or reordered elsewhere closes its modal instead of editing a stale
+  // snapshot. `null` when the item is gone → the modal hides.
+  const whoLive = whoItem
+    ? (items?.find((i) => i._id === whoItem._id) ?? null)
+    : null;
+  const notesLive = notesItem
+    ? (items?.find((i) => i._id === notesItem._id) ?? null)
+    : null;
+  const songLive = songItem
+    ? (items?.find((i) => i._id === songItem._id) ?? null)
+    : null;
+  const whenLive = whenMenu
+    ? (items?.find((i) => i._id === whenMenu.item._id) ?? null)
+    : null;
 
   return (
     <View
@@ -484,45 +520,309 @@ export function RunSheetScreen() {
             );
           }
 
-          // One drag list over all phases. Phase headings are drop zones: drag
-          // an item past one to change its phase.
-          return (
-            <RunSheetDragList
-              data={rows}
-              keyExtractor={(r) => r.key}
-              onReorder={handleReorder}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={listFooter}
-              contentContainerStyle={contentStyle}
-              renderRow={({ item: row, Handle, isActive }) =>
-                row.kind === "header" ? (
-                  <Text
-                    style={[styles.segmentLabel, { color: colors.textSecondary }]}
-                  >
-                    {SEGMENT_OPTIONS.find((s) => s.key === row.segment)?.label.toUpperCase()}
-                  </Text>
-                ) : (
-                  <EditableRow
-                    item={row.item}
-                    clockMs={clockTimes[row.item._id]}
-                    communityId={communityId}
-                    groupId={group_id ?? ""}
-                    roleOptions={roleOptions}
-                    peopleByRole={peopleByRole}
-                    autoFocus={focusId === (row.item._id as string)}
-                    isActive={isActive}
-                    Handle={Handle}
-                    onPatch={(patch) => patchItem(row.item._id, patch)}
-                    onDuplicate={() => handleDuplicate(row.item._id)}
-                    onDelete={() => handleDelete(row.item)}
+          // One continuous events-os-style table. Each row's phase is the "When"
+          // column (no heading rows). renderCell returns cell CONTENT only — the
+          // primitive draws the sized, padded cell frame.
+          const renderCell = (
+            item: RunSheetItem,
+            key: string,
+          ): React.ReactNode => {
+            const isHeader = item.type === "header";
+            const isSong = item.type === "song";
+            switch (key) {
+              case "item":
+                return (
+                  <InlineText
+                    value={item.title}
+                    onSave={(t) => {
+                      patchItem(item._id, { title: t });
+                    }}
+                    placeholder={isHeader ? "Section name" : "Item title"}
+                    autoFocus={focusId === (item._id as string)}
+                    maxLength={120}
+                    required
+                    accessibilityLabel="Item title"
+                    style={[
+                      styles.titleInput,
+                      isHeader && styles.headerTitleInput,
+                      { color: colors.text },
+                    ]}
                   />
-                )
+                );
+              case "when": {
+                const short =
+                  SEGMENT_OPTIONS.find((s) => s.key === item.segment)?.short ??
+                  "During";
+                return (
+                  <WhenPill
+                    label={short}
+                    colors={colors}
+                    primaryColor={primaryColor}
+                    onOpen={(anchor) => setWhenMenu({ item, anchor })}
+                  />
+                );
               }
+              case "time": {
+                if (isHeader) return null;
+                const ms = clockTimes[item._id];
+                // A single, quiet read-only clock value ("9:00 AM") — no boxed
+                // pill, so it stays contained and doesn't compete with the
+                // editable Dur input beside it.
+                return (
+                  <Text
+                    style={[styles.timeText, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {ms != null ? formatClockTime(ms) : "—"}
+                  </Text>
+                );
+              }
+              case "dur":
+                if (isHeader) return null;
+                return (
+                  <DurationCell
+                    durationSec={item.durationSec}
+                    onSave={(sec) => patchItem(item._id, { durationSec: sec })}
+                    colors={colors}
+                  />
+                );
+              case "who":
+                return (
+                  <Pressable
+                    onPress={() => setWhoItem(item)}
+                    style={styles.cellPressable}
+                    accessibilityLabel="Edit owner / role"
+                  >
+                    {item.assignments.length > 0 ? (
+                      <View style={styles.whoChips}>
+                        {item.assignments.slice(0, 2).map((a) => (
+                          <OptionTag
+                            key={a.roleId}
+                            label={a.roleName}
+                            colors={colors}
+                            primaryColor={primaryColor}
+                            color={a.roleColor ?? DEFAULT_ROLE_COLOR}
+                          />
+                        ))}
+                        {item.assignments.length > 2 ? (
+                          <Text style={[styles.muted, { color: colors.textTertiary }]}>
+                            +{item.assignments.length - 2}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : (
+                      <OptionTag
+                        label="＋"
+                        colors={colors}
+                        primaryColor={primaryColor}
+                        placeholder
+                      />
+                    )}
+                  </Pressable>
+                );
+              case "notes":
+                return (
+                  <Pressable
+                    onPress={() => setNotesItem(item)}
+                    style={styles.cellPressable}
+                    accessibilityLabel="Edit notes"
+                  >
+                    <Text
+                      numberOfLines={2}
+                      style={[
+                        styles.cellText,
+                        {
+                          color: item.description
+                            ? colors.text
+                            : colors.textTertiary,
+                        },
+                      ]}
+                    >
+                      {item.description && item.description.length > 0
+                        ? item.description
+                        : "Add notes"}
+                      {item.notes.length > 0 ? ` · ${item.notes.length} cues` : ""}
+                    </Text>
+                  </Pressable>
+                );
+              case "song": {
+                if (!isSong) {
+                  return (
+                    <Text style={[styles.muted, { color: colors.textTertiary }]}>—</Text>
+                  );
+                }
+                const resolvedKey = item.songDetails?.key ?? item.song?.defaultKey;
+                return (
+                  <Pressable
+                    onPress={() => setSongItem(item)}
+                    style={styles.cellPressable}
+                    accessibilityLabel="Edit song"
+                  >
+                    {item.song ? (
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.cellText, { color: colors.text }]}
+                      >
+                        {item.song.title}
+                        {resolvedKey ? ` · ${resolvedKey}` : ""}
+                      </Text>
+                    ) : (
+                      <Text style={[styles.muted, { color: colors.textTertiary }]}>
+                        ＋ Song
+                      </Text>
+                    )}
+                  </Pressable>
+                );
+              }
+              case "actions":
+                return (
+                  <View style={styles.actionsRow}>
+                    <Pressable
+                      onPress={() => handleDuplicate(item._id)}
+                      hitSlop={6}
+                      style={styles.actionBtn}
+                      accessibilityLabel="Duplicate"
+                    >
+                      <Ionicons name="copy-outline" size={16} color={colors.textTertiary} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleDelete(item)}
+                      hitSlop={6}
+                      style={styles.actionBtn}
+                      accessibilityLabel="Delete"
+                    >
+                      <Ionicons name="trash-outline" size={16} color={colors.destructive} />
+                    </Pressable>
+                  </View>
+                );
+              default:
+                return null;
+            }
+          };
+
+          return (
+            <GridScrollList<RunSheetItem>
+              data={rows}
+              keyExtractor={(it) => it._id as string}
+              onReorder={handleReorder}
+              columns={columns}
+              renderCell={renderCell}
+              ListHeaderComponent={listHeader}
+              // The add controls are fixed below the table card, so they carry
+              // the bottom safe-area inset here (the rows scroll inside the card).
+              ListFooterComponent={
+                <View style={{ paddingBottom: insets.bottom + 8 }}>
+                  {listFooter}
+                </View>
+              }
+              // Vertical padding only — horizontal padding would shift the rows
+              // out of alignment with the pinned header.
+              contentContainerStyle={styles.gridContent}
             />
           );
         })()
       )}
+
+      {/* Who's-involved (roles) editor — multi-select, opened from the Who cell.
+          The live item is re-derived so a deleted/moved row closes the modal. */}
+      <CustomModal
+        visible={whoLive !== null}
+        onClose={() => setWhoItem(null)}
+        title="Who's involved"
+      >
+        {whoLive ? (
+          <WhoModalBody
+            key={whoLive._id}
+            item={whoLive}
+            roleOptions={roleOptions}
+            onPatch={(patch) => patchItem(whoLive._id, patch)}
+          />
+        ) : null}
+      </CustomModal>
+
+      {/* Notes editor — timing phase, description, and role-categorized cues. */}
+      <CustomModal
+        visible={notesLive !== null}
+        onClose={() => setNotesItem(null)}
+        title="Notes"
+      >
+        {notesLive ? (
+          <NotesModalBody
+            key={notesLive._id}
+            item={notesLive}
+            onPatch={(patch) => patchItem(notesLive._id, patch)}
+          />
+        ) : null}
+      </CustomModal>
+
+      {/* Song editor — library link plus per-service key / BPM overrides. */}
+      <CustomModal
+        visible={songLive !== null}
+        onClose={() => setSongItem(null)}
+        title="Song"
+      >
+        {songLive ? (
+          <SongModalBody
+            key={songLive._id}
+            item={songLive}
+            communityId={communityId}
+            groupId={group_id ?? ""}
+            onPatch={(patch) => patchItem(songLive._id, patch)}
+          />
+        ) : null}
+      </CustomModal>
+
+      {/* When picker — an anchored dropdown next to the pill that moves the row
+          between the before / during / after phases. */}
+      {whenMenu && whenLive ? (
+        <AnchoredMenu
+          anchor={whenMenu.anchor}
+          options={SEGMENT_OPTIONS.map((s) => ({ id: s.key, name: s.label }))}
+          selectedId={whenLive.segment}
+          onSelect={(id) => {
+            if (id) patchItem(whenLive._id, { segment: id as Segment });
+            setWhenMenu(null);
+          }}
+          onClose={() => setWhenMenu(null)}
+        />
+      ) : null}
     </View>
+  );
+}
+
+/**
+ * The "When" phase pill. Measures its own window rect on press so the parent can
+ * anchor the dropdown next to it (the pill can't hold the menu itself — the
+ * table card clips overflow).
+ */
+function WhenPill({
+  label,
+  colors,
+  primaryColor,
+  onOpen,
+}: {
+  label: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+  primaryColor: string;
+  onOpen: (anchor: AnchorRect) => void;
+}) {
+  const ref = React.useRef<View>(null);
+  return (
+    <Pressable
+      ref={ref}
+      onPress={() => measureAnchor(ref.current, onOpen)}
+      style={styles.tagPressable}
+      accessibilityRole="button"
+      accessibilityLabel={`When: ${label}. Tap to change.`}
+    >
+      <OptionTag
+        label={label}
+        colors={colors}
+        primaryColor={primaryColor}
+        tinted
+        chevron
+      />
+    </Pressable>
   );
 }
 
@@ -549,326 +849,231 @@ function AddButton({
   );
 }
 
-/** One inline-editable run sheet row. */
-function EditableRow({
+/**
+ * Who's-involved editor body (roles multi-select).
+ *
+ * Seeds a local Set from the item's current assignments so rapid toggles
+ * compound instead of each restarting from the last server-synced value (which
+ * lags a mutation round-trip). Remounted per item via a `key` at the call site,
+ * so it re-seeds whenever a different row's modal opens.
+ */
+function WhoModalBody({
   item,
-  clockMs,
-  communityId,
-  groupId,
   roleOptions,
-  peopleByRole,
-  autoFocus,
-  isActive,
-  Handle,
   onPatch,
-  onDuplicate,
-  onDelete,
 }: {
   item: RunSheetItem;
-  clockMs: number | null;
-  communityId: string;
-  groupId: string;
   roleOptions: RoleOption[];
-  peopleByRole: Record<string, string[]>;
-  autoFocus: boolean;
-  isActive: boolean;
-  Handle: React.ComponentType<{ children: React.ReactNode }>;
   onPatch: (patch: ItemPatch) => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
 }) {
   const { colors } = useTheme();
-  const [expanded, setExpanded] = useState(false);
-  const isHeader = item.type === "header";
-  const isSong = item.type === "song";
-
-  // Local selection state so rapid toggles compound instead of each starting
-  // from the last server-synced `item.assignments` (which lags a mutation
-  // round-trip and would drop quick successive taps). Re-syncs only when the
-  // server's set genuinely changes (e.g. another device edited it).
-  const serverRoleKey = item.assignments.map((a) => a.roleId).join(",");
-  const [linkedRoleIds, setLinkedRoleIds] = useState<Set<string>>(
+  const [linked, setLinked] = useState<Set<string>>(
     () => new Set(item.assignments.map((a) => a.roleId as string)),
   );
-  useEffect(() => {
-    setLinkedRoleIds(new Set(serverRoleKey ? serverRoleKey.split(",") : []));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverRoleKey]);
 
-  const toggleRole = (roleId: string) => {
-    const next = new Set(linkedRoleIds);
+  const toggle = (roleId: string) => {
+    const next = new Set(linked);
     if (next.has(roleId)) next.delete(roleId);
     else next.add(roleId);
-    setLinkedRoleIds(next);
+    setLinked(next);
     onPatch({
       assignments: [...next].map((id) => ({ roleId: id as Id<"teamRoles"> })),
     });
   };
 
+  if (roleOptions.length === 0) {
+    return (
+      <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        No roles are defined for this event yet.
+      </Text>
+    );
+  }
+
   return (
-    <View
-      style={[
-        styles.row,
-        {
-          backgroundColor: isHeader ? "transparent" : colors.surfaceSecondary,
-          opacity: isActive ? 0.6 : 1,
-          borderColor: colors.border,
-        },
-        isHeader && styles.headerRow,
-      ]}
-    >
-      <View style={styles.rowTop}>
-        {/* Drag grip */}
-        <Handle>
-          <View
-            style={styles.grip}
-            accessibilityLabel="Drag to reorder"
-            hitSlop={10}
+    <View style={styles.roleWrap}>
+      {roleOptions.map((r) => {
+        const selected = linked.has(r.roleId as string);
+        const swatch = r.roleColor ?? DEFAULT_ROLE_COLOR;
+        return (
+          <Pressable
+            key={r.roleId}
+            onPress={() => toggle(r.roleId as string)}
+            style={styles.rolePressable}
           >
-            <Ionicons name="reorder-three" size={20} color={colors.textTertiary} />
-          </View>
-        </Handle>
-
-        {/* Time */}
-        <View style={styles.timeCol}>
-          <Text style={[styles.timeText, { color: isHeader ? colors.textTertiary : colors.text }]}>
-            {clockMs != null ? formatClockTime(clockMs) : "—"}
-          </Text>
-        </View>
-
-        {/* Title (inline) */}
-        <View style={styles.titleCol}>
-          <InlineText
-            value={item.title}
-            onSave={(t) => onPatch({ title: t })}
-            placeholder={isHeader ? "Section name" : "Item title"}
-            autoFocus={autoFocus}
-            maxLength={120}
-            required
-            accessibilityLabel="Item title"
-            style={[
-              styles.titleInput,
-              isHeader && styles.headerTitleInput,
-              { color: colors.text },
-            ]}
-          />
-        </View>
-
-        {/* Duration (inline m:ss) — hidden for headers */}
-        {!isHeader ? (
-          <View style={styles.durationCol}>
-            <DurationCell
-              durationSec={item.durationSec}
-              onSave={(sec) => onPatch({ durationSec: sec })}
-              colors={colors}
-            />
-          </View>
-        ) : null}
-
-        {/* Row actions */}
-        <View style={styles.actions}>
-          {!isHeader ? (
-            <Pressable
-              onPress={() => setExpanded((v) => !v)}
-              hitSlop={6}
-              style={styles.actionBtn}
-              accessibilityLabel={expanded ? "Collapse" : "Expand details"}
+            <View
+              style={[
+                styles.roleChip,
+                {
+                  backgroundColor: selected ? swatch + "22" : colors.surface,
+                  borderColor: selected ? swatch : colors.border,
+                },
+              ]}
             >
-              <Ionicons
-                name={expanded ? "chevron-up" : "chevron-down"}
-                size={18}
-                color={colors.textTertiary}
-              />
-            </Pressable>
-          ) : null}
-          <Pressable onPress={onDuplicate} hitSlop={6} style={styles.actionBtn} accessibilityLabel="Duplicate">
-            <Ionicons name="copy-outline" size={17} color={colors.textTertiary} />
-          </Pressable>
-          <Pressable onPress={onDelete} hitSlop={6} style={styles.actionBtn} accessibilityLabel="Delete">
-            <Ionicons name="close" size={18} color={colors.textTertiary} />
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Linked people (always visible when present) */}
-      {!isHeader && item.assignments.length > 0 ? (
-        <View style={styles.assignWrap}>
-          {item.assignments.map((a) => {
-            const names = peopleByRole[a.roleId as string] ?? [];
-            return (
-              <View
-                key={a.roleId}
-                style={[
-                  styles.assignChip,
-                  { backgroundColor: (a.roleColor ?? DEFAULT_ROLE_COLOR) + "22" },
-                ]}
+              <View style={[styles.roleSwatch, { backgroundColor: swatch }]} />
+              <Text
+                style={[styles.roleChipText, { color: colors.text }]}
+                numberOfLines={1}
               >
-                <View style={[styles.assignSwatch, { backgroundColor: a.roleColor ?? DEFAULT_ROLE_COLOR }]} />
-                <Text style={[styles.assignText, { color: colors.text }]} numberOfLines={1}>
-                  {a.roleName}
-                  {names.length > 0 ? `: ${names.join(", ")}` : ""}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-      ) : null}
-
-      {/* Expanded inline editors */}
-      {expanded && !isHeader ? (
-        <View style={styles.expanded}>
-          {/* Timing phase — before / during / after the event (PCO's position). */}
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
-            Timing
-          </Text>
-          <View style={styles.timingToggle}>
-            {SEGMENT_OPTIONS.map((seg) => {
-              const active = (item.segment as Segment) === seg.key;
-              return (
-                <Pressable
-                  key={seg.key}
-                  onPress={() => onPatch({ segment: seg.key })}
-                  style={styles.timingPressable}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                >
-                  <View
-                    style={[
-                      styles.timingChip,
-                      {
-                        borderColor: active ? colors.buttonPrimary : colors.border,
-                        backgroundColor: active
-                          ? colors.buttonPrimary + "1F"
-                          : "transparent",
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.timingChipText,
-                        { color: active ? colors.buttonPrimary : colors.textSecondary },
-                      ]}
-                    >
-                      {seg.label}
-                    </Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {isSong ? (
-            <>
-              {/* Link this row to a library song (ADR-027). Free-typed rows
-                  (no songId) keep working — the picker just stays unlinked. */}
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Song</Text>
-              <SongPicker
-                communityId={communityId}
-                groupId={groupId}
-                songId={item.songId}
-                song={item.song}
-                onSelect={(songId) =>
-                  onPatch({ songId: songId as Id<"songs"> | null })
-                }
-              />
-
-              {/* Key / BPM. When a song is linked these are PER-SERVICE
-                  OVERRIDES: the value is only the override (blank if none),
-                  the placeholder is the song's default, and saving writes
-                  songDetails. Display elsewhere resolves override ?? default. */}
-              <View style={styles.songRow}>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
-                <InlineText
-                  value={item.songDetails?.key ?? ""}
-                  onSave={(key) =>
-                    onPatch({
-                      songDetails: { key: key.trim() || undefined, bpm: item.songDetails?.bpm },
-                    })
-                  }
-                  placeholder={item.song?.defaultKey ?? "—"}
-                  maxLength={8}
-                  accessibilityLabel="Song key"
-                  style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
-                />
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>BPM</Text>
-                <InlineText
-                  value={item.songDetails?.bpm ? String(item.songDetails.bpm) : ""}
-                  onSave={(bpm) =>
-                    onPatch({
-                      songDetails: {
-                        key: item.songDetails?.key,
-                        bpm: parseInt(bpm, 10) || undefined,
-                      },
-                    })
-                  }
-                  placeholder={item.song?.bpm ? String(item.song.bpm) : "—"}
-                  keyboardType="number-pad"
-                  maxLength={3}
-                  accessibilityLabel="Song BPM"
-                  style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
-                />
-              </View>
-            </>
-          ) : null}
-
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Description</Text>
-          <InlineText
-            value={item.description ?? ""}
-            onSave={(d) => onPatch({ description: d })}
-            placeholder="Optional details for this moment"
-            multiline
-            accessibilityLabel="Item description"
-            style={[styles.descInput, { color: colors.text, borderColor: colors.border }]}
-          />
-
-          {roleOptions.length > 0 ? (
-            <>
-              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Who's involved</Text>
-              <View style={styles.roleWrap}>
-                {roleOptions.map((r) => {
-                  const selected = linkedRoleIds.has(r.roleId as string);
-                  const swatch = r.roleColor ?? DEFAULT_ROLE_COLOR;
-                  return (
-                    <Pressable
-                      key={r.roleId}
-                      onPress={() => toggleRole(r.roleId as string)}
-                      style={styles.rolePressable}
-                    >
-                      <View
-                        style={[
-                          styles.roleChip,
-                          {
-                            backgroundColor: selected ? swatch + "22" : colors.surface,
-                            borderColor: selected ? swatch : colors.border,
-                          },
-                        ]}
-                      >
-                        <View style={[styles.roleSwatch, { backgroundColor: swatch }]} />
-                        <Text style={[styles.roleChipText, { color: colors.text }]} numberOfLines={1}>
-                          {r.roleName}
-                          {r.people.length > 0 ? `: ${r.people.join(", ")}` : ""}
-                        </Text>
-                        {selected ? (
-                          <Ionicons name="checkmark-circle" size={15} color={swatch} />
-                        ) : null}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </>
-          ) : null}
-
-          <NotesEditor
-            notes={item.notes}
-            onChange={(notes) => onPatch({ notes })}
-            colors={colors}
-          />
-        </View>
-      ) : null}
+                {r.roleName}
+                {r.people.length > 0 ? `: ${r.people.join(", ")}` : ""}
+              </Text>
+              {selected ? (
+                <Ionicons name="checkmark-circle" size={15} color={swatch} />
+              ) : null}
+            </View>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
+
+/**
+ * Notes editor body — the item's timing phase, free-text description, and the
+ * role-categorized cue notes. This is where the old expanded "Timing",
+ * "Description", and "Notes" fields now live.
+ */
+function NotesModalBody({
+  item,
+  onPatch,
+}: {
+  item: RunSheetItem;
+  onPatch: (patch: ItemPatch) => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.modalStack}>
+      {/* Timing phase — before / during / after the event (PCO's position). */}
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+        Timing
+      </Text>
+      <View style={styles.timingToggle}>
+        {SEGMENT_OPTIONS.map((seg) => {
+          const active = (item.segment as Segment) === seg.key;
+          return (
+            <Pressable
+              key={seg.key}
+              onPress={() => onPatch({ segment: seg.key })}
+              style={styles.timingPressable}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <View
+                style={[
+                  styles.timingChip,
+                  {
+                    borderColor: active ? colors.buttonPrimary : colors.border,
+                    backgroundColor: active
+                      ? colors.buttonPrimary + "1F"
+                      : "transparent",
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.timingChipText,
+                    { color: active ? colors.buttonPrimary : colors.textSecondary },
+                  ]}
+                >
+                  {seg.label}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
+        Description
+      </Text>
+      <InlineText
+        value={item.description ?? ""}
+        onSave={(d) => onPatch({ description: d })}
+        placeholder="Optional details for this moment"
+        multiline
+        accessibilityLabel="Item description"
+        style={[styles.descInput, { color: colors.text, borderColor: colors.border }]}
+      />
+
+      <NotesEditor
+        notes={item.notes}
+        onChange={(notes) => onPatch({ notes })}
+        colors={colors}
+      />
+    </View>
+  );
+}
+
+/**
+ * Song editor body — links the row to a library song (ADR-027) and edits the
+ * per-service Key / BPM overrides. When a song is linked, Key/BPM show only the
+ * override (blank if none), placeholder is the song's default.
+ */
+function SongModalBody({
+  item,
+  communityId,
+  groupId,
+  onPatch,
+}: {
+  item: RunSheetItem;
+  communityId: string;
+  groupId: string;
+  onPatch: (patch: ItemPatch) => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.modalStack}>
+      <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Song</Text>
+      <SongPicker
+        communityId={communityId}
+        groupId={groupId}
+        songId={item.songId}
+        song={item.song}
+        onSelect={(songId) => onPatch({ songId: songId as Id<"songs"> | null })}
+      />
+
+      <View style={styles.songRow}>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Key</Text>
+        <InlineText
+          value={item.songDetails?.key ?? ""}
+          onSave={(key) =>
+            onPatch({
+              songDetails: { key: key.trim() || undefined, bpm: item.songDetails?.bpm },
+            })
+          }
+          placeholder={item.song?.defaultKey ?? "—"}
+          maxLength={8}
+          accessibilityLabel="Song key"
+          style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+        />
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>BPM</Text>
+        <InlineText
+          value={item.songDetails?.bpm ? String(item.songDetails.bpm) : ""}
+          onSave={(bpm) =>
+            onPatch({
+              songDetails: {
+                key: item.songDetails?.key,
+                bpm: parseInt(bpm, 10) || undefined,
+              },
+            })
+          }
+          placeholder={item.song?.bpm ? String(item.song.bpm) : "—"}
+          keyboardType="number-pad"
+          maxLength={3}
+          accessibilityLabel="Song BPM"
+          style={[styles.songInput, { color: colors.text, borderColor: colors.border }]}
+        />
+      </View>
+    </View>
+  );
+}
+
+// RN-Web draws a browser focus ring on the underlying <input> that visually
+// bleeds past this tiny cell; suppress it so the input stays fully contained.
+const webNoOutline: TextStyle | undefined =
+  Platform.OS === "web"
+    ? ({ outlineStyle: "none" } as unknown as TextStyle)
+    : undefined;
 
 /** Inline m:ss duration cell. Parses "5", "5:30", or "330s"-style minute input. */
 function DurationCell({
@@ -891,7 +1096,11 @@ function DurationCell({
       keyboardType="numbers-and-punctuation"
       maxLength={6}
       accessibilityLabel="Duration (minutes:seconds)"
-      style={[styles.durationInput, { color: colors.text, borderColor: colors.border }]}
+      style={[
+        styles.durationInput,
+        { color: colors.text, borderColor: colors.border },
+        webNoOutline,
+      ]}
     />
   );
 }
@@ -972,18 +1181,11 @@ const styles = StyleSheet.create({
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   errorText: { fontSize: 14 },
   scrollContent: { padding: 16 },
+  gridContent: { paddingBottom: 8 },
   planTitle: { fontSize: 22, fontWeight: "700" },
   planDate: { fontSize: 13, marginTop: 4 },
   ranges: { fontSize: 14, fontWeight: "600", marginTop: 8 },
   emptyText: { fontSize: 14, lineHeight: 20, marginTop: 24 },
-  segmentLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    marginTop: 14,
-    marginBottom: 8,
-  },
-  list: { marginTop: 10 },
   addToRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1009,27 +1211,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   timingChipText: { fontSize: 12, fontWeight: "600" },
-  row: {
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  headerRow: {
-    borderWidth: 0,
-    paddingVertical: 4,
-    marginBottom: 4,
-    marginTop: 4,
-  },
-  rowTop: { flexDirection: "row", alignItems: "center", gap: 6 },
-  grip: { paddingHorizontal: 2, paddingVertical: 6, justifyContent: "center" },
-  timeCol: { width: 62 },
-  timeText: { fontSize: 13, fontWeight: "700" },
-  titleCol: { flex: 1 },
-  titleInput: { fontSize: 15, fontWeight: "600" },
+  titleInput: { fontSize: 15, fontWeight: "600", width: "100%" },
   headerTitleInput: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5, textTransform: "uppercase" },
-  durationCol: { width: 56 },
   durationInput: {
+    width: 60,
+    alignSelf: "center",
     fontSize: 13,
     textAlign: "center",
     borderWidth: StyleSheet.hairlineWidth,
@@ -1037,21 +1223,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: 4,
   },
-  actions: { flexDirection: "row", alignItems: "center" },
   actionBtn: { padding: 4 },
-  assignWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8, paddingLeft: 30 },
-  assignChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    maxWidth: "100%",
-  },
-  assignSwatch: { width: 8, height: 8, borderRadius: 4 },
-  assignText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
-  expanded: { marginTop: 10, paddingLeft: 30, gap: 4 },
   fieldLabel: { fontSize: 11, fontWeight: "700", marginTop: 8, textTransform: "uppercase", letterSpacing: 0.4 },
   songRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   songInput: {
@@ -1118,4 +1290,17 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   addText: { fontSize: 14, fontWeight: "600" },
+  // Grid cell content. The primitive draws the padded cell frame; these only
+  // style the content that sits inside it.
+  cellPressable: { flex: 1, justifyContent: "center" },
+  cellText: { fontSize: 13 },
+  muted: { fontSize: 13, fontWeight: "500" },
+  whoChips: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
+  // Wraps an OptionTag that opens an anchored menu (self-aligned so it hugs its
+  // content and can be measured for the dropdown anchor).
+  tagPressable: { alignSelf: "flex-start", maxWidth: "100%" },
+  // "Time" — a quiet, contained read-only clock value ("9:00 AM").
+  timeText: { fontSize: 13, fontVariant: ["tabular-nums"] },
+  actionsRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  modalStack: { gap: 4 },
 });
