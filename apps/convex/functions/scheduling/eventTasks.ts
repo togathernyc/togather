@@ -25,7 +25,7 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "../../_generated/server";
+import { internalMutation, mutation, query } from "../../_generated/server";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
@@ -288,6 +288,19 @@ export const updateTask = mutation({
       patch.howToMediaPath = args.howToMediaPath;
     if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
 
+    // Converting a role task to team-level: its per-user `eventTaskCompletions`
+    // rows were role-specific (one per assignee) and are meaningless as a
+    // team-wide completion. Team-level completion is single-source on
+    // `sharedTaskCompletions`, so drop the stale role completions — otherwise the
+    // converted task could still read as done from those rows.
+    if (args.clearRole && task.roleId) {
+      const roleCompletions = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect();
+      await Promise.all(roleCompletions.map((c) => ctx.db.delete(c._id)));
+    }
+
     await ctx.db.patch(args.taskId, patch);
     return { taskId: args.taskId };
   },
@@ -357,8 +370,12 @@ export const reorderTasks = mutation({
 });
 
 /**
- * Toggle the current user's completion of a task. `timeLabel` is meaningful
+ * Toggle the current user's completion of a ROLE task. `timeLabel` is meaningful
  * only for "during" tasks (one completion per service time).
+ *
+ * Team-level tasks (roleId == null) are REJECTED here — they are team-wide and
+ * must go through `toggleSharedTeamTask` (which gates on confirmed team
+ * membership); this per-user path only checks group membership.
  *
  * Auth: any authenticated user (completion is personal). We still verify the
  * caller can see the plan.
@@ -375,6 +392,15 @@ export const toggleTaskCompletion = mutation({
     const task = await ctx.db.get(args.taskId);
     if (!task) {
       throw new ConvexError("Task not found");
+    }
+    // Team-level tasks (roleId == null) are TEAM-WIDE and must be completed
+    // through `toggleSharedTeamTask`, which gates on confirmed TEAM membership.
+    // This per-user path only checks GROUP membership, so accepting a team-level
+    // completion here would let a non-teammate (or a stale/direct caller) mark it
+    // done and bypass the team gate. The mobile client already routes team-level
+    // tasks to the Shared tab and excludes them from "Mine".
+    if (!task.roleId) {
+      throw new ConvexError("Team-level tasks are completed on the Shared tab.");
     }
     const plan = await requirePlan(ctx, task.planId);
     await requireGroupMember(ctx, plan.groupId, userId);
@@ -417,9 +443,13 @@ export const toggleTaskCompletion = mutation({
  *     (`eventTaskCompletions`). "Expected completions" is the number of
  *     confirmed assignees of the role, × the number of service times for
  *     "during" tasks; `done` counts valid completions from those assignees.
- *   • Team-level tasks (`roleId == null`): completion is TEAM-WIDE
- *     (`sharedTaskCompletions`, surfaced on the Shared tab). Counted as a
- *     single slot: `total += 1`, `done += 1` iff a shared completion exists.
+ *   • Team-level tasks (`roleId == null`): completion is TEAM-WIDE and
+ *     single-source on `sharedTaskCompletions` (surfaced on the Shared tab).
+ *     Counted as a single slot: `total += 1`, `done += 1` iff a shared
+ *     completion row exists. (Pre-migration per-user completions of team-level
+ *     tasks were snapshotted into `sharedTaskCompletions` by a one-time
+ *     backfill — see `backfillTeamLevelSharedCompletions` — so they are not read
+ *     from `eventTaskCompletions` here.)
  * Personal serving tasks are excluded entirely.
  *
  * Auth: an active member of the plan's community.
@@ -445,7 +475,8 @@ export const getPlanTaskReadiness = query({
         .withIndex("by_plan", (q) => q.eq("planId", args.planId))
         .collect(),
     ]);
-    // Team-wide completion for team-level tasks (one row per task).
+    // Team-wide completion for team-level tasks (single-source: one row per task
+    // in `sharedTaskCompletions`).
     const sharedDoneByTask = new Set(sharedRows.map((r) => r.taskId as string));
 
     const timesCount = Math.max(1, plan.times.length);
@@ -468,7 +499,9 @@ export const getPlanTaskReadiness = query({
       if (!task.roleId) {
         // Team-level task: a single TEAM-WIDE slot, completed once for the whole
         // team via `sharedTaskCompletions` (the Shared surface), regardless of
-        // how many teammates are confirmed.
+        // how many teammates are confirmed. Single-source — done iff a shared
+        // completion row exists (pre-migration per-user completions were
+        // backfilled into `sharedTaskCompletions`).
         total = 1;
         done = sharedDoneByTask.has(task._id as string) ? 1 : 0;
       } else {
@@ -746,7 +779,10 @@ type SharedTeamTaskItem = {
  * user's confirmed team(s) on a plan. These are "the whole team is responsible,
  * no single assignee" — so completion is TEAM-WIDE (`sharedTaskCompletions`),
  * not per-user: any confirmed teammate marking it done marks it done for
- * everyone. Returned as a flat array (each item carries its `segment`), ordered
+ * everyone. Completion is single-source on `sharedTaskCompletions` — a task
+ * shows done iff a shared row exists (pre-migration per-user completions were
+ * snapshotted into `sharedTaskCompletions` by a one-time backfill).
+ * Returned as a flat array (each item carries its `segment`), ordered
  * before → during → after, then by the task's sortOrder.
  *
  * Auth: an active member of the plan's group (community read gate). Only the
@@ -839,6 +875,11 @@ export const getSharedTeamTasks = query({
  * this is a single whole-task state (it is deliberately NOT split per service
  * time — the Shared surface tracks "the team handled this", not per-slot).
  *
+ * Team-level completion reads `sharedTaskCompletions` OR legacy per-user
+ * `eventTaskCompletions` (pre-migration state), so un-checking clears BOTH:
+ * marking done writes only the shared row, but un-checking also deletes any
+ * legacy `eventTaskCompletions` rows for the task.
+ *
  * Auth: the caller must be a confirmed member of the task's team on the plan.
  */
 export const toggleSharedTeamTask = mutation({
@@ -875,6 +916,9 @@ export const toggleSharedTeamTask = mutation({
       .unique();
 
     if (args.completed) {
+      // Marking done writes only the team-wide `sharedTaskCompletions` row; any
+      // legacy per-user `eventTaskCompletions` rows are harmless because reads OR
+      // the two sources together.
       if (existing) {
         // Refresh who/when so the "completed by" label reflects the latest tap.
         await ctx.db.patch(existing._id, {
@@ -890,11 +934,127 @@ export const toggleSharedTeamTask = mutation({
           completedAt: Date.now(),
         });
       }
-    } else if (existing) {
-      await ctx.db.delete(existing._id);
+    } else {
+      // Un-checking must clear BOTH sources — the shared row and any legacy
+      // per-user `eventTaskCompletions` rows for this (plan, task) — or a
+      // pre-migration team-level completion would keep the task showing done.
+      if (existing) {
+        await ctx.db.delete(existing._id);
+      }
+      const legacyRows = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect();
+      await Promise.all(legacyRows.map((r) => ctx.db.delete(r._id)));
     }
 
     return { taskId: args.taskId, completed: args.completed };
+  },
+});
+
+/**
+ * One-time backfill: snapshot legitimate pre-migration team-level completions
+ * into the single-source `sharedTaskCompletions` store.
+ *
+ * Historically, a team-level task (`roleId == null`) could be marked done via a
+ * per-user `eventTaskCompletions` row. Team-level completion is now single-source
+ * on `sharedTaskCompletions`, and readers no longer look at `eventTaskCompletions`
+ * for team-level tasks. This migration preserves the existing "done" state by
+ * scanning every team-level task and, when it has NO shared row yet but DOES have
+ * a per-user completion from a CONFIRMED member of the task's team, inserting a
+ * shared row (using that completion's author + timestamp).
+ *
+ * Idempotent: a task that already has a `sharedTaskCompletions` row is skipped,
+ * so re-running is a no-op. The confirmed-member filter mirrors the old
+ * readers — a per-user row from a non-teammate (the old per-user toggle only
+ * checked group, not team, membership) does NOT seed a completion.
+ *
+ * Run once per deployment after deploy:
+ *   npx convex run functions/scheduling/eventTasks:backfillTeamLevelSharedCompletions
+ */
+export const backfillTeamLevelSharedCompletions = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const tasks = await ctx.db.query("eventTasks").collect();
+    const teamLevelTasks = tasks.filter((t) => !t.roleId);
+
+    // Cache of confirmed assignees per plan (userId set keyed by teamId), so we
+    // load each plan's roleAssignments at most once.
+    const confirmedByPlan = new Map<string, Map<string, Set<string>>>();
+    const confirmedForPlan = async (planId: Id<"eventPlans">) => {
+      const key = planId as string;
+      const cached = confirmedByPlan.get(key);
+      if (cached) return cached;
+      const assignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .collect();
+      const byTeam = new Map<string, Set<string>>();
+      for (const a of assignments) {
+        if (a.status !== "confirmed") continue;
+        const teamKey = a.teamId as string;
+        let set = byTeam.get(teamKey);
+        if (!set) {
+          set = new Set<string>();
+          byTeam.set(teamKey, set);
+        }
+        set.add(a.userId as string);
+      }
+      confirmedByPlan.set(key, byTeam);
+      return byTeam;
+    };
+
+    let scanned = 0;
+    let inserted = 0;
+    let skippedHasShared = 0;
+    let skippedNoLegacy = 0;
+
+    for (const task of teamLevelTasks) {
+      scanned += 1;
+
+      // Idempotency: a task with a shared completion is already migrated.
+      const existingShared = await ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .first();
+      if (existingShared) {
+        skippedHasShared += 1;
+        continue;
+      }
+
+      const completions = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .collect();
+      if (completions.length === 0) {
+        skippedNoLegacy += 1;
+        continue;
+      }
+
+      const confirmedByTeam = await confirmedForPlan(task.planId);
+      const confirmedTeam = confirmedByTeam.get(task.teamId as string);
+      // Only per-user rows from a CONFIRMED member of the task's team count.
+      // Pick the earliest such completion so the snapshot is deterministic.
+      const qualifying = completions
+        .filter((c) => confirmedTeam?.has(c.userId as string))
+        .sort((a, b) => a.completedAt - b.completedAt);
+      if (qualifying.length === 0) {
+        skippedNoLegacy += 1;
+        continue;
+      }
+
+      const source = qualifying[0];
+      await ctx.db.insert("sharedTaskCompletions", {
+        taskId: task._id,
+        planId: task.planId,
+        communityId: task.communityId,
+        completedByUserId: source.userId,
+        completedAt: source.completedAt ?? Date.now(),
+      });
+      inserted += 1;
+    }
+
+    return { scanned, inserted, skippedHasShared, skippedNoLegacy };
   },
 });
 
@@ -1115,8 +1275,9 @@ type AllTeamsEntry = {
  *     assignees, and `completed` is true when fully satisfied (done >= total,
  *     total > 0).
  *   • Team-level tasks (`roleId == null`): TEAM-WIDE — a single slot
- *     (`total = 1`) completed via `sharedTaskCompletions` (the Shared tab), so
- *     `done`/`completed` reflect whether the team marked it shared-done.
+ *     (`total = 1`) completed via `sharedTaskCompletions` (the Shared tab).
+ *     Single-source: `done`/`completed` reflect whether a shared completion row
+ *     exists (pre-migration per-user completions were backfilled into it).
  *
  * Auth: an active member of the plan's group (any serving participant).
  */
@@ -1167,7 +1328,8 @@ export const getAllTeamsTasks = query({
       if (!task.roleId) {
         // Team-level task: a single TEAM-WIDE slot completed via
         // `sharedTaskCompletions` (the Shared surface), matching the readiness
-        // semantics — one slot total, done iff the team marked it shared-done.
+        // semantics — one slot total, done iff a shared completion row exists
+        // (pre-migration per-user completions were backfilled into it).
         const sharedDone = sharedByTask.has(task._id as string);
         total = 1;
         doneForEntry = sharedDone ? 1 : 0;
