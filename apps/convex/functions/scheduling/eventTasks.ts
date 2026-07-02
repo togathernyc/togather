@@ -2,16 +2,21 @@
  * Scheduling — Event Tasks + personal serving tasks
  *
  * Event tasks (`eventTasks`) are the shared, leader-authored checklist for a
- * plan: a team (or a specific role on that team) needs to do X "before" /
- * "during" / "after" the event. Completion has two models, keyed on whether the
- * task is scoped to a role:
- *   • Role tasks (`roleId != null`) are completed PER-USER
+ * plan: one or more teams (or specific roles on those teams) need to do X
+ * "before" / "during" / "after" the event. A task carries `teamIds` (>= 1) and
+ * `roleIds` (may be empty); read them via `taskTeamIds()` / `taskRoleIds()`,
+ * which fall back to the legacy single `teamId` / `roleId` columns during the
+ * migration window. Completion has two models, keyed on whether the task has
+ * any roles:
+ *   • Role tasks (`roleIds` non-empty) are completed PER-USER
  *     (`eventTaskCompletions`); "during" tasks are completed once per service
- *     time. They surface in each assignee's "Mine" list.
- *   • Team-level tasks (`roleId == null`) are TEAM-WIDE, single-source on
- *     `sharedTaskCompletions` (one row per task): any confirmed teammate
- *     completes it for the whole team. They surface on the Shared tab and count
- *     as one slot in readiness / all-teams rollups.
+ *     time. Each person confirmed for ANY of `roleIds` sees it in their "Mine"
+ *     list and completes it individually.
+ *   • Team-level tasks (`roleIds` empty) are TEAM-WIDE, single-source on
+ *     `sharedTaskCompletions` (one row per task): any confirmed member of ANY
+ *     team in `teamIds` completes it for the whole task. A team-level task
+ *     spanning multiple teams is still ONE shared checkbox. They surface on the
+ *     Shared tab and count as one slot in readiness / all-teams rollups.
  *
  * Personal serving tasks (`personalServingTasks`) are ad-hoc, single-user rows
  * a volunteer adds for themselves in serving mode. They never touch the shared
@@ -51,6 +56,47 @@ const howToTypeValidator = v.union(
 const SEGMENT_RANK: Record<string, number> = { before: 0, during: 1, after: 2 };
 
 /**
+ * The team(s) a task belongs to. Reads through the legacy single `teamId`
+ * column when the multi-assign `teamIds` array is absent (migration window).
+ * Always returns >= 1 id for a well-formed task.
+ */
+export function taskTeamIds(
+  task: Pick<Doc<"eventTasks">, "teamIds" | "teamId">,
+): Id<"teams">[] {
+  return task.teamIds ?? (task.teamId ? [task.teamId] : []);
+}
+
+/**
+ * The role(s) responsible for a task. Reads through the legacy single `roleId`
+ * column when the multi-assign `roleIds` array is absent (migration window).
+ * EMPTY => the task is team-level (whole-team shared completion).
+ */
+export function taskRoleIds(
+  task: Pick<Doc<"eventTasks">, "roleIds" | "roleId">,
+): Id<"teamRoles">[] {
+  return task.roleIds ?? (task.roleId ? [task.roleId] : []);
+}
+
+/** Stable-order dedupe for an id array (preserves first-seen order). */
+function dedupeIds<T extends string>(ids: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const id of ids) {
+    if (seen.has(id as string)) continue;
+    seen.add(id as string);
+    out.push(id);
+  }
+  return out;
+}
+
+/** True when a task is team-level (no roles => whole-team shared completion). */
+function isTeamLevel(
+  task: Pick<Doc<"eventTasks">, "roleIds" | "roleId">,
+): boolean {
+  return taskRoleIds(task).length === 0;
+}
+
+/**
  * Load a plan or throw. Shared by task functions that key off a `planId`.
  */
 async function requirePlan(
@@ -71,19 +117,23 @@ async function requirePlan(
  */
 function assigneesForTask(
   assignments: Doc<"roleAssignments">[],
-  task: Pick<Doc<"eventTasks">, "teamId" | "roleId">,
+  task: Pick<Doc<"eventTasks">, "teamId" | "roleId" | "teamIds" | "roleIds">,
 ): Doc<"roleAssignments">[] {
+  const roleIds = new Set(taskRoleIds(task) as string[]);
+  const teamIds = new Set(taskTeamIds(task) as string[]);
   return assignments.filter((a) => {
     if (a.status !== "confirmed") return false;
-    if (task.roleId) return a.roleId === task.roleId;
-    // Team-level task (no roleId): any confirmed role on that team.
-    return a.teamId === task.teamId;
+    // Role tasks: anyone confirmed for ANY of the task's roles.
+    if (roleIds.size > 0) return roleIds.has(a.roleId as string);
+    // Team-level task (no roles): any confirmed role on ANY of the teams.
+    return teamIds.has(a.teamId as string);
   });
 }
 
 /**
  * List all tasks for a plan, ordered by (segment, then sortOrder), each
- * enriched with its `teamName` and `roleName` (null for team-level tasks).
+ * enriched with its `teamNames` and `roleNames` (parallel to `teamIds` /
+ * `roleIds`; `roleIds`/`roleNames` are empty for team-level tasks).
  *
  * Auth: an active member of the plan's community.
  */
@@ -109,27 +159,34 @@ export const listPlanTasks = query({
 
     const teamNames = new Map<string, string>();
     const roleNames = new Map<string, string>();
+    const teamNameFor = async (id: Id<"teams">): Promise<string> => {
+      const key = id as string;
+      if (!teamNames.has(key)) {
+        const team = await ctx.db.get(id);
+        teamNames.set(key, team?.name ?? "Team");
+      }
+      return teamNames.get(key)!;
+    };
+    const roleNameFor = async (id: Id<"teamRoles">): Promise<string> => {
+      const key = id as string;
+      if (!roleNames.has(key)) {
+        const role = await ctx.db.get(id);
+        roleNames.set(key, role?.name ?? "Role");
+      }
+      return roleNames.get(key)!;
+    };
+
     return Promise.all(
       tasks.map(async (task) => {
-        if (!teamNames.has(task.teamId)) {
-          const team = await ctx.db.get(task.teamId);
-          teamNames.set(task.teamId, team?.name ?? "Team");
-        }
-        let roleName: string | null = null;
-        if (task.roleId) {
-          if (!roleNames.has(task.roleId)) {
-            const role = await ctx.db.get(task.roleId);
-            roleNames.set(task.roleId, role?.name ?? "Role");
-          }
-          roleName = roleNames.get(task.roleId)!;
-        }
+        const teamIds = taskTeamIds(task);
+        const roleIds = taskRoleIds(task);
         return {
           _id: task._id,
           planId: task.planId,
-          teamId: task.teamId,
-          roleId: task.roleId ?? null,
-          teamName: teamNames.get(task.teamId)!,
-          roleName,
+          teamIds: teamIds as string[],
+          roleIds: roleIds as string[],
+          teamNames: await Promise.all(teamIds.map(teamNameFor)),
+          roleNames: await Promise.all(roleIds.map(roleNameFor)),
           segment: task.segment,
           title: task.title,
           howToType: task.howToType,
@@ -145,21 +202,22 @@ export const listPlanTasks = query({
 });
 
 /**
- * Next append `sortOrder` within a (plan, team, segment) bucket.
+ * Next append `sortOrder` within a (plan, segment) bucket. With multi-team
+ * tasks a task no longer belongs to a single team, so append order is scoped to
+ * the whole plan's segment (the grid re-sorts by team → role for display, and
+ * `reorderTasks` rewrites a plan-wide order anyway).
  */
 async function nextTaskSortOrder(
   ctx: MutationCtx,
   planId: Id<"eventPlans">,
-  teamId: Id<"teams">,
   segment: "before" | "during" | "after",
 ): Promise<number> {
-  const siblings = await ctx.db
+  const inSegment = await ctx.db
     .query("eventTasks")
-    .withIndex("by_plan_team", (q) =>
-      q.eq("planId", planId).eq("teamId", teamId),
+    .withIndex("by_plan_segment", (q) =>
+      q.eq("planId", planId).eq("segment", segment),
     )
     .collect();
-  const inSegment = siblings.filter((t) => t.segment === segment);
   if (inSegment.length === 0) return 0;
   return Math.max(...inSegment.map((t) => t.sortOrder)) + 1;
 }
@@ -173,8 +231,9 @@ export const createTask = mutation({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
-    teamId: v.id("teams"),
-    roleId: v.optional(v.id("teamRoles")),
+    // >= 1 team. `roleIds` empty (or omitted) => a team-level task.
+    teamIds: v.array(v.id("teams")),
+    roleIds: v.optional(v.array(v.id("teamRoles"))),
     segment: segmentValidator,
     title: v.string(),
     howToType: howToTypeValidator,
@@ -187,14 +246,24 @@ export const createTask = mutation({
     const userId = await requireAuth(ctx, args.token);
     const { plan } = await requirePlanScheduler(ctx, args.planId, userId);
 
-    const team = await ctx.db.get(args.teamId);
-    if (!team || team.groupId !== plan.groupId) {
-      throw new ConvexError("Team does not belong to this event's group");
+    const teamIds = dedupeIds(args.teamIds);
+    if (teamIds.length === 0) {
+      throw new ConvexError("A task must belong to at least one team");
     }
-    if (args.roleId) {
-      const role = await ctx.db.get(args.roleId);
-      if (!role || role.teamId !== args.teamId) {
-        throw new ConvexError("Role does not belong to the specified team");
+    const teamIdSet = new Set(teamIds as string[]);
+    for (const teamId of teamIds) {
+      const team = await ctx.db.get(teamId);
+      if (!team || team.groupId !== plan.groupId) {
+        throw new ConvexError("Team does not belong to this event's group");
+      }
+    }
+    const roleIds = dedupeIds(args.roleIds ?? []);
+    for (const roleId of roleIds) {
+      const role = await ctx.db.get(roleId);
+      if (!role || !teamIdSet.has(role.teamId as string)) {
+        throw new ConvexError(
+          "Role does not belong to one of the task's teams",
+        );
       }
     }
 
@@ -204,18 +273,13 @@ export const createTask = mutation({
     }
 
     const nowMs = Date.now();
-    const sortOrder = await nextTaskSortOrder(
-      ctx,
-      args.planId,
-      args.teamId,
-      args.segment,
-    );
+    const sortOrder = await nextTaskSortOrder(ctx, args.planId, args.segment);
 
     const taskId = await ctx.db.insert("eventTasks", {
       planId: args.planId,
       communityId: plan.communityId,
-      teamId: args.teamId,
-      roleId: args.roleId,
+      teamIds,
+      roleIds,
       segment: args.segment,
       title,
       howToType: args.howToType,
@@ -243,12 +307,13 @@ export const updateTask = mutation({
     token: v.string(),
     taskId: v.id("eventTasks"),
     title: v.optional(v.string()),
-    roleId: v.optional(v.id("teamRoles")),
+    // Replace the task's team(s). Must stay non-empty. Any role no longer on
+    // one of the new teams is dropped (see below).
+    teamIds: v.optional(v.array(v.id("teams"))),
+    // Replace the task's role(s). An empty array converts the task to
+    // team-level (whole-team shared completion). Omit to leave roles unchanged.
+    roleIds: v.optional(v.array(v.id("teamRoles"))),
     segment: v.optional(segmentValidator),
-    // Set true to convert a role-scoped task back to a team-level task. Needed
-    // because an omitted `roleId` and a "clear the role" intent both look like
-    // `undefined` on the wire.
-    clearRole: v.optional(v.boolean()),
     howToType: v.optional(howToTypeValidator),
     howToText: v.optional(v.string()),
     howToUrl: v.optional(v.string()),
@@ -261,14 +326,7 @@ export const updateTask = mutation({
     if (!task) {
       throw new ConvexError("Task not found");
     }
-    await requirePlanScheduler(ctx, task.planId, userId);
-
-    if (args.roleId !== undefined) {
-      const role = await ctx.db.get(args.roleId);
-      if (!role || role.teamId !== task.teamId) {
-        throw new ConvexError("Role does not belong to the task's team");
-      }
-    }
+    const { plan } = await requirePlanScheduler(ctx, task.planId, userId);
 
     const patch: Partial<Doc<"eventTasks">> = { updatedAt: Date.now() };
     if (args.title !== undefined) {
@@ -278,8 +336,52 @@ export const updateTask = mutation({
       }
       patch.title = title;
     }
-    if (args.clearRole) patch.roleId = undefined;
-    else if (args.roleId !== undefined) patch.roleId = args.roleId;
+
+    // Resolve the effective team/role sets after this update so we can validate
+    // roles against teams and detect a conversion to team-level.
+    const nextTeamIds =
+      args.teamIds !== undefined ? dedupeIds(args.teamIds) : taskTeamIds(task);
+    if (nextTeamIds.length === 0) {
+      throw new ConvexError("A task must belong to at least one team");
+    }
+    const teamIdSet = new Set(nextTeamIds as string[]);
+    if (args.teamIds !== undefined) {
+      for (const teamId of nextTeamIds) {
+        const team = await ctx.db.get(teamId);
+        if (!team || team.groupId !== plan.groupId) {
+          throw new ConvexError("Team does not belong to this event's group");
+        }
+      }
+      patch.teamIds = nextTeamIds;
+    }
+
+    const prevRoleIds = taskRoleIds(task);
+    let nextRoleIds = prevRoleIds;
+    if (args.roleIds !== undefined) {
+      nextRoleIds = dedupeIds(args.roleIds);
+      for (const roleId of nextRoleIds) {
+        const role = await ctx.db.get(roleId);
+        if (!role || !teamIdSet.has(role.teamId as string)) {
+          throw new ConvexError(
+            "Role does not belong to one of the task's teams",
+          );
+        }
+      }
+      patch.roleIds = nextRoleIds;
+    } else if (args.teamIds !== undefined) {
+      // Teams changed but roles weren't explicitly set: drop any role that no
+      // longer belongs to one of the task's teams.
+      const kept: Id<"teamRoles">[] = [];
+      for (const roleId of prevRoleIds) {
+        const role = await ctx.db.get(roleId);
+        if (role && teamIdSet.has(role.teamId as string)) kept.push(roleId);
+      }
+      if (kept.length !== prevRoleIds.length) {
+        nextRoleIds = kept;
+        patch.roleIds = kept;
+      }
+    }
+
     if (args.segment !== undefined) patch.segment = args.segment;
     if (args.howToType !== undefined) patch.howToType = args.howToType;
     if (args.howToText !== undefined) patch.howToText = args.howToText;
@@ -293,7 +395,7 @@ export const updateTask = mutation({
     // team-wide completion. Team-level completion is single-source on
     // `sharedTaskCompletions`, so drop the stale role completions — otherwise the
     // converted task could still read as done from those rows.
-    if (args.clearRole && task.roleId) {
+    if (prevRoleIds.length > 0 && nextRoleIds.length === 0) {
       const roleCompletions = await ctx.db
         .query("eventTaskCompletions")
         .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
@@ -393,13 +495,13 @@ export const toggleTaskCompletion = mutation({
     if (!task) {
       throw new ConvexError("Task not found");
     }
-    // Team-level tasks (roleId == null) are TEAM-WIDE and must be completed
-    // through `toggleSharedTeamTask`, which gates on confirmed TEAM membership.
-    // This per-user path only checks GROUP membership, so accepting a team-level
+    // Team-level tasks (no roles) are TEAM-WIDE and must be completed through
+    // `toggleSharedTeamTask`, which gates on confirmed TEAM membership. This
+    // per-user path only checks GROUP membership, so accepting a team-level
     // completion here would let a non-teammate (or a stale/direct caller) mark it
     // done and bypass the team gate. The mobile client already routes team-level
     // tasks to the Shared tab and excludes them from "Mine".
-    if (!task.roleId) {
+    if (isTeamLevel(task)) {
       throw new ConvexError("Team-level tasks are completed on the Shared tab.");
     }
     const plan = await requirePlan(ctx, task.planId);
@@ -493,17 +595,49 @@ export const getPlanTaskReadiness = query({
       { teamId: string; teamName: string; done: number; total: number }
     >();
 
+    const teamEntryFor = async (
+      teamId: Id<"teams">,
+    ): Promise<{ teamId: string; teamName: string; done: number; total: number }> => {
+      const teamKey = teamId as string;
+      let teamEntry = byTeam.get(teamKey);
+      if (!teamEntry) {
+        const team = await ctx.db.get(teamId);
+        teamEntry = {
+          teamId: teamKey,
+          teamName: team?.name ?? "Team",
+          done: 0,
+          total: 0,
+        };
+        byTeam.set(teamKey, teamEntry);
+      }
+      return teamEntry;
+    };
+
     for (const task of tasks) {
+      const teamIds = taskTeamIds(task);
       let total: number;
       let done: number;
-      if (!task.roleId) {
+      if (isTeamLevel(task)) {
         // Team-level task: a single TEAM-WIDE slot, completed once for the whole
-        // team via `sharedTaskCompletions` (the Shared surface), regardless of
-        // how many teammates are confirmed. Single-source — done iff a shared
-        // completion row exists (pre-migration per-user completions were
-        // backfilled into `sharedTaskCompletions`).
+        // task via `sharedTaskCompletions` (the Shared surface), regardless of
+        // how many teammates are confirmed or how many teams it spans. Single-
+        // source — done iff a shared completion row exists.
         total = 1;
         done = sharedDoneByTask.has(task._id as string) ? 1 : 0;
+
+        overall.total += total;
+        overall.done += done;
+        bySegment[task.segment].total += total;
+        bySegment[task.segment].done += done;
+
+        // Credit the (single) shared slot to EACH team the task spans. NOTE:
+        // this means sum(byTeam) can exceed overall for a team-level task that
+        // spans multiple teams — each team is shown the whole shared checkbox.
+        for (const teamId of teamIds) {
+          const entry = await teamEntryFor(teamId);
+          entry.total += total;
+          entry.done += done;
+        }
       } else {
         // Role task: PER-USER completion via `eventTaskCompletions`.
         const expected = assigneesForTask(assignments, task);
@@ -519,44 +653,48 @@ export const getPlanTaskReadiness = query({
         // Count only completions from people who are currently expected to do
         // this task (a since-removed assignee, or anyone calling the mutation
         // directly, must not push readiness forward), and — for "during" tasks —
-        // only completions tagged with a real service time. Capped at total as a
-        // final guard against duplicate rows.
+        // only completions tagged with a real service time.
         const completions = await ctx.db
           .query("eventTaskCompletions")
           .withIndex("by_task", (q) => q.eq("taskId", task._id))
           .collect();
-        const validCompletions = completions.filter((c) => {
-          if (!expectedUserIds.has(c.userId as string)) return false;
-          if (task.segment === "during") {
-            // No configured times => a single unlabeled slot (mirrors
-            // getMyServingTasks), so accept the null-label completion.
-            if (plan.times.length === 0) return c.timeLabel == null;
-            return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
-          }
-          return true;
-        });
-        done = Math.min(validCompletions.length, total);
-      }
+        const countValid = (allowed: Set<string>): number =>
+          completions.filter((c) => {
+            if (!allowed.has(c.userId as string)) return false;
+            if (task.segment === "during") {
+              // No configured times => a single unlabeled slot (mirrors
+              // getMyServingTasks), so accept the null-label completion.
+              if (plan.times.length === 0) return c.timeLabel == null;
+              return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+            }
+            return true;
+          }).length;
+        done = Math.min(countValid(expectedUserIds), total);
 
-      overall.total += total;
-      overall.done += done;
-      bySegment[task.segment].total += total;
-      bySegment[task.segment].done += done;
+        overall.total += total;
+        overall.done += done;
+        bySegment[task.segment].total += total;
+        bySegment[task.segment].done += done;
 
-      const teamKey = task.teamId as string;
-      let teamEntry = byTeam.get(teamKey);
-      if (!teamEntry) {
-        const team = await ctx.db.get(task.teamId);
-        teamEntry = {
-          teamId: teamKey,
-          teamName: team?.name ?? "Team",
-          done: 0,
-          total: 0,
-        };
-        byTeam.set(teamKey, teamEntry);
+        // Per-team split: a role belongs to exactly one team, so partition the
+        // expected assignees by team. This keeps sum(byTeam) == overall for
+        // role tasks even when the task spans multiple teams/roles.
+        for (const teamId of teamIds) {
+          const teamUserIds = new Set(
+            expected
+              .filter((a) => (a.teamId as string) === (teamId as string))
+              .map((a) => a.userId as string),
+          );
+          const teamPeople = teamUserIds.size;
+          if (teamPeople === 0) continue;
+          const teamTotal =
+            task.segment === "during" ? teamPeople * timesCount : teamPeople;
+          const teamDone = Math.min(countValid(teamUserIds), teamTotal);
+          const entry = await teamEntryFor(teamId);
+          entry.total += teamTotal;
+          entry.done += teamDone;
+        }
       }
-      teamEntry.total += total;
-      teamEntry.done += done;
     }
 
     return {
@@ -649,12 +787,14 @@ export const getMyServingTasks = query({
     );
 
     for (const task of tasks) {
-      // Team-level tasks (roleId == null) are team-wide, single-source on
+      // Team-level tasks (no roles) are team-wide, single-source on
       // `sharedTaskCompletions`, and belong to the Shared surface only — they
-      // are no longer listed in this personal "Mine" view. Only role-assigned
-      // tasks the user is confirmed for appear here (plus their personal tasks).
-      if (!task.roleId) continue;
-      if (!confirmedRoleIds.has(task.roleId as string)) continue;
+      // are no longer listed in this personal "Mine" view. A role task appears
+      // here when the user is confirmed for ANY of its roles (plus their
+      // personal tasks).
+      const roleIds = taskRoleIds(task);
+      if (roleIds.length === 0) continue;
+      if (!roleIds.some((r) => confirmedRoleIds.has(r as string))) continue;
 
       const base = {
         title: task.title,
@@ -758,8 +898,9 @@ async function myConfirmedAssignments(
  */
 type SharedTeamTaskItem = {
   taskId: string;
-  teamId: string;
-  teamName: string;
+  /** The team(s) this whole-team task spans (>= 1). */
+  teamIds: string[];
+  teamNames: string[];
   title: string;
   segment: "before" | "during" | "after";
   howToType: string;
@@ -817,9 +958,13 @@ export const getSharedTeamTasks = query({
       sharedRows.map((r) => [r.taskId as string, r]),
     );
 
-    // Team-level tasks (no role) on a team the user is confirmed for.
+    // Team-level tasks (no roles) that span a team the user is confirmed for.
+    // A multi-team task shows ONCE (one shared checkbox) for any teammate on
+    // any of its teams.
     const teamTasks = tasks.filter(
-      (t) => !t.roleId && myTeamIds.has(t.teamId as string),
+      (t) =>
+        isTeamLevel(t) &&
+        taskTeamIds(t).some((id) => myTeamIds.has(id as string)),
     );
     teamTasks.sort(
       (a, b) =>
@@ -828,14 +973,18 @@ export const getSharedTeamTasks = query({
     );
 
     const teamNames = new Map<string, string>();
+    const teamNameFor = async (id: Id<"teams">): Promise<string> => {
+      const key = id as string;
+      if (!teamNames.has(key)) {
+        const team = await ctx.db.get(id);
+        teamNames.set(key, team?.name ?? "Team");
+      }
+      return teamNames.get(key)!;
+    };
     const userNames = new Map<string, string>();
     const items: SharedTeamTaskItem[] = [];
     for (const task of teamTasks) {
-      const teamKey = task.teamId as string;
-      if (!teamNames.has(teamKey)) {
-        const team = await ctx.db.get(task.teamId);
-        teamNames.set(teamKey, team?.name ?? "Team");
-      }
+      const teamIds = taskTeamIds(task);
       const completion = completionByTask.get(task._id as string);
       let completedByName: string | undefined;
       if (completion) {
@@ -850,8 +999,8 @@ export const getSharedTeamTasks = query({
       }
       items.push({
         taskId: task._id as string,
-        teamId: teamKey,
-        teamName: teamNames.get(teamKey)!,
+        teamIds: teamIds as string[],
+        teamNames: await Promise.all(teamIds.map(teamNameFor)),
         title: task.title,
         segment: task.segment,
         howToType: task.howToType,
@@ -895,7 +1044,7 @@ export const toggleSharedTeamTask = mutation({
     if (!task || task.planId !== args.planId) {
       throw new ConvexError("Task not found");
     }
-    if (task.roleId) {
+    if (!isTeamLevel(task)) {
       throw new ConvexError(
         "Only team-level tasks can be completed for the whole team",
       );
@@ -903,9 +1052,10 @@ export const toggleSharedTeamTask = mutation({
     const plan = await requirePlan(ctx, args.planId);
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    // Gate: the caller must be a confirmed member of THIS task's team.
+    // Gate: the caller must be a confirmed member of ANY of THIS task's teams.
+    const taskTeams = new Set(taskTeamIds(task) as string[]);
     const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
-    const onTeam = confirmed.some((a) => a.teamId === task.teamId);
+    const onTeam = confirmed.some((a) => taskTeams.has(a.teamId as string));
     if (!onTeam) {
       throw new ConvexError("You must be serving on this team to update it");
     }
@@ -976,7 +1126,7 @@ export const backfillTeamLevelSharedCompletions = internalMutation({
   args: {},
   handler: async (ctx) => {
     const tasks = await ctx.db.query("eventTasks").collect();
-    const teamLevelTasks = tasks.filter((t) => !t.roleId);
+    const teamLevelTasks = tasks.filter((t) => isTeamLevel(t));
 
     // Cache of confirmed assignees per plan (userId set keyed by teamId), so we
     // load each plan's roleAssignments at most once.
@@ -1032,11 +1182,16 @@ export const backfillTeamLevelSharedCompletions = internalMutation({
       }
 
       const confirmedByTeam = await confirmedForPlan(task.planId);
-      const confirmedTeam = confirmedByTeam.get(task.teamId as string);
-      // Only per-user rows from a CONFIRMED member of the task's team count.
-      // Pick the earliest such completion so the snapshot is deterministic.
+      // Union of confirmed members across ALL of the task's teams.
+      const confirmedTeam = new Set<string>();
+      for (const teamId of taskTeamIds(task)) {
+        for (const uid of confirmedByTeam.get(teamId as string) ?? [])
+          confirmedTeam.add(uid);
+      }
+      // Only per-user rows from a CONFIRMED member of one of the task's teams
+      // count. Pick the earliest such completion so the snapshot is deterministic.
       const qualifying = completions
-        .filter((c) => confirmedTeam?.has(c.userId as string))
+        .filter((c) => confirmedTeam.has(c.userId as string))
         .sort((a, b) => a.completedAt - b.completedAt);
       if (qualifying.length === 0) {
         skippedNoLegacy += 1;
@@ -1055,6 +1210,45 @@ export const backfillTeamLevelSharedCompletions = internalMutation({
     }
 
     return { scanned, inserted, skippedHasShared, skippedNoLegacy };
+  },
+});
+
+/**
+ * One-time backfill: populate the multi-assign `teamIds` / `roleIds` arrays on
+ * every `eventTasks` row from the legacy single `teamId` / `roleId` columns.
+ *
+ * All reads go through `taskTeamIds()` / `taskRoleIds()`, which fall back to the
+ * legacy columns, so correctness does not depend on this having run. It exists
+ * so the legacy columns can be dropped in a follow-up:
+ *   TODO(followup): after this has run in all envs, remove `teamId` / `roleId`
+ *   from the `eventTasks` schema and this migration.
+ *
+ * Idempotent: a task that already has `teamIds` set is skipped, so re-running is
+ * a no-op. A legacy `roleId` of null becomes an empty `roleIds` (team-level).
+ *
+ * Run once per deployment after deploy:
+ *   npx convex run functions/scheduling/eventTasks:backfillTaskAssignmentArrays
+ */
+export const backfillTaskAssignmentArrays = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const tasks = await ctx.db.query("eventTasks").collect();
+    let scanned = 0;
+    let migrated = 0;
+    let skippedHasArrays = 0;
+    for (const task of tasks) {
+      scanned += 1;
+      if (task.teamIds !== undefined) {
+        skippedHasArrays += 1;
+        continue;
+      }
+      await ctx.db.patch(task._id, {
+        teamIds: task.teamId ? [task.teamId] : [],
+        roleIds: task.roleId ? [task.roleId] : [],
+      });
+      migrated += 1;
+    }
+    return { scanned, migrated, skippedHasArrays };
   },
 });
 
@@ -1124,13 +1318,16 @@ export const getCrewTasks = query({
     ]);
 
     // Role tasks grouped by roleId (team-level tasks excluded — Shared surface).
+    // A multi-role task appears under each of its roles, so each person in any
+    // of those roles sees it in their crew row.
     const tasksByRole = new Map<string, Doc<"eventTasks">[]>();
     for (const t of tasks) {
-      if (!t.roleId) continue;
-      const key = t.roleId as string;
-      const list = tasksByRole.get(key) ?? [];
-      list.push(t);
-      tasksByRole.set(key, list);
+      for (const roleId of taskRoleIds(t)) {
+        const key = roleId as string;
+        const list = tasksByRole.get(key) ?? [];
+        list.push(t);
+        tasksByRole.set(key, list);
+      }
     }
 
     const timesCount = Math.max(1, plan.times.length);
@@ -1257,7 +1454,8 @@ type AllTeamsEntry = {
     taskId: string;
     title: string;
     segment: "before" | "during" | "after";
-    roleName: string | null;
+    /** Role(s) responsible for this task ON THIS team; empty => team-level. */
+    roleNames: string[];
     completed: boolean;
     howToType: string;
   }>;
@@ -1321,52 +1519,29 @@ export const getAllTeamsTasks = query({
     const roleNames = new Map<string, string>();
     const byTeam = new Map<string, AllTeamsEntry>();
 
-    for (const task of tasks) {
-      let total: number;
-      let doneForEntry: number;
-      let completed: boolean;
-      if (!task.roleId) {
-        // Team-level task: a single TEAM-WIDE slot completed via
-        // `sharedTaskCompletions` (the Shared surface), matching the readiness
-        // semantics — one slot total, done iff a shared completion row exists
-        // (pre-migration per-user completions were backfilled into it).
-        const sharedDone = sharedByTask.has(task._id as string);
-        total = 1;
-        doneForEntry = sharedDone ? 1 : 0;
-        completed = sharedDone;
-      } else {
-        // Role task: PER-USER readiness — confirmed assignees expected to
-        // complete it (× service times for "during"), done counts their valid
-        // completions. `completed` when fully satisfied.
-        const expected = assigneesForTask(assignments, task);
-        const expectedUserIds = new Set(
-          expected.map((a) => a.userId as string),
-        );
-        const expectedPeople = expectedUserIds.size;
-        total =
-          task.segment === "during"
-            ? expectedPeople * timesCount
-            : expectedPeople;
-
-        const completions = await ctx.db
-          .query("eventTaskCompletions")
-          .withIndex("by_task", (q) => q.eq("taskId", task._id))
-          .collect();
-        const validCompletions = completions.filter((c) => {
-          if (!expectedUserIds.has(c.userId as string)) return false;
-          if (task.segment === "during") {
-            if (plan.times.length === 0) return c.timeLabel == null;
-            return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
-          }
-          return true;
-        });
-        doneForEntry = Math.min(validCompletions.length, total);
-        completed = total > 0 && doneForEntry >= total;
+    // Role -> teamId, resolved lazily, so we can bucket a task's roles by team
+    // and label each team's slice of a multi-role task.
+    const roleTeam = new Map<string, string>();
+    const roleTeamFor = async (id: Id<"teamRoles">): Promise<string | null> => {
+      const key = id as string;
+      if (!roleTeam.has(key)) {
+        const role = await ctx.db.get(id);
+        if (role) roleTeam.set(key, role.teamId as string);
       }
-
-      const teamKey = task.teamId as string;
+      return roleTeam.get(key) ?? null;
+    };
+    const roleNameFor = async (id: Id<"teamRoles">): Promise<string> => {
+      const key = id as string;
+      if (!roleNames.has(key)) {
+        const role = await ctx.db.get(id);
+        roleNames.set(key, role?.name ?? "Role");
+      }
+      return roleNames.get(key)!;
+    };
+    const entryFor = async (teamId: Id<"teams">): Promise<AllTeamsEntry> => {
+      const teamKey = teamId as string;
       if (!teamNames.has(teamKey)) {
-        const team = await ctx.db.get(task.teamId);
+        const team = await ctx.db.get(teamId);
         teamNames.set(teamKey, team?.name ?? "Team");
       }
       let entry = byTeam.get(teamKey);
@@ -1381,28 +1556,91 @@ export const getAllTeamsTasks = query({
         };
         byTeam.set(teamKey, entry);
       }
+      return entry;
+    };
 
-      let roleName: string | null = null;
-      if (task.roleId) {
-        const roleKey = task.roleId as string;
-        if (!roleNames.has(roleKey)) {
-          const role = await ctx.db.get(task.roleId);
-          roleNames.set(roleKey, role?.name ?? "Role");
+    for (const task of tasks) {
+      const teamIds = taskTeamIds(task);
+      const roleIds = taskRoleIds(task);
+
+      if (roleIds.length === 0) {
+        // Team-level task: a single TEAM-WIDE slot completed via
+        // `sharedTaskCompletions` (the Shared surface). It shows under EACH team
+        // it spans, each crediting the whole shared checkbox.
+        const sharedDone = sharedByTask.has(task._id as string);
+        for (const teamId of teamIds) {
+          const entry = await entryFor(teamId);
+          entry.taskCount += 1;
+          entry.total += 1;
+          entry.done += sharedDone ? 1 : 0;
+          entry.tasks.push({
+            taskId: task._id as string,
+            title: task.title,
+            segment: task.segment,
+            roleNames: [],
+            completed: sharedDone,
+            howToType: task.howToType,
+          });
         }
-        roleName = roleNames.get(roleKey)!;
+        continue;
       }
 
-      entry.taskCount += 1;
-      entry.total += total;
-      entry.done += doneForEntry;
-      entry.tasks.push({
-        taskId: task._id as string,
-        title: task.title,
-        segment: task.segment,
-        roleName,
-        completed,
-        howToType: task.howToType,
-      });
+      // Role task: PER-USER readiness, partitioned by team (a role belongs to
+      // exactly one team). Under each team the task shows only that team's
+      // roles + that team's assignees.
+      const expected = assigneesForTask(assignments, task);
+      const completions = await ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", task._id))
+        .collect();
+      const countValid = (allowed: Set<string>): number =>
+        completions.filter((c) => {
+          if (!allowed.has(c.userId as string)) return false;
+          if (task.segment === "during") {
+            if (plan.times.length === 0) return c.timeLabel == null;
+            return c.timeLabel != null && validTimeLabels.has(c.timeLabel);
+          }
+          return true;
+        }).length;
+
+      // Group the task's roles by their owning team.
+      const rolesForTeam = new Map<string, Id<"teamRoles">[]>();
+      for (const roleId of roleIds) {
+        const teamKey = await roleTeamFor(roleId);
+        if (!teamKey) continue;
+        const list = rolesForTeam.get(teamKey) ?? [];
+        list.push(roleId);
+        rolesForTeam.set(teamKey, list);
+      }
+
+      for (const teamId of teamIds) {
+        const teamKey = teamId as string;
+        const teamRoleIds = rolesForTeam.get(teamKey) ?? [];
+        if (teamRoleIds.length === 0) continue; // no roles for this team
+        const teamUserIds = new Set(
+          expected
+            .filter((a) => (a.teamId as string) === teamKey)
+            .map((a) => a.userId as string),
+        );
+        const teamPeople = teamUserIds.size;
+        const total =
+          task.segment === "during" ? teamPeople * timesCount : teamPeople;
+        const done = Math.min(countValid(teamUserIds), total);
+        const completed = total > 0 && done >= total;
+
+        const entry = await entryFor(teamId);
+        entry.taskCount += 1;
+        entry.total += total;
+        entry.done += done;
+        entry.tasks.push({
+          taskId: task._id as string,
+          title: task.title,
+          segment: task.segment,
+          roleNames: await Promise.all(teamRoleIds.map(roleNameFor)),
+          completed,
+          howToType: task.howToType,
+        });
+      }
     }
 
     return Array.from(byTeam.values()).sort((a, b) =>

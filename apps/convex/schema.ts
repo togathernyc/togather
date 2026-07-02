@@ -2883,15 +2883,35 @@ export default defineSchema({
 
   /**
    * Per-plan serving tasks (Event Tasks feature). A task is a high-level thing
-   * a team (or a specific role on that team) needs to do for an event, tagged
-   * with when it happens ("before" | "during" | "after"). Optional "how to"
-   * guidance can be plain text, a link, an R2 media asset, or a markdown doc.
+   * one or more teams (or specific roles on those teams) need to do for an
+   * event, tagged with when it happens ("before" | "during" | "after").
+   * Optional "how to" guidance can be plain text, a link, an R2 media asset, or
+   * a markdown doc.
+   *
+   * Assignment model (multi-team / multi-role):
+   *   • `teamIds` — the team(s) this task belongs to (always >= 1).
+   *   • `roleIds` — the role(s) responsible. NON-EMPTY => per-person completion
+   *     (each confirmed person in ANY of `roleIds` completes it individually via
+   *     `eventTaskCompletions`). EMPTY => team-level task: ONE shared completion
+   *     for the whole task (`sharedTaskCompletions`), togglable by any confirmed
+   *     member of ANY team in `teamIds`. A team-level task spanning multiple
+   *     teams is still ONE shared checkbox.
+   *
+   * `teamId` / `roleId` are LEGACY single-value columns kept optional for the
+   * migration window; reads go through `taskTeamIds()` / `taskRoleIds()` which
+   * fall back to them when the arrays are absent.
+   * TODO(followup): drop legacy teamId/roleId after
+   * `backfillTaskAssignmentArrays` has run in all envs.
    */
   eventTasks: defineTable({
     planId: v.id("eventPlans"),
     communityId: v.id("communities"),
-    teamId: v.id("teams"),
-    roleId: v.optional(v.id("teamRoles")), // null => team-level task
+    // Legacy single-value columns (pre multi-assign). Optional during migration.
+    teamId: v.optional(v.id("teams")),
+    roleId: v.optional(v.id("teamRoles")), // legacy: null => team-level task
+    // Multi-assign columns. `teamIds` >= 1; empty `roleIds` => team-level task.
+    teamIds: v.optional(v.array(v.id("teams"))),
+    roleIds: v.optional(v.array(v.id("teamRoles"))),
     segment: v.union(
       v.literal("before"),
       v.literal("during"),
@@ -2915,7 +2935,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_plan", ["planId"])
-    .index("by_plan_team", ["planId", "teamId"])
     .index("by_plan_segment", ["planId", "segment"]),
 
   /**

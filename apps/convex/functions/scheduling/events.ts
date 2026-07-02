@@ -24,6 +24,7 @@ import {
   requirePlanScheduler,
 } from "./permissions";
 import { hydrateItem } from "./eventItems";
+import { taskTeamIds, taskRoleIds } from "./eventTasks";
 import {
   scheduleUnconfirmedReminders,
   cancelUnconfirmedReminders,
@@ -254,8 +255,8 @@ export const duplicateEvent = mutation({
         ctx.db.insert("eventTasks", {
           planId: newPlanId,
           communityId: task.communityId,
-          teamId: task.teamId,
-          roleId: task.roleId,
+          teamIds: taskTeamIds(task),
+          roleIds: taskRoleIds(task),
           segment: task.segment,
           title: task.title,
           howToType: task.howToType,
