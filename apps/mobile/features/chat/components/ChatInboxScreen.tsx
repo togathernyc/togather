@@ -215,6 +215,34 @@ export function ChatInboxScreen({
     token ? { token } : "skip",
   );
 
+  // Serving mode focuses the inbox on the active plan: its channels stay
+  // pinned on top (filtered server-side via `servingPlanId`, above), DMs are
+  // narrowed to those created on the event day, and the Notifications row is
+  // hidden. `getServingInboxMeta` returns the plan's `eventDate` (resolved
+  // straight from the plan id, so it works even before the day-of window) from
+  // which we derive the local-day boundaries for the DM filter.
+  const servingInboxMeta = useQuery(
+    api.functions.scheduling.serving.getServingInboxMeta,
+    inServingMode && activePlanId && token
+      ? { token, planId: activePlanId as Id<"eventPlans"> }
+      : "skip",
+  ) as { eventDate: number } | null | undefined;
+
+  // Event-day window (device-local day of `eventDate`, matching how event rows
+  // format "Today"). Null outside serving mode or before the plan loads.
+  const servingDmWindow = useMemo<{ start: number; end: number } | null>(() => {
+    if (!inServingMode) return null;
+    const eventDate = servingInboxMeta?.eventDate;
+    if (typeof eventDate !== "number") return null;
+    const d = new Date(eventDate);
+    const start = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+    ).getTime();
+    return { start, end: start + 24 * 60 * 60 * 1000 };
+  }, [inServingMode, servingInboxMeta]);
+
   // Resources flagged to show under their group in the inbox. One batched
   // subscription returns them grouped by groupId; we index into it per row.
   const inboxResources = useQuery(
@@ -699,6 +727,23 @@ export function ChatInboxScreen({
   }, [notificationSummary]);
 
   const listItemsWithDm = useMemo<InboxListItem[]>(() => {
+    // Serving mode: a focused inbox. `listItems` is already restricted to the
+    // active plan's serving channels (server-filtered via `servingPlanId`), so
+    // pin those on top and append only the DMs created on the event day. No
+    // Notifications row and no requests-link — everything unrelated is hidden.
+    if (inServingMode) {
+      const dayDmItems: InboxListItem[] = dmRows
+        .filter(
+          (row) =>
+            !servingDmWindow ||
+            (row.createdAt >= servingDmWindow.start &&
+              row.createdAt < servingDmWindow.end),
+        )
+        .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+        .map((row) => ({ kind: "dm" as const, item: row }));
+      return [...listItems, ...dayDmItems];
+    }
+
     const dmItems: InboxListItem[] = dmRows.map((row) => ({
       kind: "dm" as const,
       item: row,
@@ -760,7 +805,14 @@ export function ChatInboxScreen({
     }
     items.push(...pinned, ...merged);
     return items;
-  }, [requestCount, dmRows, listItems, notificationsItem]);
+  }, [
+    requestCount,
+    dmRows,
+    listItems,
+    notificationsItem,
+    inServingMode,
+    servingDmWindow,
+  ]);
   const hasInboxItems = listItemsWithDm.length > 0;
 
   // Show message when user has no community context

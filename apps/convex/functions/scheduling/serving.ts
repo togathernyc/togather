@@ -17,6 +17,7 @@ import { query } from "../../_generated/server";
 import type { QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { requireGroupMember } from "./permissions";
 
 /** Two hours before the first service time is when serving auto-enters. */
 const AUTO_ENTER_LEAD_MS = 2 * 60 * 60 * 1000;
@@ -220,5 +221,26 @@ export const getServingEligibility = query({
       activePlan,
       plans,
     };
+  },
+});
+
+/**
+ * Lightweight serving-inbox metadata for one plan: just its `eventDate`. The
+ * mobile inbox (serving mode) uses this to derive the event's local-day window
+ * and filter direct messages down to those created on the day of the event.
+ *
+ * Unlike `getServingEligibility`, this resolves straight from the plan id, so
+ * it works even outside the ~12h serving window (e.g. a volunteer previewing
+ * their focused inbox early) — mirroring how the runsheet loads the plan via
+ * `getEvent`. Membership-gated like the rest of the plan surface.
+ */
+export const getServingInboxMeta = query({
+  args: { token: v.string(), planId: v.id("eventPlans") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return null;
+    await requireGroupMember(ctx, plan.groupId, userId);
+    return { eventDate: plan.eventDate };
   },
 });
