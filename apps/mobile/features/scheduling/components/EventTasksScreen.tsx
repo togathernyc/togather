@@ -57,6 +57,17 @@ import {
 } from "./EventTasksGrid";
 import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import { EventTasksHowToDocEditor } from "./EventTasksHowToDocEditor";
+import { PlanTemplateToolbar } from "./PlanTemplateToolbar";
+import {
+  getPlanTemplateStateRef,
+  listTaskTemplatesRef,
+  setPlanTaskTemplateRef,
+  saveTaskTemplateFromPlanRef,
+  revertPlanTaskTemplateEditsRef,
+  type PlanTemplateState,
+  type TemplateCarryover,
+  type SaveTemplateStrategy,
+} from "../api/eventTemplates";
 
 /** Show a one-button error (Alert.alert is a no-op on web in this codebase). */
 function notifyError(title: string, message: string) {
@@ -156,6 +167,101 @@ export function EventTasksScreen() {
   const reorderTasks = useAuthenticatedMutation(
     api.functions.scheduling.eventTasks.reorderTasks,
   );
+
+  // Plan ↔ task-template linkage (Phase 3/4). `getPlanTemplateState` carries
+  // both task and run-sheet slices; this screen reads the task slice only.
+  const templateState = useAuthenticatedQuery(
+    getPlanTemplateStateRef,
+    canView && planId ? { planId } : "skip",
+  ) as PlanTemplateState | undefined;
+  const taskTemplates = useAuthenticatedQuery(
+    listTaskTemplatesRef,
+    canView && groupId ? { groupId } : "skip",
+  );
+  const setPlanTaskTemplate = useAuthenticatedMutation(setPlanTaskTemplateRef);
+  const saveTaskTemplateFromPlan = useAuthenticatedMutation(
+    saveTaskTemplateFromPlanRef,
+  );
+  const revertPlanTaskTemplateEdits = useAuthenticatedMutation(
+    revertPlanTaskTemplateEditsRef,
+  );
+
+  const templateSlice = templateState
+    ? {
+        templateId: templateState.taskTemplateId,
+        templateName: templateState.taskTemplateName,
+        hasEdits: templateState.hasTaskTemplateEdits,
+        isPast: templateState.isPast,
+      }
+    : undefined;
+  const templateOptions = useMemo(
+    () =>
+      (taskTemplates ?? []).map((t) => ({
+        _id: t._id as string,
+        name: t.name,
+        itemCount: t.itemCount,
+      })),
+    [taskTemplates],
+  );
+
+  const handleSetTemplate = useCallback(
+    (templateId: string | null, carryover: TemplateCarryover) => {
+      void setPlanTaskTemplate({
+        planId,
+        templateId: templateId as Id<"eventTaskTemplates"> | null,
+        carryover,
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't switch template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [setPlanTaskTemplate, planId],
+  );
+
+  const handleSaveNewTemplate = useCallback(
+    (name: string) => {
+      void saveTaskTemplateFromPlan({
+        planId,
+        mode: { kind: "new", name },
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't save template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [saveTaskTemplateFromPlan, planId],
+  );
+
+  const handleSaveExistingTemplate = useCallback(
+    (templateId: string, strategy: SaveTemplateStrategy) => {
+      void saveTaskTemplateFromPlan({
+        planId,
+        mode: {
+          kind: "existing",
+          templateId: templateId as Id<"eventTaskTemplates">,
+          strategy,
+        },
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't save template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [saveTaskTemplateFromPlan, planId],
+  );
+
+  const handleRevertTemplate = useCallback(() => {
+    void revertPlanTaskTemplateEdits({ planId }).catch((e: any) =>
+      notifyError(
+        "Couldn't revert",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      ),
+    );
+  }, [revertPlanTaskTemplateEdits, planId]);
 
   const teams: TeamOption[] = useMemo(
     () => (teamsData ?? []).map((t) => ({ _id: t._id, name: t.name })),
@@ -429,6 +535,16 @@ export function EventTasksScreen() {
           {formatEventDateLong(event.eventDate)}
         </Text>
       ) : null}
+      <PlanTemplateToolbar
+        label="Task template"
+        itemNoun="tasks"
+        state={templateSlice}
+        templates={templateOptions}
+        onSetTemplate={handleSetTemplate}
+        onSaveNew={handleSaveNewTemplate}
+        onSaveExisting={handleSaveExistingTemplate}
+        onRevert={handleRevertTemplate}
+      />
       <ReadinessHeader readiness={readiness} primaryColor={primaryColor} colors={colors} />
       {(tasks?.length ?? 0) > 0 ? (
         <FilterBar

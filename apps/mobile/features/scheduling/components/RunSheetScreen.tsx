@@ -52,6 +52,17 @@ import { InlineText } from "./InlineText";
 import { GridScrollList, OptionTag, type GridColumn } from "./GridScrollList";
 import { AnchoredMenu, type AnchorRect } from "./AnchoredMenu";
 import { CustomModal } from "@components/ui/Modal";
+import { PlanTemplateToolbar } from "./PlanTemplateToolbar";
+import {
+  getPlanTemplateStateRef,
+  listRunSheetTemplatesRef,
+  setPlanRunSheetTemplateRef,
+  saveRunSheetTemplateFromPlanRef,
+  revertPlanRunSheetTemplateEditsRef,
+  type PlanTemplateState,
+  type TemplateCarryover,
+  type SaveTemplateStrategy,
+} from "../api/eventTemplates";
 import type { Song } from "@features/songs/types";
 import {
   WhenPill,
@@ -157,6 +168,103 @@ export function RunSheetScreen() {
   const reorderItems = useAuthenticatedMutation(
     api.functions.scheduling.eventItems.reorderItems,
   );
+
+  // Plan ↔ run-sheet-template linkage (Phase 3/4). `getPlanTemplateState`
+  // carries both task and run-sheet slices; this screen reads the run-sheet one.
+  const templateState = useAuthenticatedQuery(
+    getPlanTemplateStateRef,
+    planId ? { planId } : "skip",
+  ) as PlanTemplateState | undefined;
+  const runSheetTemplates = useAuthenticatedQuery(
+    listRunSheetTemplatesRef,
+    group_id ? { groupId: group_id as Id<"groups"> } : "skip",
+  );
+  const setPlanRunSheetTemplate = useAuthenticatedMutation(
+    setPlanRunSheetTemplateRef,
+  );
+  const saveRunSheetTemplateFromPlan = useAuthenticatedMutation(
+    saveRunSheetTemplateFromPlanRef,
+  );
+  const revertPlanRunSheetTemplateEdits = useAuthenticatedMutation(
+    revertPlanRunSheetTemplateEditsRef,
+  );
+
+  const templateSlice = templateState
+    ? {
+        templateId: templateState.runSheetTemplateId,
+        templateName: templateState.runSheetTemplateName,
+        hasEdits: templateState.hasRunSheetTemplateEdits,
+        isPast: templateState.isPast,
+      }
+    : undefined;
+  const templateOptions = useMemo(
+    () =>
+      (runSheetTemplates ?? []).map((t) => ({
+        _id: t._id as string,
+        name: t.name,
+        itemCount: t.itemCount,
+      })),
+    [runSheetTemplates],
+  );
+
+  const handleSetTemplate = useCallback(
+    (templateId: string | null, carryover: TemplateCarryover) => {
+      void setPlanRunSheetTemplate({
+        planId,
+        templateId: templateId as Id<"runSheetTemplates"> | null,
+        carryover,
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't switch template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [setPlanRunSheetTemplate, planId],
+  );
+
+  const handleSaveNewTemplate = useCallback(
+    (name: string) => {
+      void saveRunSheetTemplateFromPlan({
+        planId,
+        mode: { kind: "new", name },
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't save template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [saveRunSheetTemplateFromPlan, planId],
+  );
+
+  const handleSaveExistingTemplate = useCallback(
+    (templateId: string, strategy: SaveTemplateStrategy) => {
+      void saveRunSheetTemplateFromPlan({
+        planId,
+        mode: {
+          kind: "existing",
+          templateId: templateId as Id<"runSheetTemplates">,
+          strategy,
+        },
+      }).catch((e: any) =>
+        notifyError(
+          "Couldn't save template",
+          e?.data?.message ?? e?.message ?? "Please try again.",
+        ),
+      );
+    },
+    [saveRunSheetTemplateFromPlan, planId],
+  );
+
+  const handleRevertTemplate = useCallback(() => {
+    void revertPlanRunSheetTemplateEdits({ planId }).catch((e: any) =>
+      notifyError(
+        "Couldn't revert",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      ),
+    );
+  }, [revertPlanRunSheetTemplateEdits, planId]);
 
   // The just-created item to autofocus its title for immediate editing.
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -421,6 +529,16 @@ export function RunSheetScreen() {
                   {formatServiceRanges(times, duringTotalSec)}
                 </Text>
               ) : null}
+              <PlanTemplateToolbar
+                label="Run-sheet template"
+                itemNoun="run-sheet items"
+                state={templateSlice}
+                templates={templateOptions}
+                onSetTemplate={handleSetTemplate}
+                onSaveNew={handleSaveNewTemplate}
+                onSaveExisting={handleSaveExistingTemplate}
+                onRevert={handleRevertTemplate}
+              />
             </View>
           );
 
