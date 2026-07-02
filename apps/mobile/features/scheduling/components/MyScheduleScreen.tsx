@@ -426,7 +426,7 @@ function UpcomingRow({
           onPress={onOpenEvent}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel={`Open event view for ${assignment.eventTitle}`}
+          accessibilityLabel={`Enter event mode for ${assignment.eventTitle}`}
           style={({ pressed }) => [
             styles.openEventBtn,
             { borderColor: primaryColor },
@@ -434,7 +434,7 @@ function UpcomingRow({
           ]}
         >
           <Ionicons name="open-outline" size={14} color={primaryColor} />
-          <Text style={[styles.openEventText, { color: primaryColor }]}>Open event</Text>
+          <Text style={[styles.openEventText, { color: primaryColor }]}>Event mode</Text>
         </Pressable>
       ) : null}
       <View style={[styles.statusPill, { backgroundColor: statusColor + "22" }]}>

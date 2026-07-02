@@ -2933,7 +2933,11 @@ export default defineSchema({
   })
     .index("by_task", ["taskId"])
     .index("by_task_user", ["taskId", "userId"])
-    .index("by_plan_user", ["planId", "userId"]),
+    .index("by_plan_user", ["planId", "userId"])
+    // Plan-wide read of every completion row: used to detect legacy per-user
+    // completions of team-level tasks (pre-migration "done" state) so readiness
+    // and the Shared/All-teams surfaces still count them. See eventTasks.ts.
+    .index("by_plan", ["planId"]),
 
   /**
    * Ad-hoc, single-user serving tasks a user adds for themselves in serving
