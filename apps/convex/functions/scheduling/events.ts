@@ -379,6 +379,7 @@ export const deleteEvent = mutation({
       items,
       tasks,
       taskCompletions,
+      sharedCompletions,
       personalTasks,
     ] = await Promise.all([
       ctx.db
@@ -403,11 +404,29 @@ export const deleteEvent = mutation({
         .query("eventTaskCompletions")
         .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
         .collect(),
+      // Team-wide shared completions for the plan's team-level tasks.
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
       ctx.db
         .query("personalServingTasks")
         .withIndex("by_plan_user", (q) => q.eq("planId", args.planId))
         .collect(),
     ]);
+
+    // Per-user "doc" How-To checklist state is keyed by task (no planId column),
+    // so gather it per event task via the `by_task` index.
+    const docChecks = (
+      await Promise.all(
+        tasks.map((t) =>
+          ctx.db
+            .query("howToDocChecks")
+            .withIndex("by_task", (q) => q.eq("taskId", t._id))
+            .collect(),
+        ),
+      )
+    ).flat();
 
     // Distinct serving teams touched by this event's assignments — captured
     // before the deletes so we can reconcile them afterwards.
@@ -426,6 +445,8 @@ export const deleteEvent = mutation({
       ...items.map((row) => ctx.db.delete(row._id)),
       ...tasks.map((row) => ctx.db.delete(row._id)),
       ...taskCompletions.map((row) => ctx.db.delete(row._id)),
+      ...sharedCompletions.map((row) => ctx.db.delete(row._id)),
+      ...docChecks.map((row) => ctx.db.delete(row._id)),
       ...personalTasks.map((row) => ctx.db.delete(row._id)),
     ]);
     await ctx.db.delete(args.planId);

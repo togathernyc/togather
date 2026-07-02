@@ -934,6 +934,208 @@ describe("multi-team / multi-role event tasks", () => {
   });
 });
 
+describe("completion cleanup on convert / role-drop / delete", () => {
+  it("does not resurrect a shared completion across a team-level → role → team-level round trip", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    // Team-level task, marked done team-wide.
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId],
+        roleIds: [],
+        segment: "before",
+        title: "Lock up",
+        howToType: "none",
+      },
+    );
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: memberToken,
+      planId,
+      taskId,
+      completed: true,
+    });
+    const sharedCount = async () =>
+      (
+        await t.run(async (ctx) =>
+          ctx.db
+            .query("sharedTaskCompletions")
+            .withIndex("by_task", (q) => q.eq("taskId", taskId))
+            .collect(),
+        )
+      ).length;
+    expect(await sharedCount()).toBe(1);
+
+    // Convert to a role task → the stale shared completion is dropped.
+    await t.mutation(api.functions.scheduling.eventTasks.updateTask, {
+      token: leaderToken,
+      taskId,
+      roleIds: [world.roleId],
+    });
+    expect(await sharedCount()).toBe(0);
+
+    // Convert BACK to team-level → must NOT be done again (no resurrection).
+    await t.mutation(api.functions.scheduling.eventTasks.updateTask, {
+      token: leaderToken,
+      taskId,
+      roleIds: [],
+    });
+    expect(await sharedCount()).toBe(0);
+    const shared = await t.query(
+      api.functions.scheduling.eventTasks.getSharedTeamTasks,
+      { token: memberToken, planId },
+    );
+    expect(shared.find((s) => s.taskId === (taskId as string))!.completed).toBe(
+      false,
+    );
+  });
+
+  it("drops completions from users no longer covered when a role is removed", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const modToken = (await generateTokens(world.channelModeratorId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    const team2 = await addSecondTeam(t, world);
+
+    // Member confirmed for Drums (role1); Moderator confirmed for Greeter (role2).
+    await assignConfirm(t, leaderToken, planId, world.teamId, world.roleId, world.channelMemberId);
+    await assignConfirm(t, leaderToken, planId, team2.teamId, team2.roleId, world.channelModeratorId);
+
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId, team2.teamId],
+        roleIds: [world.roleId, team2.roleId],
+        segment: "before",
+        title: "Prep",
+        howToType: "none",
+      },
+    );
+
+    // Both complete it (per-person).
+    await t.mutation(api.functions.scheduling.eventTasks.toggleTaskCompletion, {
+      token: memberToken,
+      taskId,
+      completed: true,
+    });
+    await t.mutation(api.functions.scheduling.eventTasks.toggleTaskCompletion, {
+      token: modToken,
+      taskId,
+      completed: true,
+    });
+    let rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(rows).toHaveLength(2);
+
+    // Remove role1 (Drums). The member was only in role1 → their completion is
+    // dropped; the moderator (still in role2) keeps theirs.
+    await t.mutation(api.functions.scheduling.eventTasks.updateTask, {
+      token: leaderToken,
+      taskId,
+      roleIds: [team2.roleId],
+    });
+    rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("eventTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(world.channelModeratorId);
+  });
+
+  it("cascades sharedTaskCompletions and howToDocChecks on plan deletion", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    // Team-level task with a team-wide shared completion.
+    const teamLevel = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId],
+        roleIds: [],
+        segment: "before",
+        title: "Sweep",
+        howToType: "none",
+      },
+    );
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: memberToken,
+      planId,
+      taskId: teamLevel.taskId,
+      completed: true,
+    });
+
+    // A role task with a per-user "doc" How-To check.
+    const roleTask = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId],
+        roleIds: [world.roleId],
+        segment: "before",
+        title: "Checklist",
+        howToType: "doc",
+        howToDoc: "- [ ] step one",
+      },
+    );
+    await t.mutation(api.functions.scheduling.eventTasks.setHowToDocCheck, {
+      token: memberToken,
+      taskId: roleTask.taskId,
+      itemKey: "step-one",
+      checked: true,
+    });
+
+    // Sanity: the rows exist before deletion.
+    const sharedBefore = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .collect(),
+    );
+    expect(sharedBefore).toHaveLength(1);
+
+    await t.mutation(api.functions.scheduling.events.deleteEvent, {
+      token: leaderToken,
+      planId,
+    });
+
+    const sharedAfter = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .collect(),
+    );
+    const docChecksAfter = await t.run(async (ctx) =>
+      ctx.db
+        .query("howToDocChecks")
+        .withIndex("by_task", (q) => q.eq("taskId", roleTask.taskId))
+        .collect(),
+    );
+    expect(sharedAfter).toHaveLength(0);
+    expect(docChecksAfter).toHaveLength(0);
+  });
+});
+
 describe("serving eligibility", () => {
   it("marks an in-window confirmed plan eligible with resolved channels", async () => {
     const { t, world } = await setupSchedulingWorld();

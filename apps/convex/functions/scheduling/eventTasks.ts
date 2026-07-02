@@ -390,17 +390,61 @@ export const updateTask = mutation({
       patch.howToMediaPath = args.howToMediaPath;
     if (args.howToDoc !== undefined) patch.howToDoc = args.howToDoc;
 
-    // Converting a role task to team-level: its per-user `eventTaskCompletions`
-    // rows were role-specific (one per assignee) and are meaningless as a
-    // team-wide completion. Team-level completion is single-source on
-    // `sharedTaskCompletions`, so drop the stale role completions — otherwise the
-    // converted task could still read as done from those rows.
-    if (prevRoleIds.length > 0 && nextRoleIds.length === 0) {
+    // Completion cleanup — kept symmetric so a task can be converted back and
+    // forth without resurrecting stale "done" state from the other model. The
+    // two completion models are single-source per task kind: role tasks use
+    // per-user `eventTaskCompletions`; team-level tasks use `sharedTaskCompletions`.
+    const prevIsTeamLevel = prevRoleIds.length === 0;
+    const nextIsTeamLevel = nextRoleIds.length === 0;
+
+    if (!prevIsTeamLevel && nextIsTeamLevel) {
+      // Role → team-level: the per-user role completions are meaningless as a
+      // team-wide completion, so drop them — otherwise the converted task could
+      // still read as done from those rows.
       const roleCompletions = await ctx.db
         .query("eventTaskCompletions")
         .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
         .collect();
       await Promise.all(roleCompletions.map((c) => ctx.db.delete(c._id)));
+    } else if (prevIsTeamLevel && !nextIsTeamLevel) {
+      // Team-level → role: drop the stale shared completion, or converting the
+      // task BACK to team-level later would resurrect a phantom "done" state.
+      const shared = await ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect();
+      await Promise.all(shared.map((s) => ctx.db.delete(s._id)));
+    } else if (!nextIsTeamLevel) {
+      // Stayed a role task but a role was removed: per-user completions from
+      // people who were only in a dropped role are now orphaned (and would
+      // resurrect if the role were re-added). Delete completions whose user is
+      // no longer covered by ANY remaining role. Users still covered by a
+      // remaining role keep their completion.
+      const nextSet = new Set(nextRoleIds as string[]);
+      const roleRemoved = prevRoleIds.some((r) => !nextSet.has(r as string));
+      if (roleRemoved) {
+        const assignments = await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_plan", (q) => q.eq("planId", task.planId))
+          .collect();
+        const coveredUserIds = new Set(
+          assignments
+            .filter(
+              (a) =>
+                a.status === "confirmed" && nextSet.has(a.roleId as string),
+            )
+            .map((a) => a.userId as string),
+        );
+        const completions = await ctx.db
+          .query("eventTaskCompletions")
+          .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+          .collect();
+        await Promise.all(
+          completions
+            .filter((c) => !coveredUserIds.has(c.userId as string))
+            .map((c) => ctx.db.delete(c._id)),
+        );
+      }
     }
 
     await ctx.db.patch(args.taskId, patch);
@@ -423,7 +467,7 @@ export const deleteTask = mutation({
     }
     await requirePlanScheduler(ctx, task.planId, userId);
 
-    const [completions, sharedCompletions] = await Promise.all([
+    const [completions, sharedCompletions, docChecks] = await Promise.all([
       ctx.db
         .query("eventTaskCompletions")
         .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
@@ -432,10 +476,16 @@ export const deleteTask = mutation({
         .query("sharedTaskCompletions")
         .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
         .collect(),
+      // Per-user "doc" How-To checklist state also cascades with the task.
+      ctx.db
+        .query("howToDocChecks")
+        .withIndex("by_task", (q) => q.eq("taskId", args.taskId))
+        .collect(),
     ]);
     await Promise.all([
       ...completions.map((c) => ctx.db.delete(c._id)),
       ...sharedCompletions.map((c) => ctx.db.delete(c._id)),
+      ...docChecks.map((c) => ctx.db.delete(c._id)),
     ]);
     await ctx.db.delete(args.taskId);
 

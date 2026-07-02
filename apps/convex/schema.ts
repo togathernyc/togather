@@ -2993,7 +2993,10 @@ export default defineSchema({
     // old positional-index scheme.
     checkedKeys: v.array(v.string()),
     updatedAt: v.number(),
-  }).index("by_user_task", ["userId", "taskId"]),
+  })
+    .index("by_user_task", ["userId", "taskId"])
+    // Scan a task's checks (across users) so task/plan deletion can cascade.
+    .index("by_task", ["taskId"]),
 
   /**
    * Team-WIDE completion of a team-level event task (the "Shared" serving
