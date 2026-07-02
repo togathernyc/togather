@@ -327,11 +327,16 @@ export function EventTasksScreen() {
 
   const handleReorder = useCallback(
     (orderedIds: Array<Id<"eventTasks">>) => {
+      // No-op while any view filter is active: the grid only sees the FILTERED
+      // ids, so reordering here would rewrite sortOrder 0..k over just those,
+      // colliding with the hidden tasks' sortOrders and corrupting the global
+      // order. The reactive query snaps the dragged row back.
+      if (phaseFilter || teamFilter || roleFilter) return;
       void reorderTasks({ planId, orderedIds }).catch((e: any) =>
         notifyError("Couldn't reorder", e?.data?.message ?? e?.message ?? "Please try again."),
       );
     },
-    [reorderTasks, planId],
+    [reorderTasks, planId, phaseFilter, teamFilter, roleFilter],
   );
 
   // `updateTask` (final API) has no `teamId` arg — a task's team is fixed at

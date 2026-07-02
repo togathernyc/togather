@@ -541,7 +541,12 @@ export const getMyServingTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    const plan = await requirePlan(ctx, args.planId);
+    // Tolerate a stale/deleted activePlanId: return the empty shape rather than
+    // throwing, so the serving Tasks tab degrades gracefully (like getEvent)
+    // instead of dropping to the error boundary. Auth is unchanged when the
+    // plan exists.
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return { before: [], during: [], after: [] };
     await requireGroupMember(ctx, plan.groupId, userId);
 
     const result: Record<
@@ -716,7 +721,11 @@ export const getSharedTeamTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
   handler: async (ctx, args): Promise<SharedTeamTaskItem[]> => {
     const userId = await requireAuth(ctx, args.token);
-    const plan = await requirePlan(ctx, args.planId);
+    // Tolerate a stale/deleted activePlanId: return empty rather than throwing,
+    // so the serving Tasks tab degrades gracefully instead of erroring. Auth is
+    // unchanged when the plan exists.
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return [];
     await requireGroupMember(ctx, plan.groupId, userId);
 
     const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
@@ -897,7 +906,11 @@ export const getCrewTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
   handler: async (ctx, args): Promise<CrewMemberEntry[]> => {
     const userId = await requireAuth(ctx, args.token);
-    const plan = await requirePlan(ctx, args.planId);
+    // Tolerate a stale/deleted activePlanId: return empty rather than throwing,
+    // so the serving Tasks tab degrades gracefully instead of erroring. Auth is
+    // unchanged when the plan exists.
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return [];
     await requireGroupMember(ctx, plan.groupId, userId);
 
     const myConfirmed = await myConfirmedAssignments(ctx, args.planId, userId);
@@ -1073,7 +1086,11 @@ export const getAllTeamsTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
   handler: async (ctx, args): Promise<AllTeamsEntry[]> => {
     const userId = await requireAuth(ctx, args.token);
-    const plan = await requirePlan(ctx, args.planId);
+    // Tolerate a stale/deleted activePlanId: return empty rather than throwing,
+    // so the serving Tasks tab degrades gracefully instead of erroring. Auth is
+    // unchanged when the plan exists.
+    const plan = await ctx.db.get(args.planId);
+    if (!plan) return [];
     await requireGroupMember(ctx, plan.groupId, userId);
 
     const [tasks, assignments, sharedRows] = await Promise.all([
@@ -1132,6 +1149,11 @@ export const getAllTeamsTasks = query({
       // A team-level task the team marked shared-done counts as fully complete.
       const sharedDone = !task.roleId && sharedByTask.has(task._id as string);
       const completed = sharedDone || (total > 0 && done >= total);
+      // Keep the aggregate consistent with the row's checkmark: a shared-done
+      // team-level task is fully satisfied, so contribute its full slot count to
+      // the team's `done` (not the sparse per-user completions) — otherwise the
+      // row shows done while the team card reads e.g. 0/6.
+      const doneForEntry = sharedDone ? total : done;
 
       const teamKey = task.teamId as string;
       if (!teamNames.has(teamKey)) {
@@ -1163,7 +1185,7 @@ export const getAllTeamsTasks = query({
 
       entry.taskCount += 1;
       entry.total += total;
-      entry.done += done;
+      entry.done += doneForEntry;
       entry.tasks.push({
         taskId: task._id as string,
         title: task.title,

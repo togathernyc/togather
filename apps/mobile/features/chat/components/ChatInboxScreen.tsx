@@ -762,9 +762,13 @@ export function ChatInboxScreen({
       const dayDmItems: InboxListItem[] = dmRows
         .filter(
           (row) =>
-            !servingDmWindow ||
-            (row.createdAt >= servingDmWindow.start &&
-              row.createdAt < servingDmWindow.end),
+            // Only surface DMs once the event-day window is KNOWN. While
+            // getServingInboxMeta is loading, or when it returns null (plan
+            // gone / non-member), servingDmWindow is null — show no DMs rather
+            // than falling open to every DM.
+            servingDmWindow != null &&
+            row.createdAt >= servingDmWindow.start &&
+            row.createdAt < servingDmWindow.end,
         )
         .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
         .map((row) => ({ kind: "dm" as const, item: row }));
