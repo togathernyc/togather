@@ -20,7 +20,7 @@
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -86,6 +86,80 @@ type MyServingTasks = {
   after: ServingTask[];
 };
 
+// ----------------------------------------------------------------------------
+// Section switcher
+// ----------------------------------------------------------------------------
+
+/** The four views of the serving Tasks page. */
+type Section = "mine" | "shared" | "crew" | "allTeams";
+
+const SECTIONS: Array<{ key: Section; label: string }> = [
+  { key: "mine", label: "Mine" },
+  { key: "shared", label: "Shared" },
+  { key: "crew", label: "Crew" },
+  { key: "allTeams", label: "All teams" },
+];
+
+/** A whole-team task (from `getSharedTeamTasks`). Completion is team-wide. */
+type SharedTask = {
+  taskId: string;
+  teamId: string;
+  teamName: string;
+  title: string;
+  segment: Segment;
+  howToType: HowToType;
+  howToText?: string | null;
+  howToUrl?: string | null;
+  howToMediaPath?: string | null;
+  howToDoc?: string | null;
+  completed: boolean;
+  completedByName?: string | null;
+  completedAt?: number | null;
+};
+
+/** A single teammate task in the crew view (read-only; content not fetched). */
+type CrewTask = {
+  taskId: string;
+  title: string;
+  segment: Segment;
+  completed: boolean;
+  howToType: HowToType;
+};
+
+/** One entry per member+role from `getCrewTasks` (current user first). */
+type CrewMember = {
+  userId: string;
+  name: string;
+  roleId: string;
+  roleName: string;
+  teamId: string;
+  teamName: string;
+  isCurrentUser: boolean;
+  done: number;
+  total: number;
+  tasks: CrewTask[];
+};
+
+/** A single task in the all-teams overview (read-only). */
+type TeamTask = {
+  taskId: string;
+  title: string;
+  segment: Segment;
+  roleName: string | null;
+  completed: boolean;
+  howToType: HowToType;
+};
+
+/** One row per team from `getAllTeamsTasks` (plan-wide readiness). */
+type AllTeamsTeam = {
+  teamId: string;
+  teamName: string;
+  taskCount: number;
+  done: number;
+  total: number;
+  tasks: TeamTask[];
+};
+
 /** Show a one-button error (Alert.alert is a no-op on web in this codebase). */
 function notify(title: string, message: string) {
   if (Platform.OS === "web") {
@@ -115,6 +189,25 @@ export function ServingTasksScreen() {
   ) as { plans: Array<{ planId: string; title: string; startsAt: number }> } | null | undefined;
   const activePlan = eligibility?.plans.find((p) => p.planId === planId) ?? null;
 
+  // The other three sections. Fetched alongside Mine so the pill badges can
+  // show live counts; only the active section's content is rendered.
+  const sharedTasks = useAuthenticatedQuery(
+    api.functions.scheduling.eventTasks.getSharedTeamTasks,
+    planId ? { planId } : "skip",
+  ) as SharedTask[] | undefined;
+  const crewMembers = useAuthenticatedQuery(
+    api.functions.scheduling.eventTasks.getCrewTasks,
+    planId ? { planId } : "skip",
+  ) as CrewMember[] | undefined;
+  const allTeams = useAuthenticatedQuery(
+    api.functions.scheduling.eventTasks.getAllTeamsTasks,
+    planId ? { planId } : "skip",
+  ) as AllTeamsTeam[] | undefined;
+
+  const toggleSharedTeamTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.toggleSharedTeamTask,
+  );
+
   const toggleTaskCompletion = useAuthenticatedMutation(
     api.functions.scheduling.eventTasks.toggleTaskCompletion,
   );
@@ -138,6 +231,78 @@ export function ServingTasksScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   // The how-to guidance currently open in the full-screen viewer (null = none).
   const [viewerContent, setViewerContent] = useState<HowToViewerContent | null>(null);
+
+  // Which section is showing. Persisted in component state.
+  const [section, setSection] = useState<Section>("mine");
+  // Expanded rows in the read-only Crew / All-teams sections.
+  const [expandedCrewId, setExpandedCrewId] = useState<string | null>(null);
+  const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null);
+
+  // Optimistic overrides for shared (team-wide) task completion, keyed by
+  // taskId. Cleared once the reactive query catches up to the toggled value.
+  const [sharedOptimistic, setSharedOptimistic] = useState<
+    Record<string, boolean>
+  >({});
+
+  useEffect(() => {
+    if (!sharedTasks) return;
+    setSharedOptimistic((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const t of sharedTasks) {
+        if (t.taskId in next && next[t.taskId] === t.completed) {
+          delete next[t.taskId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [sharedTasks]);
+
+  const toggleShared = useCallback(
+    async (taskId: string, next: boolean) => {
+      if (!planId) return;
+      setSharedOptimistic((o) => ({ ...o, [taskId]: next }));
+      try {
+        await toggleSharedTeamTask({
+          planId,
+          taskId: taskId as Id<"eventTasks">,
+          completed: next,
+        });
+      } catch (err) {
+        // Revert the optimistic value on failure.
+        setSharedOptimistic((o) => {
+          const copy = { ...o };
+          delete copy[taskId];
+          return copy;
+        });
+        notify("Couldn't update task", String((err as Error)?.message ?? err));
+      }
+    },
+    [planId, toggleSharedTeamTask],
+  );
+
+  const openHowTo = useCallback(
+    (t: {
+      taskId: string;
+      title: string;
+      howToType?: HowToType;
+      howToUrl?: string | null;
+      howToMediaPath?: string | null;
+      howToDoc?: string | null;
+    }) => {
+      setViewerContent({
+        taskId: t.taskId,
+        title: t.title,
+        howToType: t.howToType ?? "none",
+        howToUrl: t.howToUrl,
+        howToMediaPath: t.howToMediaPath,
+        howToDoc: t.howToDoc,
+      });
+    },
+    [],
+  );
 
   const toggle = useCallback(
     async (task: ServingTask) => {
@@ -193,6 +358,14 @@ export function ServingTasksScreen() {
   const overallDone = allTasks.filter((t) => t.completed).length;
   const overallTotal = allTasks.length;
 
+  // Small badges on the section pills (null hides the badge).
+  const sectionCounts: Record<Section, string | null> = {
+    mine: overallTotal > 0 ? `${overallDone}/${overallTotal}` : null,
+    shared: sharedTasks && sharedTasks.length > 0 ? String(sharedTasks.length) : null,
+    crew: crewMembers && crewMembers.length > 0 ? String(crewMembers.length) : null,
+    allTeams: allTeams && allTeams.length > 0 ? String(allTeams.length) : null,
+  };
+
   return (
     <>
       <ScrollView
@@ -214,12 +387,21 @@ export function ServingTasksScreen() {
           primaryColor={primaryColor}
         />
 
-        {tasks === undefined ? (
-          <View style={styles.inlineLoading}>
-            <ActivityIndicator size="small" color={colors.text} />
-          </View>
-        ) : (
-          SEGMENTS.map(({ key, label }) => {
+        <SectionPills
+          section={section}
+          counts={sectionCounts}
+          onChange={setSection}
+          colors={colors}
+          primaryColor={primaryColor}
+        />
+
+        {section === "mine" &&
+          (tasks === undefined ? (
+            <View style={styles.inlineLoading}>
+              <ActivityIndicator size="small" color={colors.text} />
+            </View>
+          ) : (
+            SEGMENTS.map(({ key, label }) => {
             const segmentTasks = tasks[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
             const total = segmentTasks.length;
@@ -341,9 +523,44 @@ export function ServingTasksScreen() {
                     </Text>
                   </Pressable>
                 )}
-              </View>
-            );
-          })
+                </View>
+              );
+            })
+          ))}
+
+        {section === "shared" && (
+          <SharedSection
+            tasks={sharedTasks}
+            optimistic={sharedOptimistic}
+            colors={colors}
+            primaryColor={primaryColor}
+            onToggle={toggleShared}
+            onOpenHowTo={openHowTo}
+          />
+        )}
+
+        {section === "crew" && (
+          <CrewSection
+            members={crewMembers}
+            expandedId={expandedCrewId}
+            onToggleExpand={(id) =>
+              setExpandedCrewId((cur) => (cur === id ? null : id))
+            }
+            colors={colors}
+            primaryColor={primaryColor}
+          />
+        )}
+
+        {section === "allTeams" && (
+          <AllTeamsSection
+            teams={allTeams}
+            expandedId={expandedTeamId}
+            onToggleExpand={(id) =>
+              setExpandedTeamId((cur) => (cur === id ? null : id))
+            }
+            colors={colors}
+            primaryColor={primaryColor}
+          />
         )}
       </ScrollView>
 
@@ -741,6 +958,699 @@ function AddTaskForm({
   );
 }
 
+// ============================================================================
+// Section pills (Mine · Shared · Crew · All teams)
+// ============================================================================
+
+function SectionPills({
+  section,
+  counts,
+  onChange,
+  colors,
+  primaryColor,
+}: {
+  section: Section;
+  counts: Record<Section, string | null>;
+  onChange: (s: Section) => void;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.pillsScroll}
+      contentContainerStyle={styles.pillsRow}
+    >
+      {SECTIONS.map(({ key, label }) => {
+        const active = key === section;
+        const count = counts[key];
+        return (
+          <Pressable
+            key={key}
+            onPress={() => onChange(key)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={label}
+            style={[
+              styles.pill,
+              active
+                ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                : { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            <Text
+              style={[
+                styles.pillText,
+                { color: active ? "#fff" : colors.textSecondary },
+              ]}
+            >
+              {label}
+            </Text>
+            {count != null ? (
+              <View
+                style={[
+                  styles.pillBadge,
+                  {
+                    backgroundColor: active
+                      ? "rgba(255,255,255,0.25)"
+                      : colors.background,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pillBadgeText,
+                    { color: active ? "#fff" : colors.textTertiary },
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// ============================================================================
+// Shared (team-wide) tasks
+// ============================================================================
+
+function SharedSection({
+  tasks,
+  optimistic,
+  colors,
+  primaryColor,
+  onToggle,
+  onOpenHowTo,
+}: {
+  tasks: SharedTask[] | undefined;
+  optimistic: Record<string, boolean>;
+  colors: ThemeColors;
+  primaryColor: string;
+  onToggle: (taskId: string, next: boolean) => void;
+  onOpenHowTo: (t: SharedTask) => void;
+}) {
+  if (tasks === undefined) return <SectionLoading colors={colors} />;
+  if (tasks.length === 0) {
+    return (
+      <SectionEmpty
+        icon="people-outline"
+        title="No shared tasks"
+        subtitle="Whole-team tasks show up here."
+        colors={colors}
+      />
+    );
+  }
+
+  const stateOf = (t: SharedTask) => optimistic[t.taskId] ?? t.completed;
+
+  return (
+    <View style={styles.sectionBody}>
+      {SEGMENTS.map(({ key, label }) => {
+        const segTasks = tasks.filter((t) => t.segment === key);
+        if (segTasks.length === 0) return null;
+        const done = segTasks.filter(stateOf).length;
+        const total = segTasks.length;
+        return (
+          <View key={key} style={styles.segment}>
+            <View style={styles.segmentHeader}>
+              <Text style={[styles.segmentTitle, { color: colors.textSecondary }]}>
+                {label.toUpperCase()}
+              </Text>
+              <Text style={[styles.segmentCount, { color: colors.textTertiary }]}>
+                {done}/{total}
+              </Text>
+            </View>
+            <ProgressBar
+              progress={total > 0 ? done / total : 0}
+              color={primaryColor}
+              height={4}
+            />
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              {segTasks.map((task, i) => (
+                <SharedTaskRow
+                  key={task.taskId}
+                  task={task}
+                  completed={stateOf(task)}
+                  first={i === 0}
+                  colors={colors}
+                  primaryColor={primaryColor}
+                  onToggle={() => onToggle(task.taskId, !stateOf(task))}
+                  onOpenHowTo={() => onOpenHowTo(task)}
+                />
+              ))}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function SharedTaskRow({
+  task,
+  completed,
+  first,
+  colors,
+  primaryColor,
+  onToggle,
+  onOpenHowTo,
+}: {
+  task: SharedTask;
+  completed: boolean;
+  first: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+  onToggle: () => void;
+  onOpenHowTo: () => void;
+}) {
+  const howToType = task.howToType;
+  const inlineText = howToType === "text" ? task.howToText : null;
+  const viewerType =
+    howToType === "link" || howToType === "media" || howToType === "doc"
+      ? howToType
+      : null;
+
+  return (
+    <View
+      style={[
+        styles.taskRow,
+        !first && {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+      ]}
+    >
+      <View style={styles.taskRowMain}>
+        <Pressable
+          onPress={onToggle}
+          hitSlop={10}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: completed }}
+          accessibilityLabel={task.title}
+          style={styles.checkboxPress}
+        >
+          <View
+            style={[
+              styles.checkbox,
+              completed
+                ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                : { borderColor: colors.textTertiary },
+            ]}
+          >
+            {completed ? (
+              <Ionicons name="checkmark" size={15} color="#fff" />
+            ) : null}
+          </View>
+        </Pressable>
+
+        <View style={styles.taskBody}>
+          <Text
+            style={[
+              styles.taskTitle,
+              { color: colors.text },
+              completed && styles.taskTitleDone,
+            ]}
+          >
+            {task.title}
+          </Text>
+
+          <View style={styles.taskMetaRow}>
+            <View style={styles.teamCue}>
+              <Ionicons name="people" size={12} color={colors.textTertiary} />
+              <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
+                Team task
+              </Text>
+            </View>
+            {completed && task.completedByName ? (
+              <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
+                · Done by {task.completedByName}
+              </Text>
+            ) : null}
+          </View>
+
+          {inlineText ? (
+            <Text
+              style={[
+                styles.inlineHowTo,
+                { color: colors.textSecondary },
+                completed && styles.inlineHowToDone,
+              ]}
+              numberOfLines={2}
+            >
+              {inlineText}
+            </Text>
+          ) : null}
+        </View>
+
+        {viewerType ? (
+          <Pressable
+            onPress={() => {
+              if (howToType === "link" && task.howToUrl) {
+                void Linking.openURL(task.howToUrl).catch(() => {});
+              } else {
+                onOpenHowTo();
+              }
+            }}
+            hitSlop={6}
+            style={[styles.howToChip, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={
+              howToType === "link"
+                ? `Open link for ${task.title}`
+                : `Open how-to for ${task.title}`
+            }
+          >
+            <Ionicons
+              name={VIEWER_HOW_TO_ICONS[viewerType]}
+              size={13}
+              color={primaryColor}
+            />
+            <Text style={[styles.howToChipText, { color: primaryColor }]}>
+              How-To
+            </Text>
+            <Ionicons
+              name={howToType === "link" ? "open-outline" : "arrow-forward"}
+              size={13}
+              color={primaryColor}
+            />
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+// ============================================================================
+// Crew (read-only: who's doing what)
+// ============================================================================
+
+function CrewSection({
+  members,
+  expandedId,
+  onToggleExpand,
+  colors,
+  primaryColor,
+}: {
+  members: CrewMember[] | undefined;
+  expandedId: string | null;
+  onToggleExpand: (id: string) => void;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  if (members === undefined) return <SectionLoading colors={colors} />;
+  if (members.length === 0) {
+    return (
+      <SectionEmpty
+        icon="people-outline"
+        title="No crew yet"
+        subtitle="Teammates serving this event will appear here."
+        colors={colors}
+      />
+    );
+  }
+
+  // Group by team, preserving the query's ordering (current user first).
+  const groups: Array<{ teamId: string; teamName: string; members: CrewMember[] }> = [];
+  for (const m of members) {
+    let g = groups.find((x) => x.teamId === m.teamId);
+    if (!g) {
+      g = { teamId: m.teamId, teamName: m.teamName, members: [] };
+      groups.push(g);
+    }
+    g.members.push(m);
+  }
+  const showTeamHeaders = groups.length > 1;
+
+  return (
+    <View style={styles.sectionBody}>
+      {groups.map((g) => (
+        <View key={g.teamId} style={styles.crewGroup}>
+          {showTeamHeaders ? (
+            <Text style={[styles.groupHeader, { color: colors.textSecondary }]}>
+              {g.teamName.toUpperCase()}
+            </Text>
+          ) : null}
+          <View
+            style={[
+              styles.card,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
+            {g.members.map((m, i) => {
+              const rowKey = `${m.userId}:${m.roleId}`;
+              return (
+                <CrewMemberRow
+                  key={rowKey}
+                  member={m}
+                  first={i === 0}
+                  expanded={expandedId === rowKey}
+                  onToggle={() => onToggleExpand(rowKey)}
+                  colors={colors}
+                  primaryColor={primaryColor}
+                />
+              );
+            })}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function CrewMemberRow({
+  member,
+  first,
+  expanded,
+  onToggle,
+  colors,
+  primaryColor,
+}: {
+  member: CrewMember;
+  first: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  const progress = member.total > 0 ? member.done / member.total : 0;
+  const allDone = member.total > 0 && member.done === member.total;
+
+  return (
+    <View
+      style={[
+        styles.expandRow,
+        !first && {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+      ]}
+    >
+      <Pressable
+        onPress={onToggle}
+        style={styles.expandHeader}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={`${member.name}, ${member.roleName}`}
+      >
+        <View style={styles.expandInfo}>
+          <View style={styles.expandTitleRow}>
+            <Text style={[styles.expandTitle, { color: colors.text }]} numberOfLines={1}>
+              {member.name}
+            </Text>
+            {member.isCurrentUser ? (
+              <View style={[styles.youChip, { backgroundColor: primaryColor }]}>
+                <Text style={styles.youChipText}>You</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={[styles.expandSub, { color: colors.textTertiary }]} numberOfLines={1}>
+            {member.roleName}
+          </Text>
+        </View>
+        <View style={styles.expandRight}>
+          <Text
+            style={[
+              styles.expandCount,
+              { color: allDone ? primaryColor : colors.textSecondary },
+            ]}
+          >
+            {member.done}/{member.total}
+          </Text>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textTertiary}
+          />
+        </View>
+      </Pressable>
+
+      <View style={styles.expandProgress}>
+        <ProgressBar progress={progress} color={primaryColor} height={3} />
+      </View>
+
+      {expanded ? (
+        <View style={styles.readonlyList}>
+          {member.tasks.length === 0 ? (
+            <Text style={[styles.readonlyEmpty, { color: colors.textTertiary }]}>
+              No tasks assigned.
+            </Text>
+          ) : (
+            member.tasks.map((t) => (
+              <ReadOnlyTaskItem
+                key={t.taskId}
+                title={t.title}
+                completed={t.completed}
+                howToType={t.howToType}
+                colors={colors}
+                primaryColor={primaryColor}
+              />
+            ))
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ============================================================================
+// All teams (read-only: whole-event overview)
+// ============================================================================
+
+function AllTeamsSection({
+  teams,
+  expandedId,
+  onToggleExpand,
+  colors,
+  primaryColor,
+}: {
+  teams: AllTeamsTeam[] | undefined;
+  expandedId: string | null;
+  onToggleExpand: (id: string) => void;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  if (teams === undefined) return <SectionLoading colors={colors} />;
+  if (teams.length === 0) {
+    return (
+      <SectionEmpty
+        icon="grid-outline"
+        title="No teams"
+        subtitle="Teams serving this event will appear here."
+        colors={colors}
+      />
+    );
+  }
+
+  return (
+    <View style={styles.sectionBody}>
+      <View
+        style={[
+          styles.card,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        {teams.map((team, i) => (
+          <TeamRow
+            key={team.teamId}
+            team={team}
+            first={i === 0}
+            expanded={expandedId === team.teamId}
+            onToggle={() => onToggleExpand(team.teamId)}
+            colors={colors}
+            primaryColor={primaryColor}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function TeamRow({
+  team,
+  first,
+  expanded,
+  onToggle,
+  colors,
+  primaryColor,
+}: {
+  team: AllTeamsTeam;
+  first: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  const progress = team.total > 0 ? team.done / team.total : 0;
+  const allDone = team.total > 0 && team.done === team.total;
+
+  return (
+    <View
+      style={[
+        styles.expandRow,
+        !first && {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+      ]}
+    >
+      <Pressable
+        onPress={onToggle}
+        style={styles.expandHeader}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={team.teamName}
+      >
+        <View style={styles.expandInfo}>
+          <Text style={[styles.expandTitle, { color: colors.text }]} numberOfLines={1}>
+            {team.teamName}
+          </Text>
+        </View>
+        <View style={styles.expandRight}>
+          <Text
+            style={[
+              styles.expandCount,
+              { color: allDone ? primaryColor : colors.textSecondary },
+            ]}
+          >
+            {team.done}/{team.total}
+          </Text>
+          <Ionicons
+            name={expanded ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.textTertiary}
+          />
+        </View>
+      </Pressable>
+
+      <View style={styles.expandProgress}>
+        <ProgressBar progress={progress} color={primaryColor} height={3} />
+      </View>
+
+      {expanded ? (
+        <View style={styles.readonlyList}>
+          {team.tasks.length === 0 ? (
+            <Text style={[styles.readonlyEmpty, { color: colors.textTertiary }]}>
+              No tasks yet.
+            </Text>
+          ) : (
+            team.tasks.map((t) => (
+              <ReadOnlyTaskItem
+                key={t.taskId}
+                title={t.title}
+                meta={t.roleName ?? undefined}
+                completed={t.completed}
+                howToType={t.howToType}
+                colors={colors}
+                primaryColor={primaryColor}
+              />
+            ))
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+// ============================================================================
+// Shared bits for the read-only sections
+// ============================================================================
+
+/** A non-interactive task line: done indicator, title, optional meta + quiet
+ *  how-to hint. Used by both Crew and All-teams. */
+function ReadOnlyTaskItem({
+  title,
+  meta,
+  completed,
+  howToType,
+  colors,
+  primaryColor,
+}: {
+  title: string;
+  meta?: string;
+  completed: boolean;
+  howToType: HowToType;
+  colors: ThemeColors;
+  primaryColor: string;
+}) {
+  return (
+    <View style={styles.roItem}>
+      <Ionicons
+        name={completed ? "checkmark-circle" : "ellipse-outline"}
+        size={18}
+        color={completed ? primaryColor : colors.textTertiary}
+      />
+      <View style={styles.roItemBody}>
+        <Text
+          style={[
+            styles.roItemTitle,
+            { color: colors.text },
+            completed && styles.taskTitleDone,
+          ]}
+          numberOfLines={2}
+        >
+          {title}
+        </Text>
+        {meta ? (
+          <Text style={[styles.roItemMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+            {meta}
+          </Text>
+        ) : null}
+      </View>
+      {howToType !== "none" ? (
+        <Ionicons
+          name="help-circle-outline"
+          size={16}
+          color={colors.textTertiary}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function SectionLoading({ colors }: { colors: ThemeColors }) {
+  return (
+    <View style={styles.inlineLoading}>
+      <ActivityIndicator size="small" color={colors.text} />
+    </View>
+  );
+}
+
+function SectionEmpty({
+  icon,
+  title,
+  subtitle,
+  colors,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle?: string;
+  colors: ThemeColors;
+}) {
+  return (
+    <View style={styles.sectionEmpty}>
+      <Ionicons name={icon} size={30} color={colors.textTertiary} />
+      <Text style={[styles.sectionEmptyTitle, { color: colors.textSecondary }]}>
+        {title}
+      </Text>
+      {subtitle ? (
+        <Text style={[styles.sectionEmptySub, { color: colors.textTertiary }]}>
+          {subtitle}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: {
@@ -847,4 +1757,80 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   textButton: { paddingVertical: 6, paddingHorizontal: 4 },
+
+  // Section pills
+  pillsScroll: { marginBottom: 20 },
+  pillsRow: { paddingHorizontal: 16, gap: 8 },
+  pill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pillText: { fontSize: 14, fontWeight: "600" },
+  pillBadge: {
+    minWidth: 18,
+    paddingHorizontal: 5,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pillBadgeText: { fontSize: 11, fontWeight: "700" },
+
+  // Shared / read-only section wrappers
+  sectionBody: {},
+  teamCue: { flexDirection: "row", alignItems: "center", gap: 4 },
+
+  // Crew grouping
+  crewGroup: { paddingHorizontal: 16, marginBottom: 20 },
+  groupHeader: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+
+  // Expandable rows (crew members + teams)
+  expandRow: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10 },
+  expandHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  expandInfo: { flex: 1 },
+  expandTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  expandTitle: { fontSize: 15, fontWeight: "600", flexShrink: 1 },
+  expandSub: { fontSize: 13, marginTop: 2 },
+  expandRight: { flexDirection: "row", alignItems: "center", gap: 6 },
+  expandCount: { fontSize: 13, fontWeight: "700" },
+  expandProgress: { marginTop: 10 },
+  youChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  youChipText: { fontSize: 10, fontWeight: "700", color: "#fff", letterSpacing: 0.3 },
+
+  // Read-only task lists (inside expanded crew/team rows)
+  readonlyList: { marginTop: 12, gap: 10 },
+  readonlyEmpty: { fontSize: 13, fontStyle: "italic" },
+  roItem: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  roItemBody: { flex: 1 },
+  roItemTitle: { fontSize: 14, lineHeight: 19, fontWeight: "500" },
+  roItemMeta: { fontSize: 12, marginTop: 2 },
+
+  // Per-section empty state
+  sectionEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+    paddingVertical: 56,
+    gap: 8,
+  },
+  sectionEmptyTitle: { fontSize: 16, fontWeight: "600" },
+  sectionEmptySub: { fontSize: 14, textAlign: "center", lineHeight: 19 },
 });
