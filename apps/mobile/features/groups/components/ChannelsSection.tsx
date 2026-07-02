@@ -72,6 +72,8 @@ interface Channel {
   isShared?: boolean;
   /** false when leader hid channel; memberships stay (see Convex isEnabled). */
   isEnabled: boolean;
+  /** true for custom channels auto-created from an event plan's serving team. */
+  isServingTeam?: boolean;
 }
 
 export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsSectionProps) {
@@ -366,14 +368,21 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
 
   customChannels.forEach((channel: Channel) => {
     const enabled = channel.isEnabled && !channel.isArchived;
+    // Serving-team channels are auto-created from event plans (channelType
+    // "custom" + isServingTeam). Give them a distinct calendar icon so leaders
+    // can tell them apart from manually-created custom channels.
+    const isServingTeam = channel.isServingTeam === true;
+    const memberSubtitle = `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`;
     rows.push({
       key: channel._id,
-      icon: "chatbubble",
-      iconColor: "#00BCD4",
-      iconBg: "#00BCD415",
+      icon: isServingTeam ? "calendar-outline" : "chatbubble",
+      iconColor: isServingTeam ? "#10B981" : "#00BCD4",
+      iconBg: isServingTeam ? "#10B98115" : "#00BCD415",
       name: channel.name,
       subtitle: enabled
-        ? `${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`
+        ? isServingTeam
+          ? `${memberSubtitle} · Serving team`
+          : memberSubtitle
         : "Hidden — visible to leaders",
       enabled,
       onPress: () => navigateToChannelInfo(channel.slug),
