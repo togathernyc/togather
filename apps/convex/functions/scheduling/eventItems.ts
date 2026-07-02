@@ -338,6 +338,13 @@ export const updateItem = mutation({
       }
     }
 
+    // Event-templates linkage (Phase 3): a local edit to a template-sourced item
+    // detaches it so forward propagation stops overwriting the user's change.
+    // No-op for items with no template source (unlinked plans unaffected).
+    if (item.sourceTemplateItemId && !item.templateDetached) {
+      patch.templateDetached = true;
+    }
+
     await ctx.db.patch(args.itemId, patch);
     return { itemId: args.itemId };
   },
@@ -356,7 +363,25 @@ export const deleteItem = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireItemScheduler(ctx, args.itemId, userId);
+    const { item, plan } = await requireItemScheduler(ctx, args.itemId, userId);
+
+    // Event-templates linkage (Phase 3): deleting a template-sourced item on a
+    // linked plan records the removal so forward propagation won't re-add it.
+    // No-op for items with no template source (unlinked plans unaffected).
+    if (item.sourceTemplateItemId) {
+      const detached = new Set(
+        (plan.detachedRunSheetTemplateItemIds ?? []).map((id) => id as string),
+      );
+      if (!detached.has(item.sourceTemplateItemId as string)) {
+        await ctx.db.patch(plan._id, {
+          detachedRunSheetTemplateItemIds: [
+            ...(plan.detachedRunSheetTemplateItemIds ?? []),
+            item.sourceTemplateItemId,
+          ],
+        });
+      }
+    }
+
     await ctx.db.delete(args.itemId);
     return { deleted: true };
   },
@@ -495,13 +520,30 @@ export const reorderItems = mutation({
 
     // Sequence counts up independently within each phase, in the order items
     // appear in the client's list.
+    const byId = new Map(existing.map((i) => [i._id as string, i]));
     const counters: Record<Segment, number> = { before: 0, during: 0, after: 0 };
     const nowMs = Date.now();
     await Promise.all(
       orderedItems.map((entry) => {
         const segment = entry.segment as Segment;
         const sequence = counters[segment]++;
-        return ctx.db.patch(entry.id, { segment, sequence, updatedAt: nowMs });
+        const patch: Partial<Doc<"eventItems">> = {
+          segment,
+          sequence,
+          updatedAt: nowMs,
+        };
+        // Event-templates linkage (Phase 3): a manual reorder that actually
+        // moves a template-sourced item detaches it, so propagation stops
+        // rewriting its order. Unmoved (and non-template) rows stay synced.
+        const current = byId.get(entry.id as string);
+        if (
+          current?.sourceTemplateItemId &&
+          !current.templateDetached &&
+          (itemSegment(current) !== segment || current.sequence !== sequence)
+        ) {
+          patch.templateDetached = true;
+        }
+        return ctx.db.patch(entry.id, patch);
       }),
     );
 
