@@ -67,10 +67,21 @@ export function DatePicker({
     [primaryColor, isDark, colors.surface, colors.text, colors.textSecondary]
   );
 
-  // MUI fires onChange with an Invalid Date object while the user is mid-typing.
-  // Only propagate a cleared value (null) or a fully valid date so we never
-  // clobber the parent's state with garbage.
-  const handleChange = (next: Date | null) => {
+  // MUI fires onChange on every keystroke, including intermediate states that
+  // parse to a real Date but are still invalid — an incomplete year like
+  // `0002`, or a value outside minDate/maxDate. Those arrive with a non-null
+  // `validationError` in the change context. Reject them (along with the
+  // Invalid Date emitted mid-typing) so the parent never receives a bogus
+  // value and the controlled field can't snap to it — which is exactly the
+  // web typing-jump this component exists to prevent. Only a cleared value
+  // (null) or a fully valid, in-range date is propagated.
+  const handleChange = (
+    next: Date | null,
+    context?: { validationError?: unknown }
+  ) => {
+    if (context?.validationError) {
+      return;
+    }
     if (next === null) {
       onChange(null);
       return;

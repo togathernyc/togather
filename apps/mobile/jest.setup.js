@@ -291,6 +291,23 @@ jest.mock('expo-clipboard', () => ({
   hasString: jest.fn(() => false),
 }));
 
+// Mock expo-notifications to avoid loading the real native module in tests.
+// Importing the real module eagerly resolves PlatformConstants via
+// TurboModuleRegistry, which is not registered under jest-expo. Individual
+// tests can still override this with their own jest.mock() for assertions.
+jest.mock('expo-notifications', () => ({
+  addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  dismissNotificationAsync: jest.fn(() => Promise.resolve()),
+  getExpoPushTokenAsync: jest.fn(() => Promise.resolve({ data: 'mock-push-token' })),
+  getLastNotificationResponseAsync: jest.fn(() => Promise.resolve(null)),
+  getPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
+  getPresentedNotificationsAsync: jest.fn(() => Promise.resolve([])),
+  requestPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'granted' })),
+  scheduleNotificationAsync: jest.fn(() => Promise.resolve('mock-notification-id')),
+  setNotificationHandler: jest.fn(),
+}));
+
 // Mock react-native-safe-area-context
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
