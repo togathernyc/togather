@@ -2750,12 +2750,35 @@ export default defineSchema({
     reminder1dJobId: v.optional(v.id("_scheduled_functions")),
     reminder4dSent: v.optional(v.boolean()),
     reminder1dSent: v.optional(v.boolean()),
+    /**
+     * Event-templates linkage (Phase 3). When set, this plan is LINKED to a
+     * task and/or run-sheet template: its `eventTasks` / `eventItems` are
+     * materialized from the template's items and future template edits
+     * propagate forward to this plan's still-synced rows (past plans are
+     * frozen — never touched). Cleared on unlink.
+     */
+    taskTemplateId: v.optional(v.id("eventTaskTemplates")),
+    runSheetTemplateId: v.optional(v.id("runSheetTemplates")),
+    /**
+     * Template item ids the user removed LOCALLY from this plan. Propagation
+     * must NOT re-add these, so a deleted-locally template task/item stays
+     * gone even though it still exists on the template.
+     */
+    detachedTaskTemplateItemIds: v.optional(
+      v.array(v.id("eventTaskTemplateItems")),
+    ),
+    detachedRunSheetTemplateItemIds: v.optional(
+      v.array(v.id("runSheetTemplateItems")),
+    ),
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
   })
     .index("by_group", ["groupId"])
-    .index("by_community_date", ["communityId", "eventDate"]),
+    .index("by_community_date", ["communityId", "eventDate"])
+    // Forward-propagation lookups: all plans linked to a given template.
+    .index("by_task_template", ["taskTemplateId"])
+    .index("by_run_sheet_template", ["runSheetTemplateId"]),
 
   /** "We need N of role X" on a given event. */
   neededRoles: defineTable({
@@ -2882,6 +2905,15 @@ export default defineSchema({
      * defaults. Cleared (nulled) when the referenced song is deleted.
      */
     songId: v.optional(v.id("songs")),
+    /**
+     * Event-templates linkage (Phase 3). Set => this row was materialized from
+     * the run-sheet template item with this id. SYNCED (`templateDetached`
+     * falsy) rows are updated/deleted by propagation to match the template;
+     * OVERRIDDEN rows (`templateDetached` true, set on a local edit) are left
+     * alone. Rows with no `sourceTemplateItemId` are plain local additions.
+     */
+    sourceTemplateItemId: v.optional(v.id("runSheetTemplateItems")),
+    templateDetached: v.optional(v.boolean()),
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
@@ -2939,6 +2971,15 @@ export default defineSchema({
     howToMediaPath: v.optional(v.string()), // r2: path
     howToDoc: v.optional(v.string()), // markdown source
     sortOrder: v.number(),
+    /**
+     * Event-templates linkage (Phase 3). Set => this task was materialized from
+     * the task-template item with this id. SYNCED (`templateDetached` falsy)
+     * rows are updated/deleted by propagation to match the template; OVERRIDDEN
+     * rows (`templateDetached` true, set on a local edit) are left alone. Tasks
+     * with no `sourceTemplateItemId` are plain local additions.
+     */
+    sourceTemplateItemId: v.optional(v.id("eventTaskTemplateItems")),
+    templateDetached: v.optional(v.boolean()),
     createdById: v.id("users"),
     createdAt: v.number(),
     updatedAt: v.number(),
