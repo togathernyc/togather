@@ -20,7 +20,7 @@
  *   - CHANNEL ACTIONS (Share invite link, Leave channel)
  *   - LEADER CONTROLS (Active state, Rename, Share with groups, Archive)
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -48,9 +48,7 @@ import { CustomModal } from "@components/ui/Modal";
 import { AutoChannelSettings } from "@features/channels";
 import {
   CrossTeamSelectorPicker,
-  listCrossTeamChannelsRef,
   updateCrossTeamChannelRef,
-  type CrossTeamChannel,
   type CrossTeamSelector,
 } from "@features/scheduling";
 import { useAuth } from "@providers/AuthProvider";
@@ -208,16 +206,6 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       : "skip",
   );
 
-  // Cross-team channels: list the group's cross-team channels so we can find
-  // THIS channel's current selectors to prefill the edit picker. The backend
-  // has no per-channel getter, so we filter the group-scoped list.
-  const crossTeamChannels = useQuery(
-    listCrossTeamChannelsRef,
-    token && channel?._id && channel.channelType === "cross_team"
-      ? { token, groupId: groupId as Id<"groups"> }
-      : "skip",
-  ) as CrossTeamChannel[] | undefined;
-
   const updateCrossTeamChannel = useAuthenticatedMutation(
     updateCrossTeamChannelRef,
   );
@@ -307,11 +295,30 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const isPco = channelType === "pco_services";
   const isCrossTeam = channelType === "cross_team";
 
-  // This channel's current cross-team config (selectors), if any.
-  const thisCrossTeamChannel = useMemo(
-    () => crossTeamChannels?.find((c) => c._id === channel?._id),
-    [crossTeamChannels, channel?._id],
+  // This channel's saved cross-team selectors, sourced BY CHANNEL ID from
+  // getChannelBySlug (the raw `crossTeamSync.selectors`). Reading it off the
+  // channel doc — rather than a group-scoped list — means the edit picker
+  // prefills correctly even for a shared channel opened from a linked group
+  // whose id differs from the channel's home group.
+  const savedCrossTeamSelectors = useMemo<CrossTeamSelector[]>(
+    () =>
+      (
+        (channel as { crossTeamSync?: { selectors?: CrossTeamSelector[] } } | undefined)
+          ?.crossTeamSync?.selectors ?? []
+      ).map((s) => ({
+        sourceTeamId: s.sourceTeamId,
+        ...(s.roleId ? { roleId: s.roleId } : {}),
+      })),
+    [channel],
   );
+
+  // Re-seed the picker draft whenever the edit modal opens or the saved
+  // selectors resolve/change. A one-shot copy at button-tap missed the case
+  // where the channel query hadn't resolved yet (draft stuck at []).
+  useEffect(() => {
+    if (!crossTeamEditVisible) return;
+    setCrossTeamDraft(savedCrossTeamSelectors);
+  }, [crossTeamEditVisible, savedCrossTeamSelectors]);
 
   const iconCfg = getChannelIconConfig(channelType, primaryColor);
   const channelDisplayName = channel?.name?.trim() || iconCfg.defaultName;
@@ -491,20 +498,6 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       setArchiving(false);
     }
   }, [channel?._id, archiveCustomChannelMutation, groupId, router]);
-
-  const handleOpenCrossTeamEdit = useCallback(() => {
-    // Prefill the picker draft from the channel's current selectors. The
-    // enriched selectors carry extra display fields — strip them down to the
-    // { sourceTeamId, roleId? } shape the picker/mutation expect.
-    const current: CrossTeamSelector[] = (
-      thisCrossTeamChannel?.selectors ?? []
-    ).map((s) => ({
-      sourceTeamId: s.sourceTeamId,
-      ...(s.roleId ? { roleId: s.roleId } : {}),
-    }));
-    setCrossTeamDraft(current);
-    setCrossTeamEditVisible(true);
-  }, [thisCrossTeamChannel?.selectors]);
 
   const handleSaveCrossTeam = useCallback(async () => {
     if (!channel?._id || crossTeamSaving) return;
@@ -1317,7 +1310,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   saves via updateCrossTeamChannel. */}
               {isCrossTeam && (
                 <Pressable
-                  onPress={handleOpenCrossTeamEdit}
+                  onPress={() => setCrossTeamEditVisible(true)}
                   style={({ pressed }) => [
                     styles.actionRowFlat,
                     {
