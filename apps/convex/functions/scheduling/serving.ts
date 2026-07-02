@@ -48,9 +48,10 @@ function planEndsAt(plan: Doc<"eventPlans">): number {
 /**
  * Resolve the set of chat channel ids relevant to a plan's serving context:
  *   (a) `teams.channelId` for every team that has needed roles or assignments
- *       on the plan, and
+ *       on the plan,
  *   (b) `chatChannels` scoped (`meetingId`) to any of the plan's linked
- *       `meetingIds`.
+ *       `meetingIds`, and
+ *   (c) cross-team channels whose selectors reference a team on the plan.
  *
  * Returned as a `Set` of channel id strings. Agent D imports this into
  * `messaging/channels.ts`.
@@ -81,6 +82,30 @@ export async function resolveServingChannelIds(
   for (const teamId of teamIds) {
     const team = await ctx.db.get(teamId as Id<"teams">);
     if (team?.channelId) channelIds.add(team.channelId as string);
+  }
+
+  // (c) Cross-team channels that draw from any team on this plan. Their
+  // membership is auto-synced (syncSource "event_plan") from the same
+  // roleAssignments, so a rostered member belongs in the serving inbox too.
+  // Scoped to the plan's group via `by_group_type` (cross-team channels live
+  // in the same group as the plan's teams) to avoid a full-table scan. This is
+  // membership-agnostic like the team-channel branch above: the serving
+  // flatten in messaging/channels.ts only iterates channels already in the
+  // per-user, active-membership-gated result, so widening this Set leaks
+  // nothing — only users with an active chatChannelMembers row actually see
+  // the channel.
+  const crossTeamChannels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group_type", (q) =>
+      q.eq("groupId", plan.groupId).eq("channelType", "cross_team"),
+    )
+    .collect();
+  for (const ch of crossTeamChannels) {
+    if (ch.isArchived === true) continue;
+    const selectors = ch.crossTeamSync?.selectors ?? [];
+    if (selectors.some((s) => teamIds.has(s.sourceTeamId as string))) {
+      channelIds.add(ch._id as string);
+    }
   }
 
   // (b) Linked meeting channels.
