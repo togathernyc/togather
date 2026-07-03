@@ -23,12 +23,18 @@ import { ADD_DAYS_BEFORE } from "./teamChannelSync";
 /** Milliseconds in one day. */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** Two hours before the first service time is when serving auto-enters. */
-const AUTO_ENTER_LEAD_MS = 2 * 60 * 60 * 1000;
 /** Assumed run-time of the last service so we can bound the event's end. */
 const LAST_SERVICE_DURATION_MS = 4 * 60 * 60 * 1000;
 /** A plan is "eligible" (manual entry) anywhere in this same-day window. */
 const SAME_DAY_LEAD_MS = 12 * 60 * 60 * 1000;
+/**
+ * How early serving auto-enters, measured before the first service. Matches the
+ * same-day eligibility window so a volunteer who opens the app any time on the
+ * day of their event is dropped straight into serving mode (they can still Exit
+ * — a manual exit suppresses auto re-entry for the session, see the mobile
+ * eventModeStore `autoEnterBlocked`).
+ */
+const AUTO_ENTER_LEAD_MS = SAME_DAY_LEAD_MS;
 
 /** Earliest service `startsAt` on a plan, or its `eventDate` if it has none. */
 function planStartsAt(plan: Doc<"eventPlans">): number {
@@ -167,9 +173,10 @@ type ServingPlan = {
  * (e.g. two campuses on the same morning), so the client can render one entry
  * per event and the volunteer picks which one they're serving. `plans` is sorted
  * soonest-first; `activePlan` is the soonest (kept for the inbox chip / runsheet
- * consumers). `autoEnter` is true only when exactly one plan is active and it's
- * inside the tighter (2h before → end) window — with multiple active plans the
- * choice is ambiguous, so we never auto-enter.
+ * consumers). `autoEnter` is true only when exactly one plan is active (auto and
+ * eligibility now share the same same-day window) — with multiple active plans
+ * the choice is ambiguous, so we never auto-enter and the client offers a
+ * manual chip instead.
  *
  * Auth: any authenticated user.
  */

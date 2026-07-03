@@ -284,6 +284,7 @@ export function ChatInboxScreen({
   // only once per session and never if they manually exited this session, so a
   // volunteer who intentionally left isn't yanked back in.
   const enterServingMode = useEventModeStore((s) => s.enter);
+  const autoEnterBlocked = useEventModeStore((s) => s.autoEnterBlocked);
   const servingEligibility = useQuery(
     api.functions.scheduling.serving.getServingEligibility,
     token && eventTasksEnabled ? { token } : "skip",
@@ -295,23 +296,21 @@ export function ChatInboxScreen({
       }
     | undefined;
 
-  // Tracks whether serving mode was auto-entered this app session, so we don't
-  // repeatedly re-enter after a manual exit within the same session.
-  const autoEnteredThisSessionRef = useRef(false);
   useEffect(() => {
     if (!servingEligibility?.eligible) return;
     const planId = servingEligibility.activePlan?.planId;
     if (!planId) return;
     // Already in serving mode → nothing to do.
     if (isServingMode) return;
-    // Auto-enter only when the backend asks for it and we haven't already done
-    // so (a manual exit flips isServingMode false but leaves the ref set, so
-    // we won't bounce the user straight back in).
-    if (servingEligibility.autoEnter && !autoEnteredThisSessionRef.current) {
-      autoEnteredThisSessionRef.current = true;
+    // Auto-enter only when the backend asks for it and the user hasn't manually
+    // exited this session. `autoEnterBlocked` lives in the store (not a
+    // component ref) so it survives the tab-navigator remount that exiting
+    // triggers — a ref would reset on that remount and immediately re-enter,
+    // making the Exit button appear broken.
+    if (servingEligibility.autoEnter && !autoEnterBlocked) {
       enterServingMode(planId);
     }
-  }, [servingEligibility, isServingMode, enterServingMode]);
+  }, [servingEligibility, isServingMode, enterServingMode, autoEnterBlocked]);
 
   // Show the manual re-entry chip when eligible but not currently serving.
   const showServingChip =
