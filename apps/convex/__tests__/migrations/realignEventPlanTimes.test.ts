@@ -96,6 +96,41 @@ describe("realignEventPlanTimes", () => {
     expect(again.changedTimes).toBe(0);
   });
 
+  it("leaves a legitimate same-day late-evening service untouched", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const world = await buildSchedulingWorld(t);
+
+    // eventDate anchored at 9 AM EDT (13:00 UTC). A 10 PM EDT service is 02:00
+    // UTC the NEXT UTC day — its raw day-rounded gap is -1, but it's genuinely
+    // on the event's local day, so the >=2-day guard must leave it alone.
+    const eventDate = Date.UTC(2026, 6, 19, 13, 0, 0);
+    const lateService = Date.UTC(2026, 6, 20, 2, 0, 0); // Jul 19, 10 PM EDT
+    const planId = await t.run((ctx) =>
+      ctx.db.insert("eventPlans", {
+        groupId: world.groupId,
+        communityId: world.communityId,
+        title: "Evening",
+        eventDate,
+        times: [{ label: "10:00 PM", startsAt: lateService }],
+        status: "published",
+        createdAt: 0,
+        createdById: world.groupLeaderId,
+        updatedAt: 0,
+      }),
+    );
+
+    const res = await t.mutation(
+      internal.functions.migrations.realignEventPlanTimes
+        .realignEventPlanTimes,
+      { communityId: world.communityId },
+    );
+    expect(res.changedPlans).toBe(0);
+
+    const plan = await t.run((ctx) => ctx.db.get(planId));
+    expect(plan!.times[0].startsAt).toBe(lateService);
+  });
+
   it("dryRun reports changes without writing", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;

@@ -17,14 +17,19 @@
  *   dayShift    = round((eventDate - startsAt) / DAY)   // days, sign included
  *   newStartsAt = startsAt + dayShift * DAY
  *
- * Rounding is timezone- and DST-agnostic: the corruption is always a whole-day
- * (whole-week) drift, and rounding absorbs the sub-day remainder between the
- * plan's eventDate anchor (its default 9 AM) and each service's own time-of-day.
- * A time already on the right day (|gap| < ~12h) rounds to 0 and is left alone,
- * so the migration is idempotent. NOTE: this assumes services sit within ~12h of
- * the eventDate anchor (true for all current data — morning services). A service
- * more than ~12h from the anchor on the SAME day could be mis-shifted, so the
- * dry-run output lists every change for review before applying.
+ * To avoid ever corrupting a *legitimately* same-day service, we only realign
+ * when the drift is an unambiguous whole-day gap of **>= 2 days** (`MIN_DRIFT`).
+ * Real corruption in the data is always multiple days (observed 4–28 days), while
+ * any genuine same-day or adjacent-day service sits within ~24h of the eventDate
+ * anchor — so a late-evening service (e.g. 10 PM, or a US late service whose UTC
+ * timestamp lands on the next UTC day) is never mistaken for drift and moved.
+ *
+ * DST note: adding whole UTC days preserves the wall-clock time only when the
+ * stranded time and its target date are in the same DST period. All target data
+ * is single-period (June–July, EDT), so this is exact; the dry-run below lists
+ * every before/after so a cross-DST wall-clock shift would be caught in review
+ * before applying. (A fully DST-general fix would need a per-plan timezone, which
+ * eventPlans does not carry.)
  *
  * Idempotent: re-running finds nothing to change once aligned.
  * Pass `communityId` to scope to one community; omit to scan every plan.
@@ -43,6 +48,13 @@ import { v } from "convex/values";
 import { internalMutation } from "../../_generated/server";
 
 const DAY = 86_400_000;
+/**
+ * Minimum whole-day drift (in days) before we realign a service time. Anything
+ * smaller is treated as a legitimate same-day/adjacent-day offset and left
+ * alone, so a late-evening service is never mistaken for corruption. Real drift
+ * in the data is always several days (whole weeks), so this loses nothing.
+ */
+const MIN_DRIFT_DAYS = 2;
 
 export const realignEventPlanTimes = internalMutation({
   args: {
@@ -74,7 +86,9 @@ export const realignEventPlanTimes = internalMutation({
       let planChanged = false;
       const newTimes = plan.times.map((t) => {
         const dayShift = Math.round((plan.eventDate - t.startsAt) / DAY);
-        if (dayShift === 0) return t;
+        // Only realign unambiguous multi-day drift; leave same-day/adjacent
+        // services (incl. legitimate late-evening ones) untouched.
+        if (Math.abs(dayShift) < MIN_DRIFT_DAYS) return t;
         planChanged = true;
         changedTimes++;
         return { ...t, startsAt: t.startsAt + dayShift * DAY };
