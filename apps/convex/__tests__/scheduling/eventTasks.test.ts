@@ -1142,7 +1142,7 @@ describe("serving eligibility", () => {
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
     const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
 
-    // Event starting in 1 hour → inside the 2h auto-enter window.
+    // Event starting in 1 hour → inside the same-day auto-enter window.
     const eventDate = Date.now() + 60 * 60 * 1000;
     const { planId } = await t.mutation(
       api.functions.scheduling.events.createEvent,
@@ -1172,6 +1172,40 @@ describe("serving eligibility", () => {
     expect(result.activePlan!.teamIds).toContain(world.teamId);
     // The team owns a channel, so it resolves as a team channel.
     expect(result.activePlan!.teamChannelIds).toContain(world.channelId);
+  });
+
+  it("auto-enters anywhere in the same-day window, not just the final 2h", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+
+    // Event 6h out → outside the old 2h auto window, but inside the 12h same-day
+    // window. Auto-enter should now fire so a volunteer who opens the app that
+    // morning lands in serving mode.
+    const eventDate = Date.now() + 6 * 60 * 60 * 1000;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Later today",
+        eventDate,
+        times: [{ label: "Service", startsAt: eventDate }],
+      },
+    );
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leaderToken,
+      planId,
+      roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+    });
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+
+    const result = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: memberToken },
+    );
+    expect(result.eligible).toBe(true);
+    expect(result.autoEnter).toBe(true);
   });
 
   it("is not eligible when the user has no confirmed active plan", async () => {

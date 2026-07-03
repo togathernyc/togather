@@ -19,6 +19,15 @@ interface EventModeState {
   isServingMode: boolean;
   /** The plan the user is serving on, or null when not in serving mode. */
   activePlanId: string | null;
+  /**
+   * Session-only guard: set when the user manually exits, to suppress backend
+   * auto-enter for the rest of the app session. Deliberately NOT persisted (see
+   * `partialize`), so a fresh launch is allowed to auto-enter again. Lives in
+   * the store rather than a component ref because exiting remounts the tab
+   * navigator (`app/(tabs)/_layout.tsx` keys on serving mode) — a ref would
+   * reset on that remount and immediately re-enter, making Exit appear broken.
+   */
+  autoEnterBlocked: boolean;
   /** Enter serving mode for a plan. */
   enter: (planId: string) => void;
   /** Exit serving mode and clear the active plan. */
@@ -30,13 +39,14 @@ export const useEventModeStore = create<EventModeState>()(
     (set) => ({
       isServingMode: false,
       activePlanId: null,
+      autoEnterBlocked: false,
 
       enter: (planId: string) => {
         set({ isServingMode: true, activePlanId: planId });
       },
 
       exit: () => {
-        set({ isServingMode: false, activePlanId: null });
+        set({ isServingMode: false, activePlanId: null, autoEnterBlocked: true });
       },
     }),
     {

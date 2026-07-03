@@ -22,6 +22,12 @@ interface EventModeState {
   isServingMode: boolean;
   /** The plan the user is serving on, or null when not in serving mode. */
   activePlanId: string | null;
+  /**
+   * Session-only guard: set when the user manually exits, to suppress backend
+   * auto-enter for the rest of the session. NOT persisted, so a refresh is
+   * allowed to auto-enter again. Mirrors the native store.
+   */
+  autoEnterBlocked: boolean;
   /** Enter serving mode for a plan. */
   enter: (planId: string) => void;
   /** Exit serving mode and clear the active plan. */
@@ -84,6 +90,7 @@ const persisted = loadPersisted();
 const state: EventModeState = {
   isServingMode: persisted.isServingMode,
   activePlanId: persisted.activePlanId,
+  autoEnterBlocked: false,
   enter: (planId: string) => {
     state.isServingMode = true;
     state.activePlanId = planId;
@@ -94,6 +101,7 @@ const state: EventModeState = {
   exit: () => {
     state.isServingMode = false;
     state.activePlanId = null;
+    state.autoEnterBlocked = true;
     snapshot = makeSnapshot();
     persist();
     emit();
@@ -104,6 +112,7 @@ function makeSnapshot(): EventModeState {
   return {
     isServingMode: state.isServingMode,
     activePlanId: state.activePlanId,
+    autoEnterBlocked: state.autoEnterBlocked,
     enter: state.enter,
     exit: state.exit,
   };
