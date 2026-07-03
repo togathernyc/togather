@@ -319,7 +319,26 @@ export const updateEvent = mutation({
       patch.title = title;
     }
     if (args.eventDate !== undefined) patch.eventDate = args.eventDate;
-    if (args.times !== undefined) patch.times = args.times;
+    if (args.times !== undefined) {
+      patch.times = args.times;
+    } else if (
+      args.eventDate !== undefined &&
+      existing &&
+      existing.eventDate !== args.eventDate
+    ) {
+      // Reschedule without explicit new times: shift each service time's
+      // absolute `startsAt` by the same offset the event moved, so the times
+      // stay on the new date (the label, e.g. "9:00 AM", is preserved). Mirrors
+      // duplicateEvent's `dateDelta` shift. Without this, editing only the date
+      // strands `startsAt` on the OLD day — which silently decouples the
+      // serving window (`getServingEligibility` keys off `times[].startsAt`)
+      // from the real event date, so day-of serving mode never activates.
+      const dateDelta = args.eventDate - existing.eventDate;
+      patch.times = existing.times.map((t) => ({
+        ...t,
+        startsAt: t.startsAt + dateDelta,
+      }));
+    }
     if (args.notes !== undefined) patch.notes = args.notes;
     if (args.meetingIds !== undefined) patch.meetingIds = args.meetingIds;
 

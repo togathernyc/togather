@@ -249,6 +249,81 @@ describe("duplicateEvent", () => {
   });
 });
 
+describe("updateEvent reschedule realigns times", () => {
+  it("shifts times[].startsAt onto the new date when only eventDate changes", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const HOUR = 3600000;
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday Service",
+        eventDate,
+        times: [
+          { label: "9:00 AM", startsAt: eventDate },
+          { label: "11:00 AM", startsAt: eventDate + 2 * HOUR },
+        ],
+      },
+    );
+
+    // Reschedule two weeks out, sending ONLY the new date — this mirrors every
+    // date-picker client (EventEditorScreen / EventEditorPanel /
+    // DateColumnHeaderEditor all send eventDate alone).
+    const newEventDate = eventDate + 14 * DAY;
+    await t.mutation(api.functions.scheduling.events.updateEvent, {
+      token: leaderToken,
+      planId,
+      eventDate: newEventDate,
+    });
+
+    const plan = await t.run(async (ctx) => ctx.db.get(planId));
+    expect(plan!.eventDate).toBe(newEventDate);
+    // Each service time moved by the same delta so it stays on the event's new
+    // day (labels preserved) — not stranded on the old date, which is what used
+    // to decouple the serving window from the real event date.
+    expect(plan!.times[0].startsAt).toBe(newEventDate);
+    expect(plan!.times[0].label).toBe("9:00 AM");
+    expect(plan!.times[1].startsAt).toBe(newEventDate + 2 * HOUR);
+    expect(plan!.times[1].label).toBe("11:00 AM");
+  });
+
+  it("uses caller-supplied times verbatim when both eventDate and times change", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const HOUR = 3600000;
+    const eventDate = Date.now() + 7 * DAY;
+    const { planId } = await t.mutation(
+      api.functions.scheduling.events.createEvent,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        title: "Sunday Service",
+        eventDate,
+        times: [{ label: "9:00 AM", startsAt: eventDate }],
+      },
+    );
+
+    const newEventDate = eventDate + 7 * DAY;
+    const explicitStart = newEventDate + 5 * HOUR;
+    await t.mutation(api.functions.scheduling.events.updateEvent, {
+      token: leaderToken,
+      planId,
+      eventDate: newEventDate,
+      times: [{ label: "2:00 PM", startsAt: explicitStart }],
+    });
+
+    const plan = await t.run(async (ctx) => ctx.db.get(planId));
+    expect(plan!.times).toHaveLength(1);
+    expect(plan!.times[0].startsAt).toBe(explicitStart);
+    expect(plan!.times[0].label).toBe("2:00 PM");
+  });
+});
+
 describe("seedNeededRolesFromDefaults", () => {
   it("seeds neededRoles from a team's role defaults", async () => {
     const { t, world } = await setupSchedulingWorld();
