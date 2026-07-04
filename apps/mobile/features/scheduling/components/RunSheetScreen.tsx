@@ -341,12 +341,12 @@ export function RunSheetScreen() {
   // the flex columns (Item / Notes) absorb any leftover slack when it fits.
   const columns: GridColumn[] = useMemo(
     () => [
-      { key: "item", label: "Item", width: 220, flex: 3 },
-      { key: "time", label: "Time", width: 96, align: "center" },
-      { key: "dur", label: "Dur", width: 84, align: "center" },
-      { key: "who", label: "Owner / Role", width: 176 },
+      { key: "time", label: "Time", width: 84 },
+      { key: "dur", label: "Dur", width: 64 },
+      { key: "item", label: "Item", width: 200, flex: 3 },
       { key: "notes", label: "Notes", width: 240, flex: 3 },
-      { key: "song", label: "Song", width: 150 },
+      { key: "who", label: "Owner / Role", width: 132 },
+      { key: "song", label: "Song", width: 96 },
       { key: "actions", label: "", width: 48, align: "center" },
     ],
     [],
