@@ -95,8 +95,8 @@ and has a test under `apps/mobile/stores/__tests__/`.
 | `groupCache.ts` | group details + members/leaders | `groupId` | 24h | no |
 | `channelsCache.ts` | a group's channel list | `groupId` | 24h | no |
 | `runSheetCache.ts` | PCO run sheet + service types (via actions) | `groupId:serviceTypeId` / `groupId` | 4h | **yes** (`getRunSheetStale`) |
-| `servingRunSheetCache.ts` | native serving run sheet: plans / event / items | `plans:groupId` / `event:planId` / `items:planId` | 12h | **yes** |
-| `servingTasksCache.ts` | serving Tasks tab sections | `section:planId` (section ∈ `mine`/`shared`/`crew`/`allTeams`) | 12h | **yes** |
+| `servingRunSheetCache.ts` | native serving run sheet: plans / event / items | `plans:groupId` / `event:planId` / `items:planId` | none — LRU-evict (40) | stale-only |
+| `servingTasksCache.ts` | serving Tasks tab sections | `section:planId` (section ∈ `mine`/`shared`/`crew`/`allTeams`) | none — LRU-evict (40) | stale-only |
 
 **Read pattern.** A screen's live Convex `useQuery` returns `undefined` while
 loading and *stays* `undefined` with no network. The component falls back to the

@@ -388,7 +388,14 @@ export function ServingTasksScreen() {
               completed: op.completed,
             });
           }
-          dequeueCompletion(op.id);
+          // Only drop it if the desired state hasn't changed since we
+          // snapshotted `all()` — the user may have gone offline mid-flush and
+          // re-toggled this task, in which case `enqueue` replaced the entry and
+          // we must keep the newer intent for the next flush.
+          const current = useServingTaskQueue.getState().pending[op.id];
+          if (current && current.completed === op.completed) {
+            dequeueCompletion(op.id);
+          }
         } catch {
           // Leave it queued; the next reconnect (or screen mount) retries.
         }
@@ -412,6 +419,10 @@ export function ServingTasksScreen() {
   // Drop queued entries the server already reflects (our flush landing, or
   // another volunteer completing a shared task) so the overlay clears.
   useEffect(() => {
+    // Only reconcile against LIVE server data. Offline, `effTasks`/`effShared`
+    // are the stale cache, and matching a queued op against it would dequeue a
+    // completion that never reached the server — a silent lost write.
+    if (!isNetworkAvailable) return;
     const pending = useServingTaskQueue.getState().pending;
     if (Object.keys(pending).length === 0) return;
     const mineFlat = effTasks
@@ -434,7 +445,7 @@ export function ServingTasksScreen() {
         dequeueCompletion(op.id);
       }
     }
-  }, [effTasks, effShared, dequeueCompletion]);
+  }, [isNetworkAvailable, effTasks, effShared, dequeueCompletion]);
 
   const toggleShared = useCallback(
     async (taskId: string, next: boolean) => {

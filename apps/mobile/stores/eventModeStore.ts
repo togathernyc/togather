@@ -72,11 +72,14 @@ export const useEventModeStore = create<EventModeState>()(
         isServingMode: state.isServingMode,
         activePlanId: state.activePlanId,
       }),
-      // Runs once rehydration from AsyncStorage completes (including the empty
-      // first-launch case). Flip the flag so serving-mode-aware screens know the
-      // real state is now in place.
-      onRehydrateStorage: () => (state) => {
-        state?.setHasHydrated(true);
+      // Runs after every rehydration attempt — the normal path, the empty
+      // first-launch case, AND the error path, where Zustand invokes this with
+      // `state === undefined` (a failed AsyncStorage read / deserialize). Flip
+      // the flag unconditionally via the store handle so a failed read degrades
+      // to defaults (regular inbox) instead of leaving serving-mode-aware screens
+      // stuck on their loading gate forever.
+      onRehydrateStorage: () => () => {
+        useEventModeStore.setState({ hasHydrated: true });
       },
     }
   )

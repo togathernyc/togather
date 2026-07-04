@@ -11,13 +11,10 @@ const noopNull = () => null;
 const state = {
   entries: {},
   setPlans: noop,
-  getPlans: noopNull,
   getPlansStale: noopNull,
   setEvent: noop,
-  getEvent: noopNull,
   getEventStale: noopNull,
   setItems: noop,
-  getItems: noopNull,
   getItemsStale: noopNull,
   clearAll: noop,
 };

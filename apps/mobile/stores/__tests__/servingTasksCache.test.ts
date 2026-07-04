@@ -11,9 +11,9 @@ describe("servingTasksCache", () => {
   it("stores and retrieves a section by plan", () => {
     const mine = { before: [], during: [{ key: "t1" }], after: [] };
     useServingTasksCache.getState().setSection("mine", "plan1", mine);
-    expect(useServingTasksCache.getState().getSection("mine", "plan1")).toEqual(
-      mine,
-    );
+    expect(
+      useServingTasksCache.getState().getSectionStale("mine", "plan1"),
+    ).toEqual(mine);
   });
 
   it("keeps sections and plans separate", () => {
@@ -21,34 +21,33 @@ describe("servingTasksCache", () => {
     useServingTasksCache.getState().setSection("shared", "plan1", [{ b: 2 }]);
     useServingTasksCache.getState().setSection("mine", "plan2", { a: 3 });
 
-    expect(useServingTasksCache.getState().getSection("mine", "plan1")).toEqual({
-      a: 1,
-    });
-    expect(useServingTasksCache.getState().getSection("shared", "plan1")).toEqual([
-      { b: 2 },
-    ]);
-    expect(useServingTasksCache.getState().getSection("mine", "plan2")).toEqual({
-      a: 3,
-    });
+    expect(
+      useServingTasksCache.getState().getSectionStale("mine", "plan1"),
+    ).toEqual({ a: 1 });
+    expect(
+      useServingTasksCache.getState().getSectionStale("shared", "plan1"),
+    ).toEqual([{ b: 2 }]);
+    expect(
+      useServingTasksCache.getState().getSectionStale("mine", "plan2"),
+    ).toEqual({ a: 3 });
   });
 
   it("returns null for missing sections", () => {
     expect(
-      useServingTasksCache.getState().getSection("crew", "plan1"),
+      useServingTasksCache.getState().getSectionStale("crew", "plan1"),
     ).toBeNull();
   });
 
-  it("expires fresh getter past 12h but keeps stale getter", () => {
+  it("returns cached data regardless of age (offline fallback, no TTL)", () => {
     useServingTasksCache.getState().setSection("mine", "plan1", { a: 1 });
 
     const entries = { ...useServingTasksCache.getState().entries };
     entries["mine:plan1"] = {
       ...entries["mine:plan1"],
-      timestamp: Date.now() - 13 * 60 * 60 * 1000,
+      timestamp: Date.now() - 30 * 24 * 60 * 60 * 1000, // 30 days ago
     };
     useServingTasksCache.setState({ entries });
 
-    expect(useServingTasksCache.getState().getSection("mine", "plan1")).toBeNull();
     expect(
       useServingTasksCache.getState().getSectionStale("mine", "plan1"),
     ).toEqual({ a: 1 });
@@ -58,7 +57,7 @@ describe("servingTasksCache", () => {
     useServingTasksCache.getState().setSection("mine", "plan1", { a: 1 });
     useServingTasksCache.getState().clearAll();
     expect(
-      useServingTasksCache.getState().getSection("mine", "plan1"),
+      useServingTasksCache.getState().getSectionStale("mine", "plan1"),
     ).toBeNull();
   });
 });

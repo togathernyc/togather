@@ -11,7 +11,6 @@ const noopNull = () => null;
 const state = {
   entries: {},
   setSection: noop,
-  getSection: noopNull,
   getSectionStale: noopNull,
   clearAll: noop,
 };
