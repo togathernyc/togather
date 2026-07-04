@@ -27,6 +27,8 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { useConnectionStatus } from "@providers/ConnectionProvider";
+import { useServingRunSheetCache } from "@/stores/servingRunSheetCache";
 import { DEFAULT_ROLE_COLOR, formatEventDate } from "@features/scheduling/utils/format";
 import {
   computeSegmentedClockTimes,
@@ -96,6 +98,10 @@ export function NativeRunSheetView({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
+  const { isNetworkAvailable } = useConnectionStatus();
+  // Subscribe to the cache store (not `.getState()`) so the async AsyncStorage
+  // rehydration on a cold offline launch re-renders us once the saved copy lands.
+  const runSheetCache = useServingRunSheetCache();
 
   // This tool renders inside the `(user)` route group, which is presented as
   // a modal (see app/_layout.tsx). Pushing a `/rostering/...` card from inside
@@ -111,11 +117,30 @@ export function NativeRunSheetView({
     { groupId },
   ) as PlanSummary[] | undefined;
 
+  // Cache-on-load so a serving volunteer can reopen this group's plans offline.
+  // The live query stays `undefined` with no radio, so we persist every fresh
+  // result (stale-while-revalidate; see servingRunSheetCache / ADR-028).
+  useEffect(() => {
+    if (plans !== undefined) {
+      useServingRunSheetCache.getState().setPlans(groupId, plans);
+    }
+  }, [plans, groupId]);
+
+  // Offline fallback: when the device radio is down the query can't resolve, so
+  // fall back to the last-cached plans. Web always reports online and waits for
+  // live data, so `effectivePlans === plans` there (and whenever online).
+  const effectivePlans =
+    plans ??
+    (!isNetworkAvailable
+      ? ((runSheetCache.getPlansStale(groupId) as PlanSummary[] | null) ??
+        undefined)
+      : undefined);
+
   const [selectedId, setSelectedId] = useState<Id<"eventPlans"> | null>(null);
   const activePlanId =
-    selectedId ?? initialPlanId ?? plans?.[0]?._id ?? null;
+    selectedId ?? initialPlanId ?? effectivePlans?.[0]?._id ?? null;
 
-  if (plans === undefined) {
+  if (effectivePlans === undefined) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="small" color={colors.text} />
@@ -123,7 +148,7 @@ export function NativeRunSheetView({
     );
   }
 
-  if (plans.length === 0) {
+  if (effectivePlans.length === 0) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
@@ -138,13 +163,13 @@ export function NativeRunSheetView({
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Upcoming-plan tabs (only when there's more than one) */}
-      {plans.length > 1 ? (
+      {effectivePlans.length > 1 ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.tabs}
         >
-          {plans.map((p) => {
+          {effectivePlans.map((p) => {
             const selected = p._id === activePlanId;
             return (
               <Pressable
@@ -211,6 +236,9 @@ function PlanRunSheet({
 }) {
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const { isNetworkAvailable } = useConnectionStatus();
+  // Subscribe so AsyncStorage rehydration re-renders us (see NativeRunSheetView).
+  const runSheetCache = useServingRunSheetCache();
 
   const event = useAuthenticatedQuery(
     api.functions.scheduling.events.getEvent,
@@ -230,7 +258,38 @@ function PlanRunSheet({
     { planId },
   ) as RunSheetItem[] | null | undefined;
 
-  const times = event?.times ?? [];
+  // Cache-on-load so this plan's header + items reopen offline. Both queries
+  // stay `undefined` with no radio, so persist every fresh result
+  // (stale-while-revalidate; see servingRunSheetCache / ADR-028).
+  useEffect(() => {
+    if (event !== undefined) {
+      useServingRunSheetCache.getState().setEvent(planId, event);
+    }
+  }, [event, planId]);
+  useEffect(() => {
+    if (items !== undefined) {
+      useServingRunSheetCache.getState().setItems(planId, items);
+    }
+  }, [items, planId]);
+
+  // Offline fallback: when the device radio is down the queries can't resolve,
+  // so fall back to the last-cached copies. Web always reports online and waits
+  // for live data, so `effEvent === event` / `effItems === items` there (and
+  // whenever online) — this is purely an additive read fallback.
+  const effEvent =
+    event ??
+    (!isNetworkAvailable
+      ? ((runSheetCache.getEventStale(planId) as typeof event | null) ??
+        undefined)
+      : undefined);
+  const effItems =
+    items ??
+    (!isNetworkAvailable
+      ? ((runSheetCache.getItemsStale(planId) as RunSheetItem[] | null) ??
+        undefined)
+      : undefined);
+
+  const times = effEvent?.times ?? [];
   const earliestStart = useMemo(
     () => (times.length > 0 ? Math.min(...times.map((t) => t.startsAt)) : Date.now()),
     [times],
@@ -245,12 +304,12 @@ function PlanRunSheet({
       during: [],
       after: [],
     };
-    for (const it of items ?? []) {
+    for (const it of effItems ?? []) {
       const seg = (it.segment as Segment) ?? "during";
       (groups[seg] ?? groups.during).push(it);
     }
     return groups;
-  }, [items]);
+  }, [effItems]);
   const clockTimes = useMemo(
     () =>
       computeSegmentedClockTimes(
@@ -268,17 +327,17 @@ function PlanRunSheet({
   );
   const peopleByRole = useMemo(() => {
     const map: Record<string, string[]> = {};
-    for (const r of event?.roles ?? []) {
+    for (const r of effEvent?.roles ?? []) {
       map[r.roleId as string] = r.assignments
         .filter((a) => a.status !== "declined")
         .map((a) => a.userName);
     }
     return map;
-  }, [event?.roles]);
+  }, [effEvent?.roles]);
   // Only surface the rehearsal shortcut when the sheet actually has songs.
   const hasSongs = useMemo(
-    () => (items ?? []).some((it) => it.type === "song"),
-    [items],
+    () => (effItems ?? []).some((it) => it.type === "song"),
+    [effItems],
   );
 
   // Expandable rows: which items have their description/notes revealed.
@@ -355,7 +414,7 @@ function PlanRunSheet({
     // Without real service times the clocks are anchored to `now` (see
     // earliestStart fallback), which would spuriously highlight the first item.
     if (times.length === 0) return null;
-    const list = items ?? [];
+    const list = effItems ?? [];
     for (let i = list.length - 1; i >= 0; i--) {
       const it = list[i];
       if (it.type === "header") continue;
@@ -365,16 +424,16 @@ function PlanRunSheet({
       if (now >= start && now < end) return it._id;
     }
     return null;
-  }, [items, clockTimes, now, times.length]);
+  }, [effItems, clockTimes, now, times.length]);
 
-  if (event === undefined || items === undefined) {
+  if (effEvent === undefined || effItems === undefined) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="small" color={colors.text} />
       </View>
     );
   }
-  if (!event || !items) {
+  if (!effEvent || !effItems) {
     return (
       <View style={styles.centered}>
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
@@ -389,7 +448,7 @@ function PlanRunSheet({
       <View style={styles.sheetHeader}>
         <View style={styles.sheetHeaderText}>
           <Text style={[styles.planTitle, { color: colors.text }]}>
-            {event.title}
+            {effEvent.title}
           </Text>
           {times.length > 0 ? (
             <Text style={[styles.ranges, { color: colors.textSecondary }]}>
@@ -430,7 +489,7 @@ function PlanRunSheet({
         </View>
       </View>
 
-      {items.length === 0 ? (
+      {effItems.length === 0 ? (
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
           This event plan's run sheet is empty.
         </Text>

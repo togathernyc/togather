@@ -37,7 +37,6 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
 import {
   RequireProfilePhotoSheet,
   classifyProfilePhotoError,
@@ -55,11 +54,7 @@ const SEARCH_LIMIT = 30;
 const MAX_GROUP_RECIPIENTS = 19; // matches MAX_GROUP_DM_RECIPIENTS in directMessages.ts
 
 export default function StartChatScreenRoute() {
-  return (
-    <DmFeatureGate>
-      <StartChatScreen />
-    </DmFeatureGate>
-  );
+  return <StartChatScreen />;
 }
 
 // Spring-y feel without bringing in Reanimated. LayoutAnimation handles the

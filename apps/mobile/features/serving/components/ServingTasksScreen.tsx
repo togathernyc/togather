@@ -20,7 +20,7 @@
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -41,6 +41,13 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ProgressBar } from "@components/ui/ProgressBar";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { useConnectionStatus } from "@providers/ConnectionProvider";
+import { useServingTasksCache } from "@/stores/servingTasksCache";
+import {
+  useServingTaskQueue,
+  completionId,
+  type ServingTaskKind,
+} from "@/stores/servingTaskQueue";
 import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
 
@@ -262,9 +269,192 @@ export function ServingTasksScreen() {
     });
   }, [sharedTasks]);
 
+  // --- Offline support -------------------------------------------------------
+  // Serving happens on the event day, often with poor venue connectivity, so
+  // the Tasks tab must work offline: view cached tasks and check them off, with
+  // completions queued to sync on reconnect. See ADR-028.
+  const { isNetworkAvailable, isEffectivelyOffline } = useConnectionStatus();
+  const queuePending = useServingTaskQueue((s) => s.pending);
+  const enqueueCompletion = useServingTaskQueue((s) => s.enqueue);
+  const dequeueCompletion = useServingTaskQueue((s) => s.dequeue);
+  // Subscribe to the cache store (not `.getState()`) so the async AsyncStorage
+  // rehydration on a cold offline launch re-renders us once the saved copy lands.
+  const tasksCache = useServingTasksCache();
+
+  // Cache each section's live result as it arrives so it can be shown offline.
+  useEffect(() => {
+    if (planId && tasks !== undefined)
+      useServingTasksCache.getState().setSection("mine", planId, tasks);
+  }, [planId, tasks]);
+  useEffect(() => {
+    if (planId && sharedTasks !== undefined)
+      useServingTasksCache.getState().setSection("shared", planId, sharedTasks);
+  }, [planId, sharedTasks]);
+  useEffect(() => {
+    if (planId && crewMembers !== undefined)
+      useServingTasksCache.getState().setSection("crew", planId, crewMembers);
+  }, [planId, crewMembers]);
+  useEffect(() => {
+    if (planId && allTeams !== undefined)
+      useServingTasksCache.getState().setSection("allTeams", planId, allTeams);
+  }, [planId, allTeams]);
+
+  // With no network the live queries stay `undefined`; fall back to the last
+  // saved copy (any age). `isNetworkAvailable` is the stable radio signal —
+  // preferred over `isEffectivelyOffline` here to avoid Android's flaky
+  // reachability probe forcing the cache on a healthy cold start.
+  const useCache = !isNetworkAvailable && !!planId;
+  const effTasks: MyServingTasks | undefined =
+    tasks ??
+    (useCache
+      ? ((tasksCache.getSectionStale("mine", planId!) as
+          | MyServingTasks
+          | null) ?? undefined)
+      : undefined);
+  const effShared: SharedTask[] | undefined =
+    sharedTasks ??
+    (useCache
+      ? ((tasksCache.getSectionStale("shared", planId!) as
+          | SharedTask[]
+          | null) ?? undefined)
+      : undefined);
+  const effCrew: CrewMember[] | undefined =
+    crewMembers ??
+    (useCache
+      ? ((tasksCache.getSectionStale("crew", planId!) as
+          | CrewMember[]
+          | null) ?? undefined)
+      : undefined);
+  const effAllTeams: AllTeamsTeam[] | undefined =
+    allTeams ??
+    (useCache
+      ? ((tasksCache.getSectionStale("allTeams", planId!) as
+          | AllTeamsTeam[]
+          | null) ?? undefined)
+      : undefined);
+  const isStale = tasks === undefined && effTasks !== undefined;
+
+  // Overlay any queued (offline) completions on top of the displayed data so a
+  // just-checked task shows checked before it has synced.
+  const mineWithOverlay = useMemo<MyServingTasks | undefined>(() => {
+    if (!effTasks) return effTasks;
+    const apply = (arr: ServingTask[]) =>
+      arr.map((t) => {
+        const kind: ServingTaskKind = t.isPersonal ? "personal" : "template";
+        const queued = queuePending[completionId(kind, t.taskId, t.timeLabel)];
+        return queued ? { ...t, completed: queued.completed } : t;
+      });
+    return {
+      before: apply(effTasks.before),
+      during: apply(effTasks.during),
+      after: apply(effTasks.after),
+    };
+  }, [effTasks, queuePending]);
+
+  // Shared completion overlay merges the online optimistic map with any queued
+  // offline completions (queue wins).
+  const sharedOverlay = useMemo<Record<string, boolean>>(() => {
+    const merged: Record<string, boolean> = { ...sharedOptimistic };
+    for (const op of Object.values(queuePending)) {
+      if (op.kind === "shared") merged[op.taskId] = op.completed;
+    }
+    return merged;
+  }, [sharedOptimistic, queuePending]);
+
+  // Replay queued completions when back online. All three toggle mutations take
+  // an explicit `completed` and are idempotent, so replay is always safe.
+  const flushingRef = useRef(false);
+  const flushQueue = useCallback(async () => {
+    if (flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      for (const op of useServingTaskQueue.getState().all()) {
+        try {
+          if (op.kind === "personal") {
+            await togglePersonalTask({
+              taskId: op.taskId as Id<"personalServingTasks">,
+              completed: op.completed,
+            });
+          } else if (op.kind === "template") {
+            await toggleTaskCompletion({
+              taskId: op.taskId as Id<"eventTasks">,
+              timeLabel: op.timeLabel,
+              completed: op.completed,
+            });
+          } else {
+            await toggleSharedTeamTask({
+              planId: op.planId as Id<"eventPlans">,
+              taskId: op.taskId as Id<"eventTasks">,
+              completed: op.completed,
+            });
+          }
+          // Only drop it if the desired state hasn't changed since we
+          // snapshotted `all()` — the user may have gone offline mid-flush and
+          // re-toggled this task, in which case `enqueue` replaced the entry and
+          // we must keep the newer intent for the next flush.
+          const current = useServingTaskQueue.getState().pending[op.id];
+          if (current && current.completed === op.completed) {
+            dequeueCompletion(op.id);
+          }
+        } catch {
+          // Leave it queued; the next reconnect (or screen mount) retries.
+        }
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [
+    togglePersonalTask,
+    toggleTaskCompletion,
+    toggleSharedTeamTask,
+    dequeueCompletion,
+  ]);
+
+  useEffect(() => {
+    if (isEffectivelyOffline) return;
+    if (Object.keys(queuePending).length === 0) return;
+    void flushQueue();
+  }, [isEffectivelyOffline, queuePending, flushQueue]);
+
+  // Drop queued entries the server already reflects (our flush landing, or
+  // another volunteer completing a shared task) so the overlay clears.
+  useEffect(() => {
+    // Only reconcile against LIVE server data. Offline, `effTasks`/`effShared`
+    // are the stale cache, and matching a queued op against it would dequeue a
+    // completion that never reached the server — a silent lost write.
+    if (!isNetworkAvailable) return;
+    const pending = useServingTaskQueue.getState().pending;
+    if (Object.keys(pending).length === 0) return;
+    const mineFlat = effTasks
+      ? [...effTasks.before, ...effTasks.during, ...effTasks.after]
+      : [];
+    for (const op of Object.values(pending)) {
+      let serverState: boolean | undefined;
+      if (op.kind === "shared") {
+        serverState = (effShared ?? []).find(
+          (t) => t.taskId === op.taskId,
+        )?.completed;
+      } else {
+        serverState = mineFlat.find(
+          (t) =>
+            t.taskId === op.taskId &&
+            (t.timeLabel ?? "") === (op.timeLabel ?? ""),
+        )?.completed;
+      }
+      if (serverState !== undefined && serverState === op.completed) {
+        dequeueCompletion(op.id);
+      }
+    }
+  }, [isNetworkAvailable, effTasks, effShared, dequeueCompletion]);
+
   const toggleShared = useCallback(
     async (taskId: string, next: boolean) => {
       if (!planId) return;
+      // Offline: queue the desired state; the overlay reflects it immediately.
+      if (isEffectivelyOffline) {
+        enqueueCompletion({ planId, kind: "shared", taskId, completed: next });
+        return;
+      }
       setSharedOptimistic((o) => ({ ...o, [taskId]: next }));
       try {
         await toggleSharedTeamTask({
@@ -282,7 +472,7 @@ export function ServingTasksScreen() {
         notify("Couldn't update task", String((err as Error)?.message ?? err));
       }
     },
-    [planId, toggleSharedTeamTask],
+    [planId, isEffectivelyOffline, enqueueCompletion, toggleSharedTeamTask],
   );
 
   const openHowTo = useCallback(
@@ -309,24 +499,45 @@ export function ServingTasksScreen() {
   const toggle = useCallback(
     async (task: ServingTask) => {
       if (!planId) return;
+      const kind: ServingTaskKind = task.isPersonal ? "personal" : "template";
+      // `task.completed` is the displayed (overlay-aware) state, so this is the
+      // correct desired next value.
+      const desired = !task.completed;
+      // Offline: queue the desired state; the overlay reflects it immediately.
+      if (isEffectivelyOffline) {
+        enqueueCompletion({
+          planId,
+          kind,
+          taskId: task.taskId,
+          timeLabel: task.timeLabel ?? undefined,
+          completed: desired,
+        });
+        return;
+      }
       try {
         if (task.isPersonal) {
           await togglePersonalTask({
             taskId: task.taskId as Id<"personalServingTasks">,
-            completed: !task.completed,
+            completed: desired,
           });
         } else {
           await toggleTaskCompletion({
             taskId: task.taskId as Id<"eventTasks">,
             timeLabel: task.timeLabel ?? undefined,
-            completed: !task.completed,
+            completed: desired,
           });
         }
       } catch (err) {
         notify("Couldn't update task", String((err as Error)?.message ?? err));
       }
     },
-    [planId, togglePersonalTask, toggleTaskCompletion],
+    [
+      planId,
+      isEffectivelyOffline,
+      enqueueCompletion,
+      togglePersonalTask,
+      toggleTaskCompletion,
+    ],
   );
 
   const remove = useCallback(
@@ -353,9 +564,10 @@ export function ServingTasksScreen() {
     );
   }
 
-  // Overall readiness across every segment.
-  const allTasks = tasks
-    ? [...tasks.before, ...tasks.during, ...tasks.after]
+  // Overall readiness across every segment (overlay-aware so queued offline
+  // completions count toward the progress bars).
+  const allTasks = mineWithOverlay
+    ? [...mineWithOverlay.before, ...mineWithOverlay.during, ...mineWithOverlay.after]
     : [];
   const overallDone = allTasks.filter((t) => t.completed).length;
   const overallTotal = allTasks.length;
@@ -363,9 +575,9 @@ export function ServingTasksScreen() {
   // Small badges on the section pills (null hides the badge).
   const sectionCounts: Record<Section, string | null> = {
     mine: overallTotal > 0 ? `${overallDone}/${overallTotal}` : null,
-    shared: sharedTasks && sharedTasks.length > 0 ? String(sharedTasks.length) : null,
-    crew: crewMembers && crewMembers.length > 0 ? String(crewMembers.length) : null,
-    allTeams: allTeams && allTeams.length > 0 ? String(allTeams.length) : null,
+    shared: effShared && effShared.length > 0 ? String(effShared.length) : null,
+    crew: effCrew && effCrew.length > 0 ? String(effCrew.length) : null,
+    allTeams: effAllTeams && effAllTeams.length > 0 ? String(effAllTeams.length) : null,
   };
 
   return (
@@ -379,12 +591,14 @@ export function ServingTasksScreen() {
       >
         <ServingPlanSwitcher />
 
+        {isStale ? <OfflineBanner colors={colors} /> : null}
+
         <ServingHeader
           title={activePlan?.title ?? "My tasks"}
           startsAt={activePlan?.startsAt}
           done={overallDone}
           total={overallTotal}
-          loading={tasks === undefined}
+          loading={effTasks === undefined}
           colors={colors}
           primaryColor={primaryColor}
         />
@@ -398,13 +612,22 @@ export function ServingTasksScreen() {
         />
 
         {section === "mine" &&
-          (tasks === undefined ? (
-            <View style={styles.inlineLoading}>
-              <ActivityIndicator size="small" color={colors.text} />
-            </View>
+          (mineWithOverlay === undefined ? (
+            useCache ? (
+              <SectionEmpty
+                icon="cloud-offline-outline"
+                title="You're offline"
+                subtitle="Your tasks will appear once you've opened them with a connection."
+                colors={colors}
+              />
+            ) : (
+              <View style={styles.inlineLoading}>
+                <ActivityIndicator size="small" color={colors.text} />
+              </View>
+            )
           ) : (
             SEGMENTS.map(({ key, label }) => {
-            const segmentTasks = tasks[key] ?? [];
+            const segmentTasks = mineWithOverlay[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
             const total = segmentTasks.length;
             const progress = total > 0 ? done / total : 0;
@@ -532,8 +755,8 @@ export function ServingTasksScreen() {
 
         {section === "shared" && (
           <SharedSection
-            tasks={sharedTasks}
-            optimistic={sharedOptimistic}
+            tasks={effShared}
+            optimistic={sharedOverlay}
             colors={colors}
             primaryColor={primaryColor}
             onToggle={toggleShared}
@@ -543,7 +766,7 @@ export function ServingTasksScreen() {
 
         {section === "crew" && (
           <CrewSection
-            members={crewMembers}
+            members={effCrew}
             expandedId={expandedCrewId}
             onToggleExpand={(id) =>
               setExpandedCrewId((cur) => (cur === id ? null : id))
@@ -555,7 +778,7 @@ export function ServingTasksScreen() {
 
         {section === "allTeams" && (
           <AllTeamsSection
-            teams={allTeams}
+            teams={effAllTeams}
             expandedId={expandedTeamId}
             onToggleExpand={(id) =>
               setExpandedTeamId((cur) => (cur === id ? null : id))
@@ -1619,6 +1842,18 @@ function ReadOnlyTaskItem({
   );
 }
 
+/** Quiet banner shown when the tab is rendering a saved (offline) copy. */
+function OfflineBanner({ colors }: { colors: ThemeColors }) {
+  return (
+    <View style={[styles.offlineBanner, { backgroundColor: colors.surface }]}>
+      <Ionicons name="cloud-offline-outline" size={14} color={colors.textSecondary} />
+      <Text style={[styles.offlineBannerText, { color: colors.textSecondary }]}>
+        Offline · showing your saved copy
+      </Text>
+    </View>
+  );
+}
+
 function SectionLoading({ colors }: { colors: ThemeColors }) {
   return (
     <View style={styles.inlineLoading}>
@@ -1664,6 +1899,18 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 15, textAlign: "center" },
   inlineLoading: { paddingVertical: 48, alignItems: "center" },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+  },
+  offlineBannerText: { fontSize: 13, fontWeight: "500" },
 
   // Header
   header: { paddingHorizontal: 16, marginBottom: 20 },

@@ -28,6 +28,14 @@ interface EventModeState {
    * allowed to auto-enter again. Mirrors the native store.
    */
   autoEnterBlocked: boolean;
+  /**
+   * Always `true` on web — persisted state loads synchronously from
+   * localStorage (no async rehydration), so there's nothing to wait for.
+   * Mirrors the native flag so serving-mode-aware screens don't gate forever.
+   */
+  hasHydrated: boolean;
+  /** No-op on web (state is already hydrated); present for API parity. */
+  setHasHydrated: (value: boolean) => void;
   /** Enter serving mode for a plan. */
   enter: (planId: string) => void;
   /** Exit serving mode and clear the active plan. */
@@ -91,6 +99,10 @@ const state: EventModeState = {
   isServingMode: persisted.isServingMode,
   activePlanId: persisted.activePlanId,
   autoEnterBlocked: false,
+  hasHydrated: true,
+  setHasHydrated: () => {
+    // No-op: web hydrates synchronously in loadPersisted().
+  },
   enter: (planId: string) => {
     state.isServingMode = true;
     state.activePlanId = planId;
@@ -113,6 +125,8 @@ function makeSnapshot(): EventModeState {
     isServingMode: state.isServingMode,
     activePlanId: state.activePlanId,
     autoEnterBlocked: state.autoEnterBlocked,
+    hasHydrated: state.hasHydrated,
+    setHasHydrated: state.setHasHydrated,
     enter: state.enter,
     exit: state.exit,
   };

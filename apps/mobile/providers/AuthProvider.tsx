@@ -20,6 +20,9 @@ import { useMessageCache } from "../stores/messageCache";
 import { useGroupCache } from "../stores/groupCache";
 import { useChannelsCache } from "../stores/channelsCache";
 import { useRunSheetCache } from "../stores/runSheetCache";
+import { useServingRunSheetCache } from "../stores/servingRunSheetCache";
+import { useServingTasksCache } from "../stores/servingTasksCache";
+import { useServingTaskQueue } from "../stores/servingTaskQueue";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
 
@@ -646,6 +649,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "group-cache",
       "channels-cache",
       "runsheet-cache",
+      "serving-runsheet-cache",
+      "serving-tasks-cache",
+      "serving-task-queue",
     ];
 
     await Promise.all(
@@ -662,6 +668,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useGroupCache.getState().clearAll();
     useChannelsCache.getState().clearAll();
     useRunSheetCache.getState().clearAll();
+    useServingRunSheetCache.getState().clearAll();
+    useServingTasksCache.getState().clearAll();
+    useServingTaskQueue.getState().clear();
 
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {

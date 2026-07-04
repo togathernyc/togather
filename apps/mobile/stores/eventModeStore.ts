@@ -28,6 +28,17 @@ interface EventModeState {
    * reset on that remount and immediately re-enter, making Exit appear broken.
    */
   autoEnterBlocked: boolean;
+  /**
+   * Whether the persisted state has finished rehydrating from AsyncStorage.
+   * Rehydration is async, so on first render the store still holds its default
+   * `isServingMode: false`. Screens that branch on serving mode (the inbox
+   * filters itself to the active plan) must wait for this before rendering, or
+   * they briefly show the full regular inbox before stripping down to serving
+   * mode. Not persisted — it describes this session's hydration, not user state.
+   */
+  hasHydrated: boolean;
+  /** Mark rehydration complete (called once from `onRehydrateStorage`). */
+  setHasHydrated: (value: boolean) => void;
   /** Enter serving mode for a plan. */
   enter: (planId: string) => void;
   /** Exit serving mode and clear the active plan. */
@@ -40,6 +51,11 @@ export const useEventModeStore = create<EventModeState>()(
       isServingMode: false,
       activePlanId: null,
       autoEnterBlocked: false,
+      hasHydrated: false,
+
+      setHasHydrated: (value: boolean) => {
+        set({ hasHydrated: value });
+      },
 
       enter: (planId: string) => {
         set({ isServingMode: true, activePlanId: planId });
@@ -56,6 +72,15 @@ export const useEventModeStore = create<EventModeState>()(
         isServingMode: state.isServingMode,
         activePlanId: state.activePlanId,
       }),
+      // Runs after every rehydration attempt — the normal path, the empty
+      // first-launch case, AND the error path, where Zustand invokes this with
+      // `state === undefined` (a failed AsyncStorage read / deserialize). Flip
+      // the flag unconditionally via the store handle so a failed read degrades
+      // to defaults (regular inbox) instead of leaving serving-mode-aware screens
+      // stuck on their loading gate forever.
+      onRehydrateStorage: () => () => {
+        useEventModeStore.setState({ hasHydrated: true });
+      },
     }
   )
 );

@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
+import { useConnectionStatus } from "@providers/ConnectionProvider";
 import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { AppImage, SearchBar } from "@components/ui";
@@ -43,7 +44,6 @@ import { selectMainChannel } from "../utils/selectMainChannel";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
-import { useConvexFeatureFlag } from "@hooks/useConvexFeatureFlag";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
@@ -151,6 +151,9 @@ export function ChatInboxScreen({
   const hasCommunity = !!community?.id;
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
   const { getInboxChannels, setInboxChannels } = useInboxCache();
+  // Device network state. Drives the loading strategy: online we hold for a
+  // complete first paint; with no network we fall back to cached channels.
+  const { isNetworkAvailable } = useConnectionStatus();
   const hasAutoSelected = useRef(false);
 
   // Get Convex IDs from auth context
@@ -173,6 +176,11 @@ export function ChatInboxScreen({
   // serving channels (flat) by passing `servingPlanId` to getInboxChannels.
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const activePlanId = useEventModeStore((s) => s.activePlanId);
+  // The serving-mode flags above are persisted and rehydrate from AsyncStorage
+  // asynchronously. Until this is true they hold their defaults, so we hold the
+  // inbox on its loading state rather than rendering the full regular inbox and
+  // then stripping it down to the serving-mode view a beat later.
+  const eventModeHydrated = useEventModeStore((s) => s.hasHydrated);
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
@@ -203,18 +211,13 @@ export function ChatInboxScreen({
   // Direct-message inbox is a separate subscription so the existing
   // `getInboxChannels` query (and its 4222-line file) stays untouched. Convex
   // multi-subscription cost is negligible.
-  //
-  // The whole DM surface is behind a PostHog flag for staged rollout. When
-  // the flag is off we skip the queries entirely (no spurious subscriptions
-  // for users who don't have the feature) and hide every entry point below.
-  const { enabled: dmsEnabled } = useConvexFeatureFlag("direct-messages");
   const directInbox = useQuery(
     api.functions.messaging.directMessages.getDirectInbox,
-    token && dmsEnabled && communityId ? { token, communityId } : "skip",
+    token && communityId ? { token, communityId } : "skip",
   );
   const chatRequests = useQuery(
     api.functions.messaging.directMessages.listChatRequests,
-    token && dmsEnabled && communityId ? { token, communityId } : "skip",
+    token && communityId ? { token, communityId } : "skip",
   );
 
   // Summary for the synthetic "Notifications" inbox row: the latest
@@ -332,12 +335,23 @@ export function ChatInboxScreen({
       : "skip",
   );
 
+  // Offline cache key. Serving mode returns a *different* (plan-filtered) set of
+  // channels than the regular inbox, so it must not share a cache slot with it —
+  // otherwise the stale-while-revalidate fallback could serve the full regular
+  // inbox while the serving query loads, flashing it before it strips down.
+  const inboxCacheKey = useMemo(() => {
+    if (!communityId) return null;
+    return inServingMode && activePlanId
+      ? `${communityId}:serving:${activePlanId}`
+      : communityId;
+  }, [communityId, inServingMode, activePlanId]);
+
   // Cache inbox data for offline use
   useEffect(() => {
-    if (inboxChannels && inboxChannels.length > 0 && communityId) {
-      setInboxChannels(communityId, inboxChannels);
+    if (inboxChannels && inboxChannels.length > 0 && inboxCacheKey) {
+      setInboxChannels(inboxCacheKey, inboxChannels);
     }
-  }, [inboxChannels, communityId, setInboxChannels]);
+  }, [inboxChannels, inboxCacheKey, setInboxChannels]);
 
   // Inbox list entries are a grouped item (group + its channels), an event row,
   // a direct-message row, or the requests-link header. Groups, events, and DMs
@@ -546,17 +560,15 @@ export function ChatInboxScreen({
         >
           Inbox
         </Animated.Text>
-        {dmsEnabled && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Start a new chat"
-            onPress={() => router.push("/inbox/new" as any)}
-            style={styles.headerActionButton}
-            hitSlop={12}
-          >
-            <Ionicons name="create-outline" size={24} color={colors.text} />
-          </Pressable>
-        )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start a new chat"
+          onPress={() => router.push("/inbox/new" as any)}
+          style={styles.headerActionButton}
+          hitSlop={12}
+        >
+          <Ionicons name="create-outline" size={24} color={colors.text} />
+        </Pressable>
       </View>
 
       <Animated.View style={[styles.searchWrap, searchStyle]}>
@@ -577,12 +589,11 @@ export function ChatInboxScreen({
   // The same header is rendered above the list and the three empty/loading
   // states below; centralizing it here keeps the "+" button placement (and the
   // tap target that opens the new-chat picker) in one place. Hidden in the
-  // "no community" empty state since the picker has nothing to search, and
-  // hidden entirely when the DM feature flag is off.
+  // "no community" empty state since the picker has nothing to search.
   const renderHeader = (showCompose: boolean) => (
     <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
       <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
-      {showCompose && dmsEnabled && (
+      {showCompose && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Start a new chat"
@@ -652,13 +663,37 @@ export function ChatInboxScreen({
     | InboxGroup[]
     | undefined;
   let isStale = false;
-  if (isLoading && communityId) {
-    const cached = getInboxChannels(communityId) as InboxGroup[] | undefined;
+  // Wait for the serving-mode flag to hydrate before serving stale channels —
+  // `inboxCacheKey` depends on it, so before hydration we'd risk handing back the
+  // regular inbox for what turns out to be a serving session.
+  if (isLoading && inboxCacheKey && eventModeHydrated) {
+    const cached = getInboxChannels(inboxCacheKey) as InboxGroup[] | undefined;
     if (cached && cached.length > 0) {
       displayChannels = cached;
       isStale = true;
     }
   }
+
+  // The inbox is assembled from several independent subscriptions beyond the
+  // channel backbone: resources shown under each group, DMs, pending requests,
+  // the Notifications summary, and — in serving mode — the plan's DM window and
+  // "coming soon" channels. If we paint as soon as `getInboxChannels` resolves,
+  // each of these pops in a beat later (and DMs/notifications re-sort the list
+  // as they land). So hold the first paint until every *active* subscription has
+  // resolved once. A Convex query only returns `undefined` before its first
+  // result — skipped queries stay `undefined` forever — so each is awaited only
+  // when its inputs make it live.
+  const hasChatContext = !!token && !!communityId;
+  const auxDataLoading =
+    (hasChatContext && inboxResources === undefined) || // resources under items
+    (!!token && notificationSummary === undefined) || // Notifications row
+    (hasChatContext &&
+      (directInbox === undefined || chatRequests === undefined)) || // DMs + requests
+    // Serving mode pulls two more subscriptions the focused inbox is built from.
+    (inServingMode &&
+      !!activePlanId &&
+      !!token &&
+      (servingInboxMeta === undefined || upcomingChannels === undefined));
 
   // Interleave group and event rows by recency. Server already hides event
   // channels without a first message and those quiet for >2 days (see
@@ -877,7 +912,21 @@ export function ChatInboxScreen({
     );
   }
 
-  const showLoadingSpinner = isLoading && !isStale;
+  // Hold the loading state until the whole first paint is ready: the persisted
+  // serving-mode flag has hydrated (so we know which inbox to build), the channel
+  // backbone has loaded, and every active auxiliary subscription (resources, DMs,
+  // requests, notifications, serving extras) has resolved once. Waiting for all of
+  // them means the inbox appears complete instead of having rows, resources, and
+  // DMs pop in and re-sort piecemeal.
+  const firstPaintComplete =
+    eventModeHydrated && !isLoading && !auxDataLoading;
+  // Offline is the one exception: the live queries can never resolve, so rather
+  // than spin forever we fall back to whatever channels are cached (once the
+  // serving-mode flag has hydrated, so the cache key is correct). Web always
+  // reports a network, so it always waits for the complete paint.
+  const offlineStaleFallback =
+    !isNetworkAvailable && eventModeHydrated && isStale;
+  const showLoadingSpinner = !firstPaintComplete && !offlineStaleFallback;
 
   if (showLoadingSpinner) {
     return (
