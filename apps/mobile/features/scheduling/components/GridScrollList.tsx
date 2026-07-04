@@ -297,16 +297,20 @@ export function GridScrollList<T>({
         ? `${FOOTER_KEY_PREFIX}${it.section.key}`
         : keyExtractor(it.item);
 
-  // Rebuild the COMPLETE row order before handing it to the caller.
+  // Turn the drag list's post-drop order into a COMPLETE, section-safe order.
   //
-  // Only expanded sections contribute rows to the drag list, so `orderedKeys`
-  // omits collapsed sections' rows. Forwarding that partial list would make the
-  // run-sheet reorder mutation reject a stale order and would let Event Tasks
-  // rewrite sort orders for only the visible rows. To stay complete (and match
-  // flat mode), we re-emit every row: expanded sections in their new relative
-  // order, collapsed sections in their original order, spliced back at their
-  // section position. Grouping by owning section also makes an accidental
-  // cross-section drag a no-op (the row stays in its own segment).
+  // Two hazards to handle, both because all sections share one drag list:
+  //  1. Collapsed sections contribute no rows, so `orderedKeys` omits them —
+  //     forwarding that partial list would make the run-sheet mutation reject a
+  //     stale order and let Event Tasks rewrite sort orders for only visible rows.
+  //  2. A row can be dropped across a section boundary. We don't support segment
+  //     changes via drag (that's the row's ⋯ menu), so such a drop must be a
+  //     full no-op — not a silent within-section reshuffle of the landing section.
+  //
+  // A within-section reorder never moves a row out of its section's contiguous
+  // block, so the sequence of section indices stays non-decreasing. Any
+  // inversion means the row crossed a boundary → snap back by not persisting.
+  // Otherwise re-emit every row (collapsed sections keep their original rows).
   const handleSectionReorder = (orderedKeys: string[]) => {
     if (!sections) return onReorder(orderedKeys);
     const visibleOrder = orderedKeys.filter(
@@ -317,25 +321,30 @@ export function GridScrollList<T>({
     sections.forEach((section, i) =>
       section.rows.forEach((row) => sectionOf.set(keyExtractor(row), i)),
     );
-    const reorderedBySection = new Map<number, string[]>();
-    for (const key of visibleOrder) {
-      const i = sectionOf.get(key);
-      if (i === undefined) continue;
-      const list = reorderedBySection.get(i);
-      if (list) list.push(key);
-      else reorderedBySection.set(i, [key]);
+    const seq = visibleOrder
+      .map((k) => sectionOf.get(k))
+      .filter((i): i is number => i !== undefined);
+    if (seq.length !== visibleOrder.length) return; // unknown key → no-op
+    for (let i = 1; i < seq.length; i++) {
+      if (seq[i] < seq[i - 1]) return; // cross-section drop → no-op
     }
+    const expandedCount = sections.reduce(
+      (n, s) => n + (s.collapsed ? 0 : s.rows.length),
+      0,
+    );
+    if (visibleOrder.length !== expandedCount) return; // defensive → no-op
+    // `visibleOrder` is now guaranteed grouped by section in ascending order,
+    // so walk it straight through, splicing collapsed rows back at their spot.
     const fullOrder: string[] = [];
-    sections.forEach((section, i) => {
-      const reordered = reorderedBySection.get(i);
-      // Expanded section with every row accounted for → use the new order;
-      // otherwise (collapsed, or a defensive count mismatch) keep original.
-      if (!section.collapsed && reordered?.length === section.rows.length) {
-        fullOrder.push(...reordered);
+    let vi = 0;
+    for (const section of sections) {
+      if (section.collapsed) {
+        for (const row of section.rows) fullOrder.push(keyExtractor(row));
       } else {
-        section.rows.forEach((row) => fullOrder.push(keyExtractor(row)));
+        for (let n = 0; n < section.rows.length; n++)
+          fullOrder.push(visibleOrder[vi++]);
       }
-    });
+    }
     onReorder(fullOrder);
   };
 
