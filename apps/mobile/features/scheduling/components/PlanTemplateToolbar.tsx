@@ -196,8 +196,13 @@ export function PlanTemplateToolbar({
   // --- Render -----------------------------------------------------------------
   const pickerValue = linkedName ?? "None";
 
+  // Only the default (full) render uses the full-width `wrap`. In the split
+  // pickerOnly / saveOnly modes the toolbar is embedded inline (the picker sits
+  // among the filter chips; the save button on the readiness row), so it must
+  // size to its content — otherwise width:100% pushes the neighbouring chips off.
+  const inline = pickerOnly || saveOnly;
   return (
-    <View style={saveOnly ? undefined : styles.wrap}>
+    <View style={inline ? undefined : styles.wrap}>
       <View style={styles.row}>
         {/* Template picker */}
         {!saveOnly && (
