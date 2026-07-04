@@ -297,14 +297,47 @@ export function GridScrollList<T>({
         ? `${FOOTER_KEY_PREFIX}${it.section.key}`
         : keyExtractor(it.item);
 
-  // Strip the synthetic header/footer keys so the caller only sees row keys.
-  const handleSectionReorder = (orderedKeys: string[]) =>
-    onReorder(
-      orderedKeys.filter(
-        (k) =>
-          !k.startsWith(SECTION_KEY_PREFIX) && !k.startsWith(FOOTER_KEY_PREFIX),
-      ),
+  // Rebuild the COMPLETE row order before handing it to the caller.
+  //
+  // Only expanded sections contribute rows to the drag list, so `orderedKeys`
+  // omits collapsed sections' rows. Forwarding that partial list would make the
+  // run-sheet reorder mutation reject a stale order and would let Event Tasks
+  // rewrite sort orders for only the visible rows. To stay complete (and match
+  // flat mode), we re-emit every row: expanded sections in their new relative
+  // order, collapsed sections in their original order, spliced back at their
+  // section position. Grouping by owning section also makes an accidental
+  // cross-section drag a no-op (the row stays in its own segment).
+  const handleSectionReorder = (orderedKeys: string[]) => {
+    if (!sections) return onReorder(orderedKeys);
+    const visibleOrder = orderedKeys.filter(
+      (k) =>
+        !k.startsWith(SECTION_KEY_PREFIX) && !k.startsWith(FOOTER_KEY_PREFIX),
     );
+    const sectionOf = new Map<string, number>();
+    sections.forEach((section, i) =>
+      section.rows.forEach((row) => sectionOf.set(keyExtractor(row), i)),
+    );
+    const reorderedBySection = new Map<number, string[]>();
+    for (const key of visibleOrder) {
+      const i = sectionOf.get(key);
+      if (i === undefined) continue;
+      const list = reorderedBySection.get(i);
+      if (list) list.push(key);
+      else reorderedBySection.set(i, [key]);
+    }
+    const fullOrder: string[] = [];
+    sections.forEach((section, i) => {
+      const reordered = reorderedBySection.get(i);
+      // Expanded section with every row accounted for → use the new order;
+      // otherwise (collapsed, or a defensive count mismatch) keep original.
+      if (!section.collapsed && reordered?.length === section.rows.length) {
+        fullOrder.push(...reordered);
+      } else {
+        section.rows.forEach((row) => fullOrder.push(keyExtractor(row)));
+      }
+    });
+    onReorder(fullOrder);
+  };
 
   const renderSectionHeader = (section: GridSection<T>) => (
     <Pressable
