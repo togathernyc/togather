@@ -2457,7 +2457,12 @@ function PeopleCellView({
           {extra > 0 ? ` +${extra}` : ""}
         </Text>
         {cell.doubleBooked && (
-          <Ionicons name="warning" size={11} color={colors.warning} style={styles.cellCorner} />
+          <Ionicons
+            name="warning"
+            size={11}
+            color={colors.destructive}
+            style={styles.cellCorner}
+          />
         )}
       </Pressable>
     );
@@ -2853,7 +2858,7 @@ function MemberCellPopover({
       onClose={onClose}
     >
       {cell.doubleBooked && (
-        <Text style={[styles.noteLine, { color: colors.warning }]}>
+        <Text style={[styles.noteLine, { color: colors.destructive }]}>
           ⚠ Double-booked this day
         </Text>
       )}
