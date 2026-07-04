@@ -611,7 +611,7 @@ export function EventTasksScreen() {
         onSaveExisting={handleSaveExistingTemplate}
         onRevert={handleRevertTemplate}
       />
-      <ReadinessHeader readiness={readiness} primaryColor={primaryColor} colors={colors} />
+      <ReadinessHeader readiness={readiness} colors={colors} />
       {(tasks?.length ?? 0) > 0 ? (
         <FilterBar
           phase={phaseFilter}
@@ -793,90 +793,64 @@ function RoleLoader({
   return null;
 }
 
-/** A thin fixed-height progress track with a primary-colored fill (no SVG). */
-function MiniBar({
-  ratio,
-  height,
-  trackColor,
-  fillColor,
-}: {
-  ratio: number;
-  height: number;
-  trackColor: string;
-  fillColor: string;
-}) {
-  const clamped = Math.max(0, Math.min(1, ratio));
-  return (
-    <View style={[styles.miniTrack, { height, backgroundColor: trackColor }]}>
-      <View
-        style={{
-          height,
-          width: `${clamped * 100}%`,
-          borderRadius: height / 2,
-          backgroundColor: fillColor,
-        }}
-      />
-    </View>
-  );
-}
-
 /**
- * Readiness header — a compact row of stat tiles (Overall / Pre / During / Post),
- * each showing a done/total count and a short primary-colored bar, plus a
- * wrapping row of per-team chips. Contained to the table's centered max width so
- * it doesn't stretch edge-to-edge on desktop.
+ * Readiness header — one compact line: a bold done/total count (monospace,
+ * tabular), a "READY" label, a thin progress track (fill in `colors.success`),
+ * and inline per-phase counts (Pre / During / Post). Any per-team breakdown
+ * follows as a small secondary line of compact chips. Contained to the table's
+ * centered max width so it doesn't stretch edge-to-edge on desktop.
  */
 function ReadinessHeader({
   readiness,
-  primaryColor,
   colors,
 }: {
   readiness: Readiness | undefined;
-  primaryColor: string;
   colors: ReturnType<typeof useTheme>["colors"];
 }) {
   if (!readiness) return null;
-  const pct = (d: number, t: number) => (t > 0 ? d / t : 0);
-  const tiles: Array<{ label: string; done: number; total: number }> = [
-    { label: "Overall", ...readiness.overall },
-    { label: "Pre", ...readiness.bySegment.before },
-    { label: "During", ...readiness.bySegment.during },
-    { label: "Post", ...readiness.bySegment.after },
+  const { overall, bySegment, byTeam } = readiness;
+  const ratio = overall.total > 0 ? overall.done / overall.total : 0;
+  const clamped = Math.max(0, Math.min(1, ratio));
+  const phases: Array<{ label: string; done: number; total: number }> = [
+    { label: "Pre", ...bySegment.before },
+    { label: "During", ...bySegment.during },
+    { label: "Post", ...bySegment.after },
   ];
 
   return (
     <View style={styles.readiness}>
-      <Text style={[styles.readinessTitle, { color: colors.textSecondary }]}>
-        READINESS
-      </Text>
-      <View style={styles.statRow}>
-        {tiles.map((tile) => (
+      <View style={styles.readinessMain}>
+        <Text style={[styles.rdCount, { color: colors.text }]}>
+          {overall.done}/{overall.total}
+        </Text>
+        <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
+          READY
+        </Text>
+        <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
           <View
-            key={tile.label}
-            style={[
-              styles.statTile,
-              { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-            ]}
-          >
-            <Text style={[styles.statCount, { color: colors.text }]}>
-              {tile.done}/{tile.total}
+            style={{
+              height: "100%",
+              width: `${clamped * 100}%`,
+              borderRadius: 6,
+              backgroundColor: colors.success,
+            }}
+          />
+        </View>
+        <View style={styles.rdPhases}>
+          {phases.map((p) => (
+            <Text
+              key={p.label}
+              style={[styles.rdPhase, { color: colors.textSecondary }]}
+            >
+              {p.label} {p.done}/{p.total}
             </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              {tile.label}
-            </Text>
-            <MiniBar
-              ratio={pct(tile.done, tile.total)}
-              height={4}
-              trackColor={colors.border}
-              fillColor={primaryColor}
-            />
-          </View>
-        ))}
+          ))}
+        </View>
       </View>
 
-      {readiness.byTeam.length > 0 ? (
+      {byTeam.length > 0 ? (
         <View style={styles.teamChipRow}>
-          {readiness.byTeam.map((t) => (
+          {byTeam.map((t) => (
             <View
               key={t.teamId}
               style={[
@@ -893,14 +867,6 @@ function ReadinessHeader({
               <Text style={[styles.teamChipCount, { color: colors.textSecondary }]}>
                 {t.done}/{t.total}
               </Text>
-              <View style={styles.teamChipBar}>
-                <MiniBar
-                  ratio={pct(t.done, t.total)}
-                  height={3}
-                  trackColor={colors.border}
-                  fillColor={primaryColor}
-                />
-              </View>
             </View>
           ))}
         </View>
@@ -1095,6 +1061,10 @@ function FilterBar({
   );
 }
 
+// Monospace + tabular figures for the readiness counts (the "broadcast rundown"
+// numeric feel, matching the run-sheet time/duration cells).
+const MONO_FONT = Platform.select({ ios: "Menlo", default: "monospace" });
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
@@ -1132,25 +1102,33 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     gap: 10,
   },
-  readinessTitle: { fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
-  statRow: { flexDirection: "row", gap: 8 },
-  statTile: {
-    flex: 1,
-    minWidth: 68,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 4,
+  // The single compact readiness line: count · READY · track · phase counts.
+  readinessMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
   },
-  statCount: { fontSize: 18, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  statLabel: {
-    fontSize: 11,
+  rdCount: {
+    fontSize: 15,
+    fontWeight: "700",
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
+  rdLabel: {
+    fontSize: 10,
     fontWeight: "600",
+    letterSpacing: 0.8,
     textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
-  miniTrack: { borderRadius: 2, overflow: "hidden", marginTop: 2 },
+  rdTrack: { width: 130, height: 6, borderRadius: 6, overflow: "hidden" },
+  rdPhases: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  rdPhase: {
+    fontSize: 12,
+    fontWeight: "600",
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
   teamChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   teamChip: {
     flexDirection: "row",
@@ -1162,8 +1140,11 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   teamChipName: { fontSize: 12, fontWeight: "600", maxWidth: 120 },
-  teamChipCount: { fontSize: 11, fontVariant: ["tabular-nums"] },
-  teamChipBar: { width: 40 },
+  teamChipCount: {
+    fontSize: 11,
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
   filterBar: { marginTop: 14, width: "100%", maxWidth: 1200, alignSelf: "center" },
   filterScroll: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 2 },
   filterChip: {

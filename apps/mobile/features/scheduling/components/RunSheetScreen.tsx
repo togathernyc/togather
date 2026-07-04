@@ -959,8 +959,13 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 13 },
   muted: { fontSize: 13, fontWeight: "500" },
   whoChips: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
-  // "Time" — a quiet, contained read-only clock value ("9:00 AM").
-  timeText: { fontSize: 13, fontVariant: ["tabular-nums"] },
+  // "Time" — a quiet, contained read-only clock value ("9:00 AM"). Monospace +
+  // tabular figures give it the aligned "broadcast rundown" feel.
+  timeText: {
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontVariant: ["tabular-nums"],
+  },
   // The per-row "⋯" actions trigger — centered in its compact cell.
   actionsTrigger: { flex: 1, alignItems: "center", justifyContent: "center" },
 });
