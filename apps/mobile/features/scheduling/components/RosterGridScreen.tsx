@@ -46,6 +46,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Avatar } from "@components/ui/Avatar";
 import { Button } from "@components/ui/Button";
+import { SegmentedTabs } from "@components/ui/SegmentedTabs";
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -248,6 +249,13 @@ function statusColor(status: AssignmentStatus, colors: Colors): string {
 function statusIcon(status: AssignmentStatus): keyof typeof Ionicons.glyphMap {
   if (status === "declined") return "close";
   if (status === "unconfirmed") return "time-outline";
+  return "checkmark";
+}
+
+/** Filled glyph for the tiny avatar corner badge (declined ✕ / awaiting … / confirmed ✓). */
+function statusBadgeIcon(status: AssignmentStatus): keyof typeof Ionicons.glyphMap {
+  if (status === "declined") return "close";
+  if (status === "unconfirmed") return "time";
   return "checkmark";
 }
 
@@ -1000,7 +1008,11 @@ export function RosterGridScreen() {
   // -------------------------------------------------------------------------
   // Header
   // -------------------------------------------------------------------------
-  const renderHeaderBar = () => (
+  // `showActions` gates the desktop title-row actions (view toggle / Publish /
+  // overflow). It is only passed by the main render — never by the gating/empty
+  // early returns — because renderPublishButton is declared further down; calling
+  // it from an early return would hit a temporal-dead-zone ReferenceError.
+  const renderHeaderBar = (showActions = false) => (
     <View style={[styles.header, { borderBottomColor: colors.border }]}>
       <TouchableOpacity
         onPress={() => router.canGoBack() && router.back()}
@@ -1019,25 +1031,29 @@ export function RosterGridScreen() {
         )}
       </View>
       {groupId && <GridPresenceBar groupId={groupId} />}
-      {/* On desktop the view toggle moves into the single toolbar row below
-          (renderDesktopToolbar); on mobile it stays here in the header. */}
-      {!isWide && (
-        <View style={styles.segmented}>
-          <SegBtn
-            label="Roles"
-            active={mode === "roles"}
-            onPress={() => setMode("roles")}
-            colors={colors}
+      {/* View toggle + Publish + overflow sit on the title row (matching the
+          prototype); the row below is just filters. On mobile the toggle stays
+          here and Publish is the bottom bar. */}
+      {!isWide ? (
+        <>
+          <SegmentedTabs
+            options={[
+              { key: "roles", label: "Roles" },
+              { key: "people", label: "People" },
+            ]}
+            value={mode}
+            onChange={setMode}
+            accessibilityLabel="Roster view"
           />
-          <SegBtn
-            label="People"
-            active={mode === "people"}
-            onPress={() => setMode("people")}
-            colors={colors}
-          />
+          {renderOverflowButton()}
+        </>
+      ) : showActions && data ? (
+        <View style={styles.headerActions}>
+          {renderViewToggle()}
+          {renderPublishButton(false)}
+          {renderOverflowButton()}
         </View>
-      )}
-      {!isWide && renderOverflowButton()}
+      ) : null}
     </View>
   );
 
@@ -1059,20 +1075,15 @@ export function RosterGridScreen() {
 
   // The shared view toggle, reused by the header (mobile) and toolbar (desktop).
   const renderViewToggle = () => (
-    <View style={styles.segmented}>
-      <SegBtn
-        label="Roles"
-        active={mode === "roles"}
-        onPress={() => setMode("roles")}
-        colors={colors}
-      />
-      <SegBtn
-        label="People"
-        active={mode === "people"}
-        onPress={() => setMode("people")}
-        colors={colors}
-      />
-    </View>
+    <SegmentedTabs
+      options={[
+        { key: "roles", label: "Roles" },
+        { key: "people", label: "People" },
+      ]}
+      value={mode}
+      onChange={setMode}
+      accessibilityLabel="Roster view"
+    />
   );
 
   if (data === undefined) {
@@ -1230,36 +1241,33 @@ export function RosterGridScreen() {
     </View>
   );
 
-  // Desktop: one horizontal toolbar row — view toggle, filters, then Publish
-  // pinned right. Replaces both the header toggle and the stacked filter bar.
+  // Desktop: the filters row. View toggle + Publish + overflow now live on the
+  // title row (renderHeaderBar), matching the prototype.
   const renderDesktopToolbar = () => (
     <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
-      {renderViewToggle()}
       {teamChip}
       {groupScopeChip}
       {openOnlyChip}
       {availableOnlyChip}
       {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
       <View style={styles.toolbarSpacer} />
-      {renderPublishButton(false)}
-      {renderOverflowButton()}
     </View>
   );
 
   const renderLegend = () => (
     <View style={styles.legend}>
       <LegendItem icon="checkmark" color={colors.success} label="Confirmed" colors={colors} />
-      <LegendItem icon="time-outline" color={colors.warning} label="Awaiting" colors={colors} />
+      <LegendItem icon="time" color={colors.warning} label="Awaiting" colors={colors} />
       <LegendItem icon="close" color={colors.destructive} label="Declined" colors={colors} />
-      <LegendItem icon="ellipse-outline" color={colors.textTertiary} label="Open" colors={colors} />
-      <LegendItem icon="warning" color={colors.warning} label="Double-booked" colors={colors} />
+      <LegendItem icon="add" color={colors.textTertiary} label="Open" colors={colors} open />
+      <LegendItem icon="warning" color={colors.destructive} label="Double-booked" colors={colors} />
     </View>
   );
 
   // -------------------------------------------------------------------------
   // Header row of event columns (shared by both views)
   // -------------------------------------------------------------------------
-  const renderHeaderRow = (cornerLabel: string) => (
+  const renderHeaderRow = (kicker: string, count: number) => (
     <View style={[styles.matrixHeaderRow, { borderBottomColor: colors.border }]}>
       <View
         style={[
@@ -1267,9 +1275,10 @@ export function RosterGridScreen() {
           { width: NAME_W, height: HEADER_H, backgroundColor: colors.surface },
         ]}
       >
-        <Text style={[styles.cornerText, { color: colors.textSecondary }]}>
-          {cornerLabel}
+        <Text style={[styles.cornerKicker, { color: colors.textSecondary }]}>
+          {kicker.toUpperCase()}
         </Text>
+        <Text style={[styles.cornerCount, { color: colors.text }]}>{count}</Text>
       </View>
       <ScrollView
         ref={headerScrollRef}
@@ -1834,10 +1843,8 @@ export function RosterGridScreen() {
   );
 
   const rows = mode === "roles" ? roleRows.length : visibleMembers.length;
-  const cornerLabel =
-    mode === "roles"
-      ? `${visibleRoles.length} ${visibleRoles.length === 1 ? "role" : "roles"}`
-      : `${visibleMembers.length} ${visibleMembers.length === 1 ? "person" : "people"}`;
+  const cornerKicker = mode === "roles" ? "Roles" : "People";
+  const cornerCount = mode === "roles" ? visibleRoles.length : visibleMembers.length;
 
   // Publish button label (#477 FR-3). One event → name the date; several with
   // drafts left → generic; all published → "Re-send". Anyone who can see this
@@ -1894,7 +1901,7 @@ export function RosterGridScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
-      {renderHeaderBar()}
+      {renderHeaderBar(true)}
       {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
 
@@ -1903,7 +1910,7 @@ export function RosterGridScreen() {
           full width and AssignSheet overlays as a modal (below). */}
       <View style={isWide ? styles.contentRowWide : styles.contentColumn}>
         <View style={styles.gridArea}>
-          {renderHeaderRow(cornerLabel)}
+          {renderHeaderRow(cornerKicker, cornerCount)}
           <View
             style={styles.matrixBody}
             onLayout={(e) => {
@@ -2375,6 +2382,16 @@ function RoleCellView({
             ]}
           >
             <Avatar name={o.userName} imageUrl={o.profilePhoto} size={AV} />
+            {/* Corner status disc — mirrors the legend glyphs so the ring's
+                color has a redundant, colorblind-safe icon. */}
+            <View
+              style={[
+                styles.statusBadge,
+                { backgroundColor: statusColor(o.status, colors), borderColor: colors.surface },
+              ]}
+            >
+              <Ionicons name={statusBadgeIcon(o.status)} size={7} color="#fff" />
+            </View>
           </View>
         ))}
         {overflow > 0 && (
@@ -2450,7 +2467,12 @@ function PeopleCellView({
           {extra > 0 ? ` +${extra}` : ""}
         </Text>
         {cell.doubleBooked && (
-          <Ionicons name="warning" size={11} color={colors.warning} style={styles.cellCorner} />
+          <Ionicons
+            name="warning"
+            size={11}
+            color={colors.destructive}
+            style={styles.cellCorner}
+          />
         )}
       </Pressable>
     );
@@ -2846,7 +2868,7 @@ function MemberCellPopover({
       onClose={onClose}
     >
       {cell.doubleBooked && (
-        <Text style={[styles.noteLine, { color: colors.warning }]}>
+        <Text style={[styles.noteLine, { color: colors.destructive }]}>
           ⚠ Double-booked this day
         </Text>
       )}
@@ -3366,9 +3388,25 @@ function RoleNameCell({
           </Text>
         </Pressable>
       )}
-      <Text style={[styles.subCount, { color: colors.textTertiary }]}>
-        covered {coveredCount}/{total}
-      </Text>
+      <View style={styles.cov}>
+        <View style={[styles.covBar, { backgroundColor: colors.surfaceSecondary }]}>
+          <View
+            style={[
+              styles.covFill,
+              {
+                width: total > 0 ? `${(coveredCount / total) * 100}%` : "0%",
+                backgroundColor: coveredCount >= total ? colors.success : colors.warning,
+              },
+            ]}
+          />
+        </View>
+        <Text style={[styles.covText, { color: colors.textSecondary }]}>
+          {coveredCount}/{total}
+        </Text>
+        {coveredCount < total && (
+          <Ionicons name="warning-outline" size={11} color={colors.warning} />
+        )}
+      </View>
     </View>
   );
 }
@@ -3376,33 +3414,6 @@ function RoleNameCell({
 // ---------------------------------------------------------------------------
 // Small shared UI
 // ---------------------------------------------------------------------------
-function SegBtn({
-  label,
-  active,
-  onPress,
-  colors,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  colors: Colors;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.segBtn,
-        { backgroundColor: active ? colors.surface : "transparent" },
-        active && styles.segBtnActive,
-      ]}
-    >
-      <Text style={[styles.segBtnText, { color: active ? colors.text : colors.textSecondary }]}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 function Chip({
   icon,
   trailingIcon,
@@ -3443,15 +3454,26 @@ function LegendItem({
   color,
   label,
   colors,
+  open,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
   label: string;
   colors: Colors;
+  /** "Open" gets a dashed outline circle instead of a filled swatch. */
+  open?: boolean;
 }) {
   return (
     <View style={styles.legendItem}>
-      <Ionicons name={icon} size={12} color={color} />
+      {open ? (
+        <View style={[styles.legendSwatchOpen, { borderColor: color }]}>
+          <Ionicons name={icon} size={8} color={color} />
+        </View>
+      ) : (
+        <View style={[styles.legendSwatch, { backgroundColor: color }]}>
+          <Ionicons name={icon} size={8} color="#fff" />
+        </View>
+      )}
       <Text style={[styles.legendText, { color: colors.textSecondary }]}>{label}</Text>
     </View>
   );
@@ -3775,6 +3797,7 @@ const styles = StyleSheet.create({
   back: { width: 36, padding: 4 },
   overflowBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   headerTitleWrap: { flex: 1 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   headerSub: { fontSize: 12, marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
@@ -3799,21 +3822,6 @@ const styles = StyleSheet.create({
   emptyPrimaryButton: { width: "100%" },
   emptySecondary: { minHeight: 24, alignItems: "center", justifyContent: "center" },
   emptySecondaryText: { fontSize: 15, fontWeight: "500" },
-  segmented: {
-    flexDirection: "row",
-    borderRadius: 9,
-    padding: 2,
-    backgroundColor: "rgba(120,120,128,0.12)",
-  },
-  segBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 7 },
-  segBtnActive: {
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 1,
-  },
-  segBtnText: { fontSize: 13, fontWeight: "600" },
   filterBar: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -3862,11 +3870,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 7,
   },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  legendSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  legendSwatchOpen: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   legendText: { fontSize: 11 },
   matrixHeaderRow: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth },
-  corner: { justifyContent: "flex-end", paddingHorizontal: 12, paddingBottom: 8 },
-  cornerText: { fontSize: 12, fontWeight: "600" },
+  corner: { justifyContent: "flex-end", paddingHorizontal: 12, paddingBottom: 8, gap: 3 },
+  cornerKicker: { fontSize: 10, fontWeight: "700", letterSpacing: 1 },
+  cornerCount: { fontSize: 15, fontWeight: "700", fontVariant: ["tabular-nums"] },
   row: { flexDirection: "row" },
   headerCell: {
     alignItems: "center",
@@ -3947,6 +3972,10 @@ const styles = StyleSheet.create({
   },
   leaderTag: { fontSize: 10 },
   subCount: { fontSize: 11, fontWeight: "600", marginTop: 1 },
+  cov: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 4 },
+  covBar: { width: 52, height: 5, borderRadius: 5, overflow: "hidden" },
+  covFill: { height: "100%", borderRadius: 5 },
+  covText: { fontSize: 10.5, fontWeight: "600", fontVariant: ["tabular-nums"] },
   cell: {
     alignItems: "center",
     justifyContent: "center",
@@ -3964,6 +3993,17 @@ const styles = StyleSheet.create({
   },
   overflowChip: { width: 26, height: 26 },
   overflowText: { fontSize: 10, fontWeight: "700" },
+  statusBadge: {
+    position: "absolute",
+    right: -3,
+    bottom: -3,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   openSlot: {
     width: 26,
     height: 26,

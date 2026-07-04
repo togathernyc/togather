@@ -147,6 +147,11 @@ export function AddButton({
   );
 }
 
+// Monospace + tabular figures give the numeric run-sheet cells a "broadcast
+// rundown" feel (aligned digits). The repo already uses this Menlo/monospace
+// Platform.select idiom elsewhere.
+const MONO_FONT = Platform.select({ ios: "Menlo", default: "monospace" });
+
 // RN-Web draws a browser focus ring on the underlying <input> that visually
 // bleeds past this tiny cell; suppress it so the input stays fully contained.
 const webNoOutline: TextStyle | undefined =
@@ -175,11 +180,8 @@ export function DurationCell({
       keyboardType="numbers-and-punctuation"
       maxLength={6}
       accessibilityLabel="Duration (minutes:seconds)"
-      style={[
-        styles.durationInput,
-        { color: colors.text, borderColor: colors.border },
-        webNoOutline,
-      ]}
+      borderless
+      style={[styles.durationInput, { color: colors.text }, webNoOutline]}
     />
   );
 }
@@ -530,15 +532,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   timingChipText: { fontSize: 12, fontWeight: "600" },
+  // Reads as plain text at rest (InlineText `borderless` supplies the border /
+  // fill on focus); monospace + tabular figures keep durations digit-aligned.
   durationInput: {
     width: 60,
     alignSelf: "center",
     fontSize: 13,
     textAlign: "center",
-    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 6,
     paddingVertical: 3,
     paddingHorizontal: 4,
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
   },
   actionBtn: { padding: 4 },
   fieldLabel: {

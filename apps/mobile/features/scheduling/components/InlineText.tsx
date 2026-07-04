@@ -30,6 +30,7 @@ export function InlineText({
   autoFocus,
   accessibilityLabel,
   required,
+  borderless,
 }: {
   value: string;
   onSave: (text: string) => void | Promise<void>;
@@ -47,9 +48,17 @@ export function InlineText({
    * we snap back to the last saved value instead of saving "".
    */
   required?: boolean;
+  /**
+   * Opt-in "reads as text" look (run-sheet numeric cells): the field is
+   * borderless with a transparent background at rest and only reveals a subtle
+   * border + faint fill on focus. Off by default so every other caller keeps
+   * its own bordered styling untouched.
+   */
+  borderless?: boolean;
 }) {
   const { colors } = useTheme();
   const [draft, setDraft] = useState(value);
+  const [focused, setFocused] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<string | null>(null);
 
@@ -103,11 +112,25 @@ export function InlineText({
   flushRef.current = flush;
   useEffect(() => () => flushRef.current(), []);
 
+  // Text-like resting state that only shows its frame on focus. Applied LAST so
+  // it wins over the caller's `style`, but only when `borderless` is opted in.
+  const borderlessStyle: TextStyle | null = borderless
+    ? {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: focused ? colors.border : "transparent",
+        backgroundColor: focused ? colors.surfaceSecondary : "transparent",
+      }
+    : null;
+
   return (
     <TextInput
       value={draft}
       onChangeText={handleChange}
-      onBlur={() => flush(true)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        flush(true);
+      }}
       placeholder={placeholder}
       placeholderTextColor={colors.inputPlaceholder}
       multiline={multiline}
@@ -115,7 +138,7 @@ export function InlineText({
       maxLength={maxLength}
       autoFocus={autoFocus}
       accessibilityLabel={accessibilityLabel}
-      style={[styles.base, { color: colors.text }, style]}
+      style={[styles.base, { color: colors.text }, style, borderlessStyle]}
     />
   );
 }

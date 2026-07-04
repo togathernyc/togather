@@ -551,14 +551,31 @@ export function RunSheetScreen() {
           { backgroundColor: colors.surface, borderBottomColor: colors.border },
         ]}
       >
-        <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
+        <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBackBtn}>
+          <Ionicons name="chevron-back" size={26} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Run sheet</Text>
+        <View style={styles.headerTitleBlock}>
+          <Text
+            style={[styles.headerEventTitle, { color: colors.text }]}
+            numberOfLines={1}
+          >
+            {event?.title ?? "Run sheet"}
+          </Text>
+          {event ? (
+            <Text
+              style={[styles.headerEventMeta, { color: colors.textSecondary }]}
+              numberOfLines={1}
+            >
+              {formatEventDateLong(event.eventDate)}
+              {times.length > 0
+                ? ` · ${formatServiceRanges(times, duringTotalSec)}`
+                : ""}
+            </Text>
+          ) : null}
+        </View>
         {/* Run sheet ⇄ Tasks switcher — the entry point to the leader Event Tasks
             "database view" for this plan. Shown only when the community has opted
-            into Event Tasks; the Tasks screen itself re-checks the flag + leader
-            role. When the flag is off, keep a spacer so the title stays centered. */}
+            into Event Tasks; the Tasks screen itself re-checks the flag + leader role. */}
         {eventTasksEnabled ? (
           <SegmentedTabs
             options={[
@@ -572,9 +589,7 @@ export function RunSheetScreen() {
             }}
             accessibilityLabel="View"
           />
-        ) : (
-          <View style={styles.headerBtn} />
-        )}
+        ) : null}
       </View>
 
       {loading ? (
@@ -591,18 +606,6 @@ export function RunSheetScreen() {
         (() => {
           const listHeader = (
             <View>
-              <Text style={[styles.planTitle, { color: colors.text }]}>
-                {event.title}
-              </Text>
-              <Text style={[styles.planDate, { color: colors.textSecondary }]}>
-                {formatEventDateLong(event.eventDate)}
-              </Text>
-              {/* The "during" phase is the event window; before/after bracket it. */}
-              {times.length > 0 ? (
-                <Text style={[styles.ranges, { color: colors.text }]}>
-                  {formatServiceRanges(times, duringTotalSec)}
-                </Text>
-              ) : null}
               {isLeader ? (
                 <PlanTemplateToolbar
                   label="Run-sheet template"
@@ -943,6 +946,15 @@ const styles = StyleSheet.create({
   },
   headerBtn: { width: 36, padding: 4, alignItems: "center" },
   headerTitle: { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
+  headerBackBtn: { padding: 4 },
+  headerTitleBlock: { flex: 1, minWidth: 0, marginLeft: 4, marginRight: 8 },
+  headerEventTitle: { fontSize: 18, fontWeight: "700", letterSpacing: -0.3 },
+  headerEventMeta: {
+    fontSize: 12,
+    marginTop: 2,
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontVariant: ["tabular-nums"],
+  },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   errorText: { fontSize: 14 },
   gridContent: { paddingBottom: 8 },
@@ -959,8 +971,13 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 13 },
   muted: { fontSize: 13, fontWeight: "500" },
   whoChips: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
-  // "Time" — a quiet, contained read-only clock value ("9:00 AM").
-  timeText: { fontSize: 13, fontVariant: ["tabular-nums"] },
+  // "Time" — a quiet, contained read-only clock value ("9:00 AM"). Monospace +
+  // tabular figures give it the aligned "broadcast rundown" feel.
+  timeText: {
+    fontSize: 13,
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    fontVariant: ["tabular-nums"],
+  },
   // The per-row "⋯" actions trigger — centered in its compact cell.
   actionsTrigger: { flex: 1, alignItems: "center", justifyContent: "center" },
 });

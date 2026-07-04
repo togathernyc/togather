@@ -45,6 +45,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { TimesEditor } from "./TimesEditor";
@@ -92,6 +93,15 @@ export function EventEditorPanel({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const router = useRouter();
+
+  // Whether to surface the Event Tasks entry point — same community flag the
+  // Tasks screen (EventTasksScreen) and RunSheetScreen gate on. Read
+  // defensively: the mobile Community type only enumerates `prayerEnabled`.
+  const { community } = useAuth();
+  const eventTasksEnabled = Boolean(
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled,
+  );
 
   const event = useAuthenticatedQuery(
     api.functions.scheduling.events.getEvent,
@@ -544,6 +554,29 @@ export function EventEditorPanel({
           </Text>
           <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
         </Pressable>
+
+        {/* Tasks (event checklist) entry — mirrors the Run sheet row. Gated on
+            the Event Tasks community flag. */}
+        {eventTasksEnabled && (
+          <Pressable
+            onPress={() =>
+              router.push(
+                `/rostering/${event.groupId}/tasks/${planId}` as never,
+              )
+            }
+            style={({ pressed }) => [
+              styles.actionRow,
+              { backgroundColor: colors.surfaceSecondary, marginTop: 12 },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Ionicons name="checkbox-outline" size={20} color={colors.text} />
+            <Text style={[styles.actionLabel, { color: colors.text }]}>
+              Tasks
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Pressable>
+        )}
 
         {/* Assignment happens on the GRID — this panel intentionally has no
             per-role assign cards. A short pointer keeps that discoverable. */}
