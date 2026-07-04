@@ -54,6 +54,7 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { NeededRolesModal } from "./NeededRolesModal";
 
@@ -119,6 +120,15 @@ export function DateColumnHeaderEditor({
   onPublish: () => void;
 }) {
   const router = useRouter();
+
+  // Whether to surface the Event Tasks entry point — same community flag the
+  // Tasks screen (EventTasksScreen) and RunSheetScreen gate on. Read
+  // defensively: the mobile Community type only enumerates `prayerEnabled`.
+  const { community } = useAuth();
+  const eventTasksEnabled = Boolean(
+    (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
+      ?.eventTasksEnabled,
+  );
 
   // Run-sheet item count for the header button / menu row.
   const runSheetItems = useAuthenticatedQuery(
@@ -270,6 +280,11 @@ export function DateColumnHeaderEditor({
     router.push(`/rostering/${groupId}/run-sheet/${event._id}` as never);
   }, [router, groupId, event._id]);
 
+  const openTasks = useCallback(() => {
+    setMenuOpen(false);
+    router.push(`/rostering/${groupId}/tasks/${event._id}` as never);
+  }, [router, groupId, event._id]);
+
   const handleDuplicate = useCallback(async () => {
     setMenuOpen(false);
     try {
@@ -418,6 +433,25 @@ export function DateColumnHeaderEditor({
         </TouchableOpacity>
       )}
 
+      {/* Tasks button — mirrors the run-sheet chip; wide columns only, narrow
+          folds it into the menu. Gated on the Event Tasks community flag. */}
+      {!narrow && eventTasksEnabled && (
+        <TouchableOpacity
+          onPress={openTasks}
+          style={[styles.runSheetBtn, { borderColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Open tasks"
+        >
+          <Ionicons name="checkbox-outline" size={12} color={colors.textSecondary} />
+          <Text
+            style={[styles.runSheetText, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            Tasks
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* Context menu — a centered card over a dim backdrop (Modal), matching
           the screen's other menus. A Modal (rather than an absolutely-
           positioned popover) avoids the horizontal header ScrollView clipping
@@ -470,6 +504,14 @@ export function DateColumnHeaderEditor({
                 colors={colors}
                 onPress={openRunSheet}
               />
+              {eventTasksEnabled && (
+                <MenuItem
+                  icon="checkbox-outline"
+                  label="Open tasks"
+                  colors={colors}
+                  onPress={openTasks}
+                />
+              )}
               <MenuItem
                 icon="paper-plane-outline"
                 label={
