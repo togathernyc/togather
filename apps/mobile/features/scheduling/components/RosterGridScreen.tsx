@@ -1027,20 +1027,29 @@ export function RosterGridScreen() {
         )}
       </View>
       {groupId && <GridPresenceBar groupId={groupId} />}
-      {/* On desktop the view toggle moves into the single toolbar row below
-          (renderDesktopToolbar); on mobile it stays here in the header. */}
-      {!isWide && (
-        <SegmentedTabs
-          options={[
-            { key: "roles", label: "Roles" },
-            { key: "people", label: "People" },
-          ]}
-          value={mode}
-          onChange={setMode}
-          accessibilityLabel="Roster view"
-        />
-      )}
-      {!isWide && renderOverflowButton()}
+      {/* View toggle + Publish + overflow sit on the title row (matching the
+          prototype); the row below is just filters. On mobile the toggle stays
+          here and Publish is the bottom bar. */}
+      {!isWide ? (
+        <>
+          <SegmentedTabs
+            options={[
+              { key: "roles", label: "Roles" },
+              { key: "people", label: "People" },
+            ]}
+            value={mode}
+            onChange={setMode}
+            accessibilityLabel="Roster view"
+          />
+          {renderOverflowButton()}
+        </>
+      ) : data ? (
+        <View style={styles.headerActions}>
+          {renderViewToggle()}
+          {renderPublishButton(false)}
+          {renderOverflowButton()}
+        </View>
+      ) : null}
     </View>
   );
 
@@ -1228,19 +1237,16 @@ export function RosterGridScreen() {
     </View>
   );
 
-  // Desktop: one horizontal toolbar row — view toggle, filters, then Publish
-  // pinned right. Replaces both the header toggle and the stacked filter bar.
+  // Desktop: the filters row. View toggle + Publish + overflow now live on the
+  // title row (renderHeaderBar), matching the prototype.
   const renderDesktopToolbar = () => (
     <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
-      {renderViewToggle()}
       {teamChip}
       {groupScopeChip}
       {openOnlyChip}
       {availableOnlyChip}
       {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
       <View style={styles.toolbarSpacer} />
-      {renderPublishButton(false)}
-      {renderOverflowButton()}
     </View>
   );
 
@@ -3787,6 +3793,7 @@ const styles = StyleSheet.create({
   back: { width: 36, padding: 4 },
   overflowBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   headerTitleWrap: { flex: 1 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   headerSub: { fontSize: 12, marginTop: 1 },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
