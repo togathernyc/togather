@@ -9,15 +9,10 @@
  */
 import { useLocalSearchParams } from "expo-router";
 import { ChatInfoScreen } from "@features/chat/components/ChatInfoScreen";
-import { DmFeatureGate } from "@features/chat/components/DmFeatureGate";
 import type { Id } from "@services/api/convex";
 
 export default function ChatInfoRoute() {
   const { channelId } = useLocalSearchParams<{ channelId: string }>();
   if (!channelId) return null;
-  return (
-    <DmFeatureGate>
-      <ChatInfoScreen channelId={channelId as Id<"chatChannels">} />
-    </DmFeatureGate>
-  );
+  return <ChatInfoScreen channelId={channelId as Id<"chatChannels">} />;
 }
