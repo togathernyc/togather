@@ -415,41 +415,52 @@ export function DateColumnHeaderEditor({
       {/* Coverage / availability tally (rendered by the caller, view-aware). */}
       <View style={styles.tallyRow}>{tally}</View>
 
-      {/* Run-sheet button — wide columns only; narrow folds it into the menu. */}
+      {/* Run-sheet + Tasks chips share ONE row so adding the Tasks chip never
+          grows the header past HEADER_H (the frozen corner / Add-date cells are
+          fixed at that height). Wide columns only (CELL_W >= 200); narrow folds
+          both into the ⋯ menu. Tasks is gated on the Event Tasks community flag. */}
       {!narrow && (
-        <TouchableOpacity
-          onPress={openRunSheet}
-          style={[styles.runSheetBtn, { borderColor: colors.border }]}
-          accessibilityRole="button"
-          accessibilityLabel="Open run sheet"
-        >
-          <Ionicons name="list-outline" size={12} color={colors.textSecondary} />
-          <Text
-            style={[styles.runSheetText, { color: colors.textSecondary }]}
-            numberOfLines={1}
+        <View style={styles.headerChipRow}>
+          <TouchableOpacity
+            onPress={openRunSheet}
+            style={[styles.runSheetBtn, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Open run sheet"
           >
-            Run sheet · {runSheetCount}
-          </Text>
-        </TouchableOpacity>
-      )}
+            <Ionicons
+              name="list-outline"
+              size={12}
+              color={colors.textSecondary}
+            />
+            <Text
+              style={[styles.runSheetText, { color: colors.textSecondary }]}
+              numberOfLines={1}
+            >
+              Run sheet · {runSheetCount}
+            </Text>
+          </TouchableOpacity>
 
-      {/* Tasks button — mirrors the run-sheet chip; wide columns only, narrow
-          folds it into the menu. Gated on the Event Tasks community flag. */}
-      {!narrow && eventTasksEnabled && (
-        <TouchableOpacity
-          onPress={openTasks}
-          style={[styles.runSheetBtn, { borderColor: colors.border }]}
-          accessibilityRole="button"
-          accessibilityLabel="Open tasks"
-        >
-          <Ionicons name="checkbox-outline" size={12} color={colors.textSecondary} />
-          <Text
-            style={[styles.runSheetText, { color: colors.textSecondary }]}
-            numberOfLines={1}
-          >
-            Tasks
-          </Text>
-        </TouchableOpacity>
+          {eventTasksEnabled && (
+            <TouchableOpacity
+              onPress={openTasks}
+              style={[styles.runSheetBtn, { borderColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityLabel="Open tasks"
+            >
+              <Ionicons
+                name="checkbox-outline"
+                size={12}
+                color={colors.textSecondary}
+              />
+              <Text
+                style={[styles.runSheetText, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                Tasks
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
       )}
 
       {/* Context menu — a centered card over a dim backdrop (Modal), matching
@@ -793,18 +804,27 @@ const styles = StyleSheet.create({
     gap: 2,
     minHeight: 14,
   },
+  headerChipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    alignSelf: "center",
+    maxWidth: "100%",
+  },
   runSheetBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 3,
-    alignSelf: "center",
+    flexShrink: 1,
+    minWidth: 0,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  runSheetText: { fontSize: 9, fontWeight: "600" },
+  runSheetText: { fontSize: 9, fontWeight: "600", flexShrink: 1 },
   menuBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
