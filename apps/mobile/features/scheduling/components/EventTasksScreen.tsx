@@ -526,6 +526,7 @@ export function EventTasksScreen() {
     if (router.canGoBack()) router.back();
   }, [router]);
 
+  // Simple centered bar for gating states (event not loaded yet).
   const renderHeaderBar = () => (
     <View style={[styles.header, { borderBottomColor: colors.border }]}>
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
@@ -533,6 +534,41 @@ export function EventTasksScreen() {
       </TouchableOpacity>
       <Text style={[styles.headerTitle, { color: colors.text }]}>Event tasks</Text>
       <View style={styles.headerBtn} />
+    </View>
+  );
+
+  // Consolidated top bar: back + event title/date + the Run sheet/Tasks tabs,
+  // all on one row (matches the run sheet and the approved prototype).
+  const renderRichHeader = () => (
+    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBackBtn}>
+        <Ionicons name="chevron-back" size={26} color={colors.text} />
+      </TouchableOpacity>
+      <View style={styles.headerTitleBlock}>
+        <Text style={[styles.headerEventTitle, { color: colors.text }]} numberOfLines={1}>
+          {event?.title ?? "Event tasks"}
+        </Text>
+        {event ? (
+          <Text
+            style={[styles.headerEventMeta, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {formatEventDateLong(event.eventDate)}
+          </Text>
+        ) : null}
+      </View>
+      <SegmentedTabs
+        options={[
+          { key: "run", label: "Run sheet" },
+          { key: "tasks", label: "Tasks" },
+        ]}
+        value="tasks"
+        onChange={(k) => {
+          if (k === "run")
+            router.push(`/rostering/${group_id}/run-sheet/${planId}`);
+        }}
+        accessibilityLabel="Switch between run sheet and tasks"
+      />
     </View>
   );
 
@@ -580,27 +616,6 @@ export function EventTasksScreen() {
 
   const listHeader = (
     <View>
-      <SegmentedTabs
-        options={[
-          { key: "run", label: "Run sheet" },
-          { key: "tasks", label: "Tasks" },
-        ]}
-        value="tasks"
-        onChange={(k) => {
-          if (k === "run")
-            router.push(`/rostering/${group_id}/run-sheet/${planId}`);
-        }}
-        style={styles.viewTabs}
-        accessibilityLabel="Switch between run sheet and tasks"
-      />
-      <Text style={[styles.planTitle, { color: colors.text }]}>
-        {event?.title ?? "Event plan"}
-      </Text>
-      {event ? (
-        <Text style={[styles.planDate, { color: colors.textSecondary }]}>
-          {formatEventDateLong(event.eventDate)}
-        </Text>
-      ) : null}
       <PlanTemplateToolbar
         label="Task template"
         itemNoun="tasks"
@@ -631,7 +646,7 @@ export function EventTasksScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
-      {renderHeaderBar()}
+      {renderRichHeader()}
 
       {/* Populate rolesByTeam for every referenced team + the team currently in
           the role picker, so role labels/pickers resolve without a big join. */}
@@ -1076,11 +1091,17 @@ const styles = StyleSheet.create({
   },
   headerBtn: { width: 44, padding: 4, alignItems: "center" },
   headerTitle: { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
+  headerBackBtn: { padding: 4 },
+  headerTitleBlock: { flex: 1, minWidth: 0, marginLeft: 4, marginRight: 8 },
+  headerEventTitle: { fontSize: 18, fontWeight: "700", letterSpacing: -0.3 },
+  headerEventMeta: {
+    fontSize: 12,
+    marginTop: 2,
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   gateText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
-  viewTabs: { alignSelf: "flex-start", marginBottom: 12 },
-  planTitle: { fontSize: 22, fontWeight: "700" },
-  planDate: { fontSize: 13, marginTop: 4 },
   // Per-section "+ Add task" footer button (dashed, community accent).
   sectionAdd: {
     flexDirection: "row",
