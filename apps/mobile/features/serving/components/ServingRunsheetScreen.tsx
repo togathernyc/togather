@@ -11,13 +11,15 @@
  * the serving-eligibility window (so previewing an event outside the ~12h
  * window still shows its run sheet).
  */
-import React from "react";
+import React, { useEffect } from "react";
 import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
+import { useConnectionStatus } from "@providers/ConnectionProvider";
+import { useServingRunSheetCache } from "@/stores/servingRunSheetCache";
 import { NativeRunSheetView } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
@@ -25,6 +27,9 @@ import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 export function ServingRunsheetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const { isNetworkAvailable } = useConnectionStatus();
+  // Subscribe so AsyncStorage rehydration re-renders us on a cold offline launch.
+  const runSheetCache = useServingRunSheetCache();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const activePlanId = useEventModeStore((s) => s.activePlanId);
 
@@ -42,7 +47,27 @@ export function ServingRunsheetScreen() {
     | null
     | undefined;
 
-  const groupId = event?.groupId as Id<"groups"> | undefined;
+  // Cache-on-load so serving mode can resolve the owning group + item count
+  // offline. This `getEvent` shares the serving run sheet cache with
+  // PlanRunSheet (same shape, keyed by planId; stale-while-revalidate, ADR-028).
+  useEffect(() => {
+    if (activePlanId && event !== undefined) {
+      useServingRunSheetCache.getState().setEvent(activePlanId, event);
+    }
+  }, [activePlanId, event]);
+
+  // Offline fallback: with no radio the live query can't resolve, so read the
+  // last-cached event. Web always reports online and waits for live data, so
+  // `effEvent === event` there (and whenever online).
+  const effEvent =
+    event ??
+    (activePlanId && !isNetworkAvailable
+      ? ((runSheetCache.getEventStale(activePlanId) as
+          | { groupId: string; items: unknown[] }
+          | null) ?? undefined)
+      : undefined);
+
+  const groupId = effEvent?.groupId as Id<"groups"> | undefined;
 
   if (!isServingMode) {
     return (
@@ -55,7 +80,7 @@ export function ServingRunsheetScreen() {
   }
 
   // Still loading the plan (only while we actually have a plan to load).
-  if (activePlanId && event === undefined) {
+  if (activePlanId && effEvent === undefined) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="small" color={colors.text} />
@@ -65,7 +90,7 @@ export function ServingRunsheetScreen() {
 
   // Genuinely nothing to show: no active plan, the plan was deleted, or it has
   // no run sheet items — as opposed to merely being outside the serving window.
-  const hasItems = !!event && event.items.length > 0;
+  const hasItems = !!effEvent && effEvent.items.length > 0;
   if (!groupId || !hasItems) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
