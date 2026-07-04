@@ -33,6 +33,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -104,6 +105,11 @@ export function EventTasksScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  // Side "card" gutter the content insets by (header, readiness/filter rows, and
+  // the table all line up on it): roomier on wide/web, tighter on narrow phones.
+  const { width } = useWindowDimensions();
+  const isWide = width >= 700;
+  const gutter = isWide ? 24 : 16;
   const router = useRouter();
   const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
@@ -528,7 +534,12 @@ export function EventTasksScreen() {
 
   // Simple centered bar for gating states (event not loaded yet).
   const renderHeaderBar = () => (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
         <Ionicons name="chevron-back" size={28} color={colors.text} />
       </TouchableOpacity>
@@ -540,7 +551,12 @@ export function EventTasksScreen() {
   // Consolidated top bar: back + event title/date + the Run sheet/Tasks tabs,
   // all on one row (matches the run sheet and the approved prototype).
   const renderRichHeader = () => (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBackBtn}>
         <Ionicons name="chevron-back" size={26} color={colors.text} />
       </TouchableOpacity>
@@ -679,7 +695,12 @@ export function EventTasksScreen() {
           <ActivityIndicator size="small" color={colors.text} />
         </View>
       ) : (tasks ?? []).length === 0 ? (
-        <ScrollView contentContainerStyle={styles.emptyScroll}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.emptyScroll,
+            { paddingHorizontal: gutter },
+          ]}
+        >
           {listHeader}
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             No tasks yet. Use "Add task" under a phase (Pre / During / Post) to
@@ -702,21 +723,27 @@ export function EventTasksScreen() {
           </View>
         </ScrollView>
       ) : (
-        <EventTasksGrid
-          tasks={filteredTasks}
-          teams={teams}
-          rolesByTeam={rolesByTeam}
-          onPatch={handlePatch}
-          onDelete={handleDelete}
-          onDuplicate={handleDuplicate}
-          onAdd={handleAdd}
-          onReorder={handleReorder}
-          onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
-          onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
-          onOpenDoc={setDocEditorTask}
-          listHeader={listHeader}
-          sections={taskSections}
-        />
+        // Extra horizontal gutter to seat the table (and its readiness/filter
+        // header) on the same inset as the top bar. GridScrollList already adds a
+        // fixed 16px inset internally, so we only add the remainder (0 on narrow,
+        // +8 on wide) to reach `gutter` without doubling up.
+        <View style={{ flex: 1, paddingHorizontal: gutter - 16 }}>
+          <EventTasksGrid
+            tasks={filteredTasks}
+            teams={teams}
+            rolesByTeam={rolesByTeam}
+            onPatch={handlePatch}
+            onDelete={handleDelete}
+            onDuplicate={handleDuplicate}
+            onAdd={handleAdd}
+            onReorder={handleReorder}
+            onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
+            onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
+            onOpenDoc={setDocEditorTask}
+            listHeader={listHeader}
+            sections={taskSections}
+          />
+        </View>
       )}
 
       {/* Team picker — a multi-select dropdown; a task can belong to several

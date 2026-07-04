@@ -308,6 +308,14 @@ export function RosterGridScreen() {
   // full grid width (a single wide column is fine — far better than a 280px
   // column with a 700px dead band beside it).
   const MIN_CELL_W = isWide ? 150 : 76;
+  // Horizontal gutter that insets the whole screen (header bar, filter row,
+  // legend, and the matrix) as a single unit — the "card" inset the prototype
+  // shows. Applied on the OUTER screen container so the frozen column + synced
+  // scroll area shift together and `bodyW` (measured inside) re-measures against
+  // the inset width, keeping CELL_W math and header/body alignment intact. The
+  // inner rows drop their own horizontal padding so the left gutter reads ~GUTTER
+  // total rather than stacking.
+  const GUTTER = isWide ? 24 : 16;
 
   // Past dates are normally hidden (the grid leads with upcoming). The ⋯
   // overflow's "Previous dates" stepper bumps how many past plans lead the grid
@@ -1088,7 +1096,7 @@ export function RosterGridScreen() {
 
   if (data === undefined) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top, paddingHorizontal: GUTTER }]}>
         {renderHeaderBar()}
         <View style={styles.centered}>
           <ActivityIndicator size="small" color={colors.text} />
@@ -1102,7 +1110,7 @@ export function RosterGridScreen() {
     // starter team + roles + a draft plan, then drops the leader into the
     // editor. "Add a blank event plan" stays available as the manual path.
     return (
-      <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top, paddingHorizontal: GUTTER }]}>
         {renderHeaderBar()}
         <View style={styles.emptyWrap}>
           <Ionicons
@@ -1296,7 +1304,7 @@ export function RosterGridScreen() {
               mode === "roles" ? (
                 open > 0 ? (
                   <>
-                    <Ionicons name="ellipse-outline" size={10} color={colors.textTertiary} />
+                    <Ionicons name="time-outline" size={11} color={colors.textTertiary} />
                     <Text style={[styles.headerCellTallyText, { color: colors.textTertiary }]}>
                       {open}
                     </Text>
@@ -1900,7 +1908,7 @@ export function RosterGridScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top, paddingHorizontal: GUTTER }]}>
       {renderHeaderBar(true)}
       {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
@@ -3789,7 +3797,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
+    // No horizontal padding: the screen container's GUTTER supplies the inset so
+    // the header bar lines up with the filter row, legend, and matrix.
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 6,
@@ -3823,7 +3832,7 @@ const styles = StyleSheet.create({
   emptySecondary: { minHeight: 24, alignItems: "center", justifyContent: "center" },
   emptySecondaryText: { fontSize: 15, fontWeight: "500" },
   filterBar: {
-    paddingHorizontal: 12,
+    // Horizontal inset comes from the screen container's GUTTER.
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
@@ -3833,7 +3842,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 16,
+    // Horizontal inset comes from the screen container's GUTTER.
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     flexWrap: "wrap",
@@ -3867,7 +3876,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 14,
-    paddingHorizontal: 14,
+    // Horizontal inset comes from the screen container's GUTTER.
     paddingVertical: 7,
   },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
