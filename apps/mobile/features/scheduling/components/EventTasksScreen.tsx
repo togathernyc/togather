@@ -39,6 +39,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { SegmentedTabs } from "@components/ui/SegmentedTabs";
 import { useAuth } from "@providers/AuthProvider";
 import {
   useAuthenticatedQuery,
@@ -52,6 +53,7 @@ import {
   type PlanTask,
   type Segment,
   type TaskPatch,
+  type TaskSection,
   type TeamOption,
   type RoleOption,
 } from "./EventTasksGrid";
@@ -313,6 +315,14 @@ export function EventTasksScreen() {
   const [teamFilter, setTeamFilter] = useState<Id<"teams"> | null>(null);
   const [roleFilter, setRoleFilter] = useState<Id<"teamRoles"> | null>(null);
 
+  // Per-phase section collapse state (default: all expanded). Owned here; the
+  // grid's section headers flip these via `onToggle`.
+  const [collapsed, setCollapsed] = useState<Record<Segment, boolean>>({
+    before: false,
+    during: false,
+    after: false,
+  });
+
   // Changing the team filter resets the role filter — a role belongs to one team.
   const handleSetTeamFilter = useCallback((id: Id<"teams"> | null) => {
     setTeamFilter(id);
@@ -443,6 +453,49 @@ export function EventTasksScreen() {
     [reorderTasks, planId, phaseFilter, teamFilter, roleFilter],
   );
 
+  // Group the visible tasks into Pre / During / Post sections for the grid. A
+  // phase filter narrows to that one section; otherwise all three show. The grid
+  // supplies each section's sorted rows itself (keyed by `segment`), so we only
+  // own the chrome: title, readiness meta, collapse, and a per-section Add.
+  const taskSections = useMemo<TaskSection[]>(() => {
+    const defs: Array<{ segment: Segment; title: string }> = [
+      { segment: "before", title: "PRE" },
+      { segment: "during", title: "DURING" },
+      { segment: "after", title: "POST" },
+    ];
+    return defs
+      .filter((d) => !phaseFilter || d.segment === phaseFilter)
+      .map((d) => {
+        const seg = readiness?.bySegment[d.segment];
+        const count = filteredTasks.filter((t) => t.segment === d.segment).length;
+        return {
+          key: d.segment,
+          segment: d.segment,
+          title: d.title,
+          meta: seg ? `${seg.done}/${seg.total} ready` : `${count} tasks`,
+          collapsed: collapsed[d.segment],
+          onToggle: () =>
+            setCollapsed((c) => ({ ...c, [d.segment]: !c[d.segment] })),
+          footer: (
+            <TouchableOpacity
+              onPress={() => void handleAdd(d.segment)}
+              style={[
+                styles.sectionAdd,
+                { borderColor: primaryColor, backgroundColor: primaryColor + "0D" },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Add a ${d.title.toLowerCase()} task`}
+            >
+              <Ionicons name="add" size={16} color={primaryColor} />
+              <Text style={[styles.sectionAddText, { color: primaryColor }]}>
+                Add task
+              </Text>
+            </TouchableOpacity>
+          ),
+        };
+      });
+  }, [phaseFilter, readiness, filteredTasks, collapsed, handleAdd, primaryColor]);
+
   // Teams and roles are now multi-select edits via `updateTask` (a task can
   // belong to several teams/roles). Toggling a team on/off keeps at least one
   // team; toggling a role on/off freely (empty roles => a team-level task).
@@ -527,6 +580,19 @@ export function EventTasksScreen() {
 
   const listHeader = (
     <View>
+      <SegmentedTabs
+        options={[
+          { key: "run", label: "Run sheet" },
+          { key: "tasks", label: "Tasks" },
+        ]}
+        value="tasks"
+        onChange={(k) => {
+          if (k === "run")
+            router.push(`/rostering/${group_id}/run-sheet/${planId}`);
+        }}
+        style={styles.viewTabs}
+        accessibilityLabel="Switch between run sheet and tasks"
+      />
       <Text style={[styles.planTitle, { color: colors.text }]}>
         {event?.title ?? "Event plan"}
       </Text>
@@ -623,6 +689,7 @@ export function EventTasksScreen() {
           onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
           onOpenDoc={setDocEditorTask}
           listHeader={listHeader}
+          sections={taskSections}
         />
       )}
 
@@ -1041,8 +1108,23 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   gateText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
+  viewTabs: { alignSelf: "flex-start", marginBottom: 12 },
   planTitle: { fontSize: 22, fontWeight: "700" },
   planDate: { fontSize: 13, marginTop: 4 },
+  // Per-section "+ Add task" footer button (dashed, community accent).
+  sectionAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginVertical: 6,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderStyle: "dashed",
+  },
+  sectionAddText: { fontSize: 14, fontWeight: "600" },
   readiness: {
     marginTop: 16,
     width: "100%",

@@ -26,6 +26,8 @@ import {
   Text,
   ScrollView,
   StyleSheet,
+  Pressable,
+  Platform,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
@@ -49,6 +51,32 @@ export type GridColumn = {
   align?: "left" | "center";
 };
 
+/**
+ * An optional collapsible group of rows. When the `sections` prop is supplied,
+ * `GridScrollList` renders each section as a full-width header row (chevron +
+ * uppercase title + right-aligned muted `meta`), followed by its `rows` (via the
+ * SAME row renderer as the flat API — drag grip, columns, cells, dense sizing
+ * all identical) and an optional full-width `footer` (typically a "+ Add" button).
+ *
+ * `GridRow` is the caller's own row item type (the generic `T`); a section's
+ * `rows` are exactly the same items the flat `data`/`rows` prop accepts.
+ */
+export type GridSection<T> = {
+  key: string;
+  /** Uppercased, letter-spaced group label, e.g. "BEFORE EVENT" / "PRE". */
+  title: string;
+  /** Right-aligned muted text, e.g. "11 items · 7:30–9:59a" or "0/23 ready". */
+  meta?: string;
+  /** Collapse state is owned by the caller; flip it inside `onToggle`. */
+  collapsed?: boolean;
+  /** Called when the header is tapped so the caller can flip `collapsed`. */
+  onToggle?: () => void;
+  /** The section's row items — same type the flat `data`/`rows` prop accepts. */
+  rows: T[];
+  /** Full-width node rendered below the rows (e.g. a per-section Add button). */
+  footer?: React.ReactNode;
+};
+
 /** Left gutter that holds the drag grip (header has a matching spacer). */
 const GRIP_W = 34;
 // Roomier events-os spacing: a comfortable row that lets 1–2 line cells breathe,
@@ -59,6 +87,11 @@ const ROW_MIN_HEIGHT = 46;
 // this when a cell wraps, so wrapped content is never clipped.
 const DENSE_ROW_MIN_HEIGHT = 38;
 const HEADER_MIN_HEIGHT = 38;
+/** Full-width collapsible section header row (only used when `sections` is set). */
+const SECTION_MIN_HEIGHT = 32;
+/** Key prefixes for the synthetic header/footer rows woven into the drag list. */
+const SECTION_KEY_PREFIX = "__gridSectionHeader__:";
+const FOOTER_KEY_PREFIX = "__gridSectionFooter__:";
 
 interface Props<T> {
   data: T[];
@@ -83,6 +116,18 @@ interface Props<T> {
    * so this never clips multi-line content — it only lowers the floor.
    */
   dense?: boolean;
+  /**
+   * OPTIONAL section grouping. When provided, rows are rendered grouped under
+   * collapsible section headers (each with an optional footer), instead of the
+   * flat `data` list. `data`/`keyExtractor`/`columns`/`renderCell` are still
+   * required — the section rows reuse `keyExtractor`, `columns` and `renderCell`
+   * exactly as the flat path does. When omitted, rendering is unchanged.
+   *
+   * Reordering stays within the drag list; `onReorder` is called with the
+   * reordered row keys (synthetic header/footer keys stripped). Cross-section
+   * drag is not specially handled.
+   */
+  sections?: GridSection<T>[];
 }
 
 export function GridScrollList<T>({
@@ -95,6 +140,7 @@ export function GridScrollList<T>({
   ListFooterComponent,
   contentContainerStyle,
   dense = false,
+  sections,
 }: Props<T>) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -174,6 +220,179 @@ export function GridScrollList<T>({
     ? { height: size.h }
     : { flexGrow: 1 };
 
+  // The shared data-row renderer — identical for the flat list and for the rows
+  // inside a section, so drag grip, columns, cells and dense sizing stay the same.
+  const renderDataRow = ({
+    item,
+    Handle,
+    isActive,
+  }: {
+    item: T;
+    Handle: React.ComponentType<{ children: React.ReactNode }>;
+    isActive: boolean;
+  }) => (
+    <View
+      style={[
+        styles.row,
+        {
+          minHeight: rowMinHeight,
+          borderBottomColor: colors.border,
+          backgroundColor: isActive ? colors.surfaceSecondary : colors.surface,
+        },
+      ]}
+    >
+      <Handle>
+        <View
+          style={styles.gripCell}
+          accessibilityLabel="Drag to reorder"
+          hitSlop={8}
+        >
+          <Ionicons name="reorder-three" size={18} color={colors.textTertiary} />
+        </View>
+      </Handle>
+      {columns.map((col, i) => (
+        <View key={col.key} style={cellFrame(i)}>
+          {renderCell(item, col.key, { isActive })}
+        </View>
+      ))}
+    </View>
+  );
+
+  // ── Section rendering (only when `sections` is provided) ────────────────────
+  // The header/footer are woven into a SINGLE drag list as synthetic rows so
+  // there is exactly one vertical scroll container (same as the flat path). On
+  // web the header/footer content is pinned to the visible left edge via
+  // position:sticky so the title/Add button stay visible while scrolling
+  // horizontally; on native it scrolls with the content (acceptable fallback —
+  // this component has no frozen column region to pin to).
+  const stickyLeft: ViewStyle =
+    Platform.OS === "web"
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ({ position: "sticky", left: 0 } as any)
+      : {};
+  const pinnedWidth = size.w || innerWidth;
+
+  type SectionItem =
+    | { _kind: "header"; section: GridSection<T> }
+    | { _kind: "footer"; section: GridSection<T> }
+    | { _kind: "row"; item: T };
+
+  const sectionItems: SectionItem[] = [];
+  if (sections) {
+    for (const section of sections) {
+      sectionItems.push({ _kind: "header", section });
+      if (!section.collapsed) {
+        for (const row of section.rows)
+          sectionItems.push({ _kind: "row", item: row });
+        if (section.footer != null)
+          sectionItems.push({ _kind: "footer", section });
+      }
+    }
+  }
+
+  const sectionKeyExtractor = (it: SectionItem) =>
+    it._kind === "header"
+      ? `${SECTION_KEY_PREFIX}${it.section.key}`
+      : it._kind === "footer"
+        ? `${FOOTER_KEY_PREFIX}${it.section.key}`
+        : keyExtractor(it.item);
+
+  // Turn the drag list's post-drop order into a COMPLETE, section-safe order.
+  //
+  // Two hazards to handle, both because all sections share one drag list:
+  //  1. Collapsed sections contribute no rows, so `orderedKeys` omits them —
+  //     forwarding that partial list would make the run-sheet mutation reject a
+  //     stale order and let Event Tasks rewrite sort orders for only visible rows.
+  //  2. A row can be dropped across a section boundary. We don't support segment
+  //     changes via drag (that's the row's ⋯ menu), so such a drop must be a
+  //     full no-op — not a silent within-section reshuffle of the landing section.
+  //
+  // A within-section reorder never moves a row out of its section's contiguous
+  // block, so the sequence of section indices stays non-decreasing. Any
+  // inversion means the row crossed a boundary → snap back by not persisting.
+  // Otherwise re-emit every row (collapsed sections keep their original rows).
+  const handleSectionReorder = (orderedKeys: string[]) => {
+    if (!sections) return onReorder(orderedKeys);
+    const visibleOrder = orderedKeys.filter(
+      (k) =>
+        !k.startsWith(SECTION_KEY_PREFIX) && !k.startsWith(FOOTER_KEY_PREFIX),
+    );
+    const sectionOf = new Map<string, number>();
+    sections.forEach((section, i) =>
+      section.rows.forEach((row) => sectionOf.set(keyExtractor(row), i)),
+    );
+    const seq = visibleOrder
+      .map((k) => sectionOf.get(k))
+      .filter((i): i is number => i !== undefined);
+    if (seq.length !== visibleOrder.length) return; // unknown key → no-op
+    for (let i = 1; i < seq.length; i++) {
+      if (seq[i] < seq[i - 1]) return; // cross-section drop → no-op
+    }
+    const expandedCount = sections.reduce(
+      (n, s) => n + (s.collapsed ? 0 : s.rows.length),
+      0,
+    );
+    if (visibleOrder.length !== expandedCount) return; // defensive → no-op
+    // `visibleOrder` is now guaranteed grouped by section in ascending order,
+    // so walk it straight through, splicing collapsed rows back at their spot.
+    const fullOrder: string[] = [];
+    let vi = 0;
+    for (const section of sections) {
+      if (section.collapsed) {
+        for (const row of section.rows) fullOrder.push(keyExtractor(row));
+      } else {
+        for (let n = 0; n < section.rows.length; n++)
+          fullOrder.push(visibleOrder[vi++]);
+      }
+    }
+    onReorder(fullOrder);
+  };
+
+  const renderSectionHeader = (section: GridSection<T>) => (
+    <Pressable
+      onPress={section.onToggle}
+      style={[
+        styles.sectionHeader,
+        {
+          backgroundColor: colors.surfaceSecondary,
+          borderBottomColor: colors.border,
+        },
+      ]}
+    >
+      <View
+        style={[styles.sectionHeaderInner, { width: pinnedWidth }, stickyLeft]}
+      >
+        <Ionicons
+          name={section.collapsed ? "chevron-forward" : "chevron-down"}
+          size={14}
+          color={colors.textSecondary}
+        />
+        <Text
+          style={[styles.sectionTitle, { color: colors.textSecondary }]}
+          numberOfLines={1}
+        >
+          {section.title}
+        </Text>
+        {section.meta ? (
+          <Text
+            style={[styles.sectionMeta, { color: colors.textTertiary }]}
+            numberOfLines={1}
+          >
+            {section.meta}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+
+  const renderSectionFooter = (section: GridSection<T>) => (
+    <View style={styles.sectionFooter}>
+      <View style={[styles.sectionFooterInner, { width: pinnedWidth }, stickyLeft]}>
+        {section.footer}
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.root}>
       {ListHeaderComponent}
@@ -192,45 +411,31 @@ export function GridScrollList<T>({
           <View style={[{ width: innerWidth }, innerHeightStyle]}>
             {headerRow}
             <View style={styles.listWrap}>
-              <RunSheetDragList
-                data={data}
-                keyExtractor={keyExtractor}
-                onReorder={onReorder}
-                contentContainerStyle={contentContainerStyle}
-                renderRow={({ item, Handle, isActive }) => (
-                  <View
-                    style={[
-                      styles.row,
-                      {
-                        minHeight: rowMinHeight,
-                        borderBottomColor: colors.border,
-                        backgroundColor: isActive
-                          ? colors.surfaceSecondary
-                          : colors.surface,
-                      },
-                    ]}
-                  >
-                    <Handle>
-                      <View
-                        style={styles.gripCell}
-                        accessibilityLabel="Drag to reorder"
-                        hitSlop={8}
-                      >
-                        <Ionicons
-                          name="reorder-three"
-                          size={18}
-                          color={colors.textTertiary}
-                        />
-                      </View>
-                    </Handle>
-                    {columns.map((col, i) => (
-                      <View key={col.key} style={cellFrame(i)}>
-                        {renderCell(item, col.key, { isActive })}
-                      </View>
-                    ))}
-                  </View>
-                )}
-              />
+              {sections ? (
+                <RunSheetDragList<SectionItem>
+                  data={sectionItems}
+                  keyExtractor={sectionKeyExtractor}
+                  onReorder={handleSectionReorder}
+                  contentContainerStyle={contentContainerStyle}
+                  renderRow={({ item: it, Handle, isActive }) =>
+                    it._kind === "header"
+                      ? renderSectionHeader(it.section)
+                      : it._kind === "footer"
+                        ? renderSectionFooter(it.section)
+                        : renderDataRow({ item: it.item, Handle, isActive })
+                  }
+                />
+              ) : (
+                <RunSheetDragList
+                  data={data}
+                  keyExtractor={keyExtractor}
+                  onReorder={onReorder}
+                  contentContainerStyle={contentContainerStyle}
+                  renderRow={({ item, Handle, isActive }) =>
+                    renderDataRow({ item, Handle, isActive })
+                  }
+                />
+              )}
             </View>
           </View>
         </ScrollView>
@@ -380,5 +585,39 @@ const styles = StyleSheet.create({
     width: GRIP_W,
     alignItems: "center",
     justifyContent: "center",
+  },
+  sectionHeader: {
+    minHeight: SECTION_MIN_HEIGHT,
+    justifyContent: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  sectionHeaderInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    minHeight: SECTION_MIN_HEIGHT,
+    paddingHorizontal: 10,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    flexShrink: 1,
+  },
+  sectionMeta: {
+    fontSize: 11,
+    fontWeight: "500",
+    marginLeft: "auto",
+    paddingLeft: 8,
+  },
+  sectionFooter: {
+    minHeight: SECTION_MIN_HEIGHT,
+    justifyContent: "center",
+  },
+  sectionFooterInner: {
+    paddingLeft: GRIP_W,
+    paddingRight: 10,
+    paddingVertical: 4,
   },
 });

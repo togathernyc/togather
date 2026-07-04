@@ -24,7 +24,12 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import type { Id } from "@services/api/convex";
 import { InlineText } from "./InlineText";
-import { GridScrollList, OptionTag, type GridColumn } from "./GridScrollList";
+import {
+  GridScrollList,
+  OptionTag,
+  type GridColumn,
+  type GridSection,
+} from "./GridScrollList";
 import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import {
   EventTasksHowToCell,
@@ -101,6 +106,23 @@ export type TaskPatch = {
   segment?: Segment;
 } & HowToPatch;
 
+/**
+ * Chrome for one Pre/During/Post section when the grid is rendered grouped. The
+ * grid supplies the sorted rows itself (from its team→role sort of `tasks`),
+ * keyed by `segment`; the screen owns the title/meta/collapse/footer.
+ */
+export type TaskSection = {
+  /** Globally-unique section key (the segment works). */
+  key: string;
+  /** Which segment's (sorted) rows this section shows. */
+  segment: Segment;
+  title: string;
+  meta?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  footer?: React.ReactNode;
+};
+
 export function EventTasksGrid({
   tasks,
   teams,
@@ -115,6 +137,7 @@ export function EventTasksGrid({
   onOpenDoc,
   listHeader,
   listFooter,
+  sections,
 }: {
   tasks: PlanTask[];
   teams: TeamOption[];
@@ -134,6 +157,12 @@ export function EventTasksGrid({
   onOpenDoc: (task: PlanTask) => void;
   listHeader?: React.ReactElement | null;
   listFooter?: React.ReactElement | null;
+  /**
+   * OPTIONAL Pre/During/Post grouping. When provided, the grid renders its rows
+   * under collapsible section headers (each with a per-section Add footer) using
+   * its own team→role sort per segment, instead of one flat table.
+   */
+  sections?: TaskSection[];
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -331,22 +360,40 @@ export function EventTasksGrid({
     }
   };
 
-  // Add-task bar below the table. Sections are gone, so a new task starts in Pre
-  // and the leader reassigns its phase via the Phase column.
+  // Pair each section's chrome (from the screen) with the grid's own sorted rows
+  // for that segment. `data`/`renderCell`/`columns` are shared with the flat path.
+  const gridSections = useMemo<GridSection<PlanTask>[] | undefined>(() => {
+    if (!sections) return undefined;
+    return sections.map((s) => ({
+      key: s.key,
+      title: s.title,
+      meta: s.meta,
+      collapsed: s.collapsed,
+      onToggle: s.onToggle,
+      rows: tasksBySegment[s.segment] ?? [],
+      footer: s.footer,
+    }));
+  }, [sections, tasksBySegment]);
+
+  // Add-task bar below the table. In flat mode a new task starts in Pre (the
+  // leader reassigns its phase via the Phase column); in sectioned mode each
+  // section owns its own Add footer, so we render only the bottom padding here.
   const footer = (
     <View style={{ paddingBottom: insets.bottom + 8 }}>
-      <Pressable
-        onPress={() => onAdd("before")}
-        style={[
-          styles.addTaskBar,
-          { borderColor: primaryColor, backgroundColor: primaryColor + "0D" },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel="Add a task"
-      >
-        <Ionicons name="add" size={18} color={primaryColor} />
-        <Text style={[styles.addTaskText, { color: primaryColor }]}>Add task</Text>
-      </Pressable>
+      {sections ? null : (
+        <Pressable
+          onPress={() => onAdd("before")}
+          style={[
+            styles.addTaskBar,
+            { borderColor: primaryColor, backgroundColor: primaryColor + "0D" },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Add a task"
+        >
+          <Ionicons name="add" size={18} color={primaryColor} />
+          <Text style={[styles.addTaskText, { color: primaryColor }]}>Add task</Text>
+        </Pressable>
+      )}
       {listFooter}
     </View>
   );
@@ -360,6 +407,7 @@ export function EventTasksGrid({
     <>
       <GridScrollList
         data={flatTasks}
+        sections={gridSections}
         keyExtractor={(t) => t._id as string}
         onReorder={handleReorder}
         columns={columns}
@@ -457,9 +505,15 @@ function ChipCell({
   const addRef = React.useRef<View>(null);
   // Empty + a placeholder label => the team-level dashed chip (role column).
   const showPlaceholder = chips.length === 0 && !!emptyPlaceholder;
+  // Keep the cell to a single line: show the first chip (truncated) and, when
+  // there are more, a compact "+N" count rather than letting many chips wrap and
+  // blow out the row's width/height. Removal of the hidden chips still happens
+  // through the multi-select picker the "+" opens.
+  const visibleChips = chips.slice(0, 1);
+  const overflowCount = chips.length - visibleChips.length;
   return (
     <View style={styles.chipWrap}>
-      {chips.map((chip) => (
+      {visibleChips.map((chip) => (
         <View
           key={chip.id}
           style={[
@@ -489,6 +543,21 @@ function ChipCell({
           ) : null}
         </View>
       ))}
+      {overflowCount > 0 ? (
+        // Compact "+N" count for the remaining chips. The adjacent "+" opens the
+        // multi-select picker (which lists every team/role), so the hidden ones
+        // stay reachable without letting the cell wrap onto a second line.
+        <View
+          style={[
+            styles.chipCount,
+            { borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+          ]}
+        >
+          <Text style={[styles.chipCountText, { color: colors.textSecondary }]}>
+            +{overflowCount}
+          </Text>
+        </View>
+      ) : null}
       {showPlaceholder ? (
         // Team-level: a single dashed placeholder chip that opens the role picker.
         <Pressable
@@ -607,8 +676,18 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   addTaskText: { fontSize: 15, fontWeight: "600" },
-  // Multi-chip team/role cells.
-  chipWrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 4 },
+  // Multi-chip team/role cells. Constrained to the cell width and clipped so a
+  // long chip (or several) never bleeds into the neighbouring How-To column; the
+  // single visible chip truncates while the "+N"/add controls hold their size.
+  chipWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
+  },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -619,9 +698,20 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
     maxWidth: "100%",
+    minWidth: 0,
+    flexShrink: 1,
   },
-  chipDot: { width: 8, height: 8, borderRadius: 4 },
-  chipText: { fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  chipDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  chipText: { fontSize: 13, fontWeight: "600", flexShrink: 1, minWidth: 0 },
+  // "+N" overflow count — never shrinks, so it stays legible next to the chip.
+  chipCount: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexShrink: 0,
+  },
+  chipCountText: { fontSize: 12, fontWeight: "700" },
   chipAdd: {
     flexDirection: "row",
     alignItems: "center",
@@ -631,8 +721,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
     borderStyle: "dashed",
+    flexShrink: 0,
+    maxWidth: "100%",
   },
-  chipAddText: { fontSize: 12, fontWeight: "600" },
+  chipAddText: { fontSize: 12, fontWeight: "600", flexShrink: 1, minWidth: 0 },
   // Compact icon-only add: a small muted circle that hugs the chip on one line.
   // Visually ~24px; hitSlop widens the touch target to a comfortable size.
   chipAddCompact: {
@@ -642,6 +734,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
+    flexShrink: 0,
   },
   optionScroll: { maxHeight: 360 },
   optionRow: {
