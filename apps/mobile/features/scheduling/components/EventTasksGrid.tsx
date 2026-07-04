@@ -17,7 +17,7 @@
  * readiness header, and mutation wiring live in EventTasksScreen.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
@@ -336,24 +336,11 @@ export function EventTasksGrid({
         );
       case "actions":
         return (
-          <View style={styles.actionsCell}>
-            <Pressable
-              onPress={() => onDuplicate(task)}
-              hitSlop={6}
-              style={styles.actionBtn}
-              accessibilityLabel="Duplicate task"
-            >
-              <Ionicons name="copy-outline" size={18} color={colors.textSecondary} />
-            </Pressable>
-            <Pressable
-              onPress={() => onDelete(task)}
-              hitSlop={6}
-              style={styles.actionBtn}
-              accessibilityLabel="Delete task"
-            >
-              <Ionicons name="trash-outline" size={18} color={colors.destructive} />
-            </Pressable>
-          </View>
+          <ActionsCell
+            colors={colors}
+            onDuplicate={() => onDuplicate(task)}
+            onDelete={() => onDelete(task)}
+          />
         );
       default:
         return null;
@@ -650,10 +637,74 @@ export function TaskOptionList({
   );
 }
 
+/**
+ * Row actions (duplicate / delete). On web the controls stay hidden until the
+ * pointer enters the actions cell, then fade in — matching the prototype's
+ * hover-reveal (`.acts { opacity:0 } .row:hover .acts { opacity:1 }`).
+ * GridScrollList owns the row's hover state and can't be edited from here, so
+ * the reveal is scoped to this cell (the rightmost column) rather than the whole
+ * row. On native there is no hover, so the controls are always visible.
+ */
+function ActionsCell({
+  colors,
+  onDuplicate,
+  onDelete,
+}: {
+  colors: ReturnType<typeof useTheme>["colors"];
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const isWeb = Platform.OS === "web";
+  const hoverProps = isWeb
+    ? {
+        onPointerEnter: () => setHovered(true),
+        onPointerLeave: () => setHovered(false),
+      }
+    : {};
+  // Hidden by default on web (revealed on hover); always visible on native.
+  const visible = !isWeb || hovered;
+  return (
+    <View {...hoverProps} style={styles.actionsCell}>
+      <View
+        style={[styles.actionsInner, { opacity: visible ? 1 : 0 }]}
+        // Keep the invisible buttons un-clickable until revealed; the outer View
+        // still receives the pointer, so hover flips them back to interactive.
+        pointerEvents={visible ? "auto" : "none"}
+      >
+        <Pressable
+          onPress={onDuplicate}
+          hitSlop={6}
+          style={styles.actionBtn}
+          accessibilityLabel="Duplicate task"
+        >
+          <Ionicons name="copy-outline" size={18} color={colors.textSecondary} />
+        </Pressable>
+        <Pressable
+          onPress={onDelete}
+          hitSlop={6}
+          style={styles.actionBtn}
+          accessibilityLabel="Delete task"
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.destructive} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   listContent: { paddingBottom: 24 },
   titleInput: { fontSize: 15, fontWeight: "600", width: "100%" },
+  // Fills the whole actions cell so the hover-reveal zone is the full column,
+  // not just the two icons.
   actionsCell: {
+    flex: 1,
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionsInner: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

@@ -33,6 +33,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -104,6 +105,11 @@ export function EventTasksScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  // Side "card" gutter the content insets by (header, readiness/filter rows, and
+  // the table all line up on it): roomier on wide/web, tighter on narrow phones.
+  const { width } = useWindowDimensions();
+  const isWide = width >= 700;
+  const gutter = isWide ? 24 : 16;
   const router = useRouter();
   const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
@@ -526,13 +532,59 @@ export function EventTasksScreen() {
     if (router.canGoBack()) router.back();
   }, [router]);
 
+  // Simple centered bar for gating states (event not loaded yet).
   const renderHeaderBar = () => (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
         <Ionicons name="chevron-back" size={28} color={colors.text} />
       </TouchableOpacity>
       <Text style={[styles.headerTitle, { color: colors.text }]}>Event tasks</Text>
       <View style={styles.headerBtn} />
+    </View>
+  );
+
+  // Consolidated top bar: back + event title/date + the Run sheet/Tasks tabs,
+  // all on one row (matches the run sheet and the approved prototype).
+  const renderRichHeader = () => (
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
+      <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBackBtn}>
+        <Ionicons name="chevron-back" size={26} color={colors.text} />
+      </TouchableOpacity>
+      <View style={styles.headerTitleBlock}>
+        <Text style={[styles.headerEventTitle, { color: colors.text }]} numberOfLines={1}>
+          {event?.title ?? "Event tasks"}
+        </Text>
+        {event ? (
+          <Text
+            style={[styles.headerEventMeta, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {formatEventDateLong(event.eventDate)}
+          </Text>
+        ) : null}
+      </View>
+      <SegmentedTabs
+        options={[
+          { key: "run", label: "Run sheet" },
+          { key: "tasks", label: "Tasks" },
+        ]}
+        value="tasks"
+        onChange={(k) => {
+          if (k === "run")
+            router.push(`/rostering/${group_id}/run-sheet/${planId}`);
+        }}
+        accessibilityLabel="Switch between run sheet and tasks"
+      />
     </View>
   );
 
@@ -578,40 +630,27 @@ export function EventTasksScreen() {
 
   const loading = tasks === undefined || event === undefined;
 
+  // Split the template toolbar so its pieces land on the prototype's two rows:
+  // "Save as template" sits on the readiness line; the picker sits inline with
+  // the filter chips.
+  const templateToolbarProps = {
+    label: "Task template",
+    itemNoun: "tasks",
+    state: templateSlice,
+    templates: templateOptions,
+    onSetTemplate: handleSetTemplate,
+    onSaveNew: handleSaveNewTemplate,
+    onSaveExisting: handleSaveExistingTemplate,
+    onRevert: handleRevertTemplate,
+  } as const;
+  const templatePicker = <PlanTemplateToolbar {...templateToolbarProps} pickerOnly />;
   const listHeader = (
     <View>
-      <SegmentedTabs
-        options={[
-          { key: "run", label: "Run sheet" },
-          { key: "tasks", label: "Tasks" },
-        ]}
-        value="tasks"
-        onChange={(k) => {
-          if (k === "run")
-            router.push(`/rostering/${group_id}/run-sheet/${planId}`);
-        }}
-        style={styles.viewTabs}
-        accessibilityLabel="Switch between run sheet and tasks"
+      <ReadinessHeader
+        readiness={readiness}
+        colors={colors}
+        right={<PlanTemplateToolbar {...templateToolbarProps} saveOnly />}
       />
-      <Text style={[styles.planTitle, { color: colors.text }]}>
-        {event?.title ?? "Event plan"}
-      </Text>
-      {event ? (
-        <Text style={[styles.planDate, { color: colors.textSecondary }]}>
-          {formatEventDateLong(event.eventDate)}
-        </Text>
-      ) : null}
-      <PlanTemplateToolbar
-        label="Task template"
-        itemNoun="tasks"
-        state={templateSlice}
-        templates={templateOptions}
-        onSetTemplate={handleSetTemplate}
-        onSaveNew={handleSaveNewTemplate}
-        onSaveExisting={handleSaveExistingTemplate}
-        onRevert={handleRevertTemplate}
-      />
-      <ReadinessHeader readiness={readiness} primaryColor={primaryColor} colors={colors} />
       {(tasks?.length ?? 0) > 0 ? (
         <FilterBar
           phase={phaseFilter}
@@ -624,14 +663,17 @@ export function EventTasksScreen() {
           roles={roleFilterOptions}
           colors={colors}
           primaryColor={primaryColor}
+          leading={templatePicker}
         />
-      ) : null}
+      ) : (
+        <View style={styles.pickerOnlyRow}>{templatePicker}</View>
+      )}
     </View>
   );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
-      {renderHeaderBar()}
+      {renderRichHeader()}
 
       {/* Populate rolesByTeam for every referenced team + the team currently in
           the role picker, so role labels/pickers resolve without a big join. */}
@@ -653,7 +695,12 @@ export function EventTasksScreen() {
           <ActivityIndicator size="small" color={colors.text} />
         </View>
       ) : (tasks ?? []).length === 0 ? (
-        <ScrollView contentContainerStyle={styles.emptyScroll}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.emptyScroll,
+            { paddingHorizontal: gutter },
+          ]}
+        >
           {listHeader}
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             No tasks yet. Use "Add task" under a phase (Pre / During / Post) to
@@ -676,21 +723,27 @@ export function EventTasksScreen() {
           </View>
         </ScrollView>
       ) : (
-        <EventTasksGrid
-          tasks={filteredTasks}
-          teams={teams}
-          rolesByTeam={rolesByTeam}
-          onPatch={handlePatch}
-          onDelete={handleDelete}
-          onDuplicate={handleDuplicate}
-          onAdd={handleAdd}
-          onReorder={handleReorder}
-          onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
-          onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
-          onOpenDoc={setDocEditorTask}
-          listHeader={listHeader}
-          sections={taskSections}
-        />
+        // Extra horizontal gutter to seat the table (and its readiness/filter
+        // header) on the same inset as the top bar. GridScrollList already adds a
+        // fixed 16px inset internally, so we only add the remainder (0 on narrow,
+        // +8 on wide) to reach `gutter` without doubling up.
+        <View style={{ flex: 1, paddingHorizontal: gutter - 16 }}>
+          <EventTasksGrid
+            tasks={filteredTasks}
+            teams={teams}
+            rolesByTeam={rolesByTeam}
+            onPatch={handlePatch}
+            onDelete={handleDelete}
+            onDuplicate={handleDuplicate}
+            onAdd={handleAdd}
+            onReorder={handleReorder}
+            onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
+            onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
+            onOpenDoc={setDocEditorTask}
+            listHeader={listHeader}
+            sections={taskSections}
+          />
+        </View>
       )}
 
       {/* Team picker — a multi-select dropdown; a task can belong to several
@@ -793,118 +846,76 @@ function RoleLoader({
   return null;
 }
 
-/** A thin fixed-height progress track with a primary-colored fill (no SVG). */
-function MiniBar({
-  ratio,
-  height,
-  trackColor,
-  fillColor,
-}: {
-  ratio: number;
-  height: number;
-  trackColor: string;
-  fillColor: string;
-}) {
-  const clamped = Math.max(0, Math.min(1, ratio));
-  return (
-    <View style={[styles.miniTrack, { height, backgroundColor: trackColor }]}>
-      <View
-        style={{
-          height,
-          width: `${clamped * 100}%`,
-          borderRadius: height / 2,
-          backgroundColor: fillColor,
-        }}
-      />
-    </View>
-  );
-}
-
 /**
- * Readiness header — a compact row of stat tiles (Overall / Pre / During / Post),
- * each showing a done/total count and a short primary-colored bar, plus a
- * wrapping row of per-team chips. Contained to the table's centered max width so
- * it doesn't stretch edge-to-edge on desktop.
+ * Readiness header — one compact line: a bold done/total count (monospace,
+ * tabular), a "READY" label, a thin progress track (fill in `colors.success`),
+ * and inline per-phase counts (Pre / During / Post). Any per-team breakdown
+ * follows as a small secondary line of compact chips. Contained to the table's
+ * centered max width so it doesn't stretch edge-to-edge on desktop.
  */
 function ReadinessHeader({
   readiness,
-  primaryColor,
   colors,
+  right,
 }: {
   readiness: Readiness | undefined;
-  primaryColor: string;
   colors: ReturnType<typeof useTheme>["colors"];
+  /** Optional node pinned to the right of the readiness line (e.g. Save as template). */
+  right?: React.ReactNode;
 }) {
-  if (!readiness) return null;
-  const pct = (d: number, t: number) => (t > 0 ? d / t : 0);
-  const tiles: Array<{ label: string; done: number; total: number }> = [
-    { label: "Overall", ...readiness.overall },
-    { label: "Pre", ...readiness.bySegment.before },
-    { label: "During", ...readiness.bySegment.during },
-    { label: "Post", ...readiness.bySegment.after },
-  ];
+  // Render nothing only when there's neither readiness data nor a right slot.
+  // The `right` slot (Save as template) must NOT disappear while readiness is
+  // still loading — readiness is a separate query from tasks/event.
+  if (!readiness && !right) return null;
+  const clamped = readiness
+    ? Math.max(
+        0,
+        Math.min(1, readiness.overall.total > 0 ? readiness.overall.done / readiness.overall.total : 0),
+      )
+    : 0;
+  const phases: Array<{ label: string; done: number; total: number }> = readiness
+    ? [
+        { label: "Pre", ...readiness.bySegment.before },
+        { label: "During", ...readiness.bySegment.during },
+        { label: "Post", ...readiness.bySegment.after },
+      ]
+    : [];
 
   return (
     <View style={styles.readiness}>
-      <Text style={[styles.readinessTitle, { color: colors.textSecondary }]}>
-        READINESS
-      </Text>
-      <View style={styles.statRow}>
-        {tiles.map((tile) => (
-          <View
-            key={tile.label}
-            style={[
-              styles.statTile,
-              { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-            ]}
-          >
-            <Text style={[styles.statCount, { color: colors.text }]}>
-              {tile.done}/{tile.total}
+      <View style={styles.readinessMain}>
+        {readiness ? (
+          <>
+            <Text style={[styles.rdCount, { color: colors.text }]}>
+              {readiness.overall.done}/{readiness.overall.total}
             </Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-              {tile.label}
+            <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
+              READY
             </Text>
-            <MiniBar
-              ratio={pct(tile.done, tile.total)}
-              height={4}
-              trackColor={colors.border}
-              fillColor={primaryColor}
-            />
-          </View>
-        ))}
-      </View>
-
-      {readiness.byTeam.length > 0 ? (
-        <View style={styles.teamChipRow}>
-          {readiness.byTeam.map((t) => (
-            <View
-              key={t.teamId}
-              style={[
-                styles.teamChip,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-              ]}
-            >
-              <Text
-                style={[styles.teamChipName, { color: colors.text }]}
-                numberOfLines={1}
-              >
-                {t.teamName}
-              </Text>
-              <Text style={[styles.teamChipCount, { color: colors.textSecondary }]}>
-                {t.done}/{t.total}
-              </Text>
-              <View style={styles.teamChipBar}>
-                <MiniBar
-                  ratio={pct(t.done, t.total)}
-                  height={3}
-                  trackColor={colors.border}
-                  fillColor={primaryColor}
-                />
-              </View>
+            <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
+              <View
+                style={{
+                  height: "100%",
+                  width: `${clamped * 100}%`,
+                  borderRadius: 6,
+                  backgroundColor: colors.success,
+                }}
+              />
             </View>
-          ))}
-        </View>
-      ) : null}
+            <View style={styles.rdPhases}>
+              {phases.map((p) => (
+                <Text
+                  key={p.label}
+                  style={[styles.rdPhase, { color: colors.textSecondary }]}
+                >
+                  {p.label} {p.done}/{p.total}
+                </Text>
+              ))}
+            </View>
+          </>
+        ) : null}
+        {right ? <View style={styles.readinessRight}>{right}</View> : null}
+      </View>
     </View>
   );
 }
@@ -926,6 +937,7 @@ function FilterBar({
   roles,
   colors,
   primaryColor,
+  leading,
 }: {
   phase: Segment | null;
   onPhase: (seg: Segment | null) => void;
@@ -937,6 +949,8 @@ function FilterBar({
   roles: RoleOption[];
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  /** Optional node rendered inline before the filter chips (e.g. template picker). */
+  leading?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState<{ kind: "team" | "role"; anchor: AnchorRect } | null>(null);
   const teamRef = React.useRef<View>(null);
@@ -968,6 +982,7 @@ function FilterBar({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterScroll}
       >
+        {leading}
         {phaseChips.map((c) => {
           const active = phase === c.key;
           return (
@@ -1095,6 +1110,10 @@ function FilterBar({
   );
 }
 
+// Monospace + tabular figures for the readiness counts (the "broadcast rundown"
+// numeric feel, matching the run-sheet time/duration cells).
+const MONO_FONT = Platform.select({ ios: "Menlo", default: "monospace" });
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
@@ -1106,11 +1125,17 @@ const styles = StyleSheet.create({
   },
   headerBtn: { width: 44, padding: 4, alignItems: "center" },
   headerTitle: { flex: 1, fontSize: 17, fontWeight: "600", textAlign: "center" },
+  headerBackBtn: { padding: 4 },
+  headerTitleBlock: { flex: 1, minWidth: 0, marginLeft: 4, marginRight: 8 },
+  headerEventTitle: { fontSize: 18, fontWeight: "700", letterSpacing: -0.3 },
+  headerEventMeta: {
+    fontSize: 12,
+    marginTop: 2,
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
   centered: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, gap: 12 },
   gateText: { fontSize: 15, textAlign: "center", lineHeight: 22 },
-  viewTabs: { alignSelf: "flex-start", marginBottom: 12 },
-  planTitle: { fontSize: 22, fontWeight: "700" },
-  planDate: { fontSize: 13, marginTop: 4 },
   // Per-section "+ Add task" footer button (dashed, community accent).
   sectionAdd: {
     flexDirection: "row",
@@ -1132,38 +1157,35 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     gap: 10,
   },
-  readinessTitle: { fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
-  statRow: { flexDirection: "row", gap: 8 },
-  statTile: {
-    flex: 1,
-    minWidth: 68,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    gap: 4,
-  },
-  statCount: { fontSize: 18, fontWeight: "800", fontVariant: ["tabular-nums"] },
-  statLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  miniTrack: { borderRadius: 2, overflow: "hidden", marginTop: 2 },
-  teamChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  teamChip: {
+  // The single compact readiness line: count · READY · track · phase counts.
+  readinessMain: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    flexWrap: "wrap",
+    gap: 10,
   },
-  teamChipName: { fontSize: 12, fontWeight: "600", maxWidth: 120 },
-  teamChipCount: { fontSize: 11, fontVariant: ["tabular-nums"] },
-  teamChipBar: { width: 40 },
+  rdCount: {
+    fontSize: 15,
+    fontWeight: "700",
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
+  rdLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  readinessRight: { marginLeft: "auto" },
+  pickerOnlyRow: { marginTop: 14, width: "100%", maxWidth: 1200, alignSelf: "center" },
+  rdTrack: { width: 130, height: 6, borderRadius: 6, overflow: "hidden" },
+  rdPhases: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  rdPhase: {
+    fontSize: 12,
+    fontWeight: "600",
+    fontFamily: MONO_FONT,
+    fontVariant: ["tabular-nums"],
+  },
   filterBar: { marginTop: 14, width: "100%", maxWidth: 1200, alignSelf: "center" },
   filterScroll: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 2 },
   filterChip: {

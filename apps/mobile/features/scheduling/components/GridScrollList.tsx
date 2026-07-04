@@ -35,6 +35,47 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+
+/**
+ * A data row with a web-only hover highlight (matches the prototype). Pointer
+ * enter/leave only fire on web where there's a cursor; on native the handlers
+ * are omitted, so touch rows behave exactly as before.
+ */
+function HoverableRow({
+  isActive,
+  minHeight,
+  borderBottomColor,
+  baseBg,
+  activeBg,
+  hoverBg,
+  children,
+}: {
+  isActive: boolean;
+  minHeight: number;
+  borderBottomColor: string;
+  baseBg: string;
+  activeBg: string;
+  hoverBg: string;
+  children: React.ReactNode;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const hoverProps =
+    Platform.OS === "web"
+      ? {
+          onPointerEnter: () => setHovered(true),
+          onPointerLeave: () => setHovered(false),
+        }
+      : {};
+  const backgroundColor = isActive ? activeBg : hovered ? hoverBg : baseBg;
+  return (
+    <View
+      {...hoverProps}
+      style={[styles.row, { minHeight, borderBottomColor, backgroundColor }]}
+    >
+      {children}
+    </View>
+  );
+}
 import { RunSheetDragList } from "./RunSheetDragList";
 
 /**
@@ -231,15 +272,13 @@ export function GridScrollList<T>({
     Handle: React.ComponentType<{ children: React.ReactNode }>;
     isActive: boolean;
   }) => (
-    <View
-      style={[
-        styles.row,
-        {
-          minHeight: rowMinHeight,
-          borderBottomColor: colors.border,
-          backgroundColor: isActive ? colors.surfaceSecondary : colors.surface,
-        },
-      ]}
+    <HoverableRow
+      isActive={isActive}
+      minHeight={rowMinHeight}
+      borderBottomColor={colors.border}
+      baseBg={colors.surface}
+      activeBg={colors.surfaceSecondary}
+      hoverBg={primaryColor + "12"}
     >
       <Handle>
         <View
@@ -255,7 +294,7 @@ export function GridScrollList<T>({
           {renderCell(item, col.key, { isActive })}
         </View>
       ))}
-    </View>
+    </HoverableRow>
   );
 
   // ── Section rendering (only when `sections` is provided) ────────────────────
