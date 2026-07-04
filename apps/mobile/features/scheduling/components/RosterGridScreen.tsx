@@ -1008,7 +1008,11 @@ export function RosterGridScreen() {
   // -------------------------------------------------------------------------
   // Header
   // -------------------------------------------------------------------------
-  const renderHeaderBar = () => (
+  // `showActions` gates the desktop title-row actions (view toggle / Publish /
+  // overflow). It is only passed by the main render — never by the gating/empty
+  // early returns — because renderPublishButton is declared further down; calling
+  // it from an early return would hit a temporal-dead-zone ReferenceError.
+  const renderHeaderBar = (showActions = false) => (
     <View style={[styles.header, { borderBottomColor: colors.border }]}>
       <TouchableOpacity
         onPress={() => router.canGoBack() && router.back()}
@@ -1043,7 +1047,7 @@ export function RosterGridScreen() {
           />
           {renderOverflowButton()}
         </>
-      ) : data ? (
+      ) : showActions && data ? (
         <View style={styles.headerActions}>
           {renderViewToggle()}
           {renderPublishButton(false)}
@@ -1897,7 +1901,7 @@ export function RosterGridScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, paddingTop: insets.top }]}>
-      {renderHeaderBar()}
+      {renderHeaderBar(true)}
       {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
 
