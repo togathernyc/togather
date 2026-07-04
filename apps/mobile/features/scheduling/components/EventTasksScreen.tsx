@@ -863,45 +863,57 @@ function ReadinessHeader({
   /** Optional node pinned to the right of the readiness line (e.g. Save as template). */
   right?: React.ReactNode;
 }) {
-  if (!readiness) return null;
-  const { overall, bySegment } = readiness;
-  const ratio = overall.total > 0 ? overall.done / overall.total : 0;
-  const clamped = Math.max(0, Math.min(1, ratio));
-  const phases: Array<{ label: string; done: number; total: number }> = [
-    { label: "Pre", ...bySegment.before },
-    { label: "During", ...bySegment.during },
-    { label: "Post", ...bySegment.after },
-  ];
+  // Render nothing only when there's neither readiness data nor a right slot.
+  // The `right` slot (Save as template) must NOT disappear while readiness is
+  // still loading — readiness is a separate query from tasks/event.
+  if (!readiness && !right) return null;
+  const clamped = readiness
+    ? Math.max(
+        0,
+        Math.min(1, readiness.overall.total > 0 ? readiness.overall.done / readiness.overall.total : 0),
+      )
+    : 0;
+  const phases: Array<{ label: string; done: number; total: number }> = readiness
+    ? [
+        { label: "Pre", ...readiness.bySegment.before },
+        { label: "During", ...readiness.bySegment.during },
+        { label: "Post", ...readiness.bySegment.after },
+      ]
+    : [];
 
   return (
     <View style={styles.readiness}>
       <View style={styles.readinessMain}>
-        <Text style={[styles.rdCount, { color: colors.text }]}>
-          {overall.done}/{overall.total}
-        </Text>
-        <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
-          READY
-        </Text>
-        <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
-          <View
-            style={{
-              height: "100%",
-              width: `${clamped * 100}%`,
-              borderRadius: 6,
-              backgroundColor: colors.success,
-            }}
-          />
-        </View>
-        <View style={styles.rdPhases}>
-          {phases.map((p) => (
-            <Text
-              key={p.label}
-              style={[styles.rdPhase, { color: colors.textSecondary }]}
-            >
-              {p.label} {p.done}/{p.total}
+        {readiness ? (
+          <>
+            <Text style={[styles.rdCount, { color: colors.text }]}>
+              {readiness.overall.done}/{readiness.overall.total}
             </Text>
-          ))}
-        </View>
+            <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
+              READY
+            </Text>
+            <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
+              <View
+                style={{
+                  height: "100%",
+                  width: `${clamped * 100}%`,
+                  borderRadius: 6,
+                  backgroundColor: colors.success,
+                }}
+              />
+            </View>
+            <View style={styles.rdPhases}>
+              {phases.map((p) => (
+                <Text
+                  key={p.label}
+                  style={[styles.rdPhase, { color: colors.textSecondary }]}
+                >
+                  {p.label} {p.done}/{p.total}
+                </Text>
+              ))}
+            </View>
+          </>
+        ) : null}
         {right ? <View style={styles.readinessRight}>{right}</View> : null}
       </View>
     </View>
@@ -1171,22 +1183,6 @@ const styles = StyleSheet.create({
   rdPhase: {
     fontSize: 12,
     fontWeight: "600",
-    fontFamily: MONO_FONT,
-    fontVariant: ["tabular-nums"],
-  },
-  teamChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  teamChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  teamChipName: { fontSize: 12, fontWeight: "600", maxWidth: 120 },
-  teamChipCount: {
-    fontSize: 11,
     fontFamily: MONO_FONT,
     fontVariant: ["tabular-nums"],
   },
