@@ -614,19 +614,27 @@ export function EventTasksScreen() {
 
   const loading = tasks === undefined || event === undefined;
 
+  // Split the template toolbar so its pieces land on the prototype's two rows:
+  // "Save as template" sits on the readiness line; the picker sits inline with
+  // the filter chips.
+  const templateToolbarProps = {
+    label: "Task template",
+    itemNoun: "tasks",
+    state: templateSlice,
+    templates: templateOptions,
+    onSetTemplate: handleSetTemplate,
+    onSaveNew: handleSaveNewTemplate,
+    onSaveExisting: handleSaveExistingTemplate,
+    onRevert: handleRevertTemplate,
+  } as const;
+  const templatePicker = <PlanTemplateToolbar {...templateToolbarProps} pickerOnly />;
   const listHeader = (
     <View>
-      <PlanTemplateToolbar
-        label="Task template"
-        itemNoun="tasks"
-        state={templateSlice}
-        templates={templateOptions}
-        onSetTemplate={handleSetTemplate}
-        onSaveNew={handleSaveNewTemplate}
-        onSaveExisting={handleSaveExistingTemplate}
-        onRevert={handleRevertTemplate}
+      <ReadinessHeader
+        readiness={readiness}
+        colors={colors}
+        right={<PlanTemplateToolbar {...templateToolbarProps} saveOnly />}
       />
-      <ReadinessHeader readiness={readiness} colors={colors} />
       {(tasks?.length ?? 0) > 0 ? (
         <FilterBar
           phase={phaseFilter}
@@ -639,8 +647,11 @@ export function EventTasksScreen() {
           roles={roleFilterOptions}
           colors={colors}
           primaryColor={primaryColor}
+          leading={templatePicker}
         />
-      ) : null}
+      ) : (
+        <View style={styles.pickerOnlyRow}>{templatePicker}</View>
+      )}
     </View>
   );
 
@@ -818,12 +829,15 @@ function RoleLoader({
 function ReadinessHeader({
   readiness,
   colors,
+  right,
 }: {
   readiness: Readiness | undefined;
   colors: ReturnType<typeof useTheme>["colors"];
+  /** Optional node pinned to the right of the readiness line (e.g. Save as template). */
+  right?: React.ReactNode;
 }) {
   if (!readiness) return null;
-  const { overall, bySegment, byTeam } = readiness;
+  const { overall, bySegment } = readiness;
   const ratio = overall.total > 0 ? overall.done / overall.total : 0;
   const clamped = Math.max(0, Math.min(1, ratio));
   const phases: Array<{ label: string; done: number; total: number }> = [
@@ -861,31 +875,8 @@ function ReadinessHeader({
             </Text>
           ))}
         </View>
+        {right ? <View style={styles.readinessRight}>{right}</View> : null}
       </View>
-
-      {byTeam.length > 0 ? (
-        <View style={styles.teamChipRow}>
-          {byTeam.map((t) => (
-            <View
-              key={t.teamId}
-              style={[
-                styles.teamChip,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-              ]}
-            >
-              <Text
-                style={[styles.teamChipName, { color: colors.text }]}
-                numberOfLines={1}
-              >
-                {t.teamName}
-              </Text>
-              <Text style={[styles.teamChipCount, { color: colors.textSecondary }]}>
-                {t.done}/{t.total}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -907,6 +898,7 @@ function FilterBar({
   roles,
   colors,
   primaryColor,
+  leading,
 }: {
   phase: Segment | null;
   onPhase: (seg: Segment | null) => void;
@@ -918,6 +910,8 @@ function FilterBar({
   roles: RoleOption[];
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  /** Optional node rendered inline before the filter chips (e.g. template picker). */
+  leading?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState<{ kind: "team" | "role"; anchor: AnchorRect } | null>(null);
   const teamRef = React.useRef<View>(null);
@@ -949,6 +943,7 @@ function FilterBar({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterScroll}
       >
+        {leading}
         {phaseChips.map((c) => {
           const active = phase === c.key;
           return (
@@ -1142,6 +1137,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
+  readinessRight: { marginLeft: "auto" },
+  pickerOnlyRow: { marginTop: 14, width: "100%", maxWidth: 1200, alignSelf: "center" },
   rdTrack: { width: 130, height: 6, borderRadius: 6, overflow: "hidden" },
   rdPhases: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   rdPhase: {
