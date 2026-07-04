@@ -33,6 +33,7 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -104,6 +105,11 @@ export function EventTasksScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  // Side "card" gutter the content insets by (header, readiness/filter rows, and
+  // the table all line up on it): roomier on wide/web, tighter on narrow phones.
+  const { width } = useWindowDimensions();
+  const isWide = width >= 700;
+  const gutter = isWide ? 24 : 16;
   const router = useRouter();
   const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
@@ -528,7 +534,12 @@ export function EventTasksScreen() {
 
   // Simple centered bar for gating states (event not loaded yet).
   const renderHeaderBar = () => (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBtn}>
         <Ionicons name="chevron-back" size={28} color={colors.text} />
       </TouchableOpacity>
@@ -540,7 +551,12 @@ export function EventTasksScreen() {
   // Consolidated top bar: back + event title/date + the Run sheet/Tasks tabs,
   // all on one row (matches the run sheet and the approved prototype).
   const renderRichHeader = () => (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View
+      style={[
+        styles.header,
+        { borderBottomColor: colors.border, paddingHorizontal: gutter },
+      ]}
+    >
       <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.headerBackBtn}>
         <Ionicons name="chevron-back" size={26} color={colors.text} />
       </TouchableOpacity>
@@ -614,19 +630,27 @@ export function EventTasksScreen() {
 
   const loading = tasks === undefined || event === undefined;
 
+  // Split the template toolbar so its pieces land on the prototype's two rows:
+  // "Save as template" sits on the readiness line; the picker sits inline with
+  // the filter chips.
+  const templateToolbarProps = {
+    label: "Task template",
+    itemNoun: "tasks",
+    state: templateSlice,
+    templates: templateOptions,
+    onSetTemplate: handleSetTemplate,
+    onSaveNew: handleSaveNewTemplate,
+    onSaveExisting: handleSaveExistingTemplate,
+    onRevert: handleRevertTemplate,
+  } as const;
+  const templatePicker = <PlanTemplateToolbar {...templateToolbarProps} pickerOnly />;
   const listHeader = (
     <View>
-      <PlanTemplateToolbar
-        label="Task template"
-        itemNoun="tasks"
-        state={templateSlice}
-        templates={templateOptions}
-        onSetTemplate={handleSetTemplate}
-        onSaveNew={handleSaveNewTemplate}
-        onSaveExisting={handleSaveExistingTemplate}
-        onRevert={handleRevertTemplate}
+      <ReadinessHeader
+        readiness={readiness}
+        colors={colors}
+        right={<PlanTemplateToolbar {...templateToolbarProps} saveOnly />}
       />
-      <ReadinessHeader readiness={readiness} colors={colors} />
       {(tasks?.length ?? 0) > 0 ? (
         <FilterBar
           phase={phaseFilter}
@@ -639,8 +663,11 @@ export function EventTasksScreen() {
           roles={roleFilterOptions}
           colors={colors}
           primaryColor={primaryColor}
+          leading={templatePicker}
         />
-      ) : null}
+      ) : (
+        <View style={styles.pickerOnlyRow}>{templatePicker}</View>
+      )}
     </View>
   );
 
@@ -668,7 +695,12 @@ export function EventTasksScreen() {
           <ActivityIndicator size="small" color={colors.text} />
         </View>
       ) : (tasks ?? []).length === 0 ? (
-        <ScrollView contentContainerStyle={styles.emptyScroll}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.emptyScroll,
+            { paddingHorizontal: gutter },
+          ]}
+        >
           {listHeader}
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
             No tasks yet. Use "Add task" under a phase (Pre / During / Post) to
@@ -691,21 +723,27 @@ export function EventTasksScreen() {
           </View>
         </ScrollView>
       ) : (
-        <EventTasksGrid
-          tasks={filteredTasks}
-          teams={teams}
-          rolesByTeam={rolesByTeam}
-          onPatch={handlePatch}
-          onDelete={handleDelete}
-          onDuplicate={handleDuplicate}
-          onAdd={handleAdd}
-          onReorder={handleReorder}
-          onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
-          onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
-          onOpenDoc={setDocEditorTask}
-          listHeader={listHeader}
-          sections={taskSections}
-        />
+        // Extra horizontal gutter to seat the table (and its readiness/filter
+        // header) on the same inset as the top bar. GridScrollList already adds a
+        // fixed 16px inset internally, so we only add the remainder (0 on narrow,
+        // +8 on wide) to reach `gutter` without doubling up.
+        <View style={{ flex: 1, paddingHorizontal: gutter - 16 }}>
+          <EventTasksGrid
+            tasks={filteredTasks}
+            teams={teams}
+            rolesByTeam={rolesByTeam}
+            onPatch={handlePatch}
+            onDelete={handleDelete}
+            onDuplicate={handleDuplicate}
+            onAdd={handleAdd}
+            onReorder={handleReorder}
+            onPickTeam={(task, anchor) => setTeamPicker({ task, anchor })}
+            onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
+            onOpenDoc={setDocEditorTask}
+            listHeader={listHeader}
+            sections={taskSections}
+          />
+        </View>
       )}
 
       {/* Team picker — a multi-select dropdown; a task can belong to several
@@ -818,74 +856,66 @@ function RoleLoader({
 function ReadinessHeader({
   readiness,
   colors,
+  right,
 }: {
   readiness: Readiness | undefined;
   colors: ReturnType<typeof useTheme>["colors"];
+  /** Optional node pinned to the right of the readiness line (e.g. Save as template). */
+  right?: React.ReactNode;
 }) {
-  if (!readiness) return null;
-  const { overall, bySegment, byTeam } = readiness;
-  const ratio = overall.total > 0 ? overall.done / overall.total : 0;
-  const clamped = Math.max(0, Math.min(1, ratio));
-  const phases: Array<{ label: string; done: number; total: number }> = [
-    { label: "Pre", ...bySegment.before },
-    { label: "During", ...bySegment.during },
-    { label: "Post", ...bySegment.after },
-  ];
+  // Render nothing only when there's neither readiness data nor a right slot.
+  // The `right` slot (Save as template) must NOT disappear while readiness is
+  // still loading — readiness is a separate query from tasks/event.
+  if (!readiness && !right) return null;
+  const clamped = readiness
+    ? Math.max(
+        0,
+        Math.min(1, readiness.overall.total > 0 ? readiness.overall.done / readiness.overall.total : 0),
+      )
+    : 0;
+  const phases: Array<{ label: string; done: number; total: number }> = readiness
+    ? [
+        { label: "Pre", ...readiness.bySegment.before },
+        { label: "During", ...readiness.bySegment.during },
+        { label: "Post", ...readiness.bySegment.after },
+      ]
+    : [];
 
   return (
     <View style={styles.readiness}>
       <View style={styles.readinessMain}>
-        <Text style={[styles.rdCount, { color: colors.text }]}>
-          {overall.done}/{overall.total}
-        </Text>
-        <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
-          READY
-        </Text>
-        <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
-          <View
-            style={{
-              height: "100%",
-              width: `${clamped * 100}%`,
-              borderRadius: 6,
-              backgroundColor: colors.success,
-            }}
-          />
-        </View>
-        <View style={styles.rdPhases}>
-          {phases.map((p) => (
-            <Text
-              key={p.label}
-              style={[styles.rdPhase, { color: colors.textSecondary }]}
-            >
-              {p.label} {p.done}/{p.total}
+        {readiness ? (
+          <>
+            <Text style={[styles.rdCount, { color: colors.text }]}>
+              {readiness.overall.done}/{readiness.overall.total}
             </Text>
-          ))}
-        </View>
-      </View>
-
-      {byTeam.length > 0 ? (
-        <View style={styles.teamChipRow}>
-          {byTeam.map((t) => (
-            <View
-              key={t.teamId}
-              style={[
-                styles.teamChip,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-              ]}
-            >
-              <Text
-                style={[styles.teamChipName, { color: colors.text }]}
-                numberOfLines={1}
-              >
-                {t.teamName}
-              </Text>
-              <Text style={[styles.teamChipCount, { color: colors.textSecondary }]}>
-                {t.done}/{t.total}
-              </Text>
+            <Text style={[styles.rdLabel, { color: colors.textSecondary }]}>
+              READY
+            </Text>
+            <View style={[styles.rdTrack, { backgroundColor: colors.surfaceSecondary }]}>
+              <View
+                style={{
+                  height: "100%",
+                  width: `${clamped * 100}%`,
+                  borderRadius: 6,
+                  backgroundColor: colors.success,
+                }}
+              />
             </View>
-          ))}
-        </View>
-      ) : null}
+            <View style={styles.rdPhases}>
+              {phases.map((p) => (
+                <Text
+                  key={p.label}
+                  style={[styles.rdPhase, { color: colors.textSecondary }]}
+                >
+                  {p.label} {p.done}/{p.total}
+                </Text>
+              ))}
+            </View>
+          </>
+        ) : null}
+        {right ? <View style={styles.readinessRight}>{right}</View> : null}
+      </View>
     </View>
   );
 }
@@ -907,6 +937,7 @@ function FilterBar({
   roles,
   colors,
   primaryColor,
+  leading,
 }: {
   phase: Segment | null;
   onPhase: (seg: Segment | null) => void;
@@ -918,6 +949,8 @@ function FilterBar({
   roles: RoleOption[];
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  /** Optional node rendered inline before the filter chips (e.g. template picker). */
+  leading?: React.ReactNode;
 }) {
   const [menu, setMenu] = useState<{ kind: "team" | "role"; anchor: AnchorRect } | null>(null);
   const teamRef = React.useRef<View>(null);
@@ -949,6 +982,7 @@ function FilterBar({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.filterScroll}
       >
+        {leading}
         {phaseChips.map((c) => {
           const active = phase === c.key;
           return (
@@ -1142,27 +1176,13 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: "uppercase",
   },
+  readinessRight: { marginLeft: "auto" },
+  pickerOnlyRow: { marginTop: 14, width: "100%", maxWidth: 1200, alignSelf: "center" },
   rdTrack: { width: 130, height: 6, borderRadius: 6, overflow: "hidden" },
   rdPhases: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
   rdPhase: {
     fontSize: 12,
     fontWeight: "600",
-    fontFamily: MONO_FONT,
-    fontVariant: ["tabular-nums"],
-  },
-  teamChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  teamChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  teamChipName: { fontSize: 12, fontWeight: "600", maxWidth: 120 },
-  teamChipCount: {
-    fontSize: 11,
     fontFamily: MONO_FONT,
     fontVariant: ["tabular-nums"],
   },

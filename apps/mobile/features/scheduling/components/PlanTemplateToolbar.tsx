@@ -70,6 +70,8 @@ export function PlanTemplateToolbar({
   onSaveNew,
   onSaveExisting,
   onRevert,
+  pickerOnly = false,
+  saveOnly = false,
 }: {
   /** Picker prefix, e.g. "Task template" or "Run-sheet template". */
   label: string;
@@ -86,6 +88,10 @@ export function PlanTemplateToolbar({
   onSaveNew: (name: string) => void;
   onSaveExisting: (templateId: string, strategy: SaveTemplateStrategy) => void;
   onRevert: () => void;
+  /** Render only the picker + edited/revert (place it in the filter row). */
+  pickerOnly?: boolean;
+  /** Render only the "Save as template" button (place it on the readiness row). */
+  saveOnly?: boolean;
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -190,14 +196,21 @@ export function PlanTemplateToolbar({
   // --- Render -----------------------------------------------------------------
   const pickerValue = linkedName ?? "None";
 
+  // Only the default (full) render uses the full-width `wrap`. In the split
+  // pickerOnly / saveOnly modes the toolbar is embedded inline (the picker sits
+  // among the filter chips; the save button on the readiness row), so it must
+  // size to its content — otherwise width:100% pushes the neighbouring chips off.
+  const inline = pickerOnly || saveOnly;
   return (
-    <View style={styles.wrap}>
+    <View style={inline ? undefined : styles.wrap}>
       <View style={styles.row}>
         {/* Template picker */}
-        <Text style={[styles.label, { color: colors.textSecondary }]}>
-          {label}:
-        </Text>
-        {isPast ? (
+        {!saveOnly && (
+          <Text style={[styles.label, { color: colors.textSecondary }]}>
+            {label}:
+          </Text>
+        )}
+        {saveOnly ? null : isPast ? (
           // Past events: the linkage is read-only.
           <View
             style={[
@@ -246,24 +259,26 @@ export function PlanTemplateToolbar({
         )}
 
         {/* Save as template */}
-        <View ref={saveAsRef} collapsable={false} style={styles.saveAsHost}>
-          <TouchableOpacity
-            onPress={openSaveAs}
-            style={[styles.saveAsBtn, { borderColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="Save as template"
-          >
-            <Ionicons name="bookmark-outline" size={14} color={colors.text} />
-            <Text style={[styles.saveAsText, { color: colors.text }]}>
-              Save as template
-            </Text>
-            <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </View>
+        {!pickerOnly && (
+          <View ref={saveAsRef} collapsable={false} style={styles.saveAsHost}>
+            <TouchableOpacity
+              onPress={openSaveAs}
+              style={[styles.saveAsBtn, { borderColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityLabel="Save as template"
+            >
+              <Ionicons name="bookmark-outline" size={14} color={colors.text} />
+              <Text style={[styles.saveAsText, { color: colors.text }]}>
+                Save as template
+              </Text>
+              <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Edited-for-this-event indicator + actions */}
-      {hasEdits ? (
+      {!saveOnly && hasEdits ? (
         <View style={styles.editedRow}>
           <View
             style={[

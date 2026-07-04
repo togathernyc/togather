@@ -29,6 +29,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -41,11 +42,10 @@ import {
   api,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { DEFAULT_ROLE_COLOR, formatEventDateLong } from "../utils/format";
+import { formatEventDate } from "../utils/format";
 import {
   computeSegmentedClockTimes,
   formatClockTime,
-  formatServiceRanges,
   totalDurationSec,
 } from "../utils/runSheetTiming";
 import { useAuth } from "@providers/AuthProvider";
@@ -95,6 +95,44 @@ function notifyError(title: string, message: string) {
     return;
   }
   Alert.alert(title, message);
+}
+
+/** 12-hour clock parts with a single-letter meridiem, e.g. `{ time: "1:29", mer: "p" }`. */
+function compactClockParts(ms: number): { time: string; mer: "a" | "p" } {
+  const d = new Date(ms);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const mer: "a" | "p" = h < 12 ? "a" : "p";
+  h %= 12;
+  if (h === 0) h = 12;
+  return { time: `${h}:${String(m).padStart(2, "0")}`, mer };
+}
+
+/**
+ * Compact header subtitle — "Sun, Jul 5 · 10:00–11:29a · 12:00–1:29p".
+ *
+ * Short weekday + day, then each service's start–end range in lowercase 12h
+ * (meridiem shown once at the end of a range, or on both ends if they straddle
+ * noon). Ranges are joined with " · ". The run sheet's order/durations are shared
+ * across every service, so each ends `totalSec` after its own start.
+ */
+function formatCompactServiceHeader(
+  eventDate: number,
+  times: Array<{ startsAt: number }>,
+  totalSec: number,
+): string {
+  const date = formatEventDate(eventDate);
+  if (times.length === 0) return date;
+  const ranges = times
+    .map((t) => {
+      const start = compactClockParts(t.startsAt);
+      const end = compactClockParts(t.startsAt + Math.max(0, totalSec) * 1000);
+      const startStr =
+        start.mer === end.mer ? start.time : `${start.time}${start.mer}`;
+      return `${startStr}–${end.time}${end.mer}`;
+    })
+    .join(" · ");
+  return `${date} · ${ranges}`;
 }
 
 type RunSheetItem = {
@@ -161,6 +199,14 @@ export function RunSheetScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  // Inset "card" gutter (ADR-026 redesign): the header, template toolbar, and the
+  // table all sit inside a horizontal gutter that reads ~24px on wide/web and
+  // ~16px on narrow. GridScrollList already insets its root (toolbar + table) by
+  // 16px and the header carries a matching 16px; this adds the extra 8px on wide
+  // so everything lands on the same edge — no double-padding.
+  const isWide = width >= 700;
+  const gutterExtra = isWide ? 8 : 0;
   const router = useRouter();
   const { community, user } = useAuth();
   const { plan_id, group_id } = useLocalSearchParams<{
@@ -341,12 +387,12 @@ export function RunSheetScreen() {
   // the flex columns (Item / Notes) absorb any leftover slack when it fits.
   const columns: GridColumn[] = useMemo(
     () => [
-      { key: "item", label: "Item", width: 220, flex: 3 },
-      { key: "time", label: "Time", width: 96, align: "center" },
-      { key: "dur", label: "Dur", width: 84, align: "center" },
-      { key: "who", label: "Owner / Role", width: 176 },
+      { key: "time", label: "Time", width: 84 },
+      { key: "dur", label: "Dur", width: 64 },
+      { key: "item", label: "Item", width: 200, flex: 3 },
       { key: "notes", label: "Notes", width: 240, flex: 3 },
-      { key: "song", label: "Song", width: 150 },
+      { key: "who", label: "Owner / Role", width: 132 },
+      { key: "song", label: "Song", width: 96 },
       { key: "actions", label: "", width: 48, align: "center" },
     ],
     [],
@@ -542,7 +588,11 @@ export function RunSheetScreen() {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.surface },
+        {
+          paddingTop: insets.top,
+          paddingHorizontal: gutterExtra,
+          backgroundColor: colors.surface,
+        },
       ]}
     >
       <View
@@ -566,10 +616,11 @@ export function RunSheetScreen() {
               style={[styles.headerEventMeta, { color: colors.textSecondary }]}
               numberOfLines={1}
             >
-              {formatEventDateLong(event.eventDate)}
-              {times.length > 0
-                ? ` · ${formatServiceRanges(times, duringTotalSec)}`
-                : ""}
+              {formatCompactServiceHeader(
+                event.eventDate,
+                times,
+                duringTotalSec,
+              )}
             </Text>
           ) : null}
         </View>
@@ -608,7 +659,7 @@ export function RunSheetScreen() {
             <View>
               {isLeader ? (
                 <PlanTemplateToolbar
-                  label="Run-sheet template"
+                  label="Template"
                   itemNoun="run-sheet items"
                   state={templateSlice}
                   templates={templateOptions}
@@ -734,12 +785,13 @@ export function RunSheetScreen() {
                     {item.assignments.length > 0 ? (
                       <View style={styles.whoChips}>
                         {item.assignments.slice(0, 2).map((a) => (
+                          // Soft neutral pill (role name only) — matches the
+                          // prototype's owner cell; no colored role tint here.
                           <OptionTag
                             key={a.roleId}
                             label={a.roleName}
                             colors={colors}
                             primaryColor={primaryColor}
-                            color={a.roleColor ?? DEFAULT_ROLE_COLOR}
                           />
                         ))}
                         {item.assignments.length > 2 ? (
@@ -749,12 +801,13 @@ export function RunSheetScreen() {
                         ) : null}
                       </View>
                     ) : (
-                      <OptionTag
-                        label="＋"
-                        colors={colors}
-                        primaryColor={primaryColor}
-                        placeholder
-                      />
+                      // Empty state — a dashed circle with a muted "+", the
+                      // "add owner" affordance from the prototype.
+                      <View
+                        style={[styles.whoAddCircle, { borderColor: colors.border }]}
+                      >
+                        <Ionicons name="add" size={15} color={colors.textTertiary} />
+                      </View>
                     )}
                   </Pressable>
                 );
@@ -940,7 +993,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
+    // Matches GridScrollList's 16px root inset so the header, template toolbar,
+    // and table share the same left edge; the container adds the extra wide gutter.
+    paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
@@ -971,6 +1026,16 @@ const styles = StyleSheet.create({
   cellText: { fontSize: 13 },
   muted: { fontSize: 13, fontWeight: "500" },
   whoChips: { flexDirection: "row", alignItems: "center", gap: 4, flexWrap: "wrap" },
+  // Empty owner/role affordance — a ~24px dashed circle holding a muted "+".
+  whoAddCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   // "Time" — a quiet, contained read-only clock value ("9:00 AM"). Monospace +
   // tabular figures give it the aligned "broadcast rundown" feel.
   timeText: {
