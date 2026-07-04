@@ -572,6 +572,12 @@ export function ServingTasksScreen() {
   const overallDone = allTasks.filter((t) => t.completed).length;
   const overallTotal = allTasks.length;
 
+  // "Preloaded" tasks are the template (assigned) tasks for the user's role;
+  // personal tasks are the ones the user adds themselves. When the role has no
+  // preloaded tasks, we guide the user to their team lead while still letting
+  // them add their own tasks per segment.
+  const hasPreloadedTasks = allTasks.some((t) => !t.isPersonal);
+
   // Small badges on the section pills (null hides the badge).
   const sectionCounts: Record<Section, string | null> = {
     mine: overallTotal > 0 ? `${overallDone}/${overallTotal}` : null,
@@ -626,7 +632,9 @@ export function ServingTasksScreen() {
               </View>
             )
           ) : (
-            SEGMENTS.map(({ key, label }) => {
+            <>
+            {!hasPreloadedTasks ? <NoPreloadedNotice colors={colors} /> : null}
+            {SEGMENTS.map(({ key, label }) => {
             const segmentTasks = mineWithOverlay[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
             const total = segmentTasks.length;
@@ -650,6 +658,10 @@ export function ServingTasksScreen() {
                   height={4}
                 />
 
+                {/* When the role has no preloaded tasks, the notice above already
+                    explains the empty state, so we skip the per-segment empty
+                    card and leave just the "Add my own task" affordance. */}
+                {segmentTasks.length === 0 && !hasPreloadedTasks ? null : (
                 <View
                   style={[
                     styles.card,
@@ -709,6 +721,7 @@ export function ServingTasksScreen() {
                     ))
                   )}
                 </View>
+                )}
 
                 {addingSegment === key ? (
                   <AddTaskForm
@@ -750,7 +763,8 @@ export function ServingTasksScreen() {
                 )}
                 </View>
               );
-            })
+            })}
+            </>
           ))}
 
         {section === "shared" && (
@@ -1854,6 +1868,38 @@ function OfflineBanner({ colors }: { colors: ThemeColors }) {
   );
 }
 
+/**
+ * Shown at the top of the "Mine" section when the user's role has no preloaded
+ * (template) tasks. Explains the empty state and points the user to their team
+ * lead, while the per-segment "Add my own task" affordances remain available.
+ */
+function NoPreloadedNotice({ colors }: { colors: ThemeColors }) {
+  return (
+    <View style={styles.segment}>
+      <View
+        style={[
+          styles.noticeCard,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}
+      >
+        <Ionicons
+          name="information-circle-outline"
+          size={20}
+          color={colors.textSecondary}
+        />
+        <View style={styles.noticeBody}>
+          <Text style={[styles.noticeMessage, { color: colors.text }]}>
+            No preloaded task. Please contact your team lead to add tasks.
+          </Text>
+          <Text style={[styles.noticeHint, { color: colors.textTertiary }]}>
+            You can still add your own tasks below.
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function SectionLoading({ colors }: { colors: ThemeColors }) {
   return (
     <View style={styles.inlineLoading}>
@@ -1942,6 +1988,19 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cardEmpty: { fontSize: 14, fontStyle: "italic", padding: 16 },
+
+  // "No preloaded task" notice (Mine section, role with no assigned tasks)
+  noticeCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
+  },
+  noticeBody: { flex: 1 },
+  noticeMessage: { fontSize: 14, lineHeight: 20, fontWeight: "500" },
+  noticeHint: { fontSize: 13, lineHeight: 18, marginTop: 4 },
 
   // Task rows
   taskRow: { paddingHorizontal: 14, paddingVertical: 12 },
