@@ -2,6 +2,7 @@ import {
   computeItemClockTimes,
   formatDuration,
   formatServiceRanges,
+  pickActiveServiceIndex,
   type TimingItem,
 } from "../runSheetTiming";
 
@@ -69,5 +70,47 @@ describe("formatDuration", () => {
     expect(formatDuration(45)).toBe("45 sec");
     expect(formatDuration(300)).toBe("5 min");
     expect(formatDuration(3900)).toBe("1 hr 5 min");
+  });
+});
+
+describe("pickActiveServiceIndex", () => {
+  const at = (h: number, m = 0) => new Date(2026, 5, 7, h, m).getTime();
+  // Two services: 9:00 AM and 11:00 AM; 60-min "during", no before/after.
+  const times = [{ startsAt: at(9) }, { startsAt: at(11) }];
+  const DURING = 60 * 60; // 1 hr in seconds
+
+  it("picks the service whose window contains now", () => {
+    expect(pickActiveServiceIndex(times, at(9, 30), 0, DURING, 0)).toBe(0);
+    expect(pickActiveServiceIndex(times, at(11, 30), 0, DURING, 0)).toBe(1);
+  });
+
+  it("before any service, picks the soonest upcoming", () => {
+    expect(pickActiveServiceIndex(times, at(8), 0, DURING, 0)).toBe(0);
+  });
+
+  it("between services, picks the next upcoming", () => {
+    // 10:30 is past the 9:00 window (ends 10:00) and before 11:00.
+    expect(pickActiveServiceIndex(times, at(10, 30), 0, DURING, 0)).toBe(1);
+  });
+
+  it("after all services, picks the last", () => {
+    expect(pickActiveServiceIndex(times, at(13), 0, DURING, 0)).toBe(1);
+  });
+
+  it("counts a before pre-roll as part of the service window", () => {
+    // 30-min pre-roll → the 9:00 window opens at 8:30.
+    expect(pickActiveServiceIndex(times, at(8, 45), 30 * 60, DURING, 0)).toBe(0);
+    // ...but 8:15 is still ahead of it → soonest upcoming (still index 0).
+    expect(pickActiveServiceIndex(times, at(8, 15), 30 * 60, DURING, 0)).toBe(0);
+  });
+
+  it("returns the array index even when times are unordered", () => {
+    const unordered = [{ startsAt: at(11) }, { startsAt: at(9) }];
+    // 9:30 is inside the second element's window.
+    expect(pickActiveServiceIndex(unordered, at(9, 30), 0, DURING, 0)).toBe(1);
+  });
+
+  it("handles empty times", () => {
+    expect(pickActiveServiceIndex([], at(9), 0, DURING, 0)).toBe(0);
   });
 });

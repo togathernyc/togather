@@ -88,6 +88,56 @@ export function computeSegmentedClockTimes(
   };
 }
 
+/**
+ * Pick which service a multi-service plan's run sheet should anchor to for a
+ * given wall-clock `now`, so day-of the sheet re-bases to the service you're
+ * actually in (and its live highlight tracks the right rows). Each service `i`
+ * owns the window `[startsAt_i − before, startsAt_i + during + after]` — its
+ * pre-roll leading in through its post-roll.
+ *
+ * Selection order:
+ *   1. a service whose window contains `now` (the one happening now — if two
+ *      overlap, the later-starting wins, since that's the one you're rolling into);
+ *   2. else the soonest service still ahead of `now` (its window hasn't opened);
+ *   3. else the last service (everything's already over).
+ *
+ * Returns an index into `times` (0 when empty). Durations are in seconds.
+ */
+export function pickActiveServiceIndex(
+  times: Array<{ startsAt: number }>,
+  now: number,
+  beforeSec: number,
+  duringSec: number,
+  afterSec: number,
+): number {
+  if (times.length === 0) return 0;
+  const beforeMs = Math.max(0, beforeSec) * 1000;
+  const tailMs = (Math.max(0, duringSec) + Math.max(0, afterSec)) * 1000;
+
+  let containing = -1;
+  let nextUpcoming = -1;
+  let last = 0;
+  for (let i = 0; i < times.length; i++) {
+    const winStart = times[i].startsAt - beforeMs;
+    const winEnd = times[i].startsAt + tailMs;
+    if (now >= winStart && now < winEnd) {
+      if (containing === -1 || times[i].startsAt > times[containing].startsAt) {
+        containing = i;
+      }
+    }
+    if (winStart > now) {
+      if (nextUpcoming === -1 || times[i].startsAt < times[nextUpcoming].startsAt) {
+        nextUpcoming = i;
+      }
+    }
+    if (times[i].startsAt > times[last].startsAt) last = i;
+  }
+
+  if (containing !== -1) return containing;
+  if (nextUpcoming !== -1) return nextUpcoming;
+  return last;
+}
+
 /** "10:04 AM" — clock label for a run sheet row. */
 export function formatClockTime(ms: number): string {
   return new Date(ms).toLocaleTimeString("en-US", {

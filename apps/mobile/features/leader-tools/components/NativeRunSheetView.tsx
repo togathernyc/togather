@@ -35,8 +35,10 @@ import {
   formatClockTime,
   formatDuration,
   formatServiceRanges,
+  pickActiveServiceIndex,
   totalDurationSec,
 } from "@features/scheduling/utils/runSheetTiming";
+import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
 
 /** Current-item highlight, mirroring the PCO run sheet (RunSheetScreen). */
@@ -290,10 +292,6 @@ function PlanRunSheet({
       : undefined);
 
   const times = effEvent?.times ?? [];
-  const earliestStart = useMemo(
-    () => (times.length > 0 ? Math.min(...times.map((t) => t.startsAt)) : Date.now()),
-    [times],
-  );
   // Group into before / during / after phases (listItems returns them sorted
   // by (segment, sequence)), then time each phase: during from the event start,
   // before backward to it, after from the event end. Keeps clocks consistent
@@ -310,20 +308,59 @@ function PlanRunSheet({
     }
     return groups;
   }, [effItems]);
+  // Phase totals feed both the header ranges and the active-service window.
+  const duringTotalSec = useMemo(
+    () => totalDurationSec(itemsBySegment.during),
+    [itemsBySegment.during],
+  );
+  const beforeTotalSec = useMemo(
+    () => totalDurationSec(itemsBySegment.before),
+    [itemsBySegment.before],
+  );
+  const afterTotalSec = useMemo(
+    () => totalDurationSec(itemsBySegment.after),
+    [itemsBySegment.after],
+  );
+
+  // Live clock: tick every 30s so the current-item highlight — and, on a
+  // multi-service plan, the auto-selected service — advance as the day moves.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Which service the sheet is anchored to. `null` = follow the live service
+  // (auto, day-of); a number = the user manually picked one (sticky override).
+  const [manualServiceIdx, setManualServiceIdx] = useState<number | null>(null);
+  const autoServiceIdx = useMemo(
+    () =>
+      pickActiveServiceIndex(
+        times,
+        now,
+        beforeTotalSec,
+        duringTotalSec,
+        afterTotalSec,
+      ),
+    [times, now, beforeTotalSec, duringTotalSec, afterTotalSec],
+  );
+  // A manual pick can go stale if `times` shrinks (rare) — clamp it.
+  const effectiveServiceIdx =
+    manualServiceIdx != null && manualServiceIdx < times.length
+      ? manualServiceIdx
+      : autoServiceIdx;
+  const serviceStartMs =
+    times.length > 0 ? times[effectiveServiceIdx].startsAt : now;
+
   const clockTimes = useMemo(
     () =>
       computeSegmentedClockTimes(
         itemsBySegment.before,
         itemsBySegment.during,
         itemsBySegment.after,
-        earliestStart,
+        serviceStartMs,
       ),
-    [itemsBySegment, earliestStart],
-  );
-  // The service window is the "during" phase — before/after bracket it.
-  const duringTotalSec = useMemo(
-    () => totalDurationSec(itemsBySegment.during),
-    [itemsBySegment.during],
+    [itemsBySegment, serviceStartMs],
   );
   const peopleByRole = useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -398,21 +435,13 @@ function PlanRunSheet({
     ).catch((err) => console.error("Failed to save collapsed state:", err));
   }, [collapsedHeaders, collapsedHeadersLoaded, collapsedStorageKey]);
 
-  // Live "current item": tick a clock every 30s and match the item whose
-  // computed [start, start + durationSec) window contains now. Same logic as
-  // the PCO renderer, but sourced from client-computed clock times.
-  // TODO(followup): clock times are anchored to the earliest service time, so
-  // on a multi-service plan only the earliest service ever highlights. To
-  // support later services we'd need a service-time selector (like PCO's) and
-  // re-base clockTimes to the chosen window before matching.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(interval);
-  }, []);
+  // Live "current item": match the item whose computed [start, start +
+  // durationSec) window contains `now` (ticked above). Because `clockTimes` is
+  // anchored to the active/selected service, this highlights the right rows on
+  // every service of a multi-service plan, not just the earliest.
   const currentItemId = useMemo(() => {
-    // Without real service times the clocks are anchored to `now` (see
-    // earliestStart fallback), which would spuriously highlight the first item.
+    // Without real service times the clocks are anchored to `now` (the
+    // serviceStartMs fallback), which would spuriously highlight the first item.
     if (times.length === 0) return null;
     const list = effItems ?? [];
     for (let i = list.length - 1; i >= 0; i--) {
@@ -488,6 +517,14 @@ function PlanRunSheet({
           ) : null}
         </View>
       </View>
+
+      <ServiceTimeSelector
+        times={times}
+        selectedIndex={effectiveServiceIdx}
+        following={manualServiceIdx == null}
+        onSelect={setManualServiceIdx}
+        onResetToLive={() => setManualServiceIdx(null)}
+      />
 
       {effItems.length === 0 ? (
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
