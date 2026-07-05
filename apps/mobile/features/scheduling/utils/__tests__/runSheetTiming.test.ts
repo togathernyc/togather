@@ -110,6 +110,22 @@ describe("pickActiveServiceIndex", () => {
     expect(pickActiveServiceIndex(unordered, at(9, 30), 0, DURING, 0)).toBe(1);
   });
 
+  it("when windows overlap, the later-starting service wins", () => {
+    // 90-min "during" makes 9:00's window run to 10:30, overlapping 10:00's
+    // window [10:00, 11:30). At 10:15 both contain now → pick the later one.
+    const overlapping = [{ startsAt: at(9) }, { startsAt: at(10) }];
+    expect(pickActiveServiceIndex(overlapping, at(10, 15), 0, 90 * 60, 0)).toBe(
+      1,
+    );
+  });
+
+  it("after all services with unordered times, picks the max-start index", () => {
+    // Windows end by 12:00; 13:00 is past all → the latest service (11:00),
+    // which is index 0 in this unordered array.
+    const unordered = [{ startsAt: at(11) }, { startsAt: at(9) }];
+    expect(pickActiveServiceIndex(unordered, at(13), 0, DURING, 0)).toBe(0);
+  });
+
   it("handles empty times", () => {
     expect(pickActiveServiceIndex([], at(9), 0, DURING, 0)).toBe(0);
   });

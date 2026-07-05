@@ -344,7 +344,9 @@ function PlanRunSheet({
       ),
     [times, now, beforeTotalSec, duringTotalSec, afterTotalSec],
   );
-  // A manual pick can go stale if `times` shrinks (rare) — clamp it.
+  // Guard the upper bound so a manual pick that outran a shrunk `times` falls
+  // back to auto. (A reorder that keeps the length isn't tracked — editing
+  // service times mid-serving is rare enough to accept.)
   const effectiveServiceIdx =
     manualServiceIdx != null && manualServiceIdx < times.length
       ? manualServiceIdx

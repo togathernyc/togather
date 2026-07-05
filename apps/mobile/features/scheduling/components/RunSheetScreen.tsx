@@ -419,6 +419,8 @@ export function RunSheetScreen() {
   const [selectedServiceIdx, setSelectedServiceIdx] = useState<number | null>(
     null,
   );
+  // Guard the upper bound so a pick that outran a shrunk `times` falls back to
+  // the earliest (a same-length reorder isn't tracked — an acceptable rarity).
   const effectiveServiceIdx =
     selectedServiceIdx != null && selectedServiceIdx < times.length
       ? selectedServiceIdx
