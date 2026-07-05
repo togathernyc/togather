@@ -129,11 +129,11 @@ describe("rosterMatrix", () => {
     expect(adminRow?.availableCount).toBe(1);
   });
 
-  it("servingTotal counts assignments beyond the visible columns (across all groups)", async () => {
+  it("servingTotal counts only upcoming assignments — past ones are excluded", async () => {
     const { t, world } = await setup();
     const leader = (await generateTokens(world.groupLeaderId)).accessToken;
 
-    // One hidden past plan and one visible upcoming plan, on different days.
+    // One past plan (already served) and one upcoming plan, on different days.
     const past = await createPlan(t, leader, world.groupId, "Past", Date.now() - 7 * DAY);
     const soon = await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
     for (const planId of [past, soon]) {
@@ -151,16 +151,57 @@ describe("rosterMatrix", () => {
       });
     }
 
-    // Default window shows only "Soon", but servingTotal counts BOTH the visible
-    // and the hidden-past assignment — the same reach used for cross-group load.
+    // The serving count is forward-looking: the past assignment is NOT counted
+    // (otherwise a long-serving member's count would grow without bound), so
+    // only the upcoming "Soon" assignment shows.
     const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
       token: leader,
       groupId: world.groupId,
     });
     expect(m.events.map((e) => e.title)).toEqual(["Soon"]);
     const row = m.members.find((mm) => mm.userId === world.channelMemberId);
+    expect(row?.servingTotal).toBe(1);
+    // Different days → not double-booked.
+    expect(row?.doubleBooked).toBe(false);
+  });
+
+  it("serving two roles at one event counts twice but is not a double-booking", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const soon = await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
+
+    // A second role on the same team, so the member can serve two roles at once.
+    const { roleId: role2 } = await t.mutation(
+      api.functions.scheduling.roles.createRole,
+      { token: leader, teamId: world.teamId, name: "Keys" },
+    );
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leader,
+      planId: soon,
+      roles: [
+        { teamId: world.teamId, roleId: world.roleId, count: 1 },
+        { teamId: world.teamId, roleId: role2, count: 1 },
+      ],
+    });
+    // Same member serves BOTH roles at the single event.
+    for (const roleId of [world.roleId, role2]) {
+      await t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leader,
+        planId: soon,
+        teamId: world.teamId,
+        roleId,
+        userId: world.channelMemberId,
+      });
+    }
+
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    const row = m.members.find((mm) => mm.userId === world.channelMemberId);
+    // Two assignments → 2 srv, but a single event → NOT double-booked (the
+    // conflict rule keys on two *different* plans on the same day).
     expect(row?.servingTotal).toBe(2);
-    // Different days → not double-booked, even though they serve twice overall.
     expect(row?.doubleBooked).toBe(false);
   });
 

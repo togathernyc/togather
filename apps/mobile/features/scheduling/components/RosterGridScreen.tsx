@@ -134,7 +134,7 @@ type RosterMember = {
   userName: string;
   isLeader: boolean;
   availableCount: number;
-  /** Total live serving assignments across every group the member belongs to. */
+  /** Upcoming serving assignments across every group the member belongs to. */
   servingTotal: number;
   /** Staffed more than once on the same day (any group) — the ⚠ beside "N srv". */
   doubleBooked: boolean;
@@ -1777,14 +1777,15 @@ export function RosterGridScreen() {
       style={{ width: NAME_W, flexGrow: 0, flexShrink: 0, flexBasis: NAME_W }}
     >
       {visibleMembers.map((m, i) => {
-        // "N srv" is the member's TOTAL serving load across every group (backend
-        // `servingTotal`), so a leader can see who's already committed elsewhere.
-        // The ⚠ flags a cross-group double-booking — staffed more than once on
-        // the same day (backend `doubleBooked`) — with the reason surfaced via
-        // an accessible label (and a hover tooltip on web).
+        // "N srv" is the member's UPCOMING serving load across every group
+        // (backend `servingTotal`), so a leader can see who's already committed
+        // elsewhere going forward. The ⚠ flags a cross-group double-booking —
+        // staffed on two different plans on the same day (backend `doubleBooked`)
+        // — with the reason surfaced via an accessible label (and a hover
+        // tooltip on web).
         const servingLabel = m.doubleBooked
-          ? `Double-booked — ${m.userName} is serving more than once on the same day across groups. ${m.servingTotal} serving assignment${m.servingTotal === 1 ? "" : "s"} total.`
-          : `${m.servingTotal} serving assignment${m.servingTotal === 1 ? "" : "s"} total.`;
+          ? `Double-booked — ${m.userName} is serving on two events on the same day across groups. ${m.servingTotal} upcoming serving assignment${m.servingTotal === 1 ? "" : "s"}.`
+          : `${m.servingTotal} upcoming serving assignment${m.servingTotal === 1 ? "" : "s"}.`;
         return (
           <View
             key={m.userId}

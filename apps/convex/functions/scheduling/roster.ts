@@ -369,19 +369,29 @@ export const rosterMatrix = query({
           dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
         }
 
-        // Serving load is the member's TOTAL live commitment across every group
-        // they belong to — not just this roster's columns — so the "N srv"
-        // leaders see next to a name reads as their whole load. Same cross-group
-        // scope as the double-booking rule above (both off `allAssigns`), so a
-        // person already staffed elsewhere shows as busy here.
-        const servingTotal = allAssigns.filter(
-          (a) => a.status !== "declined",
-        ).length;
-        // Member-level double-booking: any calendar day on which they're staffed
-        // more than once — across groups and beyond the visible columns. This
-        // rolls the per-cell `doubleBooked` flags up into a single name-level
-        // warning (the ⚠ beside the serving count).
-        const doubleBooked = Array.from(dayCounts.values()).some((c) => c >= 2);
+        // The member's UPCOMING serving commitments across every group they
+        // belong to — bounded to today-onward (the window the grid leads with)
+        // so "N srv" reflects who's busy GOING FORWARD, not a lifetime tally
+        // that only ever grows. Spans groups and weeks beyond the visible
+        // columns, so a person already staffed elsewhere reads as busy here.
+        const upcomingAssigns = allAssigns.filter(
+          (a) => a.status !== "declined" && a.eventDate >= cutoff,
+        );
+        const servingTotal = upcomingAssigns.length;
+        // Name-level double-booking: staffed on two DIFFERENT plans on the same
+        // calendar day (mirrors the assign mutation's `planId !== plan._id &&
+        // same-day` rule, so serving two roles at one event doesn't count).
+        // Counts distinct plans per day across the upcoming assignments.
+        const plansPerDay = new Map<number, Set<string>>();
+        for (const a of upcomingAssigns) {
+          const day = utcDayBucket(a.eventDate);
+          const set = plansPerDay.get(day) ?? new Set<string>();
+          set.add(a.planId as string);
+          plansPerDay.set(day, set);
+        }
+        const doubleBooked = Array.from(plansPerDay.values()).some(
+          (s) => s.size >= 2,
+        );
 
         let availableCount = 0;
         const cells: Record<
