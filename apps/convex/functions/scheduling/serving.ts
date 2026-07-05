@@ -415,7 +415,6 @@ type ServingTeamPerson = {
 type ServingTeamColumn = {
   teamId: string;
   name: string;
-  color: string | null;
   people: ServingTeamPerson[];
 };
 
@@ -540,7 +539,6 @@ export const getServingTeamRoster = query({
         teams.push({
           teamId,
           name: team.name,
-          color: null,
           people,
         });
       }

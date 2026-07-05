@@ -998,25 +998,12 @@ export function ChatInboxScreen({
               color={colors.iconSecondary}
               style={{ marginBottom: 16 }}
             />
-            {inServingMode ? (
-              <>
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                  Your event inbox
-                </Text>
-                <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-                  This is your inbox for the event. Your team channels and shared
-                  team channels show up here, along with direct messages from the
-                  event day. Nothing yet — check back closer to the event.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>No Groups Yet</Text>
-                <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-                  Join a group to start chatting
-                </Text>
-              </>
-            )}
+            {/* Serving mode always pins the Team card, so the inbox is never
+                empty there — this branch only renders outside serving mode. */}
+            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Groups Yet</Text>
+            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
+              Join a group to start chatting
+            </Text>
           </ScrollView>
         </View>
       </Wrapper>

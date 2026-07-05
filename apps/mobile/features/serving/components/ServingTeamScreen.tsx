@@ -154,7 +154,20 @@ export function ServingTeamScreen() {
     <View style={[styles.flex, { backgroundColor: colors.background }]}>
       {header}
 
-      {roster === undefined ? (
+      {!isServingMode ? (
+        // The query is skipped outside serving mode, so `roster` would stay
+        // undefined and spin forever. Show a plain empty state instead.
+        <View style={styles.centered}>
+          <Ionicons
+            name="people-outline"
+            size={30}
+            color={colors.textTertiary}
+          />
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            Not currently serving on an event.
+          </Text>
+        </View>
+      ) : roster === undefined ? (
         <View style={styles.centered}>
           <ActivityIndicator size="small" color={colors.text} />
         </View>
@@ -212,17 +225,26 @@ export function ServingTeamScreen() {
                       >
                         {team.name}
                       </Text>
-                      {team.people.map((person, i) => (
-                        <PersonCard
-                          key={`${person.userId}:${person.roleName}:${i}`}
-                          person={person}
-                          colors={colors}
-                          primaryColor={primaryColor}
-                          onPress={() =>
-                            person.isSelf ? undefined : setSelected(person)
-                          }
-                        />
-                      ))}
+                      {team.people.map((person, i) => {
+                        // No actionable card for yourself, or for someone with
+                        // neither a DM path (no community context) nor a phone —
+                        // opening an empty action sheet would be a dead end.
+                        const actionable =
+                          !person.isSelf &&
+                          (canMessage || !!person.phone);
+                        return (
+                          <PersonCard
+                            key={`${person.userId}:${person.roleName}:${i}`}
+                            person={person}
+                            colors={colors}
+                            primaryColor={primaryColor}
+                            actionable={actionable}
+                            onPress={() =>
+                              actionable ? setSelected(person) : undefined
+                            }
+                          />
+                        );
+                      })}
                     </View>
                   ))}
                 </ScrollView>
@@ -251,11 +273,14 @@ function PersonCard({
   person,
   colors,
   primaryColor,
+  actionable,
   onPress,
 }: {
   person: RosterPerson;
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  /** Whether tapping does anything (has a message/text action available). */
+  actionable: boolean;
   onPress: () => void;
 }) {
   const roleColor =
@@ -267,17 +292,19 @@ function PersonCard({
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={person.isSelf ? 1 : 0.7}
-      disabled={person.isSelf}
+      activeOpacity={actionable ? 0.7 : 1}
+      disabled={!actionable}
       style={[
         styles.personCard,
         { backgroundColor: colors.surface, borderColor: colors.border },
       ]}
-      accessibilityRole="button"
+      accessibilityRole={actionable ? "button" : "text"}
       accessibilityLabel={
         person.isSelf
           ? `${person.displayName} (you), ${person.roleName}`
-          : `Message ${person.displayName}, ${person.roleName}`
+          : actionable
+            ? `Message ${person.displayName}, ${person.roleName}`
+            : `${person.displayName}, ${person.roleName}`
       }
     >
       <View style={styles.personTop}>

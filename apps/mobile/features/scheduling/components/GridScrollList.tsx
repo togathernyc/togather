@@ -20,7 +20,7 @@
  * this component only lays the cells out and draws the divided, padded, sized
  * cell frame (the table chrome).
  */
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -207,9 +207,11 @@ export function GridScrollList<T>({
   const rowMinHeight = dense ? DENSE_ROW_MIN_HEIGHT : ROW_MIN_HEIGHT;
 
   // ── Column resize (only when `storageKey` is set) ───────────────────────────
-  // Persisted per-column overrides for THIS grid. Selecting the nested slice by
-  // key keeps the reference stable across unrelated store writes, so a resize on
-  // another grid never re-renders this one. `undefined` when not opted in.
+  // Persisted per-column overrides for THIS grid. On native (zustand), selecting
+  // the nested slice by key keeps the reference stable across unrelated store
+  // writes, so a resize on another grid doesn't re-render this one. (The web
+  // store re-renders all subscribers on any write, but grids are rarely
+  // co-mounted, so the extra render is immaterial.) `undefined` when not opted in.
   const storedWidths = useGridColumnWidths((s) =>
     storageKey ? s.widths[storageKey] : undefined,
   );
@@ -598,14 +600,32 @@ function ColumnResizeHandle({
   onDragRef.current = onDrag;
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
+  const onResetRef = useRef(onReset);
+  onResetRef.current = onReset;
   // The width captured when THIS drag began (stable for the whole gesture).
   const startWidthRef = useRef(width);
+  // Timestamp of the last tap/click, for double-tap-to-reset detection. A
+  // double-click restores the column's default width on both platforms — see
+  // the web `onClick` handler and the native `onPanResponderRelease` below.
+  // (RN-Web drops `onDoubleClick` — it's not in its forwarded-prop whitelist —
+  // so we must detect the double manually via `onClick`, which IS whitelisted.)
+  const lastTapRef = useRef(0);
+  const DOUBLE_TAP_MS = 300;
+  // Guards setState/commit after unmount (e.g. columns re-render away mid-drag)
+  // so window pointer listeners resolving late don't touch a dead tree.
+  const mountedRef = useRef(true);
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
-  // Native gesture handler, created once (its closures read the refs above so
-  // they never go stale). Declared UNCONDITIONALLY — before the web branch —
-  // to keep hook order stable; on web it's simply never attached.
-  const responder = useRef(
-    PanResponder.create({
+  // Native gesture handler, lazily created ONCE (its closures read the refs
+  // above so they never go stale). Declared UNCONDITIONALLY — before the web
+  // branch — to keep hook order stable; on web it's simply never attached.
+  const responderRef = useRef<ReturnType<typeof PanResponder.create> | null>(
+    null,
+  );
+  if (responderRef.current === null) {
+    responderRef.current = PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       // Don't yield the gesture to the enclosing horizontal ScrollView.
@@ -619,14 +639,27 @@ function ColumnResizeHandle({
       },
       onPanResponderRelease: (_evt, gesture) => {
         setActive(false);
+        // A near-stationary release is a TAP, not a drag: use it for
+        // double-tap-to-reset instead of committing an unchanged width.
+        if (Math.abs(gesture.dx) < 3) {
+          const now = Date.now();
+          if (now - lastTapRef.current < DOUBLE_TAP_MS) {
+            lastTapRef.current = 0;
+            onResetRef.current();
+          } else {
+            lastTapRef.current = now;
+          }
+          return;
+        }
         onCommitRef.current(clampColWidth(startWidthRef.current + gesture.dx));
       },
       onPanResponderTerminate: (_evt, gesture) => {
         setActive(false);
         onCommitRef.current(clampColWidth(startWidthRef.current + gesture.dx));
       },
-    }),
-  ).current;
+    });
+  }
+  const responder = responderRef.current;
 
   const highlighted = active || hovered;
   const lineColor = highlighted
@@ -644,20 +677,54 @@ function ColumnResizeHandle({
       e.stopPropagation?.();
       const startX: number = e.nativeEvent?.clientX ?? e.clientX ?? 0;
       startWidthRef.current = widthRef.current;
-      setActive(true);
-      const move = (ev: PointerEvent) => {
-        onDragRef.current(clampColWidth(startWidthRef.current + (ev.clientX - startX)));
-      };
-      const up = (ev: PointerEvent) => {
+      if (mountedRef.current) setActive(true);
+      let moved = false;
+      const cleanup = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        setActive(false);
-        onCommitRef.current(
+        window.removeEventListener("pointercancel", cancel);
+      };
+      const move = (ev: PointerEvent) => {
+        moved = true;
+        if (!mountedRef.current) return;
+        onDragRef.current(
           clampColWidth(startWidthRef.current + (ev.clientX - startX)),
         );
       };
+      const up = (ev: PointerEvent) => {
+        cleanup();
+        if (!mountedRef.current) return;
+        setActive(false);
+        // Only commit an actual drag; a click without movement is left for the
+        // `onClick` double-click-reset handler (a no-op commit would be fine but
+        // clutters the store with default-width entries).
+        if (moved) {
+          onCommitRef.current(
+            clampColWidth(startWidthRef.current + (ev.clientX - startX)),
+          );
+        }
+      };
+      // Pointer cancellation (browser takes over scrolling, OS interrupt) never
+      // fires `pointerup`, so without this the listeners would leak and the
+      // handle would stay stuck active. Revert to the last-committed width.
+      const cancel = () => {
+        cleanup();
+        if (mountedRef.current) setActive(false);
+      };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
+    };
+    // RN-Web drops `onDoubleClick` (not in its forwarded-prop whitelist), so
+    // detect the double manually off `onClick` (which IS whitelisted).
+    const handleClick = () => {
+      const now = Date.now();
+      if (now - lastTapRef.current < DOUBLE_TAP_MS) {
+        lastTapRef.current = 0;
+        onResetRef.current();
+      } else {
+        lastTapRef.current = now;
+      }
     };
     return (
       <View
@@ -667,10 +734,10 @@ function ColumnResizeHandle({
           onPointerDown: handlePointerDown,
           onPointerEnter: () => setHovered(true),
           onPointerLeave: () => setHovered(false),
-          onDoubleClick: onReset,
+          onClick: handleClick,
         } as any)}
         style={[styles.resizeHandle, { cursor: "col-resize" } as any]}
-        accessibilityLabel="Drag to resize column"
+        accessibilityLabel="Drag to resize column (double-click to reset)"
       >
         <View style={[styles.resizeLine, { backgroundColor: lineColor }]} />
       </View>
