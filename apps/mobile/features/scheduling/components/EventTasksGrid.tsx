@@ -138,6 +138,7 @@ export function EventTasksGrid({
   listHeader,
   listFooter,
   sections,
+  storageKey = "eventTasks",
 }: {
   tasks: PlanTask[];
   teams: TeamOption[];
@@ -163,6 +164,13 @@ export function EventTasksGrid({
    * its own team→role sort per segment, instead of one flat table.
    */
   sections?: TaskSection[];
+  /**
+   * Persistence key for drag-to-resize column widths (see `GridScrollList`).
+   * Defaults to "eventTasks" (the plan grid); the task-template editor passes a
+   * DISTINCT key so a template's column layout is remembered separately from a
+   * live plan's.
+   */
+  storageKey?: string;
 }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -399,6 +407,7 @@ export function EventTasksGrid({
         onReorder={handleReorder}
         columns={columns}
         renderCell={(item, columnKey) => renderCell(item, columnKey)}
+        storageKey={storageKey}
         ListHeaderComponent={listHeader ?? undefined}
         ListFooterComponent={footer}
         contentContainerStyle={styles.listContent}

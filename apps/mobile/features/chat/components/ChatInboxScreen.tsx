@@ -373,6 +373,8 @@ export function ChatInboxScreen({
     | { kind: "dm"; item: DirectInboxRow }
     | { kind: "notifications"; item: NotificationsRow }
     | { kind: "ghost"; item: UpcomingChannel }
+    // Serving-mode only: a pinned link to the "who's serving" Team grid.
+    | { kind: "team-link" }
     | { kind: "requests-link"; count: number };
 
   // Render a single inbox row (group, event, dm, section header, or
@@ -382,6 +384,40 @@ export function ChatInboxScreen({
   // Request flow, so we deliberately do NOT interleave them.
   const renderItem = useCallback(
     ({ item }: { item: InboxListItem }) => {
+      if (item.kind === "team-link") {
+        return (
+          <Pressable
+            onPress={() => router.push("/serving/team" as any)}
+            style={styles.requestsLinkRow}
+            accessibilityRole="button"
+            accessibilityLabel="Team — who's serving"
+          >
+            <View
+              style={[styles.requestsLinkIcon, { backgroundColor: primaryColor }]}
+            >
+              <Ionicons name="people" size={20} color="#ffffff" />
+            </View>
+            <View style={styles.requestsLinkContent}>
+              <Text style={[styles.requestsLinkTitle, { color: colors.text }]}>
+                Team
+              </Text>
+              <Text
+                style={[
+                  styles.requestsLinkSubtitle,
+                  { color: colors.textSecondary },
+                ]}
+              >
+                See who&apos;s serving
+              </Text>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={18}
+              color={colors.textSecondary}
+            />
+          </Pressable>
+        );
+      }
       if (item.kind === "requests-link") {
         return (
           <Pressable
@@ -470,6 +506,7 @@ export function ChatInboxScreen({
 
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
+    if (item.kind === "team-link") return "team-link";
     if (item.kind === "requests-link") return "requests-link";
     if (item.kind === "notifications") return "notifications";
     if (item.kind === "ghost") return `ghost:${item.item.channelId}`;
@@ -814,7 +851,13 @@ export function ChatInboxScreen({
         .filter((c) => c.availableAt > now)
         .sort((a, b) => a.availableAt - b.availableAt)
         .map((c) => ({ kind: "ghost" as const, item: c }));
-      return [...listItems, ...dayDmItems, ...ghostItems];
+      // A pinned "Team" card leads the serving inbox — the who's-serving grid.
+      return [
+        { kind: "team-link" as const },
+        ...listItems,
+        ...dayDmItems,
+        ...ghostItems,
+      ];
     }
 
     const dmItems: InboxListItem[] = dmRows.map((row) => ({

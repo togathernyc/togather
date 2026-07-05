@@ -454,6 +454,7 @@ export function TaskTemplateEditorScreen() {
           onPickRole={(task, anchor) => setRolePicker({ task, anchor })}
           onOpenDoc={setDocEditorTask}
           listHeader={listHeader}
+          storageKey="taskTemplate"
         />
       )}
 

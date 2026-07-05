@@ -5,3 +5,4 @@
 export { ServingTasksScreen } from "./components/ServingTasksScreen";
 export { ServingRunsheetScreen } from "./components/ServingRunsheetScreen";
 export { ServingExitScreen } from "./components/ServingExitScreen";
+export { ServingTeamScreen } from "./components/ServingTeamScreen";

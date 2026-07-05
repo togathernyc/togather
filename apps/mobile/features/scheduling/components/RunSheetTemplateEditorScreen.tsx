@@ -670,6 +670,7 @@ export function RunSheetTemplateEditorScreen() {
           onReorder={handleReorder}
           columns={columns}
           renderCell={renderCell}
+          storageKey="runSheetTemplate"
           ListHeaderComponent={listHeader}
           ListFooterComponent={
             <View style={{ paddingBottom: insets.bottom + 8 }}>{listFooter}</View>

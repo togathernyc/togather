@@ -23,6 +23,7 @@ import { useRunSheetCache } from "../stores/runSheetCache";
 import { useServingRunSheetCache } from "../stores/servingRunSheetCache";
 import { useServingTasksCache } from "../stores/servingTasksCache";
 import { useServingTaskQueue } from "../stores/servingTaskQueue";
+import { useGridColumnWidths } from "../stores/gridColumnWidths";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
 
@@ -652,6 +653,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "serving-runsheet-cache",
       "serving-tasks-cache",
       "serving-task-queue",
+      "grid-column-widths",
     ];
 
     await Promise.all(
@@ -671,6 +673,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingRunSheetCache.getState().clearAll();
     useServingTasksCache.getState().clearAll();
     useServingTaskQueue.getState().clear();
+    useGridColumnWidths.getState().clearAll();
 
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {

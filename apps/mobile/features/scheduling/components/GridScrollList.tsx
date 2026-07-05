@@ -20,7 +20,7 @@
  * this component only lays the cells out and draws the divided, padded, sized
  * cell frame (the table chrome).
  */
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -28,6 +28,7 @@ import {
   StyleSheet,
   Pressable,
   Platform,
+  PanResponder,
   type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
@@ -35,6 +36,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useGridColumnWidths } from "@/stores/gridColumnWidths";
 
 /**
  * A data row with a web-only hover highlight (matches the prototype). Pointer
@@ -134,6 +136,14 @@ const SECTION_MIN_HEIGHT = 32;
 const SECTION_KEY_PREFIX = "__gridSectionHeader__:";
 const FOOTER_KEY_PREFIX = "__gridSectionFooter__:";
 
+/** Drag-to-resize bounds — narrow enough to stay usable, wide enough for notes. */
+const MIN_COL_W = 56;
+const MAX_COL_W = 640;
+/** Clamp a candidate column width to the allowed resize range. */
+function clampColWidth(w: number): number {
+  return Math.max(MIN_COL_W, Math.min(MAX_COL_W, w));
+}
+
 interface Props<T> {
   data: T[];
   keyExtractor: (item: T) => string;
@@ -169,6 +179,14 @@ interface Props<T> {
    * drag is not specially handled.
    */
   sections?: GridSection<T>[];
+  /**
+   * OPTIONAL. When set, columns become drag-to-resize: a grab handle appears on
+   * the right edge of every header cell except the last, and the dragged widths
+   * persist (per grid, per column) under this key in `useGridColumnWidths`.
+   * When OMITTED, behavior is identical to before — no handles, no store reads —
+   * so callers that don't opt in are unaffected.
+   */
+  storageKey?: string;
 }
 
 export function GridScrollList<T>({
@@ -182,10 +200,41 @@ export function GridScrollList<T>({
   contentContainerStyle,
   dense = false,
   sections,
+  storageKey,
 }: Props<T>) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const rowMinHeight = dense ? DENSE_ROW_MIN_HEIGHT : ROW_MIN_HEIGHT;
+
+  // ── Column resize (only when `storageKey` is set) ───────────────────────────
+  // Persisted per-column overrides for THIS grid. Selecting the nested slice by
+  // key keeps the reference stable across unrelated store writes, so a resize on
+  // another grid never re-renders this one. `undefined` when not opted in.
+  const storedWidths = useGridColumnWidths((s) =>
+    storageKey ? s.widths[storageKey] : undefined,
+  );
+  const setStoredWidth = useGridColumnWidths((s) => s.setWidth);
+  const resetStoredColumn = useGridColumnWidths((s) => s.resetColumn);
+  // Live width WHILE a handle is being dragged. Held in local state (not the
+  // store) so each pointer/pan move re-renders smoothly without thrashing
+  // AsyncStorage — we only commit the final width to the store on release.
+  const [liveDrag, setLiveDrag] = useState<{ key: string; width: number } | null>(
+    null,
+  );
+  const resizable = !!storageKey;
+
+  // The columns the table actually lays out. An explicit override (or the live
+  // drag) both PINS the width AND cancels `flex`: once a leader has sized a
+  // column, its width is a promise — letting slack redistribution keep nudging
+  // it would make the drag feel indirect and springy. Non-overridden columns
+  // keep their `flex` so the table still fills the card. Label/align/key ride
+  // along unchanged (we spread the original column).
+  const resolvedColumns: GridColumn[] = columns.map((c) => {
+    const live = liveDrag && liveDrag.key === c.key ? liveDrag.width : undefined;
+    const override = storedWidths ? storedWidths[c.key] : undefined;
+    const pinned = live ?? override;
+    return pinned != null ? { ...c, width: pinned, flex: 0 } : c;
+  });
 
   // The card's measured inner size. Width drives the slack distribution; height
   // bounds the inner content so the drag list's vertical scroll works while it
@@ -205,10 +254,10 @@ export function GridScrollList<T>({
   //          and the table keeps its natural width (→ the ScrollView scrolls).
   // innerWidth = max(baseW, containerWidth) so the inner content fills the card
   //          when it fits, and keeps its natural width when it overflows.
-  const baseW = GRIP_W + columns.reduce((sum, c) => sum + c.width, 0);
-  const totalFlex = columns.reduce((sum, c) => sum + (c.flex ?? 0), 0);
+  const baseW = GRIP_W + resolvedColumns.reduce((sum, c) => sum + c.width, 0);
+  const totalFlex = resolvedColumns.reduce((sum, c) => sum + (c.flex ?? 0), 0);
   const slack = Math.max(0, size.w - baseW);
-  const effWidths = columns.map((c) =>
+  const effWidths = resolvedColumns.map((c) =>
     c.flex && totalFlex > 0 ? c.width + (slack * c.flex) / totalFlex : c.width,
   );
   const innerWidth = Math.max(baseW, size.w);
@@ -221,10 +270,21 @@ export function GridScrollList<T>({
     // its 1-line neighbours off-centre. The row stretches every cell to the same
     // height, so the vertical dividers still run the full row.
     justifyContent: "flex-start",
-    alignItems: columns[i].align === "center" ? "center" : "flex-start",
-    borderRightWidth: i < columns.length - 1 ? StyleSheet.hairlineWidth : 0,
+    alignItems: resolvedColumns[i].align === "center" ? "center" : "flex-start",
+    borderRightWidth: i < resolvedColumns.length - 1 ? StyleSheet.hairlineWidth : 0,
     borderRightColor: colors.border,
   });
+
+  // Commit a dragged width to the store on release, and clear the live-drag
+  // state so `resolvedColumns` reads the persisted value from here on.
+  const commitWidth = (columnKey: string, width: number) => {
+    if (storageKey) setStoredWidth(storageKey, columnKey, clampColWidth(width));
+    setLiveDrag(null);
+  };
+  const resetWidth = (columnKey: string) => {
+    if (storageKey) resetStoredColumn(storageKey, columnKey);
+    setLiveDrag(null);
+  };
 
   const headerRow = (
     <View
@@ -237,7 +297,7 @@ export function GridScrollList<T>({
       ]}
     >
       <View style={styles.gripCell} />
-      {columns.map((col, i) => (
+      {resolvedColumns.map((col, i) => (
         <View key={col.key} style={cellFrame(i)}>
           <Text
             style={[
@@ -249,6 +309,18 @@ export function GridScrollList<T>({
           >
             {col.label}
           </Text>
+          {/* Resize handle on the RIGHT edge — you size a column by dragging its
+              own right edge, so the LAST column (nothing to its right) has none. */}
+          {resizable && i < resolvedColumns.length - 1 ? (
+            <ColumnResizeHandle
+              width={effWidths[i]}
+              primaryColor={primaryColor}
+              borderColor={colors.border}
+              onDrag={(w) => setLiveDrag({ key: col.key, width: w })}
+              onCommit={(w) => commitWidth(col.key, w)}
+              onReset={() => resetWidth(col.key)}
+            />
+          ) : null}
         </View>
       ))}
     </View>
@@ -289,7 +361,7 @@ export function GridScrollList<T>({
           <Ionicons name="reorder-three" size={18} color={colors.textTertiary} />
         </View>
       </Handle>
-      {columns.map((col, i) => (
+      {resolvedColumns.map((col, i) => (
         <View key={col.key} style={cellFrame(i)}>
           {renderCell(item, col.key, { isActive })}
         </View>
@@ -484,6 +556,140 @@ export function GridScrollList<T>({
   );
 }
 
+/**
+ * The drag-to-resize grab strip on a header cell's right edge. Cross-platform:
+ *
+ *  - Web: `onPointerDown` snapshots the start clientX + width, then attaches
+ *    window `pointermove`/`pointerup` listeners so the drag keeps tracking even
+ *    when the pointer outruns the 8px strip. Each move reports a LIVE width to
+ *    the parent for smooth feedback; only `pointerup` COMMITS to the store —
+ *    writing on every move would thrash AsyncStorage. Double-click resets the
+ *    column to its default. The `col-resize` cursor is honored by RN-Web.
+ *  - Native: a `PanResponder` does the same live-move / commit-on-release, and
+ *    refuses termination so the horizontal ScrollView can't steal the gesture.
+ *
+ * `width` is the column's CURRENT effective width; it's snapshotted at gesture
+ * start (via a ref) so mid-drag re-renders don't compound the delta.
+ */
+function ColumnResizeHandle({
+  width,
+  primaryColor,
+  borderColor,
+  onDrag,
+  onCommit,
+  onReset,
+}: {
+  width: number;
+  primaryColor: string;
+  borderColor: string;
+  onDrag: (width: number) => void;
+  onCommit: (width: number) => void;
+  onReset: () => void;
+}) {
+  const [active, setActive] = useState(false);
+  const [hovered, setHovered] = useState(false);
+
+  // Latest values mirrored into refs so the once-created PanResponder (native)
+  // and the window listeners (web) always read fresh callbacks / start width
+  // without re-subscribing every render.
+  const widthRef = useRef(width);
+  widthRef.current = width;
+  const onDragRef = useRef(onDrag);
+  onDragRef.current = onDrag;
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+  // The width captured when THIS drag began (stable for the whole gesture).
+  const startWidthRef = useRef(width);
+
+  // Native gesture handler, created once (its closures read the refs above so
+  // they never go stale). Declared UNCONDITIONALLY — before the web branch —
+  // to keep hook order stable; on web it's simply never attached.
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      // Don't yield the gesture to the enclosing horizontal ScrollView.
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: () => {
+        startWidthRef.current = widthRef.current;
+        setActive(true);
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        onDragRef.current(clampColWidth(startWidthRef.current + gesture.dx));
+      },
+      onPanResponderRelease: (_evt, gesture) => {
+        setActive(false);
+        onCommitRef.current(clampColWidth(startWidthRef.current + gesture.dx));
+      },
+      onPanResponderTerminate: (_evt, gesture) => {
+        setActive(false);
+        onCommitRef.current(clampColWidth(startWidthRef.current + gesture.dx));
+      },
+    }),
+  ).current;
+
+  const highlighted = active || hovered;
+  const lineColor = highlighted
+    ? primaryColor
+    : // On web the strip is invisible until hover (discoverable via the cursor);
+      // on native there's no hover, so a faint always-on line hints it's grabbable.
+      Platform.OS === "web"
+      ? "transparent"
+      : borderColor;
+
+  if (Platform.OS === "web") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handlePointerDown = (e: any) => {
+      e.preventDefault?.();
+      e.stopPropagation?.();
+      const startX: number = e.nativeEvent?.clientX ?? e.clientX ?? 0;
+      startWidthRef.current = widthRef.current;
+      setActive(true);
+      const move = (ev: PointerEvent) => {
+        onDragRef.current(clampColWidth(startWidthRef.current + (ev.clientX - startX)));
+      };
+      const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        setActive(false);
+        onCommitRef.current(
+          clampColWidth(startWidthRef.current + (ev.clientX - startX)),
+        );
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+    return (
+      <View
+        // Web-only DOM props — RN-Web forwards these; `cursor` is honored too.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        {...({
+          onPointerDown: handlePointerDown,
+          onPointerEnter: () => setHovered(true),
+          onPointerLeave: () => setHovered(false),
+          onDoubleClick: onReset,
+        } as any)}
+        style={[styles.resizeHandle, { cursor: "col-resize" } as any]}
+        accessibilityLabel="Drag to resize column"
+      >
+        <View style={[styles.resizeLine, { backgroundColor: lineColor }]} />
+      </View>
+    );
+  }
+
+  // Native: attach the PanResponder created above.
+  return (
+    <View
+      {...responder.panHandlers}
+      style={styles.resizeHandle}
+      hitSlop={{ left: 6, right: 6, top: 0, bottom: 0 }}
+      accessibilityLabel="Drag to resize column"
+    >
+      <View style={[styles.resizeLine, { backgroundColor: lineColor }]} />
+    </View>
+  );
+}
+
 /** #RRGGBB (with or without the leading #). Team / role colors are stored as hex. */
 const HEX6 = /^#?[0-9a-fA-F]{6}$/;
 
@@ -614,6 +820,21 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   headerLabelCenter: { textAlign: "center" },
+  // Grab strip on a header cell's right edge. ~8px wide hit area straddling the
+  // divider (right:-4), spanning the full header height. Above neighbouring
+  // cells so its live line/cursor win near the boundary.
+  resizeHandle: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    right: -4,
+    width: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 5,
+  },
+  // The 2px divider line inside the strip — emphasized on hover/active.
+  resizeLine: { width: 2, height: "100%", borderRadius: 1 },
   row: {
     flexDirection: "row",
     alignItems: "stretch",
