@@ -117,13 +117,51 @@ describe("rosterMatrix", () => {
     expect(row?.cells[planA].assignments[0].roleName).toBe("Drums");
     expect(row?.cells[planA].doubleBooked).toBe(true);
     expect(row?.cells[planB].doubleBooked).toBe(true);
-    expect(row?.load).toBe(2);
+    // Total serving load across all groups, and the name-level double-booking
+    // flag (rolled up from the per-cell conflicts above).
+    expect(row?.servingTotal).toBe(2);
+    expect(row?.doubleBooked).toBe(true);
 
     // channelAdmin: available on A, no assignment.
     const adminRow = m.members.find((mm) => mm.userId === world.channelAdminId);
     expect(adminRow?.cells[planA].availability).toBe("available");
     expect(adminRow?.cells[planA].assignments).toHaveLength(0);
     expect(adminRow?.availableCount).toBe(1);
+  });
+
+  it("servingTotal counts assignments beyond the visible columns (across all groups)", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // One hidden past plan and one visible upcoming plan, on different days.
+    const past = await createPlan(t, leader, world.groupId, "Past", Date.now() - 7 * DAY);
+    const soon = await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
+    for (const planId of [past, soon]) {
+      await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+        token: leader,
+        planId,
+        roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+      });
+      await t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leader,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      });
+    }
+
+    // Default window shows only "Soon", but servingTotal counts BOTH the visible
+    // and the hidden-past assignment — the same reach used for cross-group load.
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    expect(m.events.map((e) => e.title)).toEqual(["Soon"]);
+    const row = m.members.find((mm) => mm.userId === world.channelMemberId);
+    expect(row?.servingTotal).toBe(2);
+    // Different days → not double-booked, even though they serve twice overall.
+    expect(row?.doubleBooked).toBe(false);
   });
 
   it("windows columns: upcoming by default, pastLimit leads with recent past", async () => {

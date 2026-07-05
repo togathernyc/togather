@@ -369,8 +369,21 @@ export const rosterMatrix = query({
           dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
         }
 
+        // Serving load is the member's TOTAL live commitment across every group
+        // they belong to — not just this roster's columns — so the "N srv"
+        // leaders see next to a name reads as their whole load. Same cross-group
+        // scope as the double-booking rule above (both off `allAssigns`), so a
+        // person already staffed elsewhere shows as busy here.
+        const servingTotal = allAssigns.filter(
+          (a) => a.status !== "declined",
+        ).length;
+        // Member-level double-booking: any calendar day on which they're staffed
+        // more than once — across groups and beyond the visible columns. This
+        // rolls the per-cell `doubleBooked` flags up into a single name-level
+        // warning (the ⚠ beside the serving count).
+        const doubleBooked = Array.from(dayCounts.values()).some((c) => c >= 2);
+
         let availableCount = 0;
-        let load = 0;
         const cells: Record<
           string,
           {
@@ -390,9 +403,6 @@ export const rosterMatrix = query({
             availByUserPlan.get(`${uid}:${planKey}`) ?? "no_response";
           if (availability === "available") availableCount += 1;
           const planAssigns = myAssigns.filter((a) => a.planId === planKey);
-          for (const a of planAssigns) {
-            if (a.status !== "declined") load += 1;
-          }
           const day = utcDayBucket(plan.eventDate);
           cells[planKey] = {
             availability,
@@ -412,7 +422,8 @@ export const rosterMatrix = query({
           userName: userName(uid, u),
           isLeader: isLeaderRole(m.role),
           availableCount,
-          load,
+          servingTotal,
+          doubleBooked,
           cells,
         };
       }),

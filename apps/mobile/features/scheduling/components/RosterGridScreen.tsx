@@ -134,7 +134,10 @@ type RosterMember = {
   userName: string;
   isLeader: boolean;
   availableCount: number;
-  load: number;
+  /** Total live serving assignments across every group the member belongs to. */
+  servingTotal: number;
+  /** Staffed more than once on the same day (any group) — the ⚠ beside "N srv". */
+  doubleBooked: boolean;
   cells: Record<string, MemberCell>;
 };
 
@@ -210,6 +213,17 @@ function webContextMenu(onOpen: () => void): Record<string, unknown> {
       onOpen();
     },
   };
+}
+
+/**
+ * Web-only `title` tooltip. RN-Web forwards an unknown `title` DOM prop onto the
+ * host node, giving a native hover tooltip; the RN types don't know it, hence
+ * the bag + spread (same idiom as `webContextMenu`). On native this returns
+ * `{}` — the `accessibilityLabel` carries the same text for screen readers.
+ */
+function webTitle(title: string): Record<string, unknown> {
+  if (typeof document === "undefined") return {};
+  return { title };
 }
 
 /** Next Sunday at 9:00 AM local time — the neutral default for a new plan. */
@@ -1763,7 +1777,14 @@ export function RosterGridScreen() {
       style={{ width: NAME_W, flexGrow: 0, flexShrink: 0, flexBasis: NAME_W }}
     >
       {visibleMembers.map((m, i) => {
-        const heavy = m.load >= Math.ceil(events.length / 2);
+        // "N srv" is the member's TOTAL serving load across every group (backend
+        // `servingTotal`), so a leader can see who's already committed elsewhere.
+        // The ⚠ flags a cross-group double-booking — staffed more than once on
+        // the same day (backend `doubleBooked`) — with the reason surfaced via
+        // an accessible label (and a hover tooltip on web).
+        const servingLabel = m.doubleBooked
+          ? `Double-booked — ${m.userName} is serving more than once on the same day across groups. ${m.servingTotal} serving assignment${m.servingTotal === 1 ? "" : "s"} total.`
+          : `${m.servingTotal} serving assignment${m.servingTotal === 1 ? "" : "s"} total.`;
         return (
           <View
             key={m.userId}
@@ -1790,9 +1811,13 @@ export function RosterGridScreen() {
                 <Text style={[styles.subCount, { color: colors.success }]}>
                   ✓{m.availableCount}/{events.length}
                 </Text>
-                <Text style={[styles.subCount, { color: heavy ? colors.warning : colors.textTertiary }]}>
-                  {heavy ? "⚠ " : ""}
-                  {m.load} srv
+                <Text
+                  style={[styles.subCount, { color: m.doubleBooked ? colors.warning : colors.textTertiary }]}
+                  accessibilityLabel={servingLabel}
+                  {...(m.doubleBooked ? webTitle(servingLabel) : {})}
+                >
+                  {m.doubleBooked ? "⚠ " : ""}
+                  {m.servingTotal} srv
                 </Text>
               </View>
             </View>
