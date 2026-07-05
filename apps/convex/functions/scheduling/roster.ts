@@ -369,8 +369,31 @@ export const rosterMatrix = query({
           dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
         }
 
+        // The member's UPCOMING serving commitments across every group they
+        // belong to — bounded to today-onward (the window the grid leads with)
+        // so "N srv" reflects who's busy GOING FORWARD, not a lifetime tally
+        // that only ever grows. Spans groups and weeks beyond the visible
+        // columns, so a person already staffed elsewhere reads as busy here.
+        const upcomingAssigns = allAssigns.filter(
+          (a) => a.status !== "declined" && a.eventDate >= cutoff,
+        );
+        const servingTotal = upcomingAssigns.length;
+        // Name-level double-booking: staffed on two DIFFERENT plans on the same
+        // calendar day (mirrors the assign mutation's `planId !== plan._id &&
+        // same-day` rule, so serving two roles at one event doesn't count).
+        // Counts distinct plans per day across the upcoming assignments.
+        const plansPerDay = new Map<number, Set<string>>();
+        for (const a of upcomingAssigns) {
+          const day = utcDayBucket(a.eventDate);
+          const set = plansPerDay.get(day) ?? new Set<string>();
+          set.add(a.planId as string);
+          plansPerDay.set(day, set);
+        }
+        const doubleBooked = Array.from(plansPerDay.values()).some(
+          (s) => s.size >= 2,
+        );
+
         let availableCount = 0;
-        let load = 0;
         const cells: Record<
           string,
           {
@@ -390,9 +413,6 @@ export const rosterMatrix = query({
             availByUserPlan.get(`${uid}:${planKey}`) ?? "no_response";
           if (availability === "available") availableCount += 1;
           const planAssigns = myAssigns.filter((a) => a.planId === planKey);
-          for (const a of planAssigns) {
-            if (a.status !== "declined") load += 1;
-          }
           const day = utcDayBucket(plan.eventDate);
           cells[planKey] = {
             availability,
@@ -412,7 +432,8 @@ export const rosterMatrix = query({
           userName: userName(uid, u),
           isLeader: isLeaderRole(m.role),
           availableCount,
-          load,
+          servingTotal,
+          doubleBooked,
           cells,
         };
       }),

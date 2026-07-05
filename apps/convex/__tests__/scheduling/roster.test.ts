@@ -117,13 +117,92 @@ describe("rosterMatrix", () => {
     expect(row?.cells[planA].assignments[0].roleName).toBe("Drums");
     expect(row?.cells[planA].doubleBooked).toBe(true);
     expect(row?.cells[planB].doubleBooked).toBe(true);
-    expect(row?.load).toBe(2);
+    // Total serving load across all groups, and the name-level double-booking
+    // flag (rolled up from the per-cell conflicts above).
+    expect(row?.servingTotal).toBe(2);
+    expect(row?.doubleBooked).toBe(true);
 
     // channelAdmin: available on A, no assignment.
     const adminRow = m.members.find((mm) => mm.userId === world.channelAdminId);
     expect(adminRow?.cells[planA].availability).toBe("available");
     expect(adminRow?.cells[planA].assignments).toHaveLength(0);
     expect(adminRow?.availableCount).toBe(1);
+  });
+
+  it("servingTotal counts only upcoming assignments — past ones are excluded", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // One past plan (already served) and one upcoming plan, on different days.
+    const past = await createPlan(t, leader, world.groupId, "Past", Date.now() - 7 * DAY);
+    const soon = await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
+    for (const planId of [past, soon]) {
+      await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+        token: leader,
+        planId,
+        roles: [{ teamId: world.teamId, roleId: world.roleId, count: 1 }],
+      });
+      await t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leader,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+      });
+    }
+
+    // The serving count is forward-looking: the past assignment is NOT counted
+    // (otherwise a long-serving member's count would grow without bound), so
+    // only the upcoming "Soon" assignment shows.
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    expect(m.events.map((e) => e.title)).toEqual(["Soon"]);
+    const row = m.members.find((mm) => mm.userId === world.channelMemberId);
+    expect(row?.servingTotal).toBe(1);
+    // Different days → not double-booked.
+    expect(row?.doubleBooked).toBe(false);
+  });
+
+  it("serving two roles at one event counts twice but is not a double-booking", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const soon = await createPlan(t, leader, world.groupId, "Soon", Date.now() + 7 * DAY);
+
+    // A second role on the same team, so the member can serve two roles at once.
+    const { roleId: role2 } = await t.mutation(
+      api.functions.scheduling.roles.createRole,
+      { token: leader, teamId: world.teamId, name: "Keys" },
+    );
+    await t.mutation(api.functions.scheduling.events.setNeededRoles, {
+      token: leader,
+      planId: soon,
+      roles: [
+        { teamId: world.teamId, roleId: world.roleId, count: 1 },
+        { teamId: world.teamId, roleId: role2, count: 1 },
+      ],
+    });
+    // Same member serves BOTH roles at the single event.
+    for (const roleId of [world.roleId, role2]) {
+      await t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: leader,
+        planId: soon,
+        teamId: world.teamId,
+        roleId,
+        userId: world.channelMemberId,
+      });
+    }
+
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+    const row = m.members.find((mm) => mm.userId === world.channelMemberId);
+    // Two assignments → 2 srv, but a single event → NOT double-booked (the
+    // conflict rule keys on two *different* plans on the same day).
+    expect(row?.servingTotal).toBe(2);
+    expect(row?.doubleBooked).toBe(false);
   });
 
   it("windows columns: upcoming by default, pastLimit leads with recent past", async () => {

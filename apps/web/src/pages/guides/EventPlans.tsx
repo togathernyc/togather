@@ -302,7 +302,13 @@ export function EventPlans() {
           so a fully-staffed week reads as a wall of green and the gaps jump out.
           A segmented <Term>Roles</Term> / <Term>People</Term> control flips the
           grid to a per-person view when you'd rather see one volunteer's whole
-          schedule.
+          schedule. In the People view each name carries a running{" "}
+          <Term>srv</Term> count — how many upcoming times that person is serving
+          across every group they belong to, not just this one — so you can spot
+          who's already carrying a heavy load elsewhere before you add more. When
+          someone is booked on two different events on the same day (in any
+          group), a <Term>⚠</Term> appears beside their count to flag the
+          double-booking.
         </P>
 
         <P>
