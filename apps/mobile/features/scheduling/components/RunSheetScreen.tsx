@@ -60,6 +60,7 @@ import { AnchoredMenu, measureAnchor, type AnchorRect } from "./AnchoredMenu";
 import { SegmentedTabs } from "@components/ui/SegmentedTabs";
 import { CustomModal } from "@components/ui/Modal";
 import { PlanTemplateToolbar } from "./PlanTemplateToolbar";
+import { ServiceTimeSelector } from "./ServiceTimeSelector";
 import { listRunSheetTemplatesRef } from "../api/eventTemplates";
 import {
   getPlanTemplateStateRef,
@@ -402,15 +403,32 @@ export function RunSheetScreen() {
     if (router.canGoBack()) router.back();
   }, [router]);
 
-  // The shared run sheet is timed from the earliest service start.
+  // The shared run sheet is timed from the SELECTED service start. Rows default
+  // to the earliest service; on a multi-service plan the toolbar's service
+  // selector re-bases every row to another service with no writes.
   const times = event?.times ?? [];
-  const earliestStart = useMemo(
-    () =>
-      times.length > 0
-        ? Math.min(...times.map((t) => t.startsAt))
-        : (event?.eventDate ?? Date.now()),
-    [times, event?.eventDate],
+  const earliestIndex = useMemo(() => {
+    if (times.length === 0) return 0;
+    let idx = 0;
+    for (let i = 1; i < times.length; i++) {
+      if (times[i].startsAt < times[idx].startsAt) idx = i;
+    }
+    return idx;
+  }, [times]);
+  // `null` = show the default (earliest) service; a number = user's pick.
+  const [selectedServiceIdx, setSelectedServiceIdx] = useState<number | null>(
+    null,
   );
+  // Guard the upper bound so a pick that outran a shrunk `times` falls back to
+  // the earliest (a same-length reorder isn't tracked — an acceptable rarity).
+  const effectiveServiceIdx =
+    selectedServiceIdx != null && selectedServiceIdx < times.length
+      ? selectedServiceIdx
+      : earliestIndex;
+  const serviceStartMs =
+    times.length > 0
+      ? times[effectiveServiceIdx].startsAt
+      : (event?.eventDate ?? Date.now());
 
   // Group items into before / during / after phases. `listItems` already
   // returns them sorted by (segment, sequence), so each group stays ordered.
@@ -433,9 +451,9 @@ export function RunSheetScreen() {
         itemsBySegment.before,
         itemsBySegment.during,
         itemsBySegment.after,
-        earliestStart,
+        serviceStartMs,
       ),
-    [itemsBySegment, earliestStart],
+    [itemsBySegment, serviceStartMs],
   );
 
   // The service window is the "during" phase — before/after bracket it.
@@ -669,6 +687,13 @@ export function RunSheetScreen() {
                   onRevert={handleRevertTemplate}
                 />
               ) : null}
+              {/* Multi-service plans: pick which service the row clocks anchor
+                  to (renders nothing for a single-service plan). */}
+              <ServiceTimeSelector
+                times={times}
+                selectedIndex={effectiveServiceIdx}
+                onSelect={setSelectedServiceIdx}
+              />
             </View>
           );
 
