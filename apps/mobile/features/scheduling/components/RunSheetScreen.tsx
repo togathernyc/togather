@@ -888,6 +888,7 @@ export function RunSheetScreen() {
               columns={columns}
               renderCell={renderCell}
               sections={sections}
+              storageKey="runSheet"
               dense
               ListHeaderComponent={listHeader}
               // Add controls now live in each section's footer, so the list footer

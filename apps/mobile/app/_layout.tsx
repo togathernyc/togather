@@ -166,6 +166,15 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Serving-mode pushed screens (e.g. the Team who's-serving grid),
+          slide from right like inbox/rostering. */}
+      <Stack.Screen
+        name="serving"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
       {/* Scheduling deep links — assignment request accept/decline screen */}
       <Stack.Screen
         name="scheduling"

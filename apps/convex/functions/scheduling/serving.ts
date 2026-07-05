@@ -17,6 +17,7 @@ import { query } from "../../_generated/server";
 import type { QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { getDisplayName } from "../../lib/utils";
 import { requireGroupMember } from "./permissions";
 import { ADD_DAYS_BEFORE } from "./teamChannelSync";
 
@@ -392,5 +393,165 @@ export const getServingUpcomingChannels = query({
     }
 
     return result;
+  },
+});
+
+/** One serving teammate card in the Team roster grid. */
+type ServingTeamPerson = {
+  userId: string;
+  displayName: string;
+  firstName: string | null;
+  /** The role they fill on this team for this plan, e.g. "Vocals". */
+  roleName: string;
+  roleColor: string | null;
+  profilePhoto: string | null;
+  /** Their phone number, if on file — powers the "Text" action. Null otherwise. */
+  phone: string | null;
+  /** True for the current user's own card (no message/text actions on self). */
+  isSelf: boolean;
+};
+
+/** One team column in a plan's Team roster grid. */
+type ServingTeamColumn = {
+  teamId: string;
+  name: string;
+  people: ServingTeamPerson[];
+};
+
+/** One plan section in the Team roster grid. */
+type ServingTeamPlan = {
+  planId: string;
+  title: string;
+  eventDate: number;
+  teams: ServingTeamColumn[];
+};
+
+/**
+ * Serving-mode "Team" grid: who is serving alongside the current user, grouped
+ * by plan then by team. For EVERY plan the user can currently serve (same
+ * eligibility window as `getServingEligibility` — a `confirmed` assignment plus
+ * "now" inside the plan's same-day window), returns each team that has at least
+ * one confirmed volunteer as a column, and each volunteer as a card (name, the
+ * role they fill, avatar, and phone for the day-of "Text" action).
+ *
+ * One card per (user, role) confirmed assignment — a person filling two roles on
+ * the same team shows two cards. `isSelf` flags the current user's own cards so
+ * the client can suppress the message/text actions on them.
+ *
+ * Membership is already implied by the confirmed assignment, so there is no
+ * extra group-member gate here. Phone numbers are surfaced only among people
+ * confirmed to serve the same event — the day-of coordination context the grid
+ * exists for.
+ *
+ * Auth: any authenticated user.
+ */
+export const getServingTeamRoster = query({
+  args: { token: v.string() },
+  handler: async (ctx, args): Promise<{ plans: ServingTeamPlan[] }> => {
+    const userId = await requireAuth(ctx, args.token);
+    const now = Date.now();
+
+    // Plans the user is confirmed for (mirrors getServingEligibility's window).
+    const confirmed = await ctx.db
+      .query("roleAssignments")
+      .withIndex("by_user_status", (q) =>
+        q.eq("userId", userId).eq("status", "confirmed"),
+      )
+      .collect();
+    const planIds = [...new Set(confirmed.map((a) => a.planId as string))];
+
+    const eligiblePlans: Doc<"eventPlans">[] = [];
+    for (const planIdStr of planIds) {
+      const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
+      if (!plan) continue;
+      const startsAt = planStartsAt(plan);
+      const endsAt = planEndsAt(plan);
+      if (now < startsAt - SAME_DAY_LEAD_MS || now > endsAt) continue;
+      eligiblePlans.push(plan);
+    }
+    // Soonest-first so the grid's plan sections read in event order.
+    eligiblePlans.sort((a, b) => planStartsAt(a) - planStartsAt(b));
+
+    // Resolve every team/role/user referenced across the eligible plans once.
+    const teamCache = new Map<string, Doc<"teams"> | null>();
+    const roleCache = new Map<string, Doc<"teamRoles"> | null>();
+    const userCache = new Map<string, Doc<"users"> | null>();
+    const getTeam = async (id: string) => {
+      if (!teamCache.has(id))
+        teamCache.set(id, await ctx.db.get(id as Id<"teams">));
+      return teamCache.get(id) ?? null;
+    };
+    const getRole = async (id: string) => {
+      if (!roleCache.has(id))
+        roleCache.set(id, await ctx.db.get(id as Id<"teamRoles">));
+      return roleCache.get(id) ?? null;
+    };
+    const getUser = async (id: string) => {
+      if (!userCache.has(id))
+        userCache.set(id, await ctx.db.get(id as Id<"users">));
+      return userCache.get(id) ?? null;
+    };
+
+    const plans: ServingTeamPlan[] = [];
+    for (const plan of eligiblePlans) {
+      const assignments = (
+        await ctx.db
+          .query("roleAssignments")
+          .withIndex("by_plan", (q) => q.eq("planId", plan._id))
+          .collect()
+      ).filter((a) => a.status === "confirmed");
+
+      // Group confirmed assignments by team, de-duping identical (user, role)
+      // rows so a double-written assignment can't produce a duplicate card.
+      const byTeam = new Map<string, typeof assignments>();
+      const seen = new Set<string>();
+      for (const a of assignments) {
+        const dedupeKey = `${a.userId}:${a.roleId}:${a.teamId}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+        const teamId = a.teamId as string;
+        (byTeam.get(teamId) ?? byTeam.set(teamId, []).get(teamId)!).push(a);
+      }
+
+      const teams: ServingTeamColumn[] = [];
+      for (const [teamId, teamAssignments] of byTeam) {
+        const team = await getTeam(teamId);
+        if (!team || team.isArchived === true) continue;
+
+        const people: ServingTeamPerson[] = [];
+        for (const a of teamAssignments) {
+          const [role, user] = await Promise.all([
+            getRole(a.roleId as string),
+            getUser(a.userId as string),
+          ]);
+          people.push({
+            userId: a.userId as string,
+            displayName: getDisplayName(user?.firstName, user?.lastName),
+            firstName: user?.firstName ?? null,
+            roleName: role?.name ?? "Role",
+            roleColor: role?.color ?? null,
+            profilePhoto: user?.profilePhoto ?? null,
+            phone: user?.phone ?? null,
+            isSelf: (a.userId as string) === (userId as string),
+          });
+        }
+        people.sort((x, y) => x.displayName.localeCompare(y.displayName));
+        teams.push({
+          teamId,
+          name: team.name,
+          people,
+        });
+      }
+      teams.sort((x, y) => x.name.localeCompare(y.name));
+
+      plans.push({
+        planId: plan._id as string,
+        title: plan.title,
+        eventDate: plan.eventDate,
+        teams,
+      });
+    }
+
+    return { plans };
   },
 });
