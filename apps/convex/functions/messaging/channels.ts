@@ -1237,6 +1237,10 @@ export const listGroupChannels = query({
     isPinned: v.boolean(),
     lastMessageAt: v.optional(v.number()),
     isShared: v.optional(v.boolean()),
+    /** Number of groups with an ACCEPTED share on this channel. Lets the
+     *  group page label an owned shared channel ("Shared with N groups")
+     *  without shipping the full sharedGroups array to the client. */
+    sharedGroupCount: v.optional(v.number()),
     isEnabled: v.boolean(),
     isServingTeam: v.optional(v.boolean()),
   })),
@@ -1434,6 +1438,9 @@ export const listGroupChannels = query({
           isPinned,
           lastMessageAt: channel.lastMessageAt,
           isShared: channel.isShared || undefined,
+          sharedGroupCount:
+            channel.sharedGroups?.filter((sg) => sg.status === "accepted")
+              .length || undefined,
           isEnabled: channelEffectiveEnabledForGroup(channel, args.groupId),
           isServingTeam: channel.isServingTeam ?? undefined,
         };

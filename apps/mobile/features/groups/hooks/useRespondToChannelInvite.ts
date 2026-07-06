@@ -9,6 +9,30 @@ interface UseRespondToChannelInviteOptions {
 }
 
 /**
+ * Optional invite metadata, used to show the announcements-specific accept
+ * confirmation. Fields come straight off `listPendingInvitesForGroup` rows.
+ */
+export interface RespondInviteContext {
+  channelType?: string;
+  primaryGroupName?: string;
+  /**
+   * Name of the group whose shared Announcements channel this group is
+   * currently an accepted secondary of, if any — accepting a new
+   * announcements share automatically switches away from it.
+   */
+  switchFromGroupName?: string | null;
+}
+
+/** ConvexError carries its payload on `.data`; production `.message` is a
+ *  generic "Server Error" string, so prefer `.data.message` when present. */
+function errorMessage(error: unknown, fallback: string): string {
+  const data = (error as { data?: { message?: string } } | null)?.data;
+  if (typeof data?.message === "string") return data.message;
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+/**
  * Hook to handle responding to shared channel invitations.
  * Encapsulates the mutation, loading state, and confirmation flow.
  */
@@ -25,7 +49,8 @@ export function useRespondToChannelInvite({
   const handleRespond = useCallback(
     async (
       channelId: Id<"chatChannels">,
-      response: "accepted" | "declined"
+      response: "accepted" | "declined",
+      invite?: RespondInviteContext
     ) => {
       if (!token || !groupId) return;
 
@@ -48,11 +73,7 @@ export function useRespondToChannelInvite({
                     response: "declined",
                   });
                 } catch (error) {
-                  const message =
-                    error instanceof Error
-                      ? error.message
-                      : "Failed to decline.";
-                  Alert.alert("Error", message);
+                  Alert.alert("Error", errorMessage(error, "Failed to decline."));
                 } finally {
                   setRespondingTo(null);
                 }
@@ -63,21 +84,41 @@ export function useRespondToChannelInvite({
         return;
       }
 
-      setRespondingTo(`${channelId}-accept`);
-      try {
-        await respondMutation({
-          token,
-          channelId,
-          groupId: groupId as Id<"groups">,
-          response: "accepted",
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to accept.";
-        Alert.alert("Error", message);
-      } finally {
-        setRespondingTo(null);
+      const performAccept = async () => {
+        setRespondingTo(`${channelId}-accept`);
+        try {
+          await respondMutation({
+            token,
+            channelId,
+            groupId: groupId as Id<"groups">,
+            response: "accepted",
+          });
+        } catch (error) {
+          Alert.alert("Error", errorMessage(error, "Failed to accept."));
+        } finally {
+          setRespondingTo(null);
+        }
+      };
+
+      // Accepting an announcements share has group-wide side effects (member
+      // backfill + own Announcements channel turned off), so confirm first.
+      if (invite?.channelType === "announcements") {
+        const ownerName = invite.primaryGroupName ?? "the owning group";
+        Alert.alert(
+          "Accept Announcements share?",
+          `Accepting will add all members of this group to ${ownerName}'s Announcements and turn off this group's own Announcements channel. Leaders of both groups can post.` +
+            (invite.switchFromGroupName
+              ? ` This group will stop receiving announcements from ${invite.switchFromGroupName}.`
+              : ""),
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Accept", onPress: () => void performAccept() },
+          ]
+        );
+        return;
       }
+
+      await performAccept();
     },
     [token, groupId, respondMutation]
   );

@@ -86,6 +86,7 @@ type ChannelType =
   | "main"
   | "leaders"
   | "reach_out"
+  | "announcements"
   | "pco_services"
   | "custom"
   | "cross_team";
@@ -121,6 +122,8 @@ function getChannelIconConfig(
       return { icon: "star", color: "#FFA500", bg: "#FFA50015", defaultName: "Leaders" };
     case "reach_out":
       return { icon: "hand-left", color: "#8E44AD", bg: "#8E44AD15", defaultName: "Reach Out" };
+    case "announcements":
+      return { icon: "megaphone", color: "#E11D48", bg: "#E11D4815", defaultName: "Announcements" };
     case "pco_services":
       return { icon: "sync", color: "#2196F3", bg: "#2196F315", defaultName: "PCO Channel" };
     case "cross_team":
@@ -334,6 +337,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const isReachOut = channelType === "reach_out";
   const isPco = channelType === "pco_services";
   const isCrossTeam = channelType === "cross_team";
+  const isAnnouncements = channelType === "announcements";
   // Renameable types: plain custom, serving-team (which is a `custom` channel
   // flagged isServingTeam — renaming it also renames the team, backend-side),
   // and cross-team. NOT pco_services or system channels (main/leaders/
@@ -404,6 +408,17 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       (sg: any) => sg.groupId === groupId && sg.status === "accepted",
     );
   }, [channel?.groupId, channel?.sharedGroups, groupId]);
+
+  // Only fetched while reviewing a pending ANNOUNCEMENTS invite (leader-gated
+  // on the backend): tells us whether this group already receives
+  // announcements through another share, so the accept confirmation can warn
+  // about the automatic switch.
+  const activeSharedChannels = useQuery(
+    api.functions.messaging.sharedChannels.listActiveSharedChannelsForGroup,
+    token && isPendingShareInvite && channel?.channelType === "announcements"
+      ? { token, groupId: groupId as Id<"groups"> }
+      : "skip",
+  );
 
   const handleBack = useCallback(() => {
     if (router.canGoBack()) {
@@ -479,7 +494,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     }
   }, [channel?._id, leaveChannelMutation, groupId, router]);
 
-  const handleAcceptInvite = useCallback(async () => {
+  const performAcceptInvite = useCallback(async () => {
     if (!channel?._id) return;
     setPendingResponding("accept");
     try {
@@ -491,11 +506,48 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
       // Stay on the screen — getChannelBySlug now re-resolves the channel as an
       // accepted shared channel and the normal management UI takes over.
     } catch (e: any) {
-      Alert.alert("Couldn't accept", e?.message || "Please try again.");
+      // ConvexError payloads (e.g. OWN_CHANNEL_SHARED) carry the readable
+      // message on `.data.message`; `.message` is generic in production.
+      Alert.alert(
+        "Couldn't accept",
+        e?.data?.message ?? e?.message ?? "Please try again.",
+      );
     } finally {
       setPendingResponding(null);
     }
   }, [channel?._id, respondToInviteMutation, groupId]);
+
+  const handleAcceptInvite = useCallback(() => {
+    // Accepting an announcements share has group-wide side effects (member
+    // backfill + this group's own Announcements channel turned off), so it
+    // gets an explicit confirmation. Other channel types accept immediately.
+    if (channel?.channelType === "announcements") {
+      const ownerName = primaryGroupName ?? "the owning group";
+      const currentShare = (activeSharedChannels ?? []).find(
+        (c: any) =>
+          c.channelType === "announcements" && c.channelId !== channel._id,
+      );
+      Alert.alert(
+        "Accept Announcements share?",
+        `Accepting will add all members of this group to ${ownerName}'s Announcements and turn off this group's own Announcements channel. Leaders of both groups can post.` +
+          (currentShare
+            ? ` This group will stop receiving announcements from ${currentShare.primaryGroupName}.`
+            : ""),
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Accept", onPress: () => void performAcceptInvite() },
+        ],
+      );
+      return;
+    }
+    void performAcceptInvite();
+  }, [
+    channel?.channelType,
+    channel?._id,
+    primaryGroupName,
+    activeSharedChannels,
+    performAcceptInvite,
+  ]);
 
   const handleDeclineInvite = useCallback(() => {
     Alert.alert(
@@ -1560,8 +1612,11 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                 </Pressable>
               )}
 
-              {/* Share with groups — custom + pco_services */}
-              {(isCustom || isPco) && (
+              {/* Share with groups — custom + pco_services + announcements.
+                  Announcements can only be shared by the OWNING group's
+                  leaders (a secondary group receives the share; it has
+                  nothing to share out). */}
+              {(isCustom || isPco || (isAnnouncements && !isSecondaryShare)) && (
                 <Pressable
                   onPress={handleManageMembers}
                   style={({ pressed }) => [

@@ -167,7 +167,13 @@ export default function ChannelActiveStateRoute() {
           router.back();
         }
       } catch (e: any) {
-        Alert.alert("Error", e?.message || "Failed to update channel");
+        // ConvexError guards (e.g. CHANNEL_SHARED / IN_SHARED_ANNOUNCEMENTS on
+        // announcements toggles) carry the readable message on `.data.message`;
+        // `.message` is a generic "Server Error" string in production.
+        Alert.alert(
+          "Error",
+          e?.data?.message ?? e?.message ?? "Failed to update channel",
+        );
       } finally {
         setSubmitting(false);
       }
