@@ -26,6 +26,12 @@ This folder contains Architecture Decision Records (ADRs) and implementation gui
 |-----|--------|-------------|
 | [ADR-010](./ADR-010-primary-admin-role.md) | Implemented | Primary admin role hierarchy |
 
+### Developer Platform
+
+| ADR | Status | Description |
+|-----|--------|-------------|
+| [ADR-029](./ADR-029-contributor-dev-dashboard.md) | Proposed | Contributor dev dashboard: in-house AI-driven contribution pipeline |
+
 ---
 
 ## Frontend Architecture Decisions
