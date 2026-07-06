@@ -937,6 +937,11 @@ function Footer() {
                   </Link>
                 </li>
                 <li>
+                  <Link to="/contribute/ai" className="hover:text-white">
+                    AI Workflow
+                  </Link>
+                </li>
+                <li>
                   <Link to="/developers" className="hover:text-white">
                     Developer API
                   </Link>
