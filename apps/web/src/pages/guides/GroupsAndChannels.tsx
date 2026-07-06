@@ -17,6 +17,7 @@ import { appLinks } from "../../guides/appLinks";
 const toc: TocItem[] = [
   { id: "create", label: "Create groups for teams & campuses" },
   { id: "channels", label: "The channels inside a group" },
+  { id: "share-announcements", label: "Sharing an Announcements channel" },
   { id: "custom-channels", label: "Custom channels & invite links" },
   { id: "leaders", label: "Members & leaders" },
   { id: "make-leader", label: "Making someone a leader" },
@@ -476,6 +477,53 @@ export function GroupsAndChannels() {
         </P>
       </Section>
 
+      <Section
+        id="share-announcements"
+        title="Sharing an Announcements channel"
+      >
+        <P>
+          Related groups often need the same announcements — think of a{" "}
+          <strong>Worship Team</strong> and the <strong>Tech Team</strong> that
+          serves alongside it. Instead of posting the same message in each
+          group, a leader can <strong>share their group&rsquo;s Announcements
+          channel with other groups</strong> so everyone reads one feed.
+        </P>
+
+        <Steps>
+          <Step n={1}>
+            Open your Announcements channel and go to its info/members screen.
+          </Step>
+          <Step n={2}>
+            Tap <Term>Share with Groups</Term> and pick the group you want to
+            invite.
+          </Step>
+          <Step n={3}>
+            That group&rsquo;s leaders get the invite and choose to accept or
+            decline.
+          </Step>
+        </Steps>
+
+        <P>
+          When a group accepts, all of its members are added to the shared
+          channel automatically — and anyone who joins the group later is added
+          too, so the roster never drifts. The accepting group&rsquo;s own
+          Announcements channel is turned off automatically (its history is
+          kept), so members see one announcements feed instead of two. Leaders
+          of the owning group <strong>and</strong> of every group that accepted
+          can post.
+        </P>
+
+        <Callout tone="note" title="One Announcements channel per group">
+          A group can only be part of one Announcements channel at a time.
+          Accepting a different share moves the group over automatically, and
+          leaving a share (or being removed from one) restores the group&rsquo;s
+          own Announcements channel to how it was before. One more rule: a group
+          that&rsquo;s sharing its own Announcements channel with others
+          can&rsquo;t also accept another group&rsquo;s share — it needs to
+          unshare first.
+        </Callout>
+      </Section>
+
       <Section id="custom-channels" title="Custom channels & invite links">
         <P>
           Beyond the built-in channels, leaders can create their own{" "}
@@ -538,7 +586,8 @@ export function GroupsAndChannels() {
         </P>
         <Steps>
           <Step n={1}>
-            Create custom channels and enable the Announcements channel.
+            Create custom channels, enable the Announcements channel, and share
+            it with other groups.
           </Step>
           <Step n={2}>
             Post in the Announcements channel (members can only read it).
