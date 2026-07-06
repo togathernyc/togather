@@ -738,7 +738,9 @@ export const sendMessage = mutation({
       // member is a channel member (so unread counts work) but only group
       // leaders can post. Block sends from non-leaders here regardless of
       // channel-member role, since channel role is denormalized at sync time
-      // and may lag the source-of-truth on `groupMembers`.
+      // and may lag the source-of-truth on `groupMembers`. For shared
+      // announcements channels, leaders of any ACCEPTED secondary group can
+      // post too; pending invitees get nothing.
       if (channel.channelType === "announcements") {
         if (!channelIsLeaderEnabled(channel) || channel.isArchived) {
           throw new Error("This channel is disabled");
@@ -753,7 +755,24 @@ export const sendMessage = mutation({
           )
           .filter((q) => q.eq(q.field("leftAt"), undefined))
           .first();
-        if (!isLeaderRole(groupMembership?.role)) {
+        let canPost = isLeaderRole(groupMembership?.role);
+        if (!canPost) {
+          for (const sg of channel.sharedGroups ?? []) {
+            if (sg.status !== "accepted") continue;
+            const secondaryMembership = await ctx.db
+              .query("groupMembers")
+              .withIndex("by_group_user", (q) =>
+                q.eq("groupId", sg.groupId).eq("userId", userId)
+              )
+              .filter((q) => q.eq(q.field("leftAt"), undefined))
+              .first();
+            if (isLeaderRole(secondaryMembership?.role)) {
+              canPost = true;
+              break;
+            }
+          }
+        }
+        if (!canPost) {
           throw new ConvexError({
             code: "FORBIDDEN",
             message: "Only group leaders can post in Announcements",

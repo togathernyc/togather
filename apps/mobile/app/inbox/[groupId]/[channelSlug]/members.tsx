@@ -199,8 +199,13 @@ export default function ChannelMembersScreen() {
     return isOwner || isGroupLeader;
   }, [channelData, user]);
 
-  // Can the user share this channel (primary leader only, custom/pco channels)
-  const canShare = canManage && isPrimaryGroup && (channelData?.channelType === "custom" || channelData?.channelType === "pco_services");
+  // Can the user share this channel (primary leader only, custom/pco/announcements channels)
+  const canShare =
+    canManage &&
+    isPrimaryGroup &&
+    (channelData?.channelType === "custom" ||
+      channelData?.channelType === "pco_services" ||
+      channelData?.channelType === "announcements");
 
   // Check if this is a custom channel
   const isCustomChannel = useMemo(() => {

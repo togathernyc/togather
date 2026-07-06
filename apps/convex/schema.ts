@@ -1581,7 +1581,11 @@ export default defineSchema({
    */
   chatChannels: defineTable({
     groupId: v.optional(v.id("groups")),
-    /** Set for ad-hoc channels (dm, group_dm) that are not bound to a group. */
+    /**
+     * Set for ad-hoc channels (dm, group_dm) that are not bound to a group,
+     * and for announcements/shared channels so `by_community_isShared` can
+     * scope share scans to one community.
+     */
     communityId: v.optional(v.id("communities")),
     /** Convenience flag: true for ad-hoc dm/group_dm channels. */
     isAdHoc: v.optional(v.boolean()),
@@ -1628,6 +1632,14 @@ export default defineSchema({
           sortOrder: v.optional(v.number()), // How this group orders the channel
           /** Linked group's leaders hid the channel from tab bar / chat; owning group unchanged. */
           hiddenFromNavigation: v.optional(v.boolean()),
+          /**
+           * Announcements-type shares only: whether this group's OWN
+           * announcements channel was enabled when it accepted the share
+           * (accepting disables it). Used to restore the prior state when the
+           * group later leaves the share. Carried over when switching shares
+           * so the true original state survives back-to-back shares.
+           */
+          previousAnnouncementsChannelEnabled: v.optional(v.boolean()),
         }),
       ),
     ),
@@ -1669,6 +1681,7 @@ export default defineSchema({
     .index("by_lastMessageAt", ["lastMessageAt"])
     .index("by_archived", ["isArchived"])
     .index("by_isShared", ["isShared"])
+    .index("by_community_isShared", ["communityId", "isShared"])
     .index("by_inviteShortId", ["inviteShortId"])
     .index("by_meetingId", ["meetingId"])
     .index("by_dmPairKey", ["dmPairKey"])

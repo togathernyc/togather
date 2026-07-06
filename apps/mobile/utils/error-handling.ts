@@ -24,6 +24,19 @@ export function showAlert(title: string, message: string): void {
 }
 
 /**
+ * Extract a readable message from a ConvexError (or plain Error).
+ *
+ * ConvexError carries its payload on `.data`; production `.message` is a
+ * generic "Server Error" string, so prefer `.data.message` when present.
+ */
+export function errorMessage(error: unknown, fallback: string): string {
+  const data = (error as { data?: { message?: string } } | null)?.data;
+  if (typeof data?.message === 'string') return data.message;
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
+
+/**
  * Map of known error messages to user-friendly versions
  * Add entries here to customize error messages shown to users
  */

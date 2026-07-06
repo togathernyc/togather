@@ -22,7 +22,10 @@ import {
   DEFAULT_RSVP_OPTIONS,
 } from "../../lib/meetingConfig";
 import { syncUserChannelMembershipsLogic } from "../sync/memberships";
-import { ensureChannelsForGroupLogic } from "../messaging/channels";
+import {
+  ensureChannelsForGroupLogic,
+  restoreOwnAnnouncementsChannelLogic,
+} from "../messaging/channels";
 import { MutationCtx } from "../../_generated/server";
 import { buildMeetingSearchText } from "../../lib/meetingSearchText";
 
@@ -385,6 +388,30 @@ export const update = mutation({
 
         for (const member of activeMembers) {
           await ctx.db.patch(member._id, { leftAt: timestamp });
+        }
+
+        // Archiving the OWNER of a shared announcements channel ends the
+        // share: every accepted secondary whose own announcements channel was
+        // disabled by accepting gets it re-enabled and repopulated.
+        if (channel.channelType === "announcements") {
+          for (const sg of channel.sharedGroups ?? []) {
+            if (
+              sg.status === "accepted" &&
+              sg.previousAnnouncementsChannelEnabled === true
+            ) {
+              await restoreOwnAnnouncementsChannelLogic(ctx, sg.groupId, userId);
+            }
+          }
+
+          // The share itself ends too — clear the entries so unarchiving the
+          // group and re-enabling the channel doesn't resurrect the share
+          // from stale accepted entries.
+          if ((channel.sharedGroups?.length ?? 0) > 0) {
+            await ctx.db.patch(channel._id, {
+              sharedGroups: [],
+              isShared: false,
+            });
+          }
         }
       }
 

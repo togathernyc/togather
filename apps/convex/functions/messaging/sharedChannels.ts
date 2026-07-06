@@ -13,12 +13,113 @@
 
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "../../_generated/server";
+import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { isLeaderRole } from "../../lib/helpers";
+import { channelIsLeaderEnabled, isLeaderRole } from "../../lib/helpers";
 import { getChannelSlug } from "../../lib/slugs";
-import { updateChannelMemberCount } from "./helpers";
+import {
+  updateChannelMemberCount,
+  findAcceptedSharedAnnouncementsChannelsForGroup,
+  type SharedGroupEntry,
+} from "./helpers";
+import {
+  ensureChannelMembership,
+  restoreOwnAnnouncementsChannelLogic,
+} from "./channels";
+
+// ============================================================================
+// Shared Helpers
+// ============================================================================
+
+/**
+ * Removes a group's entry from a shared channel's `sharedGroups` and
+ * soft-deletes channel members who belong ONLY to the removed group (members
+ * also in the primary group or another accepted group stay). Recomputes
+ * `memberCount` and unsets `isShared` when no entries remain.
+ *
+ * Returns the removed entry, or null if the group wasn't on the channel.
+ * Used by `removeGroupFromChannel` and by the announcements accept-switch
+ * path in `respondToChannelInvite`.
+ */
+async function removeGroupEntryAndCleanupMembers(
+  ctx: MutationCtx,
+  channel: Doc<"chatChannels">,
+  groupId: Id<"groups">,
+  now: number
+): Promise<SharedGroupEntry | null> {
+  const existingSharedGroups = channel.sharedGroups ?? [];
+  const groupIndex = existingSharedGroups.findIndex(
+    (sg) => sg.groupId === groupId
+  );
+  if (groupIndex === -1) {
+    return null;
+  }
+
+  const removedEntry = existingSharedGroups[groupIndex];
+
+  // Remove the entry
+  const updatedSharedGroups = existingSharedGroups.filter(
+    (_, i) => i !== groupIndex
+  );
+  const isStillShared = updatedSharedGroups.length > 0;
+
+  // Determine the set of remaining group IDs (primary + other accepted secondary groups)
+  const remainingGroupIds = new Set<string>();
+  if (channel.groupId) {
+    remainingGroupIds.add(channel.groupId); // primary group always remains
+  }
+  for (const sg of updatedSharedGroups) {
+    if (sg.status === "accepted") {
+      remainingGroupIds.add(sg.groupId);
+    }
+  }
+
+  // Get all active channel members
+  const activeMembers = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .collect();
+
+  // For each active channel member, check if they belong to any remaining group
+  for (const member of activeMembers) {
+    let belongsToRemainingGroup = false;
+
+    for (const gId of remainingGroupIds) {
+      const gMembership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", gId as Id<"groups">).eq("userId", member.userId)
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+
+      if (gMembership) {
+        belongsToRemainingGroup = true;
+        break;
+      }
+    }
+
+    if (!belongsToRemainingGroup) {
+      // Soft-delete the channel membership
+      await ctx.db.patch(member._id, { leftAt: now });
+    }
+  }
+
+  // Update the channel
+  await ctx.db.patch(channel._id, {
+    sharedGroups: updatedSharedGroups,
+    isShared: isStillShared,
+    updatedAt: now,
+  });
+
+  // Recompute member count
+  await updateChannelMemberCount(ctx, channel._id);
+
+  return removedEntry;
+}
 
 // ============================================================================
 // Invitation Flow Mutations
@@ -83,6 +184,32 @@ export const inviteGroupToChannel = mutation({
       throw new ConvexError("Can only invite groups from the same community");
     }
 
+    if (channel.channelType === "announcements") {
+      // Can't share a disabled/archived channel — the invited group would
+      // accept into a channel nobody can use.
+      if (channel.isArchived || !channelIsLeaderEnabled(channel)) {
+        throw new ConvexError({
+          code: "CHANNEL_DISABLED",
+          message:
+            "This Announcements channel is disabled or archived. Re-enable it before sharing it with other groups.",
+        });
+      }
+
+      // A group that receives announcements through another group's shared
+      // channel can't share its own — it would relay a share of a share.
+      const owningGroupShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+        ctx,
+        channelGroupId
+      );
+      if (owningGroupShares.length > 0) {
+        throw new ConvexError({
+          code: "OWNER_IS_SECONDARY",
+          message:
+            "This group receives announcements through another group's shared Announcements channel. Leave that share before sharing its own Announcements channel.",
+        });
+      }
+    }
+
     // Duplicate check: cannot invite a group that's already in sharedGroups
     const existingSharedGroups = channel.sharedGroups ?? [];
     const alreadyInvited = existingSharedGroups.some(
@@ -109,6 +236,10 @@ export const inviteGroupToChannel = mutation({
       isShared: true,
       sharedGroups: updatedSharedGroups,
       updatedAt: now,
+      // Stamp communityId (from the owning group) so community-scoped share
+      // scans (by_community_isShared) see this channel — defensive for
+      // channels created before communityId was denormalized.
+      ...(channel.communityId ? {} : { communityId: primaryGroup.communityId }),
     });
 
     // Notify leaders of the invited group
@@ -176,6 +307,86 @@ export const respondToChannelInvite = mutation({
     const now = Date.now();
 
     if (args.response === "accepted") {
+      // Can't accept into a disabled/archived channel — the accepting group
+      // would be joined to a channel nobody can use, and the backfill batch
+      // would bail anyway.
+      if (channel.isArchived || !channelIsLeaderEnabled(channel)) {
+        throw new ConvexError({
+          code: "CHANNEL_DISABLED",
+          message:
+            "This channel is disabled or archived and can't be joined. Ask the owning group to re-enable it first.",
+        });
+      }
+
+      // Announcements shares have accept-time side effects: the accepting
+      // group's members are backfilled into the shared channel and its own
+      // announcements channel is disabled (prior state recorded so it can be
+      // restored when the group later leaves the share).
+      let previousAnnouncementsChannelEnabled: boolean | undefined;
+
+      if (channel.channelType === "announcements") {
+        // Guard: a group whose OWN announcements channel is itself shared
+        // (pending or accepted entries) can't also receive announcements
+        // through another group's channel — unshare first.
+        const ownChannel = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group_type", (q) =>
+            q.eq("groupId", args.groupId).eq("channelType", "announcements")
+          )
+          .first();
+        if (ownChannel && (ownChannel.sharedGroups?.length ?? 0) > 0) {
+          throw new ConvexError({
+            code: "OWN_CHANNEL_SHARED",
+            message:
+              "This group's own Announcements channel is shared with other groups. Unshare it before accepting another group's Announcements channel.",
+          });
+        }
+
+        // Accept = switch: if already an accepted secondary of a DIFFERENT
+        // shared announcements channel (at most one can exist per group),
+        // leave it (same cleanup as removeGroupFromChannel) — but do NOT
+        // restore the own channel mid-switch. Carry the OLD entry's recorded
+        // prior state onto the new entry so the true original state is
+        // restored on the final leave.
+        const acceptedShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+          ctx,
+          args.groupId
+        );
+        const oldShare = acceptedShares.find(
+          ({ channel: otherChannel }) => otherChannel._id !== args.channelId
+        );
+        if (oldShare) {
+          await removeGroupEntryAndCleanupMembers(
+            ctx,
+            oldShare.channel,
+            args.groupId,
+            now
+          );
+        }
+
+        const ownChannelEnabled =
+          !!ownChannel &&
+          ownChannel.isArchived !== true &&
+          channelIsLeaderEnabled(ownChannel);
+
+        // Legacy entries created before prior-state tracking have no recorded
+        // value — fall back to the CURRENT own-channel state.
+        previousAnnouncementsChannelEnabled =
+          (oldShare
+            ? oldShare.entry.previousAnnouncementsChannelEnabled
+            : undefined) ?? ownChannelEnabled;
+
+        // Accepting disables the group's own announcements channel —
+        // announcements now flow through the share.
+        if (ownChannel && ownChannelEnabled) {
+          await ctx.db.patch(ownChannel._id, {
+            isEnabled: false,
+            disabledByUserId: userId,
+            updatedAt: now,
+          });
+        }
+      }
+
       // Update the entry in place
       const updatedSharedGroups = [...existingSharedGroups];
       updatedSharedGroups[inviteIndex] = {
@@ -183,12 +394,37 @@ export const respondToChannelInvite = mutation({
         status: "accepted",
         respondedById: userId,
         respondedAt: now,
+        ...(channel.channelType === "announcements"
+          ? { previousAnnouncementsChannelEnabled }
+          : {}),
       };
 
       await ctx.db.patch(args.channelId, {
         sharedGroups: updatedSharedGroups,
         updatedAt: now,
       });
+
+      // Backfill: every active member of the accepting group becomes a
+      // channel member (leaders mirror to channel role "admin"), in scheduled
+      // batches.
+      if (channel.channelType === "announcements") {
+        // Add the accepting leader synchronously so they can post immediately,
+        // before the async batch backfills everyone else (see
+        // ensureChannelMembership). Leaders mirror to channel role "admin".
+        await ensureChannelMembership(ctx, args.channelId, userId, "admin", now);
+
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.messaging.channels.populateChannelMembersBatch,
+          {
+            groupId: args.groupId,
+            channelId: args.channelId,
+            mirrorGroupRole: true,
+            cursor: null,
+            processed: 0,
+          }
+        );
+      }
     } else {
       // Decline: remove the entry from sharedGroups
       const updatedSharedGroups = existingSharedGroups.filter(
@@ -264,74 +500,29 @@ export const removeGroupFromChannel = mutation({
       );
     }
 
-    // Find the group in sharedGroups
-    const existingSharedGroups = channel.sharedGroups ?? [];
-    const groupIndex = existingSharedGroups.findIndex(
-      (sg) => sg.groupId === args.groupId
+    const now = Date.now();
+
+    // Remove the entry and soft-delete members exclusive to the removed group
+    const removedEntry = await removeGroupEntryAndCleanupMembers(
+      ctx,
+      channel,
+      args.groupId,
+      now
     );
 
-    if (groupIndex === -1) {
+    if (!removedEntry) {
       throw new ConvexError("Group is not shared on this channel");
     }
 
-    // Remove the entry
-    const updatedSharedGroups = existingSharedGroups.filter(
-      (_, i) => i !== groupIndex
-    );
-
-    const now = Date.now();
-    const isStillShared = updatedSharedGroups.length > 0;
-
-    // Determine the set of remaining group IDs (primary + other accepted secondary groups)
-    const remainingGroupIds = new Set<string>();
-    remainingGroupIds.add(channelGroupId); // primary group always remains
-    for (const sg of updatedSharedGroups) {
-      if (sg.status === "accepted") {
-        remainingGroupIds.add(sg.groupId);
-      }
+    // Leaving an announcements share restores the group's own announcements
+    // channel if accepting the share is what disabled it.
+    if (
+      channel.channelType === "announcements" &&
+      removedEntry.status === "accepted" &&
+      removedEntry.previousAnnouncementsChannelEnabled === true
+    ) {
+      await restoreOwnAnnouncementsChannelLogic(ctx, args.groupId, userId);
     }
-
-    // Get all active channel members
-    const activeMembers = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) => q.eq(q.field("leftAt"), undefined))
-      .collect();
-
-    // For each active channel member, check if they belong to any remaining group
-    for (const member of activeMembers) {
-      let belongsToRemainingGroup = false;
-
-      for (const gId of remainingGroupIds) {
-        const gMembership = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", gId as Id<"groups">).eq("userId", member.userId)
-          )
-          .filter((q) => q.eq(q.field("leftAt"), undefined))
-          .first();
-
-        if (gMembership) {
-          belongsToRemainingGroup = true;
-          break;
-        }
-      }
-
-      if (!belongsToRemainingGroup) {
-        // Soft-delete the channel membership
-        await ctx.db.patch(member._id, { leftAt: now });
-      }
-    }
-
-    // Update the channel
-    await ctx.db.patch(args.channelId, {
-      sharedGroups: updatedSharedGroups,
-      isShared: isStillShared,
-      updatedAt: now,
-    });
-
-    // Recompute member count
-    await updateChannelMemberCount(ctx, args.channelId);
   },
 });
 
