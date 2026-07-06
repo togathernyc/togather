@@ -62,6 +62,17 @@ export const DEFAULT_RSVP_OPTIONS: RsvpOption[] = [
 ];
 
 /**
+ * RSVP option ids are stable semantic slots — hosts can rename the labels
+ * (e.g. "I'm there 😳") but the editor (RsvpOptionsEditor.tsx) never changes
+ * the ids, so id is the label-agnostic way to identify an option's meaning.
+ * Keep in sync with GOING_RSVP_OPTION_ID in
+ * apps/mobile/features/events/components/EventRsvpSection.tsx.
+ */
+export const GOING_RSVP_OPTION_ID = 1;
+export const MAYBE_RSVP_OPTION_ID = 2;
+export const CANT_GO_RSVP_OPTION_ID = 3;
+
+/**
  * RSVP option IDs whose responders are considered "attending enough" to:
  *   - be seated in the event chat channel (and thus get update notifications)
  *   - receive host text blasts
@@ -70,7 +81,10 @@ export const DEFAULT_RSVP_OPTIONS: RsvpOption[] = [
  * excluded. These are matched by id, so events using custom option labels are
  * still keyed off the conventional Going/Maybe slots.
  */
-export const NOTIFIED_RSVP_OPTION_IDS: number[] = [1, 2];
+export const NOTIFIED_RSVP_OPTION_IDS: number[] = [
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+];
 
 /** Whether an RSVP option id grants chat membership + blast/update delivery. */
 export function isNotifiedRsvpOptionId(optionId: number): boolean {

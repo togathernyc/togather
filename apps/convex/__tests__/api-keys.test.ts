@@ -211,9 +211,11 @@ async function seedMeeting(
         });
       }
     };
+    // Option ids follow the standard slots: 1 = Going, 2 = Maybe, 3 = Can't Go
+    // (see DEFAULT_RSVP_OPTIONS in lib/meetingConfig.ts).
     await insertRsvps(rsvps.going ?? 0, 1, rsvps.goingGuests);
-    await insertRsvps(rsvps.notGoing ?? 0, 2);
-    await insertRsvps(rsvps.maybe ?? 0, 3);
+    await insertRsvps(rsvps.maybe ?? 0, 2);
+    await insertRsvps(rsvps.notGoing ?? 0, 3);
 
     return meetingId;
   });

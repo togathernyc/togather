@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
-import { isGoingOptionLabel } from "./EventRsvpSection";
+import { isGoingRsvpOption, MAYBE_RSVP_OPTION_ID } from "./EventRsvpSection";
 
 // ============================================================================
 // Types
@@ -30,15 +30,8 @@ export interface RsvpData {
   totalWithGuests?: number;
 }
 
-export interface RsvpOption {
-  id: number;
-  label: string;
-  enabled: boolean;
-}
-
 interface GuestListPreviewProps {
   rsvpData: RsvpData;
-  rsvpOptions: RsvpOption[];
   onViewAll: () => void;
   /** When true, the RSVP count is considered private. */
   hideRsvpCount?: boolean;
@@ -61,7 +54,6 @@ const AVATAR_ROW_MIN_FOR_HIDDEN_COUNT = 5;
  */
 export function GuestListPreview({
   rsvpData,
-  rsvpOptions,
   onViewAll,
   hideRsvpCount = false,
   canSeeCount = false,
@@ -72,20 +64,14 @@ export function GuestListPreview({
   // there are enough attendees to fill the row (otherwise the sparse stack
   // would leak roughly how many RSVP'd).
   const countIsHidden = hideRsvpCount && !canSeeCount;
-  // Find the "Going" option to show those guests. Uses the same heuristic
-  // as isGoingOption in apps/convex/lib/rsvpGuests.ts so decline variants
-  // ("Not Going") aren't mistakenly treated as Going.
-  const goingOption = rsvpOptions.find((opt) => isGoingOptionLabel(opt.label));
-  const goingRsvp = rsvpData.rsvps.find((r) => r.option.id === goingOption?.id);
+  // RSVP groups are matched by their stable id slots (1 = Going, 2 = Maybe)
+  // so custom labels ("I'm there 😳") don't break the guest preview.
+  const goingRsvp = rsvpData.rsvps.find((r) => isGoingRsvpOption(r.option));
   const goingCount = goingRsvp?.count || 0;
   const goingGuestCount = goingRsvp?.guestCount || 0;
   const goingUsers = goingRsvp?.users || [];
 
-  // Find the "Maybe" option to also show those guests
-  const maybeOption = rsvpOptions.find((opt) =>
-    opt.label.toLowerCase().includes("maybe")
-  );
-  const maybeRsvp = rsvpData.rsvps.find((r) => r.option.id === maybeOption?.id);
+  const maybeRsvp = rsvpData.rsvps.find((r) => r.option.id === MAYBE_RSVP_OPTION_ID);
   const maybeCount = maybeRsvp?.count || 0;
   const maybeUsers = maybeRsvp?.users || [];
 

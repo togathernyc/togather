@@ -38,19 +38,11 @@ export default function RsvpProfileScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [registerPending, setRegisterPending] = useState(false);
 
-  // Get event details to find the option label using Convex
+  // Get event details (for the meeting id) using Convex
   const event = useQuery(
     api.functions.meetings.index.getByShortId,
     shortId ? { shortId } : "skip"
   );
-
-  const getOptionLabel = useCallback(() => {
-    if (!event?.rsvpOptions || !optionId) return "Going";
-    const option = (event.rsvpOptions as any[]).find(
-      (o) => o.id === parseInt(optionId, 10)
-    );
-    return option?.label || "Going";
-  }, [event, optionId]);
 
   const submitRsvp = useCallback(async () => {
     if (!event?.id || !optionId) return;
@@ -118,7 +110,7 @@ export default function RsvpProfileScreen() {
       // Navigate to success
       router.replace({
         pathname: `/e/${shortId}/rsvp/success`,
-        params: { optionLabel: getOptionLabel() },
+        params: { optionId },
       });
     } catch (err: any) {
       setRegisterPending(false);

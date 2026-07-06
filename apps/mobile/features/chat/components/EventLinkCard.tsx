@@ -24,7 +24,7 @@ import type { PrefetchedEventData } from '../context/ChatPrefetchContext';
 import {
   DEFAULT_MAX_GUESTS_PER_RSVP,
   GuestStepper,
-  isGoingOptionLabel,
+  isGoingRsvpOption,
 } from '@/features/events/components/EventRsvpSection';
 
 interface EventLinkCardProps {
@@ -511,9 +511,7 @@ export function EventLinkCard({ shortId, isMyMessage = true, embedded = false, p
   // Identify the currently-selected option (if any) to conditionally show
   // the plus-ones stepper underneath the RSVP list.
   const selectedOption = rsvpOptions.find((o) => o.id === myRsvp?.optionId) ?? null;
-  const selectedIsGoing = selectedOption
-    ? isGoingOptionLabel(selectedOption.label)
-    : false;
+  const selectedIsGoing = isGoingRsvpOption(selectedOption);
   const maxGuests =
     ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
     DEFAULT_MAX_GUESTS_PER_RSVP;

@@ -449,10 +449,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
         guestCount: 0,
       });
       // Navigate to success screen with animation (use replace to avoid duplicate event screens in stack)
-      const selectedOption = rsvpOptions.find((o) => o.id === optionId);
       router.replace({
         pathname: `/e/${shortId}/rsvp/success`,
-        params: { optionLabel: selectedOption?.label || "Going" },
+        params: { optionId: String(optionId) },
       });
     } finally {
       setLoadingOptionId(null);
@@ -473,10 +472,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       // Only navigate to success screen if the option actually changed.
       // Guest-count-only edits should stay on the event page.
       if (optionId !== myRsvp?.optionId) {
-        const selectedOption = rsvpOptions.find((o) => o.id === optionId);
         router.replace({
           pathname: `/e/${shortId}/rsvp/success`,
-          params: { optionLabel: selectedOption?.label || "Going" },
+          params: { optionId: String(optionId) },
         });
       }
     } finally {
@@ -997,7 +995,6 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
           {showGuestListPreview && !isLoadingRsvp && rsvpData && (
             <GuestListPreview
               rsvpData={rsvpData as RsvpData}
-              rsvpOptions={rsvpOptions}
               onViewAll={handleViewGuestList}
               hideRsvpCount={(eventData as any)?.hideRsvpCount === true}
               canSeeCount={canEdit}
