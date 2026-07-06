@@ -47,6 +47,7 @@ import type * as functions_communityWideEvents from "../functions/communityWideE
 import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
 import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
 import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
+import type * as functions_devAssistant_contributions from "../functions/devAssistant/contributions.js";
 import type * as functions_devAssistant_index from "../functions/devAssistant/index.js";
 import type * as functions_devAssistant_maintainers from "../functions/devAssistant/maintainers.js";
 import type * as functions_devAssistant_prompts from "../functions/devAssistant/prompts.js";
@@ -275,6 +276,7 @@ declare const fullApi: ApiFromModules<{
   "functions/devAssistant/actions": typeof functions_devAssistant_actions;
   "functions/devAssistant/agent": typeof functions_devAssistant_agent;
   "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
+  "functions/devAssistant/contributions": typeof functions_devAssistant_contributions;
   "functions/devAssistant/index": typeof functions_devAssistant_index;
   "functions/devAssistant/maintainers": typeof functions_devAssistant_maintainers;
   "functions/devAssistant/prompts": typeof functions_devAssistant_prompts;

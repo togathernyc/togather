@@ -12,7 +12,7 @@ import { api, internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
-import { bugStatusValidator } from "./bugs";
+import { bugStatusValidator, riskLevelValidator } from "./bugs";
 import type { ToolExecutionContext } from "./tools";
 
 const FLAG_KEY = "dev-assistant-bot";
@@ -182,6 +182,100 @@ export const dispatchBug = internalAction({
 });
 
 // ============================================================================
+// Dispatch a dashboard contribution to the Routine in spec-drafting mode
+// ============================================================================
+
+/**
+ * Fire the Claude Code Routine in "spec" mode for a dashboard-submitted
+ * contribution (ADR-029). Unlike dispatchBug, the routine must NOT write code:
+ * it investigates the codebase, drafts an implementation spec, proposes a risk
+ * level, and reports both back via the signed /dev-assistant/callback with
+ * status IN_REVIEW. The row stays DRAFT until that callback lands.
+ *
+ * Mirrors dispatchBug's env-missing/error handling: never throws; failures are
+ * recorded on the row via recordDispatchError.
+ */
+export const dispatchSpec = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+
+    const triggerUrl = process.env.CLAUDE_ROUTINES_TRIGGER_URL;
+    const token = process.env.CLAUDE_ROUTINES_TOKEN;
+    if (!triggerUrl || !token) {
+      console.error("[DevAssistant] CLAUDE_ROUTINES_* env not configured");
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: "Routine trigger env not configured" },
+      );
+      return;
+    }
+
+    // Stamp the routineRunId before the POST so a crash or double-schedule
+    // can't double-run the spec routine (same pattern as markDispatched). A
+    // failed POST leaves lastError on the row; recovery is manual, never an
+    // automatic re-fire (mirrors the impl dispatch policy).
+    const routineRunId = crypto.randomUUID();
+    const marked = await ctx.runMutation(
+      internal.functions.devAssistant.bugs.markSpecDispatched,
+      { bugId: args.bugId, routineRunId },
+    );
+    if (marked.alreadyDispatched) return;
+
+    const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
+    const payload = {
+      mode: "spec",
+      bugId: args.bugId,
+      routineRunId,
+      kind: bug.kind ?? "bug",
+      title: bug.title,
+      body: bug.body,
+      repro: bug.repro,
+      screenshotUrls: bug.screenshotUrls,
+      callbackUrl,
+      instructions:
+        "Spec-drafting mode: do NOT write code or open a PR. Investigate the " +
+        "codebase, draft an implementation spec (markdown), and propose a risk " +
+        'level ("low" = single-screen UI/copy only; "medium" = one feature\'s ' +
+        'logic on one side of the stack, nothing shared; "high" = shared ' +
+        "components, frontend + backend together, schema/auth/notifications/" +
+        "offline). Report back by POSTing the signed callback with " +
+        '{ bugId, routineRunId, status: "IN_REVIEW", spec, riskLevel }.',
+    };
+
+    try {
+      const res = await fetch(triggerUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          // Required on every api.anthropic.com endpoint — see dispatchBug.
+          "anthropic-version": "2023-06-01",
+        },
+        // The fire endpoint reads the per-invocation payload from `text` and
+        // ignores other top-level fields — see dispatchBug.
+        body: JSON.stringify({ text: JSON.stringify(payload) }),
+      });
+      if (!res.ok) {
+        const errBody = await res.text();
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.recordDispatchError,
+          { bugId: args.bugId, error: `Routine POST ${res.status}: ${errBody}` },
+        );
+      }
+    } catch (error) {
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: String(error) },
+      );
+    }
+  },
+});
+
+// ============================================================================
 // Routine callback → thread message
 // ============================================================================
 
@@ -207,6 +301,41 @@ function defaultCallbackMessage(
   }
 }
 
+/**
+ * Push copy for the contributor-facing transitions (ADR-029). Returns null for
+ * transitions contributors don't need a push for.
+ */
+function contributorPushForStatus(
+  status: string,
+  bug: { kind?: "bug" | "feature"; title: string; spec?: string },
+): { title: string; body: string } | null {
+  const noun = bug.kind === "feature" ? "feature idea" : "bug report";
+  switch (status) {
+    case "IN_REVIEW":
+      // Only meaningful when the spec agent actually delivered a spec.
+      if (!bug.spec) return null;
+      return {
+        title: "Spec ready for review",
+        body: `The plan for your ${noun} "${bug.title}" is ready — review and approve it.`,
+      };
+    case "CODE_REVIEW":
+      // The module treats CODE_REVIEW as "the PR exists" (READY_TO_MERGE is a
+      // later, maintainer-facing step) — pushing here and not on READY_TO_MERGE
+      // means one "PR opened" push, not two.
+      return {
+        title: "Your contribution is in code review",
+        body: `A pull request is open for "${bug.title}".`,
+      };
+    case "MERGED":
+      return {
+        title: "Your contribution shipped 🎉",
+        body: `"${bug.title}" was merged. Thanks for making Togather better!`,
+      };
+    default:
+      return null;
+  }
+}
+
 export const handleRoutineCallback = internalAction({
   args: {
     bugId: v.id("devBugs"),
@@ -215,6 +344,8 @@ export const handleRoutineCallback = internalAction({
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
     message: v.optional(v.string()),
+    spec: v.optional(v.string()),
+    riskLevel: v.optional(riskLevelValidator),
   },
   handler: async (ctx, args): Promise<void> => {
     // Correlate by routineRunId and verify it matches the claimed bugId.
@@ -238,6 +369,8 @@ export const handleRoutineCallback = internalAction({
         status: args.status,
         prUrl: args.prUrl,
         screenshots: args.screenshots,
+        spec: args.spec,
+        riskLevel: args.riskLevel,
       },
     );
     if (!updated) return;
@@ -252,6 +385,36 @@ export const handleRoutineCallback = internalAction({
       );
       return;
     }
+
+    // Push the originator on the transitions they care about (spec ready, PR
+    // opened, shipped). Only when the status genuinely changed — a re-delivered
+    // callback for the current status (bug.status === args.status is a legal
+    // idempotent re-apply) must not re-push. Chat-originated items are excluded:
+    // the thread bot message below already notifies the channel.
+    const statusChanged = bug.status !== updated.status;
+    if (statusChanged && !updated.channelId) {
+      const push = contributorPushForStatus(args.status, updated);
+      if (push) {
+        await ctx.runAction(
+          internal.functions.notifications.actions.sendPushNotification,
+          {
+            userId: updated.originatorUserId,
+            title: push.title,
+            body: push.body,
+            notificationType: "dev_contribution_update",
+            data: {
+              bugId: args.bugId,
+              status: args.status,
+              ...(updated.prUrl ? { prUrl: updated.prUrl } : {}),
+            },
+          },
+        );
+      }
+    }
+
+    // Dashboard-originated items have no chat thread to post into — the push
+    // above (plus the dashboard itself) is their notification surface.
+    if (!updated.channelId) return;
 
     const content = args.message ?? defaultCallbackMessage(args.status, args.prUrl);
     const mentionedUserIds: Id<"users">[] | undefined =

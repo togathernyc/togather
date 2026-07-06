@@ -39,6 +39,13 @@ export const bugStatusValidator = v.union(
   v.literal("REJECTED"),
 );
 
+/** AI-proposed blast-radius level for dashboard contributions (ADR-029). */
+export const riskLevelValidator = v.union(
+  v.literal("low"),
+  v.literal("medium"),
+  v.literal("high"),
+);
+
 type BugStatus = Doc<"devBugs">["status"];
 
 /**
@@ -76,7 +83,7 @@ function canTransition(from: BugStatus, to: BugStatus): boolean {
  * action immediately (event-driven, no cron) so the routine fires the instant
  * the bug is marked ready.
  */
-async function applyStatusTransition(
+export async function applyStatusTransition(
   ctx: MutationCtx,
   bug: Doc<"devBugs">,
   newStatus: BugStatus,
@@ -88,7 +95,14 @@ async function applyStatusTransition(
   }
   if (newStatus === bug.status) return;
 
-  await ctx.db.patch(bug._id, { status: newStatus, updatedAt: Date.now() });
+  await ctx.db.patch(bug._id, {
+    status: newStatus,
+    updatedAt: Date.now(),
+    // "Shipped" timestamp for the contributor dashboard (ADR-029).
+    ...(newStatus === "MERGED" && !bug.shippedAt
+      ? { shippedAt: Date.now() }
+      : {}),
+  });
 
   if (newStatus === "READY_FOR_IMPL") {
     await ctx.scheduler.runAfter(
@@ -143,6 +157,8 @@ export const createBug = internalMutation({
       threadRootMessageId: args.threadRootMessageId,
       originatorUserId: args.originatorUserId,
       status: "IN_REVIEW",
+      kind: "bug",
+      source: "chat",
       title: args.title,
       body: args.body,
       repro: args.repro,
@@ -356,10 +372,35 @@ export const recordDispatchError = internalMutation({
 });
 
 /**
+ * Stamp the routineRunId for a spec-drafting dispatch BEFORE the outbound POST
+ * (mirrors markDispatched) so a crash mid-dispatch can't double-run the spec
+ * routine. The row stays DRAFT — the spec callback moves it to IN_REVIEW.
+ */
+export const markSpecDispatched = internalMutation({
+  args: { bugId: v.id("devBugs"), routineRunId: v.string() },
+  handler: async (ctx, args): Promise<{ alreadyDispatched: boolean }> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return { alreadyDispatched: true };
+    if (bug.status !== "DRAFT" || bug.routineRunId) {
+      return { alreadyDispatched: true };
+    }
+    await ctx.db.patch(args.bugId, {
+      routineRunId: args.routineRunId,
+      lastError: undefined,
+      updatedAt: Date.now(),
+    });
+    return { alreadyDispatched: false };
+  },
+});
+
+/**
  * Apply a routine callback. Validates the callback's target status against the
  * transition map; on an illegal transition we keep the current status but
  * record lastError (callbacks must never throw the HTTP handler). Always
  * refreshes prUrl/screenshots/lastCallbackAt.
+ *
+ * Spec-mode callbacks (ADR-029) additionally deliver `spec` + `riskLevel`,
+ * which are stored whenever provided; a MERGED transition stamps `shippedAt`.
  */
 export const applyCallback = internalMutation({
   args: {
@@ -367,6 +408,8 @@ export const applyCallback = internalMutation({
     status: bugStatusValidator,
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
+    spec: v.optional(v.string()),
+    riskLevel: v.optional(riskLevelValidator),
   },
   handler: async (ctx, args): Promise<Doc<"devBugs"> | null> => {
     const bug = await ctx.db.get(args.bugId);
@@ -379,10 +422,15 @@ export const applyCallback = internalMutation({
     };
     if (args.prUrl !== undefined) patch.prUrl = args.prUrl;
     if (args.screenshots !== undefined) patch.screenshotUrls = args.screenshots;
+    if (args.spec !== undefined) patch.spec = args.spec;
+    if (args.riskLevel !== undefined) patch.riskLevel = args.riskLevel;
 
     if (canTransition(bug.status, args.status)) {
       patch.status = args.status;
       patch.lastError = undefined;
+      if (args.status === "MERGED" && !bug.shippedAt) {
+        patch.shippedAt = now;
+      }
     } else {
       patch.lastError = `Ignored callback transition ${bug.status} -> ${args.status}`;
     }

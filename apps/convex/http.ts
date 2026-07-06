@@ -1019,12 +1019,17 @@ async function verifyDevAssistantSignature(
 }
 
 const DEV_ASSISTANT_CALLBACK_STATUSES = [
+  // Spec-drafting mode (ADR-029): the routine delivers `spec` (+ `riskLevel`)
+  // and moves a dashboard contribution DRAFT -> IN_REVIEW.
+  "IN_REVIEW",
   "IN_PROGRESS",
   "CODE_REVIEW",
   "READY_TO_MERGE",
   "MERGED",
   "REJECTED",
 ];
+
+const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
 
 /**
  * POST /dev-assistant/callback
@@ -1034,7 +1039,8 @@ const DEV_ASSISTANT_CALLBACK_STATUSES = [
  * applies the transition + posts a bot message into the thread). Returns 200
  * fast — chat fanout and idempotency are handled downstream.
  *
- * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[], message? }
+ * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[],
+ *         message?, spec?, riskLevel? }
  */
 http.route({
   path: "/dev-assistant/callback",
@@ -1065,6 +1071,8 @@ http.route({
       prUrl?: string;
       screenshots?: string[];
       message?: string;
+      spec?: string;
+      riskLevel?: string;
     };
     try {
       payload = JSON.parse(body);
@@ -1072,12 +1080,19 @@ http.route({
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    const { bugId, routineRunId, status, prUrl, screenshots, message } = payload;
+    const { bugId, routineRunId, status, prUrl, screenshots, message, spec, riskLevel } =
+      payload;
     if (!bugId || !routineRunId || !status) {
       return new Response("Missing bugId, routineRunId, or status", { status: 400 });
     }
     if (!DEV_ASSISTANT_CALLBACK_STATUSES.includes(status)) {
       return new Response(`Unsupported status: ${status}`, { status: 400 });
+    }
+    if (spec !== undefined && typeof spec !== "string") {
+      return new Response("Invalid spec: must be a string", { status: 400 });
+    }
+    if (riskLevel !== undefined && !DEV_ASSISTANT_RISK_LEVELS.includes(riskLevel)) {
+      return new Response(`Unsupported riskLevel: ${riskLevel}`, { status: 400 });
     }
 
     await ctx.scheduler.runAfter(
@@ -1087,6 +1102,7 @@ http.route({
         bugId: bugId as Id<"devBugs">,
         routineRunId,
         status: status as
+          | "IN_REVIEW"
           | "IN_PROGRESS"
           | "CODE_REVIEW"
           | "READY_TO_MERGE"
@@ -1095,6 +1111,8 @@ http.route({
         prUrl,
         screenshots,
         message,
+        spec,
+        riskLevel: riskLevel as "low" | "medium" | "high" | undefined,
       }
     );
 

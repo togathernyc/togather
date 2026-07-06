@@ -2133,8 +2133,11 @@ export default defineSchema({
   // the PR tracks code. Each transition posts a bot message into the thread.
   // Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
   devBugs: defineTable({
-    communityId: v.id("communities"),
-    channelId: v.id("chatChannels"),
+    // Chat-originated items carry the originating community/channel/thread.
+    // Dashboard-originated items (contributor dev dashboard, ADR-029) are
+    // platform-level and have none of the three.
+    communityId: v.optional(v.id("communities")),
+    channelId: v.optional(v.id("chatChannels")),
     // All bot replies/callbacks post into this thread (the root message).
     threadRootMessageId: v.optional(v.id("chatMessages")),
     originatorUserId: v.id("users"),
@@ -2154,6 +2157,19 @@ export default defineSchema({
     body: v.string(), // clean implementation brief (synthesized)
     repro: v.optional(v.string()),
     screenshotUrls: v.optional(v.array(v.string())), // pulled from thread image attachments
+
+    // Contributor dev dashboard (ADR-029). All optional for backward compat;
+    // pre-existing rows are chat-originated bugs.
+    kind: v.optional(v.union(v.literal("bug"), v.literal("feature"))), // default "bug"
+    source: v.optional(v.union(v.literal("chat"), v.literal("dashboard"))),
+    riskLevel: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
+    spec: v.optional(v.string()), // AI-drafted spec, markdown
+    specApprovedAt: v.optional(v.number()), // contributor sign-off
+    githubIssueNumber: v.optional(v.number()),
+    githubIssueUrl: v.optional(v.string()),
+    shippedAt: v.optional(v.number()), // set when status reaches MERGED
 
     prUrl: v.optional(v.string()),
     reviewLink: v.optional(v.string()),
