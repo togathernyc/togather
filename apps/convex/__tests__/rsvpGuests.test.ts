@@ -1,9 +1,9 @@
 /**
  * Unit tests for shared RSVP plus-one helpers.
  *
- * Covers the label-based heuristic that decides which RSVP option
- * counts as "Going" — regressions here silently mis-categorize RSVPs
- * and inflate or deflate headcounts.
+ * Covers the id-slot rule that decides which RSVP option counts as
+ * "Going" — regressions here silently mis-categorize RSVPs and inflate
+ * or deflate headcounts.
  */
 
 import { describe, expect, test } from "vitest";
@@ -15,29 +15,25 @@ import {
 } from "../lib/rsvpGuests";
 
 describe("isGoingOption", () => {
-  test("accepts canonical affirmative labels", () => {
+  test("accepts the Going slot (id 1) regardless of label", () => {
     expect(isGoingOption({ id: 1, label: "Going" })).toBe(true);
-    expect(isGoingOption({ id: 1, label: "going" })).toBe(true);
     expect(isGoingOption({ id: 1, label: "Going 👍" })).toBe(true);
-    expect(isGoingOption({ id: 1, label: "  Going  " })).toBe(true);
-    expect(isGoingOption({ id: 1, label: "I'm going" })).toBe(true);
+    // Custom labels must still work — hosts rename options freely.
+    expect(isGoingOption({ id: 1, label: "I'm there 😳" })).toBe(true);
+    expect(isGoingOption({ id: 1, label: "Count me in" })).toBe(true);
   });
 
-  test("rejects decline variants that also contain 'going'", () => {
-    expect(isGoingOption({ id: 1, label: "Not Going" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "not going" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Can't Go" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Cannot Go" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Not Attending" })).toBe(false);
+  test("rejects other slots regardless of label", () => {
+    expect(isGoingOption({ id: 2, label: "Maybe" })).toBe(false);
+    expect(isGoingOption({ id: 3, label: "Can't Go" })).toBe(false);
+    // Even a label containing "going" is not the Going slot.
+    expect(isGoingOption({ id: 3, label: "Not Going" })).toBe(false);
+    expect(isGoingOption({ id: 2, label: "Going later" })).toBe(false);
   });
 
-  test("rejects unrelated or empty labels", () => {
+  test("rejects missing options", () => {
     expect(isGoingOption(null)).toBe(false);
     expect(isGoingOption(undefined)).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Maybe" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Yes" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "No" })).toBe(false);
-    expect(isGoingOption({ id: 1, label: "Attending" })).toBe(false);
   });
 });
 
@@ -52,9 +48,10 @@ describe("getMaxGuestsForMeeting", () => {
 });
 
 describe("normalizeGuestCount", () => {
-  const going = { id: 1, label: "Going" };
-  const notGoing = { id: 2, label: "Not Going" };
-  const maybe = { id: 3, label: "Maybe" };
+  // Custom label on the Going slot — guest counts must still be allowed.
+  const going = { id: 1, label: "I'm there 😳" };
+  const maybe = { id: 2, label: "Still deciding 🫣" };
+  const notGoing = { id: 3, label: "No can do ☹️" };
 
   test("returns 0 for missing or zero counts", () => {
     expect(normalizeGuestCount(undefined, going, 3)).toBe(0);

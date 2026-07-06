@@ -10,14 +10,14 @@ import { v } from "convex/values";
 import { internalQuery, internalMutation, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { now } from "../lib/utils";
+import {
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "../lib/meetingConfig";
 
 // Attendance status code that means "attended" (see meetings/attendance.ts).
 const ATTENDED_STATUS = 1;
-
-// Standard RSVP option ids (see meetings.rsvpOptions defaults).
-const RSVP_GOING = 1;
-const RSVP_NOT_GOING = 2;
-const RSVP_MAYBE = 3;
 
 // Default and maximum number of events returned in a single call. Callers
 // should page through history with the `since`/`until` filters.
@@ -94,12 +94,12 @@ async function countMeeting(
   let maybe = 0;
   let guestsExpected = 0;
   for (const rsvp of rsvps) {
-    if (rsvp.rsvpOptionId === RSVP_GOING) {
+    if (rsvp.rsvpOptionId === GOING_RSVP_OPTION_ID) {
       going++;
       guestsExpected += rsvp.guestCount ?? 0;
-    } else if (rsvp.rsvpOptionId === RSVP_NOT_GOING) {
+    } else if (rsvp.rsvpOptionId === CANT_GO_RSVP_OPTION_ID) {
       notGoing++;
-    } else if (rsvp.rsvpOptionId === RSVP_MAYBE) {
+    } else if (rsvp.rsvpOptionId === MAYBE_RSVP_OPTION_ID) {
       maybe++;
     }
   }

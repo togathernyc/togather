@@ -102,18 +102,14 @@ function GuestListPage() {
 
   const isLoading = isLoadingMeeting || isLoadingRsvp;
 
-  // Get all users grouped by RSVP status
-  const goingUsers = rsvpData?.rsvps?.find((r) =>
-    r.option.label.toLowerCase().includes("going") && !r.option.label.toLowerCase().includes("can't")
-  )?.users || [];
+  // Get all users grouped by RSVP status. Options are matched by their
+  // stable id slots (1 = Going, 2 = Maybe, 3 = Can't Go) so custom labels
+  // ("I'm there 😳") don't break the grouping.
+  const goingUsers = rsvpData?.rsvps?.find((r) => r.option.id === 1)?.users || [];
 
-  const maybeUsers = rsvpData?.rsvps?.find((r) =>
-    r.option.label.toLowerCase().includes("maybe")
-  )?.users || [];
+  const maybeUsers = rsvpData?.rsvps?.find((r) => r.option.id === 2)?.users || [];
 
-  const cantGoUsers = rsvpData?.rsvps?.find((r) =>
-    r.option.label.toLowerCase().includes("can't")
-  )?.users || [];
+  const cantGoUsers = rsvpData?.rsvps?.find((r) => r.option.id === 3)?.users || [];
 
   return (
     <UserRoute>
