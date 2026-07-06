@@ -13,7 +13,7 @@ import { v } from "convex/values";
 import { internalMutation, action } from "../../_generated/server";
 import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
 
@@ -169,6 +169,137 @@ export async function syncAnnouncementGroupMembership(
 // Channel Membership Sync
 // ============================================================================
 
+/** Whether a channel is a shared announcements channel with accepted secondaries. */
+function channelIsSharedAnnouncements(channel: Doc<"chatChannels">): boolean {
+  return (
+    channel.channelType === "announcements" &&
+    channel.isShared === true &&
+    (channel.sharedGroups ?? []).some((sg) => sg.status === "accepted")
+  );
+}
+
+/**
+ * Where a user stands across ALL groups participating in a shared
+ * announcements channel: the owning group plus every accepted secondary.
+ *
+ * - `isMemberOfAny`: active member of at least one participating group
+ *   (→ should be a channel member)
+ * - `isLeaderOfAny`: leader/admin of at least one participating group
+ *   (→ channel role mirrors to "admin")
+ */
+async function resolveSharedAnnouncementsStanding(
+  ctx: MutationCtx,
+  channel: Doc<"chatChannels">,
+  userId: Id<"users">
+): Promise<{ isMemberOfAny: boolean; isLeaderOfAny: boolean }> {
+  const participatingGroupIds: Id<"groups">[] = [];
+  if (channel.groupId) {
+    participatingGroupIds.push(channel.groupId);
+  }
+  for (const sg of channel.sharedGroups ?? []) {
+    if (sg.status === "accepted") {
+      participatingGroupIds.push(sg.groupId);
+    }
+  }
+
+  let isMemberOfAny = false;
+  let isLeaderOfAny = false;
+  for (const gId of participatingGroupIds) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", gId).eq("userId", userId)
+      )
+      .first();
+    if (membership && !membership.leftAt) {
+      isMemberOfAny = true;
+      if (membership.role === "leader" || membership.role === "admin") {
+        isLeaderOfAny = true;
+      }
+    }
+  }
+  return { isMemberOfAny, isLeaderOfAny };
+}
+
+/**
+ * Reconciles a single user's membership row on a channel to the desired
+ * state: adds/reactivates, soft-removes, or updates the role — and keeps the
+ * channel's `memberCount` in step. Shared body of the per-group channel loop
+ * and the shared-announcements reconcile in `syncUserChannelMembershipsLogic`.
+ */
+async function reconcileChannelMembershipRow(
+  ctx: MutationCtx,
+  channel: Doc<"chatChannels">,
+  userId: Id<"users">,
+  shouldBeInChannel: boolean,
+  expectedChannelRole: string,
+  displayName: string | undefined,
+  profilePhoto: string | undefined,
+  now: number
+): Promise<void> {
+  // Get current channel membership
+  const currentMembership = await ctx.db
+    .query("chatChannelMembers")
+    .withIndex("by_channel_user", (q: any) =>
+      q.eq("channelId", channel._id).eq("userId", userId)
+    )
+    .first();
+
+  const isCurrentlyInChannel = currentMembership && !currentMembership.leftAt;
+
+  // Sync membership to desired state
+  let memberCountDelta = 0;
+  if (shouldBeInChannel && !isCurrentlyInChannel) {
+    // ADD to channel
+    if (currentMembership) {
+      // Reactivate existing membership
+      await ctx.db.patch(currentMembership._id, {
+        leftAt: undefined,
+        joinedAt: now,
+        role: expectedChannelRole,
+        displayName,
+        profilePhoto,
+      });
+      console.log(`[syncUserChannelMembershipsLogic] Reactivated user ${userId} in ${channel.channelType} channel ${channel._id}`);
+    } else {
+      // Create new membership
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: channel._id,
+        userId,
+        role: expectedChannelRole,
+        joinedAt: now,
+        isMuted: false,
+        displayName,
+        profilePhoto,
+      });
+      console.log(`[syncUserChannelMembershipsLogic] Added user ${userId} to ${channel.channelType} channel ${channel._id}`);
+    }
+    memberCountDelta = 1;
+  } else if (!shouldBeInChannel && isCurrentlyInChannel) {
+    // REMOVE from channel (soft delete)
+    await ctx.db.patch(currentMembership!._id, {
+      leftAt: now,
+    });
+    console.log(`[syncUserChannelMembershipsLogic] Removed user ${userId} from ${channel.channelType} channel ${channel._id}`);
+    memberCountDelta = -1;
+  } else if (shouldBeInChannel && isCurrentlyInChannel && currentMembership.role !== expectedChannelRole) {
+    // UPDATE role if it changed (e.g., promoted to leader or demoted from leader)
+    await ctx.db.patch(currentMembership._id, {
+      role: expectedChannelRole,
+      displayName,
+      profilePhoto,
+    });
+  }
+
+  // Increment/decrement channel member count
+  if (memberCountDelta !== 0) {
+    const currentCount = channel.memberCount ?? 0;
+    await ctx.db.patch(channel._id, {
+      memberCount: Math.max(0, currentCount + memberCountDelta),
+    });
+  }
+}
+
 /**
  * Sync a user's channel memberships for a specific group.
  *
@@ -237,6 +368,8 @@ export async function syncUserChannelMembershipsLogic(
 
     // Determine if user SHOULD be in this channel
     let shouldBeInChannel = false;
+    // Determine expected channel role
+    let expectedChannelRole = isLeaderOrAdmin ? "admin" : "member";
     if (channel.channelType === "main") {
       shouldBeInChannel = isActiveGroupMember;
     } else if (channel.channelType === "leaders") {
@@ -246,73 +379,64 @@ export async function syncUserChannelMembershipsLogic(
     } else if (channel.channelType === "announcements") {
       // Announcements: every active group member is a channel member so they
       // can read; posting is gated to leaders in sendMessage.
-      shouldBeInChannel = isActiveGroupMember;
-    }
-
-    // Get current channel membership
-    const currentMembership = await ctx.db
-      .query("chatChannelMembers")
-      .withIndex("by_channel_user", (q: any) =>
-        q.eq("channelId", channel._id).eq("userId", userId)
-      )
-      .first();
-
-    const isCurrentlyInChannel = currentMembership && !currentMembership.leftAt;
-
-    // Determine expected channel role
-    const expectedChannelRole = isLeaderOrAdmin ? "admin" : "member";
-
-    // Sync membership to desired state
-    let memberCountDelta = 0;
-    if (shouldBeInChannel && !isCurrentlyInChannel) {
-      // ADD to channel
-      if (currentMembership) {
-        // Reactivate existing membership
-        await ctx.db.patch(currentMembership._id, {
-          leftAt: undefined,
-          joinedAt: now,
-          role: expectedChannelRole,
-          displayName,
-          profilePhoto,
-        });
-        console.log(`[syncUserChannelMembershipsLogic] Reactivated user ${userId} in ${channel.channelType} channel ${channel._id}`);
+      if (channelIsSharedAnnouncements(channel)) {
+        // Shared announcements: membership spans the owning group AND every
+        // accepted secondary group, so leaving one of them must not remove a
+        // user who is still active in another. Channel role is admin if they
+        // lead ANY of those groups.
+        const standing = await resolveSharedAnnouncementsStanding(
+          ctx,
+          channel,
+          userId
+        );
+        shouldBeInChannel = standing.isMemberOfAny;
+        expectedChannelRole = standing.isLeaderOfAny ? "admin" : "member";
       } else {
-        // Create new membership
-        await ctx.db.insert("chatChannelMembers", {
-          channelId: channel._id,
-          userId,
-          role: expectedChannelRole,
-          joinedAt: now,
-          isMuted: false,
-          displayName,
-          profilePhoto,
-        });
-        console.log(`[syncUserChannelMembershipsLogic] Added user ${userId} to ${channel.channelType} channel ${channel._id}`);
+        shouldBeInChannel = isActiveGroupMember;
       }
-      memberCountDelta = 1;
-    } else if (!shouldBeInChannel && isCurrentlyInChannel) {
-      // REMOVE from channel (soft delete)
-      await ctx.db.patch(currentMembership!._id, {
-        leftAt: now,
-      });
-      console.log(`[syncUserChannelMembershipsLogic] Removed user ${userId} from ${channel.channelType} channel ${channel._id}`);
-      memberCountDelta = -1;
-    } else if (shouldBeInChannel && isCurrentlyInChannel && currentMembership.role !== expectedChannelRole) {
-      // UPDATE role if it changed (e.g., promoted to leader or demoted from leader)
-      await ctx.db.patch(currentMembership._id, {
-        role: expectedChannelRole,
-        displayName,
-        profilePhoto,
-      });
     }
 
-    // Increment/decrement channel member count
-    if (memberCountDelta !== 0) {
-      const currentCount = channel.memberCount ?? 0;
-      await ctx.db.patch(channel._id, {
-        memberCount: Math.max(0, currentCount + memberCountDelta),
-      });
-    }
+    await reconcileChannelMembershipRow(
+      ctx,
+      channel,
+      userId,
+      shouldBeInChannel,
+      expectedChannelRole,
+      displayName,
+      profilePhoto,
+      now
+    );
+  }
+
+  // Reconcile shared announcements channels owned by OTHER groups where this
+  // group is an accepted secondary — a join/leave/role change here must flow
+  // into those channels too. The `by_isShared` index keeps this scan limited
+  // to shared channels (rare), so the common path is unaffected.
+  const sharedChannels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_isShared", (q: any) => q.eq("isShared", true))
+    .filter((q: any) => q.eq(q.field("isArchived"), false))
+    .collect();
+
+  for (const channel of sharedChannels) {
+    if (channel.channelType !== "announcements") continue;
+    if (!channel.groupId || channel.groupId === groupId) continue; // own channels handled above
+    const isAcceptedSecondary = (channel.sharedGroups ?? []).some(
+      (sg) => sg.groupId === groupId && sg.status === "accepted"
+    );
+    if (!isAcceptedSecondary) continue;
+
+    const standing = await resolveSharedAnnouncementsStanding(ctx, channel, userId);
+    await reconcileChannelMembershipRow(
+      ctx,
+      channel,
+      userId,
+      standing.isMemberOfAny,
+      standing.isLeaderOfAny ? "admin" : "member",
+      displayName,
+      profilePhoto,
+      now
+    );
   }
 
   // Handle custom channels when user leaves group

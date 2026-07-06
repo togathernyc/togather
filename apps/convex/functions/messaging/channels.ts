@@ -24,6 +24,7 @@ import { syncUserChannelMembershipsLogic } from "../sync/memberships";
 import {
   updateChannelMemberCount,
   isCommunityAdminForGroup,
+  findAcceptedSharedAnnouncementsChannelsForGroup,
 } from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
@@ -3898,6 +3899,47 @@ export async function ensureAnnouncementsChannelLogic(
 }
 
 /**
+ * Restore a group's own announcements channel after it leaves (or is removed
+ * from) a shared announcements channel that had disabled it on accept.
+ *
+ * Re-enables the channel (creating it via `ensureAnnouncementsChannelLogic`
+ * if it somehow no longer exists), clears the disable audit trail, and
+ * repopulates members via `populateChannelMembersBatch` with
+ * `mirrorGroupRole: true` so members who joined the group during the share
+ * are included and leaders mirror to channel role "admin".
+ */
+export async function restoreOwnAnnouncementsChannelLogic(
+  ctx: MutationCtx,
+  groupId: Id<"groups">,
+  actingUserId: Id<"users">
+): Promise<void> {
+  const now = Date.now();
+  const channelId = await ensureAnnouncementsChannelLogic(ctx, groupId, actingUserId);
+  const channel = await ctx.db.get(channelId);
+  if (!channel) return;
+
+  if (channel.isEnabled === false || channel.disabledByUserId !== undefined) {
+    await ctx.db.patch(channelId, {
+      isEnabled: true,
+      disabledByUserId: undefined,
+      updatedAt: now,
+    });
+  }
+
+  await ctx.scheduler.runAfter(
+    0,
+    internal.functions.messaging.channels.populateChannelMembersBatch,
+    {
+      groupId,
+      channelId,
+      mirrorGroupRole: true,
+      cursor: null,
+      processed: 0,
+    }
+  );
+}
+
+/**
  * Internal mutation to ensure channels exist for a group.
  * Creates main and leaders channels if they don't exist.
  *
@@ -4387,6 +4429,13 @@ async function ensureChannelMembership(
  * `mirrorGroupRole`: when true (announcements), leaders map to channel role
  * "admin"; otherwise everyone is "member". Posting permission is always
  * enforced server-side in `sendMessage`, independent of channel role.
+ *
+ * `recountMemberCount`: when true, the final page recounts active channel
+ * members instead of assuming the processed roster IS the channel. Required
+ * when fanning a group's roster into a channel that also holds other groups'
+ * members (e.g. backfilling an accepted secondary group into a shared
+ * announcements channel) — otherwise `memberCount` would collapse to just the
+ * backfilled group's size.
  */
 export const populateChannelMembersBatch = internalMutation({
   args: {
@@ -4395,6 +4444,7 @@ export const populateChannelMembersBatch = internalMutation({
     mirrorGroupRole: v.boolean(),
     cursor: v.union(v.string(), v.null()),
     processed: v.number(),
+    recountMemberCount: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     // Bail if the channel was archived/disabled since this chain started
@@ -4455,9 +4505,15 @@ export const populateChannelMembersBatch = internalMutation({
     const processed = args.processed + page.page.length;
 
     if (page.isDone) {
-      // Every active group member is now an active channel member, so the
-      // running count equals the channel's member count.
-      await ctx.db.patch(args.channelId, { memberCount: processed });
+      if (args.recountMemberCount) {
+        // The channel holds members beyond this group's roster (shared
+        // channel) — recount from actual membership rows.
+        await updateChannelMemberCount(ctx, args.channelId);
+      } else {
+        // Every active group member is now an active channel member, so the
+        // running count equals the channel's member count.
+        await ctx.db.patch(args.channelId, { memberCount: processed });
+      }
     } else {
       await ctx.scheduler.runAfter(
         0,
@@ -4568,6 +4624,21 @@ export const toggleAnnouncementsChannel = mutation({
       .first();
 
     if (args.enabled) {
+      // While this group is an accepted secondary of another group's shared
+      // announcements channel, its own channel stays disabled — announcements
+      // flow through the share. Leave the share first.
+      const acceptedShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+        ctx,
+        args.groupId
+      );
+      if (acceptedShares.length > 0) {
+        throw new ConvexError({
+          code: "IN_SHARED_ANNOUNCEMENTS",
+          message:
+            "This group receives announcements through another group's shared Announcements channel. Leave that share before enabling its own Announcements channel.",
+        });
+      }
+
       let channelId: Id<"chatChannels">;
 
       if (existingChannel) {
@@ -4655,6 +4726,16 @@ export const toggleAnnouncementsChannel = mutation({
     }
     if (existingChannel.isEnabled === false || existingChannel.isArchived) {
       return { channelId: existingChannel._id, status: "already_disabled" as const };
+    }
+
+    // A shared announcements channel (pending OR accepted entries) can't be
+    // disabled out from under the groups it's shared with — unshare first.
+    if ((existingChannel.sharedGroups?.length ?? 0) > 0) {
+      throw new ConvexError({
+        code: "CHANNEL_SHARED",
+        message:
+          "This Announcements channel is shared with other groups. Remove the shared groups before disabling it.",
+      });
     }
 
     await ctx.db.patch(existingChannel._id, {

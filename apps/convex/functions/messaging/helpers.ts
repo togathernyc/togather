@@ -67,3 +67,40 @@ export async function updateChannelMemberCount(
 
   await ctx.db.patch(channelId, { memberCount: activeMembers.length });
 }
+
+/** One entry of `chatChannels.sharedGroups`. */
+export type SharedGroupEntry = NonNullable<
+  Doc<"chatChannels">["sharedGroups"]
+>[number];
+
+/**
+ * Finds non-archived shared ANNOUNCEMENTS channels where `groupId` is an
+ * ACCEPTED secondary group (i.e. the group receives announcements through
+ * another group's channel).
+ *
+ * Same `by_isShared` scan pattern as `listActiveSharedChannelsForGroup`:
+ * shared channels are rare, so the indexed scan stays cheap.
+ */
+export async function findAcceptedSharedAnnouncementsChannelsForGroup(
+  ctx: QueryCtx,
+  groupId: Id<"groups">
+): Promise<Array<{ channel: Doc<"chatChannels">; entry: SharedGroupEntry }>> {
+  const sharedChannels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_isShared", (q) => q.eq("isShared", true))
+    .filter((q) => q.eq(q.field("archivedAt"), undefined))
+    .collect();
+
+  const results: Array<{ channel: Doc<"chatChannels">; entry: SharedGroupEntry }> = [];
+  for (const channel of sharedChannels) {
+    if (channel.channelType !== "announcements") continue;
+    if (!channel.groupId || channel.groupId === groupId) continue;
+    const entry = (channel.sharedGroups ?? []).find(
+      (sg) => sg.groupId === groupId && sg.status === "accepted"
+    );
+    if (entry) {
+      results.push({ channel, entry });
+    }
+  }
+  return results;
+}

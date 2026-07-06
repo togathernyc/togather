@@ -1628,6 +1628,14 @@ export default defineSchema({
           sortOrder: v.optional(v.number()), // How this group orders the channel
           /** Linked group's leaders hid the channel from tab bar / chat; owning group unchanged. */
           hiddenFromNavigation: v.optional(v.boolean()),
+          /**
+           * Announcements-type shares only: whether this group's OWN
+           * announcements channel was enabled when it accepted the share
+           * (accepting disables it). Used to restore the prior state when the
+           * group later leaves the share. Carried over when switching shares
+           * so the true original state survives back-to-back shares.
+           */
+          previousAnnouncementsChannelEnabled: v.optional(v.boolean()),
         }),
       ),
     ),
