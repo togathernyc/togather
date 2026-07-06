@@ -70,6 +70,8 @@ import {
   getDebugReasonText,
   type UnsyncedPerson,
 } from "@/utils/channel-members";
+import { errorMessage } from "@/utils/error-handling";
+import { confirmAnnouncementsShareAccept } from "@features/groups/hooks/useRespondToChannelInvite";
 
 type Props = {
   groupId: string;
@@ -508,10 +510,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     } catch (e: any) {
       // ConvexError payloads (e.g. OWN_CHANNEL_SHARED) carry the readable
       // message on `.data.message`; `.message` is generic in production.
-      Alert.alert(
-        "Couldn't accept",
-        e?.data?.message ?? e?.message ?? "Please try again.",
-      );
+      Alert.alert("Couldn't accept", errorMessage(e, "Please try again."));
     } finally {
       setPendingResponding(null);
     }
@@ -522,22 +521,15 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     // backfill + this group's own Announcements channel turned off), so it
     // gets an explicit confirmation. Other channel types accept immediately.
     if (channel?.channelType === "announcements") {
-      const ownerName = primaryGroupName ?? "the owning group";
       const currentShare = (activeSharedChannels ?? []).find(
         (c: any) =>
           c.channelType === "announcements" && c.channelId !== channel._id,
       );
-      Alert.alert(
-        "Accept Announcements share?",
-        `Accepting will add all members of this group to ${ownerName}'s Announcements and turn off this group's own Announcements channel. Leaders of both groups can post.` +
-          (currentShare
-            ? ` This group will stop receiving announcements from ${currentShare.primaryGroupName}.`
-            : ""),
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Accept", onPress: () => void performAcceptInvite() },
-        ],
-      );
+      confirmAnnouncementsShareAccept({
+        ownerName: primaryGroupName ?? "the owning group",
+        switchFromGroupName: currentShare?.primaryGroupName,
+        onConfirm: () => void performAcceptInvite(),
+      });
       return;
     }
     void performAcceptInvite();

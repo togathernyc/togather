@@ -472,4 +472,138 @@ describe("ChannelsSection (redesigned)", () => {
       expect(queryByText("Archived")).toBeNull();
     });
   });
+
+  describe("Announcements", () => {
+    const ownAnnouncementsChannel = {
+      _id: "channel-announcements-own",
+      slug: "announcements",
+      channelType: "announcements",
+      name: "Announcements",
+      memberCount: 12,
+      isArchived: false,
+      isMember: true,
+      unreadCount: 0,
+      isPinned: false,
+      isEnabled: true,
+    };
+
+    // Another group's announcements channel shared INTO this group — same
+    // slug as the own channel, disambiguated by sharedFromGroupName/_id.
+    const sharedInAnnouncementsChannel = {
+      _id: "channel-announcements-shared",
+      slug: "announcements",
+      channelType: "announcements",
+      name: "Announcements",
+      memberCount: 40,
+      isArchived: false,
+      isMember: true,
+      unreadCount: 3,
+      isPinned: false,
+      isEnabled: true,
+      sharedFromGroupId: "owner-group",
+      sharedFromGroupName: "Owner Group",
+    };
+
+    it("renders the own channel with member count and passes the channel id on tap", () => {
+      mockChannelsData = [mockMainChannel, ownAnnouncementsChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getByText("Announcements")).toBeTruthy();
+      expect(getByText("12 members · Leaders post")).toBeTruthy();
+
+      act(() => {
+        fireEvent.press(getByText("Announcements").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith({
+        pathname: "/inbox/test-group/announcements/info",
+        params: { channelId: "channel-announcements-own" },
+      });
+    });
+
+    it("shows the owner-side shared count on the own channel", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        { ...ownAnnouncementsChannel, sharedGroupCount: 2 },
+      ];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getByText("12 members · Shared with 2 groups")).toBeTruthy();
+    });
+
+    it("renders ONE row from the shared-in channel and hides the own disabled channel", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        // Own channel is disabled while receiving the share.
+        { ...ownAnnouncementsChannel, isEnabled: false },
+        sharedInAnnouncementsChannel,
+      ];
+
+      const { getByText, getAllByText, queryByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(getAllByText("Announcements")).toHaveLength(1);
+      expect(
+        getByText("Shared — announcements come from Owner Group")
+      ).toBeTruthy();
+      // The disabled own channel neither renders as a second row nor folds
+      // under Archived.
+      expect(queryByText("Archived")).toBeNull();
+      // Unread badge comes from the shared-in channel.
+      expect(getByText("3")).toBeTruthy();
+    });
+
+    it("navigates to the SHARED channel (by id) when the shared-in row is tapped", () => {
+      mockChannelsData = [
+        mockMainChannel,
+        { ...ownAnnouncementsChannel, isEnabled: false },
+        sharedInAnnouncementsChannel,
+      ];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      act(() => {
+        fireEvent.press(getByText("Announcements").parent!.parent!.parent!);
+      });
+
+      expect(mockPush).toHaveBeenCalledWith({
+        pathname: "/inbox/test-group/announcements/info",
+        params: { channelId: "channel-announcements-shared" },
+      });
+    });
+
+    it("members with a shared-in channel see the shared subtitle too", () => {
+      // Members never receive the own disabled channel from the query.
+      mockChannelsData = [mockMainChannel, sharedInAnnouncementsChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="member" />
+      );
+
+      expect(
+        getByText("Shared — announcements come from Owner Group")
+      ).toBeTruthy();
+    });
+
+    it("shows the enable CTA for leaders when no announcements channel exists", () => {
+      mockChannelsData = [mockMainChannel];
+
+      const { getByText } = render(
+        <ChannelsSection groupId="test-group" userRole="leader" />
+      );
+
+      expect(
+        getByText("Tap to enable — leaders post, members read")
+      ).toBeTruthy();
+    });
+  });
 });

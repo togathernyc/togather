@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { Alert } from "react-native";
 import { useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 
 interface UseRespondToChannelInviteOptions {
   token: string | null;
@@ -23,13 +24,34 @@ export interface RespondInviteContext {
   switchFromGroupName?: string | null;
 }
 
-/** ConvexError carries its payload on `.data`; production `.message` is a
- *  generic "Server Error" string, so prefer `.data.message` when present. */
-function errorMessage(error: unknown, fallback: string): string {
-  const data = (error as { data?: { message?: string } } | null)?.data;
-  if (typeof data?.message === "string") return data.message;
-  if (error instanceof Error && error.message) return error.message;
-  return fallback;
+/**
+ * Confirmation dialog for accepting an announcements share. Accepting has
+ * group-wide side effects (member backfill + the group's own Announcements
+ * channel turned off), so it always gets an explicit confirmation. When
+ * `switchFromGroupName` is set the copy also warns about the automatic
+ * switch away from the current share. Shared by this hook and
+ * ChannelInfoScreen so the copy can't drift between the two entry points.
+ */
+export function confirmAnnouncementsShareAccept({
+  ownerName,
+  switchFromGroupName,
+  onConfirm,
+}: {
+  ownerName: string;
+  switchFromGroupName?: string | null;
+  onConfirm: () => void;
+}): void {
+  Alert.alert(
+    "Accept Announcements share?",
+    `Accepting will add all members of this group to ${ownerName}'s Announcements and turn off this group's own Announcements channel. Leaders of both groups can post.` +
+      (switchFromGroupName
+        ? ` This group will stop receiving announcements from ${switchFromGroupName}.`
+        : ""),
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: "Accept", onPress: onConfirm },
+    ]
+  );
 }
 
 /**
@@ -103,18 +125,11 @@ export function useRespondToChannelInvite({
       // Accepting an announcements share has group-wide side effects (member
       // backfill + own Announcements channel turned off), so confirm first.
       if (invite?.channelType === "announcements") {
-        const ownerName = invite.primaryGroupName ?? "the owning group";
-        Alert.alert(
-          "Accept Announcements share?",
-          `Accepting will add all members of this group to ${ownerName}'s Announcements and turn off this group's own Announcements channel. Leaders of both groups can post.` +
-            (invite.switchFromGroupName
-              ? ` This group will stop receiving announcements from ${invite.switchFromGroupName}.`
-              : ""),
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Accept", onPress: () => void performAccept() },
-          ]
-        );
+        confirmAnnouncementsShareAccept({
+          ownerName: invite.primaryGroupName ?? "the owning group",
+          switchFromGroupName: invite.switchFromGroupName,
+          onConfirm: () => void performAccept(),
+        });
         return;
       }
 

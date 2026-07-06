@@ -16,6 +16,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { COMMUNITY_ADMIN_THRESHOLD } from "../../lib/permissions";
+import { findAcceptedSharedAnnouncementsChannelsForGroup } from "../messaging/helpers";
 
 // ============================================================================
 // Main Entry Point
@@ -410,22 +411,14 @@ export async function syncUserChannelMembershipsLogic(
 
   // Reconcile shared announcements channels owned by OTHER groups where this
   // group is an accepted secondary — a join/leave/role change here must flow
-  // into those channels too. The `by_isShared` index keeps this scan limited
-  // to shared channels (rare), so the common path is unaffected.
-  const sharedChannels = await ctx.db
-    .query("chatChannels")
-    .withIndex("by_isShared", (q: any) => q.eq("isShared", true))
-    .filter((q: any) => q.eq(q.field("isArchived"), false))
-    .collect();
+  // into those channels too. The helper's community-scoped index keeps this
+  // scan limited to the group's community, so the common path is unaffected.
+  const acceptedShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+    ctx,
+    groupId
+  );
 
-  for (const channel of sharedChannels) {
-    if (channel.channelType !== "announcements") continue;
-    if (!channel.groupId || channel.groupId === groupId) continue; // own channels handled above
-    const isAcceptedSecondary = (channel.sharedGroups ?? []).some(
-      (sg) => sg.groupId === groupId && sg.status === "accepted"
-    );
-    if (!isAcceptedSecondary) continue;
-
+  for (const { channel } of acceptedShares) {
     const standing = await resolveSharedAnnouncementsStanding(ctx, channel, userId);
     await reconcileChannelMembershipRow(
       ctx,

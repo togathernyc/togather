@@ -78,16 +78,23 @@ export type SharedGroupEntry = NonNullable<
  * ACCEPTED secondary group (i.e. the group receives announcements through
  * another group's channel).
  *
- * Same `by_isShared` scan pattern as `listActiveSharedChannelsForGroup`:
- * shared channels are rare, so the indexed scan stays cheap.
+ * Shared channels are community-scoped (`inviteGroupToChannel` enforces it
+ * and stamps `communityId`), so the scan uses `by_community_isShared` to
+ * stay cheap even on deployments with many communities. This runs on hot
+ * paths (membership sync), so it must never scan shares deployment-wide.
  */
 export async function findAcceptedSharedAnnouncementsChannelsForGroup(
   ctx: QueryCtx,
   groupId: Id<"groups">
 ): Promise<Array<{ channel: Doc<"chatChannels">; entry: SharedGroupEntry }>> {
+  const group = await ctx.db.get(groupId);
+  if (!group) return [];
+
   const sharedChannels = await ctx.db
     .query("chatChannels")
-    .withIndex("by_isShared", (q) => q.eq("isShared", true))
+    .withIndex("by_community_isShared", (q) =>
+      q.eq("communityId", group.communityId).eq("isShared", true)
+    )
     .filter((q) => q.eq(q.field("archivedAt"), undefined))
     .collect();
 

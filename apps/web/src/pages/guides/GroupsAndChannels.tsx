@@ -520,7 +520,9 @@ export function GroupsAndChannels() {
           own Announcements channel to how it was before. One more rule: a group
           that&rsquo;s sharing its own Announcements channel with others
           can&rsquo;t also accept another group&rsquo;s share — it needs to
-          unshare first.
+          unshare first. And a shared Announcements channel can&rsquo;t be
+          turned off while other groups are still connected — remove the shared
+          groups first.
         </Callout>
       </Section>
 

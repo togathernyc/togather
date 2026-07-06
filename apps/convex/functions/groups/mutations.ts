@@ -393,10 +393,7 @@ export const update = mutation({
         // Archiving the OWNER of a shared announcements channel ends the
         // share: every accepted secondary whose own announcements channel was
         // disabled by accepting gets it re-enabled and repopulated.
-        if (
-          channel.channelType === "announcements" &&
-          (channel.sharedGroups?.length ?? 0) > 0
-        ) {
+        if (channel.channelType === "announcements") {
           for (const sg of channel.sharedGroups ?? []) {
             if (
               sg.status === "accepted" &&
@@ -404,6 +401,16 @@ export const update = mutation({
             ) {
               await restoreOwnAnnouncementsChannelLogic(ctx, sg.groupId, userId);
             }
+          }
+
+          // The share itself ends too — clear the entries so unarchiving the
+          // group and re-enabling the channel doesn't resurrect the share
+          // from stale accepted entries.
+          if ((channel.sharedGroups?.length ?? 0) > 0) {
+            await ctx.db.patch(channel._id, {
+              sharedGroups: [],
+              isShared: false,
+            });
           }
         }
       }

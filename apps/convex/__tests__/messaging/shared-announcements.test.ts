@@ -1037,3 +1037,354 @@ describe("decline and cancel have no announcements side effects", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
   });
 });
+
+// ============================================================================
+// Owner archive clears the share itself
+// ============================================================================
+
+describe("archiving the owner clears the share from the archived channel", () => {
+  test("sharedGroups is emptied and isShared cleared so unarchiving can't resurrect the share", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(api.functions.groups.mutations.update, {
+      token: data.adminToken,
+      groupId: data.ownerGroupId,
+      isArchived: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const sharedChannel = await t.run((ctx) =>
+      ctx.db.get(data.ownerAnnouncementsChannelId)
+    );
+    expect(sharedChannel!.isArchived).toBe(true);
+    expect(sharedChannel!.sharedGroups).toHaveLength(0);
+    expect(sharedChannel!.isShared).toBe(false);
+  });
+});
+
+// ============================================================================
+// archiveChannel guard
+// ============================================================================
+
+describe("archiveChannel on a shared channel", () => {
+  test("cannot archive a channel with shared groups (pending entry is enough)", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.archiveChannel, {
+        token: data.ownerLeaderToken,
+        channelId: data.ownerAnnouncementsChannelId,
+      })
+    ).rejects.toThrow(/CHANNEL_SHARED/);
+  });
+});
+
+// ============================================================================
+// Disabled/archived channel guards on invite + accept
+// ============================================================================
+
+describe("disabled/archived shared channel guards", () => {
+  test("cannot accept an invite to a disabled channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.ownerAnnouncementsChannelId, { isEnabled: false });
+    });
+
+    await expect(acceptShare(t, data)).rejects.toThrow(/CHANNEL_DISABLED/);
+
+    // No side effects: the accepting group's own channel stays enabled.
+    const ownChannel = await t.run((ctx) =>
+      ctx.db.get(data.secondaryAnnouncementsChannelId)
+    );
+    expect(ownChannel!.isEnabled).toBe(true);
+  });
+
+  test("cannot accept an invite to an archived channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.ownerAnnouncementsChannelId, {
+        isArchived: true,
+        archivedAt: Date.now(),
+      });
+    });
+
+    await expect(acceptShare(t, data)).rejects.toThrow(/CHANNEL_DISABLED/);
+  });
+
+  test("cannot invite a group to a disabled announcements channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.ownerAnnouncementsChannelId, { isEnabled: false });
+    });
+
+    await expect(inviteSecondary(t, data)).rejects.toThrow(/CHANNEL_DISABLED/);
+  });
+
+  test("a group that receives announcements through a share cannot share its own channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Force the secondary's own channel back to enabled directly (bypassing
+    // the IN_SHARED_ANNOUNCEMENTS toggle guard) so the disabled-channel
+    // invite guard doesn't fire first.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(data.secondaryAnnouncementsChannelId, {
+        isEnabled: true,
+        disabledByUserId: undefined,
+      });
+    });
+
+    const fourthGroupId = await t.run(async (ctx) => {
+      return await ctx.db.insert("groups", {
+        name: "Fourth Group",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isPublic: true,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+        token: data.secondaryLeaderToken,
+        channelId: data.secondaryAnnouncementsChannelId,
+        groupId: fourthGroupId,
+      })
+    ).rejects.toThrow(/OWNER_IS_SECONDARY/);
+  });
+});
+
+// ============================================================================
+// Backfill race guard
+// ============================================================================
+
+describe("populateChannelMembersBatch race guard", () => {
+  test("in-flight backfill bails when the group is removed from the share before it runs", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+
+    // Remove the group from the share BEFORE the scheduled backfill runs.
+    await t.mutation(api.functions.messaging.sharedChannels.removeGroupFromChannel, {
+      token: data.secondaryLeaderToken,
+      channelId: data.ownerAnnouncementsChannelId,
+      groupId: data.secondaryGroupId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The stale backfill must NOT have re-added the removed group's members.
+    for (const userId of [data.secondaryLeaderId, data.secondaryMemberId]) {
+      const row = await getChannelMember(t, data.ownerAnnouncementsChannelId, userId);
+      if (row) {
+        expect(row.leftAt).toBeDefined();
+      }
+    }
+
+    const sharedChannel = await t.run((ctx) =>
+      ctx.db.get(data.ownerAnnouncementsChannelId)
+    );
+    expect(sharedChannel!.memberCount).toBe(2);
+  });
+});
+
+// ============================================================================
+// Accepting leader gets immediate membership
+// ============================================================================
+
+describe("accepting leader membership", () => {
+  test("the responding leader is an active channel admin before the batch runs", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+
+    // BEFORE running scheduled functions — the synchronous ensure must
+    // already have added the leader so an immediate post can't fail with
+    // "Not a member of this channel".
+    const leaderRow = await getChannelMember(
+      t,
+      data.ownerAnnouncementsChannelId,
+      data.secondaryLeaderId
+    );
+    expect(leaderRow).not.toBeNull();
+    expect(leaderRow!.leftAt).toBeUndefined();
+    expect(leaderRow!.role).toBe("admin");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
+// ============================================================================
+// Legacy entries without recorded prior state
+// ============================================================================
+
+describe("switching from a legacy entry without previousAnnouncementsChannelEnabled", () => {
+  test("falls back to the current own-channel state instead of storing undefined", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    // Third owner group with its own announcements channel.
+    const thirdGroupId = await t.run(async (ctx) => {
+      return await ctx.db.insert("groups", {
+        name: "Third Owner Group",
+        communityId: data.communityId,
+        groupTypeId: data.groupTypeId,
+        isPublic: true,
+        isArchived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+    const thirdLeader = await createUserInGroup(
+      t,
+      data.communityId,
+      thirdGroupId,
+      "leader",
+      "ThirdOwnerL"
+    );
+    const thirdChannelId = await createAnnouncementsChannel(
+      t,
+      thirdGroupId,
+      thirdLeader.userId
+    );
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Simulate a legacy entry created before prior-state tracking: strip the
+    // recorded previousAnnouncementsChannelEnabled off the accepted entry.
+    await t.run(async (ctx) => {
+      const channel = await ctx.db.get(data.ownerAnnouncementsChannelId);
+      const stripped = (channel!.sharedGroups ?? []).map((sg) => {
+        const { previousAnnouncementsChannelEnabled: _omit, ...rest } = sg;
+        return rest;
+      });
+      await ctx.db.patch(data.ownerAnnouncementsChannelId, {
+        sharedGroups: stripped,
+      });
+    });
+
+    // Switch to the third group's share.
+    await t.mutation(api.functions.messaging.sharedChannels.inviteGroupToChannel, {
+      token: thirdLeader.token,
+      channelId: thirdChannelId,
+      groupId: data.secondaryGroupId,
+    });
+    await t.mutation(api.functions.messaging.sharedChannels.respondToChannelInvite, {
+      token: data.secondaryLeaderToken,
+      channelId: thirdChannelId,
+      groupId: data.secondaryGroupId,
+      response: "accepted",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The new entry stores the CURRENT own-channel state (disabled by the
+    // first accept → false), not undefined.
+    const newChannel = await t.run((ctx) => ctx.db.get(thirdChannelId));
+    const newEntry = newChannel!.sharedGroups!.find(
+      (sg) => sg.groupId === data.secondaryGroupId
+    );
+    expect(newEntry!.previousAnnouncementsChannelEnabled).toBe(false);
+  });
+});
+
+// ============================================================================
+// Community-scoped share metadata
+// ============================================================================
+
+describe("community scoping of shared channels", () => {
+  test("inviting stamps communityId on the shared channel", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    // Seeded without communityId (legacy shape).
+    let channel = await t.run((ctx) => ctx.db.get(data.ownerAnnouncementsChannelId));
+    expect(channel!.communityId).toBeUndefined();
+
+    await inviteSecondary(t, data);
+
+    channel = await t.run((ctx) => ctx.db.get(data.ownerAnnouncementsChannelId));
+    expect(channel!.communityId).toBe(data.communityId);
+  });
+});
+
+// ============================================================================
+// listGroupChannels — shared-in announcements shape
+// ============================================================================
+
+describe("listGroupChannels with a shared announcements channel", () => {
+  test("secondary side gets sharedFromGroupName (no sharedGroupCount); owner side gets sharedGroupCount", async () => {
+    const t = convexTest(schema, modules);
+    const data = await seedData(t);
+
+    await inviteSecondary(t, data);
+    await acceptShare(t, data);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Secondary group's view: the shared-in channel carries the owning
+    // group's name; its own (disabled) channel does not.
+    const secondaryChannels = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      {
+        token: data.secondaryLeaderToken,
+        groupId: data.secondaryGroupId,
+        includeArchived: true,
+      }
+    );
+    const sharedIn = secondaryChannels.find(
+      (c) => c._id === data.ownerAnnouncementsChannelId
+    );
+    expect(sharedIn).toBeDefined();
+    expect(sharedIn!.sharedFromGroupId).toBe(data.ownerGroupId);
+    expect(sharedIn!.sharedFromGroupName).toBe("Owner Group");
+    expect(sharedIn!.sharedGroupCount).toBeUndefined();
+
+    const ownDisabled = secondaryChannels.find(
+      (c) => c._id === data.secondaryAnnouncementsChannelId
+    );
+    expect(ownDisabled).toBeDefined();
+    expect(ownDisabled!.sharedFromGroupName).toBeUndefined();
+
+    // Owner group's view: its channel is owner-side shared.
+    const ownerChannels = await t.query(
+      api.functions.messaging.channels.listGroupChannels,
+      {
+        token: data.ownerLeaderToken,
+        groupId: data.ownerGroupId,
+        includeArchived: true,
+      }
+    );
+    const owned = ownerChannels.find(
+      (c) => c._id === data.ownerAnnouncementsChannelId
+    );
+    expect(owned).toBeDefined();
+    expect(owned!.sharedGroupCount).toBe(1);
+    expect(owned!.sharedFromGroupName).toBeUndefined();
+  });
+});

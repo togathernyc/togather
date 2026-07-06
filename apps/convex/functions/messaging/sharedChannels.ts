@@ -17,14 +17,17 @@ import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { isLeaderRole } from "../../lib/helpers";
+import { channelIsLeaderEnabled, isLeaderRole } from "../../lib/helpers";
 import { getChannelSlug } from "../../lib/slugs";
 import {
   updateChannelMemberCount,
   findAcceptedSharedAnnouncementsChannelsForGroup,
   type SharedGroupEntry,
 } from "./helpers";
-import { restoreOwnAnnouncementsChannelLogic } from "./channels";
+import {
+  ensureChannelMembership,
+  restoreOwnAnnouncementsChannelLogic,
+} from "./channels";
 
 // ============================================================================
 // Shared Helpers
@@ -181,6 +184,32 @@ export const inviteGroupToChannel = mutation({
       throw new ConvexError("Can only invite groups from the same community");
     }
 
+    if (channel.channelType === "announcements") {
+      // Can't share a disabled/archived channel — the invited group would
+      // accept into a channel nobody can use.
+      if (channel.isArchived || !channelIsLeaderEnabled(channel)) {
+        throw new ConvexError({
+          code: "CHANNEL_DISABLED",
+          message:
+            "This Announcements channel is disabled or archived. Re-enable it before sharing it with other groups.",
+        });
+      }
+
+      // A group that receives announcements through another group's shared
+      // channel can't share its own — it would relay a share of a share.
+      const owningGroupShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
+        ctx,
+        channelGroupId
+      );
+      if (owningGroupShares.length > 0) {
+        throw new ConvexError({
+          code: "OWNER_IS_SECONDARY",
+          message:
+            "This group receives announcements through another group's shared Announcements channel. Leave that share before sharing its own Announcements channel.",
+        });
+      }
+    }
+
     // Duplicate check: cannot invite a group that's already in sharedGroups
     const existingSharedGroups = channel.sharedGroups ?? [];
     const alreadyInvited = existingSharedGroups.some(
@@ -207,6 +236,10 @@ export const inviteGroupToChannel = mutation({
       isShared: true,
       sharedGroups: updatedSharedGroups,
       updatedAt: now,
+      // Stamp communityId (from the owning group) so community-scoped share
+      // scans (by_community_isShared) see this channel — defensive for
+      // channels created before communityId was denormalized.
+      ...(channel.communityId ? {} : { communityId: primaryGroup.communityId }),
     });
 
     // Notify leaders of the invited group
@@ -274,6 +307,17 @@ export const respondToChannelInvite = mutation({
     const now = Date.now();
 
     if (args.response === "accepted") {
+      // Can't accept into a disabled/archived channel — the accepting group
+      // would be joined to a channel nobody can use, and the backfill batch
+      // would bail anyway.
+      if (channel.isArchived || !channelIsLeaderEnabled(channel)) {
+        throw new ConvexError({
+          code: "CHANNEL_DISABLED",
+          message:
+            "This channel is disabled or archived and can't be joined. Ask the owning group to re-enable it first.",
+        });
+      }
+
       // Announcements shares have accept-time side effects: the accepting
       // group's members are backfilled into the shared channel and its own
       // announcements channel is disabled (prior state recorded so it can be
@@ -299,23 +343,22 @@ export const respondToChannelInvite = mutation({
         }
 
         // Accept = switch: if already an accepted secondary of a DIFFERENT
-        // shared announcements channel, leave it (same cleanup as
-        // removeGroupFromChannel) — but do NOT restore the own channel
-        // mid-switch. Carry the OLD entry's recorded prior state onto the new
-        // entry so the true original state is restored on the final leave.
+        // shared announcements channel (at most one can exist per group),
+        // leave it (same cleanup as removeGroupFromChannel) — but do NOT
+        // restore the own channel mid-switch. Carry the OLD entry's recorded
+        // prior state onto the new entry so the true original state is
+        // restored on the final leave.
         const acceptedShares = await findAcceptedSharedAnnouncementsChannelsForGroup(
           ctx,
           args.groupId
         );
-        let switched = false;
-        for (const { channel: otherChannel, entry: oldEntry } of acceptedShares) {
-          if (otherChannel._id === args.channelId) continue;
-          switched = true;
-          previousAnnouncementsChannelEnabled =
-            oldEntry.previousAnnouncementsChannelEnabled;
+        const oldShare = acceptedShares.find(
+          ({ channel: otherChannel }) => otherChannel._id !== args.channelId
+        );
+        if (oldShare) {
           await removeGroupEntryAndCleanupMembers(
             ctx,
-            otherChannel,
+            oldShare.channel,
             args.groupId,
             now
           );
@@ -324,11 +367,14 @@ export const respondToChannelInvite = mutation({
         const ownChannelEnabled =
           !!ownChannel &&
           ownChannel.isArchived !== true &&
-          ownChannel.isEnabled !== false;
+          channelIsLeaderEnabled(ownChannel);
 
-        if (!switched) {
-          previousAnnouncementsChannelEnabled = ownChannelEnabled;
-        }
+        // Legacy entries created before prior-state tracking have no recorded
+        // value — fall back to the CURRENT own-channel state.
+        previousAnnouncementsChannelEnabled =
+          (oldShare
+            ? oldShare.entry.previousAnnouncementsChannelEnabled
+            : undefined) ?? ownChannelEnabled;
 
         // Accepting disables the group's own announcements channel —
         // announcements now flow through the share.
@@ -360,9 +406,13 @@ export const respondToChannelInvite = mutation({
 
       // Backfill: every active member of the accepting group becomes a
       // channel member (leaders mirror to channel role "admin"), in scheduled
-      // batches. `recountMemberCount` because the channel already holds the
-      // owning group's members.
+      // batches.
       if (channel.channelType === "announcements") {
+        // Add the accepting leader synchronously so they can post immediately,
+        // before the async batch backfills everyone else (see
+        // ensureChannelMembership). Leaders mirror to channel role "admin".
+        await ensureChannelMembership(ctx, args.channelId, userId, "admin", now);
+
         await ctx.scheduler.runAfter(
           0,
           internal.functions.messaging.channels.populateChannelMembersBatch,
@@ -372,7 +422,6 @@ export const respondToChannelInvite = mutation({
             mirrorGroupRole: true,
             cursor: null,
             processed: 0,
-            recountMemberCount: true,
           }
         );
       }

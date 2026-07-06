@@ -43,6 +43,7 @@ import {
   useAuthenticatedMutation,
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 
 export default function ChannelActiveStateRoute() {
   const { groupId, channelSlug } = useLocalSearchParams<{
@@ -170,10 +171,7 @@ export default function ChannelActiveStateRoute() {
         // ConvexError guards (e.g. CHANNEL_SHARED / IN_SHARED_ANNOUNCEMENTS on
         // announcements toggles) carry the readable message on `.data.message`;
         // `.message` is a generic "Server Error" string in production.
-        Alert.alert(
-          "Error",
-          e?.data?.message ?? e?.message ?? "Failed to update channel",
-        );
+        Alert.alert("Error", errorMessage(e, "Failed to update channel"));
       } finally {
         setSubmitting(false);
       }

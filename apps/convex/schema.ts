@@ -1581,7 +1581,11 @@ export default defineSchema({
    */
   chatChannels: defineTable({
     groupId: v.optional(v.id("groups")),
-    /** Set for ad-hoc channels (dm, group_dm) that are not bound to a group. */
+    /**
+     * Set for ad-hoc channels (dm, group_dm) that are not bound to a group,
+     * and for announcements/shared channels so `by_community_isShared` can
+     * scope share scans to one community.
+     */
     communityId: v.optional(v.id("communities")),
     /** Convenience flag: true for ad-hoc dm/group_dm channels. */
     isAdHoc: v.optional(v.boolean()),
@@ -1677,6 +1681,7 @@ export default defineSchema({
     .index("by_lastMessageAt", ["lastMessageAt"])
     .index("by_archived", ["isArchived"])
     .index("by_isShared", ["isShared"])
+    .index("by_community_isShared", ["communityId", "isShared"])
     .index("by_inviteShortId", ["inviteShortId"])
     .index("by_meetingId", ["meetingId"])
     .index("by_dmPairKey", ["dmPairKey"])

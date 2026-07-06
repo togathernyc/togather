@@ -40,6 +40,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
 
@@ -70,8 +71,11 @@ interface Channel {
   isPinned: boolean;
   lastMessageAt?: number;
   isShared?: boolean;
-  /** Number of groups with an accepted share on this channel (owner side). */
+  /** Number of groups with an accepted share on this channel (owner side only). */
   sharedGroupCount?: number;
+  /** For announcements channels shared INTO this group: the owning group. */
+  sharedFromGroupId?: string;
+  sharedFromGroupName?: string;
   /** false when leader hid channel; memberships stay (see Convex isEnabled). */
   isEnabled: boolean;
   /** true for custom channels auto-created from an event plan's serving team. */
@@ -101,17 +105,6 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
     token && isLeader ? { token, groupId: groupId as Id<"groups"> } : "skip"
   );
 
-  // Shared channels this group participates in as an accepted SECONDARY.
-  // Used to detect when announcements flow in through another group's shared
-  // Announcements channel (which keeps this group's own channel disabled).
-  const activeSharedChannels = useQuery(
-    api.functions.messaging.sharedChannels.listActiveSharedChannelsForGroup,
-    token && isLeader ? { token, groupId: groupId as Id<"groups"> } : "skip"
-  );
-  const announcementsShare = activeSharedChannels?.find(
-    (c) => c.channelType === "announcements"
-  );
-
   const { channels: rawChannels } = useGroupChannels(groupId, {
     includeArchived: isLeader,
   });
@@ -125,8 +118,16 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
   const mainChannel = channels?.find((c: Channel) => c.channelType === "main");
   const leadersChannel = channels?.find((c: Channel) => c.channelType === "leaders");
   const reachOutChannel = channels?.find((c: Channel) => c.channelType === "reach_out");
+  // An announcements channel shared INTO this group (owned by another group,
+  // sharedFromGroupName set) IS the group's announcements surface while the
+  // share is active — the group's own channel stays intentionally disabled.
+  // Both come out of the same cached listGroupChannels payload, so this works
+  // offline too.
+  const sharedInAnnouncements = channels?.find(
+    (c: Channel) => c.channelType === "announcements" && !!c.sharedFromGroupName
+  );
   const announcementsChannel = channels?.find(
-    (c: Channel) => c.channelType === "announcements"
+    (c: Channel) => c.channelType === "announcements" && !c.sharedFromGroupName
   );
   const pcoSyncedChannels = channels?.filter((c: Channel) => c.channelType === "pco_services") ?? [];
   const crossTeamChannels = channels?.filter((c: Channel) => c.channelType === "cross_team") ?? [];
@@ -163,10 +164,7 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
     } catch (e: any) {
       // ConvexError payloads (e.g. IN_SHARED_ANNOUNCEMENTS) carry the readable
       // message on `.data.message`; `.message` is generic in production.
-      Alert.alert(
-        "Error",
-        e?.data?.message ?? e?.message ?? "Failed to enable Announcements"
-      );
+      Alert.alert("Error", errorMessage(e, "Failed to enable Announcements"));
     } finally {
       setEnablingAnnouncements(false);
     }
@@ -286,47 +284,68 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
   // Announcements: opt-in leader-broadcast channel. Leaders see the row
   // even before the channel exists so they can enable it; members only see
   // it once a leader has turned it on.
-  if (announcementsChannel || isLeader) {
-    const hasAnnouncementsRecord = !!announcementsChannel;
-    // Accepted shares on this group's OWN announcements channel (owner side).
-    const sharedWithCount = announcementsChannel?.sharedGroupCount ?? 0;
+  if (sharedInAnnouncements) {
+    // Announcements come from another group's shared channel — THE one
+    // announcements row opens that channel. The group's own (intentionally
+    // disabled) channel doesn't render at all: re-enabling it is guarded
+    // backend-side by IN_SHARED_ANNOUNCEMENTS, and leaving the share happens
+    // from the shared channel's info screen. The channel id disambiguates the
+    // shared channel from the own channel that shares the same slug.
+    rows.push({
+      key: sharedInAnnouncements._id,
+      icon: "megaphone",
+      iconColor: "#E11D48",
+      iconBg: "#E11D4815",
+      name: "Announcements",
+      subtitle: `Shared — announcements come from ${sharedInAnnouncements.sharedFromGroupName}`,
+      enabled: sharedInAnnouncements.isEnabled !== false,
+      onPress: () =>
+        navigateToChannelInfo(sharedInAnnouncements.slug, sharedInAnnouncements._id),
+      unreadCount: sharedInAnnouncements.unreadCount,
+      pinned: sharedInAnnouncements.isPinned,
+      archived: false,
+    });
+  } else if (announcementsChannel || isLeader) {
+    let subtitle: string;
+    if (!announcementsChannel) {
+      subtitle = enablingAnnouncements
+        ? "Enabling…"
+        : "Tap to enable — leaders post, members read";
+    } else if (!announcementsEnabled) {
+      subtitle = "Disabled";
+    } else {
+      const memberCountLabel = `${announcementsChannel.memberCount} member${announcementsChannel.memberCount !== 1 ? "s" : ""}`;
+      // Accepted shares on this group's OWN announcements channel (owner side).
+      const sharedWithCount = announcementsChannel.sharedGroupCount ?? 0;
+      subtitle =
+        sharedWithCount > 0
+          ? `${memberCountLabel} · Shared with ${sharedWithCount} group${sharedWithCount !== 1 ? "s" : ""}`
+          : `${memberCountLabel} · Leaders post`;
+    }
     rows.push({
       key: announcementsChannel?._id ?? "announcements-placeholder",
       icon: "megaphone",
       iconColor: "#E11D48",
       iconBg: "#E11D4815",
       name: "Announcements",
-      // When this group receives announcements through another group's shared
-      // channel, its own channel is intentionally disabled — say so instead of
-      // showing a "Disabled"/"Tap to enable" state that would just error
-      // (enable is guarded backend-side by IN_SHARED_ANNOUNCEMENTS).
-      subtitle: announcementsShare
-        ? `Shared — announcements come from ${announcementsShare.primaryGroupName}`
-        : hasAnnouncementsRecord
-          ? announcementsEnabled
-            ? sharedWithCount > 0
-              ? `${announcementsChannel!.memberCount} member${announcementsChannel!.memberCount !== 1 ? "s" : ""} · Shared with ${sharedWithCount} group${sharedWithCount !== 1 ? "s" : ""}`
-              : `${announcementsChannel!.memberCount} member${announcementsChannel!.memberCount !== 1 ? "s" : ""} · Leaders post`
-            : "Disabled"
-          : enablingAnnouncements
-            ? "Enabling…"
-            : "Tap to enable — leaders post, members read",
+      subtitle,
       enabled: announcementsEnabled,
       // Placeholder (no record yet) tap → lazy-create via mutation (surfaces
       // the backend guard message if announcements come through a share).
-      // Existing record tap → channel info screen for further toggling.
-      onPress: hasAnnouncementsRecord
-        ? () => navigateToChannelInfo(announcementsChannel!.slug)
+      // Existing record tap → channel info screen for further toggling. The
+      // channel id is passed so routing can't resolve a same-slug shared
+      // channel instead of this group's own channel.
+      onPress: announcementsChannel
+        ? () =>
+            navigateToChannelInfo(announcementsChannel.slug, announcementsChannel._id)
         : isLeader
           ? handleEnableAnnouncements
           : undefined,
       unreadCount: announcementsChannel?.unreadCount,
       pinned: announcementsChannel?.isPinned,
       // Keep the "Tap to enable" CTA (no record) in the main list; fold only
-      // an existing-but-disabled Announcements channel. While receiving a
-      // share, keep the row visible — the disabled state is explained by the
-      // "Shared — announcements come from …" subtitle.
-      archived: !!announcementsChannel && !announcementsEnabled && !announcementsShare,
+      // an existing-but-disabled Announcements channel.
+      archived: !!announcementsChannel && !announcementsEnabled,
     });
   }
 
