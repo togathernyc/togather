@@ -114,11 +114,11 @@ export function ContributeAI() {
                   title: "Describe the bug or idea",
                   body: (
                     <>
-                      File an issue on GitHub using our templates, or mention{" "}
-                      <code className="bg-neutral-200 px-1.5 py-0.5 rounded text-sm">@Togather</code>{" "}
-                      in an issue. Plain language is fine — say what you saw,
-                      what you expected, and why it matters. Screenshots help a
-                      lot.
+                      Submit it in the Togather app's dev dashboard (Settings
+                      &rarr; Contribute). Plain language is fine — say what you
+                      saw, what you expected, and why it matters. Screenshots
+                      help a lot. (Prefer GitHub? Filing an issue there works
+                      too.)
                     </>
                   ),
                 },
@@ -126,11 +126,10 @@ export function ContributeAI() {
                   title: "AI turns it into a detailed spec",
                   body: (
                     <>
-                      The <code className="bg-neutral-200 px-1.5 py-0.5 rounded text-sm">@Togather</code>{" "}
-                      agent investigates the codebase, reproduces the bug where
-                      it can, and rewrites your report as a structured spec:
-                      affected screens, expected behavior, edge cases, and
-                      acceptance criteria.
+                      The AI agent investigates the codebase, reproduces the
+                      bug where it can, and rewrites your report as a
+                      structured spec: affected screens, expected behavior,
+                      edge cases, and acceptance criteria.
                     </>
                   ),
                 },
@@ -139,19 +138,20 @@ export function ContributeAI() {
                   body: (
                     <>
                       This is a product review, not a technical one. Read the
-                      spec and answer one question: <em>is this what I meant?</em>{" "}
-                      Correct anything that's off in a comment — the agent will
-                      revise.
+                      spec in the dashboard and answer one question:{" "}
+                      <em>is this what I meant?</em> Correct anything that's
+                      off — the agent will revise.
                     </>
                   ),
                 },
                 {
-                  title: "Mark it ready to build",
+                  title: "Approve the spec",
                   body: (
                     <>
-                      When the spec matches your intent, it gets the{" "}
-                      <code className="bg-neutral-200 px-1.5 py-0.5 rounded text-sm">ready-to-build</code>{" "}
-                      label. That's the signal for AI to implement it.
+                      When the spec matches your intent, approve it in the
+                      dashboard. Low-risk changes start building automatically
+                      the moment you approve; bigger ones wait for an explicit
+                      "Start build" go-ahead.
                     </>
                   ),
                 },
@@ -170,9 +170,10 @@ export function ContributeAI() {
                   body: (
                     <>
                       Check the screenshots (or the preview build) against your
-                      acceptance criteria and leave a comment confirming it
-                      does what you asked. A maintainer makes the final merge
-                      decision and the change ships in the next release.
+                      acceptance criteria and confirm it does what you asked.
+                      A maintainer makes the final merge decision on GitHub —
+                      you can track every status change in the dashboard, and
+                      you'll get a push notification when your change ships.
                     </>
                   ),
                 },
@@ -189,6 +190,13 @@ export function ContributeAI() {
               ))}
             </ol>
           </div>
+
+          <p className="text-neutral-600 text-sm leading-relaxed mt-4">
+            Behind the scenes, every dashboard item links to its real GitHub
+            issue and pull request — and if you add your GitHub username, you
+            get co-author credit on the commits: public open-source
+            contributions you can show employers.
+          </p>
         </section>
 
         {/* Workflow 2 */}
@@ -202,29 +210,31 @@ export function ContributeAI() {
             </h2>
           </div>
           <p className="text-neutral-600 leading-relaxed mb-6">
-            For changes that are clearly low risk, the whole pipeline runs
-            without a human in the middle: the issue is triaged, implemented,
-            verified, and merged automatically. Your spec is the only human
-            input — which is exactly why writing a good one matters.
+            For changes that are clearly low risk, the pipeline runs from your
+            approval onward without a human in the middle: the change is
+            implemented, verified, and merged automatically. Your approved
+            spec is the only human input — which is exactly why writing a good
+            one matters.
           </p>
 
           <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-6 mb-6">
             <ol className="space-y-3 text-neutral-600">
               {[
-                <>An issue is filed (or a spec is marked{" "}
-                  <code className="bg-neutral-200 px-1.5 py-0.5 rounded text-sm">ready-to-build</code>).</>,
+                <>You submit a bug or idea and approve its spec in the
+                  dashboard, just like the guided workflow.</>,
                 <>An AI triage step reads the spec, works out which parts of the
-                  codebase it touches, and assigns a risk label automatically.</>,
+                  codebase it touches, and assigns a risk level automatically.</>,
                 <>
-                  <strong className="text-neutral-700">Low risk:</strong> AI
-                  implements, verifies with automated tests and screenshots,
-                  and merges on its own. It ships in the next release.
+                  <strong className="text-neutral-700">Low risk:</strong> the
+                  build starts the moment you approve the spec. AI implements,
+                  verifies with automated tests and screenshots, and merges on
+                  its own. It ships in the next release.
                 </>,
                 <>
                   <strong className="text-neutral-700">Medium or high risk:</strong>{" "}
                   the change automatically falls back to the guided workflow
-                  above — AI still builds it, but a maintainer reviews and
-                  merges.
+                  above — a build starts on an explicit go-ahead, AI still
+                  builds it, but a maintainer reviews and merges.
                 </>,
               ].map((item, i) => (
                 <li key={i} className="flex gap-3">
@@ -254,8 +264,8 @@ export function ContributeAI() {
           <p className="text-neutral-600 leading-relaxed mb-6">
             Which workflow a change takes is decided by its risk level. Risk is
             about blast radius: how much of the app could break if the change
-            is wrong. An AI triage step assigns the label when an issue is
-            marked ready, and maintainers can always override it.
+            is wrong. An AI triage step assigns the level while drafting the
+            spec, and maintainers can always override it.
           </p>
 
           <div className="space-y-3">
@@ -378,14 +388,15 @@ export function ContributeAI() {
             The five GitHub words you need
           </h2>
           <p className="text-neutral-600 leading-relaxed mb-6">
-            Everything happens on GitHub, but you only need a handful of terms
-            to follow along.
+            The dashboard is the front door, but the code, reviews, and merges
+            live on GitHub — and every dashboard item links out to them. You
+            only need a handful of terms to follow along.
           </p>
           <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-6">
             <dl className="space-y-3 text-neutral-600 text-sm leading-relaxed">
               {[
                 ["Issue", "A tracked request — a bug report or feature idea. This is where your spec lives."],
-                ["Label", "A colored tag on an issue, like ready-to-build or risk:low. Labels are what move a change through the pipeline."],
+                ["Label", "A colored tag on an issue, like risk:low. Labels mirror where a change is in the pipeline and how risky it is."],
                 ["Pull request (PR)", "A proposed change to the app, with the code, screenshots, and test results attached. AI opens these; humans (or automation) approve them."],
                 ["Merge", "Accepting a pull request into the app. After merging, the change ships in the next release."],
                 ["CI", "The automated checks that run on every pull request — tests, checks that the app still builds, and our risk-level rules."],
@@ -406,7 +417,9 @@ export function ContributeAI() {
           </h2>
           <p className="text-neutral-600 leading-relaxed mb-6">
             The best first contribution is a well-written bug report about
-            something that annoyed you this week.
+            something that annoyed you this week. Open Settings &rarr;
+            Contribute in the Togather app and describe it — or, if you're
+            more at home on GitHub, file an issue there.
           </p>
           <div className="flex flex-wrap gap-3">
             <a

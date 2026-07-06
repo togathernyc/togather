@@ -30,7 +30,7 @@ This folder contains Architecture Decision Records (ADRs) and implementation gui
 
 | ADR | Status | Description |
 |-----|--------|-------------|
-| [ADR-029](./ADR-029-contributor-dev-dashboard.md) | Proposed | Contributor dev dashboard: in-house AI-driven contribution pipeline |
+| [ADR-029](./ADR-029-contributor-dev-dashboard.md) | Accepted | Contributor dev dashboard: in-house AI-driven contribution pipeline |
 
 ---
 
