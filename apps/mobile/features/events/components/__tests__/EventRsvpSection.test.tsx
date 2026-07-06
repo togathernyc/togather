@@ -3,6 +3,7 @@ import { render } from "@testing-library/react-native";
 import {
   RsvpEditModal,
   isGoingRsvpOption,
+  getEmojiForOption,
   GOING_RSVP_OPTION_ID,
 } from "../EventRsvpSection";
 
@@ -43,6 +44,18 @@ describe("isGoingRsvpOption", () => {
     expect(isGoingRsvpOption(CUSTOM_LABEL_OPTIONS[2])).toBe(false);
     expect(isGoingRsvpOption(null)).toBe(false);
     expect(isGoingRsvpOption(undefined)).toBe(false);
+  });
+});
+
+describe("getEmojiForOption", () => {
+  test("extracts the label's own emoji when present", () => {
+    expect(getEmojiForOption({ id: 3, label: "No can do ☹️" })).toBe("☹️");
+  });
+
+  test("falls back to the id slot for emoji-less custom labels", () => {
+    expect(getEmojiForOption({ id: 1, label: "Count me in" })).toBe("👍");
+    expect(getEmojiForOption({ id: 2, label: "Still deciding" })).toBe("🤔");
+    expect(getEmojiForOption({ id: 3, label: "Count me out" })).toBe("😢");
   });
 });
 

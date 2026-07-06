@@ -13,6 +13,11 @@ import { getOptionalAuth } from "../../lib/auth";
 import { getSeriesNumber } from "../eventSeries";
 import { isLeaderRole } from "../../lib/helpers";
 import { getHostUserIds, isMeetingHost } from "../../lib/meetingPermissions";
+import {
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "../../lib/meetingConfig";
 
 /**
  * Get meeting by short ID (for public sharing URLs)
@@ -41,11 +46,11 @@ export const getByShortId = query({
       .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
       .take(1000);
 
-    // Count by rsvpOptionId (1=yes, 2=no, 3=maybe based on rsvpOptions)
+    // Count by the standard option id slots (1=Going, 2=Maybe, 3=Can't Go)
     const rsvpCounts = {
-      yes: rsvps.filter((r) => r.rsvpOptionId === 1).length,
-      no: rsvps.filter((r) => r.rsvpOptionId === 2).length,
-      maybe: rsvps.filter((r) => r.rsvpOptionId === 3).length,
+      yes: rsvps.filter((r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID).length,
+      no: rsvps.filter((r) => r.rsvpOptionId === CANT_GO_RSVP_OPTION_ID).length,
+      maybe: rsvps.filter((r) => r.rsvpOptionId === MAYBE_RSVP_OPTION_ID).length,
       total: rsvps.length,
     };
 
@@ -257,11 +262,11 @@ export const getWithDetails = query({
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
       .collect();
 
-    // Count by rsvpOptionId (1=yes, 2=no, 3=maybe based on rsvpOptions)
+    // Count by the standard option id slots (1=Going, 2=Maybe, 3=Can't Go)
     const rsvpCounts = {
-      yes: rsvps.filter((r) => r.rsvpOptionId === 1).length,
-      no: rsvps.filter((r) => r.rsvpOptionId === 2).length,
-      maybe: rsvps.filter((r) => r.rsvpOptionId === 3).length,
+      yes: rsvps.filter((r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID).length,
+      no: rsvps.filter((r) => r.rsvpOptionId === CANT_GO_RSVP_OPTION_ID).length,
+      maybe: rsvps.filter((r) => r.rsvpOptionId === MAYBE_RSVP_OPTION_ID).length,
       total: rsvps.length,
     };
 

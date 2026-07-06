@@ -25,6 +25,7 @@ export const DEFAULT_MAX_GUESTS_PER_RSVP = 3;
  */
 export const GOING_RSVP_OPTION_ID = 1;
 export const MAYBE_RSVP_OPTION_ID = 2;
+export const CANT_GO_RSVP_OPTION_ID = 3;
 
 /**
  * Is this RSVP option the "Going" option (the slot that allows plus-ones)?
@@ -96,26 +97,27 @@ interface RsvpEditModalProps {
 // ============================================================================
 
 /**
- * Get emoji for an RSVP option label.
+ * Get emoji for an RSVP option.
  * Labels may include emojis (e.g., "Going 👍") or be plain (e.g., "Going").
- * This function first tries to extract an emoji from the label,
- * then falls back to keyword-based matching.
+ * Tries to extract an emoji from the label first, then falls back to the
+ * option's id slot so custom emoji-less labels still get a matching emoji.
  */
-export function getEmojiForLabel(label: string): string {
+export function getEmojiForOption(option: { id: number; label: string }): string {
   // Try to extract emoji from the end of the label
   const emojiRegex = /(\p{Emoji_Presentation}|\p{Emoji}\uFE0F)$/u;
-  const match = label.match(emojiRegex);
+  const match = option.label.match(emojiRegex);
   if (match) {
     return match[0];
   }
 
-  // Fallback to keyword-based matching for labels without emojis
-  const lowerLabel = label.toLowerCase();
-  if (lowerLabel.includes("going") && !lowerLabel.includes("can't")) return "👍";
-  if (lowerLabel.includes("maybe")) return "🤔";
-  if (lowerLabel.includes("can't") || lowerLabel.includes("no")) return "😢";
-  if (lowerLabel.includes("yes")) return "👍";
-  return "👍"; // default
+  switch (option.id) {
+    case MAYBE_RSVP_OPTION_ID:
+      return "🤔";
+    case CANT_GO_RSVP_OPTION_ID:
+      return "😢";
+    default:
+      return "👍";
+  }
 }
 
 /**
@@ -290,7 +292,7 @@ export function FloatingRsvpButtons({
     >
       <View style={styles.buttonRow}>
         {enabledOptions.map((option) => {
-          const emoji = getEmojiForLabel(option.label);
+          const emoji = getEmojiForOption(option);
           const gradient = getGradientForLabel(option.label);
           const displayLabel = getCleanLabel(option.label);
           const isLoading = loadingOptionId === option.id;
@@ -334,7 +336,7 @@ export function FloatingRsvpCard({
 }: FloatingRsvpCardProps) {
   const { colors } = useTheme();
   const selectedOption = options.find((opt) => opt.id === response.optionId);
-  const emoji = selectedOption ? getEmojiForLabel(selectedOption.label) : "👍";
+  const emoji = selectedOption ? getEmojiForOption(selectedOption) : "👍";
   const label = selectedOption ? getCleanLabel(selectedOption.label) : "Going";
   const isGoing = isGoingRsvpOption(selectedOption);
   const displayedGuestCount = response.guestCount ?? 0;

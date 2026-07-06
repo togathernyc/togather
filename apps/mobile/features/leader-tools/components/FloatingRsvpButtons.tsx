@@ -9,6 +9,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
+import {
+  getEmojiForOption,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "@/features/events/components/EventRsvpSection";
 
 interface RsvpOption {
   id: number;
@@ -22,31 +27,14 @@ interface FloatingRsvpButtonsProps {
   onSelect: (optionId: number) => void;
 }
 
-// Canonical labels are stored as "<text> <emoji>" (e.g. "Going 👍"), set by
-// RsvpOptionsEditor. Parse the emoji off the end of the label so the circle
-// matches what the user actually picked. Keep a default in case a legacy
-// option slipped through without an emoji suffix.
-const DEFAULT_EMOJI = "👍";
-const EMOJI_REGEX = /\s*(\p{Emoji_Presentation}|\p{Emoji}️)$/u;
-
-function parseLabel(label: string): { text: string; emoji: string } {
-  const match = label.match(EMOJI_REGEX);
-  if (match) {
-    return { text: label.slice(0, match.index).trim(), emoji: match[1] };
-  }
-  return { text: label, emoji: "" };
-}
-
-// Map RSVP option text (without emoji) to button color. We only branch on
-// a few known text tokens; everything else falls back to primary.
+// Map an option's id slot (1=Going, 2=Maybe, 3=Can't Go) to button color —
+// labels are host-customizable, so semantics must come from the id.
 function getButtonColor(
-  text: string,
+  optionId: number,
   colors: { warning: string; textSecondary: string; buttonPrimary: string },
 ): string {
-  const key = text.trim().toLowerCase();
-  if (key === "going" || key === "yes") return DEFAULT_PRIMARY_COLOR;
-  if (key === "maybe") return colors.warning;
-  if (key === "can't go" || key === "cant go" || key === "no") return colors.textSecondary;
+  if (optionId === MAYBE_RSVP_OPTION_ID) return colors.warning;
+  if (optionId === CANT_GO_RSVP_OPTION_ID) return colors.textSecondary;
   return DEFAULT_PRIMARY_COLOR;
 }
 
@@ -64,8 +52,8 @@ export function FloatingRsvpButtons({
     <View style={[styles.container, { paddingBottom: insets.bottom + 20, backgroundColor: colors.surface, borderTopColor: colors.border }]}>
       <View style={styles.buttonsRow}>
         {enabledOptions.map((option) => {
-          const { text, emoji } = parseLabel(option.label);
-          const circleColor = getButtonColor(text, colors);
+          const emoji = getEmojiForOption(option);
+          const circleColor = getButtonColor(option.id, colors);
           const isLoading = loadingOptionId === option.id;
 
           return (
@@ -80,7 +68,7 @@ export function FloatingRsvpButtons({
                 {isLoading ? (
                   <ActivityIndicator size="small" color={colors.textInverse} />
                 ) : (
-                  <Text style={styles.emoji}>{emoji || DEFAULT_EMOJI}</Text>
+                  <Text style={styles.emoji}>{emoji}</Text>
                 )}
               </View>
               <Text style={[styles.label, { color: colors.text }]}>{option.label}</Text>

@@ -17,6 +17,11 @@ import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { Avatar } from "@components/ui/Avatar";
 import { CustomModal } from "@components/ui/Modal";
 import { useTheme } from "@hooks/useTheme";
+import {
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "@/features/events/components/EventRsvpSection";
 
 function GuestListPage() {
   const { colors } = useTheme();
@@ -103,13 +108,15 @@ function GuestListPage() {
   const isLoading = isLoadingMeeting || isLoadingRsvp;
 
   // Get all users grouped by RSVP status. Options are matched by their
-  // stable id slots (1 = Going, 2 = Maybe, 3 = Can't Go) so custom labels
-  // ("I'm there 😳") don't break the grouping.
-  const goingUsers = rsvpData?.rsvps?.find((r) => r.option.id === 1)?.users || [];
+  // stable id slots so custom labels ("I'm there 😳") don't break the grouping.
+  const goingUsers =
+    rsvpData?.rsvps?.find((r) => r.option.id === GOING_RSVP_OPTION_ID)?.users || [];
 
-  const maybeUsers = rsvpData?.rsvps?.find((r) => r.option.id === 2)?.users || [];
+  const maybeUsers =
+    rsvpData?.rsvps?.find((r) => r.option.id === MAYBE_RSVP_OPTION_ID)?.users || [];
 
-  const cantGoUsers = rsvpData?.rsvps?.find((r) => r.option.id === 3)?.users || [];
+  const cantGoUsers =
+    rsvpData?.rsvps?.find((r) => r.option.id === CANT_GO_RSVP_OPTION_ID)?.users || [];
 
   return (
     <UserRoute>

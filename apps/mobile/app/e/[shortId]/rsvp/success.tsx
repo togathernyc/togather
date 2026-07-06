@@ -2,6 +2,11 @@ import React, { useEffect } from "react";
 import { View, Text, StyleSheet, Image, ImageSourcePropType } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  GOING_RSVP_OPTION_ID,
+  MAYBE_RSVP_OPTION_ID,
+  CANT_GO_RSVP_OPTION_ID,
+} from "@/features/events/components/EventRsvpSection";
 
 // Import GIF animations
 const starStrikeGif = require("../../../../assets/star-strike.gif");
@@ -13,41 +18,44 @@ interface AnimationConfig {
   message: string;
 }
 
-function getRsvpAnimationConfig(optionLabel: string): AnimationConfig {
-  const label = optionLabel.toLowerCase();
+/**
+ * Pick the animation by the RSVP option's id slot (1=Going, 2=Maybe,
+ * 3=Can't Go) — labels are host-customizable, so they can't be used to
+ * infer the option's meaning. Missing/unparseable ids default to Going,
+ * matching the pre-existing fallback.
+ */
+function getRsvpAnimationConfig(optionId: string | undefined): AnimationConfig {
+  const id = optionId ? parseInt(optionId, 10) : GOING_RSVP_OPTION_ID;
 
-  // Check for "going" but not "can't go"
-  if (label.includes("going") && !label.includes("can't") && !label.includes("cannot")) {
-    return {
-      gif: starStrikeGif,
-      message: "You're Going!",
-    };
-  }
-
-  // Check for "maybe" or similar
-  if (label.includes("maybe") || label.includes("interested") || label.includes("tentative")) {
+  if (id === MAYBE_RSVP_OPTION_ID) {
     return {
       gif: raisedEyebrowGif,
       message: "Let us know soon",
     };
   }
 
-  // Default for "can't go", "no", "not going", etc.
+  if (id === CANT_GO_RSVP_OPTION_ID) {
+    return {
+      gif: sadGif,
+      message: "Sad you can't make it",
+    };
+  }
+
   return {
-    gif: sadGif,
-    message: "Sad you can't make it",
+    gif: starStrikeGif,
+    message: "You're Going!",
   };
 }
 
 export default function RsvpSuccessScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { shortId, optionLabel } = useLocalSearchParams<{
+  const { shortId, optionId } = useLocalSearchParams<{
     shortId: string;
-    optionLabel: string;
+    optionId: string;
   }>();
 
-  const config = getRsvpAnimationConfig(optionLabel || "going");
+  const config = getRsvpAnimationConfig(optionId);
 
   // Auto-redirect back to event page after 3 seconds
   useEffect(() => {
