@@ -11,7 +11,6 @@ export { GroupAttendanceDetails } from "./GroupAttendanceDetails";
 export { GroupTypeEditModal } from "./GroupTypeEditModal";
 export { PendingRequestsContent } from "./PendingRequestsContent";
 export { PendingRequestsScreen } from "./PendingRequestsScreen";
-export { PeopleContent } from "./PeopleContent";
 export { PersonDetailScreen } from "./PersonDetailScreen";
 export { SettingsContent } from "./SettingsContent";
 export { SlackBotActivityScreen } from "./SlackBotActivityScreen";

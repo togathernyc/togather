@@ -12,10 +12,19 @@ import { FollowupMobileCards } from "@features/leader-tools/components/FollowupM
 type ViewMode = "cards" | "table";
 const VIEW_MODE_KEY = "people_view_mode_v1";
 
-export function PeopleTabScreen() {
+export function PeopleTabScreen({
+  showAllMembers = false,
+}: {
+  // Leader-tools People tab (default) pins the roster to the current leader's
+  // assigned members. The admin "People" surface passes showAllMembers so
+  // admins see the whole community roster (this is the merged Admin → People
+  // view — the same check-in roster, unfiltered).
+  showAllMembers?: boolean;
+} = {}) {
   const isDesktop = useIsDesktopWeb();
   const { user } = useAuth();
   const currentUserId = user?.id;
+  const enforcedAssigneeUserId = showAllMembers ? undefined : currentUserId;
   const params = useLocalSearchParams<{ returnTo?: string }>();
   const pathname = usePathname();
   const returnToParam =
@@ -62,7 +71,7 @@ export function PeopleTabScreen() {
     return (
       <FollowupDesktopTable
         groupId={announcementGroupId}
-        enforcedAssigneeUserId={currentUserId}
+        enforcedAssigneeUserId={enforcedAssigneeUserId}
         returnTo={returnTo}
       />
     );
@@ -72,7 +81,7 @@ export function PeopleTabScreen() {
     return (
       <FollowupMobileCards
         groupId={announcementGroupId}
-        enforcedAssigneeUserId={currentUserId}
+        enforcedAssigneeUserId={enforcedAssigneeUserId}
         returnTo={returnTo}
         onSwitchToTable={() => setViewModePersisted("table")}
       />
