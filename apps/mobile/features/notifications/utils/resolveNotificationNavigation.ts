@@ -160,6 +160,12 @@ export async function resolveNotificationNavigation(
       router.push("/people" as never);
       break;
     }
+    case "dev_contribution_update": {
+      // Contributor dev dashboard (ADR-029): open the conversation thread.
+      const bugId = pick("bugId") as string | undefined;
+      if (bugId) router.push(`/(user)/dev/${bugId}` as never);
+      break;
+    }
     case "admin_broadcast": {
       const deepLinkUrl = pick("url") as string | undefined;
       router.push((deepLinkUrl ?? "/(tabs)/admin") as never);

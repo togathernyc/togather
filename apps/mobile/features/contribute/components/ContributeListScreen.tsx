@@ -127,11 +127,17 @@ export interface ContributeListScreenProps {
   onSelectConversation?: (id: Id<"devBugs">) => void;
   /** Highlight this conversation's row as the active one (split view). */
   selectedId?: Id<"devBugs"> | null;
+  /**
+   * True when rendered as the split view's sidebar: hides the header back
+   * button (the list is the persistent left pane; there's nothing to pop).
+   */
+  embedded?: boolean;
 }
 
 export function ContributeListScreen({
   onSelectConversation,
   selectedId,
+  embedded = false,
 }: ContributeListScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -256,9 +262,13 @@ export function ContributeListScreen({
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </TouchableOpacity>
+        {embedded ? (
+          <View style={styles.backBtn} />
+        ) : (
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={[styles.headerTitle, { color: colors.text }]}>Contribute</Text>
         <View style={styles.backBtn} />
       </View>

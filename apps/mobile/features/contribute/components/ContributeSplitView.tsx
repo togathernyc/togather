@@ -7,16 +7,18 @@
  * conversation's thread (ContributionDetailScreen), or a "Select a
  * conversation" placeholder.
  *
- * Mirrors the inbox desktop split (app/inbox/_layout.tsx) but keeps selection
- * as LOCAL state: tapping a row highlights it and swaps the right pane
- * without navigating, so the sidebar never unmounts. Both /(user)/dev
- * and /(user)/dev/[id] render this on wide web (see those routes);
- * [id] seeds `initialId` so deep links open with that conversation showing.
- * On phones the routes keep today's two-screen flow and this component is
- * never mounted.
+ * Mirrors the inbox desktop split (app/inbox/_layout.tsx). The URL is the
+ * source of truth for the selection: tapping a row `router.replace`s to
+ * /(user)/dev/[id] (so refresh, resize, and shared links keep the same
+ * conversation), and the [id] route feeds the param back in as `initialId`.
+ * Local state is only a fast path so the right pane swaps immediately,
+ * before navigation settles. Both /(user)/dev and /(user)/dev/[id] render
+ * this on wide web (see those routes). On phones the routes keep today's
+ * two-screen flow and this component is never mounted.
  */
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import type { Id } from "@services/api/convex";
@@ -29,24 +31,37 @@ export interface ContributeSplitViewProps {
 }
 
 export function ContributeSplitView({ initialId }: ContributeSplitViewProps) {
+  const router = useRouter();
   const { colors } = useTheme();
   const [selectedId, setSelectedId] = useState<Id<"devBugs"> | null>(
     initialId ?? null,
   );
 
-  // Re-seed when the route param changes without a remount — e.g. the submit
-  // flow replaces to /(user)/dev/[newId] after creating a conversation.
+  // Re-seed from the URL param — the single source of truth — whether it
+  // changed via a row tap below, the submit flow replacing to the new
+  // conversation, or a remount (refresh / resize across the breakpoint).
   useEffect(() => {
     if (initialId) setSelectedId(initialId);
   }, [initialId]);
 
+  const handleSelect = useCallback(
+    (id: Id<"devBugs">) => {
+      // Fast path: swap the pane immediately, then sync the URL so the
+      // selection survives refresh and resize.
+      setSelectedId(id);
+      router.replace(`/(user)/dev/${id}`);
+    },
+    [router],
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Sidebar: conversation list; row taps update local selection. */}
+      {/* Sidebar: conversation list; row taps select + update the URL. */}
       <View style={styles.sidebar}>
         <ContributeListScreen
+          embedded
           selectedId={selectedId}
-          onSelectConversation={setSelectedId}
+          onSelectConversation={handleSelect}
         />
       </View>
 

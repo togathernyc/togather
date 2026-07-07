@@ -1,7 +1,7 @@
 /**
  * Contribute Conversations Route
  *
- * Route: /contribute
+ * Route: /dev
  * Conversation list for the contributor dev dashboard (ADR-029 Phase 1.5) —
  * each bug report / idea is a chat with the AI builder. Access gated on the
  * dev-assistant maintainer check.

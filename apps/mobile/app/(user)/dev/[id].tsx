@@ -1,13 +1,13 @@
 /**
  * Contribution Detail Route
  *
- * Route: /contribute/[id]
+ * Route: /dev/[id]
  * One contribution's conversation thread — chat with the AI builder, plan
  * review, staging verification, and GitHub links (ADR-029 Phase 1.5).
  *
  * On desktop web (>= 768px) this renders the two-pane split view with [id]
  * seeding the selection, so deep links land in the same sidebar + thread
- * layout as /contribute. On phones it's the full-screen thread.
+ * layout as /dev. On phones it's the full-screen thread.
  */
 
 import { useLocalSearchParams } from "expo-router";

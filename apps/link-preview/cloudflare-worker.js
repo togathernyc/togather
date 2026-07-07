@@ -202,7 +202,7 @@ const KNOWN_APP_ROUTES = new Set([
   "demo", "get-started", "nearme", "our-story", "support",
   // root
   "inbox", "ui-test", "planning-center",
-  // contributor dev dashboard door (redirects to /contribute in the app)
+  // contributor dev dashboard (the dashboard lives at /dev in the app)
   "dev",
   // onboarding & billing (browser-only, served by Expo web app)
   "onboarding", "billing",
