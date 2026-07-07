@@ -211,9 +211,9 @@ const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
 
 export interface ContributionDetailScreenProps {
   /**
-   * Desktop-web split view (ContributeSplitView): the conversation to show.
-   * Overrides the [id] route param — the split view renders this component
-   * outside the [id] route, driven by local selection state.
+   * Desktop-web split view: the conversation to show. Overrides the [id] route
+   * param so the right pane can be driven explicitly (kept in sync with the URL
+   * by the /dev layout).
    */
   id?: Id<"devBugs"> | null;
   /**
