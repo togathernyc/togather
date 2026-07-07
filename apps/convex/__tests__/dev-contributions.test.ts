@@ -3108,3 +3108,216 @@ describe("chat-first filing, pictures, and split slices", () => {
     ]);
   });
 });
+
+/**
+ * Review-cycle hardening (ADR-029 Phase 1.7): tests added after code review —
+ * the r2:-only image guard, title-truncation boundary, getThread passthrough
+ * for already-public URLs, revision-round image aggregation, and splitSlices
+ * clearing on a design_needed re-triage.
+ */
+describe("review-cycle hardening", () => {
+  test("submit and postMessage reject non-r2 image URLs", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    // submit rejects an external URL masquerading as an attachment.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.submit, {
+        token: maintainerId,
+        kind: "bug",
+        body: "look",
+        screenshotUrls: ["https://evil.example/beacon.png"],
+      }),
+    ).rejects.toThrow(/uploaded images/i);
+
+    // A valid item, then postMessage rejects the same.
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "ok" },
+    );
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.postMessage, {
+        token: maintainerId,
+        id,
+        body: "here",
+        imageUrls: ["http://169.254.169.254/latest/meta-data/"],
+      }),
+    ).rejects.toThrow(/uploaded images/i);
+  });
+
+  test("deriveTitle keeps 80 chars but clips at 81", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const exactly80 = "a".repeat(80);
+    const id80 = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: exactly80 },
+    );
+    const bug80 = await t.run(async (ctx) => ctx.db.get(id80));
+    expect(bug80?.title).toBe(exactly80); // no ellipsis at the boundary
+
+    const over81 = "b".repeat(81);
+    const id81 = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: over81 },
+    );
+    const bug81 = await t.run(async (ctx) => ctx.db.get(id81));
+    expect(bug81?.title.length).toBe(80);
+    expect(bug81?.title.endsWith("…")).toBe(true);
+  });
+
+  test("getThread passes already-public (http) image URLs through unchanged", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    // Simulate a chat-originated message whose imageUrls are already public
+    // (inserted directly, bypassing the dashboard r2:-only guard).
+    const now = Date.now();
+    const id = await t.run(async (ctx) => {
+      const bugId = await ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_REVIEW",
+        kind: "bug",
+        source: "chat",
+        title: "From chat",
+        body: "B",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("devBugMessages", {
+        bugId,
+        authorType: "user",
+        userId: maintainerId,
+        body: "see this",
+        imageUrls: ["https://already.public/shot.png"],
+        createdAt: now,
+      });
+      return bugId;
+    });
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.imageUrls).toEqual(["https://already.public/shot.png"]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("a revision round folds a reply's picture into the spec brief", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Initial report, no picture." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Move to IN_REVIEW so the reply drives a revision round.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: bug!.routineRunId!,
+        status: "IN_REVIEW",
+        spec: "## Plan",
+        riskLevel: "low",
+      },
+    );
+
+    // Reply with a screenshot → schedules a revision dispatch.
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "Here's what I mean:",
+      imageUrls: ["r2:chat/reply.jpg"],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The most recent dispatch is the revision; its brief carries the resolved
+    // reply image.
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
+    const brief = JSON.parse(JSON.parse(lastCall[1].body).text);
+    expect(brief.revision).toBe(true);
+    expect(brief.screenshotUrls).toContain("https://cdn.example.com/chat/reply.jpg");
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("re-triage from split to design_needed clears stale splitSlices", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Huge ask." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Split",
+      scope: "split",
+      splitSlices: [{ title: "One", prompt: "Build one." }],
+    });
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.splitSlices).toHaveLength(1);
+
+    // Revision decides it actually needs design work; no slices delivered.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Needs design",
+      scope: "design_needed",
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("design_needed");
+    expect(bug?.splitSlices).toBeUndefined();
+  });
+
+  test("a split revision that omits slices keeps the last-known ones", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Huge ask." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slices = [{ title: "One", prompt: "Build one." }];
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Split",
+      scope: "split",
+      splitSlices: slices,
+    });
+    // A revision that stays "split" but omits splitSlices keeps them.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Still split",
+      scope: "split",
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.splitSlices).toEqual(slices);
+  });
+});

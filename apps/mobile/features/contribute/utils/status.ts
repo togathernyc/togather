@@ -69,6 +69,37 @@ export function needsStagingVerify(
   );
 }
 
+/**
+ * The AI judged the item too big/architectural to build in one go and is now
+ * waiting on the maintainer — to copy a split's slice prompts into new
+ * sessions, or to make the design_needed call. There's nothing the pipeline
+ * can do until then, so it's the contributor's turn.
+ */
+export function needsSplitDecision(
+  contribution: Pick<Contribution, "status" | "spec" | "scope">,
+): boolean {
+  return (
+    contribution.status === "IN_REVIEW" &&
+    !!contribution.spec &&
+    !isBuildableScope(contribution.scope)
+  );
+}
+
+/**
+ * An approved buildable item still sitting in IN_REVIEW is a medium/high-risk
+ * change waiting on an explicit "Start build" tap (low risk auto-dispatches).
+ * That tap is the contributor's, so it's their turn.
+ */
+export function needsBuildStart(
+  contribution: Pick<Contribution, "status" | "specApprovedAt" | "scope">,
+): boolean {
+  return (
+    contribution.status === "IN_REVIEW" &&
+    !!contribution.specApprovedAt &&
+    isBuildableScope(contribution.scope)
+  );
+}
+
 /** True when the conversation is waiting on the contributor, not the AI. */
 export function isYourTurn(
   contribution: Pick<
@@ -76,7 +107,12 @@ export function isYourTurn(
     "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
   >,
 ): boolean {
-  return needsSpecApproval(contribution) || needsStagingVerify(contribution);
+  return (
+    needsSpecApproval(contribution) ||
+    needsStagingVerify(contribution) ||
+    needsSplitDecision(contribution) ||
+    needsBuildStart(contribution)
+  );
 }
 
 /**

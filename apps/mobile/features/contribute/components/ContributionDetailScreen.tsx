@@ -106,7 +106,12 @@ function SpecCard({ contribution }: { contribution: Contribution }) {
   );
 }
 
-/** One proposed slice with a button that copies its build prompt. */
+/**
+ * One proposed slice: its title, the full build prompt (shown so the
+ * maintainer can read exactly what they're about to paste into a dev session —
+ * it's AI-generated from a contributor's report, so it shouldn't be copied
+ * blind), and a button to copy it.
+ */
 function SliceRow({ slice, index }: { slice: SplitSlice; index: number }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -124,24 +129,35 @@ function SliceRow({ slice, index }: { slice: SplitSlice; index: number }) {
 
   return (
     <View style={[styles.sliceRow, { borderColor: colors.border }]}>
-      <Text style={[styles.sliceTitle, { color: colors.text }]}>
-        {index + 1}. {slice.title}
-      </Text>
-      <TouchableOpacity
-        style={[styles.copyButton, { borderColor: primaryColor }]}
-        onPress={handleCopy}
-        activeOpacity={0.7}
-        accessibilityLabel={`Copy build prompt for ${slice.title}`}
-      >
-        <Ionicons
-          name={copied ? "checkmark" : "copy-outline"}
-          size={15}
-          color={primaryColor}
-        />
-        <Text style={[styles.copyButtonText, { color: primaryColor }]}>
-          {copied ? "Copied" : "Copy prompt"}
+      <View style={styles.sliceHeader}>
+        <Text style={[styles.sliceTitle, { color: colors.text }]}>
+          {index + 1}. {slice.title}
         </Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.copyButton, { borderColor: primaryColor }]}
+          onPress={handleCopy}
+          activeOpacity={0.7}
+          accessibilityLabel={`Copy build prompt for ${slice.title}`}
+        >
+          <Ionicons
+            name={copied ? "checkmark" : "copy-outline"}
+            size={15}
+            color={primaryColor}
+          />
+          <Text style={[styles.copyButtonText, { color: primaryColor }]}>
+            {copied ? "Copied" : "Copy prompt"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <Text
+        style={[
+          styles.slicePrompt,
+          { color: colors.textSecondary, backgroundColor: colors.background, borderColor: colors.border },
+        ]}
+        selectable
+      >
+        {slice.prompt}
+      </Text>
     </View>
   );
 }
@@ -278,9 +294,9 @@ export function ContributionDetailScreen() {
     const imageUrls = images.storagePaths;
     // A picture-only message is valid; require text otherwise.
     if (!body && imageUrls.length === 0) return;
-    // Optimistic clear — restore the draft if the send fails.
+    // Optimistic clear of the text; keep the attachments until the send
+    // succeeds so a failure doesn't silently lose the uploaded pictures.
     setDraft("");
-    images.reset();
     setSending(true);
     try {
       await postMessage({
@@ -288,6 +304,7 @@ export function ContributionDetailScreen() {
         body,
         ...(imageUrls.length > 0 ? { imageUrls } : {}),
       });
+      images.reset();
     } catch (error) {
       setDraft(body);
       Alert.alert("Couldn't send", formatError(error));
@@ -714,15 +731,25 @@ const styles = StyleSheet.create({
   },
   specSubtitle: { fontSize: 13, lineHeight: 19 },
   sliceRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
+    gap: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: 10,
     marginTop: 2,
   },
+  sliceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
   sliceTitle: { flex: 1, fontSize: 14, fontWeight: "600" },
+  slicePrompt: {
+    fontSize: 12,
+    lineHeight: 17,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    padding: 10,
+  },
   copyButton: {
     flexDirection: "row",
     alignItems: "center",

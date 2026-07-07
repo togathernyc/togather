@@ -35,13 +35,13 @@ import {
 } from "../utils/status";
 import type { ContributionListItem } from "../types";
 
-type Segment = "yourTurn" | "inProgress" | "shipped";
+type Segment = "yourTurn" | "inProgress" | "done";
 type Owner = "mine" | "everyone";
 
 const SEGMENT_OPTIONS: { key: Segment; label: string }[] = [
   { key: "yourTurn", label: "Your turn" },
   { key: "inProgress", label: "In progress" },
-  { key: "shipped", label: "Shipped" },
+  { key: "done", label: "Done" },
 ];
 
 const OWNER_OPTIONS: { key: Owner; label: string }[] = [
@@ -58,9 +58,9 @@ const EMPTY_COPY: Record<Segment, { title: string; text: string }> = {
     title: "Nothing being built right now",
     text: "Fire something off — a bug or an idea — and once it's approved you'll watch it move through here as the AI builds, reviews, and ships it.",
   },
-  shipped: {
-    title: "Nothing shipped yet",
-    text: "Once a conversation's change makes it into the app, it lands here.",
+  done: {
+    title: "Nothing wrapped up yet",
+    text: "Once a conversation is finished — shipped into the app, or set aside — it lands here.",
   },
 };
 
@@ -131,7 +131,9 @@ export function ContributeListScreen() {
     const items = contributions ?? [];
     const filtered = items.filter((item) => {
       if (segment === "yourTurn") return isYourTurn(item);
-      if (segment === "shipped") return item.status === "MERGED";
+      // "Done" = terminal conversations, shipped or set aside.
+      if (segment === "done")
+        return item.status === "MERGED" || item.status === "REJECTED";
       // "In progress" = fired off and actively being built/reviewed.
       return isInProgress(item);
     });

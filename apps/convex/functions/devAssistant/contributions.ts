@@ -53,6 +53,21 @@ function deriveTitle(body: string): string {
 }
 
 /**
+ * Attached pictures from the dashboard must be our own R2 uploads. Reject
+ * anything that isn't an "r2:" storage path so a caller can't stash an
+ * arbitrary external URL that would later be rendered to other maintainers or
+ * fetched by the spec routine (a tracking-beacon / SSRF surface).
+ */
+function assertR2Paths(urls: string[] | undefined): void {
+  if (!urls) return;
+  for (const url of urls) {
+    if (!url.startsWith("r2:")) {
+      throw new ConvexError("Attachments must be uploaded images");
+    }
+  }
+}
+
+/**
  * Resolve stored R2 paths ("r2:…") to fetchable public URLs for the client
  * (getMediaUrl passes existing http(s) URLs through unchanged, so it's safe on
  * already-resolved chat-originated attachments too). Undefined stays undefined.
@@ -214,6 +229,7 @@ export const submit = mutation({
     const user = await requireContributor(ctx, args.token);
 
     const body = args.body.trim();
+    assertR2Paths(args.screenshotUrls);
     const hasImages = !!args.screenshotUrls && args.screenshotUrls.length > 0;
     // A screenshot with no words is a valid report; require one or the other.
     if (!body && !hasImages) {
@@ -374,6 +390,7 @@ export const postMessage = mutation({
     if (!bug) throw new ConvexError("Contribution not found");
 
     const body = args.body.trim();
+    assertR2Paths(args.imageUrls);
     const hasImages = !!args.imageUrls && args.imageUrls.length > 0;
     // A picture with no words is a valid message; require text only otherwise.
     if (!body && !hasImages) {

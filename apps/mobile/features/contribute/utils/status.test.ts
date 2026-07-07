@@ -57,4 +57,26 @@ describe("isInProgress", () => {
   it("is true for a submitted item still being reviewed (IN_REVIEW, no spec)", () => {
     expect(isInProgress(make({ status: "IN_REVIEW" }))).toBe(true);
   });
+
+  it("routes human-gated IN_REVIEW states to Your turn, not In progress", () => {
+    // A split item awaits the maintainer copying its slice prompts.
+    const split = make({ status: "IN_REVIEW", spec: "## Plan", scope: "split" });
+    expect(isYourTurn(split)).toBe(true);
+    expect(isInProgress(split)).toBe(false);
+
+    // A design_needed item awaits a maintainer decision.
+    const design = make({ status: "IN_REVIEW", spec: "## Plan", scope: "design_needed" });
+    expect(isYourTurn(design)).toBe(true);
+    expect(isInProgress(design)).toBe(false);
+
+    // An approved buildable item awaiting an explicit "Start build" tap.
+    const approved = make({
+      status: "IN_REVIEW",
+      spec: "## Plan",
+      scope: "buildable",
+      specApprovedAt: 123,
+    });
+    expect(isYourTurn(approved)).toBe(true);
+    expect(isInProgress(approved)).toBe(false);
+  });
 });

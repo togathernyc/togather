@@ -967,11 +967,11 @@ export const applyCallback = internalMutation({
     if (args.area !== undefined) patch.area = args.area;
     if (args.scope !== undefined) patch.scope = args.scope;
     // Split slices track the scope: a routine explicitly delivers them (only
-    // meaningful for "split"), and a revision that drops back to a single
-    // buildable item clears the now-stale slices.
+    // meaningful for "split"), and a revision that re-triages to any non-split
+    // scope (buildable or design_needed) clears the now-stale slices.
     if (args.splitSlices !== undefined) {
       patch.splitSlices = args.splitSlices;
-    } else if (args.scope === "buildable") {
+    } else if (args.scope !== undefined && args.scope !== "split") {
       patch.splitSlices = undefined;
     }
     if (args.verifyOnStaging !== undefined) {
