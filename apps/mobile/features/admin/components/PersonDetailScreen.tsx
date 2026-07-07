@@ -61,7 +61,6 @@ export function PersonDetailScreen() {
     currentPresent: boolean;
   } | null>(null);
   const [isUpdatingAttendance, setIsUpdatingAttendance] = useState(false);
-  const [isUpdatingBilling, setIsUpdatingBilling] = useState(false);
 
   // Fetch member details using Convex
   const rawMember = useQuery(
@@ -91,7 +90,6 @@ export function PersonDetailScreen() {
         created_at: rawMember.communityMembership?.joinedAt,
         is_admin: rawMember.communityMembership?.isAdmin ?? false,
         is_primary_admin: rawMember.communityMembership?.isPrimaryAdmin ?? false,
-        billing_inactive: rawMember.communityMembership?.billingInactive ?? false,
         role: rawMember.communityMembership?.roles,
         groups: (rawMember.activeGroups || []).map((g: any) => ({
           group_id: g.groupId,
@@ -121,27 +119,10 @@ export function PersonDetailScreen() {
   const transferPrimaryAdminMutation = useAuthenticatedMutation(api.functions.admin.members.transferPrimaryAdmin);
   const removeMemberMutation = useAuthenticatedMutation(api.functions.communities.removeMember);
   const updateAttendanceMutation = useAuthenticatedMutation(api.functions.memberFollowups.updateAttendance);
-  const setBillingActiveMutation = useAuthenticatedMutation(api.functions.memberActivity.setMemberBillingActive);
 
   const canManageAdmins = currentUser?.is_primary_admin ?? false;
   const isCurrentUserAdmin = currentUser?.is_admin || currentUser?.is_primary_admin;
   const isSelf = currentUser?.id === userId;
-
-  const handleToggleBillingActive = useCallback(async () => {
-    if (!userId || !community?.id || !member) return;
-    setIsUpdatingBilling(true);
-    try {
-      await setBillingActiveMutation({
-        communityId: community.id as Id<"communities">,
-        targetUserId: userId as Id<"users">,
-        active: member.billing_inactive, // currently inactive -> re-activate
-      });
-    } catch (error: any) {
-      Alert.alert("Error", error?.message || "Failed to update billing activity");
-    } finally {
-      setIsUpdatingBilling(false);
-    }
-  }, [userId, community?.id, member, setBillingActiveMutation]);
 
   const handleAdminUpdateAttendance = useCallback(
     async (status: number) => {
@@ -454,37 +435,6 @@ export function PersonDetailScreen() {
               )}
             </View>
           </View>
-
-          {/* Billing activity: communities pay $1/month per active member;
-              admins can exclude someone from the count regardless of app use. */}
-          {isCurrentUserAdmin && !isSelf && (
-            <View style={[styles.billingRow, { borderTopColor: colors.borderLight }]}>
-              <View style={styles.billingRowText}>
-                <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>Billing</Text>
-                <Text style={[styles.infoValue, { color: colors.text }]}>
-                  {member.billing_inactive ? "Marked inactive" : "Counts as active member"}
-                </Text>
-                <Text style={[styles.infoSubtext, { color: colors.textTertiary }]}>
-                  {member.billing_inactive
-                    ? "Excluded from the $1/month per-active-member bill."
-                    : "Billed at $1/month in any month they open the app here."}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[styles.billingToggle, { borderColor: colors.border }]}
-                disabled={isUpdatingBilling}
-                onPress={handleToggleBillingActive}
-              >
-                {isUpdatingBilling ? (
-                  <ActivityIndicator size="small" color={colors.textSecondary} />
-                ) : (
-                  <Text style={[styles.billingToggleText, { color: colors.text }]}>
-                    {member.billing_inactive ? "Mark active" : "Mark inactive"}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          )}
         </View>
 
         {/* Groups Section */}
@@ -935,30 +885,6 @@ const styles = StyleSheet.create({
   infoSubtext: {
     fontSize: 11,
     marginTop: 2,
-  },
-  billingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-  },
-  billingRowText: {
-    flex: 1,
-  },
-  billingToggle: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    minWidth: 110,
-    alignItems: "center",
-  },
-  billingToggleText: {
-    fontSize: 13,
-    fontWeight: "600",
   },
   groupCard: {
     flexDirection: "row",

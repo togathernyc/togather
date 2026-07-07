@@ -133,11 +133,11 @@ export function CreateCommunity() {
           always see exactly what you'll pay. Your bill adjusts automatically
           every month as people join, drift away, or come back.
         </P>
-        <Callout tone="tip" title="You control who counts">
-          Admins and group leaders can mark anyone as inactive from their
-          person page in the admin area (<Term>Billing → Mark inactive</Term>),
-          and they immediately stop counting toward the bill — even if they
-          still open the app. Mark them active again any time.
+        <Callout tone="tip" title="Nothing to manage">
+          There's no seat list to prune and no toggles to flip — the count is
+          fully automatic. Anyone who stops opening the app rolls off the next
+          month, and comes back the month they return. What you pay always
+          reflects who's actually using Togather.
         </Callout>
         <P>
           Payment is handled by Stripe. As soon as checkout completes, the

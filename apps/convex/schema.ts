@@ -277,10 +277,12 @@ export default defineSchema({
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
-    // Manual billing override for the per-active-user pricing model: admins
-    // and leaders can mark a member inactive so they don't count toward the
-    // $1/month/active-user subscription even if they opened the app this
-    // month. See functions/memberActivity.ts.
+    // DEPRECATED — unused. Was a manual "mark this member non-billable"
+    // override, removed because it let a community zero out its bill while
+    // members kept using the app; billing is now purely the automatic 30-day
+    // activity rule (functions/memberActivity.ts). No code reads or writes
+    // this field. Kept in the schema only so any row that already has a value
+    // still validates; drop it in a follow-up after a clear migration.
     billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])

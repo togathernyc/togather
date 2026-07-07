@@ -3,9 +3,8 @@
  *
  * Covers the billable-member definition (opened the app in THIS community
  * within the past month — per-community membership.lastLogin, not app-wide
- * activity — matching the admin Stats "Active Members" card), the manual
- * inactive flag, placeholder exclusion, and the permissions on manually
- * marking members inactive (community admins + the member's group leaders).
+ * activity — matching the admin Stats "Active Members" card), placeholder
+ * exclusion, and that the count is purely automatic with no manual override.
  *
  * Run with: cd apps/convex && pnpm test __tests__/member-activity.test.ts
  */
@@ -222,120 +221,28 @@ describe("getBillableSummary", () => {
     expect(summary.billableActiveUsers).toBe(2);
   });
 
-  test("manually marked inactive members are excluded until re-activated", async () => {
+  test("an active member always counts — the count is purely automatic", async () => {
     const t = convexTest(schema, modules);
     const { communityId, adminToken } = await seedCommunity(t);
-    const memberId = await addMember(t, communityId, "+15555560006", { age: 0 });
+    await addMember(t, communityId, "+15555560006", { age: 0 });
 
-    await t.mutation(api.functions.memberActivity.setMemberBillingActive, {
-      token: adminToken,
-      communityId,
-      targetUserId: memberId,
-      active: false,
-    });
-    let summary = await t.query(api.functions.memberActivity.getBillableSummary, {
-      token: adminToken,
-      communityId,
-    });
-    expect(summary.billableActiveUsers).toBe(1); // admin only
-
-    await t.mutation(api.functions.memberActivity.setMemberBillingActive, {
-      token: adminToken,
-      communityId,
-      targetUserId: memberId,
-      active: true,
-    });
-    summary = await t.query(api.functions.memberActivity.getBillableSummary, {
-      token: adminToken,
-      communityId,
-    });
-    expect(summary.billableActiveUsers).toBe(2);
-  });
-});
-
-describe("setMemberBillingActive permissions", () => {
-  test("a plain member cannot mark others inactive", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId } = await seedCommunity(t);
-    const memberA = await addMember(t, communityId, "+15555560007", { age: 0 });
-    const memberB = await addMember(t, communityId, "+15555560008", { age: 0 });
-
-    const { accessToken } = await generateTokens(memberA);
-    await expect(
-      t.mutation(api.functions.memberActivity.setMemberBillingActive, {
-        token: accessToken,
-        communityId,
-        targetUserId: memberB,
-        active: false,
-      }),
-    ).rejects.toThrow("group leaders");
-  });
-
-  test("a group leader can mark their group's members inactive", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, adminToken } = await seedCommunity(t);
-    const leaderId = await addMember(t, communityId, "+15555560009", { age: 0 });
-    const memberId = await addMember(t, communityId, "+15555560010", { age: 0 });
-    const outsiderId = await addMember(t, communityId, "+15555560011", { age: 0 });
-
+    // There is no manual override mutation to exclude an active member; the
+    // count is purely the automatic 30-day rule. Even a stray billingInactive
+    // value left on a row (from before the override was removed) is ignored.
     await t.run(async (ctx) => {
-      const timestamp = Date.now();
-      const groupTypeId = await ctx.db.insert("groupTypes", {
-        communityId,
-        name: "Small Groups",
-        slug: "small-groups",
-        isActive: true,
-        displayOrder: 1,
-        createdAt: timestamp,
-      });
-      const groupId = await ctx.db.insert("groups", {
-        communityId,
-        groupTypeId,
-        name: "Alpha Group",
-        isArchived: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      await ctx.db.insert("groupMembers", {
-        groupId,
-        userId: leaderId,
-        role: "leader",
-        joinedAt: timestamp,
-        notificationsEnabled: true,
-      });
-      await ctx.db.insert("groupMembers", {
-        groupId,
-        userId: memberId,
-        role: "member",
-        joinedAt: timestamp,
-        notificationsEnabled: true,
-      });
+      const membership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect();
+      const memberRow = membership.find((m) => m.roles === COMMUNITY_ROLES.MEMBER);
+      await ctx.db.patch(memberRow!._id, { billingInactive: true } as never);
     });
 
-    const { accessToken: leaderToken } = await generateTokens(leaderId);
-
-    // Leader can manage a member of their group…
-    await t.mutation(api.functions.memberActivity.setMemberBillingActive, {
-      token: leaderToken,
-      communityId,
-      targetUserId: memberId,
-      active: false,
-    });
     const summary = await t.query(api.functions.memberActivity.getBillableSummary, {
       token: adminToken,
       communityId,
     });
-    // admin + leader + outsider (member marked inactive)
-    expect(summary.billableActiveUsers).toBe(3);
-
-    // …but not someone outside their group.
-    await expect(
-      t.mutation(api.functions.memberActivity.setMemberBillingActive, {
-        token: leaderToken,
-        communityId,
-        targetUserId: outsiderId,
-        active: false,
-      }),
-    ).rejects.toThrow("group leaders");
+    // admin + the active member — the stale billingInactive flag does nothing.
+    expect(summary.billableActiveUsers).toBe(2);
   });
 });

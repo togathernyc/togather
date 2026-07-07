@@ -14,9 +14,12 @@
  *   - they are a real account (not an isPlaceholder provisional/demo user),
  *   - they opened the app in this community within the past month
  *     (membership.lastLogin — strictly; members who were added or imported
- *     but never opened the app here are NOT billable),
- *   - no admin/leader has manually marked them inactive
- *     (userCommunities.billingInactive).
+ *     but never opened the app here are NOT billable).
+ *
+ * This is entirely automatic and cannot be overridden — there is deliberately
+ * no way for an admin to mark an active member as non-billable (that would let
+ * a community zero out its bill while members keep using the app). The 30-day
+ * activity rule is the single source of truth.
  *
  * The count is used when a demo community converts to live (initial Stripe
  * subscription quantity, see functions/ee/billing.ts convertDemoToLive) and
@@ -24,13 +27,11 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query } from "../_generated/server";
+import { query } from "../_generated/server";
 import { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuth } from "../lib/auth";
 import { now } from "../lib/utils";
-import { isCommunityAdmin } from "../lib/permissions";
-import { isLeaderRole } from "../lib/helpers";
 
 /**
  * "Opened the app in this community within the past month" — the same
@@ -58,7 +59,6 @@ export async function countBillableActiveUsers(
   let count = 0;
   for (const membership of memberships) {
     if (membership.status !== 1) continue;
-    if (membership.billingInactive) continue;
 
     const user = await ctx.db.get(membership.userId);
     if (!user || user.isPlaceholder) continue;
@@ -72,87 +72,6 @@ export async function countBillableActiveUsers(
   }
   return count;
 }
-
-/**
- * Whether `actorId` may manage billing activity for `targetUserId` in this
- * community: community admins always can; group leaders can for members of
- * a group they lead.
- */
-async function canManageBillingActivity(
-  ctx: QueryCtx | MutationCtx,
-  communityId: Id<"communities">,
-  actorId: Id<"users">,
-  targetUserId: Id<"users">,
-): Promise<boolean> {
-  if (await isCommunityAdmin(ctx, communityId, actorId)) return true;
-
-  // Leader path: actor leads a (community-scoped) group the target belongs to.
-  const actorMemberships = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_user", (q) => q.eq("userId", actorId))
-    .collect();
-
-  for (const gm of actorMemberships) {
-    if (gm.leftAt !== undefined || !isLeaderRole(gm.role)) continue;
-    const group = await ctx.db.get(gm.groupId);
-    if (!group || group.communityId !== communityId) continue;
-
-    const targetMembership = await ctx.db
-      .query("groupMembers")
-      .withIndex("by_group_user", (q) =>
-        q.eq("groupId", gm.groupId).eq("userId", targetUserId),
-      )
-      .first();
-    if (targetMembership && targetMembership.leftAt === undefined) return true;
-  }
-  return false;
-}
-
-/**
- * Manually mark a member as billing-inactive (or re-activate them).
- * Community admins can manage anyone; group leaders can manage members of
- * groups they lead.
- */
-export const setMemberBillingActive = mutation({
-  args: {
-    token: v.string(),
-    communityId: v.id("communities"),
-    targetUserId: v.id("users"),
-    active: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    const actorId = await requireAuth(ctx, args.token);
-
-    const allowed = await canManageBillingActivity(
-      ctx,
-      args.communityId,
-      actorId,
-      args.targetUserId,
-    );
-    if (!allowed) {
-      throw new Error(
-        "Only community admins or the member's group leaders can change billing activity",
-      );
-    }
-
-    const membership = await ctx.db
-      .query("userCommunities")
-      .withIndex("by_user_community", (q) =>
-        q.eq("userId", args.targetUserId).eq("communityId", args.communityId),
-      )
-      .first();
-    if (!membership) {
-      throw new Error("That person is not a member of this community");
-    }
-
-    await ctx.db.patch(membership._id, {
-      billingInactive: args.active ? undefined : true,
-      updatedAt: now(),
-    });
-
-    return { billingInactive: !args.active };
-  },
-});
 
 /**
  * Billing-activity summary for a community — powers the go-live screen and
