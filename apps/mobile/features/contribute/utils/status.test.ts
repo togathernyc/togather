@@ -40,16 +40,33 @@ describe("isInProgress", () => {
     expect(isInProgress(item)).toBe(false);
   });
 
-  it("is false when the item awaits a staging check", () => {
+  it("is false when a merged item awaits its staging check (ADR-029: staging is post-merge)", () => {
+    // Nothing reaches staging until the merge, so the try-it window opens at
+    // MERGED — an interactive item there is the contributor's turn, not "in
+    // progress" and not yet "done".
     const item = make({
-      status: "CODE_REVIEW",
+      status: "MERGED",
       verifyOnStaging: true,
     });
     expect(isYourTurn(item)).toBe(true);
     expect(isInProgress(item)).toBe(false);
   });
 
+  it("does NOT treat an open PR as a staging check — nothing is on staging until merge", () => {
+    // Interactive item still in code review / awaiting merge: the PR is open,
+    // nothing is on staging, so it's still "in progress", not the user's turn.
+    for (const status of ["CODE_REVIEW", "READY_TO_MERGE"] as const) {
+      const item = make({ status, verifyOnStaging: true });
+      expect(isYourTurn(item)).toBe(false);
+      expect(isInProgress(item)).toBe(true);
+    }
+  });
+
   it("is false for shipped and closed items", () => {
+    // Merged with the staging check already done (or never required).
+    expect(
+      isInProgress(make({ status: "MERGED", verifyOnStaging: true, stagingVerifiedAt: 123 })),
+    ).toBe(false);
     expect(isInProgress(make({ status: "MERGED" }))).toBe(false);
     expect(isInProgress(make({ status: "REJECTED" }))).toBe(false);
   });

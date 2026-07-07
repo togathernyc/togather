@@ -22,9 +22,8 @@ import { StatsContent } from "./StatsContent";
 import { PeopleContent } from "./PeopleContent";
 import { SettingsContent } from "./SettingsContent";
 import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
-import { NotificationsContent } from "./NotificationsContent";
 
-type TabKey = "dashboard" | "requests" | "people" | "stats" | "notifications" | "settings";
+type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings";
 
 interface Tab {
   key: TabKey;
@@ -54,7 +53,6 @@ export function AdminScreen() {
           { key: "requests", label: "Requests" },
           { key: "people", label: "People" },
           { key: "stats", label: "Stats" },
-          { key: "notifications", label: "Notify" },
           { key: "settings", label: "Settings" },
           { key: "dashboard", label: "Dashboard" },
         ];
@@ -64,7 +62,6 @@ export function AdminScreen() {
         { key: "requests", label: "Requests" },
         { key: "people", label: "People" },
         { key: "stats", label: "Stats" },
-        { key: "notifications", label: "Notify" },
         { key: "settings", label: "Settings" },
       ];
     },
@@ -140,8 +137,6 @@ export function AdminScreen() {
           <PeopleContent />
         ) : activeTab === "stats" ? (
           <StatsContent />
-        ) : activeTab === "notifications" ? (
-          <NotificationsContent />
         ) : (
           <SettingsContent />
         )}

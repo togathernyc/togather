@@ -97,7 +97,7 @@ export function AssistantBubble({ body, createdAt }: { body: string; createdAt?:
   );
 }
 
-/** A system event ("Build started", "Shipped 🎉") — small centered caption. */
+/** A system event ("Build started", "Merged — live on staging") — small centered caption. */
 export function SystemCaption({ body, createdAt }: { body: string; createdAt?: number }) {
   const { colors } = useTheme();
   return (

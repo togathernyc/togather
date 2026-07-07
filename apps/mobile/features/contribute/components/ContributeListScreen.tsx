@@ -166,9 +166,15 @@ export function ContributeListScreen({
       if (segment === "archived") return isArchived(item);
       if (isArchived(item)) return false;
       if (segment === "yourTurn") return isYourTurn(item);
-      // "Done" = terminal conversations, shipped or set aside.
+      // "Done" = terminal conversations, shipped or set aside. A merged item
+      // still awaiting the contributor's staging try-it is "your turn", not
+      // done yet (ADR-029: staging check happens after merge), so keep it out
+      // of Done until it's verified.
       if (segment === "done")
-        return item.status === "MERGED" || item.status === "REJECTED";
+        return (
+          (item.status === "MERGED" || item.status === "REJECTED") &&
+          !isYourTurn(item)
+        );
       // "In progress" = fired off and actively being built/reviewed.
       return isInProgress(item);
     });

@@ -132,8 +132,9 @@ spec, kind) but keep their existing role gates.
   callback (`IN_PROGRESS → CODE_REVIEW → READY_TO_MERGE → MERGED`).
 
 > **Phase 1.5 adds two gates around this flow:** a scope verdict before any
-> spec can be approved, and reporter staging verification before merge for
-> interactive changes — see
+> spec can be approved, and reporter staging verification **after merge, before
+> the production deploy** for interactive changes (nothing reaches staging until
+> the merge auto-deploys it) — see
 > [Phase 1.5](#phase-15--conversation-first-dashboard-accepted).
 
 ### 5. Risk levels — blast radius, assigned by AI, human-overridable
@@ -197,8 +198,9 @@ machine, Routine dispatch, signed callbacks, role gate) is unchanged.
 Rationale: non-coders already know how to read a chat, so the pipeline
 becomes messages instead of a form-shaped detail screen; the scope gate turns
 "too big" into momentum by answering with buildable slices instead of a bad
-build; staging verification puts the reporter's hands on the change before
-merge, closing the loop the way decision 4's spec gate opened it.
+build; staging verification puts the reporter's hands on the change once it's
+merged and live on staging — gating the production deploy, not the merge —
+closing the loop the way decision 4's spec gate opened it.
 
 ### 1. Conversation-first — every contribution is a thread
 
@@ -238,8 +240,11 @@ The spec agent's **first** verdict is
 - `area: "events" | "chat" | "groups" | "prayer" | "settings" | "other"` —
   items file themselves; used as a filter/tag.
 - `verifyOnStaging: boolean` — anything **interactive** requires the reporter
-  to test the change on the staging app and tap **"Works — ship it"** before
-  merge, even at low risk. Pure copy/color changes skip it.
+  to test the change on the staging app and tap **"Works — ship it"** once it's
+  **merged and live on staging**, even at low risk. Nothing reaches staging
+  until the merge auto-deploys it, so this check happens *after* merge and
+  gates the manual production deploy — not the merge. Pure copy/color changes
+  skip it.
 
 New `devBugs` fields: `aiTitle`, `area`, `scope`, `verifyOnStaging`,
 `stagingVerifiedAt`. New functions: `getThread`, `postMessage`,
@@ -316,17 +321,20 @@ is pushed.
 ### Policy auto-merge
 
 A single self-gating action, `attemptAutoMerge`, is scheduled whenever a gate
-might have just been satisfied: on a genuine entry into `READY_TO_MERGE` and
-after `confirmStaging` stamps `stagingVerifiedAt`. It re-reads the bug and
-merges the PR via the GitHub REST API **only when every gate holds**:
+might have just been satisfied: on a genuine entry into `READY_TO_MERGE`. It
+re-reads the bug and merges the PR via the GitHub REST API **only when every
+gate holds**:
 
 - `AUTO_MERGE_ENABLED === "true"` — master safety switch; anything else means
   the feature is off (double-scheduling is harmless because the action
   re-checks everything itself).
 - `status === "READY_TO_MERGE"`, `riskLevel === "low"`,
   `reviewVerdict === "approved"`.
-- Staging verified (`stagingVerifiedAt`) whenever `verifyOnStaging` is set.
 - A `prUrl` to merge.
+
+Staging verification is **not** a merge gate: nothing reaches staging until the
+merge, so the reporter's staging try-it happens *after* merge and gates the
+manual production deploy instead. Merge gates on review + CI + low-risk only.
 
 The merge uses `GH_MIRROR_TOKEN` (the Phase 2 mirroring PAT, which now needs
 **Contents read/write** in addition to Issues) and the merge method from
@@ -397,10 +405,10 @@ Owner-requested follow-up to make filing feel like chatting and to turn a
 
 - We own state sync with GitHub (webhook + mirroring) — a second source of
   truth to keep consistent; the webhook must be idempotent.
-- Staging verification (Phase 1.5) adds a human wait state before merge:
-  interactive changes sit in `READY_TO_MERGE` until the reporter confirms on
-  staging, so stale items need nudges (push reminders) or a maintainer
-  override.
+- Staging verification (Phase 1.5) adds a human wait state after merge, before
+  the production deploy: interactive changes sit in `MERGED` (live on staging)
+  until the reporter confirms on staging, so stale items need nudges (push
+  reminders) or a maintainer to ship to production without the sign-off.
 - A PAT with write access to the repo lives in Convex env; needs rotation
   policy and least-privilege scoping (issues only — the Routine, not Convex,
   pushes code).
