@@ -1252,7 +1252,12 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const body = await request.text();
 
-    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    // Falls back to the dev-assistant callback secret so a single shared
+    // secret can serve both inbound channels; set GITHUB_WEBHOOK_SECRET to
+    // split them without a code change.
+    const secret =
+      process.env.GITHUB_WEBHOOK_SECRET ??
+      process.env.DEV_ASSISTANT_CALLBACK_SECRET;
     if (!secret) {
       console.error("[GithubWebhook] GITHUB_WEBHOOK_SECRET not configured");
       return new Response("GitHub webhook not configured", { status: 503 });

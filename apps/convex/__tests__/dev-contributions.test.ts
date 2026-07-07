@@ -1655,6 +1655,29 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     expect(res.status).toBe(401);
   });
 
+  test("falls back to DEV_ASSISTANT_CALLBACK_SECRET when GITHUB_WEBHOOK_SECRET is unset", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    process.env.DEV_ASSISTANT_CALLBACK_SECRET = WEBHOOK_SECRET;
+
+    // No GITHUB_WEBHOOK_SECRET: not a 503 — the shared secret verifies.
+    const ping = await postWebhook(t, { zen: "One secret, two doors." }, "ping");
+    expect(ping.status).toBe(200);
+    expect(await ping.text()).toBe("ignored");
+
+    // An explicit GITHUB_WEBHOOK_SECRET wins over the fallback.
+    process.env.GITHUB_WEBHOOK_SECRET = "a-different-secret";
+    const res = await t.fetch("/github/webhook", {
+      method: "POST",
+      body: "{}",
+      headers: {
+        "x-hub-signature-256": await signGithub("{}"),
+        "x-github-event": "ping",
+      },
+    });
+    expect(res.status).toBe(401);
+  });
+
   test("non-pull_request events and non-closed actions are acked and ignored", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
