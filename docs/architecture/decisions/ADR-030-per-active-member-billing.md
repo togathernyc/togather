@@ -1,4 +1,4 @@
-# ADR-029: Per-Active-Member Billing ($1/month, advance-billed, rolling 30 days)
+# ADR-030: Per-Active-Member Billing ($1/month, advance-billed, rolling 30 days)
 
 ## Status
 

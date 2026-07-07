@@ -1036,7 +1036,7 @@ interface BillingMonthlyPreviewData {
  * admins right after the monthly quantity sync (the 28th), a few days before
  * the invoice on the 1st, so the amount is never a surprise and admins still
  * have time to mark members inactive. See functions/ee/billing.ts
- * syncPerUserSubscriptionQuantities and ADR-029.
+ * syncPerUserSubscriptionQuantities and ADR-030.
  */
 export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreviewData> = {
   type: 'billing.monthly_preview',
