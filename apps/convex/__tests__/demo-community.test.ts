@@ -60,7 +60,6 @@ describe("createDemoCommunity", () => {
       smallGroupCount: 3,
       zipCode: "11201",
       primaryColor: "#AA3366",
-      secondaryColor: "#112233",
     });
 
     expect(result.name).toBe("Grace Fellowship");
@@ -240,10 +239,10 @@ describe("createDemoCommunity", () => {
     const typeById = new Map(groupTypes.map((gt) => [gt._id, gt.slug]));
     expect(
       groups.filter((g) => typeById.get(g.groupTypeId!) === "small-groups"),
-    ).toHaveLength(6);
+    ).toHaveLength(12);
     expect(
       groups.filter((g) => typeById.get(g.groupTypeId!) === "campuses"),
-    ).toHaveLength(4);
+    ).toHaveLength(12);
   });
 
   test("generates unique demo codes for same-named churches", async () => {
@@ -280,6 +279,240 @@ describe("createDemoCommunity", () => {
         primaryColor: "blue",
       }),
     ).rejects.toThrow("hex color");
+  });
+});
+
+describe("demo v3: feedback fixes", () => {
+  test("creates one group per campus and honors custom names", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Campy", "+15555550170");
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Eight Campus Church",
+      campusCount: 8,
+      smallGroupCount: 2,
+      campusNames: ["Harlem", "Bed-Stuy"],
+      groupNames: ["Tuesday Crew"],
+    });
+
+    const { groups, groupTypes } = await t.run(async (ctx) => ({
+      groups: await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect(),
+      groupTypes: await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect(),
+    }));
+    const typeById = new Map(groupTypes.map((gt) => [gt._id, gt.slug]));
+    const campuses = groups.filter((g) => typeById.get(g.groupTypeId!) === "campuses");
+    expect(campuses).toHaveLength(8);
+    // Custom names first, placeholders fill the rest.
+    const campusNames = campuses.map((g) => g.name);
+    expect(campusNames).toContain("Harlem");
+    expect(campusNames).toContain("Bed-Stuy");
+    const smallGroupsNames = groups
+      .filter((g) => typeById.get(g.groupTypeId!) === "small-groups")
+      .map((g) => g.name);
+    expect(smallGroupsNames).toContain("Tuesday Crew");
+
+    // Group type names are singular.
+    const typeNames = new Map(groupTypes.map((gt) => [gt.slug, gt.name]));
+    expect(typeNames.get("small-groups")).toBe("Small Group");
+    expect(typeNames.get("campuses")).toBe("Campus");
+    expect(typeNames.get("teams")).toBe("Team");
+  });
+
+  test("seeded members, groups, and events all have imagery; locations spread from base coords", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Pic", "+15555550171");
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Photo Church",
+      smallGroupCount: 2,
+      zipCode: "11201",
+      logo: "r2:uploads/logo.png",
+      baseCoordinates: { latitude: 40.69, longitude: -73.99 },
+    });
+
+    const { seededUsers, groups, meetings } = await t.run(async (ctx) => {
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect();
+      const seededUsers = [];
+      for (const m of memberships) {
+        const user = await ctx.db.get(m.userId);
+        if (user?.isDemoSeed) seededUsers.push(user);
+      }
+      return {
+        seededUsers,
+        groups: await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+          .collect(),
+        meetings: await ctx.db
+          .query("meetings")
+          .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+          .collect(),
+      };
+    });
+
+    // Every seeded member has a portrait.
+    expect(seededUsers.every((u) => !!u.profilePhoto)).toBe(true);
+    // Every group has an avatar; the announcement group wears the logo.
+    expect(groups.every((g) => !!g.preview)).toBe(true);
+    const announcementGroup = groups.find((g) => g.isAnnouncementGroup);
+    expect(announcementGroup?.preview).toBe("r2:uploads/logo.png");
+    // Groups carry coordinates near the base, and not all identical.
+    expect(groups.every((g) => g.coordinates !== undefined)).toBe(true);
+    const distinctLats = new Set(groups.map((g) => g.coordinates!.latitude));
+    expect(distinctLats.size).toBeGreaterThan(1);
+    // Every event has a cover image and a zip-bearing location.
+    expect(meetings.every((m) => !!m.coverImage)).toBe(true);
+    expect(meetings.every((m) => m.locationOverride?.includes("11201"))).toBe(true);
+  });
+
+  test("the creator leads the announcement group plus two groups, member elsewhere", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, token } = await createUser(t, "Lead", "+15555550172");
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Role Church",
+      smallGroupCount: 4,
+    });
+
+    const roles = await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect();
+      const out = [];
+      for (const row of rows) {
+        const group = await ctx.db.get(row.groupId);
+        if (group?.communityId !== result.communityId) continue;
+        out.push({ role: row.role, isAnnouncement: !!group.isAnnouncementGroup });
+      }
+      return out;
+    });
+
+    const leaderRoles = roles.filter((r) => r.role === "leader");
+    expect(leaderRoles.filter((r) => r.isAnnouncement)).toHaveLength(1);
+    expect(leaderRoles.filter((r) => !r.isAnnouncement)).toHaveLength(2);
+    expect(roles.filter((r) => r.role === "member").length).toBeGreaterThan(0);
+  });
+
+  test("seeds DMs, a group DM, and the Getting Started channel", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Inbox", "+15555550173");
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Inbox Church",
+    });
+
+    const { adHoc, gettingStarted, botMessages } = await t.run(async (ctx) => {
+      const adHoc = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_community_isAdHoc", (q) =>
+          q.eq("communityId", result.communityId).eq("isAdHoc", true),
+        )
+        .collect();
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect();
+      let gettingStarted = null;
+      for (const group of groups) {
+        const channel = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group_slug", (q) =>
+            q.eq("groupId", group._id).eq("slug", "getting-started"),
+          )
+          .first();
+        if (channel) gettingStarted = channel;
+      }
+      const botMessages = gettingStarted
+        ? await ctx.db
+            .query("chatMessages")
+            .withIndex("by_channel", (q) => q.eq("channelId", gettingStarted!._id))
+            .collect()
+        : [];
+      return { adHoc, gettingStarted, botMessages };
+    });
+
+    expect(adHoc.filter((c) => c.channelType === "dm")).toHaveLength(2);
+    expect(adHoc.filter((c) => c.channelType === "group_dm")).toHaveLength(1);
+    // Seeded chats are accepted conversations, and DMs have a dedup key.
+    expect(adHoc.find((c) => c.channelType === "dm")?.dmPairKey).toContain(
+      String(result.communityId),
+    );
+
+    expect(gettingStarted).not.toBeNull();
+    expect(botMessages.length).toBeGreaterThanOrEqual(5);
+    // Bot-authored: no senderId, bot content type, named sender.
+    expect(botMessages.every((m) => m.senderId === undefined)).toBe(true);
+    expect(botMessages.every((m) => m.contentType === "bot")).toBe(true);
+  });
+
+  test("getDemoProgress tracks guided missions from real activity", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Prog", "+15555550174");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Progress Church",
+    });
+
+    let progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(progress?.total).toBe(4);
+    expect(progress?.completed).toBe(0);
+
+    // A teammate joins -> invite mission completes.
+    const { token: mateToken } = await createUser(t, "Mate", "+15555550175");
+    await t.mutation(api.functions.demo.joinDemoCommunity, {
+      token: mateToken,
+      code: demo.demoCode,
+    });
+    progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(
+      progress?.missions.find((m) => m.key === "invite_teammate")?.done,
+    ).toBe(true);
+    expect(progress?.completed).toBe(1);
+  });
+
+  test("go-live purge removes seeded DMs but keeps everything real", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "DmPurge", "+15555550176");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "DM Purge Church",
+    });
+
+    await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
+      communityId: demo.communityId,
+    });
+
+    const adHoc = await t.run(async (ctx) =>
+      ctx.db
+        .query("chatChannels")
+        .withIndex("by_community_isAdHoc", (q) =>
+          q.eq("communityId", demo.communityId).eq("isAdHoc", true),
+        )
+        .collect(),
+    );
+    expect(adHoc).toHaveLength(0);
   });
 });
 
@@ -551,9 +784,14 @@ describe("demo conversion (go live)", () => {
     );
     expect(landingPage?.isEnabled).toBe(true);
     expect(landingPage?.title).toBe("Welcome to Convert Chapel");
-    // Channel denormalization was recomputed (creator remains in channels).
+    // Channel denormalization was recomputed. The creator remains in main
+    // channels; leaders channels of groups they don't lead legitimately
+    // drop to zero members after the seeded leaders are purged.
     for (const channel of after.channels) {
-      expect(channel.memberCount).toBe(1);
+      expect(channel.memberCount).toBeLessThanOrEqual(1);
+      if (channel.channelType === "main") {
+        expect(channel.memberCount).toBe(1);
+      }
       expect(channel.lastMessagePreview).toBeUndefined();
     }
   });

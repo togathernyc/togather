@@ -36,7 +36,9 @@ import { useAuth } from "@providers/AuthProvider";
 import { useSelectCommunity } from "@features/auth/hooks/useAuth";
 import { useTheme } from "@hooks/useTheme";
 import { ImagePicker } from "@components/ui";
-import { ColorInput, isValidHex } from "./ColorInput";
+import { ColorPicker } from "@features/admin/components/ColorPicker";
+import { isValidHex } from "./ColorInput";
+import { geocodeZipCode } from "@features/groups/utils/geocodeLocation";
 
 type DemoResult = {
   communityId: string;
@@ -64,7 +66,8 @@ export function DemoCommunityScreen() {
   const [zipCode, setZipCode] = useState("");
   const [logoUri, setLogoUri] = useState<string | null>(null);
   const [primaryColor, setPrimaryColor] = useState("#1E8449");
-  const [secondaryColor, setSecondaryColor] = useState("#2E86C1");
+  const [campusNames, setCampusNames] = useState<string[]>([]);
+  const [groupNamesList, setGroupNamesList] = useState<string[]>([]);
 
   // ---- Join-by-code state ----
   const [joinCode, setJoinCode] = useState("");
@@ -76,10 +79,7 @@ export function DemoCommunityScreen() {
   const [error, setError] = useState<string | null>(null);
   const [demo, setDemo] = useState<DemoResult | null>(null);
 
-  const formValid =
-    name.trim().length > 0 &&
-    isValidHex(primaryColor) &&
-    isValidHex(secondaryColor);
+  const formValid = name.trim().length > 0 && isValidHex(primaryColor);
 
   /** Upload the picked logo to R2 and return its storage path. */
   async function uploadLogo(imageUri: string): Promise<string> {
@@ -117,6 +117,19 @@ export function DemoCommunityScreen() {
     return storagePath;
   }
 
+  function setNameAt(
+    setList: React.Dispatch<React.SetStateAction<string[]>>,
+    index: number,
+    value: string,
+  ) {
+    setList((prev) => {
+      const next = [...prev];
+      while (next.length <= index) next.push("");
+      next[index] = value;
+      return next;
+    });
+  }
+
   function parseCount(value: string): number | undefined {
     const parsed = parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -128,6 +141,11 @@ export function DemoCommunityScreen() {
     setSubmitting(true);
     try {
       const logo = logoUri ? await uploadLogo(logoUri) : undefined;
+      // Best-effort: resolve the zip to coordinates (bundled US zip database)
+      // so seeded groups and events land on the map around their area.
+      const coords = geocodeZipCode(zipCode.trim() || null);
+      const cleanNames = (names: string[]) =>
+        names.map((n) => n.trim()).filter((n) => n.length > 0);
       const result = await createDemo({
         name: name.trim(),
         totalSize: parseCount(totalSize),
@@ -136,7 +154,9 @@ export function DemoCommunityScreen() {
         zipCode: zipCode.trim() || undefined,
         logo,
         primaryColor,
-        secondaryColor,
+        campusNames: cleanNames(campusNames).length > 0 ? cleanNames(campusNames) : undefined,
+        groupNames: cleanNames(groupNamesList).length > 0 ? cleanNames(groupNamesList) : undefined,
+        baseCoordinates: coords ?? undefined,
       });
       setDemo(result);
     } catch (err) {
@@ -375,6 +395,58 @@ export function DemoCommunityScreen() {
                 />
               </View>
             </View>
+
+            {/* Optional real names — skipping is explicitly fine. */}
+            {(parseCount(campusCount) ?? 0) >= 2 && (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>
+                  Campus names <Text style={{ color: colors.textTertiary }}>(optional)</Text>
+                </Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
+                  Totally fine to skip — we'll use placeholder names and spots
+                  near your zip, and you can rename anything later.
+                </Text>
+                {Array.from({ length: Math.min(parseCount(campusCount) ?? 0, 12) }).map((_, i) => (
+                  <TextInput
+                    key={`campus-${i}`}
+                    style={[
+                      styles.input,
+                      styles.nameInput,
+                      { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text },
+                    ]}
+                    value={campusNames[i] ?? ""}
+                    onChangeText={(v) => setNameAt(setCampusNames, i, v)}
+                    placeholder={`Campus ${i + 1}`}
+                    placeholderTextColor={colors.inputPlaceholder}
+                  />
+                ))}
+              </View>
+            )}
+            {(parseCount(smallGroupCount) ?? 0) >= 1 && (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>
+                  Small group names <Text style={{ color: colors.textTertiary }}>(optional)</Text>
+                </Text>
+                <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
+                  Same here — skip it and we'll seed friendly placeholder
+                  groups you can rename anytime.
+                </Text>
+                {Array.from({ length: Math.min(parseCount(smallGroupCount) ?? 0, 12) }).map((_, i) => (
+                  <TextInput
+                    key={`group-${i}`}
+                    style={[
+                      styles.input,
+                      styles.nameInput,
+                      { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text },
+                    ]}
+                    value={groupNamesList[i] ?? ""}
+                    onChangeText={(v) => setNameAt(setGroupNamesList, i, v)}
+                    placeholder={`Small group ${i + 1}`}
+                    placeholderTextColor={colors.inputPlaceholder}
+                  />
+                ))}
+              </View>
+            )}
           </View>
 
           {/* Branding */}
@@ -396,18 +468,17 @@ export function DemoCommunityScreen() {
               />
             </View>
 
-            <ColorInput
-              label="Primary color"
+            <ColorPicker
+              label="Brand color"
               value={primaryColor}
               onChange={setPrimaryColor}
-              colors={colors}
+              defaultColor="#1E8449"
             />
-            <ColorInput
-              label="Secondary color"
-              value={secondaryColor}
-              onChange={setSecondaryColor}
-              colors={colors}
-            />
+            <Text style={[styles.fieldHint, { color: colors.textTertiary }]}>
+              This colors buttons, tabs, and highlights — with white text on
+              top — so richer, darker shades work best. Every preset in the
+              picker looks great; very light or neon colors won't.
+            </Text>
           </View>
 
           {error && (
@@ -628,6 +699,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     marginBottom: 6,
+  },
+  fieldHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  nameInput: {
+    marginBottom: 8,
   },
   input: {
     borderWidth: 1,

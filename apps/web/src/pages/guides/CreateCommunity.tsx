@@ -65,25 +65,31 @@ export function CreateCommunity() {
           </Step>
           <Step n={2}>
             <Term>Church size</Term>, <Term>Campuses</Term>, and{" "}
-            <Term>Small groups</Term> — we shape the demo's groups to roughly
-            match your congregation.
+            <Term>Small groups</Term> — we create a group for every campus and
+            small group you enter. Naming them is optional: skip it and we'll
+            use friendly placeholders you can rename anytime.
           </Step>
           <Step n={3}>
-            <Term>Main zip code</Term> — so the community's home base matches
-            yours.
+            <Term>Main zip code</Term> — your groups and events are placed on
+            the map around your area.
           </Step>
           <Step n={4}>
-            <Term>Logo</Term> and <Term>brand colors</Term> — the whole app is
-            themed with your look before you ever open it.
+            <Term>Logo</Term> and <Term>brand color</Term> — pick from preset
+            swatches that all work well (richer, darker shades carry the white
+            text used on buttons and tabs). The whole app is themed with your
+            look before you ever open it.
           </Step>
         </Steps>
         <P>
           Choose <Term>Create my community</Term> and in a few seconds you're
           the admin of a working community in demo mode: 100 seeded demo
-          members, groups with real channel conversations, upcoming events with
-          RSVPs, prayer requests, and the full admin settings screen.
-          Everything works — rename it, re-brand it, create events, post
-          messages.
+          members with real profile photos, groups with avatars and real
+          channel conversations, direct messages, upcoming events with cover
+          photos and RSVPs, prayer requests, and the full admin settings
+          screen. A <Term>🎓 Getting Started</Term> conversation in your inbox
+          walks you through the best things to try, and the Go Live screen
+          tracks your progress. Everything works — rename it, re-brand it,
+          create events, post messages.
         </P>
         <Callout tone="note" title="You'll always know it's a demo">
           While your community is in demo mode, a banner appears across the

@@ -51,6 +51,10 @@ export function GoLiveScreen() {
     api.functions.memberActivity.getBillableSummary,
     isAuthenticated && communityId ? { communityId } : "skip",
   );
+  const progress = useAuthenticatedQuery(
+    api.functions.demo.getDemoProgress,
+    isAuthenticated && communityId ? { communityId } : "skip",
+  );
 
   const convertDemoToLive = useAuthenticatedAction(
     api.functions.ee.billing.convertDemoToLive,
@@ -188,6 +192,40 @@ export function GoLiveScreen() {
                   </View>
                 )}
               </View>
+
+              {progress && (
+                <View
+                  style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+                >
+                  <Text style={[styles.cardTitle, { color: colors.text }]}>
+                    While you explore · {progress.completed}/{progress.total}
+                  </Text>
+                  {progress.missions.map((mission) => (
+                    <View key={mission.key} style={styles.missionRow}>
+                      <Ionicons
+                        name={mission.done ? "checkmark-circle" : "ellipse-outline"}
+                        size={20}
+                        color={mission.done ? colors.success : colors.textTertiary}
+                      />
+                      <Text
+                        style={[
+                          styles.missionText,
+                          {
+                            color: mission.done ? colors.textSecondary : colors.text,
+                            textDecorationLine: mission.done ? "line-through" : "none",
+                          },
+                        ]}
+                      >
+                        {mission.title}
+                      </Text>
+                    </View>
+                  ))}
+                  <Text style={[styles.missionHint, { color: colors.textTertiary }]}>
+                    The 🎓 Getting Started conversation in your inbox walks
+                    through each one.
+                  </Text>
+                </View>
+              )}
 
               {error && (
                 <View
@@ -331,6 +369,21 @@ const styles = StyleSheet.create({
   estimateValue: {
     fontSize: 16,
     fontWeight: "700",
+  },
+  missionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+  },
+  missionText: {
+    fontSize: 14,
+    flex: 1,
+  },
+  missionHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
   },
   notice: {
     flexDirection: "row",
