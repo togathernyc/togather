@@ -435,6 +435,11 @@ export function ContributionDetailScreen() {
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      // This screen opens as an iOS sheet (the `(user)` route group is a modal),
+      // where "padding" alone doesn't lift the composer above the keyboard — it
+      // stays hidden behind it. The sibling `dev/notifications.tsx`, in the same
+      // modal group, corrects the sheet inset with a 64pt offset; mirror it here.
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
