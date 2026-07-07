@@ -495,7 +495,13 @@ export const postMessage = mutation({
   },
 });
 
-/** Guard shared by confirmStaging/reportStagingIssue: the staging-check window. */
+/**
+ * Guard shared by confirmStaging/reportStagingIssue: the staging-check window.
+ * Nothing reaches staging until the PR is merged to `main` (deploys auto-run on
+ * merge), so the window opens at MERGED — not while the PR is still open. The
+ * change is then live on staging and awaiting the contributor's try-it, which
+ * in turn gates the manual production deploy (ADR-029).
+ */
 function assertStagingWindow(bug: Doc<"devBugs">): void {
   if (!bug.verifyOnStaging) {
     throw new ConvexError("This item does not require staging verification");
@@ -503,18 +509,21 @@ function assertStagingWindow(bug: Doc<"devBugs">): void {
   if (bug.stagingVerifiedAt) {
     throw new ConvexError("This item was already verified on staging");
   }
-  if (bug.status !== "CODE_REVIEW" && bug.status !== "READY_TO_MERGE") {
+  if (bug.status !== "MERGED") {
     throw new ConvexError(
-      `Staging can only be checked once the PR is up (current status: ${bug.status})`,
+      `Staging can only be checked once the change is merged and live on staging (current status: ${bug.status})`,
     );
   }
 }
 
 /**
  * Contributor confirms the change works on staging. Valid only in the staging
- * window (verifyOnStaging set, not yet verified, PR up). Stamps
- * stagingVerifiedAt and logs a system message; if someone other than the
- * originator confirmed, the originator gets a push (matches approveSpec).
+ * window (verifyOnStaging set, not yet verified, already merged and live on
+ * staging). Stamps stagingVerifiedAt and logs a system message; if someone
+ * other than the originator confirmed, the originator gets a push (matches
+ * approveSpec). The change is already merged, so there is nothing to merge
+ * here — the sign-off marks the item ready for a maintainer's manual
+ * production deploy (ADR-029).
  */
 export const confirmStaging = mutation({
   args: { token: v.string(), id: v.id("devBugs") },
@@ -534,23 +543,14 @@ export const confirmStaging = mutation({
       ctx,
       args.id,
       "system",
-      `${name} confirmed it works on staging`,
+      `${name} confirmed it works on staging — ready for a maintainer to deploy to production`,
     );
 
     await notifyOriginatorUnlessSelf(ctx, bug, user._id, {
-      title: "Verified on staging",
-      body: `${name} confirmed "${bug.title}" works on staging.`,
+      title: "Verified on staging 🎉",
+      body: `${name} confirmed "${bug.title}" works on staging — a maintainer will ship it to production.`,
       status: bug.status,
     });
-
-    // Policy auto-merge (ADR-029 Phase 3): staging sign-off may have been the
-    // last unsatisfied merge gate. Schedule the attempt — the action re-reads
-    // the bug and re-checks every gate itself, so this is always safe.
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.devAssistant.actions.attemptAutoMerge,
-      { bugId: args.id },
-    );
 
     return { ok: true };
   },

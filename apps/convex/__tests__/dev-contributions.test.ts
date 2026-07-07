@@ -418,7 +418,9 @@ describe("shipped", () => {
     expect(notifications).toHaveLength(0);
 
     // The webhook source (GitHub reported the merge) stamps shippedAt and
-    // records the shipped notification.
+    // records the merged/live-on-staging notification. This item isn't
+    // interactive (verifyOnStaging unset), so the push is the honest "live on
+    // staging" note, not a "shipped to production" claim.
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
       { bugId: id, routineRunId: "run-ship", status: "MERGED", source: "webhook" },
@@ -433,7 +435,7 @@ describe("shipped", () => {
     );
     expect(
       notifications.some(
-        (n) => n.userId === maintainerId && /shipped/i.test(n.title),
+        (n) => n.userId === maintainerId && /staging/i.test(n.title),
       ),
     ).toBe(true);
   });
@@ -784,11 +786,11 @@ describe("conversation thread (Phase 1.5)", () => {
     expect(thread.map((m) => m.body)).toEqual([
       "Pull request opened",
       "Ready to merge",
-      "Shipped 🎉",
+      "Merged — live on staging",
     ]);
   });
 
-  test("CODE_REVIEW push says 'test on staging' when verifyOnStaging is set", async () => {
+  test("the 'test on staging' push fires on MERGED (not CODE_REVIEW) when verifyOnStaging is set", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -809,6 +811,8 @@ describe("conversation thread (Phase 1.5)", () => {
       }),
     );
 
+    // CODE_REVIEW: the PR is still open, nothing is on staging — the push is
+    // the generic "in code review" note, NOT the staging ask.
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
       {
@@ -820,7 +824,37 @@ describe("conversation thread (Phase 1.5)", () => {
     );
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-    const notifications = await t.run(async (ctx) =>
+    let notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(
+      notifications.filter((n) => /staging/i.test(n.title)),
+    ).toHaveLength(0);
+    expect(
+      notifications.some((n) => n.title === "Your contribution is in code review"),
+    ).toBe(true);
+
+    // MERGED (auto-deployed to staging): now the "try it on staging" push fires.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-staging-push",
+        status: "READY_TO_MERGE",
+      },
+    );
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-staging-push",
+        status: "MERGED",
+        source: "webhook",
+      },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    notifications = await t.run(async (ctx) =>
       ctx.db.query("notifications").collect(),
     );
     const stagingPush = notifications.filter(
@@ -1171,7 +1205,8 @@ describe("staging verification", () => {
     return await t.run(async (ctx) =>
       ctx.db.insert("devBugs", {
         originatorUserId: originatorId,
-        status: overrides.status ?? "CODE_REVIEW",
+        // Staging is checked after merge (ADR-029) — the window is MERGED.
+        status: overrides.status ?? "MERGED",
         kind: "bug",
         source: "dashboard",
         title: "Fix RSVP message",
@@ -1198,7 +1233,7 @@ describe("staging verification", () => {
 
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.stagingVerifiedAt).toBeTruthy();
-    expect(bug?.status).toBe("CODE_REVIEW"); // status untouched
+    expect(bug?.status).toBe("MERGED"); // status untouched — already merged
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -1207,7 +1242,7 @@ describe("staging verification", () => {
     expect(thread).toHaveLength(1);
     expect(thread[0]).toMatchObject({
       authorType: "system",
-      body: "Marge Maintainer confirmed it works on staging",
+      body: "Marge Maintainer confirmed it works on staging — ready for a maintainer to deploy to production",
     });
 
     // Confirmed by someone else -> the originator gets a push.
@@ -1249,14 +1284,26 @@ describe("staging verification", () => {
       }),
     ).rejects.toThrow(/already verified/);
 
-    // PR not up yet.
+    // Not merged yet — the PR is still open in code review, so nothing is on
+    // staging to check. The window only opens at MERGED (ADR-029).
     const earlyId = await seedStagingBug(t, maintainerId, {
-      status: "IN_PROGRESS",
+      status: "CODE_REVIEW",
     });
     await expect(
       t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
         token: maintainerId,
         id: earlyId,
+      }),
+    ).rejects.toThrow(/current status/);
+
+    // Reviewed and approved but still not merged — also rejected.
+    const preMergeId = await seedStagingBug(t, maintainerId, {
+      status: "READY_TO_MERGE",
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+        token: maintainerId,
+        id: preMergeId,
       }),
     ).rejects.toThrow(/current status/);
   });
@@ -1267,7 +1314,7 @@ describe("staging verification", () => {
     const { maintainerId } = await seedUsers(t);
 
     const id = await seedStagingBug(t, maintainerId, {
-      status: "READY_TO_MERGE",
+      status: "MERGED",
     });
     const fetchMock = stubRoutineEnv();
 
@@ -1289,7 +1336,7 @@ describe("staging verification", () => {
 
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.stagingVerifiedAt).toBeUndefined();
-    expect(bug?.status).toBe("READY_TO_MERGE");
+    expect(bug?.status).toBe("MERGED");
   });
 });
 
@@ -1787,13 +1834,15 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       { token: maintainerId, id },
     );
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
-      ["system", "Shipped 🎉"],
+      ["system", "Merged — live on staging"],
     ]);
 
-    // The originator got the shipped push (dashboard item, no chat thread).
+    // The originator got the merged/live-on-staging push (dashboard item, no
+    // chat thread). Non-interactive item, so it's the "live on staging" note,
+    // not a "shipped to production" claim.
     const shippedPushes = async () =>
       (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
-        .filter((n) => n.userId === maintainerId && /shipped/i.test(n.title));
+        .filter((n) => n.userId === maintainerId && /staging/i.test(n.title));
     expect(await shippedPushes()).toHaveLength(1);
 
     // Replayed delivery: no double system message, no double push.
@@ -1855,7 +1904,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       { token: maintainerId, id },
     );
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
-      ["system", "Shipped 🎉"],
+      ["system", "Merged — live on staging"],
     ]);
   });
 
@@ -2231,7 +2280,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     t: ReturnType<typeof convexTest>,
     originatorId: Id<"users">,
     overrides: Partial<{
-      status: "CODE_REVIEW" | "READY_TO_MERGE";
+      status: "CODE_REVIEW" | "READY_TO_MERGE" | "MERGED";
       riskLevel: "low" | "medium" | "high";
       reviewVerdict: "approved" | "changes_requested";
       verifyOnStaging: boolean;
@@ -2326,7 +2375,6 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       { status: "CODE_REVIEW" as const },
       { riskLevel: "medium" as const },
       { reviewVerdict: "changes_requested" as const },
-      { verifyOnStaging: true }, // required but not verified
       { noPrUrl: true },
     ];
     for (const overrides of gateFailures) {
@@ -2369,7 +2417,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
 
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Shipped 🎉",
+      "Merged — live on staging",
     ]);
     // GitHub confirmed the merge, so the action applies MERGED itself via
     // the trusted "automerge" source — the row must not strand at
@@ -2388,29 +2436,33 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Shipped 🎉",
+      "Merged — live on staging",
     ]);
   });
 
-  test("the success line notes staging verification when applicable", async () => {
+  test("an interactive item auto-merges without staging verification (staging is not a merge gate)", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
     enableAutoMerge();
-    const id = await seedMergeBug(t, maintainerId, {
-      verifyOnStaging: true,
-      stagingVerifiedAt: Date.now(),
-    });
-    stubMergeFetch(() => new Response(null, { status: 200 }));
+    // Interactive (verifyOnStaging) but never verified on staging — nothing
+    // reaches staging until the merge, so this must NOT block the merge
+    // (ADR-029). The staging try-it happens post-merge and gates production.
+    const id = await seedMergeBug(t, maintainerId, { verifyOnStaging: true });
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
 
     await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
       bugId: id,
     });
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
-      "Shipped 🎉",
+      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Merged — live on staging",
     ]);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.stagingVerifiedAt).toBeUndefined();
   });
 
   test("a 405 method-not-allowed retries once with plain merge", async () => {
@@ -2442,7 +2494,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Shipped 🎉",
+      "Merged — live on staging",
     ]);
   });
 
@@ -2524,18 +2576,23 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       "Code review passed ✓",
       "Ready to merge",
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Shipped 🎉",
+      "Merged — live on staging",
     ]);
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
   });
 
-  test("confirmStaging triggers the merge attempt once staging was the last gate", async () => {
+  test("confirmStaging does NOT trigger a merge — the change is already merged", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
     enableAutoMerge();
-    const id = await seedMergeBug(t, maintainerId, { verifyOnStaging: true });
+    // Staging is checked post-merge now, so the item is already MERGED when the
+    // contributor signs off — there is nothing left to merge.
+    const id = await seedMergeBug(t, maintainerId, {
+      status: "MERGED",
+      verifyOnStaging: true,
+    });
     const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
 
     await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
@@ -2544,17 +2601,10 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-    const mergeCalls = fetchMock.mock.calls.filter(
-      (c) => String(c[0]) === MERGE_URL,
-    );
-    expect(mergeCalls).toHaveLength(1);
-    expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Connie Tributor confirmed it works on staging",
-      "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
-      "Shipped 🎉",
-    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
+    expect(bug?.stagingVerifiedAt).toBeTruthy();
   });
 });
 

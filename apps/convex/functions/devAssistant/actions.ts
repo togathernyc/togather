@@ -749,11 +749,13 @@ export const attemptAutoMerge = internalAction({
     if (!bug) return;
 
     // Central policy gate — trigger points schedule freely and rely on this.
+    // Staging is NOT a merge gate (ADR-029): nothing reaches staging until the
+    // merge, so the staging try-it happens post-merge and gates the manual
+    // production deploy instead. Merge gates on review + CI + low-risk only.
     if (
       bug.status !== "READY_TO_MERGE" ||
       bug.riskLevel !== "low" ||
       bug.reviewVerdict !== "approved" ||
-      (bug.verifyOnStaging && !bug.stagingVerifiedAt) ||
       !bug.prUrl
     ) {
       console.log(
@@ -807,15 +809,11 @@ export const attemptAutoMerge = internalAction({
       }
 
       if (res.ok) {
-        const verified = bug.verifyOnStaging && bug.stagingVerifiedAt;
         await ctx.runMutation(
           internal.functions.devAssistant.bugs.addSystemThreadMessage,
           {
             bugId: args.bugId,
-            body:
-              "Auto-merged ✓ — all gates passed (low risk, review approved" +
-              (verified ? ", verified on staging" : "") +
-              ")",
+            body: "Auto-merged ✓ — all gates passed (low risk, review approved)",
           },
         );
         // GitHub just confirmed the merge, so apply MERGED directly through
@@ -909,23 +907,28 @@ function contributorPushForStatus(
     case "CODE_REVIEW":
       // The module treats CODE_REVIEW as "the PR exists" (READY_TO_MERGE is a
       // later, maintainer-facing step) — pushing here and not on READY_TO_MERGE
-      // means one "PR opened" push, not two.
-      // Staging gate (ADR-029 P1.5): interactive changes ask the originator to
-      // verify on staging rather than just announcing the PR.
-      if (bug.verifyOnStaging) {
-        return {
-          title: "Ready to test on staging",
-          body: `"${bug.title}" is built — try it on staging and confirm it works.`,
-        };
-      }
+      // means one "PR opened" push, not two. Nothing is on staging yet (the PR
+      // is still open), so this stays an honest "in code review" note — the
+      // "try it on staging" ask waits for MERGED (ADR-029).
       return {
         title: "Your contribution is in code review",
         body: `A pull request is open for "${bug.title}".`,
       };
     case "MERGED":
+      // The change is merged to `main` and auto-deployed to staging. For
+      // interactive items, this is the moment to ask the originator to try it
+      // on staging — their sign-off then gates the manual production deploy
+      // (ADR-029). Non-interactive items (copy/colour) just get an honest
+      // "it's live on staging" note, not a "shipped to production" claim.
+      if (bug.verifyOnStaging) {
+        return {
+          title: "Ready to test on staging",
+          body: `"${bug.title}" is merged and live on staging — try it and confirm it works.`,
+        };
+      }
       return {
-        title: "Your contribution shipped 🎉",
-        body: `"${bug.title}" was merged. Thanks for making Togather better!`,
+        title: "Your contribution is live on staging",
+        body: `"${bug.title}" was merged and is now live on the staging app.`,
       };
     default:
       return null;

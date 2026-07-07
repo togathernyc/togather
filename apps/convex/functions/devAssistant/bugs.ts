@@ -201,7 +201,9 @@ const STATUS_SYSTEM_MESSAGES: Partial<Record<BugStatus, string>> = {
   IN_PROGRESS: "Build started",
   CODE_REVIEW: "Pull request opened",
   READY_TO_MERGE: "Ready to merge",
-  MERGED: "Shipped 🎉",
+  // Merge auto-deploys to staging; production is a separate manual step, so the
+  // honest line is "live on staging", not "shipped" (ADR-029).
+  MERGED: "Merged — live on staging",
 };
 
 export type ThreadHistoryEntry = {
@@ -560,8 +562,8 @@ export const PR_CLOSED_UNMERGED_MESSAGE =
  * merged === true replays the bug's own routineRunId through the existing
  * handleRoutineCallback machinery with source "webhook" (the trusted channel
  * allowed to apply MERGED), which validates the transition, stamps shippedAt,
- * logs the "Shipped 🎉" system turn, pushes the originator, and (for chat
- * items) posts the sourceKey-idempotent bot message. The early-return on an
+ * logs the "Merged — live on staging" system turn, pushes the originator, and
+ * (for chat items) posts the sourceKey-idempotent bot message. The early-return on an
  * already-MERGED bug makes replayed webhooks — and the race with the
  * auto-merge action's own MERGED apply — no-ops.
  *
@@ -637,7 +639,12 @@ export const handleGithubPrClosed = internalMutation({
             ...(target.shippedAt ? {} : { shippedAt: Date.now() }),
             updatedAt: Date.now(),
           });
-          await insertThreadMessage(ctx, target._id, "system", "Shipped 🎉");
+          await insertThreadMessage(
+            ctx,
+            target._id,
+            "system",
+            "Merged — live on staging",
+          );
         } else {
           console.error(
             "[DevAssistant] GitHub merge webhook ignored: bug in status",

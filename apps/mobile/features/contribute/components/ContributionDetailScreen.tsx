@@ -599,8 +599,9 @@ export function ContributionDetailScreen({
               </Text>
             </View>
             <Text style={[styles.hint, { color: colors.textSecondary }]}>
-              Your change is live on the staging app. Open it, try the thing you
-              reported, and tell us how it went.
+              Your change is now merged and live on the staging app. Open it,
+              try the thing you reported, and tell us how it went — your
+              sign-off is what clears it to ship to production.
             </Text>
             {issueMode ? (
               <>
