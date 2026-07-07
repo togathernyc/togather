@@ -59,7 +59,7 @@ export function SubmitContributionScreen() {
           : {}),
       });
       // Land on the new item's detail screen instead of back on the form.
-      router.replace(`/(user)/contribute/${id}`);
+      router.replace(`/(user)/dev/${id}`);
     } catch (error) {
       Alert.alert("Couldn't submit", formatError(error));
       setSubmitting(false);

@@ -198,13 +198,30 @@ function SplitSlicesCard({ contribution }: { contribution: Contribution }) {
   );
 }
 
-export function ContributionDetailScreen() {
+export interface ContributionDetailScreenProps {
+  /**
+   * Desktop-web split view (ContributeSplitView): the conversation to show.
+   * Overrides the [id] route param — the split view renders this component
+   * outside the [id] route, driven by local selection state.
+   */
+  id?: Id<"devBugs"> | null;
+  /**
+   * True when rendered as the split view's right pane: hides the header back
+   * button (selection lives in the sidebar; there's nothing to pop).
+   */
+  embedded?: boolean;
+}
+
+export function ContributionDetailScreen({
+  id: idProp,
+  embedded = false,
+}: ContributionDetailScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const params = useLocalSearchParams<{ id: string }>();
-  const id = (params.id || null) as Id<"devBugs"> | null;
+  const id = idProp ?? ((params.id || null) as Id<"devBugs"> | null);
 
   // Access gate: the contribution queries throw for non-contributors (deep
   // link, revoked role), which would crash the render — skip them until the
@@ -437,9 +454,13 @@ export function ContributionDetailScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </TouchableOpacity>
+        {embedded ? (
+          <View style={styles.backBtn} />
+        ) : (
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {displayTitle(contribution)}
         </Text>
