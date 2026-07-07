@@ -81,6 +81,14 @@ const getAndroidIntentFilters = () => {
             host: "staging.togather.nyc",
             pathPrefix: "/a/",
           },
+          // Stripe go-live checkout return (success/cancel URLs) — must
+          // deep-link back into the app so the user lands on the authed
+          // go-live screen instead of a logged-out browser tab.
+          {
+            scheme: "https",
+            host: "staging.togather.nyc",
+            pathPrefix: "/onboarding/go-live",
+          },
         ],
         category: ["BROWSABLE", "DEFAULT"],
       },
@@ -117,6 +125,14 @@ const getAndroidIntentFilters = () => {
           host: "togather.nyc",
           pathPrefix: "/a/",
         },
+        // Stripe go-live checkout return (success/cancel URLs) — must
+        // deep-link back into the app so the user lands on the authed
+        // go-live screen instead of a logged-out browser tab.
+        {
+          scheme: "https",
+          host: "togather.nyc",
+          pathPrefix: "/onboarding/go-live",
+        },
         // Wildcard for community subdomains (e.g., fount.togather.nyc)
         {
           scheme: "https",
@@ -142,6 +158,11 @@ const getAndroidIntentFilters = () => {
           scheme: "https",
           host: "*.togather.nyc",
           pathPrefix: "/a/",
+        },
+        {
+          scheme: "https",
+          host: "*.togather.nyc",
+          pathPrefix: "/onboarding/go-live",
         },
       ],
       category: ["BROWSABLE", "DEFAULT"],

@@ -92,6 +92,13 @@ export default defineSchema({
     // this field in a follow-up once every environment has been migrated.
     knicksMode: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
+    // Self-serve demo communities (see functions/demo.ts): seeded sandboxes a
+    // prospective church spins up from a short questionnaire. Excluded from
+    // community search/discovery; everyone who joins via the demo code becomes
+    // an admin so a whole staff team can click around and re-brand together.
+    isDemo: v.optional(v.boolean()),
+    // The user who created the demo (for attribution and future cleanup).
+    demoCreatedById: v.optional(v.id("users")),
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online
@@ -139,6 +146,10 @@ export default defineSchema({
     subscriptionStatus: v.optional(v.string()), // "active" | "past_due" | "canceled" etc.
     subscriptionPriceMonthly: v.optional(v.number()),
     billingEmail: v.optional(v.string()),
+    // "per_active_user" = $1/month per billable active member (see
+    // functions/memberActivity.ts); a monthly cron syncs the Stripe
+    // subscription quantity. Absent = legacy fixed-price subscription.
+    billingModel: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_subdomain", ["subdomain"])
@@ -179,6 +190,11 @@ export default defineSchema({
     // `functions/scheduling/assignments.ts` and the claim path in
     // `verifyPhoneOTP` / `registerNewUser`.
     isPlaceholder: v.optional(v.boolean()),
+    // True only for the fake members seeded into a demo community
+    // (functions/demo.ts). Distinguishes them from other placeholder users
+    // (e.g. scheduling's invite-new-person flow) so the go-live purge deletes
+    // exactly the seeded accounts and never a real pending invitee.
+    isDemoSeed: v.optional(v.boolean()),
     dateJoined: v.optional(v.number()), // Unix timestamp ms
     roles: v.optional(v.number()), // Was: SmallInt bitmask
     profilePhoto: v.optional(v.string()),
@@ -244,7 +260,11 @@ export default defineSchema({
     updatedAt: v.optional(v.number()), // Unix timestamp ms
     communityAnniversary: v.optional(v.number()), // Unix timestamp ms (date only)
     status: v.optional(v.number()), // Was: SmallInt
-    lastLogin: v.optional(v.number()), // Unix timestamp ms - updated when user switches to this community
+    // Unix timestamp ms — per-community activity: stamped on login, on
+    // switching to this community, and on app foreground while it's the
+    // active community (users.recordActivity). Drives the admin "Active
+    // Members" stat and per-active-user billing (functions/memberActivity.ts).
+    lastLogin: v.optional(v.number()),
     // External integrations - stores IDs from external systems per community membership
     // e.g., { planningCenterId: "12345" }
     externalIds: v.optional(
@@ -257,6 +277,11 @@ export default defineSchema({
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
+    // Manual billing override for the per-active-user pricing model: admins
+    // and leaders can mark a member inactive so they don't count toward the
+    // $1/month/active-user subscription even if they opened the app this
+    // month. See functions/memberActivity.ts.
+    billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_user", ["userId"])
