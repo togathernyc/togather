@@ -16,7 +16,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -26,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { formatError } from "@/utils/error-handling";
+import { notify } from "@/utils/platformAlert";
 import { useSubmitContribution } from "../hooks/useContributionMutations";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { AttachmentStrip } from "./AttachmentStrip";
@@ -59,9 +59,9 @@ export function SubmitContributionScreen() {
           : {}),
       });
       // Land on the new item's detail screen instead of back on the form.
-      router.replace(`/(user)/contribute/${id}`);
+      router.replace(`/(user)/dev/${id}`);
     } catch (error) {
-      Alert.alert("Couldn't submit", formatError(error));
+      notify("Couldn't submit", formatError(error));
       setSubmitting(false);
     }
   };

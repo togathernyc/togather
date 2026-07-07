@@ -89,7 +89,7 @@ describe("ProfileMenu", () => {
     const { getByText } = render(<ProfileMenu />);
     fireEvent.press(getByText("Dev Dashboard"));
 
-    expect(mockPush).toHaveBeenCalledWith("/(user)/contribute");
+    expect(mockPush).toHaveBeenCalledWith("/(user)/dev");
   });
 
   it("hides the dev dashboard entry for non-maintainers", () => {

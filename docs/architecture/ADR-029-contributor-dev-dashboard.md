@@ -96,16 +96,17 @@ no chat thread. (Convex allows loosening required → optional without
 migration.) Chat-originated items keep their chat fields and also appear in
 the originator's dashboard list (unified history — see resolved question 5).
 
-### 3. Mobile surface — `features/contribute/` + `app/(user)/contribute/`
+### 3. Mobile surface — `features/contribute/` + `app/(user)/dev/`
 
-New feature folder per ADR-002 conventions, modeled on `features/settings/`:
+New feature folder per ADR-002 conventions, modeled on `features/settings/`.
+The routes live under `/dev`, so the public URL is `togather.nyc/dev`:
 
-- `app/(user)/contribute/index.tsx` — "My contributions" list with status
+- `app/(user)/dev/index.tsx` — "My contributions" list with status
   chips, plus submit CTA. Entry point in the profile/settings screen, visible
   only to users with `dev_maintainer` (the `canUseDevAssistant()` gate).
-- `app/(user)/contribute/submit.tsx` — bug/feature form: title, what happened
+- `app/(user)/dev/submit.tsx` — bug/feature form: title, what happened
   vs. expected, why it matters, screenshots (reuse existing upload → R2 flow).
-- `app/(user)/contribute/[id].tsx` — detail screen: status timeline, the
+- `app/(user)/dev/[id].tsx` — detail screen: status timeline, the
   AI-drafted spec with an **Approve spec** action (the contributor's product
   review), risk badge, and deep links to the GitHub issue/PR.
 

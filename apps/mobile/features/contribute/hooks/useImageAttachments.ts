@@ -8,8 +8,8 @@
  * the optimistic thumbnails while uploads are in flight.
  */
 import { useCallback, useRef, useState } from "react";
-import { Alert } from "react-native";
 import * as ImagePicker from "expo-image-picker";
+import { notify } from "@/utils/platformAlert";
 import { useImageUpload } from "@features/chat/hooks/useImageUpload";
 
 export interface ImageAttachment {
@@ -77,7 +77,7 @@ export function useImageAttachments(): UseImageAttachments {
             ),
           );
           if (error) {
-            Alert.alert("Upload failed", "That picture couldn't be uploaded.");
+            notify("Upload failed", "That picture couldn't be uploaded.");
           }
         } catch {
           setAttachments((prev) =>
@@ -85,7 +85,7 @@ export function useImageAttachments(): UseImageAttachments {
               a.id === id ? { ...a, uploading: false, failed: true } : a,
             ),
           );
-          Alert.alert("Upload failed", "That picture couldn't be uploaded.");
+          notify("Upload failed", "That picture couldn't be uploaded.");
         }
       }),
     );
