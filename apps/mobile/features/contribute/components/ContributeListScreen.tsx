@@ -14,6 +14,8 @@ import {
   FlatList,
   ActivityIndicator,
   TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { formatDistanceToNow } from "date-fns";
 import { useRouter } from "expo-router";
@@ -24,6 +26,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { SegmentedTabs } from "@components/ui/SegmentedTabs";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useAllContributions, useMyContributions } from "../hooks/useMyContributions";
+import { GithubCreditRow } from "./GithubCreditRow";
 import { conversationDotColor, displayTitle, isYourTurn } from "../utils/status";
 import type { ContributionListItem } from "../types";
 
@@ -198,12 +201,16 @@ export function ContributeListScreen() {
             </View>
           }
         />
+        <GithubCreditRow />
       </>
     );
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={26} color={colors.text} />
@@ -212,7 +219,7 @@ export function ContributeListScreen() {
         <View style={styles.backBtn} />
       </View>
       {renderBody()}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

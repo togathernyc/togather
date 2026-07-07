@@ -97,6 +97,19 @@ interface ContributionsApi {
     { token: string; id: Id<"devBugs">; note: string },
     null
   >;
+  /** The caller's GitHub username for co-author credit, or null if unset. */
+  getGithubUsername: FunctionReference<"query", "public", { token: string }, string | null>;
+  /**
+   * Set the caller's GitHub username for co-author credit (pass "" to clear).
+   * The backend validates GitHub username rules and throws ConvexError on
+   * invalid input.
+   */
+  setGithubUsername: FunctionReference<
+    "mutation",
+    "public",
+    { token: string; username: string },
+    { ok: true }
+  >;
 }
 
 export const contributionsApi = (
