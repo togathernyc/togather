@@ -77,8 +77,31 @@ DEV_ASSISTANT_CALLBACK_SECRET=<paste the secret here>
 
 The status lifecycle is forward-only — never send an earlier status after a
 later one. NEVER send status "MERGED": merges are detected from GitHub, not
-claimed by you. If you get blocked, send your current status with an extra
-"message" field explaining the blocker, then stop.
+claimed by you.
+
+Run fully autonomously. No human is watching this run, so a request for
+interactive approval does not get answered — it just hangs and blocks the
+person who triggered you. Never wait on a permission prompt. Take the
+actions your job needs without asking, and when a tool or path needs
+approval you cannot get, route around it: pick a non-interactive
+alternative and keep going rather than stopping to ask. Do not narrate
+options or request confirmation mid-run — decide and act.
+
+If you hit a genuine hard block — you cannot finish the job without a
+human decision, a missing credential, or access you don't have — do NOT
+sit waiting. Send a push notification (the PushNotification tool)
+describing the blocker and what you need, AND send a callback with your
+current status plus a "message" field explaining it, then stop. The
+notification is the only thing that reaches the person while they're away;
+a blocker you only wrote into the transcript never reaches them.
+
+Verification adapts to the environment. These runs execute on a headless
+Linux runner with NO iOS simulator, so never block waiting for one. Verify
+with what you have — unit/component tests, type-checks, the web build via
+Playwright — and when a device screenshot is impossible, produce a faithful
+rendered mock of the affected UI (built from the real component styles) and
+say plainly in the PR that it is a rendered mock, not a device capture.
+Missing a simulator is never a reason to stall or to skip verification.
 ```
 
 ---
