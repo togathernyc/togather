@@ -372,6 +372,15 @@ export const confirmStaging = mutation({
       status: bug.status,
     });
 
+    // Policy auto-merge (ADR-029 Phase 3): staging sign-off may have been the
+    // last unsatisfied merge gate. Schedule the attempt — the action re-reads
+    // the bug and re-checks every gate itself, so this is always safe.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.actions.attemptAutoMerge,
+      { bugId: args.id },
+    );
+
     return { ok: true };
   },
 });

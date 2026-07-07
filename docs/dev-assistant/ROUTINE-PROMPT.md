@@ -11,8 +11,11 @@ least-privilege credentials and a focused prompt:
 | Routine | Job | Repo access | GitHub identity |
 | --- | --- | --- | --- |
 | dev-spec | Draft/revise specs, triage | Read-only | none needed |
-| dev-implement | Build approved specs, open PRs | Read + push | author account |
+| dev-implement | Build approved specs, open PRs; fix-mode runs address review findings | Read + push | author account |
 | dev-review | Review PRs with subagents | Read-only | **reviewer** account (must differ from author — GitHub forbids reviewing your own PR) |
+
+Fix-mode runs (`mode: "fix"`, dispatched when a review requests changes) fire
+through the **dev-implement** trigger — fixing needs push access.
 
 Convex fires each via its own trigger URL:
 `CLAUDE_ROUTINES_TRIGGER_URL_SPEC` / `_IMPL` / `_REVIEW`, each falling back to
@@ -169,6 +172,30 @@ dashboard thread.
 
 ---
 
+## Fix mode (runs on the dev-implement Routine)
+
+Dispatched automatically (ADR-029 Phase 3) when a review run reports
+`changes_requested`, up to 3 rounds per item. The payload carries
+`mode: "fix"`, prUrl, the approved spec, riskLevel, and reviewSummary.
+
+```
+Your job: address the code review on an existing pull request — do NOT
+open a new PR and do NOT start over. The payload includes prUrl, the
+approved spec, riskLevel, and the review's summary.
+
+Read every review comment on the PR. Address each finding with a code
+change, or reply directly on that comment explaining why no change is
+needed. Push your fixes to the SAME branch the PR is on, and run the
+project's checks until CI is green.
+
+Then report back by POSTing the signed callback with { bugId,
+routineRunId, status: "CODE_REVIEW" }. A fresh review round is dispatched
+automatically from that callback. Never merge the PR; never approve your
+own work.
+```
+
+---
+
 ## Single-Routine setup (current default)
 
 One Routine with the existing `CLAUDE_ROUTINES_TRIGGER_URL`/`TOKEN` env vars
@@ -181,9 +208,10 @@ when/if the split happens. Paste, in order:
    The payload's `mode` field selects your job:
    - "spec"   → follow the SPEC instructions below
    - "review" → follow the REVIEW instructions below
+   - "fix"    → follow the FIX instructions below
    - otherwise → follow the IMPLEMENT instructions below
    ```
-3. All three Routine blocks, labeled SPEC / IMPLEMENT / REVIEW.
+3. All four blocks, labeled SPEC / IMPLEMENT / REVIEW / FIX.
 4. Optional: a reviewer PAT (from the Phase 2 bot account, Pull requests
    read/write) in the REVIEW block so formal approve/request-changes
    reviews post from a non-author identity. Without it, review findings
@@ -208,6 +236,13 @@ set the per-mode env vars.
   approving reviews (Phase 3 auto-merge).
 - The Convex side auto-dispatches the review Routine when an implementation
   callback reports `CODE_REVIEW` with a `prUrl` — no human trigger needed.
+  Likewise a `changes_requested` verdict auto-dispatches a fix-mode run (3
+  rounds max), and a fix run's `CODE_REVIEW` callback re-dispatches review.
+- **Phase 3 auto-merge** happens on the Convex side (never in a Routine): it
+  uses the `GH_MIRROR_TOKEN` PAT — which therefore needs **Contents:
+  read/write** in addition to Issues — behind the `AUTO_MERGE_ENABLED`
+  master switch (merge method from `AUTO_MERGE_METHOD`, default squash).
+  Routines never merge PRs in any mode.
 - Until the three-Routine split is done, one Routine with all three prompt
   sections and a `mode` switch ("spec" / "implement" / "review") works — the
   per-mode trigger URLs fall back to `CLAUDE_ROUTINES_TRIGGER_URL`.

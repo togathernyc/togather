@@ -672,8 +672,62 @@ export const markReviewDispatched = internalMutation({
   },
 });
 
+/**
+ * Stamp the routineRunId for a fix-mode dispatch BEFORE the outbound POST
+ * (mirrors markReviewDispatched — from here on the fix run owns callback
+ * correlation) and count the round. Valid only while the bug is in
+ * CODE_REVIEW (the PR-open state the fix is about); anything else is a
+ * no-op. Also logs the "round N of 3" system message here, next to the
+ * increment, so the thread only records fix rounds that actually dispatched.
+ */
+export const markFixDispatched = internalMutation({
+  args: { bugId: v.id("devBugs"), routineRunId: v.string() },
+  handler: async (ctx, args): Promise<{ alreadyDispatched: boolean }> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug || bug.status !== "CODE_REVIEW") {
+      return { alreadyDispatched: true };
+    }
+    const fixRound = (bug.fixRounds ?? 0) + 1;
+    await ctx.db.patch(args.bugId, {
+      routineRunId: args.routineRunId,
+      fixRounds: fixRound,
+      lastError: undefined,
+      updatedAt: Date.now(),
+    });
+    await insertThreadMessage(
+      ctx,
+      args.bugId,
+      "system",
+      `AI is addressing the review feedback (round ${fixRound} of ${MAX_FIX_ROUNDS})`,
+    );
+    return { alreadyDispatched: false };
+  },
+});
+
+/**
+ * Append a system message to a bug's conversation thread from an action
+ * (insertThreadMessage needs a MutationCtx). Used by attemptAutoMerge for its
+ * merged/blocked outcome lines.
+ */
+export const addSystemThreadMessage = internalMutation({
+  args: { bugId: v.id("devBugs"), body: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return;
+    await insertThreadMessage(ctx, args.bugId, "system", args.body);
+    await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+  },
+});
+
 /** Max characters of reviewSummary quoted in the thread's system message. */
 const REVIEW_SUMMARY_THREAD_LIMIT = 200;
+
+/** Fix-round budget: auto-fix dispatches per bug before escalating to a human. */
+export const MAX_FIX_ROUNDS = 3;
+
+/** Thread message posted when the fix-round budget is exhausted. */
+export const FIX_ROUNDS_EXHAUSTED_MESSAGE =
+  `Code review still failing after ${MAX_FIX_ROUNDS} fix rounds — needs a human`;
 
 /**
  * Apply a routine callback. Validates the callback's target status against the
@@ -688,10 +742,15 @@ const REVIEW_SUMMARY_THREAD_LIMIT = 200;
  * Review-mode callbacks deliver `reviewVerdict` (+ `reviewSummary`): an
  * "approved" verdict on a CODE_REVIEW callback promotes the target status to
  * READY_TO_MERGE (approval is what moves the bug forward); "changes_requested"
- * stores the verdict and leaves the bug in CODE_REVIEW. A GENUINE entry into
- * CODE_REVIEW (a PR opened — or a future revision re-entering it) clears any
- * stale verdict and schedules the review-mode dispatch; replayed CODE_REVIEW
- * callbacks are from === to, so they can never double-dispatch.
+ * stores the verdict, leaves the bug in CODE_REVIEW, and kicks off a fix run
+ * (ADR-029 Phase 3) — or escalates to a human once MAX_FIX_ROUNDS is spent. A
+ * GENUINE entry into CODE_REVIEW (a PR opened — or a future revision
+ * re-entering it) clears any stale verdict and schedules the review-mode
+ * dispatch; replayed CODE_REVIEW callbacks are from === to, so they can never
+ * double-dispatch. A fix run's CODE_REVIEW callback (already in CODE_REVIEW
+ * with a pending changes_requested verdict) clears the verdict and dispatches
+ * a fresh review round. A genuine entry into READY_TO_MERGE schedules the
+ * Phase 3 auto-merge attempt (self-gating).
  *
  * Thread side effects (ADR-029 Phase 1.5):
  *  - a delivered spec is appended as an "assistant" message (skipped when the
@@ -772,6 +831,30 @@ export const applyCallback = internalMutation({
       );
     }
 
+    // Fix run reporting back (ADR-029 Phase 3): a CODE_REVIEW callback while
+    // the bug is ALREADY in CODE_REVIEW with a changes_requested verdict
+    // pending is the fix run saying "fixes pushed" (it correlated by the fix
+    // run's routineRunId upstream). Not a genuine transition, so handle it
+    // explicitly: clear the stale verdict/summary and dispatch a fresh review
+    // round. The cleared verdict is the replay guard — a re-delivered
+    // callback from the same fix run finds no pending verdict and does
+    // nothing, so review can never double-dispatch.
+    const fixesPushed =
+      !enteredCodeReview &&
+      args.status === "CODE_REVIEW" &&
+      bug.status === "CODE_REVIEW" &&
+      bug.reviewVerdict === "changes_requested" &&
+      args.reviewVerdict === undefined;
+    if (fixesPushed) {
+      patch.reviewVerdict = undefined;
+      patch.reviewSummary = undefined;
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.devAssistant.actions.dispatchReview,
+        { bugId: args.bugId },
+      );
+    }
+
     // Explicit verdict fields in the payload win over the reset above (a
     // callback carrying both is anomalous, but the payload is authoritative).
     if (args.reviewVerdict !== undefined) {
@@ -782,6 +865,15 @@ export const applyCallback = internalMutation({
     }
 
     await ctx.db.patch(args.bugId, patch);
+
+    if (fixesPushed) {
+      await insertThreadMessage(
+        ctx,
+        args.bugId,
+        "system",
+        "Fixes pushed — running code review again",
+      );
+    }
 
     // Spec text lands in the conversation as the assistant's turn. Comparing
     // against the previously stored spec is the idempotency guard for
@@ -813,6 +905,61 @@ export const applyCallback = internalMutation({
           : "Code review requested changes";
       }
       await insertThreadMessage(ctx, args.bugId, "system", message);
+    }
+
+    // Review → fix → re-review loop (ADR-029 Phase 3): a changes_requested
+    // verdict that GENUINELY lands (changed-state guard — a re-delivered
+    // callback carries the verdict already stored on the row) dispatches a
+    // fix run while the round budget lasts; past the cap it escalates to a
+    // human instead. dispatchFix increments fixRounds and posts the
+    // "round N of 3" thread line via markFixDispatched.
+    const verdictBecameChangesRequested =
+      args.reviewVerdict === "changes_requested" &&
+      bug.reviewVerdict !== "changes_requested" &&
+      transitioned &&
+      targetStatus === "CODE_REVIEW";
+    if (verdictBecameChangesRequested) {
+      if ((bug.fixRounds ?? 0) < MAX_FIX_ROUNDS) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.devAssistant.actions.dispatchFix,
+          { bugId: args.bugId },
+        );
+      } else {
+        await insertThreadMessage(
+          ctx,
+          args.bugId,
+          "system",
+          FIX_ROUNDS_EXHAUSTED_MESSAGE,
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.notifications.actions.sendPushNotification,
+          {
+            userId: bug.originatorUserId,
+            title: "Code review needs a human",
+            body: `"${bug.title}" is still failing code review after ${MAX_FIX_ROUNDS} fix rounds.`,
+            notificationType: "dev_contribution_update",
+            data: { bugId: args.bugId, status: targetStatus },
+          },
+        );
+      }
+    }
+
+    // Policy auto-merge (ADR-029 Phase 3): a genuine entry into
+    // READY_TO_MERGE may have satisfied the last merge gate. Schedule the
+    // attempt — the action re-reads the bug and re-checks every gate itself,
+    // so double-scheduling is harmless.
+    if (
+      transitioned &&
+      targetStatus === "READY_TO_MERGE" &&
+      bug.status !== "READY_TO_MERGE"
+    ) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.devAssistant.actions.attemptAutoMerge,
+        { bugId: args.bugId },
+      );
     }
 
     // Progress log: only when the status genuinely changed (an idempotent

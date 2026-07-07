@@ -3,7 +3,8 @@
 ## Status
 
 Accepted — Phase 1 implementation in progress (2026-07-06); Phase 1.5
-(conversation-first dashboard) accepted 2026-07-07
+(conversation-first dashboard) accepted 2026-07-07; Phase 3 (policy
+auto-merge + fix loop) accepted 2026-07-07
 
 ## Date
 
@@ -153,7 +154,8 @@ just enough state:
   contribute section. No OAuth in v1; it's attribution, not authentication.
 - **Issue mirroring** — on dispatch, a Convex action creates a GitHub issue
   via the REST API. Phase 2 starts with a **fine-grained PAT** (issues
-  read/write, stored as `GITHUB_MIRROR_TOKEN` in Convex env), not a GitHub
+  read/write, stored as `GH_MIRROR_TOKEN` in Convex env; the legacy
+  `GITHUB_MIRROR_TOKEN` name still works as a fallback), not a GitHub
   App — see resolved question 2. The action stores
   `githubIssueNumber`/`githubIssueUrl`. The Routine references the issue in
   its PR so GitHub auto-closes it on merge.
@@ -268,10 +270,57 @@ Reviews must be posted from a different GitHub identity than the PR author
 with **Pull requests: read/write** added to its PAT. The Routine prompt
 covering all modes lives at `docs/dev-assistant/ROUTINE-PROMPT.md`.
 
+## Phase 3 — policy auto-merge and the fix loop (Accepted)
+
+Phase 3 closes the pipeline end-to-end: review findings are fixed
+automatically, and PRs that pass every gate merge themselves.
+
+### The review → fix → re-review loop
+
+When a review run reports `reviewVerdict: "changes_requested"`, Convex
+dispatches the Routine in **`mode: "fix"`** (`dispatchFix`, using the
+implement Routine's credentials since fixing needs push access). The fix run
+reads the PR's review comments, addresses every finding (or replies on the
+comment explaining why not), pushes to the **same branch**, gets CI green,
+and reports back with a `CODE_REVIEW` callback — which clears the stale
+verdict and dispatches a **fresh review round** (thread line: "Fixes pushed —
+running code review again").
+
+The loop is budgeted by a new `devBugs.fixRounds` counter, **capped at 3**
+fix dispatches per item. Each dispatch logs "AI is addressing the review
+feedback (round N of 3)" in the thread; when a `changes_requested` verdict
+lands with the budget spent, no fix is dispatched — the thread gets "Code
+review still failing after 3 fix rounds — needs a human" and the originator
+is pushed.
+
+### Policy auto-merge
+
+A single self-gating action, `attemptAutoMerge`, is scheduled whenever a gate
+might have just been satisfied: on a genuine entry into `READY_TO_MERGE` and
+after `confirmStaging` stamps `stagingVerifiedAt`. It re-reads the bug and
+merges the PR via the GitHub REST API **only when every gate holds**:
+
+- `AUTO_MERGE_ENABLED === "true"` — master safety switch; anything else means
+  the feature is off (double-scheduling is harmless because the action
+  re-checks everything itself).
+- `status === "READY_TO_MERGE"`, `riskLevel === "low"`,
+  `reviewVerdict === "approved"`.
+- Staging verified (`stagingVerifiedAt`) whenever `verifyOnStaging` is set.
+- A `prUrl` to merge.
+
+The merge uses `GH_MIRROR_TOKEN` (the Phase 2 mirroring PAT, which now needs
+**Contents read/write** in addition to Issues) and the merge method from
+`AUTO_MERGE_METHOD` (default `"squash"`; a 405 method-not-allowed retries
+once with `"merge"`). On success the thread gets "Auto-merged ✓ — all gates
+passed (…)"; the action never sets `MERGED` itself — the `/github/webhook`
+(and the Routine callback) already apply that transition idempotently. On
+failure (branch protection, conflict, auth) the thread gets "Auto-merge
+blocked: <reason> — needs a maintainer" and nothing retries — branch
+protection remains the backstop.
+
 ## Deliberately out of scope (v1)
 
 - GitHub OAuth / verified account linking (`githubUsername` is honor-system).
-- Auto-merge of any PR (Phase 3, and only `risk:low` behind a flag).
 - Bounties/payments, public leaderboards.
 - A separate web dashboard — the Expo web build covers desktop (Phase 1.5
   pins the desktop entry point to `togather.nyc/dev`, still routing into the

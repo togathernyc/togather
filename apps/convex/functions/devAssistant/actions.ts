@@ -142,6 +142,18 @@ function routineTrigger(mode: "spec" | "implement" | "review"): {
 const GITHUB_ISSUES_ENDPOINT =
   "https://api.github.com/repos/togathernyc/togather/issues";
 
+/** Same repo's pulls endpoint — used by policy auto-merge (ADR-029 Phase 3). */
+const GITHUB_PULLS_ENDPOINT =
+  "https://api.github.com/repos/togathernyc/togather/pulls";
+
+/**
+ * GitHub PAT used for issue mirroring and Phase 3 auto-merge. The owner named
+ * the secret GH_MIRROR_TOKEN; GITHUB_MIRROR_TOKEN is the legacy fallback.
+ */
+function githubMirrorToken(): string | undefined {
+  return process.env.GH_MIRROR_TOKEN ?? process.env.GITHUB_MIRROR_TOKEN;
+}
+
 /**
  * Body for the mirrored GitHub issue: the approved spec when there is one,
  * otherwise the raw brief (+ repro), plus a provenance footer.
@@ -199,11 +211,11 @@ export const dispatchBug = internalAction({
     // GitHub issue mirroring (ADR-029 Phase 2): create the tracking issue
     // BEFORE firing the Routine so the payload can carry its number (the
     // Routine writes "Closes #N" in the PR body and GitHub auto-closes the
-    // issue on merge). Skipped silently when GITHUB_MIRROR_TOKEN is unset
+    // issue on merge). Skipped silently when GH_MIRROR_TOKEN is unset
     // (feature not enabled) or the bug already has an issue (retry paths).
     // Failures are non-fatal: log + lastError breadcrumb, keep dispatching.
     let githubIssueNumber = bug.githubIssueNumber;
-    const mirrorToken = process.env.GITHUB_MIRROR_TOKEN;
+    const mirrorToken = githubMirrorToken();
     if (mirrorToken && githubIssueNumber === undefined) {
       try {
         const res = await fetch(GITHUB_ISSUES_ENDPOINT, {
@@ -556,6 +568,242 @@ export const dispatchReview = internalAction({
         internal.functions.devAssistant.bugs.recordDispatchError,
         { bugId: args.bugId, error: String(error) },
       );
+    }
+  },
+});
+
+// ============================================================================
+// Dispatch a review-rejected PR to the Routine in fix mode
+// ============================================================================
+
+/**
+ * Fire the Claude Code Routine in "fix" mode after a review run reports
+ * `changes_requested` (scheduled by applyCallback while the fix-round budget
+ * lasts — ADR-029 Phase 3). The fix run reads the PR's review comments,
+ * addresses every finding (or replies on the comment explaining why not),
+ * pushes to the SAME branch, gets CI green, and reports back with a
+ * CODE_REVIEW callback — which applyCallback turns into a fresh review round.
+ *
+ * Uses the implement-Routine credentials (routineTrigger("implement")) since
+ * fixing needs push access. Stamps a FRESH routineRunId + increments
+ * fixRounds via markFixDispatched BEFORE the POST (same crash-safety pattern
+ * as the other dispatchers); failures land in lastError, never throw.
+ */
+export const dispatchFix = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+
+    // A fix run needs a PR to fix — mirrors dispatchReview's anomaly handling.
+    if (!bug.prUrl) {
+      console.error(
+        "[DevAssistant] dispatchFix skipped: bug has no prUrl",
+        args.bugId,
+      );
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: "Fix dispatch skipped: bug has no prUrl" },
+      );
+      return;
+    }
+
+    const { triggerUrl, token } = routineTrigger("implement");
+    if (!triggerUrl || !token) {
+      console.error("[DevAssistant] CLAUDE_ROUTINES_* env not configured");
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: "Routine trigger env not configured" },
+      );
+      return;
+    }
+
+    // Stamp a fresh routineRunId + count the round BEFORE the POST. From here
+    // on the fix run owns callback correlation; stale callbacks from the
+    // superseded review run fall on the floor. markFixDispatched also logs the
+    // "round N of 3" system message so the thread reflects real dispatches.
+    const routineRunId = crypto.randomUUID();
+    const marked = await ctx.runMutation(
+      internal.functions.devAssistant.bugs.markFixDispatched,
+      { bugId: args.bugId, routineRunId },
+    );
+    if (marked.alreadyDispatched) return;
+
+    const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
+    const instructions =
+      "Fix mode: the code review requested changes on the open pull request — " +
+      "do NOT open a new PR. Read the PR's review comments, address every " +
+      "finding with a code change (or reply on the comment explaining why no " +
+      "change is needed), push your fixes to the SAME branch, and get CI " +
+      "green. Then report back by POSTing the signed callback with { bugId, " +
+      'routineRunId, status: "CODE_REVIEW" } — a fresh review round is ' +
+      "dispatched from that callback. Never merge the PR.";
+
+    const payload = {
+      mode: "fix",
+      bugId: args.bugId,
+      routineRunId,
+      prUrl: bug.prUrl,
+      spec: bug.spec,
+      riskLevel: bug.riskLevel,
+      reviewSummary: bug.reviewSummary,
+      callbackUrl,
+      instructions,
+    };
+
+    try {
+      const res = await fetch(triggerUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          // Required on every api.anthropic.com endpoint — see dispatchBug.
+          "anthropic-version": "2023-06-01",
+        },
+        // The fire endpoint reads the per-invocation payload from `text` and
+        // ignores other top-level fields — see dispatchBug.
+        body: JSON.stringify({ text: JSON.stringify(payload) }),
+      });
+      if (!res.ok) {
+        const errBody = await res.text();
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.recordDispatchError,
+          { bugId: args.bugId, error: `Routine POST ${res.status}: ${errBody}` },
+        );
+      }
+    } catch (error) {
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: String(error) },
+      );
+    }
+  },
+});
+
+// ============================================================================
+// Policy auto-merge (ADR-029 Phase 3)
+// ============================================================================
+
+/**
+ * Attempt to merge a bug's PR under the Phase 3 auto-merge policy. Scheduled
+ * (never inlined) whenever a gate might have just been satisfied: a genuine
+ * entry into READY_TO_MERGE (applyCallback) and staging sign-off
+ * (confirmStaging). The action re-reads the bug and re-checks EVERY gate
+ * itself, so double-scheduling is harmless.
+ *
+ * Gates (all must hold): AUTO_MERGE_ENABLED === "true" (master safety switch —
+ * anything else means the feature is off), status READY_TO_MERGE, riskLevel
+ * "low", reviewVerdict "approved", staging verified when required, prUrl set.
+ *
+ * Merges via the GitHub REST API with GH_MIRROR_TOKEN (the PAT needs Contents
+ * read/write in addition to Issues). On success it posts a system thread
+ * message and STOPS — it never sets MERGED itself; the /github/webhook (and
+ * the Routine callback) already apply that transition idempotently. On
+ * failure (branch protection, conflict, auth) it posts an "Auto-merge
+ * blocked" message for a maintainer — no retry loop.
+ */
+export const attemptAutoMerge = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    if (process.env.AUTO_MERGE_ENABLED !== "true") {
+      console.log(
+        "[DevAssistant] Auto-merge skipped: AUTO_MERGE_ENABLED is not \"true\"",
+      );
+      return;
+    }
+
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+
+    // Central policy gate — trigger points schedule freely and rely on this.
+    if (
+      bug.status !== "READY_TO_MERGE" ||
+      bug.riskLevel !== "low" ||
+      bug.reviewVerdict !== "approved" ||
+      (bug.verifyOnStaging && !bug.stagingVerifiedAt) ||
+      !bug.prUrl
+    ) {
+      console.log(
+        "[DevAssistant] Auto-merge gates not met for bug",
+        args.bugId,
+      );
+      return;
+    }
+
+    const blocked = async (reason: string): Promise<void> => {
+      console.error("[DevAssistant] Auto-merge blocked:", reason, args.bugId);
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.addSystemThreadMessage,
+        {
+          bugId: args.bugId,
+          body: `Auto-merge blocked: ${reason} — needs a maintainer`,
+        },
+      );
+    };
+
+    const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
+    if (!prMatch) {
+      await blocked(`could not parse a PR number from ${bug.prUrl}`);
+      return;
+    }
+
+    const mirrorToken = githubMirrorToken();
+    if (!mirrorToken) {
+      await blocked("GH_MIRROR_TOKEN not configured");
+      return;
+    }
+
+    const mergePr = async (mergeMethod: string): Promise<Response> =>
+      await fetch(`${GITHUB_PULLS_ENDPOINT}/${prMatch[1]}/merge`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${mirrorToken}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ merge_method: mergeMethod }),
+      });
+
+    try {
+      const method = process.env.AUTO_MERGE_METHOD ?? "squash";
+      let res = await mergePr(method);
+      // 405 covers "merge method not allowed" — retry once with plain merge.
+      if (res.status === 405 && method !== "merge") {
+        res = await mergePr("merge");
+      }
+
+      if (res.ok) {
+        const verified = bug.verifyOnStaging && bug.stagingVerifiedAt;
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.addSystemThreadMessage,
+          {
+            bugId: args.bugId,
+            body:
+              "Auto-merged ✓ — all gates passed (low risk, review approved" +
+              (verified ? ", verified on staging" : "") +
+              ")",
+          },
+        );
+        // Deliberately NOT setting MERGED here — the /github/webhook (and the
+        // Routine callback) apply that transition idempotently.
+        return;
+      }
+
+      let reason = `GitHub merge returned ${res.status}`;
+      try {
+        const errBody = (await res.json()) as { message?: string };
+        if (errBody?.message) reason = `${reason} (${errBody.message})`;
+      } catch {
+        // Non-JSON error body; the status code is reason enough.
+      }
+      await blocked(reason);
+    } catch (error) {
+      await blocked(String(error));
     }
   },
 });

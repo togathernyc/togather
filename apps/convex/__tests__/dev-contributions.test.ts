@@ -56,10 +56,15 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   delete process.env.CLAUDE_ROUTINES_TRIGGER_URL;
   delete process.env.CLAUDE_ROUTINES_TOKEN;
+  delete process.env.CLAUDE_ROUTINES_TRIGGER_URL_IMPL;
+  delete process.env.CLAUDE_ROUTINES_TOKEN_IMPL;
   delete process.env.CONVEX_SITE_URL;
   delete process.env.DEV_ASSISTANT_CALLBACK_SECRET;
+  delete process.env.GH_MIRROR_TOKEN;
   delete process.env.GITHUB_MIRROR_TOKEN;
   delete process.env.GITHUB_WEBHOOK_SECRET;
+  delete process.env.AUTO_MERGE_ENABLED;
+  delete process.env.AUTO_MERGE_METHOD;
 });
 
 async function seedUsers(t: ReturnType<typeof convexTest>): Promise<{
@@ -1374,7 +1379,7 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
     return JSON.parse(JSON.parse(init.body as string).text);
   }
 
-  test("without GITHUB_MIRROR_TOKEN mirroring is skipped; payload still carries spec + attribution", async () => {
+  test("without GH_MIRROR_TOKEN mirroring is skipped; payload still carries spec + attribution", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -1410,7 +1415,7 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
     expect(bug?.lastError).toBeUndefined();
   });
 
-  test("with GITHUB_MIRROR_TOKEN the issue is created first and its number rides the payload", async () => {
+  test("with GH_MIRROR_TOKEN the issue is created first and its number rides the payload", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -1419,7 +1424,7 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
       { token: maintainerId, username: "connie-codes" },
     );
     const id = await seedReadyBug(t, maintainerId);
-    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    process.env.GH_MIRROR_TOKEN = "gh-test-pat";
     const fetchMock = stubRoutineAndGithub(
       new Response(
         JSON.stringify({
@@ -1477,7 +1482,7 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
       githubIssueNumber: 55,
       githubIssueUrl: "https://github.com/togathernyc/togather/issues/55",
     });
-    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    process.env.GH_MIRROR_TOKEN = "gh-test-pat";
     const fetchMock = stubRoutineAndGithub(
       new Response(JSON.stringify({ number: 999 }), { status: 201 }),
     );
@@ -1498,7 +1503,7 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
     const id = await seedReadyBug(t, maintainerId);
-    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    process.env.GH_MIRROR_TOKEN = "gh-test-pat";
     const fetchMock = stubRoutineAndGithub(
       new Response("boom", { status: 500 }),
     );
@@ -1516,6 +1521,29 @@ describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
     expect(bug?.status).toBe("IN_PROGRESS");
     expect(bug?.githubIssueNumber).toBeUndefined();
     expect(bug?.lastError).toMatch(/GitHub issue mirroring failed/);
+  });
+
+  test("legacy GITHUB_MIRROR_TOKEN still enables mirroring (fallback)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyBug(t, maintainerId);
+    process.env.GITHUB_MIRROR_TOKEN = "gh-legacy-pat";
+    const fetchMock = stubRoutineAndGithub(
+      new Response(JSON.stringify({ number: 7 }), { status: 201 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const issueInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(issueInit.headers).toMatchObject({
+      Authorization: "Bearer gh-legacy-pat",
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.githubIssueNumber).toBe(7);
   });
 });
 
@@ -1774,5 +1802,525 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       ctx.db.query("devBugMessages").collect(),
     );
     expect(messages).toHaveLength(0);
+  });
+});
+
+describe("review fix loop (ADR-029 Phase 3)", () => {
+  /** Seed a bug sitting in CODE_REVIEW with an open PR. */
+  async function seedCodeReviewBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      routineRunId: string;
+      reviewVerdict: "approved" | "changes_requested";
+      reviewSummary: string;
+      fixRounds: number;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: "CODE_REVIEW",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        spec: "## Plan\nChange the string.",
+        riskLevel: "low",
+        routineRunId: overrides.routineRunId ?? "run-review",
+        prUrl: "https://github.com/togathernyc/togather/pull/42",
+        reviewVerdict: overrides.reviewVerdict,
+        reviewSummary: overrides.reviewSummary,
+        fixRounds: overrides.fixRounds,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("changes_requested dispatches a fix run via the implement trigger and counts the round", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedCodeReviewBug(t, maintainerId);
+    const fetchMock = stubRoutineEnv();
+    // Fix runs need push access, so they must fire through the implement
+    // Routine's trigger — give it a distinct URL to prove that.
+    process.env.CLAUDE_ROUTINES_TRIGGER_URL_IMPL =
+      "https://api.anthropic.com/v1/claude_code/routines/trig_impl/fire";
+    process.env.CLAUDE_ROUTINES_TOKEN_IMPL = "impl-token";
+
+    const verdictCallback = {
+      bugId: id,
+      routineRunId: "run-review",
+      status: "CODE_REVIEW" as const,
+      reviewVerdict: "changes_requested" as const,
+      reviewSummary: "Fix the null check.",
+    };
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      verdictCallback,
+    );
+    // Re-delivered verdict before the scheduled fix dispatch runs: the stored
+    // verdict is unchanged, so it must not schedule a second fix run.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      verdictCallback,
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("trig_impl");
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({
+      mode: "fix",
+      bugId: id,
+      prUrl: "https://github.com/togathernyc/togather/pull/42",
+      spec: "## Plan\nChange the string.",
+      riskLevel: "low",
+      reviewSummary: "Fix the null check.",
+      callbackUrl: "https://example.convex.site/dev-assistant/callback",
+    });
+    expect(brief.instructions).toMatch(/review comments/);
+    expect(brief.instructions).toMatch(/SAME branch/);
+    expect(brief.instructions).toMatch(/Never merge/);
+
+    // The fix run owns callback correlation (fresh routineRunId) and the
+    // round was counted.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.fixRounds).toBe(1);
+    expect(bug?.routineRunId).toBeTruthy();
+    expect(bug?.routineRunId).not.toBe("run-review");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      ["system", "Code review requested changes — Fix the null check."],
+      ["system", "AI is addressing the review feedback (round 1 of 3)"],
+    ]);
+  });
+
+  test("the 3-round cap escalates to a human instead of dispatching", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedCodeReviewBug(t, maintainerId, { fixRounds: 3 });
+    const fetchMock = stubRoutineEnv();
+
+    const verdictCallback = {
+      bugId: id,
+      routineRunId: "run-review",
+      status: "CODE_REVIEW" as const,
+      reviewVerdict: "changes_requested" as const,
+      reviewSummary: "Still broken.",
+    };
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      verdictCallback,
+    );
+    // Replay: unchanged verdict must not repost the escalation or re-push.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      verdictCallback,
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // No fix dispatch went out.
+    expect(fetchMock).not.toHaveBeenCalled();
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.fixRounds).toBe(3);
+    expect(bug?.routineRunId).toBe("run-review");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toEqual([
+      "Code review requested changes — Still broken.",
+      "Code review still failing after 3 fix rounds — needs a human",
+    ]);
+
+    // The originator was notified (record created; no push tokens in tests).
+    const notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    const escalations = notifications.filter(
+      (n) => n.userId === maintainerId && /needs a human/i.test(n.title),
+    );
+    expect(escalations).toHaveLength(1);
+  });
+
+  test("a fix run's CODE_REVIEW callback clears the verdict and re-dispatches review exactly once", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    // The fix run (run-fix-1) is in flight; the changes_requested verdict from
+    // the previous review round is still pending on the row.
+    const id = await seedCodeReviewBug(t, maintainerId, {
+      routineRunId: "run-fix-1",
+      reviewVerdict: "changes_requested",
+      reviewSummary: "Round 1 findings.",
+      fixRounds: 1,
+    });
+    const fetchMock = stubRoutineEnv();
+
+    const fixDoneCallback = {
+      bugId: id,
+      routineRunId: "run-fix-1",
+      status: "CODE_REVIEW" as const,
+    };
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      fixDoneCallback,
+    );
+    // Same-run duplicate delivery: the verdict is already cleared, so review
+    // must not double-dispatch.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      fixDoneCallback,
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({
+      mode: "review",
+      bugId: id,
+      prUrl: "https://github.com/togathernyc/togather/pull/42",
+    });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.reviewVerdict).toBeUndefined();
+    expect(bug?.reviewSummary).toBeUndefined();
+    // The fresh review round owns correlation now.
+    expect(bug?.routineRunId).toBeTruthy();
+    expect(bug?.routineRunId).not.toBe("run-fix-1");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      ["system", "Fixes pushed — running code review again"],
+    ]);
+  });
+});
+
+describe("policy auto-merge (ADR-029 Phase 3)", () => {
+  const PR_URL = "https://github.com/togathernyc/togather/pull/77";
+  const MERGE_URL =
+    "https://api.github.com/repos/togathernyc/togather/pulls/77/merge";
+
+  /** Seed a bug at the merge gate (defaults pass every policy check). */
+  async function seedMergeBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      status: "CODE_REVIEW" | "READY_TO_MERGE";
+      riskLevel: "low" | "medium" | "high";
+      reviewVerdict: "approved" | "changes_requested";
+      verifyOnStaging: boolean;
+      stagingVerifiedAt: number;
+      noPrUrl: boolean;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: overrides.status ?? "READY_TO_MERGE",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        spec: "## Plan\nChange the string.",
+        riskLevel: overrides.riskLevel ?? "low",
+        // "reviewVerdict: undefined" passed explicitly means "no verdict yet".
+        reviewVerdict:
+          "reviewVerdict" in overrides ? overrides.reviewVerdict : "approved",
+        verifyOnStaging: overrides.verifyOnStaging,
+        stagingVerifiedAt: overrides.stagingVerifiedAt,
+        routineRunId: "run-merge",
+        prUrl: overrides.noPrUrl ? undefined : PR_URL,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  /** Stub fetch with one response factory per expected call (last repeats). */
+  function stubMergeFetch(...responses: Array<() => Response>) {
+    let call = 0;
+    const fetchMock = vi.fn(async () => {
+      const make = responses[Math.min(call, responses.length - 1)]!;
+      call += 1;
+      return make();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function enableAutoMerge() {
+    process.env.AUTO_MERGE_ENABLED = "true";
+    process.env.GH_MIRROR_TOKEN = "gh-merge-pat";
+  }
+
+  async function threadBodies(
+    t: ReturnType<typeof convexTest>,
+    token: Id<"users">,
+    id: Id<"devBugs">,
+  ): Promise<string[]> {
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token, id },
+    );
+    return thread.map((m) => m.body);
+  }
+
+  test("AUTO_MERGE_ENABLED anything but \"true\" is a silent no-op", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedMergeBug(t, maintainerId);
+    process.env.GH_MIRROR_TOKEN = "gh-merge-pat";
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    // Unset entirely, then an explicit non-"true" value.
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+    process.env.AUTO_MERGE_ENABLED = "false";
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await threadBodies(t, maintainerId, id)).toEqual([]);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+  });
+
+  test("every unmet policy gate blocks the merge silently", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    const gateFailures = [
+      { status: "CODE_REVIEW" as const },
+      { riskLevel: "medium" as const },
+      { reviewVerdict: "changes_requested" as const },
+      { verifyOnStaging: true }, // required but not verified
+      { noPrUrl: true },
+    ];
+    for (const overrides of gateFailures) {
+      const id = await seedMergeBug(t, maintainerId, overrides);
+      await t.action(
+        internal.functions.devAssistant.actions.attemptAutoMerge,
+        { bugId: id },
+      );
+      expect(await threadBodies(t, maintainerId, id)).toEqual([]);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("all gates passing merges via squash and posts the success line", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const id = await seedMergeBug(t, maintainerId);
+    const fetchMock = stubMergeFetch(
+      () => new Response(JSON.stringify({ merged: true }), { status: 200 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(MERGE_URL);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("PUT");
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer gh-merge-pat",
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    });
+    expect(JSON.parse(init.body as string)).toEqual({
+      merge_method: "squash",
+    });
+
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+    ]);
+    // MERGED is the webhook's/Routine callback's job, never the action's.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+  });
+
+  test("the success line notes staging verification when applicable", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const id = await seedMergeBug(t, maintainerId, {
+      verifyOnStaging: true,
+      stagingVerifiedAt: Date.now(),
+    });
+    stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
+    ]);
+  });
+
+  test("a 405 method-not-allowed retries once with plain merge", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const id = await seedMergeBug(t, maintainerId);
+    const fetchMock = stubMergeFetch(
+      () =>
+        new Response(JSON.stringify({ message: "Merge method not allowed" }), {
+          status: 405,
+        }),
+      () => new Response(JSON.stringify({ merged: true }), { status: 200 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const second = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(first.body as string)).toEqual({
+      merge_method: "squash",
+    });
+    expect(JSON.parse(second.body as string)).toEqual({
+      merge_method: "merge",
+    });
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+    ]);
+  });
+
+  test("merge failure posts a blocked line for a maintainer, no retry loop", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const id = await seedMergeBug(t, maintainerId);
+    const fetchMock = stubMergeFetch(
+      () =>
+        new Response(
+          JSON.stringify({ message: "Pull Request is not mergeable" }),
+          { status: 409 },
+        ),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Auto-merge blocked: GitHub merge returned 409 (Pull Request is not mergeable) — needs a maintainer",
+    ]);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+  });
+
+  test("GH_MIRROR_TOKEN wins over the legacy GITHUB_MIRROR_TOKEN", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.AUTO_MERGE_ENABLED = "true";
+    process.env.GH_MIRROR_TOKEN = "gh-new-pat";
+    process.env.GITHUB_MIRROR_TOKEN = "gh-legacy-pat";
+    const id = await seedMergeBug(t, maintainerId);
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toMatchObject({
+      Authorization: "Bearer gh-new-pat",
+    });
+  });
+
+  test("an approved verdict promoting to READY_TO_MERGE triggers the merge attempt", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    // Review round in flight: CODE_REVIEW, correlated to run-review.
+    const id = await seedMergeBug(t, maintainerId, {
+      status: "CODE_REVIEW",
+      reviewVerdict: undefined,
+    });
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-merge",
+        status: "CODE_REVIEW",
+        reviewVerdict: "approved",
+        reviewSummary: "Ship it.",
+      },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const mergeCalls = fetchMock.mock.calls.filter(
+      (c) => String(c[0]) === MERGE_URL,
+    );
+    expect(mergeCalls).toHaveLength(1);
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Code review passed ✓",
+      "Ready to merge",
+      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+    ]);
+  });
+
+  test("confirmStaging triggers the merge attempt once staging was the last gate", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    const id = await seedMergeBug(t, maintainerId, { verifyOnStaging: true });
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const mergeCalls = fetchMock.mock.calls.filter(
+      (c) => String(c[0]) === MERGE_URL,
+    );
+    expect(mergeCalls).toHaveLength(1);
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Connie Tributor confirmed it works on staging",
+      "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
+    ]);
   });
 });

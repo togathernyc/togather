@@ -18,7 +18,7 @@
  * - tools.ts    — tool definitions + dispatcher
  * - prompts.ts  — brief-synthesis system prompt
  * - actions.ts  — processThreadMention / dispatchBug / dispatchSpec /
- *   handleRoutineCallback
+ *   dispatchReview / dispatchFix / attemptAutoMerge / handleRoutineCallback
  *
  * The inbound callback HTTP route lives in apps/convex/http.ts.
  */
