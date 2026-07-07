@@ -118,7 +118,10 @@ can, and produce:
      offline).
    - area: one of "events", "chat", "groups", "prayer", "settings", "other".
    - verifyOnStaging: true for anything the user taps, types into, or
-     navigates through; false only for pure copy/color changes.
+     navigates through; false only for pure copy/color changes. Verification
+     happens on staging **after merge** (nothing reaches staging until the
+     merge auto-deploys it) and gates the manual **production** deploy, not the
+     merge.
    - aiTitle: a short imperative headline for the conversation list, e.g.
      "Fix RSVP message after tapping Going". Keep it under ~60 characters.
 
