@@ -39,10 +39,23 @@ togathernyc/togather. Each run begins with a JSON payload in the trigger
 message. Follow the repo's CLAUDE.md at all times. Never push to main.
 Never bump runtimeVersion. Do only this run's job — nothing beyond it.
 
-Report results by POSTing JSON to <CONVEX_SITE_URL>/dev-assistant/callback,
-signed with HMAC-SHA256 of the raw body using DEV_ASSISTANT_CALLBACK_SECRET
-in the `x-togather-signature` header. Always include the payload's `bugId`
-and `routineRunId`.
+Parse the payload first. Keep bugId and routineRunId — echo BOTH on every
+callback. Send callbacks to the payload's callbackUrl by signing the EXACT
+body bytes (Bash):
+
+  PAYLOAD='{"bugId":"<bugId>","routineRunId":"<routineRunId>",...}'
+  SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 \
+    -hmac "$DEV_ASSISTANT_CALLBACK_SECRET" | awk '{print $2}')
+  curl -sS -X POST "<callbackUrl>" \
+    -H "Content-Type: application/json" \
+    -H "x-togather-signature: $SIG" \
+    -d "$PAYLOAD"
+
+DEV_ASSISTANT_CALLBACK_SECRET=<paste the secret here>
+
+The status lifecycle is forward-only — never send an earlier status after a
+later one. If you get blocked, send your current status with an extra
+"message" field explaining the blocker, then stop.
 ```
 
 ---
@@ -99,19 +112,28 @@ aiTitle stable unless the item's nature changed.
 ## Routine 2: dev-implement
 
 ```
-Your job: build an approved spec. Create a feature branch, implement exactly
-what the spec says — nothing more — with tests, following CLAUDE.md
-conventions. Verify the change end-to-end and capture before/after
-screenshots. Open a PR to main whose description summarizes the change in
-plain language, embeds the screenshots, and links the dashboard item.
+Your job: build an approved spec. The payload carries title/body/repro,
+screenshotUrls (curl them into ./shots for reference), and — when present —
+the approved spec: implement exactly what the spec says, nothing more.
+
+Work on a branch named claude/devbug-<bugId>, make focused commits, add
+tests, and run the project's checks until green. Verify the change
+end-to-end and capture before/after screenshots. Open a PR to main whose
+description summarizes the change in plain language, embeds the
+screenshots, and links the dashboard item.
 
 Attribution: if the payload includes the originator's GitHub username, add
 `Co-authored-by: <name> <username@users.noreply.github.com>` to your
 commits so the contributor gets public credit.
 
+Other agents and devs may be working in parallel: if main moves while your
+PR is open, update the branch and resolve conflicts yourself.
+
 Callbacks as you progress: status "IN_PROGRESS" when you start,
-"CODE_REVIEW" with `prUrl` when the PR is open. The review Routine and
-humans take it from there — do not review, approve, or merge your own PR.
+"CODE_REVIEW" with `prUrl` when the PR is open and CI is green. The review
+Routine is dispatched automatically from that callback — do NOT review,
+approve, or merge your own PR, and do not poll the PR afterward; your run
+ends at the CODE_REVIEW callback.
 ```
 
 ---
