@@ -277,4 +277,20 @@ crons.daily(
   {}
 );
 
+// =============================================================================
+// PER-ACTIVE-USER BILLING SYNC
+// =============================================================================
+// Runs monthly, ahead of the billing anchor (subscriptions bill on the 1st),
+// and updates each per-active-user community's Stripe subscription quantity
+// to its current billable member count: real accounts who opened the app in
+// that community within the past month and aren't manually marked inactive
+// ($1/month each). See functions/memberActivity.ts for the definition.
+
+crons.monthly(
+  "per-user-billing-sync",
+  { day: 28, hourUTC: 6, minuteUTC: 0 },
+  internal.functions.ee.billing.syncPerUserSubscriptionQuantities,
+  {}
+);
+
 export default crons;

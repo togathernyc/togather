@@ -1021,6 +1021,57 @@ export const prayerMemberReported: NotificationDefinition<PrayerMemberReportedDa
 };
 
 // ============================================================================
+// Billing
+// ============================================================================
+
+interface BillingMonthlyPreviewData {
+  communityId: string;
+  communityName: string;
+  billableActiveUsers: number;
+  monthlyPriceUsd: number;
+}
+
+/**
+ * Pre-period bill disclosure for per-active-user billing: sent to community
+ * admins right after the monthly quantity sync (the 28th), a few days before
+ * the invoice on the 1st, so the amount is never a surprise and admins still
+ * have time to mark members inactive. See functions/ee/billing.ts
+ * syncPerUserSubscriptionQuantities and ADR-030.
+ */
+export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreviewData> = {
+  type: 'billing.monthly_preview',
+  description:
+    'Sent to community admins after the monthly billing sync with the upcoming invoice amount',
+  formatters: {
+    email: (ctx) => {
+      const members = ctx.data.billableActiveUsers;
+      const memberWord = members === 1 ? 'active member' : 'active members';
+      return {
+        subject: `${ctx.data.communityName}: $${ctx.data.monthlyPriceUsd} on the 1st (${members} ${memberWord})`,
+        htmlBody: baseEmailLayout(`
+        <h1 class="heading">Your upcoming Togather bill</h1>
+        <p class="text">
+          ${escapeHtml(ctx.data.communityName)} had <strong>${members} ${memberWord}</strong>
+          this month &mdash; people who opened the app in your community within
+          the past 30 days.
+        </p>
+        <p class="text">
+          On the 1st you'll be billed <strong>$${ctx.data.monthlyPriceUsd}</strong>
+          ($1 per active member).
+        </p>
+        <p class="text">
+          This is the same number as the Active Members card on your admin
+          Stats tab. If someone shouldn't count, an admin or their group
+          leader can mark them inactive from their person page before the 1st.
+        </p>
+      `),
+      };
+    },
+  },
+  defaultChannels: ['email'],
+};
+
+// ============================================================================
 // Test Definitions
 // ============================================================================
 

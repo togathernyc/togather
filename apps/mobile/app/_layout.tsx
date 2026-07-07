@@ -32,6 +32,7 @@ import { useTheme } from "@hooks/useTheme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@components/ErrorBoundary";
 import { TestFlightBanner } from "@components/ui/TestFlightBanner";
+import { DemoBanner } from "@components/ui/DemoBanner";
 import { StatusBar as BottomStatusBar, useStatusBarVisible, STATUS_BAR_CONTENT_HEIGHT } from "@components/ui/StatusBar";
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
@@ -268,6 +269,9 @@ function AppLayout() {
                     <PostUpdateRecoveryBanner />
                     <TestFlightBanner />
                     <ThemedStack />
+                    {/* After the stack: renders as a persistent strip at the
+                        bottom of every screen while the community is a demo. */}
+                    <DemoBanner />
                   </StatusBarAwareContainer>
               </NotificationProvider>
               </PrefetchExecutorRegistration>
