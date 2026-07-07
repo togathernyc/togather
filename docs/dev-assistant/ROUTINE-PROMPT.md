@@ -165,6 +165,30 @@ dashboard thread.
 
 ---
 
+## Single-Routine setup (current default)
+
+One Routine with the existing `CLAUDE_ROUTINES_TRIGGER_URL`/`TOKEN` env vars
+handles all three jobs — the per-mode env vars are optional overrides for
+when/if the split happens. Paste, in order:
+
+1. The shared preamble.
+2. This mode switch:
+   ```
+   The payload's `mode` field selects your job:
+   - "spec"   → follow the SPEC instructions below
+   - "review" → follow the REVIEW instructions below
+   - otherwise → follow the IMPLEMENT instructions below
+   ```
+3. All three Routine blocks, labeled SPEC / IMPLEMENT / REVIEW.
+4. In the REVIEW block's context, the reviewer account's PAT with a hard
+   rule: post PR reviews with `GH_TOKEN=<reviewer-pat>` — GitHub rejects
+   reviews from the PR's own author.
+
+Trade-off vs. three Routines: least-privilege credential separation becomes
+a prompt rule instead of a hard boundary, and the longer prompt slightly
+dilutes instruction focus. Splitting later requires no code changes — just
+set the per-mode env vars.
+
 ## Operational notes
 
 - **Two GitHub identities are required**: the implementer (authors commits,
