@@ -36,6 +36,7 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { getNextFirstOfMonth } from "../../lib/utils";
 import { addUserToAnnouncementGroup } from "../communities";
 import { countBillableActiveUsers } from "../memberActivity";
+import { notifyCommunityAdmins } from "../../lib/notifications/send";
 
 /** Per-active-user pricing: $1/month per billable active member. */
 const PER_ACTIVE_USER_CENTS = 100;
@@ -873,6 +874,20 @@ export const handlePaymentFailed = internalMutation({
 // ============================================================================
 
 /**
+ * Guard against a billing count that moved implausibly month-over-month —
+ * the signature of a broken activity pipeline (e.g. recordActivity regression)
+ * rather than real congregation change. Small baselines are exempt: tiny
+ * communities legitimately double or halve.
+ */
+export function isAnomalousCountChange(
+  previousCount: number,
+  nextCount: number,
+): boolean {
+  if (previousCount < 10) return false;
+  return Math.abs(nextCount - previousCount) / previousCount > 0.3;
+}
+
+/**
  * List per-active-user communities with their current billable counts.
  * Used by the monthly sync cron.
  */
@@ -882,8 +897,11 @@ export const listPerUserBillingCommunities = internalQuery({
     const communities = await ctx.db.query("communities").collect();
     const results: Array<{
       communityId: Id<"communities">;
+      name: string;
       stripeSubscriptionId: string;
       billableActiveUsers: number;
+      // Last synced count (we store it as the monthly price, $1 per member).
+      previousBillableUsers: number | null;
     }> = [];
 
     for (const community of communities) {
@@ -893,11 +911,13 @@ export const listPerUserBillingCommunities = internalQuery({
 
       results.push({
         communityId: community._id,
+        name: community.name ?? "Unnamed community",
         stripeSubscriptionId: community.stripeSubscriptionId,
         billableActiveUsers: Math.max(
           1,
           await countBillableActiveUsers(ctx, community._id),
         ),
+        previousBillableUsers: community.subscriptionPriceMonthly ?? null,
       });
     }
     return results;
@@ -939,6 +959,9 @@ export const syncPerUserSubscriptionQuantities = internalAction({
     });
 
     let synced = 0;
+    const failures: string[] = [];
+    const anomalies: string[] = [];
+
     for (const community of communities) {
       try {
         const subscription = await stripe.subscriptions.retrieve(
@@ -946,8 +969,8 @@ export const syncPerUserSubscriptionQuantities = internalAction({
         );
         const item = subscription.items.data[0];
         if (!item) {
-          console.warn(
-            `[billing] Subscription ${community.stripeSubscriptionId} has no items; skipping`,
+          failures.push(
+            `${community.name} (${community.communityId}): subscription ${community.stripeSubscriptionId} has no items`,
           );
           continue;
         }
@@ -969,15 +992,292 @@ export const syncPerUserSubscriptionQuantities = internalAction({
           },
         );
         synced++;
+
+        // Flag implausible month-over-month swings for a human to eyeball —
+        // the count still syncs (real seasonal swings are legitimate), but
+        // ops gets told (a broken activity pipeline shows up here first).
+        if (
+          community.previousBillableUsers !== null &&
+          isAnomalousCountChange(
+            community.previousBillableUsers,
+            community.billableActiveUsers,
+          )
+        ) {
+          anomalies.push(
+            `${community.name} (${community.communityId}): ${community.previousBillableUsers} -> ${community.billableActiveUsers} active members`,
+          );
+        }
+
+        // Pre-period disclosure: tell the community's admins what the 1st
+        // will bill, while there's still time to mark members inactive.
+        await notifyCommunityAdmins(ctx, {
+          type: "billing.monthly_preview",
+          communityId: community.communityId,
+          channels: ["email"],
+          data: {
+            communityId: String(community.communityId),
+            communityName: community.name,
+            billableActiveUsers: community.billableActiveUsers,
+            monthlyPriceUsd: community.billableActiveUsers,
+          },
+        });
       } catch (error) {
         // One community's Stripe failure must not block the rest.
+        const message = error instanceof Error ? error.message : String(error);
         console.error(
           `[billing] Failed to sync quantity for community ${community.communityId}:`,
-          error instanceof Error ? error.message : error,
+          message,
+        );
+        failures.push(
+          `${community.name} (${community.communityId}): ${message}`,
         );
       }
     }
-    return { synced };
+
+    // Ops alert: silent billing drift is the #1 operational risk of the
+    // pre-renewal sync pattern, so failures and anomalies go to a human.
+    if (failures.length > 0 || anomalies.length > 0) {
+      await sendBillingOpsAlert(ctx, { failures, anomalies, synced });
+    }
+
+    return { synced, failures: failures.length, anomalies: anomalies.length };
+  },
+});
+
+/**
+ * Email the ops address (BILLING_ALERT_EMAIL) when the monthly billing sync
+ * hits failures or implausible count swings. Falls back to console.error if
+ * the env var isn't configured — never throws, so alerting can't break the
+ * sync itself.
+ */
+async function sendBillingOpsAlert(
+  ctx: { runAction: (ref: any, args: any) => Promise<any> },
+  report: { failures: string[]; anomalies: string[]; synced: number },
+): Promise<void> {
+  const summary = [
+    `Billing sync completed: ${report.synced} synced, ${report.failures.length} failures, ${report.anomalies.length} anomalies.`,
+    ...(report.failures.length > 0
+      ? ["", "FAILURES (Stripe quantity NOT updated — will bill stale counts):", ...report.failures]
+      : []),
+    ...(report.anomalies.length > 0
+      ? ["", "ANOMALIES (>30% month-over-month swing — synced, verify activity pipeline):", ...report.anomalies]
+      : []),
+  ].join("\n");
+
+  console.error(`[billing] Ops alert:\n${summary}`);
+
+  const alertEmail = process.env.BILLING_ALERT_EMAIL;
+  if (!alertEmail) {
+    console.warn(
+      "[billing] BILLING_ALERT_EMAIL not configured — ops alert only logged",
+    );
+    return;
+  }
+
+  try {
+    await ctx.runAction(
+      internal.functions.notifications.internal.sendEmailNotification,
+      {
+        to: alertEmail,
+        subject: `[Togather billing] sync: ${report.failures.length} failures, ${report.anomalies.length} anomalies`,
+        htmlBody: `<pre>${summary.replace(/</g, "&lt;")}</pre>`,
+        notificationType: "billing.ops_alert",
+      },
+    );
+  } catch (error) {
+    console.error(
+      "[billing] Failed to send ops alert email:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+// ============================================================================
+// Legacy-plan migration to per-active-user billing
+// ============================================================================
+
+/**
+ * Communities still on a legacy fixed-price subscription (no billingModel),
+ * with what they pay today and what per-active-user billing would charge.
+ */
+export const listLegacyBillingCommunities = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const communities = await ctx.db.query("communities").collect();
+    const results: Array<{
+      communityId: Id<"communities">;
+      name: string;
+      stripeSubscriptionId: string;
+      currentMonthlyPriceUsd: number | null;
+      billableActiveUsers: number;
+    }> = [];
+
+    for (const community of communities) {
+      if (community.billingModel) continue; // already migrated
+      if (!community.stripeSubscriptionId) continue;
+      if (community.isDemo) continue;
+      if (community.subscriptionStatus === "canceled") continue;
+
+      results.push({
+        communityId: community._id,
+        name: community.name ?? "Unnamed community",
+        stripeSubscriptionId: community.stripeSubscriptionId,
+        currentMonthlyPriceUsd: community.subscriptionPriceMonthly ?? null,
+        billableActiveUsers: Math.max(
+          1,
+          await countBillableActiveUsers(ctx, community._id),
+        ),
+      });
+    }
+    return results;
+  },
+});
+
+/** Record a completed migration on the community row. */
+export const markCommunityPerUserBilling = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    billableActiveUsers: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.communityId, {
+      billingModel: "per_active_user",
+      subscriptionPriceMonthly: args.billableActiveUsers, // $1 × active members
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Migrate existing fixed-price clients to $1/month per active member.
+ *
+ * Staff-run, dry-run by default:
+ *   npx convex run functions/ee/billing:migrateToPerUserBilling '{}'
+ *     -> report only: each legacy community's current price vs what
+ *        per-active-user billing would charge. Nothing changes.
+ *   npx convex run functions/ee/billing:migrateToPerUserBilling '{"dryRun": false}'
+ *     -> swaps each subscription's item to a $1/member price with
+ *        quantity = current billable count, proration_behavior "none" so the
+ *        change lands on the next renewal invoice (legacy subscriptions are
+ *        anchored to the 1st, same as new ones), and stamps
+ *        billingModel = "per_active_user" so the monthly sync cron and the
+ *        admin preview email pick the community up from then on.
+ *   Pass "communityId" to migrate a single community.
+ *
+ * Review the dry-run before running live — for some churches the new model
+ * is a price increase and deserves a heads-up email first.
+ */
+export const migrateToPerUserBilling = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    communityId: v.optional(v.id("communities")),
+  },
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+
+    let candidates = await ctx.runQuery(
+      internal.functions.ee.billing.listLegacyBillingCommunities,
+      {},
+    );
+    if (args.communityId) {
+      candidates = candidates.filter(
+        (c: { communityId: string }) => c.communityId === args.communityId,
+      );
+    }
+
+    const report: Array<{
+      communityId: string;
+      name: string;
+      currentMonthlyPriceUsd: number | null;
+      newMonthlyPriceUsd: number;
+      migrated: boolean;
+      error?: string;
+    }> = [];
+
+    if (candidates.length === 0) {
+      return { dryRun, migrated: 0, report };
+    }
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = dryRun
+      ? null
+      : new Stripe(process.env.STRIPE_SECRET_KEY!, {
+          apiVersion: "2026-02-25.clover",
+        });
+
+    let migrated = 0;
+    for (const community of candidates) {
+      const entry = {
+        communityId: String(community.communityId),
+        name: community.name,
+        currentMonthlyPriceUsd: community.currentMonthlyPriceUsd,
+        newMonthlyPriceUsd: community.billableActiveUsers,
+        migrated: false,
+      };
+
+      if (dryRun) {
+        report.push(entry);
+        continue;
+      }
+
+      try {
+        const subscription = await stripe!.subscriptions.retrieve(
+          community.stripeSubscriptionId,
+        );
+        const item = subscription.items.data[0];
+        if (!item) {
+          report.push({
+            ...entry,
+            error: `subscription ${community.stripeSubscriptionId} has no items`,
+          });
+          continue;
+        }
+
+        const productId = await getOrCreateProductId(stripe!);
+        const price = await stripe!.prices.create({
+          unit_amount: PER_ACTIVE_USER_CENTS,
+          currency: "usd",
+          recurring: { interval: "month" },
+          product: productId,
+          metadata: {
+            communityId: String(community.communityId),
+            billingModel: "per_active_user",
+          },
+        });
+
+        // Swap the item to the per-member price at the current billable
+        // count. proration_behavior "none" defers the change to the next
+        // renewal invoice — no mid-cycle charge or credit.
+        await stripe!.subscriptions.update(community.stripeSubscriptionId, {
+          items: [
+            {
+              id: item.id,
+              price: price.id,
+              quantity: community.billableActiveUsers,
+            },
+          ],
+          proration_behavior: "none",
+        });
+
+        await ctx.runMutation(
+          internal.functions.ee.billing.markCommunityPerUserBilling,
+          {
+            communityId: community.communityId,
+            billableActiveUsers: community.billableActiveUsers,
+          },
+        );
+
+        migrated++;
+        report.push({ ...entry, migrated: true });
+      } catch (error) {
+        report.push({
+          ...entry,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { dryRun, migrated, report };
   },
 });
 
