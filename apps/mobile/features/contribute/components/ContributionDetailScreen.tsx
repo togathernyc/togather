@@ -34,6 +34,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Markdown } from "@components/ui/Markdown";
 import { formatError } from "@/utils/error-handling";
 import type { Id } from "@services/api/convex";
+import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
 import { useThread } from "../hooks/useThread";
 import {
@@ -110,8 +111,12 @@ export function ContributionDetailScreen() {
   const params = useLocalSearchParams<{ id: string }>();
   const id = (params.id || null) as Id<"devBugs"> | null;
 
-  const { contribution } = useContribution(id);
-  const { messages } = useThread(id);
+  // Access gate: the contribution queries throw for non-contributors (deep
+  // link, revoked role), which would crash the render — skip them until the
+  // dev-dashboard access check confirms.
+  const { hasAccess, isLoading: accessLoading } = useDevAccess();
+  const { contribution } = useContribution(hasAccess ? id : null);
+  const { messages } = useThread(hasAccess ? id : null);
   const approveSpec = useApproveSpec();
   const startBuild = useStartBuild();
   const postMessage = usePostMessage();
@@ -216,10 +221,22 @@ export function ContributionDetailScreen() {
     return !(first?.authorType === "user" && first.body.trim() === contribution.body.trim());
   }, [contribution, messages]);
 
-  if (contribution === undefined) {
+  if (accessLoading || (hasAccess && contribution === undefined)) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.text} />
+      </View>
+    );
+  }
+
+  if (!hasAccess) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Ionicons name="lock-closed-outline" size={40} color={colors.iconSecondary} />
+        <Text style={[styles.lockedText, { color: colors.textSecondary }]}>
+          This area is for Togather contributors. Ask the team to invite you if
+          you'd like to help build the app.
+        </Text>
       </View>
     );
   }
@@ -235,12 +252,26 @@ export function ContributionDetailScreen() {
   }
 
   const showApproveSpec = needsSpecApproval(contribution);
-  const showStartBuild = !!contribution.specApprovedAt && contribution.status === "IN_REVIEW";
+  // Non-buildable scopes can't enter the build pipeline (the backend rejects
+  // them too) — keep the UI consistent with the "Too big for one build" card.
+  const showStartBuild =
+    !!contribution.specApprovedAt &&
+    contribution.status === "IN_REVIEW" &&
+    isBuildableScope(contribution.scope);
   const showStagingCard = needsStagingVerify(contribution);
   const awaitingSpec =
     (contribution.status === "DRAFT" || contribution.status === "IN_REVIEW") &&
     !contribution.spec;
-  const showComposerHint = contribution.status === "IN_REVIEW" && !!contribution.spec;
+  // The AI only reads replies while drafting/revising the spec
+  // (DRAFT/IN_REVIEW) — past that, be honest that messages are notes for
+  // the team, not instructions to the builder.
+  const aiReadsReplies =
+    contribution.status === "DRAFT" || contribution.status === "IN_REVIEW";
+  const composerHint = aiReadsReplies
+    ? contribution.status === "IN_REVIEW" && contribution.spec
+      ? "Replying asks the AI to revise the spec"
+      : null
+    : "Notes here are saved to the conversation for the team — the AI builder doesn't read them mid-build";
 
   const reportBody = contribution.repro
     ? `${contribution.body}\n\nHow to see it: ${contribution.repro}`
@@ -478,9 +509,9 @@ export function ContributionDetailScreen() {
         ) : null}
       </ScrollView>
 
-      {showComposerHint ? (
+      {composerHint ? (
         <Text style={[styles.composerHint, { color: colors.textTertiary }]}>
-          Replying asks the AI to revise the spec
+          {composerHint}
         </Text>
       ) : null}
       <View
@@ -527,7 +558,8 @@ export function ContributionDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 12 },
+  lockedText: { fontSize: 15, lineHeight: 22, textAlign: "center" },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",

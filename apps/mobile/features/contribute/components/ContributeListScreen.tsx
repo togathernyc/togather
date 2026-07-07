@@ -115,7 +115,10 @@ export function ContributeListScreen() {
   const canSeeEveryone = access?.isMaintainer === true;
   const showEveryone = canSeeEveryone && owner === "everyone";
 
-  const mine = useMyContributions();
+  // Only query once access is confirmed — the queries throw for
+  // non-contributors, which would crash the render instead of showing the
+  // lock UI below.
+  const mine = useMyContributions(hasAccess);
   const everyone = useAllContributions(showEveryone);
   const { contributions, isLoading } = showEveryone ? everyone : mine;
 

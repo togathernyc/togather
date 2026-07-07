@@ -2,9 +2,9 @@
  * Contribute feature types (ADR-029 Phase 1.5 — conversation-first UI).
  *
  * Mirrors the `devBugs` doc shape and thread messages returned by
- * `api.functions.devAssistant.contributions.*`. Kept as local structural
- * types so the feature compiles against the backend contract even while the
- * generated Convex types for the new module are catching up.
+ * `api.functions.devAssistant.contributions.*` (the hooks use the generated
+ * Convex types directly). Kept as local structural types so components only
+ * see the fields this feature actually renders, not the whole doc.
  */
 import type { Id } from "@services/api/convex";
 

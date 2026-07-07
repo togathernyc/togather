@@ -3,15 +3,23 @@
  * maintainers) everyone's. Newest first, each with a snippet of the latest
  * thread message.
  */
-import { useAuthenticatedQuery } from "@services/api/convex";
-import { contributionsApi } from "./contributionsApi";
+import { api, useAuthenticatedQuery } from "@services/api/convex";
 import type { ContributionListItem } from "../types";
 
-export function useMyContributions(): {
+/**
+ * useMyContributions — the current user's contributions.
+ * Pass enabled=false to skip (e.g. until dev-dashboard access is confirmed —
+ * the query throws a ConvexError for non-contributors, which would crash the
+ * render).
+ */
+export function useMyContributions(enabled: boolean): {
   contributions: ContributionListItem[] | undefined;
   isLoading: boolean;
 } {
-  const contributions = useAuthenticatedQuery(contributionsApi.myContributions, {});
+  const contributions: ContributionListItem[] | undefined = useAuthenticatedQuery(
+    api.functions.devAssistant.contributions.myContributions,
+    enabled ? {} : "skip",
+  );
   return { contributions, isLoading: contributions === undefined };
 }
 
@@ -23,8 +31,8 @@ export function useAllContributions(enabled: boolean): {
   contributions: ContributionListItem[] | undefined;
   isLoading: boolean;
 } {
-  const contributions = useAuthenticatedQuery(
-    contributionsApi.listAll,
+  const contributions: ContributionListItem[] | undefined = useAuthenticatedQuery(
+    api.functions.devAssistant.contributions.listAll,
     enabled ? {} : "skip",
   );
   return { contributions, isLoading: contributions === undefined };

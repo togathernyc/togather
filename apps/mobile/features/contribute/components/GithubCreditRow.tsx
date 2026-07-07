@@ -20,6 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { formatError } from "@/utils/error-handling";
 import { useGithubUsername, useSetGithubUsername } from "../hooks/useGithubUsername";
 
 export function GithubCreditRow() {
@@ -56,8 +57,10 @@ export function GithubCreditRow() {
       await setGithubUsername({ username: cleaned });
       setEditing(false);
       setDraft("");
-    } catch {
-      setErrorText("That doesn't look like a GitHub username");
+    } catch (error) {
+      // Surface the real reason — ConvexError explains the username rules,
+      // and network failures shouldn't masquerade as validation errors.
+      setErrorText(formatError(error));
     } finally {
       setSaving(false);
     }

@@ -28,6 +28,11 @@ jest.mock("@services/api/convex", () => ({
           hasLeaderAccess: "api.functions.tasks.index.hasLeaderAccess",
         },
       },
+      devAssistant: {
+        maintainers: {
+          myAccess: "api.functions.devAssistant.maintainers.myAccess",
+        },
+      },
     },
   },
   useAuthenticatedQuery: jest.fn(),
@@ -70,5 +75,33 @@ describe("ProfileMenu", () => {
 
     const { queryByText } = render(<ProfileMenu />);
     expect(queryByText("Tasks")).toBeNull();
+  });
+
+  it("shows the dev dashboard entry for maintainers and navigates to contribute", () => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.communities.listForUser") return [];
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return false;
+      if (queryFn === "api.functions.devAssistant.maintainers.myAccess")
+        return { canUseAssistant: true };
+      return undefined;
+    });
+
+    const { getByText } = render(<ProfileMenu />);
+    fireEvent.press(getByText("Dev Dashboard"));
+
+    expect(mockPush).toHaveBeenCalledWith("/(user)/contribute");
+  });
+
+  it("hides the dev dashboard entry for non-maintainers", () => {
+    (useAuthenticatedQuery as jest.Mock).mockImplementation((queryFn: string) => {
+      if (queryFn === "api.functions.communities.listForUser") return [];
+      if (queryFn === "api.functions.tasks.index.hasLeaderAccess") return false;
+      if (queryFn === "api.functions.devAssistant.maintainers.myAccess")
+        return { canUseAssistant: false };
+      return undefined;
+    });
+
+    const { queryByText } = render(<ProfileMenu />);
+    expect(queryByText("Dev Dashboard")).toBeNull();
   });
 });
