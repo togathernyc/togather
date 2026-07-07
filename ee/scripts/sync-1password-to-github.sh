@@ -225,15 +225,15 @@ sync_environment() {
 
   # GITHUB_MIRROR_TOKEN alias. GitHub reserves the GITHUB_ prefix for secret
   # names (`gh secret set GITHUB_*` → HTTP 422), so the 1Password item
-  # GITHUB_MIRROR_TOKEN is synced to the GitHub secret named MIRROR_TOKEN.
+  # GITHUB_MIRROR_TOKEN is synced to the GitHub secret named GH_MIRROR_TOKEN.
   # CI-only (repo mirror workflow) — intentionally not forwarded to Convex.
   MIRROR_TOKEN=$(op read "op://Togather/GITHUB_MIRROR_TOKEN/$env" 2>/dev/null || true)
   if [ -n "$MIRROR_TOKEN" ]; then
     if [ "$DRY_RUN" = true ]; then
-      echo "  [dry-run] Would set MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)"
+      echo "  [dry-run] Would set GH_MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)"
     else
-      echo -n "  Setting MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)..."
-      if printf '%s' "$MIRROR_TOKEN" | gh secret set "MIRROR_TOKEN" --env "$env" --repo "$REPO"; then
+      echo -n "  Setting GH_MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)..."
+      if printf '%s' "$MIRROR_TOKEN" | gh secret set "GH_MIRROR_TOKEN" --env "$env" --repo "$REPO"; then
         echo " done"
       else
         echo " FAILED"
