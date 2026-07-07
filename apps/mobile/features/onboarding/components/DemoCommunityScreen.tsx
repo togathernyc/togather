@@ -37,8 +37,11 @@ import { useSelectCommunity } from "@features/auth/hooks/useAuth";
 import { useTheme } from "@hooks/useTheme";
 import { ImagePicker } from "@components/ui";
 import { ColorPicker } from "@features/admin/components/ColorPicker";
-import { isValidHex } from "./ColorInput";
 import { geocodeZipCode } from "@features/groups/utils/geocodeLocation";
+
+// Server caps in functions/demo.ts (MAX_CAMPUSES / MAX_SMALL_GROUPS): we only
+// show name inputs up to this many. Keep in sync with the backend.
+const MAX_NAMED_ITEMS = 12;
 
 type DemoResult = {
   communityId: string;
@@ -79,7 +82,14 @@ export function DemoCommunityScreen() {
   const [error, setError] = useState<string | null>(null);
   const [demo, setDemo] = useState<DemoResult | null>(null);
 
-  const formValid = name.trim().length > 0 && isValidHex(primaryColor);
+  // ColorPicker only ever emits valid hex (presets + validated input), so the
+  // brand color can't be invalid — name is the only required field. The
+  // server re-validates everything regardless.
+  const formValid = name.trim().length > 0;
+
+  // Derived once (used in the render below and to size the name-input lists).
+  const campusFields = Math.min(parseCount(campusCount) ?? 0, MAX_NAMED_ITEMS);
+  const groupFields = Math.min(parseCount(smallGroupCount) ?? 0, MAX_NAMED_ITEMS);
 
   /** Upload the picked logo to R2 and return its storage path. */
   async function uploadLogo(imageUri: string): Promise<string> {
@@ -146,6 +156,8 @@ export function DemoCommunityScreen() {
       const coords = geocodeZipCode(zipCode.trim() || null);
       const cleanNames = (names: string[]) =>
         names.map((n) => n.trim()).filter((n) => n.length > 0);
+      const cleanedCampusNames = cleanNames(campusNames);
+      const cleanedGroupNames = cleanNames(groupNamesList);
       const result = await createDemo({
         name: name.trim(),
         totalSize: parseCount(totalSize),
@@ -154,8 +166,8 @@ export function DemoCommunityScreen() {
         zipCode: zipCode.trim() || undefined,
         logo,
         primaryColor,
-        campusNames: cleanNames(campusNames).length > 0 ? cleanNames(campusNames) : undefined,
-        groupNames: cleanNames(groupNamesList).length > 0 ? cleanNames(groupNamesList) : undefined,
+        campusNames: cleanedCampusNames.length > 0 ? cleanedCampusNames : undefined,
+        groupNames: cleanedGroupNames.length > 0 ? cleanedGroupNames : undefined,
         baseCoordinates: coords ?? undefined,
       });
       setDemo(result);
@@ -397,7 +409,7 @@ export function DemoCommunityScreen() {
             </View>
 
             {/* Optional real names — skipping is explicitly fine. */}
-            {(parseCount(campusCount) ?? 0) >= 2 && (
+            {campusFields >= 2 && (
               <View style={styles.fieldGroup}>
                 <Text style={[styles.label, { color: colors.textSecondary }]}>
                   Campus names <Text style={{ color: colors.textTertiary }}>(optional)</Text>
@@ -406,7 +418,7 @@ export function DemoCommunityScreen() {
                   Totally fine to skip — we'll use placeholder names and spots
                   near your zip, and you can rename anything later.
                 </Text>
-                {Array.from({ length: Math.min(parseCount(campusCount) ?? 0, 12) }).map((_, i) => (
+                {Array.from({ length: campusFields }).map((_, i) => (
                   <TextInput
                     key={`campus-${i}`}
                     style={[
@@ -422,7 +434,7 @@ export function DemoCommunityScreen() {
                 ))}
               </View>
             )}
-            {(parseCount(smallGroupCount) ?? 0) >= 1 && (
+            {groupFields >= 1 && (
               <View style={styles.fieldGroup}>
                 <Text style={[styles.label, { color: colors.textSecondary }]}>
                   Small group names <Text style={{ color: colors.textTertiary }}>(optional)</Text>
@@ -431,7 +443,7 @@ export function DemoCommunityScreen() {
                   Same here — skip it and we'll seed friendly placeholder
                   groups you can rename anytime.
                 </Text>
-                {Array.from({ length: Math.min(parseCount(smallGroupCount) ?? 0, 12) }).map((_, i) => (
+                {Array.from({ length: groupFields }).map((_, i) => (
                   <TextInput
                     key={`group-${i}`}
                     style={[

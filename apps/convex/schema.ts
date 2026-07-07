@@ -758,6 +758,10 @@ export default defineSchema({
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
+    // True only for events seeded into a demo community (functions/demo.ts).
+    // Lets getDemoProgress tell a seeded event from one the church created,
+    // without a wall-clock heuristic.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])
@@ -1860,11 +1864,18 @@ export default defineSchema({
     // For mirrored text blasts — backlink to the eventBlasts row so the UI
     // can render an "Also sent via SMS" badge and deep-link to delivery stats.
     blastId: v.optional(v.id("eventBlasts")),
+    // True only for messages seeded into a demo community (functions/demo.ts):
+    // the scripted group/DM conversations and the Getting Started tour. Lets
+    // getDemoProgress tell a seeded message from one a real user sent.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
     .index("by_channel_lastActivityAt", ["channelId", "lastActivityAt"])
     .index("by_sender", ["senderId"])
+    // Bounds getDemoProgress's "did this real user send a message here" check
+    // to one community instead of scanning the sender's cross-community history.
+    .index("by_sender_community", ["senderId", "communityId"])
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_sourceKey", ["sourceKey"])

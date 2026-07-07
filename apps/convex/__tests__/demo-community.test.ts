@@ -459,6 +459,105 @@ describe("demo v3: feedback fixes", () => {
     expect(botMessages.every((m) => m.contentType === "bot")).toBe(true);
   });
 
+  test("seeded events use the canonical RSVP labels", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Rsvp", "+15555550177");
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Rsvp Church",
+      smallGroupCount: 1,
+    });
+    const meeting = await t.run(async (ctx) =>
+      ctx.db
+        .query("meetings")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .first(),
+    );
+    // Matches lib/meetingConfig.ts DEFAULT_RSVP_OPTIONS, not "Attending".
+    expect(meeting?.rsvpOptions?.map((o) => o.label)).toEqual([
+      "Going",
+      "Maybe",
+      "Can't Go",
+    ]);
+  });
+
+  test("a message sent immediately counts, and seeded messages don't", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, token } = await createUser(t, "Fast", "+15555550178");
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Fast Church",
+    });
+
+    // Seeded DM lines "from the creator" exist but are isDemoSeed -> no credit.
+    let progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(progress?.missions.find((m) => m.key === "send_message")?.done).toBe(
+      false,
+    );
+
+    // A real message right now (same wall-clock as seed) still counts — no
+    // 5-minute dead zone.
+    await t.run(async (ctx) => {
+      const channel = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_community_isAdHoc", (q) =>
+          q.eq("communityId", demo.communityId).eq("isAdHoc", true),
+        )
+        .first();
+      await ctx.db.insert("chatMessages", {
+        channelId: channel!._id,
+        communityId: demo.communityId,
+        senderId: userId,
+        content: "hello from the admin",
+        contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+      });
+    });
+    progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(progress?.missions.find((m) => m.key === "send_message")?.done).toBe(
+      true,
+    );
+  });
+
+  test("go-live strips placeholder stock covers from surviving groups and events", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Strip", "+15555550179");
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Strip Church",
+      smallGroupCount: 2,
+      logo: "r2:uploads/logo.png",
+    });
+
+    await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
+      communityId: demo.communityId,
+    });
+
+    const { groups, meetings } = await t.run(async (ctx) => ({
+      groups: await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect(),
+      meetings: await ctx.db
+        .query("meetings")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect(),
+    }));
+    // No surviving row points at picsum.
+    expect(groups.every((g) => !g.preview?.includes("picsum.photos"))).toBe(true);
+    expect(meetings.every((m) => !m.coverImage?.includes("picsum.photos"))).toBe(true);
+    // The church's real logo (r2:) is kept on the announcement group.
+    const announcement = groups.find((g) => g.isAnnouncementGroup);
+    expect(announcement?.preview).toBe("r2:uploads/logo.png");
+  });
+
   test("getDemoProgress tracks guided missions from real activity", async () => {
     const t = convexTest(schema, modules);
     const { token } = await createUser(t, "Prog", "+15555550174");

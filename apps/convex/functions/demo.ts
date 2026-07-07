@@ -35,6 +35,7 @@ import { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuth } from "../lib/auth";
 import { now, generateShortId, buildSearchText, getMediaUrl } from "../lib/utils";
 import { COMMUNITY_ROLES } from "../lib/permissions";
+import { DEFAULT_RSVP_OPTIONS } from "../lib/meetingConfig";
 
 // ============================================================================
 // Template data
@@ -76,17 +77,28 @@ function demoMemberName(i: number): { firstName: string; lastName: string } {
 }
 
 // Demo-only external imagery so the app doesn't feel like an empty shell of
-// initials (getMediaUrl passes absolute https URLs through untouched). These
-// only ever live on seeded rows, which are purged on go-live. FIRST_NAMES
-// alternates female/male, so portrait gender tracks the name.
+// initials (getMediaUrl passes absolute https URLs through untouched).
+// Portraits live on seeded member rows (deleted on go-live); stock covers/
+// avatars live on groups/events that SURVIVE go-live, so purgeDemoSeedUsers
+// strips them (via isDemoStockUrl) rather than leaving a live community
+// depending on these third-party hosts in production.
+const DEMO_PORTRAIT_HOST = "https://randomuser.me/api/portraits/";
+const DEMO_STOCK_HOST = "https://picsum.photos/";
+
+// FIRST_NAMES alternates female/male, so portrait gender tracks the name.
 function demoMemberPhoto(i: number): string {
   const gender = i % 2 === 0 ? "women" : "men";
-  return `https://randomuser.me/api/portraits/${gender}/${Math.floor(i / 2) % 100}.jpg`;
+  return `${DEMO_PORTRAIT_HOST}${gender}/${Math.floor(i / 2) % 100}.jpg`;
 }
 
 /** Stable per-seed stock photo (Lorem Picsum serves a fixed image per seed). */
 function demoStockPhoto(seed: string, width = 800, height = 450): string {
-  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/${width}/${height}`;
+  return `${DEMO_STOCK_HOST}seed/${encodeURIComponent(seed)}/${width}/${height}`;
+}
+
+/** True for a placeholder stock image this seeder put on a row. */
+function isDemoStockUrl(url: string | undefined | null): boolean {
+  return !!url && url.startsWith(DEMO_STOCK_HOST);
 }
 
 /**
@@ -241,17 +253,46 @@ const GROUP_DM_CHAT: string[] = [
 ];
 
 /**
- * "Getting Started" guided missions, posted by the Togather bot into a
- * dedicated channel and tracked live by getDemoProgress. Keep the mission
- * list in sync with the progress query.
+ * "Getting Started" guided missions — the SINGLE source of truth for both the
+ * bot's numbered tour messages and getDemoProgress's checklist, so the two
+ * can't drift. `title` shows on the Go Live screen; `instruction` is the bot
+ * line. Every mission here is tracked by getDemoProgress.
  */
+const GETTING_STARTED_MISSIONS = [
+  {
+    key: "send_message",
+    title: "Send a message in a group",
+    instruction:
+      "Send a message — open any group's chat and say hi. Everything here is editable and safe to play with.",
+  },
+  {
+    key: "create_event",
+    title: "Create an event",
+    instruction:
+      "Create an event — open a group → Events → New Event. Try RSVP options and a cover photo.",
+  },
+  {
+    key: "birthday_bot",
+    title: "Set up the Birthday Bot",
+    instruction:
+      "Set up the Birthday Bot — open a group → settings → Bots. New members feel welcome when their birthday gets celebrated automatically.",
+  },
+  {
+    key: "invite_teammate",
+    title: "Invite a teammate with your demo code",
+    instruction:
+      "Invite a teammate — share your demo code (on the Go Live screen) so a co-worker can explore with you. Up to 10 people can join.",
+  },
+] as const;
+
+const MISSION_NUMBER_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
+
 const GETTING_STARTED_MESSAGES: string[] = [
-  "Welcome to your demo community! 👋 I'm the Togather bot. Here are a few things worth trying while you explore — I'll keep track of your progress on the Go Live screen (tap the demo banner).",
-  "1️⃣ Send a message — open any group's chat and say hi. Everything here is editable and safe to play with.",
-  "2️⃣ Create an event — open a group → Events → New Event. Try RSVP options and a cover photo.",
-  "3️⃣ Set up the Birthday Bot — open a group → settings → Bots. New members feel welcome when their birthday gets celebrated automatically.",
-  "4️⃣ Invite a teammate — share your demo code (on the Go Live screen) so a co-worker can explore with you. Up to 10 people can join.",
-  "5️⃣ Make it yours — Admin → Settings to change your name, logo, and brand color. The whole app re-themes instantly.",
+  "Welcome to your demo community! 👋 I'm the Togather bot. Here are the things worth trying while you explore — I'll check them off on the Go Live screen (tap the demo banner) as you go.",
+  ...GETTING_STARTED_MISSIONS.map(
+    (m, i) => `${MISSION_NUMBER_EMOJI[i]} ${m.instruction}`,
+  ),
+  "Any time, head to Admin → Settings to change your name, logo, and brand color — the whole app re-themes instantly. ✨",
   "When you're ready for the real thing, tap Go live on the banner — your groups, branding, and teammates stay; these demo members and I clean ourselves up. 🎉",
 ];
 
@@ -263,12 +304,6 @@ const PRAYER_REQUESTS = [
 
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
-
-const DEFAULT_RSVP_OPTIONS = [
-  { id: 1, label: "Attending", enabled: true },
-  { id: 2, label: "Maybe", enabled: true },
-  { id: 3, label: "Not Attending", enabled: true },
-];
 
 function isValidHex(hex: string): boolean {
   return /^#[0-9A-Fa-f]{6}$/.test(hex);
@@ -466,7 +501,13 @@ async function flushChannelCounts(
   counts.clear();
 }
 
-/** Count the real (non-placeholder) accounts that belong to a demo. */
+/**
+ * Count the real (non-placeholder) accounts that belong to a demo. Seeded
+ * members are always inserted as COMMUNITY_ROLES.MEMBER and real accounts are
+ * always ADMIN+ (creator = primary admin, code-joiners = admin), so role
+ * alone separates them — no per-user document read needed. This runs on the
+ * hot path (getDemoStatus, subscribed by the app-wide banner on every screen).
+ */
 async function countRealUsers(
   ctx: QueryCtx | MutationCtx,
   communityId: Id<"communities">,
@@ -475,13 +516,9 @@ async function countRealUsers(
     .query("userCommunities")
     .withIndex("by_community", (q) => q.eq("communityId", communityId))
     .collect();
-  let count = 0;
-  for (const membership of memberships) {
-    if (membership.status !== 1) continue;
-    const user = await ctx.db.get(membership.userId);
-    if (user && !user.isPlaceholder) count++;
-  }
-  return count;
+  return memberships.filter(
+    (m) => m.status === 1 && (m.roles ?? 0) >= COMMUNITY_ROLES.ADMIN,
+  ).length;
 }
 
 /**
@@ -524,6 +561,7 @@ async function seedConversation(
       contentType: args.contentType ?? "text",
       createdAt,
       isDeleted: false,
+      isDemoSeed: true, // distinguishes seed chatter from real user activity
       senderName: sender.name,
       senderProfilePhoto: sender.photo,
       lastActivityAt: createdAt,
@@ -576,6 +614,7 @@ async function createDemoMeeting(
     communityWideEventId: args.communityWideEventId,
     communityId: args.communityId,
     searchText: args.title.toLowerCase(),
+    isDemoSeed: true, // distinguishes seed events from ones the church creates
     createdAt: now(),
     reminderSent: false,
     attendanceConfirmationSent: false,
@@ -1257,35 +1296,29 @@ export const getDemoProgress = query({
     const community = await ctx.db.get(args.communityId);
     if (!community?.isDemo) return null;
 
-    // Real (non-seeded) accounts in the demo.
+    // Real accounts = ADMIN+ memberships (seeds are always MEMBER); no
+    // per-user reads. See countRealUsers.
     const memberships = await ctx.db
       .query("userCommunities")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
-    const realUserIds: Id<"users">[] = [];
-    for (const m of memberships) {
-      if (m.status !== 1) continue;
-      const user = await ctx.db.get(m.userId);
-      if (user && !user.isPlaceholder) realUserIds.push(m.userId);
-    }
+    const realUserIds = memberships
+      .filter((m) => m.status === 1 && (m.roles ?? 0) >= COMMUNITY_ROLES.ADMIN)
+      .map((m) => m.userId);
 
-    // Anything created noticeably after the seed transaction was done by a
-    // human clicking around, not by the seeder.
-    const seededBefore = (community.createdAt ?? 0) + 5 * 60 * 1000;
-
+    // "Sent a message" = a real user authored a NON-seeded message in this
+    // community. The by_sender_community index bounds the scan to this
+    // community (a real user could have thousands of messages elsewhere), and
+    // isDemoSeed excludes the scripted DM lines attributed to the creator —
+    // no wall-clock heuristic, so a message sent seconds after entering counts.
     let sentMessage = false;
     for (const realUserId of realUserIds) {
-      // Seeded DM scripts include lines "from" the creator, so only messages
-      // written after the seed transaction count as the user's own activity.
       const message = await ctx.db
         .query("chatMessages")
-        .withIndex("by_sender", (q) => q.eq("senderId", realUserId))
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("communityId"), args.communityId),
-            q.gt(q.field("createdAt"), seededBefore),
-          ),
+        .withIndex("by_sender_community", (q) =>
+          q.eq("senderId", realUserId).eq("communityId", args.communityId),
         )
+        .filter((q) => q.neq(q.field("isDemoSeed"), true))
         .first();
       if (message) {
         sentMessage = true;
@@ -1297,11 +1330,12 @@ export const getDemoProgress = query({
       .query("meetings")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
+    const realUserIdSet = new Set(realUserIds.map((id) => String(id)));
     const createdEvent = meetings.some(
       (m) =>
-        m.createdAt > seededBefore &&
+        !m.isDemoSeed &&
         m.createdById !== undefined &&
-        realUserIds.some((id) => id === m.createdById),
+        realUserIdSet.has(String(m.createdById)),
     );
 
     const groups = await ctx.db
@@ -1322,12 +1356,19 @@ export const getDemoProgress = query({
       }
     }
 
-    const missions = [
-      { key: "send_message", title: "Send a message in a group", done: sentMessage },
-      { key: "create_event", title: "Create an event", done: createdEvent },
-      { key: "birthday_bot", title: "Set up the Birthday Bot", done: birthdayBot },
-      { key: "invite_teammate", title: "Invite a teammate with your demo code", done: realUserIds.length >= 2 },
-    ];
+    // Derived from the same GETTING_STARTED_MISSIONS the bot posts, so the
+    // checklist and the tour can never disagree.
+    const doneByKey: Record<string, boolean> = {
+      send_message: sentMessage,
+      create_event: createdEvent,
+      birthday_bot: birthdayBot,
+      invite_teammate: realUserIds.length >= 2,
+    };
+    const missions = GETTING_STARTED_MISSIONS.map((m) => ({
+      key: m.key,
+      title: m.title,
+      done: doneByKey[m.key] ?? false,
+    }));
 
     return {
       missions,
@@ -1480,26 +1521,42 @@ export const purgeDemoSeedUsers = internalMutation({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
     for (const group of groups) {
+      // Seeded group avatars are placeholder stock photos on a third-party
+      // host — drop them so the now-live community isn't left depending on
+      // picsum.photos in production. The church's own uploaded logo (an r2:
+      // path on the announcement group) is kept.
+      if (isDemoStockUrl(group.preview)) {
+        await ctx.db.patch(group._id, { preview: undefined });
+      }
+
       const channels = await ctx.db
         .query("chatChannels")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
         .collect();
       for (const channel of channels) {
-        // The Getting Started tour is demo-only — it removes itself on
-        // go-live, exactly as its bot messages promise.
-        if (channel.slug === "getting-started") {
-          const tourMembers = await ctx.db
-            .query("chatChannelMembers")
-            .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
-            .collect();
-          for (const member of tourMembers) await ctx.db.delete(member._id);
+        // The Getting Started tour is demo-only and removes itself on go-live,
+        // as its bot messages promise. Match it narrowly — the announcement
+        // group's tour channel whose messages are ALL bot-authored — so a
+        // real "Getting Started" channel a church happened to create (the slug
+        // isn't reserved) is never mistaken for it and deleted.
+        if (channel.slug === "getting-started" && group.isAnnouncementGroup) {
           const tourMessages = await ctx.db
             .query("chatMessages")
             .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
             .collect();
-          for (const message of tourMessages) await ctx.db.delete(message._id);
-          await ctx.db.delete(channel._id);
-          continue;
+          const allBotAuthored = tourMessages.every(
+            (m) => m.senderId === undefined,
+          );
+          if (allBotAuthored) {
+            const tourMembers = await ctx.db
+              .query("chatChannelMembers")
+              .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+              .collect();
+            for (const member of tourMembers) await ctx.db.delete(member._id);
+            for (const message of tourMessages) await ctx.db.delete(message._id);
+            await ctx.db.delete(channel._id);
+            continue;
+          }
         }
 
         const remaining = await ctx.db
@@ -1518,6 +1575,30 @@ export const purgeDemoSeedUsers = internalMutation({
           lastMessageSenderId: lastMessage?.senderId,
           lastMessageSenderName: lastMessage?.senderName,
         });
+      }
+    }
+
+    // Strip placeholder stock covers from the events that survive go-live
+    // (meetings + the community-wide event are authored by the real creator,
+    // so they aren't deleted with the seed members).
+    const survivingMeetings = await ctx.db
+      .query("meetings")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const meeting of survivingMeetings) {
+      if (isDemoStockUrl(meeting.coverImage)) {
+        await ctx.db.patch(meeting._id, { coverImage: undefined });
+      }
+    }
+    const cwes = await ctx.db
+      .query("communityWideEvents")
+      .withIndex("by_community_status", (q) =>
+        q.eq("communityId", args.communityId).eq("status", "scheduled"),
+      )
+      .collect();
+    for (const cwe of cwes) {
+      if (isDemoStockUrl(cwe.coverImage)) {
+        await ctx.db.patch(cwe._id, { coverImage: undefined });
       }
     }
 
