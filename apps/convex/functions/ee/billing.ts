@@ -1117,7 +1117,7 @@ export const syncPerUserSubscriptionQuantities = internalAction({
         }
 
         // Pre-period disclosure: tell the community's admins what the 1st
-        // will bill, while there's still time to mark members inactive.
+        // will bill, before the invoice goes out — no surprise charge.
         await notifyCommunityAdmins(ctx, {
           type: "billing.monthly_preview",
           communityId: community.communityId,

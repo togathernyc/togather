@@ -1034,9 +1034,8 @@ interface BillingMonthlyPreviewData {
 /**
  * Pre-period bill disclosure for per-active-user billing: sent to community
  * admins right after the monthly quantity sync (the 28th), a few days before
- * the invoice on the 1st, so the amount is never a surprise and admins still
- * have time to mark members inactive. See functions/ee/billing.ts
- * syncPerUserSubscriptionQuantities and ADR-030.
+ * the invoice on the 1st, so the amount is never a surprise. See
+ * functions/ee/billing.ts syncPerUserSubscriptionQuantities and ADR-030.
  */
 export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreviewData> = {
   type: 'billing.monthly_preview',
@@ -1061,8 +1060,8 @@ export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreview
         </p>
         <p class="text">
           This is the same number as the Active Members card on your admin
-          Stats tab. If someone shouldn't count, an admin or their group
-          leader can mark them inactive from their person page before the 1st.
+          Stats tab. It updates automatically each month &mdash; anyone who
+          stops opening the app rolls off, and returns when they come back.
         </p>
       `),
       };

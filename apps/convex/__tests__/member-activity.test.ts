@@ -3,9 +3,8 @@
  *
  * Covers the billable-member definition (opened the app in THIS community
  * within the past month — per-community membership.lastLogin, not app-wide
- * activity — matching the admin Stats "Active Members" card), the manual
- * inactive flag, placeholder exclusion, and the permissions on manually
- * marking members inactive (community admins + the member's group leaders).
+ * activity — matching the admin Stats "Active Members" card), placeholder
+ * exclusion, and that the count is purely automatic with no manual override.
  *
  * Run with: cd apps/convex && pnpm test __tests__/member-activity.test.ts
  */
