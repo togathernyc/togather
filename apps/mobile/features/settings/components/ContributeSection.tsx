@@ -27,7 +27,7 @@ export function ContributeSection() {
 
       <TouchableOpacity
         style={[styles.menuItem, { backgroundColor: colors.surfaceSecondary }]}
-        onPress={() => router.push("/(user)/contribute")}
+        onPress={() => router.push("/(user)/dev")}
         activeOpacity={0.7}
       >
         <View style={styles.menuItemContent}>

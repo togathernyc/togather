@@ -22,7 +22,6 @@ import {
   TextInput,
   Image,
   Linking,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -34,6 +33,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Markdown } from "@components/ui/Markdown";
 import { formatError } from "@/utils/error-handling";
+import { confirmAsync, notify } from "@/utils/platformAlert";
 import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
@@ -125,7 +125,7 @@ function SliceRow({ slice, index }: { slice: SplitSlice; index: number }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      Alert.alert("Couldn't copy", formatError(error));
+      notify("Couldn't copy", formatError(error));
     }
   }, [slice.prompt]);
 
@@ -198,13 +198,44 @@ function SplitSlicesCard({ contribution }: { contribution: Contribution }) {
   );
 }
 
-export function ContributionDetailScreen() {
+/**
+ * Cheap shape check for a Convex document id. Convex ids are opaque and can't
+ * be truly validated client-side, but a clearly malformed deep link (e.g.
+ * /dev/foo) would make getContribution/getThread throw an
+ * ArgumentValidationError through render and land on the root error boundary
+ * instead of this screen's not-found state. Skipping the queries for
+ * malformed ids covers that case; a well-formed-but-wrong id already returns
+ * null from the query, which renders the same not-found state.
+ */
+const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
+
+export interface ContributionDetailScreenProps {
+  /**
+   * Desktop-web split view (ContributeSplitView): the conversation to show.
+   * Overrides the [id] route param — the split view renders this component
+   * outside the [id] route, driven by local selection state.
+   */
+  id?: Id<"devBugs"> | null;
+  /**
+   * True when rendered as the split view's right pane: hides the header back
+   * button (selection lives in the sidebar; there's nothing to pop).
+   */
+  embedded?: boolean;
+}
+
+export function ContributionDetailScreen({
+  id: idProp,
+  embedded = false,
+}: ContributionDetailScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const params = useLocalSearchParams<{ id: string }>();
-  const id = (params.id || null) as Id<"devBugs"> | null;
+  const rawId = idProp ?? ((params.id || null) as Id<"devBugs"> | null);
+  // Malformed ids (see LOOKS_LIKE_CONVEX_ID) skip the queries and fall
+  // through to the not-found state below.
+  const id = rawId && LOOKS_LIKE_CONVEX_ID.test(rawId) ? rawId : null;
 
   // Access gate: the contribution queries throw for non-contributors (deep
   // link, revoked role), which would crash the render — skip them until the
@@ -228,28 +259,24 @@ export function ContributionDetailScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const images = useImageAttachments();
 
-  const handleApprove = useCallback(() => {
+  const handleApprove = useCallback(async () => {
     if (!id) return;
-    Alert.alert(
-      "Approve this plan?",
-      "You're confirming the plan describes what you meant. Building starts after approval.",
-      [
-        { text: "Not yet", style: "cancel" },
-        {
-          text: "Approve",
-          onPress: async () => {
-            setBusy(true);
-            try {
-              await approveSpec({ id });
-            } catch (error) {
-              Alert.alert("Couldn't approve", formatError(error));
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ],
-    );
+    const confirmed = await confirmAsync({
+      title: "Approve this plan?",
+      message:
+        "You're confirming the plan describes what you meant. Building starts after approval.",
+      confirmText: "Approve",
+      cancelText: "Not yet",
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await approveSpec({ id });
+    } catch (error) {
+      notify("Couldn't approve", formatError(error));
+    } finally {
+      setBusy(false);
+    }
   }, [id, approveSpec]);
 
   const handleStartBuild = useCallback(async () => {
@@ -258,7 +285,7 @@ export function ContributionDetailScreen() {
     try {
       await startBuild({ id });
     } catch (error) {
-      Alert.alert("Couldn't start the build", formatError(error));
+      notify("Couldn't start the build", formatError(error));
     } finally {
       setBusy(false);
     }
@@ -270,7 +297,7 @@ export function ContributionDetailScreen() {
     try {
       await confirmStaging({ id });
     } catch (error) {
-      Alert.alert("Couldn't confirm", formatError(error));
+      notify("Couldn't confirm", formatError(error));
     } finally {
       setBusy(false);
     }
@@ -286,7 +313,7 @@ export function ContributionDetailScreen() {
       setIssueNote("");
       setIssueMode(false);
     } catch (error) {
-      Alert.alert("Couldn't send", formatError(error));
+      notify("Couldn't send", formatError(error));
     } finally {
       setBusy(false);
     }
@@ -311,35 +338,30 @@ export function ContributionDetailScreen() {
       images.reset();
     } catch (error) {
       setDraft(body);
-      Alert.alert("Couldn't send", formatError(error));
+      notify("Couldn't send", formatError(error));
     } finally {
       setSending(false);
     }
   }, [id, draft, sending, postMessage, images]);
 
-  const handleArchive = useCallback(() => {
+  const handleArchive = useCallback(async () => {
     if (!id) return;
-    Alert.alert(
-      "Archive this conversation?",
-      "It moves to your Archived tab and leaves the active list. You can restore it anytime.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Archive",
-          style: "destructive",
-          onPress: async () => {
-            setBusy(true);
-            try {
-              await archiveContribution({ id });
-            } catch (error) {
-              Alert.alert("Couldn't archive", formatError(error));
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ],
-    );
+    const confirmed = await confirmAsync({
+      title: "Archive this conversation?",
+      message:
+        "It moves to your Archived tab and leaves the active list. You can restore it anytime.",
+      confirmText: "Archive",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await archiveContribution({ id });
+    } catch (error) {
+      notify("Couldn't archive", formatError(error));
+    } finally {
+      setBusy(false);
+    }
   }, [id, archiveContribution]);
 
   const handleUnarchive = useCallback(async () => {
@@ -348,7 +370,7 @@ export function ContributionDetailScreen() {
     try {
       await unarchiveContribution({ id });
     } catch (error) {
-      Alert.alert("Couldn't restore", formatError(error));
+      notify("Couldn't restore", formatError(error));
     } finally {
       setBusy(false);
     }
@@ -364,7 +386,9 @@ export function ContributionDetailScreen() {
     return !(first?.authorType === "user" && first.body.trim() === contribution.body.trim());
   }, [contribution, messages]);
 
-  if (accessLoading || (hasAccess && contribution === undefined)) {
+  // No `id` means the queries were skipped (missing or malformed route
+  // param) — fall through to the not-found state instead of spinning forever.
+  if (accessLoading || (hasAccess && id && contribution === undefined)) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <ActivityIndicator size="large" color={colors.text} />
@@ -435,11 +459,20 @@ export function ContributionDetailScreen() {
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      // This screen opens as an iOS sheet (the `(user)` route group is a modal),
+      // where "padding" alone doesn't lift the composer above the keyboard — it
+      // stays hidden behind it. The sibling `dev/notifications.tsx`, in the same
+      // modal group, corrects the sheet inset with a 64pt offset; mirror it here.
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
     >
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </TouchableOpacity>
+        {embedded ? (
+          <View style={styles.backBtn} />
+        ) : (
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {displayTitle(contribution)}
         </Text>
