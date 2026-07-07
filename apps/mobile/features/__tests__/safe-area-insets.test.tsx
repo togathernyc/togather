@@ -203,6 +203,11 @@ jest.mock('@services/api/convex', () => ({
           hasLeaderAccess: 'api.functions.tasks.index.hasLeaderAccess',
         },
       },
+      devAssistant: {
+        maintainers: {
+          myAccess: 'api.functions.devAssistant.maintainers.myAccess',
+        },
+      },
     },
   },
   useAuthenticatedQuery: jest.fn(() => []),

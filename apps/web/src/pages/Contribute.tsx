@@ -25,10 +25,33 @@ export function Contribute() {
         <h1 className="text-4xl font-bold text-neutral-900 mb-3">
           Contribute to Togather
         </h1>
-        <p className="text-lg text-neutral-600 mb-12 leading-relaxed">
+        <p className="text-lg text-neutral-600 mb-8 leading-relaxed">
           Togather is built by the communities that use it. Whether you write
           code or not, there are ways you can help make it better.
         </p>
+
+        {/* AI-driven workflow callout */}
+        <Link
+          to="/contribute/ai"
+          className="block bg-violet-50 border border-violet-200 hover:border-violet-300 rounded-2xl p-6 mb-12 transition-colors"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-white border border-violet-200 flex items-center justify-center text-violet-700">
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3l1.9 5.7L19.6 10l-5.7 1.9L12 17.6l-1.9-5.7L4.4 10l5.7-1.9L12 3z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-neutral-900">
+              New: contribute without writing code
+            </h2>
+          </div>
+          <p className="text-neutral-600 leading-relaxed">
+            Our AI-driven development workflow turns well-written bug reports
+            and feature specs into working code. You bring the product
+            thinking — AI handles the implementation.{" "}
+            <span className="text-violet-700 font-medium">Learn how it works →</span>
+          </p>
+        </Link>
 
         {/* Non-technical */}
         <section className="mb-14">
