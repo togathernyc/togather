@@ -30,18 +30,20 @@ import { GithubCreditRow } from "./GithubCreditRow";
 import {
   conversationDotColor,
   displayTitle,
+  isArchived,
   isInProgress,
   isYourTurn,
 } from "../utils/status";
 import type { ContributionListItem } from "../types";
 
-type Segment = "yourTurn" | "inProgress" | "done";
+type Segment = "yourTurn" | "inProgress" | "done" | "archived";
 type Owner = "mine" | "everyone";
 
 const SEGMENT_OPTIONS: { key: Segment; label: string }[] = [
   { key: "yourTurn", label: "Your turn" },
   { key: "inProgress", label: "In progress" },
   { key: "done", label: "Done" },
+  { key: "archived", label: "Archived" },
 ];
 
 const OWNER_OPTIONS: { key: Owner; label: string }[] = [
@@ -61,6 +63,10 @@ const EMPTY_COPY: Record<Segment, { title: string; text: string }> = {
   done: {
     title: "Nothing wrapped up yet",
     text: "Once a conversation is finished — shipped into the app, or set aside — it lands here.",
+  },
+  archived: {
+    title: "Nothing archived",
+    text: "Conversations you set aside — abandoned, or not doable — land here. You can restore any of them.",
   },
 };
 
@@ -130,6 +136,9 @@ export function ContributeListScreen() {
   const visible = useMemo(() => {
     const items = contributions ?? [];
     const filtered = items.filter((item) => {
+      // Archived items live only in their own tab, out of the active ones.
+      if (segment === "archived") return isArchived(item);
+      if (isArchived(item)) return false;
       if (segment === "yourTurn") return isYourTurn(item);
       // "Done" = terminal conversations, shipped or set aside.
       if (segment === "done")

@@ -41,10 +41,12 @@ import { useThread } from "../hooks/useThread";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import {
   useApproveSpec,
+  useArchiveContribution,
   useConfirmStaging,
   usePostMessage,
   useReportStagingIssue,
   useStartBuild,
+  useUnarchiveContribution,
 } from "../hooks/useContributionMutations";
 import {
   displayTitle,
@@ -215,6 +217,8 @@ export function ContributionDetailScreen() {
   const postMessage = usePostMessage();
   const confirmStaging = useConfirmStaging();
   const reportStagingIssue = useReportStagingIssue();
+  const archiveContribution = useArchiveContribution();
+  const unarchiveContribution = useUnarchiveContribution();
 
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
@@ -313,6 +317,43 @@ export function ContributionDetailScreen() {
     }
   }, [id, draft, sending, postMessage, images]);
 
+  const handleArchive = useCallback(() => {
+    if (!id) return;
+    Alert.alert(
+      "Archive this conversation?",
+      "It moves to your Archived tab and leaves the active list. You can restore it anytime.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Archive",
+          style: "destructive",
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await archiveContribution({ id });
+            } catch (error) {
+              Alert.alert("Couldn't archive", formatError(error));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [id, archiveContribution]);
+
+  const handleUnarchive = useCallback(async () => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      await unarchiveContribution({ id });
+    } catch (error) {
+      Alert.alert("Couldn't restore", formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [id, unarchiveContribution]);
+
   /**
    * The original report opens the thread. The backend may also seed it as the
    * first thread message — skip the synthetic bubble when it does.
@@ -406,6 +447,14 @@ export function ContributionDetailScreen() {
         <StatusChip contribution={contribution} />
         {contribution.riskLevel ? <RiskBadge risk={contribution.riskLevel} /> : null}
         {isFromChat(contribution) ? <FromChatTag /> : null}
+        {contribution.archivedAt ? (
+          <View style={[styles.archivedPill, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="archive" size={11} color={colors.textSecondary} />
+            <Text style={[styles.archivedPillText, { color: colors.textSecondary }]}>
+              Archived
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -623,6 +672,33 @@ export function ContributionDetailScreen() {
             <Ionicons name="open-outline" size={16} color={colors.iconSecondary} />
           </TouchableOpacity>
         ) : null}
+
+        {/* Archive / restore — abandon a conversation or bring it back. */}
+        {contribution.archivedAt ? (
+          <TouchableOpacity
+            style={[styles.archiveRow, { borderColor: colors.border }]}
+            onPress={handleUnarchive}
+            disabled={busy}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-undo-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.archiveText, { color: colors.textSecondary }]}>
+              Restore this conversation
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.archiveRow, { borderColor: colors.border }]}
+            onPress={handleArchive}
+            disabled={busy}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="archive-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.archiveText, { color: colors.textSecondary }]}>
+              Archive this conversation
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       {composerHint ? (
@@ -809,6 +885,26 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   linkText: { fontSize: 14, flex: 1 },
+  archiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingVertical: 11,
+    marginTop: 20,
+  },
+  archiveText: { fontSize: 14, fontWeight: "500" },
+  archivedPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  archivedPillText: { fontSize: 11, fontWeight: "700" },
   composerHint: {
     fontSize: 11,
     textAlign: "center",

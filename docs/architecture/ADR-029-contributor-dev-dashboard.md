@@ -357,6 +357,11 @@ Owner-requested follow-up to make filing feel like chatting and to turn a
 - **"In progress" tab.** The contributor list's middle segment is now "In
   progress" (`isInProgress` — fired-off items actively being built/reviewed),
   replacing the catch-all "All"; "Your turn" and "Shipped" are unchanged.
+- **Archive.** Contributors can set a conversation aside — abandoned, or its
+  scope judged not doable — via new `devBugs.archivedAt` (orthogonal to
+  `status`, so any pipeline state can be archived and restored) and the
+  originator-only (plus staff) `archive`/`unarchive` mutations. Archived items
+  leave the active tabs into an "Archived" tab.
 - **Copyable split prompts.** For `scope: "split"`, the spec routine also
   returns `splitSlices: [{ title, prompt }]` (new `devBugs.splitSlices`,
   validated in `http.ts`, persisted by `applyCallback`, cleared when a

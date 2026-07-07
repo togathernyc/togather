@@ -365,6 +365,63 @@ export const startBuild = mutation({
   },
 });
 
+/**
+ * Archive/unarchive is originator-only (plus staff/superuser, who can tidy the
+ * shared board). Everyone can read every thread, but only the person who
+ * started it — or staff — sets it aside.
+ */
+function assertCanArchive(user: Doc<"users">, bug: Doc<"devBugs">): void {
+  const isOwner = bug.originatorUserId === user._id;
+  if (!isOwner && !user.isStaff && !user.isSuperuser) {
+    throw new ConvexError("Only the person who started this can archive it");
+  }
+}
+
+/**
+ * Set a conversation aside — the contributor abandoned it, or its scope was
+ * judged not doable. Orthogonal to the pipeline status; archived items leave
+ * the active dashboard tabs. Idempotent (re-archiving keeps the first stamp).
+ */
+export const archive = mutation({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertCanArchive(user, bug);
+
+    const now = Date.now();
+    if (!bug.archivedAt) {
+      await ctx.db.patch(args.id, { archivedAt: now, updatedAt: now });
+      await insertThreadMessage(
+        ctx,
+        args.id,
+        "system",
+        "Conversation archived — set aside by the contributor.",
+      );
+    }
+    return { ok: true };
+  },
+});
+
+/** Restore an archived conversation back into the active dashboard. */
+export const unarchive = mutation({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertCanArchive(user, bug);
+
+    if (bug.archivedAt) {
+      const now = Date.now();
+      await ctx.db.patch(args.id, { archivedAt: undefined, updatedAt: now });
+      await insertThreadMessage(ctx, args.id, "system", "Conversation restored.");
+    }
+    return { ok: true };
+  },
+});
+
 // ============================================================================
 // Conversation thread (ADR-029 Phase 1.5)
 // ============================================================================

@@ -147,6 +147,13 @@ export function conversationDotColor(
   return PALETTE.aiWorking;
 }
 
+/** The contributor set this conversation aside (abandoned / not doable). */
+export function isArchived(
+  contribution: Pick<Contribution, "archivedAt">,
+): boolean {
+  return !!contribution.archivedAt;
+}
+
 /** Conversational display title — the AI's friendly title when it exists. */
 export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle">): string {
   return contribution.aiTitle ?? contribution.title;

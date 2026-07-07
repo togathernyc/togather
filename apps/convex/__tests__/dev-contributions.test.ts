@@ -3321,3 +3321,108 @@ describe("review-cycle hardening", () => {
     expect(bug?.splitSlices).toEqual(slices);
   });
 });
+
+/**
+ * Archive / unarchive (ADR-029): a contributor sets a conversation aside
+ * (abandoned or not doable) and can restore it. Orthogonal to the pipeline
+ * status; originator-only (plus staff/superuser).
+ */
+describe("archive / unarchive", () => {
+  test("archive stamps archivedAt + a system turn, and is idempotent", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Abandon me." },
+    );
+
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeTruthy();
+    const firstStamp = bug!.archivedAt;
+
+    // Re-archiving is a no-op: keeps the first stamp, no duplicate system turn.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBe(firstStamp);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const archiveMsgs = thread.filter((m) => m.body.includes("archived"));
+    expect(archiveMsgs).toHaveLength(1);
+  });
+
+  test("unarchive clears archivedAt and restores the conversation", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Set aside then bring back." },
+    );
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    await t.mutation(api.functions.devAssistant.contributions.unarchive, {
+      token: maintainerId,
+      id,
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeUndefined();
+  });
+
+  test("only the originator (or staff) can archive; other maintainers cannot", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId, otherMaintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    // A second non-staff maintainer who is NOT the originator.
+    const now = Date.now();
+    const strangerId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Stan",
+        lastName: "Stranger",
+        platformRoles: ["dev_maintainer"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Mine to archive." },
+    );
+
+    // A non-owner, non-staff maintainer is refused.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.archive, {
+        token: strangerId,
+        id,
+      }),
+    ).rejects.toThrow(/Only the person who started this/);
+
+    // A staff maintainer (otherMaintainerId isStaff) may archive to tidy up.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: otherMaintainerId,
+      id,
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeTruthy();
+  });
+});

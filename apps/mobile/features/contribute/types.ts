@@ -78,6 +78,8 @@ export interface Contribution {
   prUrl?: string;
   githubIssueUrl?: string;
   screenshotUrls?: string[];
+  /** Set when the contributor set the conversation aside (abandoned/not doable). */
+  archivedAt?: number;
   createdAt: number;
   updatedAt: number;
   shippedAt?: number;

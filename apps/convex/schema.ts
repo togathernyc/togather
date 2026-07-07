@@ -2213,6 +2213,11 @@ export default defineSchema({
     githubIssueNumber: v.optional(v.number()),
     githubIssueUrl: v.optional(v.string()),
     shippedAt: v.optional(v.number()), // set when status reaches MERGED
+    // Contributor set the conversation aside (abandoned it, or the scope was
+    // judged not doable) — ADR-029. Orthogonal to `status`: an item can be
+    // archived from any pipeline state and unarchived to restore it. Archived
+    // items drop out of the active dashboard tabs into an "Archived" view.
+    archivedAt: v.optional(v.number()),
 
     prUrl: v.optional(v.string()),
     reviewLink: v.optional(v.string()),

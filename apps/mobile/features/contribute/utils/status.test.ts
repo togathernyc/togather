@@ -2,7 +2,7 @@
  * Unit tests for the contribution status helpers — focused on isInProgress,
  * which powers the "In progress" tab (ADR-029 follow-up).
  */
-import { isInProgress, isYourTurn } from "./status";
+import { isArchived, isInProgress, isYourTurn } from "./status";
 import type { Contribution } from "../types";
 
 type StatusInput = Pick<
@@ -78,5 +78,13 @@ describe("isInProgress", () => {
     });
     expect(isYourTurn(approved)).toBe(true);
     expect(isInProgress(approved)).toBe(false);
+  });
+});
+
+describe("isArchived", () => {
+  it("is true only when archivedAt is set", () => {
+    expect(isArchived({})).toBe(false);
+    expect(isArchived({ archivedAt: undefined })).toBe(false);
+    expect(isArchived({ archivedAt: 123 })).toBe(true);
   });
 });
