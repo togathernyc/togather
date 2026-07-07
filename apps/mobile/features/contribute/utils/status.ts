@@ -79,6 +79,25 @@ export function isYourTurn(
   return needsSpecApproval(contribution) || needsStagingVerify(contribution);
 }
 
+/**
+ * True when the item is actively being worked on by the AI/pipeline — the
+ * contributor "fired it off" and it's moving, not waiting on them and not
+ * finished. Powers the "In progress" tab. Rejected/closed items and anything
+ * awaiting the contributor (spec approval, staging check) are excluded.
+ */
+export function isInProgress(
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >,
+): boolean {
+  return (
+    !isYourTurn(contribution) &&
+    contribution.status !== "MERGED" &&
+    contribution.status !== "REJECTED"
+  );
+}
+
 /** Conversation-list dot color: purple = your turn, amber = AI working, green = shipped. */
 export function conversationDotColor(
   contribution: Pick<

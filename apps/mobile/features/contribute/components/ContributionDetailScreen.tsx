@@ -29,6 +29,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from "expo-clipboard";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Markdown } from "@components/ui/Markdown";
@@ -37,6 +38,7 @@ import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
 import { useThread } from "../hooks/useThread";
+import { useImageAttachments } from "../hooks/useImageAttachments";
 import {
   useApproveSpec,
   useConfirmStaging,
@@ -52,9 +54,10 @@ import {
   needsStagingVerify,
   PALETTE,
 } from "../utils/status";
+import { AttachmentStrip } from "./AttachmentStrip";
 import { FromChatTag, KindPill, RiskBadge, StatusChip } from "./ContributionBadges";
 import { SystemCaption, ThreadMessageBubble, UserBubble } from "./ThreadBubbles";
-import type { Contribution } from "../types";
+import type { Contribution, SplitSlice } from "../types";
 
 /**
  * The latest AI plan, rendered once at the bottom of the thread. When the AI
@@ -103,6 +106,80 @@ function SpecCard({ contribution }: { contribution: Contribution }) {
   );
 }
 
+/** One proposed slice with a button that copies its build prompt. */
+function SliceRow({ slice, index }: { slice: SplitSlice; index: number }) {
+  const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await Clipboard.setStringAsync(slice.prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      Alert.alert("Couldn't copy", formatError(error));
+    }
+  }, [slice.prompt]);
+
+  return (
+    <View style={[styles.sliceRow, { borderColor: colors.border }]}>
+      <Text style={[styles.sliceTitle, { color: colors.text }]}>
+        {index + 1}. {slice.title}
+      </Text>
+      <TouchableOpacity
+        style={[styles.copyButton, { borderColor: primaryColor }]}
+        onPress={handleCopy}
+        activeOpacity={0.7}
+        accessibilityLabel={`Copy build prompt for ${slice.title}`}
+      >
+        <Ionicons
+          name={copied ? "checkmark" : "copy-outline"}
+          size={15}
+          color={primaryColor}
+        />
+        <Text style={[styles.copyButtonText, { color: primaryColor }]}>
+          {copied ? "Copied" : "Copy prompt"}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+/**
+ * For a "split" item: the buildable slices the AI proposed, each with a
+ * copy-the-prompt button so a maintainer can paste it straight into a fresh
+ * dev session and build that slice on its own.
+ */
+function SplitSlicesCard({ contribution }: { contribution: Contribution }) {
+  const { colors } = useTheme();
+  const slices = contribution.splitSlices;
+  if (!slices || slices.length === 0) return null;
+
+  return (
+    <View
+      style={[
+        styles.specCard,
+        { backgroundColor: colors.surface, borderColor: PALETTE.aiWorking },
+      ]}
+    >
+      <View style={styles.specHeader}>
+        <Ionicons name="albums-outline" size={16} color={PALETTE.aiWorking} />
+        <Text style={[styles.specHeaderText, { color: PALETTE.aiWorking }]}>
+          Build it in {slices.length} pieces
+        </Text>
+      </View>
+      <Text style={[styles.specSubtitle, { color: colors.textSecondary }]}>
+        Copy any piece's prompt and paste it into a new dev session to build
+        that piece on its own.
+      </Text>
+      {slices.map((slice, index) => (
+        <SliceRow key={index} slice={slice} index={index} />
+      ))}
+    </View>
+  );
+}
+
 export function ContributionDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -129,6 +206,7 @@ export function ContributionDetailScreen() {
   const [issueMode, setIssueMode] = useState(false);
   const [issueNote, setIssueNote] = useState("");
   const scrollRef = useRef<ScrollView>(null);
+  const images = useImageAttachments();
 
   const handleApprove = useCallback(() => {
     if (!id) return;
@@ -195,21 +273,28 @@ export function ContributionDetailScreen() {
   }, [id, issueNote, reportStagingIssue]);
 
   const handleSend = useCallback(async () => {
-    if (!id || sending) return;
+    if (!id || sending || images.uploading) return;
     const body = draft.trim();
-    if (!body) return;
+    const imageUrls = images.storagePaths;
+    // A picture-only message is valid; require text otherwise.
+    if (!body && imageUrls.length === 0) return;
     // Optimistic clear — restore the draft if the send fails.
     setDraft("");
+    images.reset();
     setSending(true);
     try {
-      await postMessage({ id, body });
+      await postMessage({
+        id,
+        body,
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+      });
     } catch (error) {
       setDraft(body);
       Alert.alert("Couldn't send", formatError(error));
     } finally {
       setSending(false);
     }
-  }, [id, draft, sending, postMessage]);
+  }, [id, draft, sending, postMessage, images]);
 
   /**
    * The original report opens the thread. The backend may also seed it as the
@@ -273,6 +358,13 @@ export function ContributionDetailScreen() {
       : null
     : "Notes here are saved to the conversation for the team — the AI builder doesn't read them mid-build";
 
+  // Send is enabled with text OR at least one uploaded picture, and never
+  // while a picture is still uploading.
+  const canSend =
+    (draft.trim().length > 0 || images.storagePaths.length > 0) &&
+    !sending &&
+    !images.uploading;
+
   const reportBody = contribution.repro
     ? `${contribution.body}\n\nHow to see it: ${contribution.repro}`
     : contribution.body;
@@ -309,7 +401,12 @@ export function ContributionDetailScreen() {
           <UserBubble body={reportBody} createdAt={contribution.createdAt} />
         ) : null}
 
-        {contribution.screenshotUrls && contribution.screenshotUrls.length > 0 ? (
+        {/* Chat-originated items keep resolved screenshot URLs on the row;
+            dashboard items show their pictures inline in the thread bubbles
+            (the opening message carries them), so only render this for chat. */}
+        {isFromChat(contribution) &&
+        contribution.screenshotUrls &&
+        contribution.screenshotUrls.length > 0 ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -334,6 +431,8 @@ export function ContributionDetailScreen() {
         ) : null}
 
         {contribution.spec ? <SpecCard contribution={contribution} /> : null}
+
+        <SplitSlicesCard contribution={contribution} />
 
         {showApproveSpec ? (
           <View style={styles.actionBlock}>
@@ -514,6 +613,11 @@ export function ContributionDetailScreen() {
           {composerHint}
         </Text>
       ) : null}
+      {images.attachments.length > 0 ? (
+        <View style={styles.composerAttachments}>
+          <AttachmentStrip attachments={images.attachments} onRemove={images.remove} />
+        </View>
+      ) : null}
       <View
         style={[
           styles.composer,
@@ -524,6 +628,14 @@ export function ContributionDetailScreen() {
           },
         ]}
       >
+        <TouchableOpacity
+          style={styles.attachIcon}
+          onPress={images.pick}
+          activeOpacity={0.7}
+          accessibilityLabel="Attach a picture"
+        >
+          <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.composerInput,
@@ -542,10 +654,10 @@ export function ContributionDetailScreen() {
           style={[
             styles.sendButton,
             { backgroundColor: primaryColor },
-            (!draft.trim() || sending) && styles.buttonDisabled,
+            !canSend && styles.buttonDisabled,
           ]}
           onPress={handleSend}
-          disabled={!draft.trim() || sending}
+          disabled={!canSend}
           activeOpacity={0.8}
           accessibilityLabel="Send message"
         >
@@ -601,6 +713,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   specSubtitle: { fontSize: 13, lineHeight: 19 },
+  sliceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 10,
+    marginTop: 2,
+  },
+  sliceTitle: { flex: 1, fontSize: 14, fontWeight: "600" },
+  copyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 9,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+  },
+  copyButtonText: { fontSize: 13, fontWeight: "600" },
   hint: { fontSize: 13, lineHeight: 19 },
   actionBlock: { marginTop: 14, gap: 10 },
   primaryButton: {
@@ -656,6 +788,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 4,
   },
+  composerAttachments: { paddingHorizontal: 12 },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -663,6 +796,14 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 12,
     paddingTop: 8,
+  },
+  attachIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 1,
   },
   composerInput: {
     flex: 1,
