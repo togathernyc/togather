@@ -149,10 +149,14 @@ and test adequacy. Then adversarially verify every finding with a skeptic
 pass — a finding survives only if it holds up against an attempt to refute
 it.
 
-Post the surviving findings on GitHub as a real PR review with inline
-comments on the relevant lines (summary comment for anything that doesn't
-anchor to a line), so the review trail is public on the PR. You post from
-the reviewer account — never author code or push from this Routine.
+Post the surviving findings on GitHub as inline PR comments on the
+relevant lines (summary comment for anything that doesn't anchor to a
+line), so the review trail is public on the PR. If a reviewer PAT is
+provided in your instructions, also submit a formal review
+(approve/request-changes) using it via GH_TOKEN; without one, skip the
+formal review — GitHub forbids approving your own PR, and the verdict
+reaches the dashboard through the callback either way. Never author code
+or push from a review run.
 
 Verdict: "approved" only if no surviving finding would block a merge;
 otherwise "changes_requested". Scale scrutiny to riskLevel — low is a
@@ -180,9 +184,13 @@ when/if the split happens. Paste, in order:
    - otherwise → follow the IMPLEMENT instructions below
    ```
 3. All three Routine blocks, labeled SPEC / IMPLEMENT / REVIEW.
-4. In the REVIEW block's context, the reviewer account's PAT with a hard
-   rule: post PR reviews with `GH_TOKEN=<reviewer-pat>` — GitHub rejects
-   reviews from the PR's own author.
+4. Optional: a reviewer PAT (from the Phase 2 bot account, Pull requests
+   read/write) in the REVIEW block so formal approve/request-changes
+   reviews post from a non-author identity. Without it, review findings
+   still post as inline comments (allowed on your own PR) and the verdict
+   reaches the dashboard via the callback — a formal GitHub approval only
+   becomes load-bearing if branch protection ever requires approving
+   reviews (e.g. for Phase 3 auto-merge).
 
 Trade-off vs. three Routines: least-privilege credential separation becomes
 a prompt rule instead of a hard boundary, and the longer prompt slightly
@@ -191,11 +199,13 @@ set the per-mode env vars.
 
 ## Operational notes
 
-- **Two GitHub identities are required**: the implementer (authors commits,
-  opens PRs) and the reviewer (posts PR reviews). GitHub rejects
-  approve/request-changes reviews from a PR's own author. The reviewer can
-  be the same bot account that holds the Phase 2 mirror PAT — its PAT then
-  needs **Pull requests: read/write** in addition to Issues.
+- **Reviewer identity**: GitHub rejects approve/request-changes reviews from
+  a PR's own author, but inline comments on your own PR are fine. So a
+  second identity is OPTIONAL — without one, findings post as comments and
+  the verdict lives in the dashboard. When the Phase 2 bot account exists,
+  give its PAT **Pull requests: read/write** (in addition to Issues) and
+  formal reviews post from it. Required only once branch protection demands
+  approving reviews (Phase 3 auto-merge).
 - The Convex side auto-dispatches the review Routine when an implementation
   callback reports `CODE_REVIEW` with a `prUrl` — no human trigger needed.
 - Until the three-Routine split is done, one Routine with all three prompt
