@@ -70,6 +70,23 @@ They need:
 - Depending on what the user is asking, use the relevant keys from the relevant environment (dev, staging, prod)
 - Typically you will only make dev or staging related changes, double check if any action you take will affect production
 
+### Secret Update Flow
+Secrets flow **1Password → GitHub → Convex/Expo** — never shortcut either hop.
+See the full "Secret Update Flow" section in `docs/secrets.md` for the why and
+the step-by-step. In short:
+- **1Password is the source of truth.** Set/rotate the value there, never
+  directly in the GitHub UI (GitHub secrets are write-only; you can't read them
+  back, and the next sync overwrites manual edits).
+- **Don't push 1Password → Convex/Expo directly** — every deploy re-syncs all
+  secrets and would hit 1Password rate limits. GitHub is the buffer.
+- To add a new secret: (1) add the item to 1Password vault `Togather` with
+  `staging`/`production` fields; (2) add `<KEY>` to the allowlist array in
+  `ee/scripts/sync-1password-to-github.sh` (a key not listed is never synced);
+  (3) **only if a Convex function needs it**, also add it to `SECRET_KEYS` in
+  `ee/scripts/sync-secrets-to-convex.sh` — CI-only tokens stop at GitHub;
+  (4) run `gh workflow run sync-secrets.yml -f environment=both` to push it to
+  GitHub; deploys forward it onward.
+
 ### Agent Backend Selection (Maintainer CI Agents Only)
 
 This section applies **only** to Cursor Cloud Agents and similar CI agents run by project maintainers. Open-source contributors should ignore this section — you create your own personal Convex deployment via `npx convex dev` (see "Helping New Developers Onboard" above).
