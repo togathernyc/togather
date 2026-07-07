@@ -209,6 +209,10 @@ export default defineSchema({
     bio: v.optional(v.string()),
     instagramHandle: v.optional(v.string()),
     linkedinHandle: v.optional(v.string()),
+    // Self-entered GitHub username for contributor attribution (ADR-029
+    // Phase 2). Honor-system, not OAuth-verified — it only feeds the
+    // Co-authored-by trailer on dev-dashboard PRs, never authentication.
+    githubUsername: v.optional(v.string()),
     birthdayMonth: v.optional(v.number()), // 1–12
     birthdayDay: v.optional(v.number()), // 1–31
     location: v.optional(v.string()),
@@ -2133,8 +2137,11 @@ export default defineSchema({
   // the PR tracks code. Each transition posts a bot message into the thread.
   // Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
   devBugs: defineTable({
-    communityId: v.id("communities"),
-    channelId: v.id("chatChannels"),
+    // Chat-originated items carry the originating community/channel/thread.
+    // Dashboard-originated items (contributor dev dashboard, ADR-029) are
+    // platform-level and have none of the three.
+    communityId: v.optional(v.id("communities")),
+    channelId: v.optional(v.id("chatChannels")),
     // All bot replies/callbacks post into this thread (the root message).
     threadRootMessageId: v.optional(v.id("chatMessages")),
     originatorUserId: v.id("users"),
@@ -2155,9 +2162,68 @@ export default defineSchema({
     repro: v.optional(v.string()),
     screenshotUrls: v.optional(v.array(v.string())), // pulled from thread image attachments
 
+    // Contributor dev dashboard (ADR-029). All optional for backward compat;
+    // pre-existing rows are chat-originated bugs.
+    kind: v.optional(v.union(v.literal("bug"), v.literal("feature"))), // default "bug"
+    source: v.optional(v.union(v.literal("chat"), v.literal("dashboard"))),
+    riskLevel: v.optional(
+      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    ),
+    spec: v.optional(v.string()), // AI-drafted spec, markdown
+    specApprovedAt: v.optional(v.number()), // contributor sign-off
+
+    // AI triage fields (ADR-029 Phase 1.5), delivered by the spec-mode routine
+    // via the signed callback alongside spec/riskLevel.
+    aiTitle: v.optional(v.string()), // short imperative headline
+    area: v.optional(v.string()), // "events" | "chat" | "groups" | "prayer" | "settings" | "other"
+    // "buildable" = one pipeline run; "split" = too big, spec proposes slices;
+    // "design_needed" = a maintainer must make architectural decisions first.
+    // Non-buildable items cannot be spec-approved (see approveSpec).
+    scope: v.optional(
+      v.union(
+        v.literal("buildable"),
+        v.literal("split"),
+        v.literal("design_needed"),
+      ),
+    ),
+    // True for anything interactive — the originator is asked to verify the
+    // change on staging before merge; false for pure copy/color tweaks.
+    verifyOnStaging: v.optional(v.boolean()),
+    stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
+    // AI review cycle: verdict reported by the review-mode routine via the
+    // signed callback after it reviews the PR ("approved" promotes the bug to
+    // READY_TO_MERGE; "changes_requested" leaves it in CODE_REVIEW). Cleared
+    // whenever the bug genuinely (re-)enters CODE_REVIEW so a stale verdict
+    // never lingers on a new PR revision.
+    reviewVerdict: v.optional(
+      v.union(v.literal("approved"), v.literal("changes_requested")),
+    ),
+    reviewSummary: v.optional(v.string()),
+    // Count of auto-fix dispatches (ADR-029 Phase 3 review→fix→re-review
+    // loop). Capped at 3 — after that a changes_requested verdict escalates
+    // to a human instead of dispatching another fix run.
+    fixRounds: v.optional(v.number()),
+    githubIssueNumber: v.optional(v.number()),
+    githubIssueUrl: v.optional(v.string()),
+    shippedAt: v.optional(v.number()), // set when status reaches MERGED
+
     prUrl: v.optional(v.string()),
     reviewLink: v.optional(v.string()),
     routineRunId: v.optional(v.string()), // we generate; routine echoes on callbacks
+    // Mode the in-flight Routine run (the one holding routineRunId) was
+    // dispatched in. Stamped by the mark*Dispatched mutations; applyCallback
+    // restricts what each mode's callback may deliver (e.g. only review runs
+    // carry a review verdict). Unset on legacy rows dispatched before the
+    // stamping existed — those get the permissive legacy callback policy
+    // (minus MERGED, which is webhook/auto-merge-only).
+    activeRunMode: v.optional(
+      v.union(
+        v.literal("spec"),
+        v.literal("implement"),
+        v.literal("review"),
+        v.literal("fix"),
+      ),
+    ),
     dispatchedAt: v.optional(v.number()),
     lastCallbackAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
@@ -2169,6 +2235,24 @@ export default defineSchema({
     .index("by_channel", ["channelId"])
     .index("by_originator", ["originatorUserId"])
     .index("by_routineRunId", ["routineRunId"]),
+
+  /**
+   * Conversation thread on a devBugs item (contributor dev dashboard,
+   * ADR-029 Phase 1.5). Every contribution is a conversation with the AI:
+   * the submitted report is the first "user" message, spec drafts arrive as
+   * "assistant" messages, and lifecycle transitions post "system" messages.
+   */
+  devBugMessages: defineTable({
+    bugId: v.id("devBugs"),
+    authorType: v.union(
+      v.literal("user"),
+      v.literal("assistant"),
+      v.literal("system"),
+    ),
+    userId: v.optional(v.id("users")), // set when authorType === "user"
+    body: v.string(),
+    createdAt: v.number(),
+  }).index("by_bug", ["bugId", "createdAt"]),
 
   // =============================================================================
 

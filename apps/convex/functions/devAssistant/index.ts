@@ -12,10 +12,13 @@
  *
  * - bugs.ts        — devBugs DB ops + token-authed review-screen queries
  * - maintainers.ts — dev_maintainer role grants + trigger-access helpers
+ * - contributions.ts — contributor dev dashboard surface (ADR-029): dashboard
+ *   submissions, spec approval, and risk-gated build dispatch
  * - agent.ts    — OpenAI tool-use loop (gpt-4o, vision for screenshots)
  * - tools.ts    — tool definitions + dispatcher
  * - prompts.ts  — brief-synthesis system prompt
- * - actions.ts  — processThreadMention / dispatchBug / handleRoutineCallback
+ * - actions.ts  — processThreadMention / dispatchBug / dispatchSpec /
+ *   dispatchReview / dispatchFix / attemptAutoMerge / handleRoutineCallback
  *
  * The inbound callback HTTP route lives in apps/convex/http.ts.
  */

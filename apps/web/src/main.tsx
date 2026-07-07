@@ -7,6 +7,7 @@ import { PrivacyPolicy } from './pages/PrivacyPolicy.tsx'
 import { TermsOfService } from './pages/TermsOfService.tsx'
 import { AndroidDownload } from './pages/AndroidDownload.tsx'
 import { Contribute } from './pages/Contribute.tsx'
+import { ContributeAI } from './pages/ContributeAI.tsx'
 import { ReportIssue } from './pages/ReportIssue.tsx'
 import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
 import { Developers } from './pages/Developers.tsx'
@@ -31,6 +32,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/android" element={<AndroidDownload />} />
         <Route path="/android-staging" element={<AndroidDownload variant="staging" />} />
         <Route path="/contribute" element={<Contribute />} />
+        <Route path="/contribute/ai" element={<ContributeAI />} />
         <Route path="/issue" element={<ReportIssue />} />
         <Route path="/guides" element={<Guides />} />
         <Route path="/guides/create-your-community" element={<CreateCommunity />} />

@@ -1019,12 +1019,21 @@ async function verifyDevAssistantSignature(
 }
 
 const DEV_ASSISTANT_CALLBACK_STATUSES = [
+  // Spec-drafting mode (ADR-029): the routine delivers `spec` (+ `riskLevel`)
+  // and moves a dashboard contribution DRAFT -> IN_REVIEW.
+  "IN_REVIEW",
   "IN_PROGRESS",
   "CODE_REVIEW",
   "READY_TO_MERGE",
   "MERGED",
   "REJECTED",
 ];
+
+const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
+
+const DEV_ASSISTANT_SCOPES = ["buildable", "split", "design_needed"];
+
+const DEV_ASSISTANT_REVIEW_VERDICTS = ["approved", "changes_requested"];
 
 /**
  * POST /dev-assistant/callback
@@ -1034,7 +1043,13 @@ const DEV_ASSISTANT_CALLBACK_STATUSES = [
  * applies the transition + posts a bot message into the thread). Returns 200
  * fast — chat fanout and idempotency are handled downstream.
  *
- * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[], message? }
+ * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[],
+ *         message?, spec?, riskLevel?, aiTitle?, area?, scope?,
+ *         verifyOnStaging?, reviewVerdict?, reviewSummary? }
+ *
+ * Review-mode runs report `reviewVerdict` ("approved" | "changes_requested")
+ * plus a short `reviewSummary` against status CODE_REVIEW; an approved
+ * verdict advances the bug to READY_TO_MERGE downstream.
  */
 http.route({
   path: "/dev-assistant/callback",
@@ -1065,6 +1080,14 @@ http.route({
       prUrl?: string;
       screenshots?: string[];
       message?: string;
+      spec?: string;
+      riskLevel?: string;
+      aiTitle?: string;
+      area?: string;
+      scope?: string;
+      verifyOnStaging?: boolean;
+      reviewVerdict?: string;
+      reviewSummary?: string;
     };
     try {
       payload = JSON.parse(body);
@@ -1072,12 +1095,60 @@ http.route({
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    const { bugId, routineRunId, status, prUrl, screenshots, message } = payload;
+    const {
+      bugId,
+      routineRunId,
+      status,
+      prUrl,
+      screenshots,
+      message,
+      spec,
+      riskLevel,
+      aiTitle,
+      area,
+      scope,
+      verifyOnStaging,
+      reviewVerdict,
+      reviewSummary,
+    } = payload;
     if (!bugId || !routineRunId || !status) {
       return new Response("Missing bugId, routineRunId, or status", { status: 400 });
     }
     if (!DEV_ASSISTANT_CALLBACK_STATUSES.includes(status)) {
       return new Response(`Unsupported status: ${status}`, { status: 400 });
+    }
+    if (spec !== undefined && typeof spec !== "string") {
+      return new Response("Invalid spec: must be a string", { status: 400 });
+    }
+    if (riskLevel !== undefined && !DEV_ASSISTANT_RISK_LEVELS.includes(riskLevel)) {
+      return new Response(`Unsupported riskLevel: ${riskLevel}`, { status: 400 });
+    }
+    if (aiTitle !== undefined && typeof aiTitle !== "string") {
+      return new Response("Invalid aiTitle: must be a string", { status: 400 });
+    }
+    if (area !== undefined && typeof area !== "string") {
+      return new Response("Invalid area: must be a string", { status: 400 });
+    }
+    if (scope !== undefined && !DEV_ASSISTANT_SCOPES.includes(scope)) {
+      return new Response(`Unsupported scope: ${scope}`, { status: 400 });
+    }
+    if (verifyOnStaging !== undefined && typeof verifyOnStaging !== "boolean") {
+      return new Response("Invalid verifyOnStaging: must be a boolean", {
+        status: 400,
+      });
+    }
+    if (
+      reviewVerdict !== undefined &&
+      !DEV_ASSISTANT_REVIEW_VERDICTS.includes(reviewVerdict)
+    ) {
+      return new Response(`Unsupported reviewVerdict: ${reviewVerdict}`, {
+        status: 400,
+      });
+    }
+    if (reviewSummary !== undefined && typeof reviewSummary !== "string") {
+      return new Response("Invalid reviewSummary: must be a string", {
+        status: 400,
+      });
     }
 
     await ctx.scheduler.runAfter(
@@ -1087,6 +1158,7 @@ http.route({
         bugId: bugId as Id<"devBugs">,
         routineRunId,
         status: status as
+          | "IN_REVIEW"
           | "IN_PROGRESS"
           | "CODE_REVIEW"
           | "READY_TO_MERGE"
@@ -1095,6 +1167,151 @@ http.route({
         prUrl,
         screenshots,
         message,
+        spec,
+        riskLevel: riskLevel as "low" | "medium" | "high" | undefined,
+        aiTitle,
+        area,
+        scope: scope as "buildable" | "split" | "design_needed" | undefined,
+        verifyOnStaging,
+        reviewVerdict: reviewVerdict as
+          | "approved"
+          | "changes_requested"
+          | undefined,
+        reviewSummary,
+      }
+    );
+
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// ============================================================================
+// GitHub Webhook (ADR-029 Phase 2)
+// ============================================================================
+
+/**
+ * Verify a GitHub webhook signature (`X-Hub-Signature-256`) using the Web
+ * Crypto API — same HMAC-SHA256 + constant-time-compare pattern as the Stripe
+ * handler. GitHub sends `sha256=<hex digest of the raw body>`.
+ */
+async function verifyGithubSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const prefix = "sha256=";
+    if (!signature.startsWith(prefix)) return false;
+    const provided = signature.slice(prefix.length).toLowerCase();
+
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBytes = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(payload)
+    );
+    const computedSig = Array.from(new Uint8Array(signatureBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    return timingSafeEqual(provided, computedSig);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * POST /github/webhook
+ *
+ * Inbound GitHub webhook for the contributor dev dashboard (ADR-029 Phase 2).
+ * Replaces polling: a merged PR flips the correlated devBug to MERGED (+
+ * shippedAt, thread message, push) even when the merge happened directly on
+ * GitHub; a PR closed without merging flags the item for a maintainer.
+ *
+ * Only `pull_request` events with action "closed" do anything — everything
+ * else (ping, other events, other actions) returns 200 "ignored" fast.
+ * Correlation to a devBug happens in the scheduled internalMutation
+ * (handleGithubPrClosed): primarily by the Routine's `claude/devbug-<bugId>`
+ * head-branch convention, falling back to matching html_url against stored
+ * prUrl. Responds 200 immediately after scheduling (async-schedule-then-200,
+ * like the Slack handler).
+ */
+http.route({
+  path: "/github/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.text();
+
+    // Falls back to the dev-assistant callback secret so a single shared
+    // secret can serve both inbound channels; set GITHUB_WEBHOOK_SECRET to
+    // split them without a code change.
+    const secret =
+      process.env.GITHUB_WEBHOOK_SECRET ??
+      process.env.DEV_ASSISTANT_CALLBACK_SECRET;
+    if (!secret) {
+      console.error("[GithubWebhook] GITHUB_WEBHOOK_SECRET not configured");
+      return new Response("GitHub webhook not configured", { status: 503 });
+    }
+
+    const signature = request.headers.get("x-hub-signature-256");
+    if (!signature) {
+      return new Response("Missing x-hub-signature-256 header", {
+        status: 401,
+      });
+    }
+    const isValid = await verifyGithubSignature(body, signature, secret);
+    if (!isValid) {
+      console.error("[GithubWebhook] Invalid signature");
+      return new Response("Invalid signature", { status: 401 });
+    }
+
+    // Only closed pull requests matter; ack everything else immediately.
+    const event = request.headers.get("x-github-event");
+    if (event !== "pull_request") {
+      return new Response("ignored", { status: 200 });
+    }
+
+    let payload: {
+      action?: string;
+      pull_request?: {
+        merged?: boolean;
+        html_url?: string;
+        head?: { ref?: string };
+      };
+    };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+
+    if (payload.action !== "closed") {
+      return new Response("ignored", { status: 200 });
+    }
+
+    const pr = payload.pull_request;
+    const branchRef = pr?.head?.ref;
+    if (!pr || typeof pr.merged !== "boolean" || typeof branchRef !== "string") {
+      return new Response("Invalid pull_request payload", { status: 400 });
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.bugs.handleGithubPrClosed,
+      {
+        branchRef,
+        prUrl: typeof pr.html_url === "string" ? pr.html_url : undefined,
+        merged: pr.merged,
       }
     );
 

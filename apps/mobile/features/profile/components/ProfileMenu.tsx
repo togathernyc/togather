@@ -7,6 +7,7 @@ import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
+import { useDevAccess } from '@features/contribute/hooks/useDevAccess';
 
 export function ProfileMenu() {
   const router = useRouter();
@@ -25,6 +26,9 @@ export function ProfileMenu() {
     api.functions.tasks.index.hasLeaderAccess,
     community?.id ? { communityId: community.id as Id<"communities"> } : "skip"
   );
+  // Contributor dev dashboard (ADR-029) — hidden unless the dev-assistant
+  // maintainer check admits this user.
+  const { hasAccess: hasDevAccess } = useDevAccess();
 
   const handleSwitchCommunity = async () => {
     try {
@@ -128,6 +132,25 @@ export function ProfileMenu() {
               <Ionicons name="heart-outline" size={20} color={colors.text} />
             </View>
             <Text style={[styles.menuText, { color: colors.text }]}>My Prayers</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
+          </TouchableOpacity>
+        ) : null}
+
+        {hasDevAccess ? (
+          <TouchableOpacity
+            style={[styles.menuItem, { borderBottomColor: colors.border }]}
+            onPress={() => router.push('/(user)/contribute')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="construct-outline" size={20} color={colors.text} />
+            </View>
+            <View style={styles.menuTextContainer}>
+              <Text style={[styles.menuText, { color: colors.text }]}>Dev Dashboard</Text>
+              <Text style={[styles.menuSubtext, { color: colors.textTertiary }]}>
+                Help build Togather
+              </Text>
+            </View>
             <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           </TouchableOpacity>
         ) : null}

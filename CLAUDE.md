@@ -127,7 +127,7 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - **Always create a PR** - Even for small changes
 - PRs require passing CI and **all conversations resolved** before merge
 - The workflow is: `feature branch` -> PR -> `main`
-- **Code review is by @codex** — after opening a PR, post a `@codex please review` comment to trigger the review. The review doesn't run automatically.
+- **Code review is by Claude review agents, visible on GitHub** — every PR is reviewed by parallel AI subagents (correctness, security, spec-fidelity, tests) whose adversarially-verified findings are posted as real PR review comments, so the review trail lives on the PR. Dev-dashboard PRs dispatch this review automatically when the PR opens (see `docs/dev-assistant/ROUTINE-PROMPT.md`); for hand-opened PRs, trigger the review Routine manually or ask a Claude session to review with inline comments. Findings must be fixed or their threads explicitly resolved before merge (branch protection enforces this).
 
 ## Code Philosophy
 
