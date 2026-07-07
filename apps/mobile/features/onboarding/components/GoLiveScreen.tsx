@@ -3,8 +3,10 @@
  *
  * Route: /onboarding/go-live  (opened from the app-wide DemoBanner)
  *
- * Pricing is $1/month per active member: someone who opened the app in the
- * past 6 months and hasn't been manually marked inactive by an admin/leader.
+ * Pricing is $1/month per active member: someone who opened the app in this
+ * community within the past month (the same heuristic as the admin Stats
+ * "Active Members" card) and hasn't been manually marked inactive by an
+ * admin/leader.
  * The screen shows the current billable count and starts a Stripe checkout
  * (functions/ee/billing.convertDemoToLive). When the webhook confirms
  * payment, the community leaves demo mode and its 100 seeded demo members
@@ -167,10 +169,12 @@ export function GoLiveScreen() {
                   </Text>
                 </View>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                  An active member is someone who opened the app in the past 6
-                  months. Admins and group leaders can also mark people as
-                  inactive so you're never billed for them. Your bill adjusts
-                  automatically every month.
+                  An active member is someone who opened the app in your
+                  community within the past month — the same number as the
+                  Active Members card on your admin Stats tab. Admins and
+                  group leaders can also mark people as inactive so you're
+                  never billed for them. Your bill adjusts automatically every
+                  month.
                 </Text>
                 {monthlyPrice !== null && (
                   <View style={[styles.estimate, { borderTopColor: colors.borderLight }]}>

@@ -251,7 +251,11 @@ export default defineSchema({
     updatedAt: v.optional(v.number()), // Unix timestamp ms
     communityAnniversary: v.optional(v.number()), // Unix timestamp ms (date only)
     status: v.optional(v.number()), // Was: SmallInt
-    lastLogin: v.optional(v.number()), // Unix timestamp ms - updated when user switches to this community
+    // Unix timestamp ms — per-community activity: stamped on login, on
+    // switching to this community, and on app foreground while it's the
+    // active community (users.recordActivity). Drives the admin "Active
+    // Members" stat and per-active-user billing (functions/memberActivity.ts).
+    lastLogin: v.optional(v.number()),
     // External integrations - stores IDs from external systems per community membership
     // e.g., { planningCenterId: "12345" }
     externalIds: v.optional(
@@ -266,8 +270,8 @@ export default defineSchema({
     pcoPersonId: v.optional(v.string()),
     // Manual billing override for the per-active-user pricing model: admins
     // and leaders can mark a member inactive so they don't count toward the
-    // $1/month/active-user subscription even if they've opened the app
-    // recently. See functions/memberActivity.ts.
+    // $1/month/active-user subscription even if they opened the app this
+    // month. See functions/memberActivity.ts.
     billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])

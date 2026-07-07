@@ -121,9 +121,11 @@ export function CreateCommunity() {
         </P>
         <P>
           Pricing is simple: <Term>$1 per active member per month</Term>. An
-          active member is someone who has opened the app at least once in the
-          past 6 months. Your bill adjusts automatically every month as people
-          join, drift away, or come back.
+          active member is someone who opened the app in <em>your</em>{" "}
+          community within the past month — the same number as the{" "}
+          <Term>Active Members</Term> card on your admin Stats tab, so you can
+          always see exactly what you'll pay. Your bill adjusts automatically
+          every month as people join, drift away, or come back.
         </P>
         <Callout tone="tip" title="You control who counts">
           Admins and group leaders can mark anyone as inactive from their

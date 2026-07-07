@@ -1,13 +1,20 @@
 /**
  * Per-active-user billing activity.
  *
- * Togather bills $1/month per *billable active member* of a community. A
- * member is billable when all of these hold:
+ * Togather bills $1/month per *billable active member* of a community, using
+ * the same heuristic as the admin Stats "Active Members" card: people who
+ * opened the app in this community within the past month. Activity is
+ * per-community — userCommunities.lastLogin, stamped when the user logs in,
+ * switches to the community, or foregrounds the app while it's their active
+ * community (users.recordActivity) — so being active in one community never
+ * makes you billable in another.
+ *
+ * A member is billable when all of these hold:
  *   - their membership is active (userCommunities.status === 1),
  *   - they are a real account (not an isPlaceholder provisional/demo user),
- *   - they have opened the app in the past 6 months (users.lastActiveAt,
- *     with login/membership timestamps as fallback for accounts created
- *     before lastActiveAt existed or who just joined),
+ *   - they opened the app in this community within the past month
+ *     (membership.lastLogin, with membership.createdAt as the fallback so
+ *     brand-new joiners count),
  *   - no admin/leader has manually marked them inactive
  *     (userCommunities.billingInactive).
  *
@@ -25,8 +32,13 @@ import { now } from "../lib/utils";
 import { isCommunityAdmin } from "../lib/permissions";
 import { isLeaderRole } from "../lib/helpers";
 
-/** "Opened the app at least once in the past 6 months." */
-export const ACTIVITY_WINDOW_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+/**
+ * "Opened the app in this community within the past month" — the same
+ * 30-day window the admin Stats "Active Members" card uses
+ * (functions/admin/stats.ts), so the number admins see is the number
+ * they're billed for.
+ */
+export const ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Count the members of a community who count toward the per-active-user bill.
@@ -51,11 +63,10 @@ export async function countBillableActiveUsers(
     const user = await ctx.db.get(membership.userId);
     if (!user || user.isPlaceholder) continue;
 
-    // lastActiveAt is stamped on app foreground; older accounts and brand-new
-    // members may only have login/join timestamps, which still prove activity.
+    // Per-community activity only: membership.lastLogin is stamped on login,
+    // community switch, and app foreground (users.recordActivity). createdAt
+    // is the fallback so someone who just joined counts immediately.
     const lastActive = Math.max(
-      user.lastActiveAt ?? 0,
-      user.lastLogin ?? 0,
       membership.lastLogin ?? 0,
       membership.createdAt ?? 0,
     );

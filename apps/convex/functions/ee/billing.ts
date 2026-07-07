@@ -920,9 +920,9 @@ export const savePerUserBillingCount = internalMutation({
 
 /**
  * Monthly cron (see crons.ts): re-count each per-active-user community's
- * billable members — opened the app in the past 6 months, not manually marked
- * inactive, real accounts only — and update the Stripe subscription quantity
- * so the next invoice bills $1 per active member.
+ * billable members — opened the app in that community within the past month,
+ * not manually marked inactive, real accounts only — and update the Stripe
+ * subscription quantity so the next invoice bills $1 per active member.
  */
 export const syncPerUserSubscriptionQuantities = internalAction({
   args: {},

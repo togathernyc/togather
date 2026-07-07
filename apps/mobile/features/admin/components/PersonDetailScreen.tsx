@@ -467,7 +467,7 @@ export function PersonDetailScreen() {
                 <Text style={[styles.infoSubtext, { color: colors.textTertiary }]}>
                   {member.billing_inactive
                     ? "Excluded from the $1/month per-active-member bill."
-                    : "Billed at $1/month while they stay active."}
+                    : "Billed at $1/month in any month they open the app here."}
                 </Text>
               </View>
               <TouchableOpacity
