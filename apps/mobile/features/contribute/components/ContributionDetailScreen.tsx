@@ -39,6 +39,7 @@ import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
 import { useThread } from "../hooks/useThread";
 import { useImageAttachments } from "../hooks/useImageAttachments";
+import { useWebImagePaste } from "../hooks/useWebImagePaste";
 import {
   useApproveSpec,
   useArchiveContribution,
@@ -257,7 +258,11 @@ export function ContributionDetailScreen({
   const [issueMode, setIssueMode] = useState(false);
   const [issueNote, setIssueNote] = useState("");
   const scrollRef = useRef<ScrollView>(null);
+  const composerRef = useRef<TextInput>(null);
   const images = useImageAttachments();
+
+  // Web: paste a copied screenshot straight into the composer (matches chat).
+  useWebImagePaste(composerRef, images.addUris);
 
   const handleApprove = useCallback(async () => {
     if (!id) return;
@@ -777,6 +782,7 @@ export function ContributionDetailScreen({
           <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
         <TextInput
+          ref={composerRef}
           style={[
             styles.composerInput,
             {
