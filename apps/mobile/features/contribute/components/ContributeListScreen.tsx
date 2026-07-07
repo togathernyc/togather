@@ -66,7 +66,7 @@ const EMPTY_COPY: Record<Segment, { title: string; text: string }> = {
   },
   archived: {
     title: "Nothing archived",
-    text: "Conversations you set aside — abandoned, or not doable — land here. You can restore any of them.",
+    text: "Conversations set aside — abandoned, or not doable — land here. You can restore any of them.",
   },
 };
 

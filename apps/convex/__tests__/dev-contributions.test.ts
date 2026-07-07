@@ -3426,3 +3426,167 @@ describe("archive / unarchive", () => {
     expect(bug?.archivedAt).toBeTruthy();
   });
 });
+
+/**
+ * Archive pauses the pipeline (ADR-029, post-review): an archived item can't
+ * be approved/built and doesn't consume the AI, but system callbacks still
+ * land (archivedAt is orthogonal to status). Also covers the review's flagged
+ * auth/superuser gaps.
+ */
+describe("archive pauses the pipeline", () => {
+  test("approveSpec and startBuild are refused while archived", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    const id = await submitAndDeliverSpec(t, maintainerId, "medium");
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.approveSpec, {
+        token: maintainerId,
+        id,
+      }),
+    ).rejects.toThrow(/Restore this conversation/);
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.startBuild, {
+        token: maintainerId,
+        id,
+      }),
+    ).rejects.toThrow(/Restore this conversation/);
+  });
+
+  test("replying to an archived item records the note but doesn't re-fire the AI", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Abandon this." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const dispatchesBefore = fetchMock.mock.calls.length; // initial spec dispatch
+
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "Just a closing note.",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // No new dispatch fired for the archived reply.
+    expect(fetchMock.mock.calls.length).toBe(dispatchesBefore);
+    // ...but the note is in the thread.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.some((m) => m.body === "Just a closing note.")).toBe(true);
+  });
+
+  test("a routine callback still advances an archived in-flight item", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const now = Date.now();
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_PROGRESS",
+        kind: "bug",
+        source: "dashboard",
+        title: "Mid-build then archived",
+        body: "B",
+        spec: "## Plan",
+        riskLevel: "low",
+        routineRunId: "run-live",
+        activeRunMode: "implement",
+        archivedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-live",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/42",
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW"); // status advanced
+    expect(bug?.archivedAt).toBe(now); // still archived
+  });
+
+  test("unarchive is originator/staff-only, and a superuser may archive", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const now = Date.now();
+    const strangerId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Stan",
+        lastName: "Stranger",
+        platformRoles: ["dev_maintainer"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const superId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Sue",
+        lastName: "Super",
+        platformRoles: ["dev_maintainer"],
+        isSuperuser: true,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Owned item." },
+    );
+
+    // A superuser can archive someone else's item.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: superId,
+      id,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.archivedAt).toBeTruthy();
+
+    // A non-owner, non-staff maintainer cannot unarchive it.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.unarchive, {
+        token: strangerId,
+        id,
+      }),
+    ).rejects.toThrow(/Only the person who started this/);
+
+    // The originator can.
+    await t.mutation(api.functions.devAssistant.contributions.unarchive, {
+      token: maintainerId,
+      id,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.archivedAt).toBeUndefined();
+  });
+});

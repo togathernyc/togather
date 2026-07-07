@@ -301,6 +301,7 @@ export const approveSpec = mutation({
 
     const bug = await ctx.db.get(args.id);
     if (!bug) throw new ConvexError("Contribution not found");
+    assertNotArchived(bug);
     if (bug.status !== "IN_REVIEW") {
       throw new ConvexError(
         `Spec can only be approved while in review (current status: ${bug.status})`,
@@ -341,6 +342,7 @@ export const startBuild = mutation({
 
     const bug = await ctx.db.get(args.id);
     if (!bug) throw new ConvexError("Contribution not found");
+    assertNotArchived(bug);
     if (!bug.specApprovedAt) {
       throw new ConvexError("Spec must be approved before starting a build");
     }
@@ -374,6 +376,16 @@ function assertCanArchive(user: Doc<"users">, bug: Doc<"devBugs">): void {
   const isOwner = bug.originatorUserId === user._id;
   if (!isOwner && !user.isStaff && !user.isSuperuser) {
     throw new ConvexError("Only the person who started this can archive it");
+  }
+}
+
+/**
+ * Archiving means "set aside / not doable", so the pipeline is paused: no
+ * approving, building, or AI work on an archived item until it's restored.
+ */
+function assertNotArchived(bug: Doc<"devBugs">): void {
+  if (bug.archivedAt) {
+    throw new ConvexError("Restore this conversation before continuing it");
   }
 }
 
@@ -463,7 +475,12 @@ export const postMessage = mutation({
       args.imageUrls,
     );
 
-    if (bug.status === "DRAFT" || bug.status === "IN_REVIEW") {
+    // An archived item is paused: record the note but don't re-fire the spec
+    // agent (no AI work / cost until it's restored).
+    if (
+      !bug.archivedAt &&
+      (bug.status === "DRAFT" || bug.status === "IN_REVIEW")
+    ) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.devAssistant.actions.dispatchSpec,

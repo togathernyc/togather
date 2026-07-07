@@ -394,14 +394,18 @@ export function ContributionDetailScreen() {
     );
   }
 
-  const showApproveSpec = needsSpecApproval(contribution);
+  // Archiving pauses the item — hide every forward action and the composer
+  // until it's restored (the backend rejects these on archived items too).
+  const archived = !!contribution.archivedAt;
+  const showApproveSpec = !archived && needsSpecApproval(contribution);
   // Non-buildable scopes can't enter the build pipeline (the backend rejects
   // them too) — keep the UI consistent with the "Too big for one build" card.
   const showStartBuild =
+    !archived &&
     !!contribution.specApprovedAt &&
     contribution.status === "IN_REVIEW" &&
     isBuildableScope(contribution.scope);
-  const showStagingCard = needsStagingVerify(contribution);
+  const showStagingCard = !archived && needsStagingVerify(contribution);
   const awaitingSpec =
     (contribution.status === "DRAFT" || contribution.status === "IN_REVIEW") &&
     !contribution.spec;
@@ -701,6 +705,15 @@ export function ContributionDetailScreen() {
         )}
       </ScrollView>
 
+      {archived ? (
+        <View style={[styles.archivedComposer, { borderTopColor: colors.border }]}>
+          <Ionicons name="archive" size={16} color={colors.textTertiary} />
+          <Text style={[styles.archivedComposerText, { color: colors.textTertiary }]}>
+            This conversation is archived. Restore it to continue.
+          </Text>
+        </View>
+      ) : (
+        <>
       {composerHint ? (
         <Text style={[styles.composerHint, { color: colors.textTertiary }]}>
           {composerHint}
@@ -757,6 +770,8 @@ export function ContributionDetailScreen() {
           <Ionicons name="arrow-up" size={18} color="#ffffff" />
         </TouchableOpacity>
       </View>
+        </>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -896,6 +911,16 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   archiveText: { fontSize: 14, fontWeight: "500" },
+  archivedComposer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  archivedComposerText: { fontSize: 13, textAlign: "center" },
   archivedPill: {
     flexDirection: "row",
     alignItems: "center",
