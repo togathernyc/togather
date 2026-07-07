@@ -685,6 +685,34 @@ export const handleCheckoutCompleted = internalMutation({
       // leave demo mode, switch to per-active-user billing, and purge the
       // seeded placeholder members (scheduled so a large purge can't fail the
       // webhook transaction).
+
+      // Race guard: with multiple co-admins in a demo, two "Go live" checkouts
+      // can both be created before either completes (getDemoConversionInfo
+      // only rejects once a subscription is recorded). First completion wins;
+      // any later completion for a DIFFERENT subscription is a duplicate that
+      // would silently double-bill the church — cancel it instead of letting
+      // it overwrite the tracked subscription. Same-id retries (Stripe is
+      // at-least-once) fall through and re-apply idempotently.
+      const existing = await ctx.db.get(communityId);
+      if (
+        existing?.stripeSubscriptionId &&
+        existing.stripeSubscriptionId !== args.stripeSubscriptionId
+      ) {
+        console.warn(
+          `[billing] Duplicate demo-conversion checkout for community ${communityId}: ` +
+            `keeping ${existing.stripeSubscriptionId}, canceling ${args.stripeSubscriptionId}`,
+        );
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.ee.billing.cancelDuplicateSubscription,
+          {
+            stripeSubscriptionId: args.stripeSubscriptionId,
+            communityId: args.communityId,
+          },
+        );
+        return;
+      }
+
       const billableActiveUsers = Math.max(
         1,
         await countBillableActiveUsers(ctx, communityId),
@@ -866,6 +894,52 @@ export const handlePaymentFailed = internalMutation({
       subscriptionStatus: "past_due",
       updatedAt: Date.now(),
     });
+  },
+});
+
+/**
+ * Cancel a duplicate demo-conversion subscription (see the race guard in
+ * handleCheckoutCompleted). Cancels immediately so no renewal ever bills, and
+ * alerts ops so any already-collected initial payment can be refunded by a
+ * human — refunds are deliberately not automated.
+ */
+export const cancelDuplicateSubscription = internalAction({
+  args: {
+    stripeSubscriptionId: v.string(),
+    communityId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.warn(
+        `[billing] STRIPE_SECRET_KEY not configured — cannot cancel duplicate subscription ${args.stripeSubscriptionId}`,
+      );
+      return { canceled: false };
+    }
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    try {
+      await stripe.subscriptions.cancel(args.stripeSubscriptionId);
+    } catch (error) {
+      console.error(
+        `[billing] Failed to cancel duplicate subscription ${args.stripeSubscriptionId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+
+    await sendBillingOpsAlert(ctx, {
+      failures: [
+        `Duplicate demo-conversion checkout for community ${args.communityId}: ` +
+          `subscription ${args.stripeSubscriptionId} was canceled — verify in Stripe and refund any initial payment.`,
+      ],
+      anomalies: [],
+      synced: 0,
+    });
+
+    return { canceled: true };
   },
 });
 

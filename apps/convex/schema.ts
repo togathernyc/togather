@@ -190,6 +190,11 @@ export default defineSchema({
     // `functions/scheduling/assignments.ts` and the claim path in
     // `verifyPhoneOTP` / `registerNewUser`.
     isPlaceholder: v.optional(v.boolean()),
+    // True only for the fake members seeded into a demo community
+    // (functions/demo.ts). Distinguishes them from other placeholder users
+    // (e.g. scheduling's invite-new-person flow) so the go-live purge deletes
+    // exactly the seeded accounts and never a real pending invitee.
+    isDemoSeed: v.optional(v.boolean()),
     dateJoined: v.optional(v.number()), // Unix timestamp ms
     roles: v.optional(v.number()), // Was: SmallInt bitmask
     profilePhoto: v.optional(v.string()),

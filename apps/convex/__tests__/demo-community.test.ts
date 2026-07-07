@@ -549,6 +549,94 @@ describe("demo conversion (go live)", () => {
   });
 });
 
+describe("demo conversion race + purge safety (codex review)", () => {
+  test("a second completed checkout for a different subscription never overwrites the first", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Race", "+15555550160");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Race Church",
+    });
+
+    await t.mutation(internal.functions.ee.billing.handleCheckoutCompleted, {
+      stripeCustomerId: "cus_a",
+      stripeSubscriptionId: "sub_first",
+      communityId: demo.communityId,
+      demoConversion: true,
+    });
+    // A racing co-admin's checkout completes after the first one.
+    await t.mutation(internal.functions.ee.billing.handleCheckoutCompleted, {
+      stripeCustomerId: "cus_b",
+      stripeSubscriptionId: "sub_duplicate",
+      communityId: demo.communityId,
+      demoConversion: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const community = await t.run(async (ctx) => ctx.db.get(demo.communityId));
+    // First checkout stays the tracked subscription; the duplicate is routed
+    // to cancelDuplicateSubscription instead of overwriting it.
+    expect(community?.stripeSubscriptionId).toBe("sub_first");
+    expect(community?.isDemo).toBe(false);
+    expect(community?.billingModel).toBe("per_active_user");
+  });
+
+  test("purge deletes only seeded demo members, never other placeholder users", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Purge", "+15555550161");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Purge Church",
+    });
+
+    // A real pending invitee: placeholder user created by another flow (e.g.
+    // scheduling's invite-new-person), NOT part of the demo seed.
+    const inviteeId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const inviteeId = await ctx.db.insert("users", {
+        firstName: "Pending",
+        lastName: "Invitee",
+        phone: "+15555550162",
+        isPlaceholder: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId: inviteeId,
+        communityId: demo.communityId,
+        roles: COMMUNITY_ROLES.MEMBER,
+        status: 1,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      return inviteeId;
+    });
+
+    await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
+      communityId: demo.communityId,
+    });
+
+    const { invitee, seededLeft } = await t.run(async (ctx) => {
+      const invitee = await ctx.db.get(inviteeId);
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      let seededLeft = 0;
+      for (const m of memberships) {
+        const user = await ctx.db.get(m.userId);
+        if (user?.isDemoSeed) seededLeft++;
+      }
+      return { invitee, seededLeft };
+    });
+    expect(seededLeft).toBe(0);
+    expect(invitee).not.toBeNull();
+    expect(invitee?.isPlaceholder).toBe(true);
+  });
+});
+
 describe("demo isolation", () => {
   test("demo communities are excluded from community search", async () => {
     const t = convexTest(schema, modules);

@@ -616,6 +616,7 @@ export const createDemoCommunity = mutation({
         firstName: person.firstName,
         lastName: person.lastName,
         isPlaceholder: true, // never a real login; see users.isPlaceholder
+        isDemoSeed: true, // purged on go-live; see purgeDemoSeedUsers
         isActive: true,
         searchText: buildSearchText(person),
         timezone: "America/New_York",
@@ -1024,9 +1025,12 @@ export const purgeDemoSeedUsers = internalMutation({
     let purged = 0;
     for (const membership of memberships) {
       const user = await ctx.db.get(membership.userId);
-      if (!user?.isPlaceholder) continue;
+      // Only the accounts this module seeded (isDemoSeed) — other flows also
+      // create isPlaceholder users for REAL pending invitees (e.g.
+      // scheduling's invite-new-person), and those must survive go-live.
+      if (!user?.isPlaceholder || !user.isDemoSeed) continue;
 
-      // Placeholder members exist only inside their demo community, so every
+      // Seeded members exist only inside their demo community, so every
       // row keyed to them belongs to this community and is safe to delete.
       const groupRows = await ctx.db
         .query("groupMembers")
