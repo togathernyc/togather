@@ -17,8 +17,8 @@ jest.mock("../PendingRequestsContent", () => ({
 jest.mock("../StatsContent", () => ({
   StatsContent: () => null,
 }));
-jest.mock("../PeopleContent", () => ({
-  PeopleContent: () => null,
+jest.mock("@features/people/components/PeopleTabScreen", () => ({
+  PeopleTabScreen: () => null,
 }));
 jest.mock("../SettingsContent", () => ({
   SettingsContent: () => null,

@@ -19,7 +19,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { PendingRequestsContent } from "./PendingRequestsContent";
 import { StatsContent } from "./StatsContent";
-import { PeopleContent } from "./PeopleContent";
+import { PeopleTabScreen } from "@features/people/components/PeopleTabScreen";
 import { SettingsContent } from "./SettingsContent";
 import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
 
@@ -134,7 +134,11 @@ export function AdminScreen() {
         ) : activeTab === "requests" ? (
           <PendingRequestsContent />
         ) : activeTab === "people" ? (
-          <PeopleContent />
+          // Merged with the community-wide check-in roster: admins see the
+          // whole roster (showAllMembers), and reach per-member admin controls
+          // (role, transfer primary admin, remove) via the person's detail
+          // screen. Replaces the old standalone PeopleContent list.
+          <PeopleTabScreen showAllMembers />
         ) : activeTab === "stats" ? (
           <StatsContent />
         ) : (
