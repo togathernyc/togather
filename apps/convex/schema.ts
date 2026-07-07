@@ -2167,6 +2167,25 @@ export default defineSchema({
     ),
     spec: v.optional(v.string()), // AI-drafted spec, markdown
     specApprovedAt: v.optional(v.number()), // contributor sign-off
+
+    // AI triage fields (ADR-029 Phase 1.5), delivered by the spec-mode routine
+    // via the signed callback alongside spec/riskLevel.
+    aiTitle: v.optional(v.string()), // short imperative headline
+    area: v.optional(v.string()), // "events" | "chat" | "groups" | "prayer" | "settings" | "other"
+    // "buildable" = one pipeline run; "split" = too big, spec proposes slices;
+    // "design_needed" = a maintainer must make architectural decisions first.
+    // Non-buildable items cannot be spec-approved (see approveSpec).
+    scope: v.optional(
+      v.union(
+        v.literal("buildable"),
+        v.literal("split"),
+        v.literal("design_needed"),
+      ),
+    ),
+    // True for anything interactive — the originator is asked to verify the
+    // change on staging before merge; false for pure copy/color tweaks.
+    verifyOnStaging: v.optional(v.boolean()),
+    stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
     githubIssueNumber: v.optional(v.number()),
     githubIssueUrl: v.optional(v.string()),
     shippedAt: v.optional(v.number()), // set when status reaches MERGED
@@ -2185,6 +2204,24 @@ export default defineSchema({
     .index("by_channel", ["channelId"])
     .index("by_originator", ["originatorUserId"])
     .index("by_routineRunId", ["routineRunId"]),
+
+  /**
+   * Conversation thread on a devBugs item (contributor dev dashboard,
+   * ADR-029 Phase 1.5). Every contribution is a conversation with the AI:
+   * the submitted report is the first "user" message, spec drafts arrive as
+   * "assistant" messages, and lifecycle transitions post "system" messages.
+   */
+  devBugMessages: defineTable({
+    bugId: v.id("devBugs"),
+    authorType: v.union(
+      v.literal("user"),
+      v.literal("assistant"),
+      v.literal("system"),
+    ),
+    userId: v.optional(v.id("users")), // set when authorType === "user"
+    body: v.string(),
+    createdAt: v.number(),
+  }).index("by_bug", ["bugId", "createdAt"]),
 
   // =============================================================================
 

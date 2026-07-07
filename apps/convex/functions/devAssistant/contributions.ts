@@ -1,10 +1,14 @@
 /**
- * Contributor Dev Dashboard — dashboard-originated devBugs (ADR-029, Phase 1).
+ * Contributor Dev Dashboard — dashboard-originated devBugs (ADR-029, Phase 1
+ * + Phase 1.5 conversation layer).
  *
  * Contributors (== dev maintainers; everyone who passes canUseDevAssistant)
  * submit bugs/feature ideas from the in-app dashboard. Each submission is a
  * platform-level devBugs row (no communityId/channelId/thread) that flows
- * through the existing status machine:
+ * through the existing status machine, and every contribution is a
+ * conversation with the AI (devBugMessages: the report is the first "user"
+ * turn, spec drafts arrive as "assistant" turns, lifecycle transitions log
+ * "system" turns):
  *
  *   DRAFT --(spec agent, dispatchSpec)--> IN_REVIEW --(approveSpec)-->
  *     READY_FOR_IMPL (auto when riskLevel === "low", else via startBuild)
@@ -22,7 +26,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuthUser } from "../../lib/auth";
 import { canUseDevAssistant } from "./maintainers";
-import { applyStatusTransition } from "./bugs";
+import { applyStatusTransition, insertThreadMessage } from "./bugs";
 
 export const contributionKindValidator = v.union(
   v.literal("bug"),
@@ -111,6 +115,10 @@ export const submit = mutation({
       updatedAt: now,
     });
 
+    // Every contribution is a conversation with the AI (ADR-029 P1.5): the
+    // report body is the opening "user" turn of the thread.
+    await insertThreadMessage(ctx, bugId, "user", body, user._id);
+
     // Fire the spec agent (event-driven, no cron — mirrors READY_FOR_IMPL ->
     // dispatchBug in bugs.ts).
     await ctx.scheduler.runAfter(
@@ -145,6 +153,17 @@ export const approveSpec = mutation({
     }
     if (!bug.spec) {
       throw new ConvexError("This item has no spec to approve yet");
+    }
+    // Triage gate (ADR-029 P1.5): non-buildable items must not enter the build
+    // pipeline as-is — the spec body explains the proposed slices ("split") or
+    // the decisions a maintainer must make first ("design_needed"). Unset
+    // scope means a pre-triage row; treat as buildable for backward compat.
+    if (bug.scope !== undefined && bug.scope !== "buildable") {
+      throw new ConvexError(
+        bug.scope === "split"
+          ? "This request is too large for one build — see the spec for the proposed smaller slices"
+          : "This request needs maintainer design decisions before it can be built",
+      );
     }
 
     const now = Date.now();
@@ -199,8 +218,174 @@ export const startBuild = mutation({
 });
 
 // ============================================================================
+// Conversation thread (ADR-029 Phase 1.5)
+// ============================================================================
+
+/**
+ * Post a reply into a contribution's conversation thread. While the item is
+ * still in the spec phase (DRAFT/IN_REVIEW), the reply also kicks off a
+ * spec-revision round: the routine re-runs with the full thread history and
+ * responds to the latest user message via the signed callback.
+ */
+export const postMessage = mutation({
+  args: { token: v.string(), id: v.id("devBugs"), body: v.string() },
+  handler: async (ctx, args): Promise<Id<"devBugMessages">> => {
+    const user = await requireContributor(ctx, args.token);
+
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+
+    const body = args.body.trim();
+    if (!body) throw new ConvexError("Message body is required");
+
+    const messageId = await insertThreadMessage(
+      ctx,
+      args.id,
+      "user",
+      body,
+      user._id,
+    );
+
+    if (bug.status === "DRAFT" || bug.status === "IN_REVIEW") {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.devAssistant.actions.dispatchSpec,
+        { bugId: args.id, revision: true },
+      );
+    }
+
+    return messageId;
+  },
+});
+
+/** Guard shared by confirmStaging/reportStagingIssue: the staging-check window. */
+function assertStagingWindow(bug: Doc<"devBugs">): void {
+  if (!bug.verifyOnStaging) {
+    throw new ConvexError("This item does not require staging verification");
+  }
+  if (bug.stagingVerifiedAt) {
+    throw new ConvexError("This item was already verified on staging");
+  }
+  if (bug.status !== "CODE_REVIEW" && bug.status !== "READY_TO_MERGE") {
+    throw new ConvexError(
+      `Staging can only be checked once the PR is up (current status: ${bug.status})`,
+    );
+  }
+}
+
+/**
+ * Contributor confirms the change works on staging. Valid only in the staging
+ * window (verifyOnStaging set, not yet verified, PR up). Stamps
+ * stagingVerifiedAt and logs a system message; if someone other than the
+ * originator confirmed, the originator gets a push (matches approveSpec).
+ */
+export const confirmStaging = mutation({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertStagingWindow(bug);
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, { stagingVerifiedAt: now, updatedAt: now });
+
+    const name =
+      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A contributor";
+    await insertThreadMessage(
+      ctx,
+      args.id,
+      "system",
+      `${name} confirmed it works on staging`,
+    );
+
+    await notifyOriginatorUnlessSelf(ctx, bug, user._id, {
+      title: "Verified on staging",
+      body: `${name} confirmed "${bug.title}" works on staging.`,
+      status: bug.status,
+    });
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Contributor hit a problem while checking staging. Same validity window as
+ * confirmStaging. Logs the note as their "user" turn plus a system marker —
+ * no automated re-fix dispatch (the spec-revision path only exists for
+ * DRAFT/IN_REVIEW, and the item is past that); a maintainer picks it up from
+ * the thread.
+ */
+export const reportStagingIssue = mutation({
+  args: { token: v.string(), id: v.id("devBugs"), note: v.string() },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertStagingWindow(bug);
+
+    const note = args.note.trim();
+    if (!note) throw new ConvexError("A note describing the issue is required");
+
+    await insertThreadMessage(ctx, args.id, "user", note, user._id);
+    await insertThreadMessage(
+      ctx,
+      args.id,
+      "system",
+      "Staging check failed — needs another look",
+    );
+
+    await ctx.db.patch(args.id, { updatedAt: Date.now() });
+
+    return { ok: true };
+  },
+});
+
+// ============================================================================
 // Queries
 // ============================================================================
+
+/** List-item shape: the devBugs doc plus a preview of the latest thread turn. */
+export type ContributionListItem = Doc<"devBugs"> & {
+  lastMessageBody: string | undefined;
+  lastMessageAuthorType: "user" | "assistant" | "system" | undefined;
+};
+
+/** Attach the most recent thread message (indexed .first() per item). */
+async function withLastMessage(
+  ctx: QueryCtx,
+  bugs: Doc<"devBugs">[],
+): Promise<ContributionListItem[]> {
+  return await Promise.all(
+    bugs.map(async (bug) => {
+      const last = await ctx.db
+        .query("devBugMessages")
+        .withIndex("by_bug", (q) => q.eq("bugId", bug._id))
+        .order("desc")
+        .first();
+      return {
+        ...bug,
+        lastMessageBody: last?.body,
+        lastMessageAuthorType: last?.authorType,
+      };
+    }),
+  );
+}
+
+/** A contribution's conversation thread, oldest first. */
+export const getThread = query({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<Doc<"devBugMessages">[]> => {
+    await requireContributor(ctx, args.token);
+    return await ctx.db
+      .query("devBugMessages")
+      .withIndex("by_bug", (q) => q.eq("bugId", args.id))
+      .order("asc")
+      .collect();
+  },
+});
 
 /**
  * The caller's own contributions — ALL sources (dashboard submissions and
@@ -208,22 +393,24 @@ export const startBuild = mutation({
  */
 export const myContributions = query({
   args: { token: v.string() },
-  handler: async (ctx, args): Promise<Doc<"devBugs">[]> => {
+  handler: async (ctx, args): Promise<ContributionListItem[]> => {
     const user = await requireContributor(ctx, args.token);
-    return await ctx.db
+    const bugs = await ctx.db
       .query("devBugs")
       .withIndex("by_originator", (q) => q.eq("originatorUserId", user._id))
       .order("desc")
       .collect();
+    return await withLastMessage(ctx, bugs);
   },
 });
 
 /** Every contribution across all originators, newest first (capped at 200). */
 export const listAll = query({
   args: { token: v.string() },
-  handler: async (ctx, args): Promise<Doc<"devBugs">[]> => {
+  handler: async (ctx, args): Promise<ContributionListItem[]> => {
     await requireContributor(ctx, args.token);
-    return await ctx.db.query("devBugs").order("desc").take(200);
+    const bugs = await ctx.db.query("devBugs").order("desc").take(200);
+    return await withLastMessage(ctx, bugs);
   },
 });
 

@@ -12,7 +12,7 @@ import { api, internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
-import { bugStatusValidator, riskLevelValidator } from "./bugs";
+import { bugStatusValidator, riskLevelValidator, scopeValidator } from "./bugs";
 import type { ToolExecutionContext } from "./tools";
 
 const FLAG_KEY = "dev-assistant-bot";
@@ -189,14 +189,20 @@ export const dispatchBug = internalAction({
  * Fire the Claude Code Routine in "spec" mode for a dashboard-submitted
  * contribution (ADR-029). Unlike dispatchBug, the routine must NOT write code:
  * it investigates the codebase, drafts an implementation spec, proposes a risk
- * level, and reports both back via the signed /dev-assistant/callback with
- * status IN_REVIEW. The row stays DRAFT until that callback lands.
+ * level plus the Phase 1.5 triage fields (aiTitle/area/scope/verifyOnStaging),
+ * and reports them back via the signed /dev-assistant/callback with status
+ * IN_REVIEW. The row stays DRAFT until that callback lands.
+ *
+ * `revision: true` (ADR-029 Phase 1.5) re-fires the routine after the
+ * contributor replied in the conversation thread: the payload carries the full
+ * thread history and the instructions tell the routine this is a revision
+ * round responding to the latest user message.
  *
  * Mirrors dispatchBug's env-missing/error handling: never throws; failures are
  * recorded on the row via recordDispatchError.
  */
 export const dispatchSpec = internalAction({
-  args: { bugId: v.id("devBugs") },
+  args: { bugId: v.id("devBugs"), revision: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<void> => {
     const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
       bugId: args.bugId,
@@ -217,17 +223,52 @@ export const dispatchSpec = internalAction({
     // Stamp the routineRunId before the POST so a crash or double-schedule
     // can't double-run the spec routine (same pattern as markDispatched). A
     // failed POST leaves lastError on the row; recovery is manual, never an
-    // automatic re-fire (mirrors the impl dispatch policy).
+    // automatic re-fire (mirrors the impl dispatch policy). Revision rounds
+    // stamp a fresh routineRunId, orphaning stale callbacks from the
+    // superseded run (see markSpecDispatched).
     const routineRunId = crypto.randomUUID();
     const marked = await ctx.runMutation(
       internal.functions.devAssistant.bugs.markSpecDispatched,
-      { bugId: args.bugId, routineRunId },
+      { bugId: args.bugId, routineRunId, revision: args.revision },
     );
     if (marked.alreadyDispatched) return;
 
+    // Full conversation history so revision rounds (and first drafts, once the
+    // report seeds the thread) see the whole back-and-forth.
+    const thread = await ctx.runQuery(
+      internal.functions.devAssistant.bugs.getThreadHistory,
+      { bugId: args.bugId },
+    );
+
     const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
+    const baseInstructions =
+      "Spec-drafting mode: do NOT write code or open a PR. Investigate the " +
+      "codebase, draft an implementation spec (markdown), and propose a risk " +
+      'level ("low" = single-screen UI/copy only; "medium" = one feature\'s ' +
+      'logic on one side of the stack, nothing shared; "high" = shared ' +
+      "components, frontend + backend together, schema/auth/notifications/" +
+      "offline). Also triage the request: aiTitle (short imperative headline, " +
+      'e.g. "Fix RSVP message after tapping Going"); area (one of: "events", ' +
+      '"chat", "groups", "prayer", "settings", "other"); scope ("buildable" | ' +
+      '"split" | "design_needed") — requests too large for one pipeline run ' +
+      'must NOT be specced as-is: for "split", the spec body should explain ' +
+      'why and propose 2-3 smaller buildable slices; for "design_needed", the ' +
+      "spec body should explain what architectural decisions a maintainer " +
+      "must make first; and verifyOnStaging (boolean — true for anything " +
+      "interactive, false for pure copy/color). Report back by POSTing the " +
+      'signed callback with { bugId, routineRunId, status: "IN_REVIEW", spec, ' +
+      "riskLevel, aiTitle, area, scope, verifyOnStaging }.";
+    const instructions = args.revision
+      ? "REVISION ROUND: this contribution already has a spec draft, and the " +
+        "contributor replied in the conversation thread (see `thread` — the " +
+        "latest user message is what you must respond to). Revise the spec " +
+        "and triage accordingly. " +
+        baseInstructions
+      : baseInstructions;
+
     const payload = {
       mode: "spec",
+      ...(args.revision ? { revision: true } : {}),
       bugId: args.bugId,
       routineRunId,
       kind: bug.kind ?? "bug",
@@ -235,15 +276,10 @@ export const dispatchSpec = internalAction({
       body: bug.body,
       repro: bug.repro,
       screenshotUrls: bug.screenshotUrls,
+      // Full conversation history: [{ authorType, authorName?, body }, ...].
+      thread,
       callbackUrl,
-      instructions:
-        "Spec-drafting mode: do NOT write code or open a PR. Investigate the " +
-        "codebase, draft an implementation spec (markdown), and propose a risk " +
-        'level ("low" = single-screen UI/copy only; "medium" = one feature\'s ' +
-        'logic on one side of the stack, nothing shared; "high" = shared ' +
-        "components, frontend + backend together, schema/auth/notifications/" +
-        "offline). Report back by POSTing the signed callback with " +
-        '{ bugId, routineRunId, status: "IN_REVIEW", spec, riskLevel }.',
+      instructions,
     };
 
     try {
@@ -307,7 +343,12 @@ function defaultCallbackMessage(
  */
 function contributorPushForStatus(
   status: string,
-  bug: { kind?: "bug" | "feature"; title: string; spec?: string },
+  bug: {
+    kind?: "bug" | "feature";
+    title: string;
+    spec?: string;
+    verifyOnStaging?: boolean;
+  },
 ): { title: string; body: string } | null {
   const noun = bug.kind === "feature" ? "feature idea" : "bug report";
   switch (status) {
@@ -322,6 +363,14 @@ function contributorPushForStatus(
       // The module treats CODE_REVIEW as "the PR exists" (READY_TO_MERGE is a
       // later, maintainer-facing step) — pushing here and not on READY_TO_MERGE
       // means one "PR opened" push, not two.
+      // Staging gate (ADR-029 P1.5): interactive changes ask the originator to
+      // verify on staging rather than just announcing the PR.
+      if (bug.verifyOnStaging) {
+        return {
+          title: "Ready to test on staging",
+          body: `"${bug.title}" is built — try it on staging and confirm it works.`,
+        };
+      }
       return {
         title: "Your contribution is in code review",
         body: `A pull request is open for "${bug.title}".`,
@@ -346,6 +395,10 @@ export const handleRoutineCallback = internalAction({
     message: v.optional(v.string()),
     spec: v.optional(v.string()),
     riskLevel: v.optional(riskLevelValidator),
+    aiTitle: v.optional(v.string()),
+    area: v.optional(v.string()),
+    scope: v.optional(scopeValidator),
+    verifyOnStaging: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<void> => {
     // Correlate by routineRunId and verify it matches the claimed bugId.
@@ -371,6 +424,10 @@ export const handleRoutineCallback = internalAction({
         screenshots: args.screenshots,
         spec: args.spec,
         riskLevel: args.riskLevel,
+        aiTitle: args.aiTitle,
+        area: args.area,
+        scope: args.scope,
+        verifyOnStaging: args.verifyOnStaging,
       },
     );
     if (!updated) return;

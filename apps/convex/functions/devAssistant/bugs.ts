@@ -46,6 +46,13 @@ export const riskLevelValidator = v.union(
   v.literal("high"),
 );
 
+/** AI-proposed scope classification for dashboard contributions (ADR-029 P1.5). */
+export const scopeValidator = v.union(
+  v.literal("buildable"),
+  v.literal("split"),
+  v.literal("design_needed"),
+);
+
 type BugStatus = Doc<"devBugs">["status"];
 
 /**
@@ -112,6 +119,75 @@ export async function applyStatusTransition(
     );
   }
 }
+
+// ============================================================================
+// Conversation thread (devBugMessages, ADR-029 Phase 1.5)
+// ============================================================================
+
+/**
+ * Append a message to a contribution's conversation thread. `userId` is only
+ * meaningful for authorType === "user".
+ */
+export async function insertThreadMessage(
+  ctx: MutationCtx,
+  bugId: Id<"devBugs">,
+  authorType: "user" | "assistant" | "system",
+  body: string,
+  userId?: Id<"users">,
+): Promise<Id<"devBugMessages">> {
+  return await ctx.db.insert("devBugMessages", {
+    bugId,
+    authorType,
+    userId,
+    body,
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * One-line system messages posted into the thread when a callback-applied
+ * transition lands, so the conversation reads as a running progress log.
+ */
+const STATUS_SYSTEM_MESSAGES: Partial<Record<BugStatus, string>> = {
+  IN_PROGRESS: "Build started",
+  CODE_REVIEW: "Pull request opened",
+  READY_TO_MERGE: "Ready to merge",
+  MERGED: "Shipped 🎉",
+};
+
+export type ThreadHistoryEntry = {
+  authorType: "user" | "assistant" | "system";
+  authorName?: string;
+  body: string;
+};
+
+/**
+ * Full conversation history for a contribution, oldest first — shipped to the
+ * spec-mode routine so revision rounds see the whole back-and-forth.
+ */
+export const getThreadHistory = internalQuery({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<ThreadHistoryEntry[]> => {
+    const messages = await ctx.db
+      .query("devBugMessages")
+      .withIndex("by_bug", (q) => q.eq("bugId", args.bugId))
+      .order("asc")
+      .collect();
+
+    const entries: ThreadHistoryEntry[] = [];
+    for (const m of messages) {
+      let authorName: string | undefined;
+      if (m.authorType === "user" && m.userId) {
+        const user = await ctx.db.get(m.userId);
+        authorName = user
+          ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || undefined
+          : undefined;
+      }
+      entries.push({ authorType: m.authorType, authorName, body: m.body });
+    }
+    return entries;
+  },
+});
 
 // ============================================================================
 // Auth helper (mirrors admin/featureFlags.ts)
@@ -375,13 +451,27 @@ export const recordDispatchError = internalMutation({
  * Stamp the routineRunId for a spec-drafting dispatch BEFORE the outbound POST
  * (mirrors markDispatched) so a crash mid-dispatch can't double-run the spec
  * routine. The row stays DRAFT — the spec callback moves it to IN_REVIEW.
+ *
+ * Revision rounds (`revision: true`, ADR-029 Phase 1.5) re-fire the spec
+ * routine after the contributor replies in the thread, so they're valid from
+ * DRAFT *or* IN_REVIEW and always stamp a FRESH routineRunId — callbacks
+ * correlate by routineRunId, so this makes stale callbacks from the superseded
+ * spec run fall on the floor instead of overwriting the newer revision.
  */
 export const markSpecDispatched = internalMutation({
-  args: { bugId: v.id("devBugs"), routineRunId: v.string() },
+  args: {
+    bugId: v.id("devBugs"),
+    routineRunId: v.string(),
+    revision: v.optional(v.boolean()),
+  },
   handler: async (ctx, args): Promise<{ alreadyDispatched: boolean }> => {
     const bug = await ctx.db.get(args.bugId);
     if (!bug) return { alreadyDispatched: true };
-    if (bug.status !== "DRAFT" || bug.routineRunId) {
+    if (args.revision) {
+      if (bug.status !== "DRAFT" && bug.status !== "IN_REVIEW") {
+        return { alreadyDispatched: true };
+      }
+    } else if (bug.status !== "DRAFT" || bug.routineRunId) {
       return { alreadyDispatched: true };
     }
     await ctx.db.patch(args.bugId, {
@@ -399,8 +489,14 @@ export const markSpecDispatched = internalMutation({
  * record lastError (callbacks must never throw the HTTP handler). Always
  * refreshes prUrl/screenshots/lastCallbackAt.
  *
- * Spec-mode callbacks (ADR-029) additionally deliver `spec` + `riskLevel`,
+ * Spec-mode callbacks (ADR-029) additionally deliver `spec` + `riskLevel` and
+ * the Phase 1.5 triage fields (`aiTitle`/`area`/`scope`/`verifyOnStaging`),
  * which are stored whenever provided; a MERGED transition stamps `shippedAt`.
+ *
+ * Thread side effects (ADR-029 Phase 1.5):
+ *  - a delivered spec is appended as an "assistant" message (skipped when the
+ *    spec text is unchanged, so re-delivered callbacks don't duplicate it);
+ *  - genuine status transitions append a one-line "system" progress message.
  */
 export const applyCallback = internalMutation({
   args: {
@@ -410,6 +506,10 @@ export const applyCallback = internalMutation({
     screenshots: v.optional(v.array(v.string())),
     spec: v.optional(v.string()),
     riskLevel: v.optional(riskLevelValidator),
+    aiTitle: v.optional(v.string()),
+    area: v.optional(v.string()),
+    scope: v.optional(scopeValidator),
+    verifyOnStaging: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<Doc<"devBugs"> | null> => {
     const bug = await ctx.db.get(args.bugId);
@@ -424,8 +524,15 @@ export const applyCallback = internalMutation({
     if (args.screenshots !== undefined) patch.screenshotUrls = args.screenshots;
     if (args.spec !== undefined) patch.spec = args.spec;
     if (args.riskLevel !== undefined) patch.riskLevel = args.riskLevel;
+    if (args.aiTitle !== undefined) patch.aiTitle = args.aiTitle;
+    if (args.area !== undefined) patch.area = args.area;
+    if (args.scope !== undefined) patch.scope = args.scope;
+    if (args.verifyOnStaging !== undefined) {
+      patch.verifyOnStaging = args.verifyOnStaging;
+    }
 
-    if (canTransition(bug.status, args.status)) {
+    const transitioned = canTransition(bug.status, args.status);
+    if (transitioned) {
       patch.status = args.status;
       patch.lastError = undefined;
       if (args.status === "MERGED" && !bug.shippedAt) {
@@ -436,6 +543,23 @@ export const applyCallback = internalMutation({
     }
 
     await ctx.db.patch(args.bugId, patch);
+
+    // Spec text lands in the conversation as the assistant's turn. Comparing
+    // against the previously stored spec is the idempotency guard for
+    // re-delivered callbacks (and skips no-op revisions).
+    if (args.spec !== undefined && args.spec !== bug.spec) {
+      await insertThreadMessage(ctx, args.bugId, "assistant", args.spec);
+    }
+
+    // Progress log: only when the status genuinely changed (an idempotent
+    // re-apply of the current status must not re-post).
+    if (transitioned && args.status !== bug.status) {
+      const systemMessage = STATUS_SYSTEM_MESSAGES[args.status];
+      if (systemMessage) {
+        await insertThreadMessage(ctx, args.bugId, "system", systemMessage);
+      }
+    }
+
     return await ctx.db.get(args.bugId);
   },
 });

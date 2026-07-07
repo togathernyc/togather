@@ -1031,6 +1031,8 @@ const DEV_ASSISTANT_CALLBACK_STATUSES = [
 
 const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
 
+const DEV_ASSISTANT_SCOPES = ["buildable", "split", "design_needed"];
+
 /**
  * POST /dev-assistant/callback
  *
@@ -1040,7 +1042,8 @@ const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
  * fast — chat fanout and idempotency are handled downstream.
  *
  * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[],
- *         message?, spec?, riskLevel? }
+ *         message?, spec?, riskLevel?, aiTitle?, area?, scope?,
+ *         verifyOnStaging? }
  */
 http.route({
   path: "/dev-assistant/callback",
@@ -1073,6 +1076,10 @@ http.route({
       message?: string;
       spec?: string;
       riskLevel?: string;
+      aiTitle?: string;
+      area?: string;
+      scope?: string;
+      verifyOnStaging?: boolean;
     };
     try {
       payload = JSON.parse(body);
@@ -1080,8 +1087,20 @@ http.route({
       return new Response("Invalid JSON", { status: 400 });
     }
 
-    const { bugId, routineRunId, status, prUrl, screenshots, message, spec, riskLevel } =
-      payload;
+    const {
+      bugId,
+      routineRunId,
+      status,
+      prUrl,
+      screenshots,
+      message,
+      spec,
+      riskLevel,
+      aiTitle,
+      area,
+      scope,
+      verifyOnStaging,
+    } = payload;
     if (!bugId || !routineRunId || !status) {
       return new Response("Missing bugId, routineRunId, or status", { status: 400 });
     }
@@ -1093,6 +1112,20 @@ http.route({
     }
     if (riskLevel !== undefined && !DEV_ASSISTANT_RISK_LEVELS.includes(riskLevel)) {
       return new Response(`Unsupported riskLevel: ${riskLevel}`, { status: 400 });
+    }
+    if (aiTitle !== undefined && typeof aiTitle !== "string") {
+      return new Response("Invalid aiTitle: must be a string", { status: 400 });
+    }
+    if (area !== undefined && typeof area !== "string") {
+      return new Response("Invalid area: must be a string", { status: 400 });
+    }
+    if (scope !== undefined && !DEV_ASSISTANT_SCOPES.includes(scope)) {
+      return new Response(`Unsupported scope: ${scope}`, { status: 400 });
+    }
+    if (verifyOnStaging !== undefined && typeof verifyOnStaging !== "boolean") {
+      return new Response("Invalid verifyOnStaging: must be a boolean", {
+        status: 400,
+      });
     }
 
     await ctx.scheduler.runAfter(
@@ -1113,6 +1146,10 @@ http.route({
         message,
         spec,
         riskLevel: riskLevel as "low" | "medium" | "high" | undefined,
+        aiTitle,
+        area,
+        scope: scope as "buildable" | "split" | "design_needed" | undefined,
+        verifyOnStaging,
       }
     );
 
