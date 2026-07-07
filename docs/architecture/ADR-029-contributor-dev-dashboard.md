@@ -248,6 +248,26 @@ The desktop shape lives at **`togather.nyc/dev`**, routing into the Expo web
 app (same phone-OTP sign-in) — still no separate web dashboard. UI specs must
 include a **before/after mock image** so spec approval is a visual decision.
 
+## Phase 1.6 — subagent code review on GitHub (Accepted)
+
+@codex is replaced as the PR reviewer by a Claude review run. When an
+implementation callback reports `CODE_REVIEW` with a `prUrl`, Convex
+auto-dispatches a `mode: "review"` Routine run (`dispatchReview`). That run
+reviews the diff against the approved spec with parallel subagents
+(correctness, security, spec-fidelity, tests), adversarially verifies
+findings, and posts the survivors as a **real GitHub PR review with inline
+comments** — the review trail stays public on the PR. The verdict returns via
+the signed callback as `reviewVerdict: "approved" | "changes_requested"` plus
+a plain-language `reviewSummary`; approval advances the item to
+`READY_TO_MERGE`, requested changes land in the conversation thread as a
+system message. New `devBugs` fields: `reviewVerdict`, `reviewSummary`
+(cleared when a new PR revision re-enters `CODE_REVIEW`).
+
+Reviews must be posted from a different GitHub identity than the PR author
+(GitHub forbids reviewing your own PR); the Phase 2 bot account covers this
+with **Pull requests: read/write** added to its PAT. The Routine prompt
+covering all modes lives at `docs/dev-assistant/ROUTINE-PROMPT.md`.
+
 ## Deliberately out of scope (v1)
 
 - GitHub OAuth / verified account linking (`githubUsername` is honor-system).
