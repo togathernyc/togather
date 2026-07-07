@@ -146,6 +146,10 @@ export default defineSchema({
     subscriptionStatus: v.optional(v.string()), // "active" | "past_due" | "canceled" etc.
     subscriptionPriceMonthly: v.optional(v.number()),
     billingEmail: v.optional(v.string()),
+    // "per_active_user" = $1/month per billable active member (see
+    // functions/memberActivity.ts); a monthly cron syncs the Stripe
+    // subscription quantity. Absent = legacy fixed-price subscription.
+    billingModel: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_subdomain", ["subdomain"])
@@ -260,6 +264,11 @@ export default defineSchema({
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
+    // Manual billing override for the per-active-user pricing model: admins
+    // and leaders can mark a member inactive so they don't count toward the
+    // $1/month/active-user subscription even if they've opened the app
+    // recently. See functions/memberActivity.ts.
+    billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_user", ["userId"])

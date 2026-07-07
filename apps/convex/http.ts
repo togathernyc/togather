@@ -687,6 +687,7 @@ http.route({
               monthlyPrice: session.metadata.monthlyPrice
                 ? Number(session.metadata.monthlyPrice)
                 : undefined,
+              demoConversion: session.metadata.demoConversion === "true",
             }
           );
           break;

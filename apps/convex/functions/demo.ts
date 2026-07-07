@@ -9,10 +9,18 @@
  * demo community IS a real community row — branding, admin settings, chat,
  * events, and prayer all run through the normal code paths.
  *
+ * This is the front door for creating a community: churches start in demo
+ * mode and go live from inside the app by adding payment ($1/month per active
+ * member — see functions/memberActivity.ts and ee/billing.convertDemoToLive).
+ * Conversion flips isDemo off and purges the seeded placeholder members
+ * (purgeDemoSeedUsers) while keeping groups, branding, and real accounts.
+ *
  * Collaboration: the creator gets a demo code (the community slug). Anyone who
  * joins with the code becomes a community admin too, so a whole staff team can
  * re-brand and click around the same demo simultaneously (Convex mutations are
- * transactional, so concurrent edits are safe).
+ * transactional, so concurrent edits are safe). A demo holds at most
+ * MAX_REAL_USERS real accounts alongside its DEMO_SEED_USER_COUNT seeded
+ * placeholder members.
  *
  * Isolation: demo communities are `isDemo: true` + `isPublic: false`, and are
  * filtered out of community search (functions/resources.ts), so real users
@@ -21,9 +29,9 @@
  */
 
 import { v } from "convex/values";
-import { mutation } from "../_generated/server";
+import { internalMutation, mutation, query } from "../_generated/server";
 import { Id } from "../_generated/dataModel";
-import { MutationCtx } from "../_generated/server";
+import { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuth } from "../lib/auth";
 import { now, generateShortId, buildSearchText, getMediaUrl } from "../lib/utils";
 import { COMMUNITY_ROLES } from "../lib/permissions";
@@ -38,24 +46,35 @@ import { COMMUNITY_ROLES } from "../lib/permissions";
 const MAX_SMALL_GROUPS = 6;
 const MAX_CAMPUSES = 4;
 
-const DEMO_MEMBERS = [
-  { firstName: "Sarah", lastName: "Mitchell" },
-  { firstName: "James", lastName: "Okafor" },
-  { firstName: "Grace", lastName: "Kim" },
-  { firstName: "Marcus", lastName: "Rivera" },
-  { firstName: "Hannah", lastName: "Thompson" },
-  { firstName: "Daniel", lastName: "Nguyen" },
-  { firstName: "Ruth", lastName: "Adeyemi" },
-  { firstName: "Peter", lastName: "Kowalski" },
-  { firstName: "Naomi", lastName: "Castillo" },
-  { firstName: "Caleb", lastName: "Johnson" },
-  { firstName: "Esther", lastName: "Park" },
-  { firstName: "Andre", lastName: "Silva" },
-  { firstName: "Lydia", lastName: "Brennan" },
-  { firstName: "Isaiah", lastName: "Wright" },
-  { firstName: "Mary", lastName: "Santos" },
-  { firstName: "Tom", lastName: "Eriksen" },
+/** Every demo is populated by exactly this many placeholder members. */
+export const DEMO_SEED_USER_COUNT = 100;
+
+/**
+ * Real (non-placeholder) accounts allowed in one demo — the creator plus the
+ * staff teammates they invite with the demo code. Going live lifts the cap.
+ */
+export const MAX_REAL_USERS = 10;
+
+const FIRST_NAMES = [
+  "Sarah", "James", "Grace", "Marcus", "Hannah", "Daniel", "Ruth", "Peter",
+  "Naomi", "Caleb", "Esther", "Andre", "Lydia", "Isaiah", "Mary", "Tom",
+  "Priya", "Samuel", "Elena", "Joshua",
 ];
+
+const LAST_NAMES = [
+  "Mitchell", "Okafor", "Kim", "Rivera", "Thompson", "Nguyen", "Adeyemi",
+  "Kowalski", "Castillo", "Johnson", "Park", "Silva", "Brennan", "Wright",
+  "Santos", "Eriksen", "Patel", "Baker", "Ivanova", "Cohen",
+];
+
+/** Deterministic unique name for the i-th seeded demo member. */
+function demoMemberName(i: number): { firstName: string; lastName: string } {
+  const block = Math.floor(i / FIRST_NAMES.length);
+  return {
+    firstName: FIRST_NAMES[i % FIRST_NAMES.length],
+    lastName: LAST_NAMES[(i + block) % LAST_NAMES.length],
+  };
+}
 
 const GROUP_TYPES = [
   {
@@ -297,6 +316,64 @@ async function addChannelMember(
 }
 
 /**
+ * Bulk-seeding variant of addChannelMember: inserts the membership and counts
+ * it in `counts` instead of read+patching the channel per insert (with 100
+ * seeded members that halves the write volume). Callers flush `counts` once
+ * via flushChannelCounts.
+ */
+async function addChannelMemberCounted(
+  ctx: MutationCtx,
+  counts: Map<Id<"chatChannels">, number>,
+  channelId: Id<"chatChannels">,
+  userId: Id<"users">,
+  role: "admin" | "member",
+  displayName: string,
+): Promise<void> {
+  await ctx.db.insert("chatChannelMembers", {
+    channelId,
+    userId,
+    role,
+    joinedAt: now(),
+    isMuted: false,
+    displayName,
+  });
+  counts.set(channelId, (counts.get(channelId) ?? 0) + 1);
+}
+
+async function flushChannelCounts(
+  ctx: MutationCtx,
+  counts: Map<Id<"chatChannels">, number>,
+): Promise<void> {
+  for (const [channelId, added] of counts) {
+    const channel = await ctx.db.get(channelId);
+    if (channel) {
+      await ctx.db.patch(channelId, {
+        memberCount: (channel.memberCount || 0) + added,
+      });
+    }
+  }
+  counts.clear();
+}
+
+/** Count the real (non-placeholder) accounts that belong to a demo. */
+async function countRealUsers(
+  ctx: QueryCtx | MutationCtx,
+  communityId: Id<"communities">,
+): Promise<number> {
+  const memberships = await ctx.db
+    .query("userCommunities")
+    .withIndex("by_community", (q) => q.eq("communityId", communityId))
+    .collect();
+  let count = 0;
+  for (const membership of memberships) {
+    if (membership.status !== 1) continue;
+    const user = await ctx.db.get(membership.userId);
+    if (user && !user.isPlaceholder) count++;
+  }
+  return count;
+}
+
+/**
  * Post a scripted conversation into a channel from rotating senders, staggered
  * over the past few days, and denormalize the last message onto the channel so
  * inbox previews render.
@@ -489,11 +566,15 @@ export const createDemoCommunity = mutation({
     const timestamp = now();
     const slug = await uniqueDemoSlug(ctx, name);
 
-    const smallGroups = clamp(args.smallGroupCount ?? 3, 1, MAX_SMALL_GROUPS);
-    const campuses = clamp(args.campusCount ?? 1, 1, MAX_CAMPUSES);
+    // Congregation size only steers the default group count — every demo is
+    // populated by exactly DEMO_SEED_USER_COUNT placeholder members.
     const totalSize = args.totalSize ?? 100;
-    // Congregation size scales how many placeholder members populate lists.
-    const memberCount = totalSize < 50 ? 8 : totalSize < 250 ? 12 : DEMO_MEMBERS.length;
+    const smallGroups = clamp(
+      args.smallGroupCount ?? Math.ceil(totalSize / 50),
+      1,
+      MAX_SMALL_GROUPS,
+    );
+    const campuses = clamp(args.campusCount ?? 1, 1, MAX_CAMPUSES);
 
     // ---- Community ----
     const communityId = await ctx.db.insert("communities", {
@@ -529,8 +610,8 @@ export const createDemoCommunity = mutation({
 
     // ---- Placeholder members ----
     const members: Array<{ userId: Id<"users">; name: string }> = [];
-    for (let i = 0; i < memberCount; i++) {
-      const person = DEMO_MEMBERS[i];
+    for (let i = 0; i < DEMO_SEED_USER_COUNT; i++) {
+      const person = demoMemberName(i);
       const memberId = await ctx.db.insert("users", {
         firstName: person.firstName,
         lastName: person.lastName,
@@ -590,11 +671,12 @@ export const createDemoCommunity = mutation({
       isAnnouncementGroup: true,
       includeAnnouncementsChannel: true,
     });
+    const channelCounts = new Map<Id<"chatChannels">, number>();
     for (const member of members) {
       await addGroupMember(ctx, announcement.groupId, member.userId, "member");
-      await addChannelMember(ctx, announcement.channels.mainChannelId, member.userId, "member", member.name);
+      await addChannelMemberCounted(ctx, channelCounts, announcement.channels.mainChannelId, member.userId, "member", member.name);
       if (announcement.channels.announcementsChannelId) {
-        await addChannelMember(ctx, announcement.channels.announcementsChannelId, member.userId, "member", member.name);
+        await addChannelMemberCounted(ctx, channelCounts, announcement.channels.announcementsChannelId, member.userId, "member", member.name);
       }
     }
 
@@ -662,16 +744,16 @@ export const createDemoCommunity = mutation({
         defaultEndTime: def.defaultDay !== undefined ? "21:00" : undefined,
       });
 
-      // Rotate 4-5 placeholder members into each group; first one leads.
+      // Rotate 6-8 placeholder members into each group; first one leads.
       const groupMembers: Array<{ userId: Id<"users">; name: string }> = [];
-      const size = 4 + (g % 2);
+      const size = 6 + (g % 3);
       for (let m = 0; m < Math.min(size, members.length); m++) {
-        const member = members[(g * 3 + m) % members.length];
+        const member = members[(g * 7 + m * 3) % members.length];
         const isLeader = m === 0;
         await addGroupMember(ctx, created.groupId, member.userId, isLeader ? "leader" : "member");
-        await addChannelMember(ctx, created.channels.mainChannelId, member.userId, isLeader ? "admin" : "member", member.name);
+        await addChannelMemberCounted(ctx, channelCounts, created.channels.mainChannelId, member.userId, isLeader ? "admin" : "member", member.name);
         if (isLeader) {
-          await addChannelMember(ctx, created.channels.leadersChannelId, member.userId, "admin", member.name);
+          await addChannelMemberCounted(ctx, channelCounts, created.channels.leadersChannelId, member.userId, "admin", member.name);
         }
         groupMembers.push(member);
       }
@@ -781,6 +863,7 @@ export const createDemoCommunity = mutation({
     }
 
     // ---- Enroll the creator in every group/channel as leader ----
+    await flushChannelCounts(ctx, channelCounts);
     await enrollUserEverywhere(ctx, communityId, userId, callerName);
 
     return {
@@ -833,6 +916,18 @@ export const joinDemoCommunity = mutation({
         q.eq("userId", userId).eq("communityId", community._id),
       )
       .first();
+
+    // Demos hold at most MAX_REAL_USERS real accounts (the placeholder
+    // members don't count). Existing members can always re-enter.
+    if (!existing || existing.status !== 1) {
+      const realUsers = await countRealUsers(ctx, community._id);
+      if (realUsers >= MAX_REAL_USERS) {
+        throw new Error(
+          `This demo already has ${MAX_REAL_USERS} people in it. Go live to invite your whole community.`,
+        );
+      }
+    }
+
     if (existing) {
       await ctx.db.patch(existing._id, {
         // Never downgrade (the creator re-entering their own code stays primary).
@@ -864,5 +959,144 @@ export const joinDemoCommunity = mutation({
       secondaryColor: community.secondaryColor ?? null,
       demoCode: community.slug ?? code,
     };
+  },
+});
+
+/**
+ * Demo state for the current community — drives the app-wide demo banner and
+ * the go-live screen. Returns { isDemo: false } for live communities so the
+ * banner can cheaply no-op.
+ */
+export const getDemoStatus = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const membership = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", args.communityId),
+      )
+      .first();
+    if (!membership || membership.status !== 1) {
+      return { isDemo: false as const };
+    }
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community?.isDemo) {
+      return { isDemo: false as const };
+    }
+
+    return {
+      isDemo: true as const,
+      demoCode: community.slug ?? "",
+      realUserCount: await countRealUsers(ctx, args.communityId),
+      maxRealUsers: MAX_REAL_USERS,
+      isAdmin: (membership.roles ?? 0) >= COMMUNITY_ROLES.ADMIN,
+    };
+  },
+});
+
+// ============================================================================
+// Going live
+// ============================================================================
+
+/**
+ * Remove the seeded placeholder members (and everything they authored) after
+ * a demo converts to a live community. Groups, channels, branding, settings,
+ * events, and the real staff accounts all stay — only the fake people go.
+ *
+ * Scheduled by ee/billing.handleCheckoutCompleted when the demo-conversion
+ * checkout finishes. Idempotent: placeholders are deleted as they're found,
+ * so a webhook retry that schedules it twice finds nothing the second time.
+ */
+export const purgeDemoSeedUsers = internalMutation({
+  args: { communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+
+    let purged = 0;
+    for (const membership of memberships) {
+      const user = await ctx.db.get(membership.userId);
+      if (!user?.isPlaceholder) continue;
+
+      // Placeholder members exist only inside their demo community, so every
+      // row keyed to them belongs to this community and is safe to delete.
+      const groupRows = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .collect();
+      for (const row of groupRows) await ctx.db.delete(row._id);
+
+      const channelRows = await ctx.db
+        .query("chatChannelMembers")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .collect();
+      for (const row of channelRows) await ctx.db.delete(row._id);
+
+      const messages = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_sender", (q) => q.eq("senderId", user._id))
+        .collect();
+      for (const row of messages) await ctx.db.delete(row._id);
+
+      const rsvps = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_user", (q) => q.eq("userId", user._id))
+        .collect();
+      for (const row of rsvps) await ctx.db.delete(row._id);
+
+      const prayers = await ctx.db
+        .query("prayers")
+        .withIndex("by_author", (q) => q.eq("authorUserId", user._id))
+        .collect();
+      for (const row of prayers) await ctx.db.delete(row._id);
+
+      await ctx.db.delete(membership._id);
+      await ctx.db.delete(user._id);
+      purged++;
+    }
+
+    // Recompute the denormalized channel state the purge invalidated:
+    // memberCount and the inbox lastMessage preview.
+    const groups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .collect();
+    for (const group of groups) {
+      const channels = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", group._id))
+        .collect();
+      for (const channel of channels) {
+        const remaining = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+          .collect();
+        const lastMessage = await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel_createdAt", (q) => q.eq("channelId", channel._id))
+          .order("desc")
+          .first();
+        await ctx.db.patch(channel._id, {
+          memberCount: remaining.filter((m) => m.leftAt === undefined).length,
+          lastMessageAt: lastMessage?.createdAt,
+          lastMessagePreview: lastMessage?.content.slice(0, 100),
+          lastMessageSenderId: lastMessage?.senderId,
+          lastMessageSenderName: lastMessage?.senderName,
+        });
+      }
+    }
+
+    console.log(
+      `[demo] Purged ${purged} placeholder members from community ${args.communityId}`,
+    );
+    return { purged };
   },
 });

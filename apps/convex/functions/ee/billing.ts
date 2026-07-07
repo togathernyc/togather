@@ -24,6 +24,7 @@
 import { v } from "convex/values";
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   query,
@@ -34,6 +35,10 @@ import { requireCommunityAdmin, PRIMARY_ADMIN_ROLE } from "../../lib/permissions
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { getNextFirstOfMonth } from "../../lib/utils";
 import { addUserToAnnouncementGroup } from "../communities";
+import { countBillableActiveUsers } from "../memberActivity";
+
+/** Per-active-user pricing: $1/month per billable active member. */
+const PER_ACTIVE_USER_CENTS = 100;
 
 import type { Id } from "../../_generated/dataModel";
 
@@ -493,6 +498,124 @@ export const createSubscriptionForCommunity = action({
   },
 });
 
+/**
+ * State needed to start a demo-conversion checkout: verifies the caller is a
+ * community admin, that the community is still a demo, and computes the
+ * per-active-user quantity.
+ */
+export const getDemoConversionInfo = internalQuery({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community) throw new Error("Community not found");
+    if (!community.isDemo) {
+      throw new Error("This community is already live");
+    }
+    if (community.stripeSubscriptionId) {
+      throw new Error("This community already has an active subscription");
+    }
+
+    return {
+      name: community.name ?? "Togather Community",
+      stripeCustomerId: community.stripeCustomerId,
+      // Bill for the real staff already in the demo; never less than 1 seat.
+      billableActiveUsers: Math.max(
+        1,
+        await countBillableActiveUsers(ctx, args.communityId),
+      ),
+    };
+  },
+});
+
+/**
+ * Start the "go live" checkout for a demo community.
+ *
+ * Pricing is $1/month per billable active member (see
+ * functions/memberActivity.ts). The checkout starts with the current count as
+ * the subscription quantity; the monthly sync cron keeps it in step with real
+ * activity afterwards. When the webhook confirms payment, the community
+ * leaves demo mode and its seeded placeholder members are purged.
+ */
+export const convertDemoToLive = action({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args): Promise<{ url: string }> => {
+    const info = await ctx.runQuery(
+      internal.functions.ee.billing.getDemoConversionInfo,
+      { token: args.token, communityId: args.communityId },
+    );
+
+    try {
+      const Stripe = (await import("stripe")).default;
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+        apiVersion: "2026-02-25.clover",
+      });
+
+      let customerId = info.stripeCustomerId;
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          name: info.name,
+          metadata: { communityId: args.communityId },
+        });
+        customerId = customer.id;
+        await ctx.runMutation(
+          internal.functions.ee.billing.saveStripeCustomerOnCommunity,
+          { communityId: args.communityId, stripeCustomerId: customerId },
+        );
+      }
+
+      const productId = await getOrCreateProductId(stripe);
+      const price = await stripe.prices.create({
+        unit_amount: PER_ACTIVE_USER_CENTS,
+        currency: "usd",
+        recurring: { interval: "month" },
+        product: productId,
+        metadata: { communityId: args.communityId, billingModel: "per_active_user" },
+      });
+
+      // Anchor billing to the 1st of next month — Stripe prorates the first partial period
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        mode: "subscription",
+        line_items: [{ price: price.id, quantity: info.billableActiveUsers }],
+        subscription_data: {
+          billing_cycle_anchor: getNextFirstOfMonth(),
+        },
+        success_url:
+          DOMAIN_CONFIG.landingUrl + "/onboarding/go-live?checkout=success",
+        cancel_url:
+          DOMAIN_CONFIG.landingUrl + "/onboarding/go-live?checkout=canceled",
+        metadata: {
+          communityId: args.communityId,
+          demoConversion: "true",
+        },
+      });
+
+      if (!session.url) {
+        throw new Error(
+          "Stripe returned a checkout session without a URL. Please try again.",
+        );
+      }
+      return { url: session.url };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("subscription")) {
+        throw error;
+      }
+      throw new Error(
+        `Failed to create checkout session: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  },
+});
+
 // ============================================================================
 // Internal Mutations (called from webhook handlers)
 // ============================================================================
@@ -550,10 +673,41 @@ export const handleCheckoutCompleted = internalMutation({
     communityId: v.string(),
     proposalId: v.optional(v.string()),
     monthlyPrice: v.optional(v.number()),
+    demoConversion: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const communityId = args.communityId as Id<"communities">;
     const now = Date.now();
+
+    if (args.demoConversion) {
+      // Demo-conversion flow — the community and its admins already exist;
+      // leave demo mode, switch to per-active-user billing, and purge the
+      // seeded placeholder members (scheduled so a large purge can't fail the
+      // webhook transaction).
+      const billableActiveUsers = Math.max(
+        1,
+        await countBillableActiveUsers(ctx, communityId),
+      );
+
+      await ctx.db.patch(communityId, {
+        isDemo: false,
+        demoCreatedById: undefined,
+        stripeCustomerId: args.stripeCustomerId,
+        stripeSubscriptionId: args.stripeSubscriptionId,
+        subscriptionStatus: "active",
+        billingModel: "per_active_user",
+        subscriptionPriceMonthly: billableActiveUsers, // $1 × active members
+        isPublic: true,
+        updatedAt: now,
+      });
+
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.demo.purgeDemoSeedUsers,
+        { communityId },
+      );
+      return;
+    }
 
     if (args.proposalId) {
       // Proposal flow — read price from proposal, create membership + announcement group
@@ -711,6 +865,119 @@ export const handlePaymentFailed = internalMutation({
       subscriptionStatus: "past_due",
       updatedAt: Date.now(),
     });
+  },
+});
+
+// ============================================================================
+// Per-active-user quantity sync (monthly cron)
+// ============================================================================
+
+/**
+ * List per-active-user communities with their current billable counts.
+ * Used by the monthly sync cron.
+ */
+export const listPerUserBillingCommunities = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const communities = await ctx.db.query("communities").collect();
+    const results: Array<{
+      communityId: Id<"communities">;
+      stripeSubscriptionId: string;
+      billableActiveUsers: number;
+    }> = [];
+
+    for (const community of communities) {
+      if (community.billingModel !== "per_active_user") continue;
+      if (!community.stripeSubscriptionId) continue;
+      if (community.subscriptionStatus === "canceled") continue;
+
+      results.push({
+        communityId: community._id,
+        stripeSubscriptionId: community.stripeSubscriptionId,
+        billableActiveUsers: Math.max(
+          1,
+          await countBillableActiveUsers(ctx, community._id),
+        ),
+      });
+    }
+    return results;
+  },
+});
+
+/** Record the synced monthly price on the community (for admin display). */
+export const savePerUserBillingCount = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    billableActiveUsers: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.communityId, {
+      subscriptionPriceMonthly: args.billableActiveUsers, // $1 × active members
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Monthly cron (see crons.ts): re-count each per-active-user community's
+ * billable members — opened the app in the past 6 months, not manually marked
+ * inactive, real accounts only — and update the Stripe subscription quantity
+ * so the next invoice bills $1 per active member.
+ */
+export const syncPerUserSubscriptionQuantities = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const communities = await ctx.runQuery(
+      internal.functions.ee.billing.listPerUserBillingCommunities,
+      {},
+    );
+    if (communities.length === 0) return { synced: 0 };
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    let synced = 0;
+    for (const community of communities) {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          community.stripeSubscriptionId,
+        );
+        const item = subscription.items.data[0];
+        if (!item) {
+          console.warn(
+            `[billing] Subscription ${community.stripeSubscriptionId} has no items; skipping`,
+          );
+          continue;
+        }
+
+        if (item.quantity !== community.billableActiveUsers) {
+          await stripe.subscriptionItems.update(item.id, {
+            quantity: community.billableActiveUsers,
+            // Quantity reflects the coming month's roster; don't back-bill
+            // the current period.
+            proration_behavior: "none",
+          });
+        }
+
+        await ctx.runMutation(
+          internal.functions.ee.billing.savePerUserBillingCount,
+          {
+            communityId: community.communityId,
+            billableActiveUsers: community.billableActiveUsers,
+          },
+        );
+        synced++;
+      } catch (error) {
+        // One community's Stripe failure must not block the rest.
+        console.error(
+          `[billing] Failed to sync quantity for community ${community.communityId}:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return { synced };
   },
 });
 

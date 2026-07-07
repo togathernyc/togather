@@ -321,6 +321,8 @@ export const getCommunityMemberById = query({
         status: communityMembership.status || 0,
         joinedAt: communityMembership.createdAt || null,
         anniversary: communityMembership.communityAnniversary || null,
+        // Manual per-active-user billing override (see functions/memberActivity.ts)
+        billingInactive: communityMembership.billingInactive ?? false,
       },
       activeGroups: await Promise.all(
         activeGroups.map(async (m) => {

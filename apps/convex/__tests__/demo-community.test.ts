@@ -11,7 +11,7 @@
 import { convexTest } from "convex-test";
 import { expect, test, describe, vi } from "vitest";
 import schema from "../schema";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import { generateTokens } from "../lib/auth";
 import type { Id } from "../_generated/dataModel";
@@ -91,6 +91,33 @@ describe("createDemoCommunity", () => {
 
     const caller = await t.run(async (ctx) => ctx.db.get(userId));
     expect(caller?.activeCommunityId).toBe(result.communityId);
+  });
+
+  test("seeds exactly 100 placeholder demo members", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Seed", "+15555550111");
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Century Chapel",
+    });
+
+    const { placeholders, real } = await t.run(async (ctx) => {
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect();
+      let placeholders = 0;
+      let real = 0;
+      for (const m of memberships) {
+        const user = await ctx.db.get(m.userId);
+        if (user?.isPlaceholder) placeholders++;
+        else real++;
+      }
+      return { placeholders, real };
+    });
+    expect(placeholders).toBe(100);
+    expect(real).toBe(1); // just the creator
   });
 
   test("seeds groups scaled to the questionnaire, with conversations, events, RSVPs, and prayers", async () => {
@@ -327,6 +354,55 @@ describe("joinDemoCommunity", () => {
     expect(membership?.roles).toBe(COMMUNITY_ROLES.PRIMARY_ADMIN);
   });
 
+  test("caps a demo at 10 real users", async () => {
+    const t = convexTest(schema, modules);
+    const { token: creatorToken } = await createUser(t, "Cap", "+15555550120");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token: creatorToken,
+      name: "Full House Church",
+    });
+
+    // Fill the demo to the cap: creator + 9 directly-inserted real members.
+    await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      for (let i = 0; i < 9; i++) {
+        const uid = await ctx.db.insert("users", {
+          firstName: `Staff${i}`,
+          lastName: "Member",
+          phone: `+1555555013${i}`,
+          phoneVerified: true,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        await ctx.db.insert("userCommunities", {
+          userId: uid,
+          communityId: demo.communityId,
+          roles: COMMUNITY_ROLES.ADMIN,
+          status: 1,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+    });
+
+    const { token: eleventhToken } = await createUser(t, "Eleven", "+15555550129");
+    await expect(
+      t.mutation(api.functions.demo.joinDemoCommunity, {
+        token: eleventhToken,
+        code: demo.demoCode,
+      }),
+    ).rejects.toThrow("already has 10 people");
+
+    // Existing members can still re-enter at the cap.
+    await expect(
+      t.mutation(api.functions.demo.joinDemoCommunity, {
+        token: creatorToken,
+        code: demo.demoCode,
+      }),
+    ).resolves.toMatchObject({ communityId: demo.communityId });
+  });
+
   test("cannot join a non-demo community by slug", async () => {
     const t = convexTest(schema, modules);
     const { token } = await createUser(t, "Sly", "+15555550109");
@@ -347,6 +423,129 @@ describe("joinDemoCommunity", () => {
         code: "real-church",
       }),
     ).rejects.toThrow("No demo found");
+  });
+});
+
+describe("getDemoStatus", () => {
+  test("reports demo state, code, and real-user headroom to members", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Stat", "+15555550140");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Status Church",
+    });
+
+    const status = await t.query(api.functions.demo.getDemoStatus, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(status).toMatchObject({
+      isDemo: true,
+      demoCode: demo.demoCode,
+      realUserCount: 1,
+      maxRealUsers: 10,
+      isAdmin: true,
+    });
+  });
+
+  test("returns isDemo false for live communities and non-members", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Live", "+15555550141");
+
+    const communityId = await t.run(async (ctx) =>
+      ctx.db.insert("communities", {
+        name: "Live Church",
+        slug: "live-church",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const status = await t.query(api.functions.demo.getDemoStatus, {
+      token,
+      communityId,
+    });
+    expect(status).toEqual({ isDemo: false });
+  });
+});
+
+describe("demo conversion (go live)", () => {
+  test("checkout completion leaves demo mode and purges placeholder members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, token } = await createUser(t, "Conv", "+15555550150");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Convert Chapel",
+    });
+
+    await t.mutation(internal.functions.ee.billing.handleCheckoutCompleted, {
+      stripeCustomerId: "cus_test",
+      stripeSubscriptionId: "sub_test",
+      communityId: demo.communityId,
+      demoConversion: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const community = await t.run(async (ctx) => ctx.db.get(demo.communityId));
+    expect(community?.isDemo).toBe(false);
+    expect(community?.billingModel).toBe("per_active_user");
+    expect(community?.subscriptionStatus).toBe("active");
+    expect(community?.stripeSubscriptionId).toBe("sub_test");
+    expect(community?.isPublic).toBe(true);
+    // 1 real active member -> $1/month
+    expect(community?.subscriptionPriceMonthly).toBe(1);
+
+    const after = await t.run(async (ctx) => {
+      const memberships = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      let placeholders = 0;
+      for (const m of memberships) {
+        const user = await ctx.db.get(m.userId);
+        if (user?.isPlaceholder) placeholders++;
+      }
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      const prayers = await ctx.db
+        .query("prayers")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      const channels = [];
+      for (const group of groups) {
+        const rows = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", group._id))
+          .collect();
+        channels.push(...rows);
+      }
+      const messages = [];
+      for (const channel of channels) {
+        const rows = await ctx.db
+          .query("chatMessages")
+          .withIndex("by_channel", (q) => q.eq("channelId", channel._id))
+          .collect();
+        messages.push(...rows);
+      }
+      return { placeholders, groups, prayers, channels, messages, memberships };
+    });
+
+    // Fake people and everything they authored are gone…
+    expect(after.placeholders).toBe(0);
+    expect(after.messages).toHaveLength(0);
+    expect(after.prayers).toHaveLength(0);
+    // …but the structure and the real account survive.
+    expect(after.groups.length).toBeGreaterThan(0);
+    expect(after.memberships.some((m) => m.userId === userId)).toBe(true);
+    // Channel denormalization was recomputed (creator remains in channels).
+    for (const channel of after.channels) {
+      expect(channel.memberCount).toBe(1);
+      expect(channel.lastMessagePreview).toBeUndefined();
+    }
   });
 });
 
