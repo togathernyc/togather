@@ -227,7 +227,9 @@ GitHub happens once per change; GitHub → Convex/Expo happens on every deploy.
 2. Add `<KEY>` to the allowlist array in
    `ee/scripts/sync-1password-to-github.sh` — `COMMON_SECRETS` (required; logs a
    loud skip if missing) or `OPTIONAL_SECRETS` (silently skipped if absent). **A
-   key that isn't listed here is never synced.**
+   key that isn't listed here is never synced.** Note: GitHub reserves the
+   `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't sync under its
+   own name — add an alias block (see `MIRROR_TOKEN`) to rename it on the way in.
 3. **Only if a Convex function needs it at runtime**, also add `<KEY>` to
    `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh`. CI-only tokens (repo
    automation, mirror pushes, etc.) stop at GitHub — leave them out.
@@ -246,7 +248,7 @@ Store service tokens as GitHub repository secrets for use in CI workflows. Examp
 | `EXPO_TOKEN` | Expo/EAS authentication | Build and deploy workflows |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare Workers deployment | Landing page and worker deployments |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier | Worker deployments |
-| `GITHUB_MIRROR_TOKEN` | PAT for mirroring the repo to another remote | Repo mirror workflow (CI-only; not forwarded to Convex) |
+| `MIRROR_TOKEN` | PAT for mirroring the repo to another remote (stored in 1Password as `GITHUB_MIRROR_TOKEN`; renamed on sync because GitHub reserves the `GITHUB_` prefix) | Repo mirror workflow (CI-only; not forwarded to Convex) |
 
 ---
 
