@@ -1188,4 +1188,133 @@ http.route({
   }),
 });
 
+// ============================================================================
+// GitHub Webhook (ADR-029 Phase 2)
+// ============================================================================
+
+/**
+ * Verify a GitHub webhook signature (`X-Hub-Signature-256`) using the Web
+ * Crypto API — same HMAC-SHA256 + constant-time-compare pattern as the Stripe
+ * handler. GitHub sends `sha256=<hex digest of the raw body>`.
+ */
+async function verifyGithubSignature(
+  payload: string,
+  signature: string,
+  secret: string
+): Promise<boolean> {
+  try {
+    const prefix = "sha256=";
+    if (!signature.startsWith(prefix)) return false;
+    const provided = signature.slice(prefix.length).toLowerCase();
+
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBytes = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(payload)
+    );
+    const computedSig = Array.from(new Uint8Array(signatureBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    return timingSafeEqual(provided, computedSig);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * POST /github/webhook
+ *
+ * Inbound GitHub webhook for the contributor dev dashboard (ADR-029 Phase 2).
+ * Replaces polling: a merged PR flips the correlated devBug to MERGED (+
+ * shippedAt, thread message, push) even when the merge happened directly on
+ * GitHub; a PR closed without merging flags the item for a maintainer.
+ *
+ * Only `pull_request` events with action "closed" do anything — everything
+ * else (ping, other events, other actions) returns 200 "ignored" fast.
+ * Correlation to a devBug happens in the scheduled internalMutation
+ * (handleGithubPrClosed): primarily by the Routine's `claude/devbug-<bugId>`
+ * head-branch convention, falling back to matching html_url against stored
+ * prUrl. Responds 200 immediately after scheduling (async-schedule-then-200,
+ * like the Slack handler).
+ */
+http.route({
+  path: "/github/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.text();
+
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    if (!secret) {
+      console.error("[GithubWebhook] GITHUB_WEBHOOK_SECRET not configured");
+      return new Response("GitHub webhook not configured", { status: 503 });
+    }
+
+    const signature = request.headers.get("x-hub-signature-256");
+    if (!signature) {
+      return new Response("Missing x-hub-signature-256 header", {
+        status: 401,
+      });
+    }
+    const isValid = await verifyGithubSignature(body, signature, secret);
+    if (!isValid) {
+      console.error("[GithubWebhook] Invalid signature");
+      return new Response("Invalid signature", { status: 401 });
+    }
+
+    // Only closed pull requests matter; ack everything else immediately.
+    const event = request.headers.get("x-github-event");
+    if (event !== "pull_request") {
+      return new Response("ignored", { status: 200 });
+    }
+
+    let payload: {
+      action?: string;
+      pull_request?: {
+        merged?: boolean;
+        html_url?: string;
+        head?: { ref?: string };
+      };
+    };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+
+    if (payload.action !== "closed") {
+      return new Response("ignored", { status: 200 });
+    }
+
+    const pr = payload.pull_request;
+    const branchRef = pr?.head?.ref;
+    if (!pr || typeof pr.merged !== "boolean" || typeof branchRef !== "string") {
+      return new Response("Invalid pull_request payload", { status: 400 });
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.bugs.handleGithubPrClosed,
+      {
+        branchRef,
+        prUrl: typeof pr.html_url === "string" ? pr.html_url : undefined,
+        merged: pr.merged,
+      }
+    );
+
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
 export default http;

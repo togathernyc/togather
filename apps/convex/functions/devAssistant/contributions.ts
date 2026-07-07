@@ -74,6 +74,69 @@ async function notifyOriginatorUnlessSelf(
 }
 
 // ============================================================================
+// GitHub attribution (ADR-029 Phase 2)
+// ============================================================================
+
+/**
+ * GitHub's username rules: alphanumeric and hyphens only, no leading/trailing
+ * or consecutive hyphens. Length (max 39) is checked separately — a quantifier
+ * on the hyphen-separated groups can't express "39 chars total".
+ */
+const GITHUB_USERNAME_REGEX = /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$/;
+const GITHUB_USERNAME_MAX_LENGTH = 39;
+
+/** The caller's own self-entered GitHub username (null when unset). */
+export const getGithubUsername = query({
+  args: { token: v.string() },
+  handler: async (ctx, args): Promise<string | null> => {
+    const user = await requireContributor(ctx, args.token);
+    return user.githubUsername ?? null;
+  },
+});
+
+/**
+ * Set (or clear, with an empty string) the caller's GitHub username. It's
+ * honor-system attribution, not authentication (ADR-029): the implementation
+ * Routine uses it for the Co-authored-by trailer so shipped contributions
+ * land on the contributor's GitHub profile.
+ */
+export const setGithubUsername = mutation({
+  args: { token: v.string(), username: v.string() },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+
+    // Be forgiving about the two ways people paste their handle: whitespace
+    // and a leading "@".
+    let username = args.username.trim();
+    if (username.startsWith("@")) username = username.slice(1).trim();
+
+    if (username === "") {
+      await ctx.db.patch(user._id, {
+        githubUsername: undefined,
+        updatedAt: Date.now(),
+      });
+      return { ok: true };
+    }
+
+    if (
+      username.length > GITHUB_USERNAME_MAX_LENGTH ||
+      !GITHUB_USERNAME_REGEX.test(username)
+    ) {
+      throw new ConvexError(
+        "Invalid GitHub username: use letters, numbers, and hyphens only " +
+          "(no leading, trailing, or consecutive hyphens; max 39 characters)",
+      );
+    }
+
+    await ctx.db.patch(user._id, {
+      githubUsername: username,
+      updatedAt: Date.now(),
+    });
+    return { ok: true };
+  },
+});
+
+// ============================================================================
 // Mutations
 // ============================================================================
 

@@ -138,6 +138,33 @@ function routineTrigger(mode: "spec" | "implement" | "review"): {
   };
 }
 
+/** Repo the dev dashboard mirrors issues into (ADR-029 Phase 2). */
+const GITHUB_ISSUES_ENDPOINT =
+  "https://api.github.com/repos/togathernyc/togather/issues";
+
+/**
+ * Body for the mirrored GitHub issue: the approved spec when there is one,
+ * otherwise the raw brief (+ repro), plus a provenance footer.
+ */
+function buildGithubIssueBody(bug: {
+  spec?: string;
+  body: string;
+  repro?: string;
+}): string {
+  const sections: string[] = [];
+  if (bug.spec) {
+    sections.push(bug.spec);
+  } else {
+    sections.push(bug.body);
+    if (bug.repro) sections.push(`## Repro\n\n${bug.repro}`);
+  }
+  sections.push(
+    "---\n_Filed via the Togather dev dashboard " +
+      "([ADR-029](https://github.com/togathernyc/togather/blob/main/docs/architecture/ADR-029-contributor-dev-dashboard.md))._",
+  );
+  return sections.join("\n\n");
+}
+
 export const dispatchBug = internalAction({
   args: { bugId: v.id("devBugs"), forceRedispatch: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<void> => {
@@ -169,6 +196,67 @@ export const dispatchBug = internalAction({
       if (marked.alreadyDispatched && !args.forceRedispatch) return;
     }
 
+    // GitHub issue mirroring (ADR-029 Phase 2): create the tracking issue
+    // BEFORE firing the Routine so the payload can carry its number (the
+    // Routine writes "Closes #N" in the PR body and GitHub auto-closes the
+    // issue on merge). Skipped silently when GITHUB_MIRROR_TOKEN is unset
+    // (feature not enabled) or the bug already has an issue (retry paths).
+    // Failures are non-fatal: log + lastError breadcrumb, keep dispatching.
+    let githubIssueNumber = bug.githubIssueNumber;
+    const mirrorToken = process.env.GITHUB_MIRROR_TOKEN;
+    if (mirrorToken && githubIssueNumber === undefined) {
+      try {
+        const res = await fetch(GITHUB_ISSUES_ENDPOINT, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${mirrorToken}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: bug.aiTitle ?? bug.title,
+            body: buildGithubIssueBody(bug),
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`GitHub issue POST ${res.status}: ${await res.text()}`);
+        }
+        const issue = (await res.json()) as {
+          number?: number;
+          html_url?: string;
+        };
+        if (typeof issue.number !== "number") {
+          throw new Error("GitHub issue response missing `number`");
+        }
+        githubIssueNumber = issue.number;
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.setGithubIssue,
+          {
+            bugId: args.bugId,
+            githubIssueNumber: issue.number,
+            githubIssueUrl:
+              typeof issue.html_url === "string" ? issue.html_url : undefined,
+          },
+        );
+      } catch (error) {
+        console.error("[DevAssistant] GitHub issue mirroring failed:", error);
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.recordDispatchError,
+          {
+            bugId: args.bugId,
+            error: `GitHub issue mirroring failed (non-fatal): ${String(error)}`,
+          },
+        );
+      }
+    }
+
+    // Originator attribution for the Co-authored-by trailer (ADR-029 Phase 2).
+    const originator = await ctx.runQuery(
+      internal.functions.devAssistant.bugs.getOriginatorAttribution,
+      { bugId: args.bugId },
+    );
+
     const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
     const payload = {
       bugId: args.bugId,
@@ -177,6 +265,15 @@ export const dispatchBug = internalAction({
       body: bug.body,
       repro: bug.repro,
       screenshotUrls: bug.screenshotUrls,
+      // Approved spec + risk level so the Routine builds against the plan the
+      // contributor signed off on (undefined for chat-originated bugs).
+      spec: bug.spec,
+      riskLevel: bug.riskLevel,
+      // The Routine references the mirrored issue ("Closes #N") in its PR.
+      githubIssueNumber,
+      // Attribution for the Co-authored-by commit trailer.
+      originatorName: originator?.name,
+      originatorGithubUsername: originator?.githubUsername,
       callbackUrl,
     };
 

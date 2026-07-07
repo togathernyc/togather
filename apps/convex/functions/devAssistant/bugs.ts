@@ -73,13 +73,17 @@ type BugStatus = Doc<"devBugs">["status"];
  *
  * The routine runs its own internal review cycle and reports forward progress
  * (CODE_REVIEW once, then READY_TO_MERGE); it never needs us to bounce backward.
+ *
+ * CODE_REVIEW -> MERGED is a legal forward skip: a maintainer can merge the PR
+ * directly on GitHub before the AI review verdict lands, and the GitHub
+ * webhook (ADR-029 Phase 2) reports that merge. Still monotonic.
  */
 const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   DRAFT: ["IN_REVIEW", "REJECTED"],
   IN_REVIEW: ["READY_FOR_IMPL", "REJECTED"],
   READY_FOR_IMPL: ["IN_PROGRESS", "REJECTED"],
   IN_PROGRESS: ["CODE_REVIEW", "REJECTED"],
-  CODE_REVIEW: ["READY_TO_MERGE", "REJECTED"],
+  CODE_REVIEW: ["READY_TO_MERGE", "MERGED", "REJECTED"],
   READY_TO_MERGE: ["MERGED", "REJECTED"],
   MERGED: [],
   REJECTED: [],
@@ -439,6 +443,160 @@ export const markDispatched = internalMutation({
       updatedAt: Date.now(),
     });
     return { alreadyDispatched: false };
+  },
+});
+
+/**
+ * Store the mirrored GitHub issue on the bug (ADR-029 Phase 2). Written by
+ * dispatchBug right after it creates the issue, so the Routine payload and the
+ * dashboard's deep link both see it.
+ */
+export const setGithubIssue = internalMutation({
+  args: {
+    bugId: v.id("devBugs"),
+    githubIssueNumber: v.number(),
+    githubIssueUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    await ctx.db.patch(args.bugId, {
+      githubIssueNumber: args.githubIssueNumber,
+      githubIssueUrl: args.githubIssueUrl,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Originator attribution for the implementation dispatch payload (ADR-029
+ * Phase 2): the Routine writes a Co-authored-by trailer from these.
+ */
+export const getOriginatorAttribution = internalQuery({
+  args: { bugId: v.id("devBugs") },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ name?: string; githubUsername?: string } | null> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return null;
+    const user = await ctx.db.get(bug.originatorUserId);
+    if (!user) return null;
+    const name = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
+    return {
+      name: name || undefined,
+      githubUsername: user.githubUsername || undefined,
+    };
+  },
+});
+
+/** Thread message posted when a PR is closed on GitHub without merging. */
+export const PR_CLOSED_UNMERGED_MESSAGE =
+  "Pull request closed without merging — needs a maintainer look";
+
+/**
+ * Apply a GitHub `pull_request` closed event (POST /github/webhook, ADR-029
+ * Phase 2). Correlates the PR to a devBug by the Routine's branch naming
+ * convention `claude/devbug-<bugId>`; when the branch doesn't parse, falls
+ * back to matching the PR's html_url against prUrl on the bounded set of
+ * PR-open bugs (by_status is indexed and CODE_REVIEW/READY_TO_MERGE are the
+ * only states a live PR can be in).
+ *
+ * merged === true replays the bug's own routineRunId through the existing
+ * handleRoutineCallback machinery, which already validates the transition,
+ * stamps shippedAt, logs the "Shipped 🎉" system turn, pushes the originator,
+ * and (for chat items) posts the sourceKey-idempotent bot message. The
+ * early-return on an already-MERGED bug makes replayed webhooks — and the
+ * race with the Routine's own MERGED callback — no-ops.
+ *
+ * merged === false leaves the status untouched and posts a system thread
+ * message flagging the item for a maintainer (deduped against an immediate
+ * webhook redelivery).
+ */
+export const handleGithubPrClosed = internalMutation({
+  args: {
+    branchRef: v.string(),
+    prUrl: v.optional(v.string()),
+    merged: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    // Primary correlation: the implementation Routine names its branch
+    // claude/devbug-<bugId>.
+    let bug: Doc<"devBugs"> | null = null;
+    const branchMatch = /^claude\/devbug-(.+)$/.exec(args.branchRef);
+    if (branchMatch) {
+      const bugId = ctx.db.normalizeId("devBugs", branchMatch[1]);
+      if (bugId) bug = await ctx.db.get(bugId);
+    }
+
+    // Fallback: match the PR URL against the stored prUrl of PR-open bugs.
+    if (!bug && args.prUrl) {
+      for (const status of ["CODE_REVIEW", "READY_TO_MERGE"] as const) {
+        const candidates = await ctx.db
+          .query("devBugs")
+          .withIndex("by_status", (q) => q.eq("status", status))
+          .collect();
+        bug = candidates.find((b) => b.prUrl === args.prUrl) ?? null;
+        if (bug) break;
+      }
+    }
+
+    if (!bug) {
+      console.log(
+        "[DevAssistant] GitHub PR-closed webhook did not correlate to a devBug",
+        args.branchRef,
+        args.prUrl,
+      );
+      return;
+    }
+    // `bug` is a `let`; re-bind as const so closures below stay narrowed.
+    const target = bug;
+
+    if (args.merged) {
+      // Idempotent with the Routine's own MERGED callback (and with webhook
+      // redeliveries): once merged, there is nothing left to apply.
+      if (target.status === "MERGED") return;
+      if (target.routineRunId) {
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.devAssistant.actions.handleRoutineCallback,
+          {
+            bugId: target._id,
+            routineRunId: target.routineRunId,
+            status: "MERGED",
+          },
+        );
+      } else {
+        // A PR without a Routine run shouldn't exist, but don't lose the
+        // merge: apply the transition (stamps shippedAt) + progress line.
+        try {
+          await applyStatusTransition(ctx, target, "MERGED");
+          await insertThreadMessage(ctx, target._id, "system", "Shipped 🎉");
+        } catch (e) {
+          console.error(
+            "[DevAssistant] GitHub merge webhook transition failed:",
+            e,
+          );
+        }
+      }
+      return;
+    }
+
+    // Closed without merging: needs a human. Status is left as-is — the
+    // monotonic machine has no backward state for this, and a maintainer may
+    // reopen the PR or reject the bug from the review screen.
+    const last = await ctx.db
+      .query("devBugMessages")
+      .withIndex("by_bug", (q) => q.eq("bugId", target._id))
+      .order("desc")
+      .first();
+    if (last?.body !== PR_CLOSED_UNMERGED_MESSAGE) {
+      await insertThreadMessage(
+        ctx,
+        target._id,
+        "system",
+        PR_CLOSED_UNMERGED_MESSAGE,
+      );
+      await ctx.db.patch(target._id, { updatedAt: Date.now() });
+    }
   },
 });
 

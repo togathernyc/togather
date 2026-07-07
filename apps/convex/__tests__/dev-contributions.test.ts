@@ -58,6 +58,8 @@ afterEach(async () => {
   delete process.env.CLAUDE_ROUTINES_TOKEN;
   delete process.env.CONVEX_SITE_URL;
   delete process.env.DEV_ASSISTANT_CALLBACK_SECRET;
+  delete process.env.GITHUB_MIRROR_TOKEN;
+  delete process.env.GITHUB_WEBHOOK_SECRET;
 });
 
 async function seedUsers(t: ReturnType<typeof convexTest>): Promise<{
@@ -1214,5 +1216,563 @@ describe("staging verification", () => {
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.stagingVerifiedAt).toBeUndefined();
     expect(bug?.status).toBe("READY_TO_MERGE");
+  });
+});
+
+describe("githubUsername (ADR-029 Phase 2)", () => {
+  test("set + get roundtrip, trimming and stripping a leading @", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "octocat" },
+    );
+    expect(
+      await t.query(
+        api.functions.devAssistant.contributions.getGithubUsername,
+        { token: maintainerId },
+      ),
+    ).toBe("octocat");
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "  @octo-cat  " },
+    );
+    expect(
+      await t.query(
+        api.functions.devAssistant.contributions.getGithubUsername,
+        { token: maintainerId },
+      ),
+    ).toBe("octo-cat");
+  });
+
+  test("rejects usernames that break GitHub's rules", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    const invalid = [
+      "octo_cat", // underscore
+      "-leading",
+      "trailing-",
+      "double--hyphen",
+      "a".repeat(40), // 39 max
+      "octo cat", // space inside
+    ];
+    for (const username of invalid) {
+      await expect(
+        t.mutation(api.functions.devAssistant.contributions.setGithubUsername, {
+          token: maintainerId,
+          username,
+        }),
+      ).rejects.toThrow(/Invalid GitHub username/);
+    }
+
+    // Exactly 39 chars is fine.
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "a".repeat(39) },
+    );
+    const user = await t.run(async (ctx) => ctx.db.get(maintainerId));
+    expect(user?.githubUsername).toBe("a".repeat(39));
+  });
+
+  test("empty string clears the field", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "octocat" },
+    );
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "" },
+    );
+    expect(
+      await t.query(
+        api.functions.devAssistant.contributions.getGithubUsername,
+        { token: maintainerId },
+      ),
+    ).toBeNull();
+    const user = await t.run(async (ctx) => ctx.db.get(maintainerId));
+    expect(user?.githubUsername).toBeUndefined();
+  });
+
+  test("gated by requireContributor", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { regularUserId } = await seedUsers(t);
+
+    await expect(
+      t.query(api.functions.devAssistant.contributions.getGithubUsername, {
+        token: regularUserId,
+      }),
+    ).rejects.toThrow(/Not authorized/);
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.setGithubUsername, {
+        token: regularUserId,
+        username: "octocat",
+      }),
+    ).rejects.toThrow(/Not authorized/);
+  });
+});
+
+describe("GitHub issue mirroring + dispatch payload (ADR-029 Phase 2)", () => {
+  /** Seed a spec-approved dashboard item ready for implementation dispatch. */
+  async function seedReadyBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      githubIssueNumber: number;
+      githubIssueUrl: string;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: "READY_FOR_IMPL",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        aiTitle: "Fix profile typo",
+        body: "There is a typo on the profile screen.",
+        spec: "## Plan\nChange the string.",
+        riskLevel: "low",
+        specApprovedAt: now,
+        githubIssueNumber: overrides.githubIssueNumber,
+        githubIssueUrl: overrides.githubIssueUrl,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  /** Routine env + a fetch mock that also answers the GitHub issues POST. */
+  function stubRoutineAndGithub(issueResponse: Response) {
+    process.env.CLAUDE_ROUTINES_TRIGGER_URL =
+      "https://api.anthropic.com/v1/claude_code/routines/trig_test/fire";
+    process.env.CLAUDE_ROUTINES_TOKEN = "test-token";
+    process.env.CONVEX_SITE_URL = "https://example.convex.site";
+    const fetchMock = vi.fn(async (...fetchArgs: unknown[]) => {
+      if (String(fetchArgs[0]).startsWith("https://api.github.com/")) {
+        return issueResponse.clone();
+      }
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** The routine brief parsed back out of a captured fire-endpoint call. */
+  function parseBrief(call: unknown[]): Record<string, unknown> {
+    const init = call[1] as RequestInit;
+    return JSON.parse(JSON.parse(init.body as string).text);
+  }
+
+  test("without GITHUB_MIRROR_TOKEN mirroring is skipped; payload still carries spec + attribution", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "connie-codes" },
+    );
+    const id = await seedReadyBug(t, maintainerId);
+    const fetchMock = stubRoutineEnv();
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId: id,
+    });
+
+    // Only the routine POST — no GitHub call, no issue fields stored.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(
+      "api.github.com",
+    );
+    const brief = parseBrief(fetchMock.mock.calls[0] as unknown[]);
+    expect(brief).toMatchObject({
+      bugId: id,
+      spec: "## Plan\nChange the string.",
+      riskLevel: "low",
+      originatorName: "Connie Tributor",
+      originatorGithubUsername: "connie-codes",
+    });
+    expect(brief.githubIssueNumber).toBeUndefined();
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
+    expect(bug?.githubIssueNumber).toBeUndefined();
+    expect(bug?.lastError).toBeUndefined();
+  });
+
+  test("with GITHUB_MIRROR_TOKEN the issue is created first and its number rides the payload", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    await t.mutation(
+      api.functions.devAssistant.contributions.setGithubUsername,
+      { token: maintainerId, username: "connie-codes" },
+    );
+    const id = await seedReadyBug(t, maintainerId);
+    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    const fetchMock = stubRoutineAndGithub(
+      new Response(
+        JSON.stringify({
+          number: 123,
+          html_url: "https://github.com/togathernyc/togather/issues/123",
+        }),
+        { status: 201 },
+      ),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId: id,
+    });
+
+    // Issue POST first, routine POST second.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://api.github.com/repos/togathernyc/togather/issues",
+    );
+    const issueInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(issueInit.headers).toMatchObject({
+      Authorization: "Bearer gh-test-pat",
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    });
+    const issueBody = JSON.parse(issueInit.body as string);
+    // aiTitle wins over title; body is the spec + dashboard footer.
+    expect(issueBody.title).toBe("Fix profile typo");
+    expect(issueBody.body).toContain("## Plan\nChange the string.");
+    expect(issueBody.body).toMatch(/Togather dev dashboard/);
+
+    const brief = parseBrief(fetchMock.mock.calls[1] as unknown[]);
+    expect(brief).toMatchObject({
+      bugId: id,
+      spec: "## Plan\nChange the string.",
+      riskLevel: "low",
+      githubIssueNumber: 123,
+      originatorName: "Connie Tributor",
+      originatorGithubUsername: "connie-codes",
+    });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
+    expect(bug?.githubIssueNumber).toBe(123);
+    expect(bug?.githubIssueUrl).toBe(
+      "https://github.com/togathernyc/togather/issues/123",
+    );
+  });
+
+  test("a bug that already has an issue is not re-mirrored", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyBug(t, maintainerId, {
+      githubIssueNumber: 55,
+      githubIssueUrl: "https://github.com/togathernyc/togather/issues/55",
+    });
+    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    const fetchMock = stubRoutineAndGithub(
+      new Response(JSON.stringify({ number: 999 }), { status: 201 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1); // routine only
+    const brief = parseBrief(fetchMock.mock.calls[0] as unknown[]);
+    expect(brief.githubIssueNumber).toBe(55);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.githubIssueNumber).toBe(55);
+  });
+
+  test("issue creation failure is non-fatal: breadcrumb recorded, dispatch continues", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyBug(t, maintainerId);
+    process.env.GITHUB_MIRROR_TOKEN = "gh-test-pat";
+    const fetchMock = stubRoutineAndGithub(
+      new Response("boom", { status: 500 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.dispatchBug, {
+      bugId: id,
+    });
+
+    // GitHub call failed, but the routine POST still went out.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const brief = parseBrief(fetchMock.mock.calls[1] as unknown[]);
+    expect(brief.githubIssueNumber).toBeUndefined();
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
+    expect(bug?.githubIssueNumber).toBeUndefined();
+    expect(bug?.lastError).toMatch(/GitHub issue mirroring failed/);
+  });
+});
+
+describe("POST /github/webhook (ADR-029 Phase 2)", () => {
+  const WEBHOOK_SECRET = "gh-webhook-secret";
+
+  /** GitHub-style signature: sha256=<hex HMAC of the raw body>. */
+  async function signGithub(body: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(WEBHOOK_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const bytes = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+    const hex = Array.from(new Uint8Array(bytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return `sha256=${hex}`;
+  }
+
+  async function postWebhook(
+    t: ReturnType<typeof convexTest>,
+    payload: Record<string, unknown>,
+    event = "pull_request",
+  ): Promise<Response> {
+    const body = JSON.stringify(payload);
+    return await t.fetch("/github/webhook", {
+      method: "POST",
+      body,
+      headers: {
+        "x-hub-signature-256": await signGithub(body),
+        "x-github-event": event,
+      },
+    });
+  }
+
+  function mergedPrPayload(
+    branchRef: string,
+    merged: boolean,
+    htmlUrl = "https://github.com/togathernyc/togather/pull/42",
+  ): Record<string, unknown> {
+    return {
+      action: "closed",
+      pull_request: {
+        merged,
+        html_url: htmlUrl,
+        head: { ref: branchRef },
+      },
+    };
+  }
+
+  async function seedPrBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    status: "CODE_REVIEW" | "READY_TO_MERGE" = "READY_TO_MERGE",
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status,
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        routineRunId: "run-gh",
+        prUrl: "https://github.com/togathernyc/togather/pull/42",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("503 when GITHUB_WEBHOOK_SECRET is unset; 401 on missing or bad signature", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+
+    // Secret not configured -> 503 (never a signature bypass).
+    let res = await t.fetch("/github/webhook", {
+      method: "POST",
+      body: "{}",
+      headers: { "x-hub-signature-256": "sha256=deadbeef" },
+    });
+    expect(res.status).toBe(503);
+
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+
+    // Missing header -> 401.
+    res = await t.fetch("/github/webhook", { method: "POST", body: "{}" });
+    expect(res.status).toBe(401);
+
+    // Wrong signature -> 401.
+    res = await t.fetch("/github/webhook", {
+      method: "POST",
+      body: "{}",
+      headers: { "x-hub-signature-256": `sha256=${"0".repeat(64)}` },
+    });
+    expect(res.status).toBe(401);
+
+    // Signature computed with the right secret over a DIFFERENT body -> 401.
+    res = await t.fetch("/github/webhook", {
+      method: "POST",
+      body: '{"tampered":true}',
+      headers: { "x-hub-signature-256": await signGithub("{}") },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("non-pull_request events and non-closed actions are acked and ignored", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+
+    const ping = await postWebhook(t, { zen: "Design for failure." }, "ping");
+    expect(ping.status).toBe(200);
+    expect(await ping.text()).toBe("ignored");
+
+    const opened = await postWebhook(t, {
+      action: "opened",
+      pull_request: { merged: false, head: { ref: "claude/devbug-x" } },
+    });
+    expect(opened.status).toBe(200);
+    expect(await opened.text()).toBe("ignored");
+  });
+
+  test("merged PR -> MERGED + shippedAt via branch-name correlation; replay is idempotent", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedPrBug(t, maintainerId, "READY_TO_MERGE");
+
+    const res = await postWebhook(
+      t,
+      mergedPrPayload(`claude/devbug-${id}`, true),
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      ["system", "Shipped 🎉"],
+    ]);
+
+    // The originator got the shipped push (dashboard item, no chat thread).
+    const shippedPushes = async () =>
+      (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
+        .filter((n) => n.userId === maintainerId && /shipped/i.test(n.title));
+    expect(await shippedPushes()).toHaveLength(1);
+
+    // Replayed delivery: no double system message, no double push.
+    const replay = await postWebhook(
+      t,
+      mergedPrPayload(`claude/devbug-${id}`, true),
+    );
+    expect(replay.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const replayedThread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(replayedThread).toHaveLength(1);
+    expect(await shippedPushes()).toHaveLength(1);
+  });
+
+  test("merge done on GitHub while still in CODE_REVIEW correlates via prUrl fallback", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    // Branch doesn't follow the claude/devbug-<id> convention; correlation
+    // falls back to matching html_url against the stored prUrl.
+    const id = await seedPrBug(t, maintainerId, "CODE_REVIEW");
+
+    const res = await postWebhook(t, mergedPrPayload("fix/manual-branch", true));
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+  });
+
+  test("unmerged close posts a maintainer-look message and leaves status unchanged", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedPrBug(t, maintainerId, "CODE_REVIEW");
+
+    const res = await postWebhook(
+      t,
+      mergedPrPayload(`claude/devbug-${id}`, false),
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.shippedAt).toBeUndefined();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      [
+        "system",
+        "Pull request closed without merging — needs a maintainer look",
+      ],
+    ]);
+
+    // Redelivered close doesn't stack duplicate messages.
+    await postWebhook(t, mergedPrPayload(`claude/devbug-${id}`, false));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const replayedThread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(replayedThread).toHaveLength(1);
+  });
+
+  test("uncorrelated PR-closed events are dropped without side effects", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedPrBug(t, maintainerId, "READY_TO_MERGE");
+
+    // Neither the branch nor the html_url matches anything we track.
+    const res = await postWebhook(
+      t,
+      mergedPrPayload(
+        "claude/devbug-notarealid",
+        true,
+        "https://github.com/togathernyc/togather/pull/9999",
+      ),
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    const messages = await t.run(async (ctx) =>
+      ctx.db.query("devBugMessages").collect(),
+    );
+    expect(messages).toHaveLength(0);
   });
 });

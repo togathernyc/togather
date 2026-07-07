@@ -209,6 +209,10 @@ export default defineSchema({
     bio: v.optional(v.string()),
     instagramHandle: v.optional(v.string()),
     linkedinHandle: v.optional(v.string()),
+    // Self-entered GitHub username for contributor attribution (ADR-029
+    // Phase 2). Honor-system, not OAuth-verified — it only feeds the
+    // Co-authored-by trailer on dev-dashboard PRs, never authentication.
+    githubUsername: v.optional(v.string()),
     birthdayMonth: v.optional(v.number()), // 1–12
     birthdayDay: v.optional(v.number()), // 1–31
     location: v.optional(v.string()),

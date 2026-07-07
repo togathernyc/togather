@@ -189,6 +189,14 @@ describe("dev-assistant bug lifecycle", () => {
       });
     });
 
+    // Illegal: IN_PROGRESS -> READY_TO_MERGE (skips CODE_REVIEW) is ignored.
+    const illegal = await t.mutation(
+      internal.functions.devAssistant.bugs.applyCallback,
+      { bugId, status: "READY_TO_MERGE" },
+    );
+    expect(illegal?.status).toBe("IN_PROGRESS");
+    expect(illegal?.lastError).toContain("Ignored callback transition");
+
     // Valid: IN_PROGRESS -> CODE_REVIEW with a PR url.
     const afterReview = await t.mutation(
       internal.functions.devAssistant.bugs.applyCallback,
@@ -197,20 +205,21 @@ describe("dev-assistant bug lifecycle", () => {
     expect(afterReview?.status).toBe("CODE_REVIEW");
     expect(afterReview?.prUrl).toBe("https://example.com/pr/1");
 
-    // Illegal: CODE_REVIEW -> MERGED (skips READY_TO_MERGE) is ignored.
-    const illegal = await t.mutation(
-      internal.functions.devAssistant.bugs.applyCallback,
-      { bugId, status: "MERGED" },
-    );
-    expect(illegal?.status).toBe("CODE_REVIEW");
-    expect(illegal?.lastError).toContain("Ignored callback transition");
-
     // Correlate by routineRunId.
     const byRun = await t.query(
       internal.functions.devAssistant.bugs.getBugByRoutineRunId,
       { routineRunId: "run-789" },
     );
     expect(byRun?._id).toBe(bugId);
+
+    // Legal forward skip (ADR-029 Phase 2): a maintainer merged the PR
+    // directly on GitHub before the review verdict landed.
+    const merged = await t.mutation(
+      internal.functions.devAssistant.bugs.applyCallback,
+      { bugId, status: "MERGED" },
+    );
+    expect(merged?.status).toBe("MERGED");
+    expect(merged?.shippedAt).toBeTruthy();
   });
 
   test("applyCallback ignores stale backward replays (monotonic lifecycle)", async () => {
