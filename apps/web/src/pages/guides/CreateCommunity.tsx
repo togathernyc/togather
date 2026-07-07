@@ -16,6 +16,7 @@ import { appLinks } from "../../guides/appLinks";
 
 const toc: TocItem[] = [
   { id: "switcher", label: "Open the community switcher" },
+  { id: "demo", label: "Try it in a demo first" },
   { id: "request", label: "Request your community" },
   { id: "pricing", label: "Fair pricing & review" },
   { id: "self-host", label: "If you're turned down" },
@@ -40,9 +41,10 @@ export function CreateCommunity() {
         </P>
         <P>
           Open the switcher, scroll past the communities you can already see,
-          and tap the <Term>Create a Community</Term> button at the bottom of
-          the screen. It opens the <Term>Propose a Community</Term> form in
-          your browser.
+          and look at the bottom of the screen. <Term>Try a Demo for Your
+          Church</Term> spins up a private, seeded sandbox you can explore
+          right away, and <Term>Create a Community</Term> opens the{" "}
+          <Term>Propose a Community</Term> form in your browser.
         </P>
         <DeepLink href={appLinks.communitySwitcher}>
           Open the community switcher
@@ -52,6 +54,52 @@ export function CreateCommunity() {
           {/* swap-in: <img src="/images/guides/community-switcher.png" /> */}
           <CommunitySwitcherMock />
         </Figure>
+      </Section>
+
+      <Section id="demo" title="Try it in a demo first">
+        <P>
+          Not ready to commit? You can see exactly how Togather would look for
+          your church before requesting anything. Tap <Term>Try a Demo for
+          Your Church</Term> in the switcher and answer a few quick questions:
+        </P>
+        <Steps>
+          <Step n={1}>
+            <Term>Church name</Term> — your demo community is named after your
+            church from the start.
+          </Step>
+          <Step n={2}>
+            <Term>Church size</Term>, <Term>Campuses</Term>, and{" "}
+            <Term>Small groups</Term> — we scale the demo's groups and people
+            to roughly match your congregation.
+          </Step>
+          <Step n={3}>
+            <Term>Main zip code</Term> — so the community's home base matches
+            yours.
+          </Step>
+          <Step n={4}>
+            <Term>Logo</Term> and <Term>brand colors</Term> — the whole app is
+            themed with your look before you ever open it.
+          </Step>
+        </Steps>
+        <P>
+          Choose <Term>Create my demo</Term> and in a few seconds you're the
+          admin of a working community: seeded groups with real channel
+          conversations, upcoming events with RSVPs, prayer requests, and the
+          full admin settings screen. Everything works — rename it, re-brand
+          it, create events, post messages.
+        </P>
+        <Callout tone="tip" title="Explore it with your whole team">
+          Your demo comes with a <Term>demo code</Term>. Anyone on your staff
+          who enters that code on the demo page joins the same sandbox as a
+          co-admin, so several people can click around and make changes at the
+          same time.
+        </Callout>
+        <P>
+          Demo communities are private — they never show up in community
+          search — and there's no payment or commitment involved. When you're
+          ready for the real thing, continue below.
+        </P>
+        <DeepLink href={appLinks.demo}>Start a demo community</DeepLink>
       </Section>
 
       <Section id="request" title="Request your community">
@@ -225,6 +273,9 @@ function CommunitySwitcherMock() {
             Can't find your community?{" "}
             <span className="font-medium text-primary-700">Contact support</span>
           </div>
+          <button className="w-full rounded-xl bg-neutral-100 px-4 py-3 text-center text-sm font-semibold text-neutral-900">
+            Try a Demo for Your Church
+          </button>
           <button className="w-full rounded-xl bg-neutral-100 px-4 py-3 text-center text-sm font-semibold text-neutral-900">
             Create a Community
           </button>
