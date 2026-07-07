@@ -144,6 +144,11 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
+  # Repo automation token used by GitHub Actions (mirror push). CI-only — it is
+  # NOT forwarded to Convex/Expo (absent from sync-secrets-to-convex.sh). Named
+  # GH_MIRROR_TOKEN, not GITHUB_MIRROR_TOKEN, because GitHub reserves the
+  # GITHUB_ prefix for secret names (`gh secret set GITHUB_*` → HTTP 422).
+  "GH_MIRROR_TOKEN"
   # Dev-assistant bot (@Togather pipeline). Optional — only present once the
   # feature is being enabled; missing items are skipped without failing.
   "CLAUDE_ROUTINES_TRIGGER_URL"
@@ -220,28 +225,6 @@ sync_environment() {
       skipped=$((skipped + 1))
     fi
   done
-
-  echo ""
-
-  # GITHUB_MIRROR_TOKEN alias. GitHub reserves the GITHUB_ prefix for secret
-  # names (`gh secret set GITHUB_*` → HTTP 422), so the 1Password item
-  # GITHUB_MIRROR_TOKEN is synced to the GitHub secret named GH_MIRROR_TOKEN.
-  # CI-only (repo mirror workflow) — intentionally not forwarded to Convex.
-  MIRROR_TOKEN=$(op read "op://Togather/GITHUB_MIRROR_TOKEN/$env" 2>/dev/null || true)
-  if [ -n "$MIRROR_TOKEN" ]; then
-    if [ "$DRY_RUN" = true ]; then
-      echo "  [dry-run] Would set GH_MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)"
-    else
-      echo -n "  Setting GH_MIRROR_TOKEN (from GITHUB_MIRROR_TOKEN)..."
-      if printf '%s' "$MIRROR_TOKEN" | gh secret set "GH_MIRROR_TOKEN" --env "$env" --repo "$REPO"; then
-        echo " done"
-      else
-        echo " FAILED"
-        failed=$((failed + 1))
-      fi
-    fi
-    synced=$((synced + 1))
-  fi
 
   echo ""
 
