@@ -27,7 +27,26 @@ results by POSTing JSON to `<CONVEX_SITE_URL>/dev-assistant/callback`, signing
 the raw request body with HMAC-SHA256 using `DEV_ASSISTANT_CALLBACK_SECRET` in
 the `x-togather-signature` header. Every callback must echo the payload's
 `bugId` and `routineRunId`. Accepted statuses/fields are validated in
-`apps/convex/http.ts`.
+`apps/convex/http.ts`, and the backend additionally enforces a per-run-mode
+callback policy (`devBugs.activeRunMode`, stamped at dispatch): spec runs may
+only report `IN_REVIEW`; implement runs `IN_PROGRESS`/`CODE_REVIEW` (never
+`READY_TO_MERGE` — the review pipeline owns that promotion); review runs
+`CODE_REVIEW` + the verdict; fix runs `CODE_REVIEW` (any verdict they echo is
+ignored). `MERGED` is never accepted from a Routine — merges are detected
+from the GitHub webhook / the Convex auto-merge action.
+
+### Deploy order (run-mode callback policy)
+
+Update the Routine prompts to the callback shapes above **BEFORE** deploying
+the backend that enforces the per-mode policy — a Routine still following an
+older prompt (e.g. an implement run reporting `READY_TO_MERGE` or `MERGED`)
+will have its callbacks rejected with a `lastError` breadcrumb instead of
+applied. Rows dispatched before the deploy carry no `activeRunMode` and keep
+the old permissive behavior, **except `MERGED`**: in-flight `CODE_REVIEW` /
+`READY_TO_MERGE` items whose Routine reports the merge across the deploy
+won't advance from that callback — the GitHub webhook applies the merge, and
+where the webhook isn't configured a maintainer flips them with
+`markBugMerged` from the review screen.
 
 > Adjust bracketed values (Convex site URL, secrets source, staging details)
 > to each Routine's environment before pasting.
@@ -57,7 +76,8 @@ body bytes (Bash):
 DEV_ASSISTANT_CALLBACK_SECRET=<paste the secret here>
 
 The status lifecycle is forward-only — never send an earlier status after a
-later one. If you get blocked, send your current status with an extra
+later one. NEVER send status "MERGED": merges are detected from GitHub, not
+claimed by you. If you get blocked, send your current status with an extra
 "message" field explaining the blocker, then stop.
 ```
 
@@ -165,9 +185,9 @@ Verdict: "approved" only if no surviving finding would block a merge;
 otherwise "changes_requested". Scale scrutiny to riskLevel — low is a
 sanity pass, high means reading the diff line by line.
 
-Callback: { bugId, routineRunId, reviewVerdict, reviewSummary } where
-reviewSummary is 1–2 plain-language sentences a non-coder can read in the
-dashboard thread.
+Callback: { bugId, routineRunId, status: "CODE_REVIEW", reviewVerdict,
+reviewSummary } where reviewSummary is 1–2 plain-language sentences a
+non-coder can read in the dashboard thread.
 ```
 
 ---

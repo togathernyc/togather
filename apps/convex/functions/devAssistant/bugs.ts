@@ -59,6 +59,18 @@ export const reviewVerdictValidator = v.union(
   v.literal("changes_requested"),
 );
 
+/**
+ * Where a callback came from. Internal-only — threaded by trusted callers
+ * (handleRoutineCallback → "routine", handleGithubPrClosed → "webhook",
+ * attemptAutoMerge → "automerge") and NEVER exposed through the public HTTP
+ * callback, which always lands as the least-trusted "routine" source.
+ */
+export const callbackSourceValidator = v.union(
+  v.literal("routine"),
+  v.literal("webhook"),
+  v.literal("automerge"),
+);
+
 type BugStatus = Doc<"devBugs">["status"];
 
 /**
@@ -76,7 +88,9 @@ type BugStatus = Doc<"devBugs">["status"];
  *
  * CODE_REVIEW -> MERGED is a legal forward skip: a maintainer can merge the PR
  * directly on GitHub before the AI review verdict lands, and the GitHub
- * webhook (ADR-029 Phase 2) reports that merge. Still monotonic.
+ * webhook (ADR-029 Phase 2) reports that merge. Still monotonic. Note that
+ * MERGED is only reachable via webhook/auto-merge callback sources (or the
+ * human markBugMerged) — applyCallback rejects routine-claimed merges.
  */
 const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   DRAFT: ["IN_REVIEW", "REJECTED"],
@@ -93,6 +107,20 @@ function canTransition(from: BugStatus, to: BugStatus): boolean {
   if (from === to) return true; // idempotent re-apply
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
+
+/**
+ * Statuses a GitHub-observed merge (webhook / auto-merge sources) may arrive
+ * from. GitHub is ground truth for merges, so this deliberately includes
+ * IN_PROGRESS — a PR merged on GitHub before the implementation callback
+ * landed would otherwise strand the row — plus MERGED for idempotent
+ * redeliveries. Routine-claimed merges are rejected outright instead.
+ */
+const GITHUB_MERGEABLE_STATUSES: BugStatus[] = [
+  "IN_PROGRESS",
+  "CODE_REVIEW",
+  "READY_TO_MERGE",
+  "MERGED",
+];
 
 /**
  * Apply a validated status transition and persist it. Throws on an illegal
@@ -365,6 +393,13 @@ export const rejectBug = mutation({
     const bug = await ctx.db.get(args.bugId);
     if (!bug) throw new Error("Bug not found");
     await applyStatusTransition(ctx, bug, "REJECTED");
+    // Stop any in-flight Routine run from correlating: callbacks match by
+    // routineRunId, so clearing it (and the run's mode) makes them fall on
+    // the floor instead of leaving lastError noise on a terminal row.
+    await ctx.db.patch(args.bugId, {
+      routineRunId: undefined,
+      activeRunMode: undefined,
+    });
     return { ok: true };
   },
 });
@@ -438,6 +473,7 @@ export const markDispatched = internalMutation({
     await ctx.db.patch(args.bugId, {
       status: "IN_PROGRESS",
       routineRunId: args.routineRunId,
+      activeRunMode: "implement",
       dispatchedAt: Date.now(),
       lastError: undefined,
       updatedAt: Date.now(),
@@ -501,11 +537,12 @@ export const PR_CLOSED_UNMERGED_MESSAGE =
  * only states a live PR can be in).
  *
  * merged === true replays the bug's own routineRunId through the existing
- * handleRoutineCallback machinery, which already validates the transition,
- * stamps shippedAt, logs the "Shipped 🎉" system turn, pushes the originator,
- * and (for chat items) posts the sourceKey-idempotent bot message. The
- * early-return on an already-MERGED bug makes replayed webhooks — and the
- * race with the Routine's own MERGED callback — no-ops.
+ * handleRoutineCallback machinery with source "webhook" (the trusted channel
+ * allowed to apply MERGED), which validates the transition, stamps shippedAt,
+ * logs the "Shipped 🎉" system turn, pushes the originator, and (for chat
+ * items) posts the sourceKey-idempotent bot message. The early-return on an
+ * already-MERGED bug makes replayed webhooks — and the race with the
+ * auto-merge action's own MERGED apply — no-ops.
  *
  * merged === false leaves the status untouched and posts a system thread
  * message flagging the item for a maintainer (deduped against an immediate
@@ -551,7 +588,7 @@ export const handleGithubPrClosed = internalMutation({
     const target = bug;
 
     if (args.merged) {
-      // Idempotent with the Routine's own MERGED callback (and with webhook
+      // Idempotent with auto-merge's own MERGED apply (and with webhook
       // redeliveries): once merged, there is nothing left to apply.
       if (target.status === "MERGED") return;
       if (target.routineRunId) {
@@ -562,18 +599,28 @@ export const handleGithubPrClosed = internalMutation({
             bugId: target._id,
             routineRunId: target.routineRunId,
             status: "MERGED",
+            // GitHub is ground truth for merges: the webhook source is the
+            // ONLY channel (besides auto-merge) allowed to apply MERGED, and
+            // it may do so from any PR-live state — including IN_PROGRESS,
+            // where an early merge would otherwise strand the row.
+            source: "webhook",
           },
         );
       } else {
         // A PR without a Routine run shouldn't exist, but don't lose the
         // merge: apply the transition (stamps shippedAt) + progress line.
-        try {
-          await applyStatusTransition(ctx, target, "MERGED");
+        // Same ground-truth rule as above: any PR-live state may merge.
+        if (GITHUB_MERGEABLE_STATUSES.includes(target.status)) {
+          await ctx.db.patch(target._id, {
+            status: "MERGED",
+            ...(target.shippedAt ? {} : { shippedAt: Date.now() }),
+            updatedAt: Date.now(),
+          });
           await insertThreadMessage(ctx, target._id, "system", "Shipped 🎉");
-        } catch (e) {
+        } else {
           console.error(
-            "[DevAssistant] GitHub merge webhook transition failed:",
-            e,
+            "[DevAssistant] GitHub merge webhook ignored: bug in status",
+            target.status,
           );
         }
       }
@@ -640,6 +687,7 @@ export const markSpecDispatched = internalMutation({
     }
     await ctx.db.patch(args.bugId, {
       routineRunId: args.routineRunId,
+      activeRunMode: "spec",
       lastError: undefined,
       updatedAt: Date.now(),
     });
@@ -665,6 +713,7 @@ export const markReviewDispatched = internalMutation({
     }
     await ctx.db.patch(args.bugId, {
       routineRunId: args.routineRunId,
+      activeRunMode: "review",
       lastError: undefined,
       updatedAt: Date.now(),
     });
@@ -690,6 +739,7 @@ export const markFixDispatched = internalMutation({
     const fixRound = (bug.fixRounds ?? 0) + 1;
     await ctx.db.patch(args.bugId, {
       routineRunId: args.routineRunId,
+      activeRunMode: "fix",
       fixRounds: fixRound,
       lastError: undefined,
       updatedAt: Date.now(),
@@ -730,27 +780,47 @@ export const FIX_ROUNDS_EXHAUSTED_MESSAGE =
   `Code review still failing after ${MAX_FIX_ROUNDS} fix rounds — needs a human`;
 
 /**
- * Apply a routine callback. Validates the callback's target status against the
- * transition map; on an illegal transition we keep the current status but
- * record lastError (callbacks must never throw the HTTP handler). Always
- * refreshes prUrl/screenshots/lastCallbackAt.
+ * Apply a routine/webhook/auto-merge callback. Never throws back to the HTTP
+ * handler: out-of-policy callbacks record `lastError` and persist NOTHING
+ * else (no status, no prUrl/spec/verdict smuggling).
  *
- * Spec-mode callbacks (ADR-029) additionally deliver `spec` + `riskLevel` and
- * the Phase 1.5 triage fields (`aiTitle`/`area`/`scope`/`verifyOnStaging`),
- * which are stored whenever provided; a MERGED transition stamps `shippedAt`.
+ * What a callback may do is decided by two things:
  *
- * Review-mode callbacks deliver `reviewVerdict` (+ `reviewSummary`): an
- * "approved" verdict on a CODE_REVIEW callback promotes the target status to
- * READY_TO_MERGE (approval is what moves the bug forward); "changes_requested"
- * stores the verdict, leaves the bug in CODE_REVIEW, and kicks off a fix run
- * (ADR-029 Phase 3) — or escalates to a human once MAX_FIX_ROUNDS is spent. A
- * GENUINE entry into CODE_REVIEW (a PR opened — or a future revision
- * re-entering it) clears any stale verdict and schedules the review-mode
- * dispatch; replayed CODE_REVIEW callbacks are from === to, so they can never
- * double-dispatch. A fix run's CODE_REVIEW callback (already in CODE_REVIEW
- * with a pending changes_requested verdict) clears the verdict and dispatches
- * a fresh review round. A genuine entry into READY_TO_MERGE schedules the
- * Phase 3 auto-merge attempt (self-gating).
+ * 1. `source` — who is reporting. MERGED is WEBHOOK/AUTO-MERGE-ONLY (GitHub
+ *    is ground truth for merges): those sources may apply MERGED from any
+ *    PR-live state (IN_PROGRESS / CODE_REVIEW / READY_TO_MERGE — see
+ *    GITHUB_MERGEABLE_STATUSES), while a routine-source MERGED is rejected.
+ *
+ * 2. `activeRunMode` — which run holds the correlated routineRunId (stamped
+ *    at dispatch). Per-mode policy for routine-source callbacks:
+ *
+ *    | mode      | statuses allowed          | reviewVerdict                |
+ *    | --------- | ------------------------- | ---------------------------- |
+ *    | spec      | IN_REVIEW                 | rejected                     |
+ *    | implement | IN_PROGRESS, CODE_REVIEW  | rejected                     |
+ *    | review    | CODE_REVIEW               | honored (approved promotes   |
+ *    |           |                           | to READY_TO_MERGE)           |
+ *    | fix       | CODE_REVIEW               | IGNORED (stripped, no error) |
+ *    | (unset)   | legacy permissive         | honored                      |
+ *
+ *    READY_TO_MERGE from an implement run is rejected explicitly — the review
+ *    pipeline owns that promotion. Unset mode covers rows dispatched before
+ *    stamping existed and keeps their old behavior (minus MERGED).
+ *
+ * Spec-delivering callbacks store `spec` + `riskLevel` and the Phase 1.5
+ * triage fields (`aiTitle`/`area`/`scope`/`verifyOnStaging`); a CHANGED spec
+ * also clears `specApprovedAt` (the contributor approved a different plan)
+ * and logs a "needs your approval again" system turn.
+ *
+ * A GENUINE entry into CODE_REVIEW (a PR opened — or a revision re-entering
+ * it) clears any stale verdict and schedules the review-mode dispatch;
+ * replayed CODE_REVIEW callbacks are from === to, so they can never
+ * double-dispatch. A fix run's CODE_REVIEW callback while the previous
+ * round's changes_requested verdict is pending means "fixes pushed": the
+ * verdict is cleared (that clearing is the replay guard) and a fresh review
+ * round is dispatched. A genuine entry into READY_TO_MERGE schedules the
+ * Phase 3 auto-merge attempt (self-gating); "changes_requested" kicks off a
+ * fix run — or escalates to a human once MAX_FIX_ROUNDS is spent.
  *
  * Thread side effects (ADR-029 Phase 1.5):
  *  - a delivered spec is appended as an "assistant" message (skipped when the
@@ -763,6 +833,10 @@ export const applyCallback = internalMutation({
   args: {
     bugId: v.id("devBugs"),
     status: bugStatusValidator,
+    // Trusted-caller channel discriminator; defaults to "routine" (the
+    // least-trusted source, and the only one reachable from the public HTTP
+    // callback — which never forwards this field).
+    source: v.optional(callbackSourceValidator),
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
     spec: v.optional(v.string()),
@@ -778,8 +852,88 @@ export const applyCallback = internalMutation({
     const bug = await ctx.db.get(args.bugId);
     if (!bug) return null;
 
+    const source = args.source ?? "routine";
+    const mode = bug.activeRunMode;
     const now = Date.now();
+
+    // Out-of-policy callbacks record lastError and persist NOTHING else — a
+    // rejected callback must not smuggle fields onto the row either.
+    const reject = async (reason: string): Promise<Doc<"devBugs"> | null> => {
+      await ctx.db.patch(args.bugId, { lastError: reason, updatedAt: now });
+      return await ctx.db.get(args.bugId);
+    };
+
+    // MERGED is webhook/auto-merge-only: GitHub is ground truth for merges,
+    // so no routine run may claim one (the webhook reports the real merge).
+    if (args.status === "MERGED" && source === "routine") {
+      return await reject(
+        "Rejected callback: MERGED is applied only from the GitHub webhook or auto-merge",
+      );
+    }
+
+    // Per-run-mode policy (see the table in the doc comment). Unset mode =
+    // legacy pre-stamping row: keep the old permissive behavior minus MERGED.
+    if (source === "routine" && mode !== undefined) {
+      let policyError: string | null = null;
+      if (mode === "spec") {
+        if (args.status !== "IN_REVIEW") {
+          policyError = `spec run may not deliver status ${args.status}`;
+        } else if (args.reviewVerdict !== undefined) {
+          policyError = "spec run may not deliver a review verdict";
+        }
+      } else if (mode === "implement") {
+        if (args.status === "READY_TO_MERGE") {
+          policyError =
+            "implement run may not deliver READY_TO_MERGE — the review pipeline owns that promotion";
+        } else if (
+          args.status !== "IN_PROGRESS" &&
+          args.status !== "CODE_REVIEW"
+        ) {
+          policyError = `implement run may not deliver status ${args.status}`;
+        } else if (args.reviewVerdict !== undefined) {
+          policyError = "implement run may not deliver a review verdict";
+        }
+      } else if (mode === "review" && args.status !== "CODE_REVIEW") {
+        policyError = `review run may not deliver status ${args.status}`;
+      } else if (mode === "fix" && args.status !== "CODE_REVIEW") {
+        policyError = `fix run may not deliver status ${args.status}`;
+      }
+      if (policyError) {
+        return await reject(`Rejected callback: ${policyError}`);
+      }
+    }
+
+    // A fix run has no review authority: a verdict in its callback (e.g. the
+    // run echoing the feedback it just addressed) is IGNORED, never stored —
+    // fix completion is detected from the run mode + status instead.
+    const ignoreVerdict = source === "routine" && mode === "fix";
+    const reviewVerdict = ignoreVerdict ? undefined : args.reviewVerdict;
+    const reviewSummary = ignoreVerdict ? undefined : args.reviewSummary;
+
+    // An approved review verdict reported against the PR-open status promotes
+    // the bug forward: the review run calls back with its current status
+    // (CODE_REVIEW) and the verdict decides whether it advances.
+    const targetStatus: BugStatus =
+      reviewVerdict === "approved" && args.status === "CODE_REVIEW"
+        ? "READY_TO_MERGE"
+        : args.status;
+
+    // Webhook/auto-merge merges may arrive from any PR-live state (GitHub is
+    // ground truth); everything else follows the monotonic transition map.
+    const transitionOk =
+      targetStatus === "MERGED" && source !== "routine"
+        ? GITHUB_MERGEABLE_STATUSES.includes(bug.status)
+        : canTransition(bug.status, targetStatus);
+    if (!transitionOk) {
+      return await reject(
+        `Ignored callback transition ${bug.status} -> ${targetStatus}`,
+      );
+    }
+    const genuineTransition = targetStatus !== bug.status;
+
     const patch: Partial<Doc<"devBugs">> = {
+      status: targetStatus,
+      lastError: undefined,
       lastCallbackAt: now,
       updatedAt: now,
     };
@@ -793,24 +947,15 @@ export const applyCallback = internalMutation({
     if (args.verifyOnStaging !== undefined) {
       patch.verifyOnStaging = args.verifyOnStaging;
     }
+    if (targetStatus === "MERGED" && !bug.shippedAt) {
+      patch.shippedAt = now;
+    }
 
-    // An approved review verdict reported against the PR-open status promotes
-    // the bug forward: the review run calls back with its current status
-    // (CODE_REVIEW) and the verdict decides whether it advances.
-    const targetStatus: BugStatus =
-      args.reviewVerdict === "approved" && args.status === "CODE_REVIEW"
-        ? "READY_TO_MERGE"
-        : args.status;
-
-    const transitioned = canTransition(bug.status, targetStatus);
-    if (transitioned) {
-      patch.status = targetStatus;
-      patch.lastError = undefined;
-      if (targetStatus === "MERGED" && !bug.shippedAt) {
-        patch.shippedAt = now;
-      }
-    } else {
-      patch.lastError = `Ignored callback transition ${bug.status} -> ${targetStatus}`;
+    // Stale approval guard: a REVISED spec invalidates an existing sign-off —
+    // the contributor approved a different plan and must re-approve this one.
+    const specChanged = args.spec !== undefined && args.spec !== bug.spec;
+    if (specChanged && bug.specApprovedAt) {
+      patch.specApprovedAt = undefined;
     }
 
     // GENUINE entry into CODE_REVIEW = a PR (revision) just opened: clear any
@@ -818,9 +963,7 @@ export const applyCallback = internalMutation({
     // routine (event-driven, mirrors READY_FOR_IMPL -> dispatchBug). Replayed
     // CODE_REVIEW callbacks are from === to and can't re-dispatch.
     const enteredCodeReview =
-      transitioned &&
-      targetStatus === "CODE_REVIEW" &&
-      bug.status !== "CODE_REVIEW";
+      genuineTransition && targetStatus === "CODE_REVIEW";
     if (enteredCodeReview) {
       patch.reviewVerdict = undefined;
       patch.reviewSummary = undefined;
@@ -831,20 +974,22 @@ export const applyCallback = internalMutation({
       );
     }
 
-    // Fix run reporting back (ADR-029 Phase 3): a CODE_REVIEW callback while
-    // the bug is ALREADY in CODE_REVIEW with a changes_requested verdict
-    // pending is the fix run saying "fixes pushed" (it correlated by the fix
-    // run's routineRunId upstream). Not a genuine transition, so handle it
-    // explicitly: clear the stale verdict/summary and dispatch a fresh review
-    // round. The cleared verdict is the replay guard — a re-delivered
-    // callback from the same fix run finds no pending verdict and does
-    // nothing, so review can never double-dispatch.
+    // Fix run reporting back (ADR-029 Phase 3): the fix run's CODE_REVIEW
+    // callback while the previous round's changes_requested verdict is still
+    // pending is "fixes pushed" (it correlated by the fix run's routineRunId
+    // upstream). Not a genuine transition, so handle it explicitly: clear the
+    // stale verdict/summary and dispatch a fresh review round. The cleared
+    // verdict is the replay guard — a re-delivered callback from the same fix
+    // run finds no pending verdict and does nothing, so review can never
+    // double-dispatch. Legacy rows without a stamped mode keep the old
+    // payload-shape inference (a CODE_REVIEW callback carrying no verdict).
     const fixesPushed =
       !enteredCodeReview &&
       args.status === "CODE_REVIEW" &&
       bug.status === "CODE_REVIEW" &&
       bug.reviewVerdict === "changes_requested" &&
-      args.reviewVerdict === undefined;
+      (mode === "fix" ||
+        (mode === undefined && args.reviewVerdict === undefined));
     if (fixesPushed) {
       patch.reviewVerdict = undefined;
       patch.reviewSummary = undefined;
@@ -855,13 +1000,14 @@ export const applyCallback = internalMutation({
       );
     }
 
-    // Explicit verdict fields in the payload win over the reset above (a
-    // callback carrying both is anomalous, but the payload is authoritative).
-    if (args.reviewVerdict !== undefined) {
-      patch.reviewVerdict = args.reviewVerdict;
+    // Explicit (honored) verdict fields in the payload win over the resets
+    // above (a callback carrying both is anomalous, but the payload is
+    // authoritative for the modes allowed to carry one).
+    if (reviewVerdict !== undefined) {
+      patch.reviewVerdict = reviewVerdict;
     }
-    if (args.reviewSummary !== undefined) {
-      patch.reviewSummary = args.reviewSummary;
+    if (reviewSummary !== undefined) {
+      patch.reviewSummary = reviewSummary;
     }
 
     await ctx.db.patch(args.bugId, patch);
@@ -877,25 +1023,33 @@ export const applyCallback = internalMutation({
 
     // Spec text lands in the conversation as the assistant's turn. Comparing
     // against the previously stored spec is the idempotency guard for
-    // re-delivered callbacks (and skips no-op revisions).
+    // re-delivered callbacks (and skips no-op revisions). When the change
+    // invalidated an approval, say so right below the new plan.
     if (args.spec !== undefined && args.spec !== bug.spec) {
       await insertThreadMessage(ctx, args.bugId, "assistant", args.spec);
+      if (bug.specApprovedAt) {
+        await insertThreadMessage(
+          ctx,
+          args.bugId,
+          "system",
+          "Plan updated — needs your approval again",
+        );
+      }
     }
 
     // Review verdict lands as a system turn, before the status progress line
     // so an approval reads "review passed" -> "ready to merge". Same
     // changed-value guard as the spec: re-delivered callbacks don't repost.
     if (
-      args.reviewVerdict !== undefined &&
-      (args.reviewVerdict !== bug.reviewVerdict ||
-        (args.reviewSummary !== undefined &&
-          args.reviewSummary !== bug.reviewSummary))
+      reviewVerdict !== undefined &&
+      (reviewVerdict !== bug.reviewVerdict ||
+        (reviewSummary !== undefined && reviewSummary !== bug.reviewSummary))
     ) {
       let message: string;
-      if (args.reviewVerdict === "approved") {
+      if (reviewVerdict === "approved") {
         message = "Code review passed ✓";
       } else {
-        const summary = args.reviewSummary?.trim();
+        const summary = reviewSummary?.trim();
         const quoted =
           summary && summary.length > REVIEW_SUMMARY_THREAD_LIMIT
             ? `${summary.slice(0, REVIEW_SUMMARY_THREAD_LIMIT)}…`
@@ -914,9 +1068,8 @@ export const applyCallback = internalMutation({
     // human instead. dispatchFix increments fixRounds and posts the
     // "round N of 3" thread line via markFixDispatched.
     const verdictBecameChangesRequested =
-      args.reviewVerdict === "changes_requested" &&
+      reviewVerdict === "changes_requested" &&
       bug.reviewVerdict !== "changes_requested" &&
-      transitioned &&
       targetStatus === "CODE_REVIEW";
     if (verdictBecameChangesRequested) {
       if ((bug.fixRounds ?? 0) < MAX_FIX_ROUNDS) {
@@ -950,11 +1103,7 @@ export const applyCallback = internalMutation({
     // READY_TO_MERGE may have satisfied the last merge gate. Schedule the
     // attempt — the action re-reads the bug and re-checks every gate itself,
     // so double-scheduling is harmless.
-    if (
-      transitioned &&
-      targetStatus === "READY_TO_MERGE" &&
-      bug.status !== "READY_TO_MERGE"
-    ) {
+    if (genuineTransition && targetStatus === "READY_TO_MERGE") {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.devAssistant.actions.attemptAutoMerge,
@@ -964,7 +1113,7 @@ export const applyCallback = internalMutation({
 
     // Progress log: only when the status genuinely changed (an idempotent
     // re-apply of the current status must not re-post).
-    if (transitioned && targetStatus !== bug.status) {
+    if (genuineTransition) {
       const systemMessage = STATUS_SYSTEM_MESSAGES[targetStatus];
       if (systemMessage) {
         await insertThreadMessage(ctx, args.bugId, "system", systemMessage);

@@ -270,6 +270,25 @@ Reviews must be posted from a different GitHub identity than the PR author
 with **Pull requests: read/write** added to its PAT. The Routine prompt
 covering all modes lives at `docs/dev-assistant/ROUTINE-PROMPT.md`.
 
+Callbacks are held to a **per-run-mode policy**: each dispatch stamps
+`devBugs.activeRunMode` (`spec`/`implement`/`review`/`fix`), and
+`applyCallback` only accepts what that mode may deliver — spec runs report
+`IN_REVIEW`; implement runs `IN_PROGRESS`/`CODE_REVIEW` (never
+`READY_TO_MERGE`, which only the review verdict promotes); review runs the
+verdict on `CODE_REVIEW`; fix runs `CODE_REVIEW` with any echoed verdict
+ignored. `MERGED` is applied exclusively from the GitHub webhook or the
+auto-merge action (GitHub is ground truth for merges — including early
+merges from `IN_PROGRESS`). Out-of-policy callbacks record `lastError` and
+persist nothing else.
+
+**Deploy order:** update the Routine prompts (see
+`docs/dev-assistant/ROUTINE-PROMPT.md`) **before** deploying this policy —
+old-prompt callbacks (e.g. an implement run reporting `READY_TO_MERGE`) get
+rejected otherwise. Rows dispatched pre-deploy have no `activeRunMode` and
+keep the permissive legacy behavior minus `MERGED`; in-flight `CODE_REVIEW`
+items whose merge lands across the deploy may need a maintainer's
+`markBugMerged` if the GitHub webhook isn't configured.
+
 ## Phase 3 — policy auto-merge and the fix loop (Accepted)
 
 Phase 3 closes the pipeline end-to-end: review findings are fixed

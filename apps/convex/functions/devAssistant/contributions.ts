@@ -73,6 +73,24 @@ async function notifyOriginatorUnlessSelf(
   );
 }
 
+/**
+ * Triage gate (ADR-029 P1.5), shared by approveSpec and startBuild:
+ * non-buildable items must not enter the build pipeline as-is — the spec body
+ * explains the proposed slices ("split") or the decisions a maintainer must
+ * make first ("design_needed"). Unset scope means a pre-triage row; treat as
+ * buildable for backward compat. Guarding startBuild too matters because a
+ * spec revision can re-triage an already-approved item out of "buildable".
+ */
+function assertBuildableScope(bug: Doc<"devBugs">): void {
+  if (bug.scope !== undefined && bug.scope !== "buildable") {
+    throw new ConvexError(
+      bug.scope === "split"
+        ? "This request is too large for one build — see the spec for the proposed smaller slices"
+        : "This request needs maintainer design decisions before it can be built",
+    );
+  }
+}
+
 // ============================================================================
 // GitHub attribution (ADR-029 Phase 2)
 // ============================================================================
@@ -179,8 +197,13 @@ export const submit = mutation({
     });
 
     // Every contribution is a conversation with the AI (ADR-029 P1.5): the
-    // report body is the opening "user" turn of the thread.
-    await insertThreadMessage(ctx, bugId, "user", body, user._id);
+    // report body is the opening "user" turn of the thread. The repro rides
+    // along so it's visible in the conversation UI (the thread only renders
+    // messages, not the row's repro field).
+    const openingTurn = args.repro
+      ? `${body}\n\nHow to see it: ${args.repro}`
+      : body;
+    await insertThreadMessage(ctx, bugId, "user", openingTurn, user._id);
 
     // Fire the spec agent (event-driven, no cron — mirrors READY_FOR_IMPL ->
     // dispatchBug in bugs.ts).
@@ -217,17 +240,7 @@ export const approveSpec = mutation({
     if (!bug.spec) {
       throw new ConvexError("This item has no spec to approve yet");
     }
-    // Triage gate (ADR-029 P1.5): non-buildable items must not enter the build
-    // pipeline as-is — the spec body explains the proposed slices ("split") or
-    // the decisions a maintainer must make first ("design_needed"). Unset
-    // scope means a pre-triage row; treat as buildable for backward compat.
-    if (bug.scope !== undefined && bug.scope !== "buildable") {
-      throw new ConvexError(
-        bug.scope === "split"
-          ? "This request is too large for one build — see the spec for the proposed smaller slices"
-          : "This request needs maintainer design decisions before it can be built",
-      );
-    }
+    assertBuildableScope(bug);
 
     const now = Date.now();
     await ctx.db.patch(args.id, { specApprovedAt: now, updatedAt: now });
@@ -267,6 +280,9 @@ export const startBuild = mutation({
         `Build can only be started from review (current status: ${bug.status})`,
       );
     }
+    // Same scope gate as approveSpec: a spec revision may have re-triaged an
+    // already-approved item out of "buildable" after the approval landed.
+    assertBuildableScope(bug);
 
     // Schedules dispatchBug via the READY_FOR_IMPL hook in bugs.ts.
     await applyStatusTransition(ctx, bug, "READY_FOR_IMPL");
@@ -464,7 +480,8 @@ export const getThread = query({
 
 /**
  * The caller's own contributions — ALL sources (dashboard submissions and
- * chat-originated bugs they reported), newest first.
+ * chat-originated bugs they reported), newest first (capped at 200, matching
+ * listAll, so a prolific reporter can't make the query unbounded).
  */
 export const myContributions = query({
   args: { token: v.string() },
@@ -474,7 +491,7 @@ export const myContributions = query({
       .query("devBugs")
       .withIndex("by_originator", (q) => q.eq("originatorUserId", user._id))
       .order("desc")
-      .collect();
+      .take(200);
     return await withLastMessage(ctx, bugs);
   },
 });

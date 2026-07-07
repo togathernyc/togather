@@ -153,6 +153,37 @@ describe("submit", () => {
     const dispatched = await t.run(async (ctx) => ctx.db.get(id));
     expect(dispatched?.status).toBe("DRAFT");
     expect(dispatched?.routineRunId).toBeTruthy();
+    expect(dispatched?.activeRunMode).toBe("spec");
+  });
+
+  test("seeds the repro into the opening thread turn", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        title: "Fix typo",
+        body: "There is a typo on the profile screen.",
+        repro: "Open Settings > Profile and look at the header.",
+      },
+    );
+
+    // The repro is only stored on the row, so it must ride the first thread
+    // message to be visible in the conversation UI.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.body).toBe(
+      "There is a typo on the profile screen.\n\n" +
+        "How to see it: Open Settings > Profile and look at the header.",
+    );
   });
 
   test("rejects non-maintainers", async () => {
@@ -262,6 +293,7 @@ describe("spec callback", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const dispatched = await t.run(async (ctx) => ctx.db.get(id));
     expect(dispatched?.status).toBe("IN_PROGRESS");
+    expect(dispatched?.activeRunMode).toBe("implement");
   });
 
   test("approveSpec on high risk stays IN_REVIEW with specApprovedAt", async () => {
@@ -347,7 +379,7 @@ describe("spec callback", () => {
 });
 
 describe("shipped", () => {
-  test("MERGED callback stamps shippedAt and records a shipped notification", async () => {
+  test("MERGED is webhook-only: a routine callback is rejected, the webhook source ships it", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -369,16 +401,34 @@ describe("shipped", () => {
       }),
     );
 
+    // A routine run claiming the merge itself is rejected — GitHub is ground
+    // truth for merges and only the webhook/auto-merge sources may apply it.
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
       { bugId: id, routineRunId: "run-ship", status: "MERGED" },
     );
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    expect(bug?.shippedAt).toBeUndefined();
+    expect(bug?.lastError).toMatch(/MERGED/);
+    // No premature shipped push either.
+    let notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(notifications).toHaveLength(0);
 
-    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    // The webhook source (GitHub reported the merge) stamps shippedAt and
+    // records the shipped notification.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      { bugId: id, routineRunId: "run-ship", status: "MERGED", source: "webhook" },
+    );
+
+    bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
     expect(bug?.shippedAt).toBeTruthy();
 
-    const notifications = await t.run(async (ctx) =>
+    notifications = await t.run(async (ctx) =>
       ctx.db.query("notifications").collect(),
     );
     expect(
@@ -696,17 +746,34 @@ describe("conversation thread (Phase 1.5)", () => {
       }),
     );
 
-    for (const status of ["CODE_REVIEW", "READY_TO_MERGE", "MERGED"] as const) {
+    for (const status of ["CODE_REVIEW", "READY_TO_MERGE"] as const) {
       vi.setSystemTime(Date.now() + 1000);
       await t.action(
         internal.functions.devAssistant.actions.handleRoutineCallback,
         { bugId: id, routineRunId: "run-transitions", status },
       );
     }
-    // A re-delivered MERGED callback must not duplicate the system message.
+    // MERGED arrives from the GitHub webhook source (routine callbacks may
+    // not claim merges).
+    vi.setSystemTime(Date.now() + 1000);
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
-      { bugId: id, routineRunId: "run-transitions", status: "MERGED" },
+      {
+        bugId: id,
+        routineRunId: "run-transitions",
+        status: "MERGED",
+        source: "webhook",
+      },
+    );
+    // A re-delivered MERGED webhook must not duplicate the system message.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-transitions",
+        status: "MERGED",
+        source: "webhook",
+      },
     );
 
     const thread = await t.query(
@@ -847,11 +914,13 @@ describe("AI review cycle", () => {
     expect(brief.instructions).toMatch(/PR review comments/);
 
     // The review run owns callback correlation from here on: a fresh
-    // routineRunId replaced the implementation run's.
+    // routineRunId replaced the implementation run's, and the run mode is
+    // stamped so applyCallback holds its callback to the review policy.
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("CODE_REVIEW");
     expect(bug?.routineRunId).toBeTruthy();
     expect(bug?.routineRunId).not.toBe("run-impl");
+    expect(bug?.activeRunMode).toBe("review");
 
     // A late replay from the superseded implementation run fails correlation
     // and is dropped entirely — no re-dispatch.
@@ -1601,7 +1670,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
   async function seedPrBug(
     t: ReturnType<typeof convexTest>,
     originatorId: Id<"users">,
-    status: "CODE_REVIEW" | "READY_TO_MERGE" = "READY_TO_MERGE",
+    status: "IN_PROGRESS" | "CODE_REVIEW" | "READY_TO_MERGE" = "READY_TO_MERGE",
   ): Promise<Id<"devBugs">> {
     const now = Date.now();
     return await t.run(async (ctx) =>
@@ -1761,6 +1830,35 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     expect(bug?.shippedAt).toBeTruthy();
   });
 
+  test("early GitHub merge while still IN_PROGRESS applies MERGED (no stranding)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    // The implementation callback never landed: the row is still IN_PROGRESS
+    // when a maintainer merges the PR directly on GitHub.
+    const id = await seedPrBug(t, maintainerId, "IN_PROGRESS");
+
+    const res = await postWebhook(
+      t,
+      mergedPrPayload(`claude/devbug-${id}`, true),
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      ["system", "Shipped 🎉"],
+    ]);
+  });
+
   test("unmerged close posts a maintainer-look message and leaves status unchanged", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
@@ -1835,6 +1933,7 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
     originatorId: Id<"users">,
     overrides: Partial<{
       routineRunId: string;
+      activeRunMode: "spec" | "implement" | "review" | "fix";
       reviewVerdict: "approved" | "changes_requested";
       reviewSummary: string;
       fixRounds: number;
@@ -1852,6 +1951,7 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
         spec: "## Plan\nChange the string.",
         riskLevel: "low",
         routineRunId: overrides.routineRunId ?? "run-review",
+        activeRunMode: overrides.activeRunMode,
         prUrl: "https://github.com/togathernyc/togather/pull/42",
         reviewVerdict: overrides.reviewVerdict,
         reviewSummary: overrides.reviewSummary,
@@ -1910,13 +2010,14 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
     expect(brief.instructions).toMatch(/SAME branch/);
     expect(brief.instructions).toMatch(/Never merge/);
 
-    // The fix run owns callback correlation (fresh routineRunId) and the
-    // round was counted.
+    // The fix run owns callback correlation (fresh routineRunId, stamped
+    // mode) and the round was counted.
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("CODE_REVIEW");
     expect(bug?.fixRounds).toBe(1);
     expect(bug?.routineRunId).toBeTruthy();
     expect(bug?.routineRunId).not.toBe("run-review");
+    expect(bug?.activeRunMode).toBe("fix");
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -1986,6 +2087,7 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
     // the previous review round is still pending on the row.
     const id = await seedCodeReviewBug(t, maintainerId, {
       routineRunId: "run-fix-1",
+      activeRunMode: "fix",
       reviewVerdict: "changes_requested",
       reviewSummary: "Round 1 findings.",
       fixRounds: 1,
@@ -2025,6 +2127,7 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
     // The fresh review round owns correlation now.
     expect(bug?.routineRunId).toBeTruthy();
     expect(bug?.routineRunId).not.toBe("run-fix-1");
+    expect(bug?.activeRunMode).toBe("review");
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -2033,6 +2136,88 @@ describe("review fix loop (ADR-029 Phase 3)", () => {
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
       ["system", "Fixes pushed — running code review again"],
     ]);
+  });
+
+  test("a fix run's echoed review verdict is IGNORED — no fix re-dispatch, review still re-dispatched", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedCodeReviewBug(t, maintainerId, {
+      routineRunId: "run-fix-echo",
+      activeRunMode: "fix",
+      reviewVerdict: "changes_requested",
+      reviewSummary: "Round 1 findings.",
+      fixRounds: 1,
+    });
+    const fetchMock = stubRoutineEnv();
+
+    // The fix run quotes the verdict it just addressed in its callback. It
+    // has no review authority: the echo must not be stored (it would look
+    // like a fresh verdict and dispatch ANOTHER fix run) — the callback still
+    // counts as "fixes pushed" and re-dispatches review.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-fix-echo",
+        status: "CODE_REVIEW",
+        reviewVerdict: "changes_requested",
+        reviewSummary: "Echoed: fix the null check.",
+      },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Exactly one dispatch, and it's the review round — no fix run.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({ mode: "review", bugId: id });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.reviewVerdict).toBeUndefined();
+    expect(bug?.reviewSummary).toBeUndefined();
+    expect(bug?.fixRounds).toBe(1); // no extra round counted
+
+    // Only the "fixes pushed" line — the echoed verdict posted no
+    // "Code review requested changes" message.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toEqual([
+      "Fixes pushed — running code review again",
+    ]);
+  });
+
+  test("a legacy fix run (no stamped mode) still completes via payload-shape inference", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    // Row dispatched before activeRunMode stamping existed: no mode, pending
+    // verdict — the old "CODE_REVIEW callback carrying no verdict" inference
+    // must keep working across the deploy.
+    const id = await seedCodeReviewBug(t, maintainerId, {
+      routineRunId: "run-fix-legacy",
+      reviewVerdict: "changes_requested",
+      reviewSummary: "Round 1 findings.",
+      fixRounds: 1,
+    });
+    const fetchMock = stubRoutineEnv();
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      { bugId: id, routineRunId: "run-fix-legacy", status: "CODE_REVIEW" },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({ mode: "review", bugId: id });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.reviewVerdict).toBeUndefined();
   });
 });
 
@@ -2155,7 +2340,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("all gates passing merges via squash and posts the success line", async () => {
+  test("all gates passing merges via squash and applies MERGED directly", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -2184,10 +2369,27 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
 
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Shipped 🎉",
     ]);
-    // MERGED is the webhook's/Routine callback's job, never the action's.
+    // GitHub confirmed the merge, so the action applies MERGED itself via
+    // the trusted "automerge" source — the row must not strand at
+    // READY_TO_MERGE waiting on webhook delivery.
     const bug = await t.run(async (ctx) => ctx.db.get(id));
-    expect(bug?.status).toBe("READY_TO_MERGE");
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+
+    // A later webhook delivery for the same merge stays a no-op: no duplicate
+    // system message, status untouched.
+    await t.mutation(internal.functions.devAssistant.bugs.handleGithubPrClosed, {
+      branchRef: `claude/devbug-${id}`,
+      prUrl: PR_URL,
+      merged: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await threadBodies(t, maintainerId, id)).toEqual([
+      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Shipped 🎉",
+    ]);
   });
 
   test("the success line notes staging verification when applicable", async () => {
@@ -2207,6 +2409,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
 
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
+      "Shipped 🎉",
     ]);
   });
 
@@ -2239,6 +2442,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Shipped 🎉",
     ]);
   });
 
@@ -2320,7 +2524,10 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       "Code review passed ✓",
       "Ready to merge",
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Shipped 🎉",
     ]);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
   });
 
   test("confirmStaging triggers the merge attempt once staging was the last gate", async () => {
@@ -2344,6 +2551,264 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Connie Tributor confirmed it works on staging",
       "Auto-merged ✓ — all gates passed (low risk, review approved, verified on staging)",
+      "Shipped 🎉",
     ]);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+  });
+});
+
+describe("run-mode callback policy", () => {
+  test("a spec revision clears the stale approval, logs it, and pushes the originator", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // High risk so approval does NOT auto-dispatch — the item stays IN_REVIEW
+    // with a signed-off spec, the exact window a revision can invalidate.
+    const id = await submitAndDeliverSpec(t, maintainerId, "high");
+    await t.mutation(api.functions.devAssistant.contributions.approveSpec, {
+      token: maintainerId,
+      id,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.specApprovedAt,
+    ).toBeTruthy();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    stubRoutineEnv();
+    vi.setSystemTime(Date.now() + 1000);
+
+    // Contributor replies -> spec-revision round with a fresh routineRunId.
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "Actually, also fix the settings tab.",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const revised = await t.run(async (ctx) => ctx.db.get(id));
+
+    // The revision delivers a CHANGED spec with no status change.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: revised!.routineRunId!,
+        status: "IN_REVIEW",
+        spec: "## Plan v2\nChange the string on both tabs.",
+        riskLevel: "high",
+      },
+    );
+
+    // The old sign-off no longer covers the plan on the row.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.spec).toBe("## Plan v2\nChange the string on both tabs.");
+    expect(bug?.specApprovedAt).toBeUndefined();
+    expect(bug?.status).toBe("IN_REVIEW");
+
+    // Thread: new plan as the assistant turn + the re-approval system line.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.slice(-2).map((m) => [m.authorType, m.body])).toEqual([
+      ["assistant", "## Plan v2\nChange the string on both tabs."],
+      ["system", "Plan updated — needs your approval again"],
+    ]);
+
+    // The originator was pushed about the revision (status didn't change, so
+    // the plain status push can't have fired) — exactly once.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    const revisionPushes = notifications.filter(
+      (n) => n.userId === maintainerId && n.title === "Updated plan ready",
+    );
+    expect(revisionPushes).toHaveLength(1);
+  });
+
+  test("startBuild rejects non-buildable scopes (same gate as approveSpec)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const now = Date.now();
+
+    // An approved item that a later spec revision re-triaged out of
+    // "buildable" — approveSpec's gate alone can't catch this.
+    const seed = async (scope: "split" | "design_needed") =>
+      await t.run(async (ctx) =>
+        ctx.db.insert("devBugs", {
+          originatorUserId: maintainerId,
+          status: "IN_REVIEW",
+          kind: "feature",
+          source: "dashboard",
+          title: "Build video chat",
+          body: "B",
+          spec: "## Too big",
+          riskLevel: "high",
+          specApprovedAt: now,
+          scope,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+
+    const splitId = await seed("split");
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.startBuild, {
+        token: maintainerId,
+        id: splitId,
+      }),
+    ).rejects.toThrow(/too large/);
+
+    const designId = await seed("design_needed");
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.startBuild, {
+        token: maintainerId,
+        id: designId,
+      }),
+    ).rejects.toThrow(/design decisions/);
+
+    const split = await t.run(async (ctx) => ctx.db.get(splitId));
+    expect(split?.status).toBe("IN_REVIEW");
+  });
+
+  test("out-of-policy statuses for the stamped mode persist nothing", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const now = Date.now();
+
+    // A spec run may only deliver IN_REVIEW: a CODE_REVIEW callback (with a
+    // smuggled prUrl) is rejected wholesale.
+    const specBugId = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "DRAFT",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        routineRunId: "run-spec-rogue",
+        activeRunMode: "spec",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: specBugId,
+        routineRunId: "run-spec-rogue",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/rogue",
+        spec: "## Smuggled plan",
+      },
+    );
+    let bug = await t.run(async (ctx) => ctx.db.get(specBugId));
+    expect(bug?.status).toBe("DRAFT");
+    expect(bug?.prUrl).toBeUndefined();
+    expect(bug?.spec).toBeUndefined();
+    expect(bug?.lastError).toMatch(/spec run may not deliver status/);
+    // And a spec run may not carry a review verdict either.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: specBugId,
+        routineRunId: "run-spec-rogue",
+        status: "IN_REVIEW",
+        spec: "## Plan",
+        reviewVerdict: "approved",
+      },
+    );
+    bug = await t.run(async (ctx) => ctx.db.get(specBugId));
+    expect(bug?.status).toBe("DRAFT");
+    expect(bug?.spec).toBeUndefined();
+    expect(bug?.reviewVerdict).toBeUndefined();
+    expect(bug?.lastError).toMatch(/review verdict/);
+    // No thread side effects from rejected callbacks.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id: specBugId },
+    );
+    expect(thread).toHaveLength(0);
+
+    // An implement run may not promote to READY_TO_MERGE — the review
+    // pipeline owns that promotion now.
+    const implBugId = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "CODE_REVIEW",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        routineRunId: "run-impl-eager",
+        activeRunMode: "implement",
+        prUrl: "https://example.com/pr/1",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: implBugId,
+        routineRunId: "run-impl-eager",
+        status: "READY_TO_MERGE",
+      },
+    );
+    const implBug = await t.run(async (ctx) => ctx.db.get(implBugId));
+    expect(implBug?.status).toBe("CODE_REVIEW");
+    expect(implBug?.lastError).toMatch(/review pipeline owns that promotion/);
+  });
+
+  test("rejectBug clears run correlation so in-flight callbacks fall on the floor", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId, otherMaintainerId } = await seedUsers(t);
+    const now = Date.now();
+
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_PROGRESS",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        routineRunId: "run-doomed",
+        activeRunMode: "implement",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    // otherMaintainerId is staff, so it passes rejectBug's superuser gate.
+    await t.mutation(api.functions.devAssistant.bugs.rejectBug, {
+      token: otherMaintainerId,
+      bugId: id,
+    });
+
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("REJECTED");
+    expect(bug?.routineRunId).toBeUndefined();
+    expect(bug?.activeRunMode).toBeUndefined();
+
+    // The in-flight run's callback no longer correlates: dropped entirely,
+    // not even a lastError breadcrumb on the terminal row.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-doomed",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/zombie",
+      },
+    );
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("REJECTED");
+    expect(bug?.prUrl).toBeUndefined();
+    expect(bug?.lastError).toBeUndefined();
   });
 });

@@ -174,7 +174,7 @@ describe("dev-assistant bug lifecycle", () => {
     expect(bug?.routineRunId).toBe("run-123");
   });
 
-  test("applyCallback advances valid transitions and ignores illegal ones", async () => {
+  test("applyCallback advances valid transitions and rejects illegal ones without persisting anything", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { communityId, channelId, userId } = await seedContext(t);
@@ -189,21 +189,31 @@ describe("dev-assistant bug lifecycle", () => {
       });
     });
 
-    // Illegal: IN_PROGRESS -> READY_TO_MERGE (skips CODE_REVIEW) is ignored.
+    // Illegal: IN_PROGRESS -> READY_TO_MERGE (skips CODE_REVIEW) is rejected,
+    // and the rejected callback persists NOTHING else — the prUrl and spec it
+    // carried must not land on the row.
     const illegal = await t.mutation(
       internal.functions.devAssistant.bugs.applyCallback,
-      { bugId, status: "READY_TO_MERGE" },
+      {
+        bugId,
+        status: "READY_TO_MERGE",
+        prUrl: "https://example.com/pr/smuggled",
+        spec: "## Smuggled",
+      },
     );
     expect(illegal?.status).toBe("IN_PROGRESS");
     expect(illegal?.lastError).toContain("Ignored callback transition");
+    expect(illegal?.prUrl).toBeUndefined();
+    expect(illegal?.spec).toBeUndefined();
 
-    // Valid: IN_PROGRESS -> CODE_REVIEW with a PR url.
+    // Valid: IN_PROGRESS -> CODE_REVIEW with a PR url (clears the lastError).
     const afterReview = await t.mutation(
       internal.functions.devAssistant.bugs.applyCallback,
       { bugId, status: "CODE_REVIEW", prUrl: "https://example.com/pr/1" },
     );
     expect(afterReview?.status).toBe("CODE_REVIEW");
     expect(afterReview?.prUrl).toBe("https://example.com/pr/1");
+    expect(afterReview?.lastError).toBeUndefined();
 
     // Correlate by routineRunId.
     const byRun = await t.query(
@@ -212,14 +222,117 @@ describe("dev-assistant bug lifecycle", () => {
     );
     expect(byRun?._id).toBe(bugId);
 
-    // Legal forward skip (ADR-029 Phase 2): a maintainer merged the PR
-    // directly on GitHub before the review verdict landed.
-    const merged = await t.mutation(
+    // MERGED is webhook/auto-merge-only: a routine-source callback may not
+    // claim a merge, even where the transition map would allow it.
+    const routineMerge = await t.mutation(
       internal.functions.devAssistant.bugs.applyCallback,
       { bugId, status: "MERGED" },
     );
+    expect(routineMerge?.status).toBe("CODE_REVIEW");
+    expect(routineMerge?.shippedAt).toBeUndefined();
+    expect(routineMerge?.lastError).toContain("MERGED");
+
+    // The GitHub webhook is ground truth for merges and applies it.
+    const merged = await t.mutation(
+      internal.functions.devAssistant.bugs.applyCallback,
+      { bugId, status: "MERGED", source: "webhook" },
+    );
     expect(merged?.status).toBe("MERGED");
     expect(merged?.shippedAt).toBeTruthy();
+    expect(merged?.lastError).toBeUndefined();
+  });
+
+  test("webhook-source MERGED applies even from IN_PROGRESS (early GitHub merge)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { communityId, channelId, userId } = await seedContext(t);
+    const { bugId } = await t.mutation(
+      internal.functions.devAssistant.bugs.createBug,
+      { communityId, channelId, originatorUserId: userId, title: "T", body: "B" },
+    );
+    // The PR was merged on GitHub before the implementation callback landed —
+    // without the webhook allowance the row would strand at IN_PROGRESS.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bugId, {
+        status: "IN_PROGRESS",
+        routineRunId: "run-early",
+        activeRunMode: "implement",
+      });
+    });
+
+    const merged = await t.mutation(
+      internal.functions.devAssistant.bugs.applyCallback,
+      { bugId, status: "MERGED", source: "webhook" },
+    );
+    expect(merged?.status).toBe("MERGED");
+    expect(merged?.shippedAt).toBeTruthy();
+  });
+
+  test("mark*Dispatched stamp activeRunMode for their mode", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { communityId, channelId, userId } = await seedContext(t);
+
+    // implement: markDispatched (READY_FOR_IMPL -> IN_PROGRESS).
+    const { bugId } = await t.mutation(
+      internal.functions.devAssistant.bugs.createBug,
+      { communityId, channelId, originatorUserId: userId, title: "T", body: "B" },
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bugId, { status: "READY_FOR_IMPL" });
+    });
+    await t.mutation(internal.functions.devAssistant.bugs.markDispatched, {
+      bugId,
+      routineRunId: "run-impl",
+    });
+    let bug = await t.query(internal.functions.devAssistant.bugs.getBug, {
+      bugId,
+    });
+    expect(bug?.activeRunMode).toBe("implement");
+
+    // review: markReviewDispatched (CODE_REVIEW only).
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bugId, { status: "CODE_REVIEW" });
+    });
+    await t.mutation(
+      internal.functions.devAssistant.bugs.markReviewDispatched,
+      { bugId, routineRunId: "run-review" },
+    );
+    bug = await t.query(internal.functions.devAssistant.bugs.getBug, { bugId });
+    expect(bug?.activeRunMode).toBe("review");
+    expect(bug?.routineRunId).toBe("run-review");
+
+    // fix: markFixDispatched (CODE_REVIEW only; also counts the round).
+    await t.mutation(internal.functions.devAssistant.bugs.markFixDispatched, {
+      bugId,
+      routineRunId: "run-fix",
+    });
+    bug = await t.query(internal.functions.devAssistant.bugs.getBug, { bugId });
+    expect(bug?.activeRunMode).toBe("fix");
+    expect(bug?.fixRounds).toBe(1);
+
+    // spec: markSpecDispatched (fresh DRAFT dashboard row).
+    const now = Date.now();
+    const specBugId = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: userId,
+        status: "DRAFT",
+        kind: "bug",
+        source: "dashboard",
+        title: "T",
+        body: "B",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    await t.mutation(internal.functions.devAssistant.bugs.markSpecDispatched, {
+      bugId: specBugId,
+      routineRunId: "run-spec",
+    });
+    const specBug = await t.query(internal.functions.devAssistant.bugs.getBug, {
+      bugId: specBugId,
+    });
+    expect(specBug?.activeRunMode).toBe("spec");
   });
 
   test("applyCallback ignores stale backward replays (monotonic lifecycle)", async () => {

@@ -14,6 +14,7 @@ import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
 import {
   bugStatusValidator,
+  callbackSourceValidator,
   reviewVerdictValidator,
   riskLevelValidator,
   scopeValidator,
@@ -699,9 +700,11 @@ export const dispatchFix = internalAction({
  *
  * Merges via the GitHub REST API with GH_MIRROR_TOKEN (the PAT needs Contents
  * read/write in addition to Issues). On success it posts a system thread
- * message and STOPS — it never sets MERGED itself; the /github/webhook (and
- * the Routine callback) already apply that transition idempotently. On
- * failure (branch protection, conflict, auth) it posts an "Auto-merge
+ * message and applies the MERGED transition itself through the trusted
+ * "automerge" callback source — waiting on the /github/webhook alone would
+ * strand the row at READY_TO_MERGE whenever webhook delivery is missing or
+ * delayed. Webhook redelivery stays idempotent (already-MERGED rows no-op).
+ * On failure (branch protection, conflict, auth) it posts an "Auto-merge
  * blocked" message for a maintainer — no retry loop.
  */
 export const attemptAutoMerge = internalAction({
@@ -789,8 +792,29 @@ export const attemptAutoMerge = internalAction({
               ")",
           },
         );
-        // Deliberately NOT setting MERGED here — the /github/webhook (and the
-        // Routine callback) apply that transition idempotently.
+        // GitHub just confirmed the merge, so apply MERGED directly through
+        // the trusted "automerge" source instead of waiting on the webhook
+        // (which may be unconfigured or delayed and would strand the row).
+        // Route through handleRoutineCallback so the shipped push + chat bot
+        // message fire too; the webhook redelivery no-ops on a MERGED row.
+        if (bug.routineRunId) {
+          await ctx.runAction(
+            internal.functions.devAssistant.actions.handleRoutineCallback,
+            {
+              bugId: args.bugId,
+              routineRunId: bug.routineRunId,
+              status: "MERGED",
+              source: "automerge",
+            },
+          );
+        } else {
+          // No run to correlate (shouldn't happen past the gates above) —
+          // still don't lose the merge.
+          await ctx.runMutation(
+            internal.functions.devAssistant.bugs.applyCallback,
+            { bugId: args.bugId, status: "MERGED", source: "automerge" },
+          );
+        }
         return;
       }
 
@@ -887,6 +911,11 @@ export const handleRoutineCallback = internalAction({
     bugId: v.id("devBugs"),
     routineRunId: v.string(),
     status: bugStatusValidator,
+    // Trusted-caller channel: handleGithubPrClosed passes "webhook",
+    // attemptAutoMerge passes "automerge". The public HTTP callback never
+    // forwards this field, so external callers always land as "routine" —
+    // the only source applyCallback's MERGED gate rejects.
+    source: v.optional(callbackSourceValidator),
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
     message: v.optional(v.string()),
@@ -919,6 +948,7 @@ export const handleRoutineCallback = internalAction({
       {
         bugId: args.bugId,
         status: args.status,
+        source: args.source,
         prUrl: args.prUrl,
         screenshots: args.screenshots,
         spec: args.spec,
@@ -933,18 +963,28 @@ export const handleRoutineCallback = internalAction({
     );
     if (!updated) return;
 
-    // An "approved" review verdict on a CODE_REVIEW callback promotes the bug
-    // to READY_TO_MERGE inside applyCallback, so the expected post-callback
-    // status can differ from the payload's status.
-    const effectiveStatus =
-      args.reviewVerdict === "approved" && args.status === "CODE_REVIEW"
-        ? "READY_TO_MERGE"
-        : args.status;
+    // applyCallback rejects out-of-policy callbacks (illegal transition,
+    // status the run's mode may not deliver, routine-claimed MERGED) by
+    // recording lastError and persisting nothing else; a successful apply
+    // always clears lastError. Don't post/push for a callback that didn't
+    // apply (e.g. a CODE_REVIEW callback arriving after a human rejected the
+    // bug while the routine was running).
+    if (updated.lastError !== undefined) {
+      console.warn(
+        `[DevAssistant] Rejected callback ${args.status} for bug ${args.bugId}: ${updated.lastError}`,
+      );
+      return;
+    }
 
-    // If the transition was illegal, applyCallback kept the prior status and
-    // only recorded lastError — don't post a status message for a transition
-    // that didn't happen (e.g. a CODE_REVIEW callback arriving after a human
-    // rejected the bug while the routine was running).
+    // An "approved" review verdict on a CODE_REVIEW callback promotes the bug
+    // to READY_TO_MERGE inside applyCallback (unless the verdict was ignored,
+    // e.g. echoed by a fix run), so the expected post-callback status can
+    // differ from the payload's status. Read the promotion off the row.
+    const promoted =
+      args.reviewVerdict === "approved" &&
+      args.status === "CODE_REVIEW" &&
+      updated.status === "READY_TO_MERGE";
+    const effectiveStatus = promoted ? "READY_TO_MERGE" : args.status;
     if (updated.status !== effectiveStatus) {
       console.warn(
         `[DevAssistant] Ignored callback ${args.status} for bug ${args.bugId} (current status ${updated.status})`,
@@ -958,21 +998,39 @@ export const handleRoutineCallback = internalAction({
     // idempotent re-apply) must not re-push. Chat-originated items are excluded:
     // the thread bot message below already notifies the channel.
     const statusChanged = bug.status !== updated.status;
-    if (statusChanged && !updated.channelId) {
-      const push = contributorPushForStatus(effectiveStatus, updated);
-      if (push) {
+    // A spec REVISION lands without a status change (IN_REVIEW re-apply) but
+    // still needs a push — the plan the contributor is waiting on moved.
+    // Compare against the pre-callback spec so re-delivered callbacks (which
+    // carry the already-stored text) can't re-push.
+    const specChanged = args.spec !== undefined && args.spec !== bug.spec;
+    if (!updated.channelId) {
+      if (statusChanged) {
+        const push = contributorPushForStatus(effectiveStatus, updated);
+        if (push) {
+          await ctx.runAction(
+            internal.functions.notifications.actions.sendPushNotification,
+            {
+              userId: updated.originatorUserId,
+              title: push.title,
+              body: push.body,
+              notificationType: "dev_contribution_update",
+              data: {
+                bugId: args.bugId,
+                status: effectiveStatus,
+                ...(updated.prUrl ? { prUrl: updated.prUrl } : {}),
+              },
+            },
+          );
+        }
+      } else if (specChanged) {
         await ctx.runAction(
           internal.functions.notifications.actions.sendPushNotification,
           {
             userId: updated.originatorUserId,
-            title: push.title,
-            body: push.body,
+            title: "Updated plan ready",
+            body: `The updated plan for "${updated.aiTitle ?? updated.title}" is ready — review and approve it.`,
             notificationType: "dev_contribution_update",
-            data: {
-              bugId: args.bugId,
-              status: effectiveStatus,
-              ...(updated.prUrl ? { prUrl: updated.prUrl } : {}),
-            },
+            data: { bugId: args.bugId, status: effectiveStatus },
           },
         );
       }

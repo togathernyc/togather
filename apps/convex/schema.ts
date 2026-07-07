@@ -2210,6 +2210,20 @@ export default defineSchema({
     prUrl: v.optional(v.string()),
     reviewLink: v.optional(v.string()),
     routineRunId: v.optional(v.string()), // we generate; routine echoes on callbacks
+    // Mode the in-flight Routine run (the one holding routineRunId) was
+    // dispatched in. Stamped by the mark*Dispatched mutations; applyCallback
+    // restricts what each mode's callback may deliver (e.g. only review runs
+    // carry a review verdict). Unset on legacy rows dispatched before the
+    // stamping existed — those get the permissive legacy callback policy
+    // (minus MERGED, which is webhook/auto-merge-only).
+    activeRunMode: v.optional(
+      v.union(
+        v.literal("spec"),
+        v.literal("implement"),
+        v.literal("review"),
+        v.literal("fix"),
+      ),
+    ),
     dispatchedAt: v.optional(v.number()),
     lastCallbackAt: v.optional(v.number()),
     lastError: v.optional(v.string()),
