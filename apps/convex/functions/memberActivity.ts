@@ -13,8 +13,8 @@
  *   - their membership is active (userCommunities.status === 1),
  *   - they are a real account (not an isPlaceholder provisional/demo user),
  *   - they opened the app in this community within the past month
- *     (membership.lastLogin, with membership.createdAt as the fallback so
- *     brand-new joiners count),
+ *     (membership.lastLogin — strictly; members who were added or imported
+ *     but never opened the app here are NOT billable),
  *   - no admin/leader has manually marked them inactive
  *     (userCommunities.billingInactive).
  *
@@ -63,14 +63,12 @@ export async function countBillableActiveUsers(
     const user = await ctx.db.get(membership.userId);
     if (!user || user.isPlaceholder) continue;
 
-    // Per-community activity only: membership.lastLogin is stamped on login,
-    // community switch, and app foreground (users.recordActivity). createdAt
-    // is the fallback so someone who just joined counts immediately.
-    const lastActive = Math.max(
-      membership.lastLogin ?? 0,
-      membership.createdAt ?? 0,
-    );
-    if (lastActive >= cutoff) count++;
+    // Per-community activity only, and strictly lastLogin: it's stamped on
+    // login, community switch, join, and app foreground (users.recordActivity),
+    // so anyone who actually entered the community has it. Members who were
+    // added/imported (e.g. PCO sync) but never opened the app here must not
+    // bill — that's the promise in the admin copy and the Stats card.
+    if ((membership.lastLogin ?? 0) >= cutoff) count++;
   }
   return count;
 }

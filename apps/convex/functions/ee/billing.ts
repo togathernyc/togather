@@ -730,6 +730,30 @@ export const handleCheckoutCompleted = internalMutation({
         updatedAt: now,
       });
 
+      // The community just became public — give it the same default landing
+      // page the proposal flow creates, so /c/[slug] and its join form work
+      // the moment the church goes live.
+      const existingLandingPage = await ctx.db
+        .query("communityLandingPages")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first();
+      if (!existingLandingPage) {
+        const communityName = existing?.name ?? "our community";
+        await ctx.db.insert("communityLandingPages", {
+          communityId,
+          isEnabled: true,
+          title: `Welcome to ${communityName}`,
+          description:
+            "We'd love to get to know you! Fill out the form below to connect with our community.",
+          submitButtonText: "Join",
+          successMessage: `Welcome to ${communityName}!`,
+          formFields: [],
+          automationRules: [],
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
       await ctx.scheduler.runAfter(
         0,
         internal.functions.demo.purgeDemoSeedUsers,

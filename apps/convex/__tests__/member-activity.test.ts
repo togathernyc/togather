@@ -62,6 +62,7 @@ async function seedCommunity(t: ReturnType<typeof convexTest>): Promise<Fixture>
       status: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
+      lastLogin: timestamp,
     });
     return { communityId, adminId };
   });
@@ -119,6 +120,40 @@ describe("getBillableSummary", () => {
     // Admin + the two members who opened the app here this month.
     expect(summary.billableActiveUsers).toBe(3);
     expect(summary.monthlyPriceUsd).toBe(3);
+  });
+
+  test("members added but never opened here don't bill, even if just added", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedCommunity(t);
+
+    // Imported/admin-added member: fresh membership, no lastLogin — the
+    // billing promise is "opened the app here", so they must not count.
+    await t.run(async (ctx) => {
+      const nowMs = Date.now();
+      const userId = await ctx.db.insert("users", {
+        firstName: "Imported",
+        lastName: "Member",
+        phone: "+15555560030",
+        phoneVerified: true,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+      });
+      await ctx.db.insert("userCommunities", {
+        userId,
+        communityId,
+        roles: COMMUNITY_ROLES.MEMBER,
+        status: 1,
+        createdAt: nowMs,
+        updatedAt: nowMs,
+        // no lastLogin
+      });
+    });
+
+    const summary = await t.query(api.functions.memberActivity.getBillableSummary, {
+      token: adminToken,
+      communityId,
+    });
+    expect(summary.billableActiveUsers).toBe(1); // admin only
   });
 
   test("activity is per community, not app-wide", async () => {

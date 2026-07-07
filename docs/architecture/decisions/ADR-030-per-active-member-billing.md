@@ -38,11 +38,13 @@ rolling 30-day activity window, per community.**
 
 - **Billable active member** (`functions/memberActivity.ts`): an active
   membership (`status === 1`) of a real account (not `isPlaceholder`), whose
-  `userCommunities.lastLogin` — stamped on login, community switch, and app
-  foreground while that community is active (`users.recordActivity`) — is
+  `userCommunities.lastLogin` — stamped on login, community switch, join, and
+  app foreground while that community is active (`users.recordActivity`) — is
   within the past 30 days, and who has not been manually marked inactive
   (`userCommunities.billingInactive`, settable by community admins and the
-  member's group leaders).
+  member's group leaders). Strictly `lastLogin`: members who were added or
+  imported (e.g. PCO sync) but never opened the app in the community are
+  never billable.
 - **Per community, not app-wide**: activity in one community never makes a
   person billable in another.
 - **Same number the admin already sees**: the definition intentionally

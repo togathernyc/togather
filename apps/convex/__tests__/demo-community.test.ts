@@ -541,6 +541,16 @@ describe("demo conversion (go live)", () => {
     // …but the structure and the real account survive.
     expect(after.groups.length).toBeGreaterThan(0);
     expect(after.memberships.some((m) => m.userId === userId)).toBe(true);
+    // The now-public community gets the default landing page, so /c/[slug]
+    // and its join form work immediately after go-live.
+    const landingPage = await t.run(async (ctx) =>
+      ctx.db
+        .query("communityLandingPages")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .first(),
+    );
+    expect(landingPage?.isEnabled).toBe(true);
+    expect(landingPage?.title).toBe("Welcome to Convert Chapel");
     // Channel denormalization was recomputed (creator remains in channels).
     for (const channel of after.channels) {
       expect(channel.memberCount).toBe(1);
