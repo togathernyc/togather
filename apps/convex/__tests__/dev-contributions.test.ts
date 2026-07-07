@@ -2812,3 +2812,781 @@ describe("run-mode callback policy", () => {
     expect(bug?.lastError).toBeUndefined();
   });
 });
+
+/**
+ * Chat-first filing, pictures, and split slices (ADR-029 follow-up).
+ *
+ * - submit derives a title from the message when none is given
+ * - pictures ride the report/reply as message imageUrls and reach the spec
+ *   agent as resolved public URLs
+ * - the spec routine's `splitSlices` persist and clear with the scope
+ */
+describe("chat-first filing, pictures, and split slices", () => {
+  test("submit derives a title from the message when none is given", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "The events tab crashes when I tap a photo.",
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    // No title field → first line of the message becomes the placeholder.
+    expect(bug?.title).toBe("The events tab crashes when I tap a photo.");
+    // The message still seeds the opening thread turn verbatim.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.body).toBe("The events tab crashes when I tap a photo.");
+  });
+
+  test("submit clips a long derived title with an ellipsis", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const longBody =
+      "This is a really long description that goes well past the eighty " +
+      "character placeholder title limit so it should be clipped.";
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: longBody },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.title.length).toBeLessThanOrEqual(80);
+    expect(bug?.title.endsWith("…")).toBe(true);
+    // The full message is preserved on the row/thread, only the title clips.
+    expect(bug?.body).toBe(longBody);
+  });
+
+  test("submit rejects a message with neither text nor a screenshot", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.submit, {
+        token: maintainerId,
+        kind: "bug",
+        body: "   ",
+      }),
+    ).rejects.toThrow(/description or a screenshot/i);
+  });
+
+  test("submit accepts a screenshot-only report with a fallback title", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "",
+        screenshotUrls: ["r2:chat/only.jpg"],
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.title).toBe("Bug report");
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.body).toBe("");
+    expect(thread[0]?.imageUrls).toEqual(["https://cdn.example.com/chat/only.jpg"]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("attached pictures ride the opening turn and reach the spec agent as public URLs", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "See the glitch in these shots.",
+        screenshotUrls: ["r2:chat/a.jpg", "r2:chat/b.jpg"],
+      },
+    );
+
+    // Stored on the row (durable R2 paths) and on the opening message.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.screenshotUrls).toEqual(["r2:chat/a.jpg", "r2:chat/b.jpg"]);
+
+    // getThread resolves them to fetchable public URLs for the app.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.imageUrls).toEqual([
+      "https://cdn.example.com/chat/a.jpg",
+      "https://cdn.example.com/chat/b.jpg",
+    ]);
+
+    // The dispatched spec brief carries resolved (not r2:) URLs for vision.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief.screenshotUrls).toEqual([
+      "https://cdn.example.com/chat/a.jpg",
+      "https://cdn.example.com/chat/b.jpg",
+    ]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("postMessage accepts a picture-only reply and rejects an empty one", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Something's off." },
+    );
+
+    // A picture with no words is valid.
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "",
+      imageUrls: ["r2:chat/c.jpg"],
+    });
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const last = thread[thread.length - 1];
+    expect(last?.body).toBe("");
+    expect(last?.imageUrls).toEqual(["https://cdn.example.com/chat/c.jpg"]);
+
+    // Neither text nor pictures is rejected.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.postMessage, {
+        token: maintainerId,
+        id,
+        body: "   ",
+      }),
+    ).rejects.toThrow(/Message body is required/);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("spec callback persists splitSlices for a split item and clears them on re-triage", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Rebuild the whole thing." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slices = [
+      { title: "In progress tab", prompt: "Build the in-progress tab only." },
+      { title: "Chat-first filing", prompt: "Reshape the submit form to a chat." },
+    ];
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Too big\nSplit it up.",
+      scope: "split",
+      splitSlices: slices,
+    });
+
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("split");
+    expect(bug?.splitSlices).toEqual(slices);
+
+    // A revision that re-triages to a single buildable item clears the slices.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Actually small\nJust one screen.",
+      scope: "buildable",
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("buildable");
+    expect(bug?.splitSlices).toBeUndefined();
+  });
+
+  test("the http callback validates splitSlices and accepts a well-formed array", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const now = Date.now();
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "DRAFT",
+        kind: "feature",
+        source: "dashboard",
+        title: "Big ask",
+        body: "B",
+        routineRunId: "run-spec",
+        activeRunMode: "spec",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    process.env.DEV_ASSISTANT_CALLBACK_SECRET = "test-callback-secret";
+    const sign = async (body: string): Promise<string> => {
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode("test-callback-secret"),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      const bytes = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+      return Array.from(new Uint8Array(bytes))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    };
+    const post = async (payload: Record<string, unknown>): Promise<Response> => {
+      const body = JSON.stringify(payload);
+      return await t.fetch("/dev-assistant/callback", {
+        method: "POST",
+        body,
+        headers: { "x-togather-signature": await sign(body) },
+      });
+    };
+
+    // Malformed slice entries are rejected before scheduling.
+    const bad = await post({
+      bugId: id,
+      routineRunId: "run-spec",
+      status: "IN_REVIEW",
+      scope: "split",
+      splitSlices: [{ title: "Missing prompt" }],
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toMatch(/Invalid splitSlices/);
+
+    // A well-formed array passes and persists end-to-end.
+    const ok = await post({
+      bugId: id,
+      routineRunId: "run-spec",
+      status: "IN_REVIEW",
+      spec: "## Split\nDo it in pieces.",
+      scope: "split",
+      splitSlices: [{ title: "Slice one", prompt: "Build slice one only." }],
+    });
+    expect(ok.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("split");
+    expect(bug?.splitSlices).toEqual([
+      { title: "Slice one", prompt: "Build slice one only." },
+    ]);
+  });
+});
+
+/**
+ * Review-cycle hardening (ADR-029 Phase 1.7): tests added after code review —
+ * the r2:-only image guard, title-truncation boundary, getThread passthrough
+ * for already-public URLs, revision-round image aggregation, and splitSlices
+ * clearing on a design_needed re-triage.
+ */
+describe("review-cycle hardening", () => {
+  test("submit and postMessage reject non-r2 image URLs", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    // submit rejects an external URL masquerading as an attachment.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.submit, {
+        token: maintainerId,
+        kind: "bug",
+        body: "look",
+        screenshotUrls: ["https://evil.example/beacon.png"],
+      }),
+    ).rejects.toThrow(/uploaded images/i);
+
+    // A valid item, then postMessage rejects the same.
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "ok" },
+    );
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.postMessage, {
+        token: maintainerId,
+        id,
+        body: "here",
+        imageUrls: ["http://169.254.169.254/latest/meta-data/"],
+      }),
+    ).rejects.toThrow(/uploaded images/i);
+  });
+
+  test("deriveTitle keeps 80 chars but clips at 81", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const exactly80 = "a".repeat(80);
+    const id80 = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: exactly80 },
+    );
+    const bug80 = await t.run(async (ctx) => ctx.db.get(id80));
+    expect(bug80?.title).toBe(exactly80); // no ellipsis at the boundary
+
+    const over81 = "b".repeat(81);
+    const id81 = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: over81 },
+    );
+    const bug81 = await t.run(async (ctx) => ctx.db.get(id81));
+    expect(bug81?.title.length).toBe(80);
+    expect(bug81?.title.endsWith("…")).toBe(true);
+  });
+
+  test("getThread passes already-public (http) image URLs through unchanged", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    // Simulate a chat-originated message whose imageUrls are already public
+    // (inserted directly, bypassing the dashboard r2:-only guard).
+    const now = Date.now();
+    const id = await t.run(async (ctx) => {
+      const bugId = await ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_REVIEW",
+        kind: "bug",
+        source: "chat",
+        title: "From chat",
+        body: "B",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("devBugMessages", {
+        bugId,
+        authorType: "user",
+        userId: maintainerId,
+        body: "see this",
+        imageUrls: ["https://already.public/shot.png"],
+        createdAt: now,
+      });
+      return bugId;
+    });
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.imageUrls).toEqual(["https://already.public/shot.png"]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("a revision round folds a reply's picture into the spec brief", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Initial report, no picture." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Move to IN_REVIEW so the reply drives a revision round.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: bug!.routineRunId!,
+        status: "IN_REVIEW",
+        spec: "## Plan",
+        riskLevel: "low",
+      },
+    );
+
+    // Reply with a screenshot → schedules a revision dispatch.
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "Here's what I mean:",
+      imageUrls: ["r2:chat/reply.jpg"],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The most recent dispatch is the revision; its brief carries the resolved
+    // reply image.
+    const lastCall = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];
+    const brief = JSON.parse(JSON.parse(lastCall[1].body).text);
+    expect(brief.revision).toBe(true);
+    expect(brief.screenshotUrls).toContain("https://cdn.example.com/chat/reply.jpg");
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("re-triage from split to design_needed clears stale splitSlices", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Huge ask." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Split",
+      scope: "split",
+      splitSlices: [{ title: "One", prompt: "Build one." }],
+    });
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.splitSlices).toHaveLength(1);
+
+    // Revision decides it actually needs design work; no slices delivered.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Needs design",
+      scope: "design_needed",
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("design_needed");
+    expect(bug?.splitSlices).toBeUndefined();
+  });
+
+  test("a split revision that omits slices keeps the last-known ones", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Huge ask." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slices = [{ title: "One", prompt: "Build one." }];
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Split",
+      scope: "split",
+      splitSlices: slices,
+    });
+    // A revision that stays "split" but omits splitSlices keeps them.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Still split",
+      scope: "split",
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.splitSlices).toEqual(slices);
+  });
+});
+
+/**
+ * Archive / unarchive (ADR-029): a contributor sets a conversation aside
+ * (abandoned or not doable) and can restore it. Orthogonal to the pipeline
+ * status; originator-only (plus staff/superuser).
+ */
+describe("archive / unarchive", () => {
+  test("archive stamps archivedAt + a system turn, and is idempotent", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Abandon me." },
+    );
+
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeTruthy();
+    const firstStamp = bug!.archivedAt;
+
+    // Re-archiving is a no-op: keeps the first stamp, no duplicate system turn.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBe(firstStamp);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const archiveMsgs = thread.filter((m) => m.body.includes("archived"));
+    expect(archiveMsgs).toHaveLength(1);
+  });
+
+  test("unarchive clears archivedAt and restores the conversation", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Set aside then bring back." },
+    );
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    await t.mutation(api.functions.devAssistant.contributions.unarchive, {
+      token: maintainerId,
+      id,
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeUndefined();
+  });
+
+  test("only the originator (or staff) can archive; other maintainers cannot", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId, otherMaintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    // A second non-staff maintainer who is NOT the originator.
+    const now = Date.now();
+    const strangerId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Stan",
+        lastName: "Stranger",
+        platformRoles: ["dev_maintainer"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Mine to archive." },
+    );
+
+    // A non-owner, non-staff maintainer is refused.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.archive, {
+        token: strangerId,
+        id,
+      }),
+    ).rejects.toThrow(/Only the person who started this/);
+
+    // A staff maintainer (otherMaintainerId isStaff) may archive to tidy up.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: otherMaintainerId,
+      id,
+    });
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.archivedAt).toBeTruthy();
+  });
+});
+
+/**
+ * Archive pauses the pipeline (ADR-029, post-review): an archived item can't
+ * be approved/built and doesn't consume the AI, but system callbacks still
+ * land (archivedAt is orthogonal to status). Also covers the review's flagged
+ * auth/superuser gaps.
+ */
+describe("archive pauses the pipeline", () => {
+  test("approveSpec and startBuild are refused while archived", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    const id = await submitAndDeliverSpec(t, maintainerId, "medium");
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.approveSpec, {
+        token: maintainerId,
+        id,
+      }),
+    ).rejects.toThrow(/Restore this conversation/);
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.startBuild, {
+        token: maintainerId,
+        id,
+      }),
+    ).rejects.toThrow(/Restore this conversation/);
+  });
+
+  test("replying to an archived item records the note but doesn't re-fire the AI", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Abandon this." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const dispatchesBefore = fetchMock.mock.calls.length; // initial spec dispatch
+
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: maintainerId,
+      id,
+    });
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "Just a closing note.",
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // No new dispatch fired for the archived reply.
+    expect(fetchMock.mock.calls.length).toBe(dispatchesBefore);
+    // ...but the note is in the thread.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.some((m) => m.body === "Just a closing note.")).toBe(true);
+  });
+
+  test("a routine callback still advances an archived in-flight item", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const now = Date.now();
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_PROGRESS",
+        kind: "bug",
+        source: "dashboard",
+        title: "Mid-build then archived",
+        body: "B",
+        spec: "## Plan",
+        riskLevel: "low",
+        routineRunId: "run-live",
+        activeRunMode: "implement",
+        archivedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-live",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/42",
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW"); // status advanced
+    expect(bug?.archivedAt).toBe(now); // still archived
+  });
+
+  test("unarchive is originator/staff-only, and a superuser may archive", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const now = Date.now();
+    const strangerId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Stan",
+        lastName: "Stranger",
+        platformRoles: ["dev_maintainer"],
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    const superId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Sue",
+        lastName: "Super",
+        platformRoles: ["dev_maintainer"],
+        isSuperuser: true,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Owned item." },
+    );
+
+    // A superuser can archive someone else's item.
+    await t.mutation(api.functions.devAssistant.contributions.archive, {
+      token: superId,
+      id,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.archivedAt).toBeTruthy();
+
+    // A non-owner, non-staff maintainer cannot unarchive it.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.unarchive, {
+        token: strangerId,
+        id,
+      }),
+    ).rejects.toThrow(/Only the person who started this/);
+
+    // The originator can.
+    await t.mutation(api.functions.devAssistant.contributions.unarchive, {
+      token: maintainerId,
+      id,
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.archivedAt).toBeUndefined();
+  });
+});

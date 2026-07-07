@@ -29,6 +29,7 @@ import {
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from "expo-clipboard";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Markdown } from "@components/ui/Markdown";
@@ -37,12 +38,15 @@ import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
 import { useThread } from "../hooks/useThread";
+import { useImageAttachments } from "../hooks/useImageAttachments";
 import {
   useApproveSpec,
+  useArchiveContribution,
   useConfirmStaging,
   usePostMessage,
   useReportStagingIssue,
   useStartBuild,
+  useUnarchiveContribution,
 } from "../hooks/useContributionMutations";
 import {
   displayTitle,
@@ -52,9 +56,10 @@ import {
   needsStagingVerify,
   PALETTE,
 } from "../utils/status";
+import { AttachmentStrip } from "./AttachmentStrip";
 import { FromChatTag, KindPill, RiskBadge, StatusChip } from "./ContributionBadges";
 import { SystemCaption, ThreadMessageBubble, UserBubble } from "./ThreadBubbles";
-import type { Contribution } from "../types";
+import type { Contribution, SplitSlice } from "../types";
 
 /**
  * The latest AI plan, rendered once at the bottom of the thread. When the AI
@@ -103,6 +108,96 @@ function SpecCard({ contribution }: { contribution: Contribution }) {
   );
 }
 
+/**
+ * One proposed slice: its title, the full build prompt (shown so the
+ * maintainer can read exactly what they're about to paste into a dev session —
+ * it's AI-generated from a contributor's report, so it shouldn't be copied
+ * blind), and a button to copy it.
+ */
+function SliceRow({ slice, index }: { slice: SplitSlice; index: number }) {
+  const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await Clipboard.setStringAsync(slice.prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      Alert.alert("Couldn't copy", formatError(error));
+    }
+  }, [slice.prompt]);
+
+  return (
+    <View style={[styles.sliceRow, { borderColor: colors.border }]}>
+      <View style={styles.sliceHeader}>
+        <Text style={[styles.sliceTitle, { color: colors.text }]}>
+          {index + 1}. {slice.title}
+        </Text>
+        <TouchableOpacity
+          style={[styles.copyButton, { borderColor: primaryColor }]}
+          onPress={handleCopy}
+          activeOpacity={0.7}
+          accessibilityLabel={`Copy build prompt for ${slice.title}`}
+        >
+          <Ionicons
+            name={copied ? "checkmark" : "copy-outline"}
+            size={15}
+            color={primaryColor}
+          />
+          <Text style={[styles.copyButtonText, { color: primaryColor }]}>
+            {copied ? "Copied" : "Copy prompt"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <Text
+        style={[
+          styles.slicePrompt,
+          { color: colors.textSecondary, backgroundColor: colors.background, borderColor: colors.border },
+        ]}
+        selectable
+      >
+        {slice.prompt}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * For a "split" item: the buildable slices the AI proposed, each with a
+ * copy-the-prompt button so a maintainer can paste it straight into a fresh
+ * dev session and build that slice on its own.
+ */
+function SplitSlicesCard({ contribution }: { contribution: Contribution }) {
+  const { colors } = useTheme();
+  const slices = contribution.splitSlices;
+  if (!slices || slices.length === 0) return null;
+
+  return (
+    <View
+      style={[
+        styles.specCard,
+        { backgroundColor: colors.surface, borderColor: PALETTE.aiWorking },
+      ]}
+    >
+      <View style={styles.specHeader}>
+        <Ionicons name="albums-outline" size={16} color={PALETTE.aiWorking} />
+        <Text style={[styles.specHeaderText, { color: PALETTE.aiWorking }]}>
+          Build it in {slices.length} pieces
+        </Text>
+      </View>
+      <Text style={[styles.specSubtitle, { color: colors.textSecondary }]}>
+        Copy any piece's prompt and paste it into a new dev session to build
+        that piece on its own.
+      </Text>
+      {slices.map((slice, index) => (
+        <SliceRow key={index} slice={slice} index={index} />
+      ))}
+    </View>
+  );
+}
+
 export function ContributionDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -122,6 +217,8 @@ export function ContributionDetailScreen() {
   const postMessage = usePostMessage();
   const confirmStaging = useConfirmStaging();
   const reportStagingIssue = useReportStagingIssue();
+  const archiveContribution = useArchiveContribution();
+  const unarchiveContribution = useUnarchiveContribution();
 
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
@@ -129,6 +226,7 @@ export function ContributionDetailScreen() {
   const [issueMode, setIssueMode] = useState(false);
   const [issueNote, setIssueNote] = useState("");
   const scrollRef = useRef<ScrollView>(null);
+  const images = useImageAttachments();
 
   const handleApprove = useCallback(() => {
     if (!id) return;
@@ -195,21 +293,66 @@ export function ContributionDetailScreen() {
   }, [id, issueNote, reportStagingIssue]);
 
   const handleSend = useCallback(async () => {
-    if (!id || sending) return;
+    if (!id || sending || images.uploading) return;
     const body = draft.trim();
-    if (!body) return;
-    // Optimistic clear — restore the draft if the send fails.
+    const imageUrls = images.storagePaths;
+    // A picture-only message is valid; require text otherwise.
+    if (!body && imageUrls.length === 0) return;
+    // Optimistic clear of the text; keep the attachments until the send
+    // succeeds so a failure doesn't silently lose the uploaded pictures.
     setDraft("");
     setSending(true);
     try {
-      await postMessage({ id, body });
+      await postMessage({
+        id,
+        body,
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+      });
+      images.reset();
     } catch (error) {
       setDraft(body);
       Alert.alert("Couldn't send", formatError(error));
     } finally {
       setSending(false);
     }
-  }, [id, draft, sending, postMessage]);
+  }, [id, draft, sending, postMessage, images]);
+
+  const handleArchive = useCallback(() => {
+    if (!id) return;
+    Alert.alert(
+      "Archive this conversation?",
+      "It moves to your Archived tab and leaves the active list. You can restore it anytime.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Archive",
+          style: "destructive",
+          onPress: async () => {
+            setBusy(true);
+            try {
+              await archiveContribution({ id });
+            } catch (error) {
+              Alert.alert("Couldn't archive", formatError(error));
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [id, archiveContribution]);
+
+  const handleUnarchive = useCallback(async () => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      await unarchiveContribution({ id });
+    } catch (error) {
+      Alert.alert("Couldn't restore", formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [id, unarchiveContribution]);
 
   /**
    * The original report opens the thread. The backend may also seed it as the
@@ -251,14 +394,18 @@ export function ContributionDetailScreen() {
     );
   }
 
-  const showApproveSpec = needsSpecApproval(contribution);
+  // Archiving pauses the item — hide every forward action and the composer
+  // until it's restored (the backend rejects these on archived items too).
+  const archived = !!contribution.archivedAt;
+  const showApproveSpec = !archived && needsSpecApproval(contribution);
   // Non-buildable scopes can't enter the build pipeline (the backend rejects
   // them too) — keep the UI consistent with the "Too big for one build" card.
   const showStartBuild =
+    !archived &&
     !!contribution.specApprovedAt &&
     contribution.status === "IN_REVIEW" &&
     isBuildableScope(contribution.scope);
-  const showStagingCard = needsStagingVerify(contribution);
+  const showStagingCard = !archived && needsStagingVerify(contribution);
   const awaitingSpec =
     (contribution.status === "DRAFT" || contribution.status === "IN_REVIEW") &&
     !contribution.spec;
@@ -272,6 +419,13 @@ export function ContributionDetailScreen() {
       ? "Replying asks the AI to revise the spec"
       : null
     : "Notes here are saved to the conversation for the team — the AI builder doesn't read them mid-build";
+
+  // Send is enabled with text OR at least one uploaded picture, and never
+  // while a picture is still uploading.
+  const canSend =
+    (draft.trim().length > 0 || images.storagePaths.length > 0) &&
+    !sending &&
+    !images.uploading;
 
   const reportBody = contribution.repro
     ? `${contribution.body}\n\nHow to see it: ${contribution.repro}`
@@ -297,6 +451,14 @@ export function ContributionDetailScreen() {
         <StatusChip contribution={contribution} />
         {contribution.riskLevel ? <RiskBadge risk={contribution.riskLevel} /> : null}
         {isFromChat(contribution) ? <FromChatTag /> : null}
+        {contribution.archivedAt ? (
+          <View style={[styles.archivedPill, { backgroundColor: colors.surfaceSecondary }]}>
+            <Ionicons name="archive" size={11} color={colors.textSecondary} />
+            <Text style={[styles.archivedPillText, { color: colors.textSecondary }]}>
+              Archived
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
@@ -309,7 +471,12 @@ export function ContributionDetailScreen() {
           <UserBubble body={reportBody} createdAt={contribution.createdAt} />
         ) : null}
 
-        {contribution.screenshotUrls && contribution.screenshotUrls.length > 0 ? (
+        {/* Chat-originated items keep resolved screenshot URLs on the row;
+            dashboard items show their pictures inline in the thread bubbles
+            (the opening message carries them), so only render this for chat. */}
+        {isFromChat(contribution) &&
+        contribution.screenshotUrls &&
+        contribution.screenshotUrls.length > 0 ? (
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -334,6 +501,8 @@ export function ContributionDetailScreen() {
         ) : null}
 
         {contribution.spec ? <SpecCard contribution={contribution} /> : null}
+
+        <SplitSlicesCard contribution={contribution} />
 
         {showApproveSpec ? (
           <View style={styles.actionBlock}>
@@ -507,12 +676,53 @@ export function ContributionDetailScreen() {
             <Ionicons name="open-outline" size={16} color={colors.iconSecondary} />
           </TouchableOpacity>
         ) : null}
+
+        {/* Archive / restore — abandon a conversation or bring it back. */}
+        {contribution.archivedAt ? (
+          <TouchableOpacity
+            style={[styles.archiveRow, { borderColor: colors.border }]}
+            onPress={handleUnarchive}
+            disabled={busy}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="arrow-undo-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.archiveText, { color: colors.textSecondary }]}>
+              Restore this conversation
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.archiveRow, { borderColor: colors.border }]}
+            onPress={handleArchive}
+            disabled={busy}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="archive-outline" size={16} color={colors.textSecondary} />
+            <Text style={[styles.archiveText, { color: colors.textSecondary }]}>
+              Archive this conversation
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
+      {archived ? (
+        <View style={[styles.archivedComposer, { borderTopColor: colors.border }]}>
+          <Ionicons name="archive" size={16} color={colors.textTertiary} />
+          <Text style={[styles.archivedComposerText, { color: colors.textTertiary }]}>
+            This conversation is archived. Restore it to continue.
+          </Text>
+        </View>
+      ) : (
+        <>
       {composerHint ? (
         <Text style={[styles.composerHint, { color: colors.textTertiary }]}>
           {composerHint}
         </Text>
+      ) : null}
+      {images.attachments.length > 0 ? (
+        <View style={styles.composerAttachments}>
+          <AttachmentStrip attachments={images.attachments} onRemove={images.remove} />
+        </View>
       ) : null}
       <View
         style={[
@@ -524,6 +734,14 @@ export function ContributionDetailScreen() {
           },
         ]}
       >
+        <TouchableOpacity
+          style={styles.attachIcon}
+          onPress={images.pick}
+          activeOpacity={0.7}
+          accessibilityLabel="Attach a picture"
+        >
+          <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.composerInput,
@@ -542,16 +760,18 @@ export function ContributionDetailScreen() {
           style={[
             styles.sendButton,
             { backgroundColor: primaryColor },
-            (!draft.trim() || sending) && styles.buttonDisabled,
+            !canSend && styles.buttonDisabled,
           ]}
           onPress={handleSend}
-          disabled={!draft.trim() || sending}
+          disabled={!canSend}
           activeOpacity={0.8}
           accessibilityLabel="Send message"
         >
           <Ionicons name="arrow-up" size={18} color="#ffffff" />
         </TouchableOpacity>
       </View>
+        </>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -601,6 +821,36 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   specSubtitle: { fontSize: 13, lineHeight: 19 },
+  sliceRow: {
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 10,
+    marginTop: 2,
+  },
+  sliceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  sliceTitle: { flex: 1, fontSize: 14, fontWeight: "600" },
+  slicePrompt: {
+    fontSize: 12,
+    lineHeight: 17,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    padding: 10,
+  },
+  copyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderRadius: 9,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
+  },
+  copyButtonText: { fontSize: 13, fontWeight: "600" },
   hint: { fontSize: 13, lineHeight: 19 },
   actionBlock: { marginTop: 14, gap: 10 },
   primaryButton: {
@@ -650,12 +900,43 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   linkText: { fontSize: 14, flex: 1 },
+  archiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    paddingVertical: 11,
+    marginTop: 20,
+  },
+  archiveText: { fontSize: 14, fontWeight: "500" },
+  archivedComposer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  archivedComposerText: { fontSize: 13, textAlign: "center" },
+  archivedPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  archivedPillText: { fontSize: 11, fontWeight: "700" },
   composerHint: {
     fontSize: 11,
     textAlign: "center",
     paddingHorizontal: 16,
     paddingBottom: 4,
   },
+  composerAttachments: { paddingHorizontal: 12 },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -663,6 +944,14 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 12,
     paddingTop: 8,
+  },
+  attachIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 1,
   },
   composerInput: {
     flex: 1,

@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import { internalAction } from "../../_generated/server";
 import { api, internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
+import { getMediaUrl } from "../../lib/utils";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
 import {
@@ -18,6 +19,7 @@ import {
   reviewVerdictValidator,
   riskLevelValidator,
   scopeValidator,
+  splitSlicesValidator,
 } from "./bugs";
 import type { ToolExecutionContext } from "./tools";
 
@@ -396,12 +398,19 @@ export const dispatchSpec = internalAction({
       '"chat", "groups", "prayer", "settings", "other"); scope ("buildable" | ' +
       '"split" | "design_needed") — requests too large for one pipeline run ' +
       'must NOT be specced as-is: for "split", the spec body should explain ' +
-      'why and propose 2-3 smaller buildable slices; for "design_needed", the ' +
-      "spec body should explain what architectural decisions a maintainer " +
-      "must make first; and verifyOnStaging (boolean — true for anything " +
-      "interactive, false for pure copy/color). Report back by POSTing the " +
-      'signed callback with { bugId, routineRunId, status: "IN_REVIEW", spec, ' +
-      "riskLevel, aiTitle, area, scope, verifyOnStaging }.";
+      "why and propose 2-3 smaller buildable slices AND you MUST return a " +
+      "`splitSlices` array (one entry per slice) where each entry is { title, " +
+      "prompt }: `title` is the slice's short name and `prompt` is a " +
+      "self-contained instruction a maintainer can paste straight into a fresh " +
+      "dev session to build THAT slice alone (state the slice's goal, the " +
+      "files/areas involved, the done-when checklist, and that it is one slice " +
+      'of a larger split so the other slices are out of scope); for ' +
+      '"design_needed", the spec body should explain what architectural ' +
+      "decisions a maintainer must make first; and verifyOnStaging (boolean — " +
+      "true for anything interactive, false for pure copy/color). Report back " +
+      'by POSTing the signed callback with { bugId, routineRunId, status: ' +
+      '"IN_REVIEW", spec, riskLevel, aiTitle, area, scope, splitSlices?, ' +
+      "verifyOnStaging }.";
     const instructions = args.revision
       ? "REVISION ROUND: this contribution already has a spec draft, and the " +
         "contributor replied in the conversation thread (see `thread` — the " +
@@ -409,6 +418,18 @@ export const dispatchSpec = internalAction({
         "and triage accordingly. " +
         baseInstructions
       : baseInstructions;
+
+    // Pictures reach the (vision-capable) routine as fetchable URLs: gather
+    // the report's shots plus any attached to thread replies, de-dupe, and
+    // resolve the stored R2 paths to public URLs (getMediaUrl passes existing
+    // http(s) URLs through unchanged, so chat-originated shots stay valid).
+    const rawShots = [
+      ...(bug.screenshotUrls ?? []),
+      ...thread.flatMap((m) => m.imageUrls ?? []),
+    ];
+    const screenshotUrls = Array.from(new Set(rawShots))
+      .map((u) => getMediaUrl(u))
+      .filter((u): u is string => !!u);
 
     const payload = {
       mode: "spec",
@@ -419,9 +440,14 @@ export const dispatchSpec = internalAction({
       title: bug.title,
       body: bug.body,
       repro: bug.repro,
-      screenshotUrls: bug.screenshotUrls,
+      screenshotUrls: screenshotUrls.length > 0 ? screenshotUrls : undefined,
       // Full conversation history: [{ authorType, authorName?, body }, ...].
-      thread,
+      // (Image paths are folded into screenshotUrls above, not the thread.)
+      thread: thread.map((m) => ({
+        authorType: m.authorType,
+        ...(m.authorName ? { authorName: m.authorName } : {}),
+        body: m.body,
+      })),
       callbackUrl,
       instructions,
     };
@@ -924,6 +950,7 @@ export const handleRoutineCallback = internalAction({
     aiTitle: v.optional(v.string()),
     area: v.optional(v.string()),
     scope: v.optional(scopeValidator),
+    splitSlices: v.optional(splitSlicesValidator),
     verifyOnStaging: v.optional(v.boolean()),
     reviewVerdict: v.optional(reviewVerdictValidator),
     reviewSummary: v.optional(v.string()),
@@ -956,6 +983,7 @@ export const handleRoutineCallback = internalAction({
         aiTitle: args.aiTitle,
         area: args.area,
         scope: args.scope,
+        splitSlices: args.splitSlices,
         verifyOnStaging: args.verifyOnStaging,
         reviewVerdict: args.reviewVerdict,
         reviewSummary: args.reviewSummary,
