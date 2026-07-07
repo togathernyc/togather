@@ -218,9 +218,11 @@ export function DemoCommunityScreen() {
             {demo.name} is ready!
           </Text>
           <Text style={[styles.cardMessage, { color: colors.textSecondary }]}>
-            Your demo community is seeded with groups, conversations, and
-            events. You're the admin — rename it, re-brand it, and click
-            around. Everything works.
+            Your community starts in demo mode, seeded with groups,
+            conversations, and events. You're the admin — rename it, re-brand
+            it, and click around. Everything works. When you're ready, tap
+            "Go live" on the demo banner to add payment ($1/month per active
+            member) and open it to your congregation.
           </Text>
           <View
             style={[
@@ -279,12 +281,13 @@ export function DemoCommunityScreen() {
         <View style={styles.formContainer}>
           <View style={styles.header}>
             <Text style={[styles.heading, { color: colors.text }]}>
-              See Togather as your church
+              Create your community
             </Text>
             <Text style={[styles.subheading, { color: colors.textSecondary }]}>
-              Answer a few questions and we'll build a demo community with your
-              name, branding, and structure — seeded with groups, chats, and
-              events you can explore as the admin.
+              Every community starts in demo mode: answer a few questions and
+              we'll build it with your name, branding, and structure — seeded
+              with demo members, chats, and events you can explore as the
+              admin. Go live whenever you're ready.
             </Text>
           </View>
 
@@ -440,12 +443,12 @@ export function DemoCommunityScreen() {
                 { color: formValid && !submitting ? colors.buttonPrimaryText : colors.buttonDisabledText },
               ]}
             >
-              {submitting ? "Building your demo..." : "Create my demo"}
+              {submitting ? "Building your community..." : "Create my community"}
             </Text>
           </Pressable>
           <Text style={[styles.footnote, { color: colors.textTertiary }]}>
-            Free to explore — no payment, and your demo stays private to you
-            and anyone you share the code with.
+            Demo mode is free and private — up to 10 teammates can explore it
+            with you. Going live later costs $1/month per active member.
           </Text>
 
           {/* Join an existing demo */}
