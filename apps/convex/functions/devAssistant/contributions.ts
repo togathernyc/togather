@@ -27,11 +27,43 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuthUser } from "../../lib/auth";
 import { canUseDevAssistant } from "./maintainers";
 import { applyStatusTransition, insertThreadMessage } from "./bugs";
+import { getMediaUrl } from "../../lib/utils";
 
 export const contributionKindValidator = v.union(
   v.literal("bug"),
   v.literal("feature"),
 );
+
+/** Longest title we derive from a chat-first message before the AI titles it. */
+const DERIVED_TITLE_MAX = 80;
+
+/**
+ * Turn a free-form message into a one-line placeholder title (chat-first
+ * filing has no title field). First non-empty line, trimmed and clipped.
+ */
+function deriveTitle(body: string): string {
+  const firstLine =
+    body
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? body.trim();
+  return firstLine.length > DERIVED_TITLE_MAX
+    ? `${firstLine.slice(0, DERIVED_TITLE_MAX - 1).trimEnd()}…`
+    : firstLine;
+}
+
+/**
+ * Resolve stored R2 paths ("r2:…") to fetchable public URLs for the client
+ * (getMediaUrl passes existing http(s) URLs through unchanged, so it's safe on
+ * already-resolved chat-originated attachments too). Undefined stays undefined.
+ */
+function resolveImageUrls(urls: string[] | undefined): string[] | undefined {
+  if (!urls || urls.length === 0) return undefined;
+  const resolved = urls
+    .map((u) => getMediaUrl(u))
+    .filter((u): u is string => !!u);
+  return resolved.length > 0 ? resolved : undefined;
+}
 
 /**
  * Auth gate for the whole dashboard surface. Per the ADR-029 decision update
@@ -168,18 +200,31 @@ export const submit = mutation({
   args: {
     token: v.string(),
     kind: contributionKindValidator,
-    title: v.string(),
+    // Optional: chat-first filing (ADR-029) lets contributors just describe the
+    // thing in one message — the title is derived from that message, and the
+    // spec agent replaces it with a proper aiTitle. Callers may still pass an
+    // explicit title.
+    title: v.optional(v.string()),
     body: v.string(),
     repro: v.optional(v.string()),
+    // R2 storage paths ("r2:…") for pictures/screenshots attached to the report.
     screenshotUrls: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args): Promise<Id<"devBugs">> => {
     const user = await requireContributor(ctx, args.token);
 
-    const title = args.title.trim();
     const body = args.body.trim();
-    if (!title) throw new ConvexError("Title is required");
-    if (!body) throw new ConvexError("Description is required");
+    const hasImages = !!args.screenshotUrls && args.screenshotUrls.length > 0;
+    // A screenshot with no words is a valid report; require one or the other.
+    if (!body && !hasImages) {
+      throw new ConvexError("Add a description or a screenshot");
+    }
+    // Derive a title from the message when the caller didn't supply one — the
+    // list shows this until the spec agent's aiTitle lands. Image-only reports
+    // fall back to a generic headline.
+    const title =
+      args.title?.trim() ||
+      (body ? deriveTitle(body) : args.kind === "feature" ? "Feature idea" : "Bug report");
 
     const now = Date.now();
     const bugId = await ctx.db.insert("devBugs", {
@@ -199,11 +244,19 @@ export const submit = mutation({
     // Every contribution is a conversation with the AI (ADR-029 P1.5): the
     // report body is the opening "user" turn of the thread. The repro rides
     // along so it's visible in the conversation UI (the thread only renders
-    // messages, not the row's repro field).
+    // messages, not the row's repro field). Attached pictures ride on the
+    // message so they render inline in the conversation.
     const openingTurn = args.repro
       ? `${body}\n\nHow to see it: ${args.repro}`
       : body;
-    await insertThreadMessage(ctx, bugId, "user", openingTurn, user._id);
+    await insertThreadMessage(
+      ctx,
+      bugId,
+      "user",
+      openingTurn,
+      user._id,
+      args.screenshotUrls,
+    );
 
     // Fire the spec agent (event-driven, no cron — mirrors READY_FOR_IMPL ->
     // dispatchBug in bugs.ts).
@@ -307,7 +360,13 @@ export const startBuild = mutation({
  * responds to the latest user message via the signed callback.
  */
 export const postMessage = mutation({
-  args: { token: v.string(), id: v.id("devBugs"), body: v.string() },
+  args: {
+    token: v.string(),
+    id: v.id("devBugs"),
+    body: v.string(),
+    // R2 storage paths for pictures attached to this reply (optional).
+    imageUrls: v.optional(v.array(v.string())),
+  },
   handler: async (ctx, args): Promise<Id<"devBugMessages">> => {
     const user = await requireContributor(ctx, args.token);
 
@@ -315,7 +374,11 @@ export const postMessage = mutation({
     if (!bug) throw new ConvexError("Contribution not found");
 
     const body = args.body.trim();
-    if (!body) throw new ConvexError("Message body is required");
+    const hasImages = !!args.imageUrls && args.imageUrls.length > 0;
+    // A picture with no words is a valid message; require text only otherwise.
+    if (!body && !hasImages) {
+      throw new ConvexError("Message body is required");
+    }
 
     const messageId = await insertThreadMessage(
       ctx,
@@ -323,6 +386,7 @@ export const postMessage = mutation({
       "user",
       body,
       user._id,
+      args.imageUrls,
     );
 
     if (bug.status === "DRAFT" || bug.status === "IN_REVIEW") {
@@ -468,13 +532,21 @@ async function withLastMessage(
 /** A contribution's conversation thread, oldest first. */
 export const getThread = query({
   args: { token: v.string(), id: v.id("devBugs") },
-  handler: async (ctx, args): Promise<Doc<"devBugMessages">[]> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<(Doc<"devBugMessages"> & { imageUrls?: string[] })[]> => {
     await requireContributor(ctx, args.token);
-    return await ctx.db
+    const messages = await ctx.db
       .query("devBugMessages")
       .withIndex("by_bug", (q) => q.eq("bugId", args.id))
       .order("asc")
       .collect();
+    // Resolve stored R2 paths to public URLs the app can render.
+    return messages.map((m) => ({
+      ...m,
+      imageUrls: resolveImageUrls(m.imageUrls),
+    }));
   },
 });
 

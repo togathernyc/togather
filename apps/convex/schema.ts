@@ -2199,6 +2199,13 @@ export default defineSchema({
       v.union(v.literal("approved"), v.literal("changes_requested")),
     ),
     reviewSummary: v.optional(v.string()),
+    // For "split"-scope items (ADR-029): the spec routine proposes the
+    // buildable slices, each with a self-contained prompt a maintainer can
+    // copy straight into a fresh dev session to build that slice on its own.
+    // Cleared when a revision re-triages the item back to "buildable".
+    splitSlices: v.optional(
+      v.array(v.object({ title: v.string(), prompt: v.string() })),
+    ),
     // Count of auto-fix dispatches (ADR-029 Phase 3 review→fix→re-review
     // loop). Capped at 3 — after that a changes_requested verdict escalates
     // to a human instead of dispatching another fix run.
@@ -2251,6 +2258,10 @@ export default defineSchema({
     ),
     userId: v.optional(v.id("users")), // set when authorType === "user"
     body: v.string(),
+    // Screenshots/pictures attached to a "user" message (contributors can file
+    // and chat with images — ADR-029). Stored as R2 storage paths ("r2:…");
+    // read paths (getThread) resolve them to public URLs via getMediaUrl.
+    imageUrls: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index("by_bug", ["bugId", "createdAt"]),
 

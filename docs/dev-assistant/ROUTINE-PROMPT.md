@@ -97,7 +97,9 @@ can, and produce:
    - "split": too big as stated but decomposable. The spec body must explain
      why in product terms (infrastructure, decisions, blast radius — no
      jargon) and propose 2–3 smaller buildable slices, each with its own
-     risk estimate.
+     risk estimate. You MUST also return a `splitSlices` array (one entry per
+     proposed slice) — see field 4 — so the dashboard can offer a
+     copy-the-prompt button per slice.
    - "design_needed": genuinely architectural (new services, provider/cost/
      privacy decisions). The spec body must name the decisions a maintainer
      has to make first. Do NOT write an implementation spec for these.
@@ -120,8 +122,17 @@ can, and produce:
    - aiTitle: a short imperative headline for the conversation list, e.g.
      "Fix RSVP message after tapping Going". Keep it under ~60 characters.
 
+4. **splitSlices** (required only when scope is "split"; omit otherwise) — an
+   array of `{ title, prompt }`, one per proposed slice. `title` is the
+   slice's short name; `prompt` is a self-contained instruction a maintainer
+   can paste straight into a fresh dev session to build THAT slice alone. Each
+   prompt must state the slice's goal, the files/areas involved, its
+   "Done when" checklist, and that it is one slice of a larger split (so the
+   sibling slices are explicitly out of scope). The dashboard renders a
+   "Copy build prompt" button per slice from this array.
+
 Callback: { bugId, routineRunId, status: "IN_REVIEW", spec, riskLevel,
-aiTitle, area, scope, verifyOnStaging, screenshots? }.
+aiTitle, area, scope, splitSlices?, verifyOnStaging, screenshots? }.
 
 If the payload has `revision: true`, this is a revision round: the payload
 includes the full conversation thread. Respond to the latest user message,

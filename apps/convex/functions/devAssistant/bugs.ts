@@ -60,6 +60,14 @@ export const reviewVerdictValidator = v.union(
 );
 
 /**
+ * Buildable slices proposed by the spec routine for a "split"-scope item, each
+ * with a copy-paste-ready prompt for a fresh dev session (ADR-029).
+ */
+export const splitSlicesValidator = v.array(
+  v.object({ title: v.string(), prompt: v.string() }),
+);
+
+/**
  * Where a callback came from. Internal-only — threaded by trusted callers
  * (handleRoutineCallback → "routine", handleGithubPrClosed → "webhook",
  * attemptAutoMerge → "automerge") and NEVER exposed through the public HTTP
@@ -172,12 +180,15 @@ export async function insertThreadMessage(
   authorType: "user" | "assistant" | "system",
   body: string,
   userId?: Id<"users">,
+  imageUrls?: string[],
 ): Promise<Id<"devBugMessages">> {
   return await ctx.db.insert("devBugMessages", {
     bugId,
     authorType,
     userId,
     body,
+    // Store only a non-empty array — keeps text-only messages clean.
+    ...(imageUrls && imageUrls.length > 0 ? { imageUrls } : {}),
     createdAt: Date.now(),
   });
 }
@@ -197,6 +208,9 @@ export type ThreadHistoryEntry = {
   authorType: "user" | "assistant" | "system";
   authorName?: string;
   body: string;
+  // R2 storage paths for any pictures on this message (unresolved — the
+  // dispatch action resolves them to public URLs for the routine).
+  imageUrls?: string[];
 };
 
 /**
@@ -221,7 +235,14 @@ export const getThreadHistory = internalQuery({
           ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || undefined
           : undefined;
       }
-      entries.push({ authorType: m.authorType, authorName, body: m.body });
+      entries.push({
+        authorType: m.authorType,
+        authorName,
+        body: m.body,
+        ...(m.imageUrls && m.imageUrls.length > 0
+          ? { imageUrls: m.imageUrls }
+          : {}),
+      });
     }
     return entries;
   },
@@ -844,6 +865,7 @@ export const applyCallback = internalMutation({
     aiTitle: v.optional(v.string()),
     area: v.optional(v.string()),
     scope: v.optional(scopeValidator),
+    splitSlices: v.optional(splitSlicesValidator),
     verifyOnStaging: v.optional(v.boolean()),
     reviewVerdict: v.optional(reviewVerdictValidator),
     reviewSummary: v.optional(v.string()),
@@ -944,6 +966,14 @@ export const applyCallback = internalMutation({
     if (args.aiTitle !== undefined) patch.aiTitle = args.aiTitle;
     if (args.area !== undefined) patch.area = args.area;
     if (args.scope !== undefined) patch.scope = args.scope;
+    // Split slices track the scope: a routine explicitly delivers them (only
+    // meaningful for "split"), and a revision that drops back to a single
+    // buildable item clears the now-stale slices.
+    if (args.splitSlices !== undefined) {
+      patch.splitSlices = args.splitSlices;
+    } else if (args.scope === "buildable") {
+      patch.splitSlices = undefined;
+    }
     if (args.verifyOnStaging !== undefined) {
       patch.verifyOnStaging = args.verifyOnStaging;
     }

@@ -2812,3 +2812,299 @@ describe("run-mode callback policy", () => {
     expect(bug?.lastError).toBeUndefined();
   });
 });
+
+/**
+ * Chat-first filing, pictures, and split slices (ADR-029 follow-up).
+ *
+ * - submit derives a title from the message when none is given
+ * - pictures ride the report/reply as message imageUrls and reach the spec
+ *   agent as resolved public URLs
+ * - the spec routine's `splitSlices` persist and clear with the scope
+ */
+describe("chat-first filing, pictures, and split slices", () => {
+  test("submit derives a title from the message when none is given", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "The events tab crashes when I tap a photo.",
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    // No title field → first line of the message becomes the placeholder.
+    expect(bug?.title).toBe("The events tab crashes when I tap a photo.");
+    // The message still seeds the opening thread turn verbatim.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.body).toBe("The events tab crashes when I tap a photo.");
+  });
+
+  test("submit clips a long derived title with an ellipsis", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const longBody =
+      "This is a really long description that goes well past the eighty " +
+      "character placeholder title limit so it should be clipped.";
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: longBody },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.title.length).toBeLessThanOrEqual(80);
+    expect(bug?.title.endsWith("…")).toBe(true);
+    // The full message is preserved on the row/thread, only the title clips.
+    expect(bug?.body).toBe(longBody);
+  });
+
+  test("submit rejects a message with neither text nor a screenshot", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.submit, {
+        token: maintainerId,
+        kind: "bug",
+        body: "   ",
+      }),
+    ).rejects.toThrow(/description or a screenshot/i);
+  });
+
+  test("submit accepts a screenshot-only report with a fallback title", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "",
+        screenshotUrls: ["r2:chat/only.jpg"],
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.title).toBe("Bug report");
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.body).toBe("");
+    expect(thread[0]?.imageUrls).toEqual(["https://cdn.example.com/chat/only.jpg"]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("attached pictures ride the opening turn and reach the spec agent as public URLs", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const fetchMock = stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        body: "See the glitch in these shots.",
+        screenshotUrls: ["r2:chat/a.jpg", "r2:chat/b.jpg"],
+      },
+    );
+
+    // Stored on the row (durable R2 paths) and on the opening message.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.screenshotUrls).toEqual(["r2:chat/a.jpg", "r2:chat/b.jpg"]);
+
+    // getThread resolves them to fetchable public URLs for the app.
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[0]?.imageUrls).toEqual([
+      "https://cdn.example.com/chat/a.jpg",
+      "https://cdn.example.com/chat/b.jpg",
+    ]);
+
+    // The dispatched spec brief carries resolved (not r2:) URLs for vision.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief.screenshotUrls).toEqual([
+      "https://cdn.example.com/chat/a.jpg",
+      "https://cdn.example.com/chat/b.jpg",
+    ]);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("postMessage accepts a picture-only reply and rejects an empty one", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+    process.env.R2_PUBLIC_URL = "https://cdn.example.com";
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "bug", body: "Something's off." },
+    );
+
+    // A picture with no words is valid.
+    await t.mutation(api.functions.devAssistant.contributions.postMessage, {
+      token: maintainerId,
+      id,
+      body: "",
+      imageUrls: ["r2:chat/c.jpg"],
+    });
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const last = thread[thread.length - 1];
+    expect(last?.body).toBe("");
+    expect(last?.imageUrls).toEqual(["https://cdn.example.com/chat/c.jpg"]);
+
+    // Neither text nor pictures is rejected.
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.postMessage, {
+        token: maintainerId,
+        id,
+        body: "   ",
+      }),
+    ).rejects.toThrow(/Message body is required/);
+
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("spec callback persists splitSlices for a split item and clears them on re-triage", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    stubRoutineEnv();
+
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      { token: maintainerId, kind: "feature", body: "Rebuild the whole thing." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const slices = [
+      { title: "In progress tab", prompt: "Build the in-progress tab only." },
+      { title: "Chat-first filing", prompt: "Reshape the submit form to a chat." },
+    ];
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Too big\nSplit it up.",
+      scope: "split",
+      splitSlices: slices,
+    });
+
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("split");
+    expect(bug?.splitSlices).toEqual(slices);
+
+    // A revision that re-triages to a single buildable item clears the slices.
+    await t.mutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: id,
+      status: "IN_REVIEW",
+      spec: "## Actually small\nJust one screen.",
+      scope: "buildable",
+    });
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("buildable");
+    expect(bug?.splitSlices).toBeUndefined();
+  });
+
+  test("the http callback validates splitSlices and accepts a well-formed array", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const now = Date.now();
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "DRAFT",
+        kind: "feature",
+        source: "dashboard",
+        title: "Big ask",
+        body: "B",
+        routineRunId: "run-spec",
+        activeRunMode: "spec",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    process.env.DEV_ASSISTANT_CALLBACK_SECRET = "test-callback-secret";
+    const sign = async (body: string): Promise<string> => {
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode("test-callback-secret"),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      const bytes = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+      return Array.from(new Uint8Array(bytes))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    };
+    const post = async (payload: Record<string, unknown>): Promise<Response> => {
+      const body = JSON.stringify(payload);
+      return await t.fetch("/dev-assistant/callback", {
+        method: "POST",
+        body,
+        headers: { "x-togather-signature": await sign(body) },
+      });
+    };
+
+    // Malformed slice entries are rejected before scheduling.
+    const bad = await post({
+      bugId: id,
+      routineRunId: "run-spec",
+      status: "IN_REVIEW",
+      scope: "split",
+      splitSlices: [{ title: "Missing prompt" }],
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toMatch(/Invalid splitSlices/);
+
+    // A well-formed array passes and persists end-to-end.
+    const ok = await post({
+      bugId: id,
+      routineRunId: "run-spec",
+      status: "IN_REVIEW",
+      spec: "## Split\nDo it in pieces.",
+      scope: "split",
+      splitSlices: [{ title: "Slice one", prompt: "Build slice one only." }],
+    });
+    expect(ok.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.scope).toBe("split");
+    expect(bug?.splitSlices).toEqual([
+      { title: "Slice one", prompt: "Build slice one only." },
+    ]);
+  });
+});

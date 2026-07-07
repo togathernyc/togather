@@ -337,6 +337,34 @@ failure (branch protection, conflict, auth) the thread gets "Auto-merge
 blocked: <reason> — needs a maintainer" and nothing retries — branch
 protection remains the backstop.
 
+## Phase 1.7 — low-friction filing, pictures, and copyable split prompts (Accepted)
+
+Owner-requested follow-up to make filing feel like chatting and to turn a
+"split" verdict into one-tap momentum. The pipeline underneath is unchanged.
+
+- **Chat-first filing.** The submit screen drops the title/repro form for a
+  single message box plus the bug/feature toggle (`submit`'s `title` is now
+  optional and derived from the message — `deriveTitle` — until the spec
+  agent's `aiTitle` lands).
+- **Pictures in the conversation.** Contributors attach screenshots when
+  filing and when replying. New `devBugMessages.imageUrls` (R2 storage paths);
+  `getThread` resolves them to public URLs via `getMediaUrl` for rendering,
+  and `dispatchSpec` aggregates the report's + thread replies' images and
+  resolves them so the (vision-capable) spec routine receives fetchable URLs.
+  This supersedes the Phase 1.5 "screenshots omitted in v1" note — the
+  `getMediaUrl` resolver already used by the chat-originated flow removes the
+  original r2:-path blocker.
+- **"In progress" tab.** The contributor list's middle segment is now "In
+  progress" (`isInProgress` — fired-off items actively being built/reviewed),
+  replacing the catch-all "All"; "Your turn" and "Shipped" are unchanged.
+- **Copyable split prompts.** For `scope: "split"`, the spec routine also
+  returns `splitSlices: [{ title, prompt }]` (new `devBugs.splitSlices`,
+  validated in `http.ts`, persisted by `applyCallback`, cleared when a
+  revision re-triages to `buildable`). The detail screen renders a
+  "Copy prompt" button per slice so a maintainer can paste a self-contained
+  build prompt straight into a fresh dev session. See
+  `docs/dev-assistant/ROUTINE-PROMPT.md`.
+
 ## Deliberately out of scope (v1)
 
 - GitHub OAuth / verified account linking (`githubUsername` is honor-system).
