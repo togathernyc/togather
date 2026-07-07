@@ -10,6 +10,7 @@ export default function OnboardingLayout() {
       <Stack.Screen name="proposal/index" />
       <Stack.Screen name="setup/index" />
       <Stack.Screen name="success/index" />
+      <Stack.Screen name="demo/index" />
     </Stack>
   );
 }

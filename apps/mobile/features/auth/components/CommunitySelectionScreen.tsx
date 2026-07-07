@@ -643,6 +643,13 @@ export function CommunitySelectionScreen() {
           </Text>
 
           <TouchableOpacity
+            style={[styles.createCommunityButton, { backgroundColor: colors.surfaceSecondary, marginBottom: 12 }]}
+            onPress={() => router.push("/onboarding/demo")}
+          >
+            <Text style={[styles.createCommunityButtonText, { color: colors.text }]}>Try a Demo for Your Church</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
             style={[styles.createCommunityButton, { backgroundColor: colors.surfaceSecondary }]}
             onPress={() => {
               if (Platform.OS === "web") {
