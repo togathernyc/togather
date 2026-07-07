@@ -1,5 +1,6 @@
 /**
- * Presentation helpers for contribution statuses, kinds, and risk levels.
+ * Presentation helpers for contribution statuses, kinds, risk levels, and the
+ * conversation list's "whose turn is it" logic.
  *
  * Friendly, non-technical labels — contributors see "Building" and
  * "Shipped", not the raw pipeline enum. Colors follow the palette already
@@ -10,11 +11,23 @@ import type { Ionicons } from "@expo/vector-icons";
 import type {
   Contribution,
   ContributionKind,
-  ContributionStatus,
+  ContributionScope,
   RiskLevel,
 } from "../types";
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
+
+/** Shared palette (matches the status chips below). */
+export const PALETTE = {
+  /** Purple — the contributor needs to act. */
+  yourTurn: "#5856D6",
+  /** Amber — the AI (or the team) is working. */
+  aiWorking: "#FF9500",
+  /** Green — shipped. */
+  shipped: "#34C759",
+  /** Grey — closed without shipping. */
+  inactive: "#999999",
+} as const;
 
 export interface StatusPresentation {
   label: string;
@@ -22,23 +35,89 @@ export interface StatusPresentation {
   icon: IoniconName;
 }
 
+/** Unset scope counts as buildable (legacy items predate the field). */
+export function isBuildableScope(scope: ContributionScope | undefined): boolean {
+  return scope === undefined || scope === "buildable";
+}
+
+/**
+ * The contributor's product review is pending: there's a spec they haven't
+ * signed off, and the item is small enough to actually build.
+ */
+export function needsSpecApproval(
+  contribution: Pick<Contribution, "status" | "spec" | "specApprovedAt" | "scope">,
+): boolean {
+  return (
+    contribution.status === "IN_REVIEW" &&
+    !!contribution.spec &&
+    !contribution.specApprovedAt &&
+    isBuildableScope(contribution.scope)
+  );
+}
+
+/**
+ * The contributor should try the change on the staging app: it's flagged for
+ * staging verification, not yet verified, and far enough along to test.
+ */
+export function needsStagingVerify(
+  contribution: Pick<Contribution, "status" | "verifyOnStaging" | "stagingVerifiedAt">,
+): boolean {
+  return (
+    !!contribution.verifyOnStaging &&
+    !contribution.stagingVerifiedAt &&
+    (contribution.status === "CODE_REVIEW" || contribution.status === "READY_TO_MERGE")
+  );
+}
+
+/** True when the conversation is waiting on the contributor, not the AI. */
+export function isYourTurn(
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >,
+): boolean {
+  return needsSpecApproval(contribution) || needsStagingVerify(contribution);
+}
+
+/** Conversation-list dot color: purple = your turn, amber = AI working, green = shipped. */
+export function conversationDotColor(
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >,
+): string {
+  if (isYourTurn(contribution)) return PALETTE.yourTurn;
+  if (contribution.status === "MERGED") return PALETTE.shipped;
+  if (contribution.status === "REJECTED") return PALETTE.inactive;
+  return PALETTE.aiWorking;
+}
+
+/** Conversational display title — the AI's friendly title when it exists. */
+export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle">): string {
+  return contribution.aiTitle ?? contribution.title;
+}
+
 /**
  * Friendly status chip for a contribution. IN_REVIEW is contextual: it means
- * "we're looking at it" until the AI spec lands, then "your turn to review",
- * then "approved, ready to build" once signed off (medium/high risk items
- * wait here for an explicit build start).
+ * "we're looking at it" until the AI spec lands, then "your turn to review"
+ * (unless the AI judged it too big to build in one go), then "approved,
+ * ready to build" once signed off (medium/high risk items wait here for an
+ * explicit build start).
  */
 export function statusPresentation(
-  contribution: Pick<Contribution, "status" | "spec" | "specApprovedAt">,
+  contribution: Pick<Contribution, "status" | "spec" | "specApprovedAt" | "scope">,
 ): StatusPresentation {
   switch (contribution.status) {
     case "IN_REVIEW":
       if (!contribution.spec) {
         return { label: "Being reviewed", color: "#FF9500", icon: "hourglass-outline" };
       }
+      if (!isBuildableScope(contribution.scope)) {
+        return { label: "Too big for one build", color: "#FF9500", icon: "git-branch-outline" };
+      }
       if (!contribution.specApprovedAt) {
         return {
-          label: "Spec ready for your review",
+          label: "Plan ready for your review",
           color: "#007AFF",
           icon: "reader-outline",
         };
@@ -88,55 +167,4 @@ export function riskPresentation(risk: RiskLevel): { label: string; color: strin
 /** True for items that arrived via the chat dev-assistant, not this dashboard. */
 export function isFromChat(contribution: Pick<Contribution, "source">): boolean {
   return contribution.source !== "dashboard";
-}
-
-/**
- * The happy-path pipeline, in order, for the detail screen's timeline.
- * REJECTED is not a step — it renders as a terminal state instead.
- */
-export const PIPELINE_STEPS: {
-  status: ContributionStatus;
-  label: string;
-  description: string;
-}[] = [
-  {
-    status: "DRAFT",
-    label: "Submitted",
-    description: "We received your report.",
-  },
-  {
-    status: "IN_REVIEW",
-    label: "Spec & your review",
-    description: "The AI drafts a plan; you confirm it's what you meant.",
-  },
-  {
-    status: "READY_FOR_IMPL",
-    label: "Queued to build",
-    description: "Approved and waiting for a build slot.",
-  },
-  {
-    status: "IN_PROGRESS",
-    label: "Building",
-    description: "The AI is making the change.",
-  },
-  {
-    status: "CODE_REVIEW",
-    label: "Code review",
-    description: "A maintainer checks the code.",
-  },
-  {
-    status: "READY_TO_MERGE",
-    label: "Awaiting merge",
-    description: "Approved code, waiting to go in.",
-  },
-  {
-    status: "MERGED",
-    label: "Shipped",
-    description: "Your change is in the app.",
-  },
-];
-
-/** Index of a status within the happy-path pipeline (-1 for REJECTED). */
-export function pipelineIndex(status: ContributionStatus): number {
-  return PIPELINE_STEPS.findIndex((step) => step.status === status);
 }

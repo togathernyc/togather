@@ -13,6 +13,7 @@ export function useSubmitContribution() {
 /**
  * Approve the AI spec (the contributor's product review). Low-risk items
  * start building automatically after this; medium/high wait for startBuild.
+ * The backend rejects items whose scope is "split" or "design_needed".
  */
 export function useApproveSpec() {
   return useAuthenticatedMutation(contributionsApi.approveSpec);
@@ -21,4 +22,22 @@ export function useApproveSpec() {
 /** Explicitly start the build for an approved medium/high-risk item. */
 export function useStartBuild() {
   return useAuthenticatedMutation(contributionsApi.startBuild);
+}
+
+/**
+ * Post a message to the conversation thread. While the item is in
+ * DRAFT/IN_REVIEW this also asks the AI to revise the spec.
+ */
+export function usePostMessage() {
+  return useAuthenticatedMutation(contributionsApi.postMessage);
+}
+
+/** Confirm the change works on the staging app ("Works — ship it"). */
+export function useConfirmStaging() {
+  return useAuthenticatedMutation(contributionsApi.confirmStaging);
+}
+
+/** Report that the staging build isn't right, with a short note. */
+export function useReportStagingIssue() {
+  return useAuthenticatedMutation(contributionsApi.reportStagingIssue);
 }

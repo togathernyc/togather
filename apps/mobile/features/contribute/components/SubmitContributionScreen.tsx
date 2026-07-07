@@ -1,10 +1,12 @@
 /**
- * SubmitContributionScreen — report a bug or feature idea (ADR-029 Phase 1).
+ * SubmitContributionScreen — start a conversation with the AI builder
+ * (ADR-029 Phase 1.5).
  *
- * Deliberately non-technical: contributors describe what happened (or what
- * they wish happened) in their own words; the AI spec agent does the
- * investigation. Screenshots are omitted in v1 — the existing chat upload
- * flow returns r2: storage paths, not the public URLs this contract expects.
+ * Deliberately non-technical: contributors describe what they saw (or what
+ * they want) in their own words; the AI spec agent does the investigation
+ * and replies in the conversation thread. Screenshots are omitted in v1 —
+ * the existing chat upload flow returns r2: storage paths, not the public
+ * URLs this contract expects.
  */
 import React, { useState } from "react";
 import {
@@ -80,7 +82,7 @@ export function SubmitContributionScreen() {
           <Ionicons name="chevron-back" size={26} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Report a bug or idea
+          New conversation
         </Text>
         <View style={styles.backBtn} />
       </View>
@@ -89,8 +91,13 @@ export function SubmitContributionScreen() {
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
+        <Text style={[styles.intro, { color: colors.textSecondary }]}>
+          Start a conversation — describe what you saw or what you want, and
+          the AI replies with a plan you can chat about.
+        </Text>
+
         <Text style={[styles.label, { color: colors.textSecondary }]}>
-          What kind of report is this?
+          What's this about?
         </Text>
         <View style={[styles.kindToggle, { backgroundColor: colors.surfaceSecondary }]}>
           {(
@@ -171,8 +178,9 @@ export function SubmitContributionScreen() {
         />
 
         <Text style={[styles.hint, { color: colors.textTertiary }]}>
-          After you submit, the AI drafts a plan for the change and you'll be
-          asked to confirm it says what you meant before anything is built.
+          The AI reads this, drafts a plan, and replies in the conversation.
+          You'll confirm the plan says what you meant before anything is built
+          — and you can keep chatting to refine it.
         </Text>
 
         <TouchableOpacity
@@ -188,7 +196,7 @@ export function SubmitContributionScreen() {
           {submitting ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.submitButtonText}>Submit</Text>
+            <Text style={styles.submitButtonText}>Start conversation</Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -208,6 +216,7 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   scroll: { padding: 16, paddingBottom: 48 },
+  intro: { fontSize: 14, lineHeight: 21 },
   label: {
     fontSize: 12,
     fontWeight: "700",

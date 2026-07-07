@@ -1,9 +1,10 @@
 /**
- * My Contributions Route
+ * Contribute Conversations Route
  *
  * Route: /contribute
- * Contributor dev dashboard — list of the user's bug reports and feature
- * ideas (ADR-029). Access gated on the dev-assistant maintainer check.
+ * Conversation list for the contributor dev dashboard (ADR-029 Phase 1.5) —
+ * each bug report / idea is a chat with the AI builder. Access gated on the
+ * dev-assistant maintainer check.
  */
 
 import { ContributeListScreen } from "@features/contribute/components/ContributeListScreen";

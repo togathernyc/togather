@@ -15,7 +15,12 @@
 import type { FunctionReference } from "convex/server";
 import { api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import type { Contribution, ContributionKind } from "../types";
+import type {
+  Contribution,
+  ContributionKind,
+  ContributionListItem,
+  ThreadMessage,
+} from "../types";
 
 interface ContributionsApi {
   /** Create a new bug/feature contribution. Returns the new doc id. */
@@ -32,20 +37,66 @@ interface ContributionsApi {
     },
     Id<"devBugs">
   >;
-  /** Current user's contributions, newest first (includes chat-originated items). */
-  myContributions: FunctionReference<"query", "public", { token: string }, Contribution[]>;
-  /** All users' contributions, newest first (maintainer view). */
-  listAll: FunctionReference<"query", "public", { token: string }, Contribution[]>;
+  /**
+   * Current user's contributions, newest first (includes chat-originated
+   * items), each with a latest-thread-message snippet.
+   */
+  myContributions: FunctionReference<
+    "query",
+    "public",
+    { token: string },
+    ContributionListItem[]
+  >;
+  /** All users' contributions, newest first (maintainer view), with snippets. */
+  listAll: FunctionReference<"query", "public", { token: string }, ContributionListItem[]>;
   getContribution: FunctionReference<
     "query",
     "public",
     { token: string; id: Id<"devBugs"> },
     Contribution | null
   >;
-  /** Contributor sign-off on the AI spec (auto-starts the build for low risk). */
+  /** Conversation thread for one contribution, ascending by createdAt. */
+  getThread: FunctionReference<
+    "query",
+    "public",
+    { token: string; id: Id<"devBugs"> },
+    ThreadMessage[]
+  >;
+  /**
+   * Post a user message to the thread. Returns the new message id. Posting
+   * while status is DRAFT/IN_REVIEW asks the AI to revise the spec.
+   */
+  postMessage: FunctionReference<
+    "mutation",
+    "public",
+    { token: string; id: Id<"devBugs">; body: string },
+    string
+  >;
+  /**
+   * Contributor sign-off on the AI spec (auto-starts the build for low risk).
+   * Rejects items whose scope is "split" or "design_needed".
+   */
   approveSpec: FunctionReference<"mutation", "public", { token: string; id: Id<"devBugs"> }, null>;
   /** Explicit build start for approved medium/high-risk items. */
   startBuild: FunctionReference<"mutation", "public", { token: string; id: Id<"devBugs"> }, null>;
+  /**
+   * Contributor confirms the change works on staging. Valid when
+   * verifyOnStaging && !stagingVerifiedAt && status is CODE_REVIEW or
+   * READY_TO_MERGE.
+   */
+  confirmStaging: FunctionReference<
+    "mutation",
+    "public",
+    { token: string; id: Id<"devBugs"> },
+    null
+  >;
+  /** Contributor reports the staging build isn't right (same validity window). */
+  reportStagingIssue: FunctionReference<
+    "mutation",
+    "public",
+    { token: string; id: Id<"devBugs">; note: string },
+    null
+  >;
 }
 
 export const contributionsApi = (

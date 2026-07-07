@@ -254,6 +254,9 @@ export const postMessage = mutation({
       );
     }
 
+    // The conversation list orders by updatedAt — a reply floats the thread.
+    await ctx.db.patch(args.id, { updatedAt: Date.now() });
+
     return messageId;
   },
 });

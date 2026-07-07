@@ -2,7 +2,8 @@
  * Submit Contribution Route
  *
  * Route: /contribute/submit
- * Report a bug or feature idea (ADR-029 contributor dev dashboard).
+ * Start a conversation — describe a bug or idea and the AI takes it from
+ * there (ADR-029 Phase 1.5 contributor dev dashboard).
  */
 
 import { SubmitContributionScreen } from "@features/contribute/components/SubmitContributionScreen";
