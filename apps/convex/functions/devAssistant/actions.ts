@@ -12,7 +12,12 @@ import { api, internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
-import { bugStatusValidator, riskLevelValidator, scopeValidator } from "./bugs";
+import {
+  bugStatusValidator,
+  reviewVerdictValidator,
+  riskLevelValidator,
+  scopeValidator,
+} from "./bugs";
 import type { ToolExecutionContext } from "./tools";
 
 const FLAG_KEY = "dev-assistant-bot";
@@ -102,6 +107,37 @@ export const processThreadMention = internalAction({
 // Dispatch a ready bug to the Claude Code Routine
 // ============================================================================
 
+/**
+ * Per-mode Routine trigger credentials (spec / implement / review run as
+ * separate Routines with least-privilege credentials — see
+ * docs/dev-assistant/ROUTINE-PROMPT.md), falling back to the legacy single
+ * CLAUDE_ROUTINES_TRIGGER_URL/TOKEN so a one-Routine setup keeps working.
+ */
+function routineTrigger(mode: "spec" | "implement" | "review"): {
+  triggerUrl: string | undefined;
+  token: string | undefined;
+} {
+  const perMode =
+    mode === "spec"
+      ? {
+          triggerUrl: process.env.CLAUDE_ROUTINES_TRIGGER_URL_SPEC,
+          token: process.env.CLAUDE_ROUTINES_TOKEN_SPEC,
+        }
+      : mode === "implement"
+        ? {
+            triggerUrl: process.env.CLAUDE_ROUTINES_TRIGGER_URL_IMPL,
+            token: process.env.CLAUDE_ROUTINES_TOKEN_IMPL,
+          }
+        : {
+            triggerUrl: process.env.CLAUDE_ROUTINES_TRIGGER_URL_REVIEW,
+            token: process.env.CLAUDE_ROUTINES_TOKEN_REVIEW,
+          };
+  return {
+    triggerUrl: perMode.triggerUrl ?? process.env.CLAUDE_ROUTINES_TRIGGER_URL,
+    token: perMode.token ?? process.env.CLAUDE_ROUTINES_TOKEN,
+  };
+}
+
 export const dispatchBug = internalAction({
   args: { bugId: v.id("devBugs"), forceRedispatch: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<void> => {
@@ -110,8 +146,7 @@ export const dispatchBug = internalAction({
     });
     if (!bug) return;
 
-    const triggerUrl = process.env.CLAUDE_ROUTINES_TRIGGER_URL;
-    const token = process.env.CLAUDE_ROUTINES_TOKEN;
+    const { triggerUrl, token } = routineTrigger("implement");
     if (!triggerUrl || !token) {
       console.error("[DevAssistant] CLAUDE_ROUTINES_* env not configured");
       await ctx.runMutation(
@@ -209,8 +244,7 @@ export const dispatchSpec = internalAction({
     });
     if (!bug) return;
 
-    const triggerUrl = process.env.CLAUDE_ROUTINES_TRIGGER_URL;
-    const token = process.env.CLAUDE_ROUTINES_TOKEN;
+    const { triggerUrl, token } = routineTrigger("spec");
     if (!triggerUrl || !token) {
       console.error("[DevAssistant] CLAUDE_ROUTINES_* env not configured");
       await ctx.runMutation(
@@ -278,6 +312,124 @@ export const dispatchSpec = internalAction({
       screenshotUrls: bug.screenshotUrls,
       // Full conversation history: [{ authorType, authorName?, body }, ...].
       thread,
+      callbackUrl,
+      instructions,
+    };
+
+    try {
+      const res = await fetch(triggerUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          // Required on every api.anthropic.com endpoint — see dispatchBug.
+          "anthropic-version": "2023-06-01",
+        },
+        // The fire endpoint reads the per-invocation payload from `text` and
+        // ignores other top-level fields — see dispatchBug.
+        body: JSON.stringify({ text: JSON.stringify(payload) }),
+      });
+      if (!res.ok) {
+        const errBody = await res.text();
+        await ctx.runMutation(
+          internal.functions.devAssistant.bugs.recordDispatchError,
+          { bugId: args.bugId, error: `Routine POST ${res.status}: ${errBody}` },
+        );
+      }
+    } catch (error) {
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: String(error) },
+      );
+    }
+  },
+});
+
+// ============================================================================
+// Dispatch an opened PR to the Routine in review mode
+// ============================================================================
+
+/**
+ * Fire the Claude Code Routine in "review" mode after an implementation run
+ * opens a PR (scheduled by applyCallback on a GENUINE transition into
+ * CODE_REVIEW). The review run checks out the PR, reviews the diff against
+ * the spec with parallel reviewer subagents, posts its surviving findings as
+ * real GitHub PR review comments itself, and reports a verdict back via the
+ * signed callback (`reviewVerdict` "approved" | "changes_requested" +
+ * `reviewSummary`).
+ *
+ * Stamps a FRESH routineRunId before the POST (markReviewDispatched) so the
+ * review run owns callback correlation from here on — stale callbacks from
+ * the superseded implementation run fall on the floor. Mirrors dispatchSpec's
+ * env-missing/error handling: never throws; failures land in lastError.
+ */
+export const dispatchReview = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+
+    // A review needs a PR to review. CODE_REVIEW without a prUrl is anomalous
+    // (the implementation callback should always carry it) — leave a
+    // breadcrumb instead of firing a routine with nothing to check out.
+    if (!bug.prUrl) {
+      console.error(
+        "[DevAssistant] dispatchReview skipped: bug has no prUrl",
+        args.bugId,
+      );
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: "Review dispatch skipped: bug has no prUrl" },
+      );
+      return;
+    }
+
+    const { triggerUrl, token } = routineTrigger("review");
+    if (!triggerUrl || !token) {
+      console.error("[DevAssistant] CLAUDE_ROUTINES_* env not configured");
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordDispatchError,
+        { bugId: args.bugId, error: "Routine trigger env not configured" },
+      );
+      return;
+    }
+
+    // Stamp a fresh routineRunId before the POST (same crash-safety pattern as
+    // markDispatched/markSpecDispatched). A failed POST leaves lastError on
+    // the row; recovery is manual, never an automatic re-fire.
+    const routineRunId = crypto.randomUUID();
+    const marked = await ctx.runMutation(
+      internal.functions.devAssistant.bugs.markReviewDispatched,
+      { bugId: args.bugId, routineRunId },
+    );
+    if (marked.alreadyDispatched) return;
+
+    const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
+    const instructions =
+      "Review mode: do NOT implement changes — review the open pull request. " +
+      "(a) Check out the PR and review its diff against the spec using " +
+      "parallel reviewer subagents, one each for correctness, security, " +
+      "spec-fidelity/UX, and tests; adversarially verify every finding " +
+      "before reporting it and discard anything that doesn't survive. " +
+      "(b) Post the surviving findings as GitHub PR review comments (inline " +
+      "on the relevant lines where possible) so the review is publicly " +
+      "visible on the PR. (c) Report back by POSTing the signed callback " +
+      'with { bugId, routineRunId, status: "CODE_REVIEW", reviewVerdict, ' +
+      'reviewSummary }: reviewVerdict is "approved" (no blocking findings) ' +
+      'or "changes_requested", and reviewSummary is a short one-to-two ' +
+      "sentence summary of the review outcome.";
+
+    const payload = {
+      mode: "review",
+      bugId: args.bugId,
+      routineRunId,
+      prUrl: bug.prUrl,
+      title: bug.title,
+      aiTitle: bug.aiTitle,
+      spec: bug.spec,
+      riskLevel: bug.riskLevel,
       callbackUrl,
       instructions,
     };
@@ -399,6 +551,8 @@ export const handleRoutineCallback = internalAction({
     area: v.optional(v.string()),
     scope: v.optional(scopeValidator),
     verifyOnStaging: v.optional(v.boolean()),
+    reviewVerdict: v.optional(reviewVerdictValidator),
+    reviewSummary: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<void> => {
     // Correlate by routineRunId and verify it matches the claimed bugId.
@@ -428,15 +582,25 @@ export const handleRoutineCallback = internalAction({
         area: args.area,
         scope: args.scope,
         verifyOnStaging: args.verifyOnStaging,
+        reviewVerdict: args.reviewVerdict,
+        reviewSummary: args.reviewSummary,
       },
     );
     if (!updated) return;
+
+    // An "approved" review verdict on a CODE_REVIEW callback promotes the bug
+    // to READY_TO_MERGE inside applyCallback, so the expected post-callback
+    // status can differ from the payload's status.
+    const effectiveStatus =
+      args.reviewVerdict === "approved" && args.status === "CODE_REVIEW"
+        ? "READY_TO_MERGE"
+        : args.status;
 
     // If the transition was illegal, applyCallback kept the prior status and
     // only recorded lastError — don't post a status message for a transition
     // that didn't happen (e.g. a CODE_REVIEW callback arriving after a human
     // rejected the bug while the routine was running).
-    if (updated.status !== args.status) {
+    if (updated.status !== effectiveStatus) {
       console.warn(
         `[DevAssistant] Ignored callback ${args.status} for bug ${args.bugId} (current status ${updated.status})`,
       );
@@ -450,7 +614,7 @@ export const handleRoutineCallback = internalAction({
     // the thread bot message below already notifies the channel.
     const statusChanged = bug.status !== updated.status;
     if (statusChanged && !updated.channelId) {
-      const push = contributorPushForStatus(args.status, updated);
+      const push = contributorPushForStatus(effectiveStatus, updated);
       if (push) {
         await ctx.runAction(
           internal.functions.notifications.actions.sendPushNotification,
@@ -461,7 +625,7 @@ export const handleRoutineCallback = internalAction({
             notificationType: "dev_contribution_update",
             data: {
               bugId: args.bugId,
-              status: args.status,
+              status: effectiveStatus,
               ...(updated.prUrl ? { prUrl: updated.prUrl } : {}),
             },
           },
@@ -473,9 +637,10 @@ export const handleRoutineCallback = internalAction({
     // above (plus the dashboard itself) is their notification surface.
     if (!updated.channelId) return;
 
-    const content = args.message ?? defaultCallbackMessage(args.status, args.prUrl);
+    const content =
+      args.message ?? defaultCallbackMessage(effectiveStatus, args.prUrl ?? updated.prUrl);
     const mentionedUserIds: Id<"users">[] | undefined =
-      args.status === "READY_TO_MERGE" ? [updated.originatorUserId] : undefined;
+      effectiveStatus === "READY_TO_MERGE" ? [updated.originatorUserId] : undefined;
 
     // KNOWN LIMITATION (MVP, accepted): these status posts (PR links, "Code's
     // up", merge link) are plain bot messages, so they're visible to — and push
@@ -492,7 +657,7 @@ export const handleRoutineCallback = internalAction({
       parentMessageId: updated.threadRootMessageId,
       mentionedUserIds,
       // Idempotency: re-delivered callbacks for the same status are dropped.
-      sourceKey: `bug:${args.bugId}:${args.status}`,
+      sourceKey: `bug:${args.bugId}:${effectiveStatus}`,
     });
   },
 });

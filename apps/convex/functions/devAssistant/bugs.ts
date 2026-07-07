@@ -53,6 +53,12 @@ export const scopeValidator = v.union(
   v.literal("design_needed"),
 );
 
+/** Verdict reported by the review-mode routine after reviewing an open PR. */
+export const reviewVerdictValidator = v.union(
+  v.literal("approved"),
+  v.literal("changes_requested"),
+);
+
 type BugStatus = Doc<"devBugs">["status"];
 
 /**
@@ -484,6 +490,34 @@ export const markSpecDispatched = internalMutation({
 });
 
 /**
+ * Stamp the routineRunId for a review-mode dispatch BEFORE the outbound POST
+ * (mirrors markSpecDispatched). Always stamps a FRESH routineRunId: callbacks
+ * correlate by routineRunId, so from here on the review run owns the callback
+ * channel and stale callbacks from the superseded implementation run fall on
+ * the floor. Valid only while the bug is in CODE_REVIEW (the PR-open state
+ * the review is about); anything else is a no-op.
+ */
+export const markReviewDispatched = internalMutation({
+  args: { bugId: v.id("devBugs"), routineRunId: v.string() },
+  handler: async (ctx, args): Promise<{ alreadyDispatched: boolean }> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return { alreadyDispatched: true };
+    if (bug.status !== "CODE_REVIEW") {
+      return { alreadyDispatched: true };
+    }
+    await ctx.db.patch(args.bugId, {
+      routineRunId: args.routineRunId,
+      lastError: undefined,
+      updatedAt: Date.now(),
+    });
+    return { alreadyDispatched: false };
+  },
+});
+
+/** Max characters of reviewSummary quoted in the thread's system message. */
+const REVIEW_SUMMARY_THREAD_LIMIT = 200;
+
+/**
  * Apply a routine callback. Validates the callback's target status against the
  * transition map; on an illegal transition we keep the current status but
  * record lastError (callbacks must never throw the HTTP handler). Always
@@ -493,9 +527,19 @@ export const markSpecDispatched = internalMutation({
  * the Phase 1.5 triage fields (`aiTitle`/`area`/`scope`/`verifyOnStaging`),
  * which are stored whenever provided; a MERGED transition stamps `shippedAt`.
  *
+ * Review-mode callbacks deliver `reviewVerdict` (+ `reviewSummary`): an
+ * "approved" verdict on a CODE_REVIEW callback promotes the target status to
+ * READY_TO_MERGE (approval is what moves the bug forward); "changes_requested"
+ * stores the verdict and leaves the bug in CODE_REVIEW. A GENUINE entry into
+ * CODE_REVIEW (a PR opened — or a future revision re-entering it) clears any
+ * stale verdict and schedules the review-mode dispatch; replayed CODE_REVIEW
+ * callbacks are from === to, so they can never double-dispatch.
+ *
  * Thread side effects (ADR-029 Phase 1.5):
  *  - a delivered spec is appended as an "assistant" message (skipped when the
  *    spec text is unchanged, so re-delivered callbacks don't duplicate it);
+ *  - a delivered review verdict is appended as a "system" message (same
+ *    changed-value idempotency guard);
  *  - genuine status transitions append a one-line "system" progress message.
  */
 export const applyCallback = internalMutation({
@@ -510,6 +554,8 @@ export const applyCallback = internalMutation({
     area: v.optional(v.string()),
     scope: v.optional(scopeValidator),
     verifyOnStaging: v.optional(v.boolean()),
+    reviewVerdict: v.optional(reviewVerdictValidator),
+    reviewSummary: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Doc<"devBugs"> | null> => {
     const bug = await ctx.db.get(args.bugId);
@@ -531,15 +577,50 @@ export const applyCallback = internalMutation({
       patch.verifyOnStaging = args.verifyOnStaging;
     }
 
-    const transitioned = canTransition(bug.status, args.status);
+    // An approved review verdict reported against the PR-open status promotes
+    // the bug forward: the review run calls back with its current status
+    // (CODE_REVIEW) and the verdict decides whether it advances.
+    const targetStatus: BugStatus =
+      args.reviewVerdict === "approved" && args.status === "CODE_REVIEW"
+        ? "READY_TO_MERGE"
+        : args.status;
+
+    const transitioned = canTransition(bug.status, targetStatus);
     if (transitioned) {
-      patch.status = args.status;
+      patch.status = targetStatus;
       patch.lastError = undefined;
-      if (args.status === "MERGED" && !bug.shippedAt) {
+      if (targetStatus === "MERGED" && !bug.shippedAt) {
         patch.shippedAt = now;
       }
     } else {
-      patch.lastError = `Ignored callback transition ${bug.status} -> ${args.status}`;
+      patch.lastError = `Ignored callback transition ${bug.status} -> ${targetStatus}`;
+    }
+
+    // GENUINE entry into CODE_REVIEW = a PR (revision) just opened: clear any
+    // stale verdict from a previous review round and fire the review-mode
+    // routine (event-driven, mirrors READY_FOR_IMPL -> dispatchBug). Replayed
+    // CODE_REVIEW callbacks are from === to and can't re-dispatch.
+    const enteredCodeReview =
+      transitioned &&
+      targetStatus === "CODE_REVIEW" &&
+      bug.status !== "CODE_REVIEW";
+    if (enteredCodeReview) {
+      patch.reviewVerdict = undefined;
+      patch.reviewSummary = undefined;
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.devAssistant.actions.dispatchReview,
+        { bugId: args.bugId },
+      );
+    }
+
+    // Explicit verdict fields in the payload win over the reset above (a
+    // callback carrying both is anomalous, but the payload is authoritative).
+    if (args.reviewVerdict !== undefined) {
+      patch.reviewVerdict = args.reviewVerdict;
+    }
+    if (args.reviewSummary !== undefined) {
+      patch.reviewSummary = args.reviewSummary;
     }
 
     await ctx.db.patch(args.bugId, patch);
@@ -551,10 +632,35 @@ export const applyCallback = internalMutation({
       await insertThreadMessage(ctx, args.bugId, "assistant", args.spec);
     }
 
+    // Review verdict lands as a system turn, before the status progress line
+    // so an approval reads "review passed" -> "ready to merge". Same
+    // changed-value guard as the spec: re-delivered callbacks don't repost.
+    if (
+      args.reviewVerdict !== undefined &&
+      (args.reviewVerdict !== bug.reviewVerdict ||
+        (args.reviewSummary !== undefined &&
+          args.reviewSummary !== bug.reviewSummary))
+    ) {
+      let message: string;
+      if (args.reviewVerdict === "approved") {
+        message = "Code review passed ✓";
+      } else {
+        const summary = args.reviewSummary?.trim();
+        const quoted =
+          summary && summary.length > REVIEW_SUMMARY_THREAD_LIMIT
+            ? `${summary.slice(0, REVIEW_SUMMARY_THREAD_LIMIT)}…`
+            : summary;
+        message = quoted
+          ? `Code review requested changes — ${quoted}`
+          : "Code review requested changes";
+      }
+      await insertThreadMessage(ctx, args.bugId, "system", message);
+    }
+
     // Progress log: only when the status genuinely changed (an idempotent
     // re-apply of the current status must not re-post).
-    if (transitioned && args.status !== bug.status) {
-      const systemMessage = STATUS_SYSTEM_MESSAGES[args.status];
+    if (transitioned && targetStatus !== bug.status) {
+      const systemMessage = STATUS_SYSTEM_MESSAGES[targetStatus];
       if (systemMessage) {
         await insertThreadMessage(ctx, args.bugId, "system", systemMessage);
       }

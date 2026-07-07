@@ -57,6 +57,7 @@ afterEach(async () => {
   delete process.env.CLAUDE_ROUTINES_TRIGGER_URL;
   delete process.env.CLAUDE_ROUTINES_TOKEN;
   delete process.env.CONVEX_SITE_URL;
+  delete process.env.DEV_ASSISTANT_CALLBACK_SECRET;
 });
 
 async function seedUsers(t: ReturnType<typeof convexTest>): Promise<{
@@ -753,6 +754,330 @@ describe("conversation thread (Phase 1.5)", () => {
     );
     expect(stagingPush).toHaveLength(1);
     expect(stagingPush[0]?.title).toBe("Ready to test on staging");
+  });
+});
+
+describe("AI review cycle", () => {
+  /** Seed a dashboard item somewhere in the build/review pipeline. */
+  async function seedPipelineBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      status: "IN_PROGRESS" | "CODE_REVIEW" | "READY_TO_MERGE";
+      prUrl: string;
+      routineRunId: string;
+      reviewVerdict: "approved" | "changes_requested";
+      reviewSummary: string;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: overrides.status ?? "IN_PROGRESS",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        aiTitle: "Fix profile typo",
+        body: "B",
+        spec: "## Plan\nChange the string.",
+        riskLevel: "low",
+        routineRunId: overrides.routineRunId ?? "run-impl",
+        prUrl: overrides.prUrl,
+        reviewVerdict: overrides.reviewVerdict,
+        reviewSummary: overrides.reviewSummary,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("genuine CODE_REVIEW transition dispatches the review routine exactly once", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedPipelineBug(t, maintainerId);
+    const fetchMock = stubRoutineEnv();
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-impl",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/1",
+      },
+    );
+    // Re-delivered before the scheduled dispatch runs: CODE_REVIEW ->
+    // CODE_REVIEW is an idempotent re-apply, not a genuine transition, so it
+    // must not schedule a second review dispatch.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-impl",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/1",
+      },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({
+      mode: "review",
+      bugId: id,
+      prUrl: "https://example.com/pr/1",
+      title: "Fix typo",
+      aiTitle: "Fix profile typo",
+      spec: "## Plan\nChange the string.",
+      riskLevel: "low",
+      callbackUrl: "https://example.convex.site/dev-assistant/callback",
+    });
+    expect(brief.instructions).toMatch(/reviewVerdict/);
+    expect(brief.instructions).toMatch(/subagents/);
+    expect(brief.instructions).toMatch(/PR review comments/);
+
+    // The review run owns callback correlation from here on: a fresh
+    // routineRunId replaced the implementation run's.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.routineRunId).toBeTruthy();
+    expect(bug?.routineRunId).not.toBe("run-impl");
+
+    // A late replay from the superseded implementation run fails correlation
+    // and is dropped entirely — no re-dispatch.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      { bugId: id, routineRunId: "run-impl", status: "CODE_REVIEW" },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("CODE_REVIEW without a prUrl skips review dispatch with a breadcrumb", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedPipelineBug(t, maintainerId);
+    const fetchMock = stubRoutineEnv();
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      { bugId: id, routineRunId: "run-impl", status: "CODE_REVIEW" },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.lastError).toMatch(/no prUrl/);
+    // No dispatch happened, so the implementation run id is untouched.
+    expect(bug?.routineRunId).toBe("run-impl");
+  });
+
+  test("approved verdict stores fields, logs system messages, and promotes to READY_TO_MERGE", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedPipelineBug(t, maintainerId, {
+      status: "CODE_REVIEW",
+      routineRunId: "run-review",
+      prUrl: "https://example.com/pr/1",
+    });
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-review",
+        status: "CODE_REVIEW",
+        reviewVerdict: "approved",
+        reviewSummary: "All reviewers passed; tests cover the fix.",
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    expect(bug?.reviewVerdict).toBe("approved");
+    expect(bug?.reviewSummary).toBe(
+      "All reviewers passed; tests cover the fix.",
+    );
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => [m.authorType, m.body])).toEqual([
+      ["system", "Code review passed ✓"],
+      ["system", "Ready to merge"],
+    ]);
+  });
+
+  test("changes_requested stores the verdict and keeps CODE_REVIEW", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedPipelineBug(t, maintainerId, {
+      status: "CODE_REVIEW",
+      routineRunId: "run-review",
+      prUrl: "https://example.com/pr/1",
+    });
+
+    const longSummary = "x".repeat(250);
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-review",
+        status: "CODE_REVIEW",
+        reviewVerdict: "changes_requested",
+        reviewSummary: longSummary,
+      },
+    );
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.reviewVerdict).toBe("changes_requested");
+    // The full summary is stored; only the thread quote is truncated.
+    expect(bug?.reviewSummary).toBe(longSummary);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread).toHaveLength(1);
+    expect(thread[0]?.authorType).toBe("system");
+    expect(thread[0]?.body).toBe(
+      `Code review requested changes — ${"x".repeat(200)}…`,
+    );
+
+    // A re-delivered identical verdict callback must not repost the message.
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-review",
+        status: "CODE_REVIEW",
+        reviewVerdict: "changes_requested",
+        reviewSummary: longSummary,
+      },
+    );
+    const replayThread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(replayThread).toHaveLength(1);
+  });
+
+  test("a later genuine CODE_REVIEW entry clears a stale verdict and re-dispatches review", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    // A previous review round left changes_requested behind; the pipeline is
+    // back in IN_PROGRESS producing a new PR revision.
+    const id = await seedPipelineBug(t, maintainerId, {
+      status: "IN_PROGRESS",
+      routineRunId: "run-impl-2",
+      reviewVerdict: "changes_requested",
+      reviewSummary: "Old round: fix the null check.",
+    });
+    const fetchMock = stubRoutineEnv();
+
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: "run-impl-2",
+        status: "CODE_REVIEW",
+        prUrl: "https://example.com/pr/2",
+      },
+    );
+
+    // The stale verdict is gone the moment CODE_REVIEW applies.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+    expect(bug?.reviewVerdict).toBeUndefined();
+    expect(bug?.reviewSummary).toBeUndefined();
+
+    // And a fresh review run was dispatched for the new revision.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({
+      mode: "review",
+      bugId: id,
+      prUrl: "https://example.com/pr/2",
+    });
+  });
+
+  test("invalid reviewVerdict is rejected with 400 at the http layer", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedPipelineBug(t, maintainerId, {
+      status: "CODE_REVIEW",
+      routineRunId: "run-review",
+      prUrl: "https://example.com/pr/1",
+    });
+
+    process.env.DEV_ASSISTANT_CALLBACK_SECRET = "test-callback-secret";
+    const sign = async (body: string): Promise<string> => {
+      const encoder = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode("test-callback-secret"),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+      );
+      const bytes = await crypto.subtle.sign("HMAC", key, encoder.encode(body));
+      return Array.from(new Uint8Array(bytes))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    };
+    const post = async (payload: Record<string, unknown>): Promise<Response> => {
+      const body = JSON.stringify(payload);
+      return await t.fetch("/dev-assistant/callback", {
+        method: "POST",
+        body,
+        headers: { "x-togather-signature": await sign(body) },
+      });
+    };
+
+    const bad = await post({
+      bugId: id,
+      routineRunId: "run-review",
+      status: "CODE_REVIEW",
+      reviewVerdict: "maybe",
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toMatch(/Unsupported reviewVerdict/);
+
+    const badSummary = await post({
+      bugId: id,
+      routineRunId: "run-review",
+      status: "CODE_REVIEW",
+      reviewVerdict: "approved",
+      reviewSummary: 42,
+    });
+    expect(badSummary.status).toBe(400);
+
+    // A valid verdict passes validation and is accepted end-to-end.
+    const ok = await post({
+      bugId: id,
+      routineRunId: "run-review",
+      status: "CODE_REVIEW",
+      reviewVerdict: "approved",
+      reviewSummary: "Ship it.",
+    });
+    expect(ok.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    expect(bug?.reviewVerdict).toBe("approved");
   });
 });
 

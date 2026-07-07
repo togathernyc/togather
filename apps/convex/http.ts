@@ -1033,6 +1033,8 @@ const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
 
 const DEV_ASSISTANT_SCOPES = ["buildable", "split", "design_needed"];
 
+const DEV_ASSISTANT_REVIEW_VERDICTS = ["approved", "changes_requested"];
+
 /**
  * POST /dev-assistant/callback
  *
@@ -1043,7 +1045,11 @@ const DEV_ASSISTANT_SCOPES = ["buildable", "split", "design_needed"];
  *
  * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[],
  *         message?, spec?, riskLevel?, aiTitle?, area?, scope?,
- *         verifyOnStaging? }
+ *         verifyOnStaging?, reviewVerdict?, reviewSummary? }
+ *
+ * Review-mode runs report `reviewVerdict` ("approved" | "changes_requested")
+ * plus a short `reviewSummary` against status CODE_REVIEW; an approved
+ * verdict advances the bug to READY_TO_MERGE downstream.
  */
 http.route({
   path: "/dev-assistant/callback",
@@ -1080,6 +1086,8 @@ http.route({
       area?: string;
       scope?: string;
       verifyOnStaging?: boolean;
+      reviewVerdict?: string;
+      reviewSummary?: string;
     };
     try {
       payload = JSON.parse(body);
@@ -1100,6 +1108,8 @@ http.route({
       area,
       scope,
       verifyOnStaging,
+      reviewVerdict,
+      reviewSummary,
     } = payload;
     if (!bugId || !routineRunId || !status) {
       return new Response("Missing bugId, routineRunId, or status", { status: 400 });
@@ -1127,6 +1137,19 @@ http.route({
         status: 400,
       });
     }
+    if (
+      reviewVerdict !== undefined &&
+      !DEV_ASSISTANT_REVIEW_VERDICTS.includes(reviewVerdict)
+    ) {
+      return new Response(`Unsupported reviewVerdict: ${reviewVerdict}`, {
+        status: 400,
+      });
+    }
+    if (reviewSummary !== undefined && typeof reviewSummary !== "string") {
+      return new Response("Invalid reviewSummary: must be a string", {
+        status: 400,
+      });
+    }
 
     await ctx.scheduler.runAfter(
       0,
@@ -1150,6 +1173,11 @@ http.route({
         area,
         scope: scope as "buildable" | "split" | "design_needed" | undefined,
         verifyOnStaging,
+        reviewVerdict: reviewVerdict as
+          | "approved"
+          | "changes_requested"
+          | undefined,
+        reviewSummary,
       }
     );
 

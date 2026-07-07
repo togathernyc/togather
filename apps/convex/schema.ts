@@ -2186,6 +2186,15 @@ export default defineSchema({
     // change on staging before merge; false for pure copy/color tweaks.
     verifyOnStaging: v.optional(v.boolean()),
     stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
+    // AI review cycle: verdict reported by the review-mode routine via the
+    // signed callback after it reviews the PR ("approved" promotes the bug to
+    // READY_TO_MERGE; "changes_requested" leaves it in CODE_REVIEW). Cleared
+    // whenever the bug genuinely (re-)enters CODE_REVIEW so a stale verdict
+    // never lingers on a new PR revision.
+    reviewVerdict: v.optional(
+      v.union(v.literal("approved"), v.literal("changes_requested")),
+    ),
+    reviewSummary: v.optional(v.string()),
     githubIssueNumber: v.optional(v.number()),
     githubIssueUrl: v.optional(v.string()),
     shippedAt: v.optional(v.number()), // set when status reaches MERGED
