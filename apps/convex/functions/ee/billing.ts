@@ -921,25 +921,35 @@ export const cancelDuplicateSubscription = internalAction({
       apiVersion: "2026-02-25.clover",
     });
 
+    let canceled = false;
+    let cancelError: string | undefined;
     try {
       await stripe.subscriptions.cancel(args.stripeSubscriptionId);
+      canceled = true;
     } catch (error) {
+      cancelError = error instanceof Error ? error.message : String(error);
       console.error(
         `[billing] Failed to cancel duplicate subscription ${args.stripeSubscriptionId}:`,
-        error instanceof Error ? error.message : error,
+        cancelError,
       );
     }
 
+    // The alert must reflect what actually happened: a failed cancel means the
+    // duplicate subscription is STILL ACTIVE and will renew until a human
+    // cancels it in Stripe.
     await sendBillingOpsAlert(ctx, {
       failures: [
-        `Duplicate demo-conversion checkout for community ${args.communityId}: ` +
-          `subscription ${args.stripeSubscriptionId} was canceled — verify in Stripe and refund any initial payment.`,
+        canceled
+          ? `Duplicate demo-conversion checkout for community ${args.communityId}: ` +
+            `subscription ${args.stripeSubscriptionId} was canceled — verify in Stripe and refund any initial payment.`
+          : `Duplicate demo-conversion checkout for community ${args.communityId}: ` +
+            `FAILED to cancel subscription ${args.stripeSubscriptionId} (${cancelError}) — it is still active and will keep billing. Cancel it in Stripe manually and refund any initial payment.`,
       ],
       anomalies: [],
       synced: 0,
     });
 
-    return { canceled: true };
+    return { canceled };
   },
 });
 
