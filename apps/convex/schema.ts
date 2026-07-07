@@ -92,6 +92,13 @@ export default defineSchema({
     // this field in a follow-up once every environment has been migrated.
     knicksMode: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
+    // Self-serve demo communities (see functions/demo.ts): seeded sandboxes a
+    // prospective church spins up from a short questionnaire. Excluded from
+    // community search/discovery; everyone who joins via the demo code becomes
+    // an admin so a whole staff team can click around and re-brand together.
+    isDemo: v.optional(v.boolean()),
+    // The user who created the demo (for attribution and future cleanup).
+    demoCreatedById: v.optional(v.id("users")),
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online

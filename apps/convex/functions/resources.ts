@@ -185,6 +185,9 @@ export const communitySearch = query({
       .take(200); // Reduced limit - most apps have fewer than 200 communities
 
     const matchingCommunities = allCommunities.filter((c) => {
+      // Demo sandboxes (functions/demo.ts) are joinable only by demo code,
+      // never discoverable through search.
+      if (c.isDemo) return false;
       const nameMatch = c.name?.toLowerCase().includes(searchQuery);
       const subdomainMatch = c.subdomain?.toLowerCase().includes(searchQuery);
       return nameMatch || subdomainMatch;

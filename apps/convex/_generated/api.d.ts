@@ -44,6 +44,7 @@ import type * as functions_communityLandingPageActions from "../functions/commun
 import type * as functions_communityPeople from "../functions/communityPeople.js";
 import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
+import type * as functions_demo from "../functions/demo.js";
 import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
 import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
 import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
@@ -272,6 +273,7 @@ declare const fullApi: ApiFromModules<{
   "functions/communityPeople": typeof functions_communityPeople;
   "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
+  "functions/demo": typeof functions_demo;
   "functions/devAssistant/actions": typeof functions_devAssistant_actions;
   "functions/devAssistant/agent": typeof functions_devAssistant_agent;
   "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
