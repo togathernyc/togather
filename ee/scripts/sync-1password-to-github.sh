@@ -144,6 +144,11 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
+  # Repo automation token used by GitHub Actions (mirror push). CI-only — it is
+  # NOT forwarded to Convex/Expo (absent from sync-secrets-to-convex.sh). Named
+  # GH_MIRROR_TOKEN, not GITHUB_MIRROR_TOKEN, because GitHub reserves the
+  # GITHUB_ prefix for secret names (`gh secret set GITHUB_*` → HTTP 422).
+  "GH_MIRROR_TOKEN"
   # Dev-assistant bot (@Togather pipeline). Optional — only present once the
   # feature is being enabled; missing items are skipped without failing.
   "CLAUDE_ROUTINES_TRIGGER_URL"
