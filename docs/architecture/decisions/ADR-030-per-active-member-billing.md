@@ -40,11 +40,15 @@ rolling 30-day activity window, per community.**
   membership (`status === 1`) of a real account (not `isPlaceholder`), whose
   `userCommunities.lastLogin` — stamped on login, community switch, join, and
   app foreground while that community is active (`users.recordActivity`) — is
-  within the past 30 days, and who has not been manually marked inactive
-  (`userCommunities.billingInactive`, settable by community admins and the
-  member's group leaders). Strictly `lastLogin`: members who were added or
+  within the past 30 days. Strictly `lastLogin`: members who were added or
   imported (e.g. PCO sync) but never opened the app in the community are
   never billable.
+- **Fully automatic, no override**: there is deliberately no way to manually
+  mark an active member as non-billable. An earlier revision had an admin/
+  leader "mark inactive" toggle (`userCommunities.billingInactive`); it was
+  removed because it let a community zero out its bill while members kept
+  using the app. The 30-day activity rule is the single source of truth. (The
+  schema field is retained, unread, pending a clear-migration then drop.)
 - **Per community, not app-wide**: activity in one community never makes a
   person billable in another.
 - **Same number the admin already sees**: the definition intentionally
@@ -58,9 +62,8 @@ rolling 30-day activity window, per community.**
   count (the 28th→1st drift window is ~3 days and roughly symmetric).
 - **Pre-period disclosure**: after each sync, community admins get an email
   (`billing.monthly_preview`) with the count and the amount the 1st will
-  bill, while there's still time to mark members inactive. This is stronger
-  disclosure than any surveyed model (Slack's customers learn after the
-  fact).
+  bill, so the charge is never a surprise. This is stronger disclosure than
+  any surveyed model (Slack's customers learn after the fact).
 - **Ops alerting**: sync failures and >30% month-over-month count swings
   (on baselines ≥10) email `BILLING_ALERT_EMAIL` — silent billing drift is
   the pre-renewal-sync pattern's main operational risk.
