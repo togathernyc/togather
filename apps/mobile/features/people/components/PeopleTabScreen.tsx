@@ -91,7 +91,7 @@ export function PeopleTabScreen({
   return (
     <FollowupMobileGrid
       groupId={announcementGroupId}
-      enforcedAssigneeUserId={currentUserId}
+      enforcedAssigneeUserId={enforcedAssigneeUserId}
       returnTo={returnTo}
       onSwitchToCards={() => setViewModePersisted("cards")}
     />
