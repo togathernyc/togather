@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — Phase 1 implementation in progress (2026-07-06)
+Accepted — Phase 1 implementation in progress (2026-07-06); Phase 1.5
+(conversation-first dashboard) accepted 2026-07-07
 
 ## Date
 
@@ -110,6 +111,11 @@ New feature folder per ADR-002 conventions, modeled on `features/settings/`:
 Maintainer screens (`features/admin`) gain the same new fields (risk badge,
 spec, kind) but keep their existing role gates.
 
+> **Superseded in part by Phase 1.5:** the submit form and detail screen
+> become a conversation thread, and the list becomes a turn-based inbox —
+> see [Phase 1.5](#phase-15--conversation-first-dashboard-accepted). The
+> folder layout and role gate above are unchanged.
+
 ### 4. Pipeline mapping — reuse the status machine, add a spec gate
 
 - Contributor submits → `DRAFT`.
@@ -122,6 +128,11 @@ spec, kind) but keep their existing role gates.
   eligible and an explicit **Start build** action triggers implementation.
 - Implementation, PR, and merge statuses flow exactly as today via the signed
   callback (`IN_PROGRESS → CODE_REVIEW → READY_TO_MERGE → MERGED`).
+
+> **Phase 1.5 adds two gates around this flow:** a scope verdict before any
+> spec can be approved, and reporter staging verification before merge for
+> interactive changes — see
+> [Phase 1.5](#phase-15--conversation-first-dashboard-accepted).
 
 ### 5. Risk levels — blast radius, assigned by AI, human-overridable
 
@@ -174,12 +185,77 @@ push yet.
 | 2 — GitHub mirroring | `githubUsername`, issue mirroring (fine-grained PAT), `/github/webhook`, co-author attribution, deep links | GitHub PAT + webhook |
 | 3 — Risk-gated automation | Optional auto-merge of `risk:low` PRs when CI is green (behind an env flag; branch protection stays the backstop) | Merge policy |
 
+## Phase 1.5 — conversation-first dashboard (Accepted)
+
+Accepted by the owner on 2026-07-07, while Phase 1 was still being built.
+Phase 1.5 reshapes the contributor surface — the pipeline underneath (status
+machine, Routine dispatch, signed callbacks, role gate) is unchanged.
+
+Rationale: non-coders already know how to read a chat, so the pipeline
+becomes messages instead of a form-shaped detail screen; the scope gate turns
+"too big" into momentum by answering with buildable slices instead of a bad
+build; staging verification puts the reporter's hands on the change before
+merge, closing the loop the way decision 4's spec gate opened it.
+
+### 1. Conversation-first — every contribution is a thread
+
+Every contribution IS a conversation with the @Togather AI. New
+`devBugMessages` table holding `user` / `assistant` / `system` messages:
+
+- The contributor's report is the **first message** of the thread.
+- The AI's spec arrives as an **assistant message**.
+- Status changes ("Build started", "Shipped 🎉") are **system messages**.
+- Replying while a spec is in review (`IN_REVIEW`) triggers an AI **spec
+  revision** — the revision loop replaces a separate "request changes"
+  affordance.
+
+### 2. AI-generated headlines and the turn-based list
+
+The spec agent returns `aiTitle` — a short imperative headline (e.g. "Fix
+RSVP message after tapping Going") — regenerated as the work evolves. The
+sidebar/list shows `aiTitle` + a last-message snippet, grouped by whose turn
+it is: **Your turn / AI working / Shipped**, with a **Mine / Everyone**
+toggle. Everyone can read the whole team's conversations — one role, one team
+(consistent with decision 1).
+
+### 3. Scope gate — the spec agent's first verdict
+
+The spec agent's **first** verdict is
+`scope: "buildable" | "split" | "design_needed"`. Too-large asks (e.g.
+"build video chat") are not specced as-is:
+
+- `split` — the spec body proposes 2–3 smaller buildable slices.
+- `design_needed` — the spec explains which architectural decisions a
+  maintainer must make first, and the item parks in a **design queue**.
+
+`approveSpec` rejects non-`buildable` scopes.
+
+### 4. Two more triage fields — area and staging verification
+
+- `area: "events" | "chat" | "groups" | "prayer" | "settings" | "other"` —
+  items file themselves; used as a filter/tag.
+- `verifyOnStaging: boolean` — anything **interactive** requires the reporter
+  to test the change on the staging app and tap **"Works — ship it"** before
+  merge, even at low risk. Pure copy/color changes skip it.
+
+New `devBugs` fields: `aiTitle`, `area`, `scope`, `verifyOnStaging`,
+`stagingVerifiedAt`. New functions: `getThread`, `postMessage`,
+`confirmStaging`, `reportStagingIssue`.
+
+### 5. Desktop surface and visual spec approval
+
+The desktop shape lives at **`togather.nyc/dev`**, routing into the Expo web
+app (same phone-OTP sign-in) — still no separate web dashboard. UI specs must
+include a **before/after mock image** so spec approval is a visual decision.
+
 ## Deliberately out of scope (v1)
 
 - GitHub OAuth / verified account linking (`githubUsername` is honor-system).
 - Auto-merge of any PR (Phase 3, and only `risk:low` behind a flag).
 - Bounties/payments, public leaderboards.
-- A separate web dashboard — the Expo web build covers desktop.
+- A separate web dashboard — the Expo web build covers desktop (Phase 1.5
+  pins the desktop entry point to `togather.nyc/dev`, still routing into the
+  Expo web app).
 - Migrating or changing the existing chat-originated maintainer bug flow.
 
 ## Consequences
@@ -199,6 +275,10 @@ push yet.
 
 - We own state sync with GitHub (webhook + mirroring) — a second source of
   truth to keep consistent; the webhook must be idempotent.
+- Staging verification (Phase 1.5) adds a human wait state before merge:
+  interactive changes sit in `READY_TO_MERGE` until the reporter confirms on
+  staging, so stale items need nudges (push reminders) or a maintainer
+  override.
 - A PAT with write access to the repo lives in Convex env; needs rotation
   policy and least-privilege scoping (issues only — the Routine, not Convex,
   pushes code).

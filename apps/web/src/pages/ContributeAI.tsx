@@ -114,11 +114,13 @@ export function ContributeAI() {
                   title: "Describe the bug or idea",
                   body: (
                     <>
-                      Submit it in the Togather app's dev dashboard (Settings
-                      &rarr; Contribute). Plain language is fine — say what you
-                      saw, what you expected, and why it matters. Screenshots
-                      help a lot. (Prefer GitHub? Filing an issue there works
-                      too.)
+                      Submitting is just starting a conversation in the
+                      Togather app's dev dashboard (Settings &rarr;
+                      Contribute) — your report is the first message, and
+                      everything that happens next arrives as replies in that
+                      same thread. Plain language is fine — say what you saw,
+                      what you expected, and why it matters. Screenshots help
+                      a lot. (Prefer GitHub? Filing an issue there works too.)
                     </>
                   ),
                 },
@@ -129,7 +131,10 @@ export function ContributeAI() {
                       The AI agent investigates the codebase, reproduces the
                       bug where it can, and rewrites your report as a
                       structured spec: affected screens, expected behavior,
-                      edge cases, and acceptance criteria.
+                      edge cases, and acceptance criteria. It also checks the
+                      size: ideas too big for one build get split into smaller
+                      pieces or routed to a design conversation instead of
+                      being built badly.
                     </>
                   ),
                 },
@@ -137,10 +142,12 @@ export function ContributeAI() {
                   title: "You review the spec",
                   body: (
                     <>
-                      This is a product review, not a technical one. Read the
-                      spec in the dashboard and answer one question:{" "}
-                      <em>is this what I meant?</em> Correct anything that's
-                      off — the agent will revise.
+                      The spec arrives right in your conversation — with a
+                      before/after mock image for UI changes, so you can see
+                      what you'd be approving. This is a product review, not a
+                      technical one: answer one question,{" "}
+                      <em>is this what I meant?</em> If anything's off, just
+                      reply — the AI revises the spec.
                     </>
                   ),
                 },
@@ -166,14 +173,26 @@ export function ContributeAI() {
                   ),
                 },
                 {
-                  title: "You verify, a maintainer merges",
+                  title: "You try it on the staging app",
                   body: (
                     <>
-                      Check the screenshots (or the preview build) against your
-                      acceptance criteria and confirm it does what you asked.
+                      For anything interactive, you'll get a push notification
+                      when your change is live on the staging app. Try it
+                      against your acceptance criteria and tap "Works — ship
+                      it" — merging waits for your confirmation, even for
+                      low-risk changes. (Pure text or color tweaks skip this
+                      step.)
+                    </>
+                  ),
+                },
+                {
+                  title: "A maintainer merges",
+                  body: (
+                    <>
                       A maintainer makes the final merge decision on GitHub —
-                      you can track every status change in the dashboard, and
-                      you'll get a push notification when your change ships.
+                      every status change lands in your conversation as it
+                      happens, and you'll get a push notification when your
+                      change ships.
                     </>
                   ),
                 },
@@ -211,24 +230,27 @@ export function ContributeAI() {
           </div>
           <p className="text-neutral-600 leading-relaxed mb-6">
             For changes that are clearly low risk, the pipeline runs from your
-            approval onward without a human in the middle: the change is
-            implemented, verified, and merged automatically. Your approved
-            spec is the only human input — which is exactly why writing a good
-            one matters.
+            approval onward without a maintainer in the middle: the change is
+            implemented, verified, and merged automatically. It pauses for a
+            human only twice — your approved spec, and (for anything
+            interactive) your confirmation on the staging app — which is
+            exactly why writing a good spec matters.
           </p>
 
           <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-6 mb-6">
             <ol className="space-y-3 text-neutral-600">
               {[
-                <>You submit a bug or idea and approve its spec in the
-                  dashboard, just like the guided workflow.</>,
+                <>You start a conversation with a bug or idea and approve its
+                  spec, just like the guided workflow.</>,
                 <>An AI triage step reads the spec, works out which parts of the
                   codebase it touches, and assigns a risk level automatically.</>,
                 <>
                   <strong className="text-neutral-700">Low risk:</strong> the
                   build starts the moment you approve the spec. AI implements,
                   verifies with automated tests and screenshots, and merges on
-                  its own. It ships in the next release.
+                  its own — pausing first for your "Works — ship it" on the
+                  staging app if the change is interactive. It ships in the
+                  next release.
                 </>,
                 <>
                   <strong className="text-neutral-700">Medium or high risk:</strong>{" "}
