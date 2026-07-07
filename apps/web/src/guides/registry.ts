@@ -29,7 +29,7 @@ export const guides: Guide[] = [
     slug: "create-your-community",
     title: "Create your community",
     summary:
-      "Request a community from the switcher, what fair pricing means, how our admins review requests — and what happens if you're turned down.",
+      "Start your community in demo mode from the switcher, explore it with your team, then go live with simple $1/month per-active-member pricing.",
     series: CHURCH_ONBOARDING_SERIES,
     readMinutes: 6,
     emoji: "⛪️",
