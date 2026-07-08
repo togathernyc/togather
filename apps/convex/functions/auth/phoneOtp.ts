@@ -365,21 +365,27 @@ export const verifyPhoneOTP = action({
       );
     }
 
-    // Get active community details if set
+    // Get active community details if set. An archived (closed) active
+    // community is treated as if unset: the user can't auto-enter it and is
+    // routed to community selection instead (where it's also hidden).
     let activeCommunityName: string | undefined;
+    let hasUsableActiveCommunity = false;
     if (user.activeCommunityId) {
       const activeCommunity = await ctx.runQuery(
         internal.functions.authInternal.getCommunityByIdInternal,
         { communityId: user.activeCommunityId }
       );
-      activeCommunityName = activeCommunity?.name;
+      if (activeCommunity && !activeCommunity.isArchived) {
+        activeCommunityName = activeCommunity.name;
+        hasUsableActiveCommunity = true;
+      }
     }
 
     // If user has no communities or multiple communities, they need to select
-    // UNLESS they already have an active community set
+    // UNLESS they already have a usable active community set
     if (
       (communities.length === 0 || communities.length > 1) &&
-      !user.activeCommunityId
+      !hasUsableActiveCommunity
     ) {
       // Generate tokens without community (user will select one later)
       const tokens = await generateTokens(user._id, undefined);
@@ -406,8 +412,11 @@ export const verifyPhoneOTP = action({
     }
 
     // User has active community OR single community - direct login
-    // Use activeCommunityId if set, otherwise use the single community
-    const targetCommunityId = user.activeCommunityId || communities[0]?.id;
+    // Use activeCommunityId if usable (set and not archived), otherwise use the
+    // single remaining (non-archived) community.
+    const targetCommunityId = hasUsableActiveCommunity
+      ? user.activeCommunityId
+      : communities[0]?.id;
     const targetCommunityName = activeCommunityName || communities[0]?.name;
 
     // Update lastLogin on the community membership for active member tracking

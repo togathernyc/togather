@@ -30,6 +30,11 @@ export function useCommunitySettings() {
     api.functions.admin.settings.updateCommunitySettings
   );
 
+  // Mutation for archiving (closing) the community — primary admin only
+  const archiveCommunityMutation = useMutation(
+    api.functions.admin.settings.archiveCommunity
+  );
+
   // Action for R2 presigned URL
   const getR2UploadUrl = useAction(api.functions.uploads.getR2UploadUrl);
 
@@ -77,6 +82,19 @@ export function useCommunitySettings() {
     [community?.id, user?.id, token, updateSettingsMutation, refreshUser]
   );
 
+  // Archive (close) the community. One-way: after this no one can enter, and
+  // the caller is logged out by the screen. Primary admin only (enforced by
+  // the backend mutation via requirePrimaryAdmin).
+  const archiveCommunity = useCallback(async () => {
+    if (!community?.id || !token) {
+      throw new Error("Not authenticated");
+    }
+    await archiveCommunityMutation({
+      token,
+      communityId: community.id as Id<"communities">,
+    });
+  }, [community?.id, token, archiveCommunityMutation]);
+
   // Upload logo function
   // NOTE: This uses R2 presigned URLs for logo storage
   const uploadLogo = useCallback(
@@ -120,5 +138,6 @@ export function useCommunitySettings() {
     updateError,
     uploadLogo,
     isUploadingLogo,
+    archiveCommunity,
   };
 }

@@ -74,6 +74,14 @@ export const refreshToken = action({
         throw new Error("Community not found");
       }
 
+      // Archived (closed) communities cannot be refreshed into — this boots
+      // any still-open sessions the next time their access token expires.
+      if (community.isArchived) {
+        throw new Error(
+          "This community has been archived and is no longer accessible",
+        );
+      }
+
       // Verify user is a member of this community
       const userCommunities = await ctx.runQuery(
         internal.functions.authInternal.getUserWithCommunitiesInternal,

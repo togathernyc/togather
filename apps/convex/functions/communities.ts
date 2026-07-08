@@ -217,9 +217,13 @@ export const listPublic = query({
   handler: async (ctx, args) => {
     const { limit } = normalizePagination(args);
 
+    // Archived (closed) communities aren't listed. Filter in the query (before
+    // pagination) so archived rows don't consume the page window and cause a
+    // short page with a wrong hasMore.
     const communities = await ctx.db
       .query("communities")
       .withIndex("by_public", (q) => q.eq("isPublic", true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
       .take(limit + 1);
 
     const hasMore = communities.length > limit;
@@ -255,7 +259,8 @@ export const listForUser = query({
     const communities = await Promise.all(
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
-        return community
+        // Hide archived (closed) communities from the user's own list.
+        return community && !community.isArchived
           ? {
               ...community,
               roles: membership.roles,
@@ -434,6 +439,12 @@ export const join = mutation({
       userId,
       communityId: args.communityId,
     });
+
+    // Archived (closed) communities cannot be joined.
+    const community = await ctx.db.get(args.communityId);
+    if (!community || community.isArchived) {
+      throw new Error("This community is not available to join");
+    }
 
     // Check if already a member
     const existing = await ctx.db

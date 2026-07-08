@@ -56,6 +56,7 @@ export function SettingsContent() {
     isUpdating,
     uploadLogo,
     isUploadingLogo,
+    archiveCommunity,
   } = useCommunitySettings();
 
   const {
@@ -69,7 +70,8 @@ export function SettingsContent() {
   } = useGroupTypes();
 
   // Billing data
-  const { community, token } = useAuth();
+  const { community, token, user, logout } = useAuth();
+  const isPrimaryAdmin = user?.is_primary_admin ?? false;
   const billing = useQuery(
     api.functions.ee.billing.getSubscriptionStatus,
     community?.id && token
@@ -111,6 +113,9 @@ export function SettingsContent() {
 
   // Church Features state (opt-in religious features)
   const [isSavingChurchFeatures, setIsSavingChurchFeatures] = useState(false);
+
+  // Archive (close) community state
+  const [isArchiving, setIsArchiving] = useState(false);
 
   // Populate form with current settings
   useEffect(() => {
@@ -269,6 +274,52 @@ export function SettingsContent() {
     } finally {
       setIsSavingChurchFeatures(false);
     }
+  };
+
+  const performArchive = async () => {
+    setIsArchiving(true);
+    try {
+      await archiveCommunity();
+      // The community is now closed for everyone, including this admin, so
+      // there's nowhere to return to — sign out and drop back to login.
+      Alert.alert(
+        "Community Archived",
+        "This community has been archived. You'll now be signed out.",
+        [{ text: "OK", onPress: () => logout() }],
+      );
+    } catch (error: any) {
+      setIsArchiving(false);
+      Alert.alert("Error", formatError(error, "Failed to archive community"));
+    }
+  };
+
+  const handleArchiveCommunity = () => {
+    const communityName = settings?.name || "this community";
+    // Two-step confirmation — archiving is permanent and locks everyone out.
+    Alert.alert(
+      "Archive Community?",
+      `Archiving "${communityName}" closes it permanently. No one — including you — will be able to log in, and it will disappear from search. This cannot be undone from the app.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () =>
+            Alert.alert(
+              "Are you absolutely sure?",
+              `This will archive "${communityName}" for everyone. There is no in-app way to reopen it.`,
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Archive Community",
+                  style: "destructive",
+                  onPress: performArchive,
+                },
+              ],
+            ),
+        },
+      ],
+    );
   };
 
   const toggleExploreGroupType = (groupTypeId: string) => {
@@ -893,6 +944,40 @@ export function SettingsContent() {
           )}
         </View>
 
+        {/* Danger Zone — primary admin only */}
+        {isPrimaryAdmin && (
+          <View
+            style={[
+              styles.section,
+              styles.dangerSection,
+              { backgroundColor: colors.surface, borderColor: colors.error },
+            ]}
+          >
+            <Text style={[styles.sectionTitle, { color: colors.error }]}>Danger Zone</Text>
+            <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+              Archiving closes this community permanently. No one will be able to
+              log in, and it will be removed from search. This cannot be undone
+              from the app.
+            </Text>
+            <TouchableOpacity
+              style={[styles.dangerButton, { borderColor: colors.error }, isArchiving && styles.saveButtonDisabled]}
+              onPress={handleArchiveCommunity}
+              disabled={isArchiving}
+            >
+              {isArchiving ? (
+                <ActivityIndicator size="small" color={colors.error} />
+              ) : (
+                <>
+                  <Ionicons name="archive-outline" size={18} color={colors.error} />
+                  <Text style={[styles.dangerButtonText, { color: colors.error }]}>
+                    Archive Community
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Spacer for save button */}
         <View style={{ height: 80 }} />
       </ScrollView>
@@ -1167,6 +1252,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 8,
+  },
+  dangerSection: {
+    borderWidth: 1,
+  },
+  dangerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    padding: 14,
+    marginTop: 4,
+  },
+  dangerButtonText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   churchFeatureName: {
     fontSize: 16,

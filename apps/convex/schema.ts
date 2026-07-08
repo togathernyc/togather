@@ -99,6 +99,14 @@ export default defineSchema({
     isDemo: v.optional(v.boolean()),
     // The user who created the demo (for attribution and future cleanup).
     demoCreatedById: v.optional(v.id("users")),
+    // Archived (closed / shut down) communities. When true, no one can enter,
+    // switch into, or join the community, and it's hidden from search and
+    // discovery. This is a one-way soft delete set by the Primary Admin (see
+    // functions/admin/settings:archiveCommunity) — reversing it is a manual DB
+    // action, not an in-app flow.
+    isArchived: v.optional(v.boolean()),
+    archivedAt: v.optional(v.number()), // Unix timestamp ms
+    archivedById: v.optional(v.id("users")),
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online

@@ -197,6 +197,13 @@ export const selectCommunity = action({
       throw new Error("Community not found");
     }
 
+    // Archived (closed) communities cannot be entered.
+    if (community.isArchived) {
+      throw new Error(
+        "This community has been archived and is no longer accessible",
+      );
+    }
+
     // Ensure user has membership AND update active community atomically
     // This prevents inconsistent state where user has membership but wrong activeCommunityId
     await ctx.runMutation(
