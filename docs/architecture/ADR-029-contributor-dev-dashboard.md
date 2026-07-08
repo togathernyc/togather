@@ -328,13 +328,19 @@ gate holds**:
 - `AUTO_MERGE_ENABLED === "true"` — master safety switch; anything else means
   the feature is off (double-scheduling is harmless because the action
   re-checks everything itself).
-- `status === "READY_TO_MERGE"`, `riskLevel === "low"`,
-  `reviewVerdict === "approved"`.
+- `status === "READY_TO_MERGE"`, `reviewVerdict === "approved"`.
 - A `prUrl` to merge.
+- The bug's `riskLevel` is **at or below the per-originator auto-merge cap**.
+  Each user has an `autoMergeMaxSeverity` (`none` < `low` < `medium` < `high`),
+  set on the `/admin/maintainers` screen and defaulting to `low` when unset —
+  so the original "low-risk only" behavior is the default, and an operator can
+  trust an individual up to `high` or opt them out with `none`. The gate keys
+  off the contribution's originator (`getAutoMergeCapForUser`).
 
 Staging verification is **not** a merge gate: nothing reaches staging until the
 merge, so the reporter's staging try-it happens *after* merge and gates the
-manual production deploy instead. Merge gates on review + CI + low-risk only.
+manual production deploy instead. Merge gates on review + CI + the originator's
+severity cap only.
 
 The merge uses `GH_MIRROR_TOKEN` (the Phase 2 mirroring PAT, which now needs
 **Contents read/write** in addition to Issues) and the merge method from
@@ -345,6 +351,23 @@ passed (…)"; the action never sets `MERGED` itself — the `/github/webhook`
 failure (branch protection, conflict, auth) the thread gets "Auto-merge
 blocked: <reason> — needs a maintainer" and nothing retries — branch
 protection remains the backstop.
+
+### Detecting a manual merge
+
+`MERGED` is applied by the `/github/webhook` handler (or auto-merge itself),
+never claimed by a Routine. But webhook delivery isn't guaranteed — an
+unconfigured repo hook or a secret mismatch would leave a manually-merged PR's
+dashboard item stuck at `CODE_REVIEW`/`READY_TO_MERGE` forever. Two backstops
+cover that gap:
+
+- **Reconciliation cron.** `reconcileMergedPrs` runs every 15 minutes, polls
+  each open-PR bug's merge state on GitHub (via `GH_MIRROR_TOKEN`), and applies
+  the merge through the same webhook-correlation path — so a manual merge always
+  reflects within a cron interval even with no webhook configured. Idempotent;
+  a no-op when the GitHub integration is unset.
+- **Manual "Mark merged".** The review screen's button is available from
+  `CODE_REVIEW` as well as `READY_TO_MERGE` (both are legal forward transitions
+  to `MERGED`), so a maintainer can always flip an open-PR item by hand.
 
 ## Phase 1.7 — low-friction filing, pictures, and copyable split prompts (Accepted)
 

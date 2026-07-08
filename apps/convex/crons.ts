@@ -293,4 +293,19 @@ crons.monthly(
   {}
 );
 
+// =============================================================================
+// DEV-ASSISTANT PR MERGE RECONCILE
+// =============================================================================
+// Backstop for the /github/webhook: polls open dev-dashboard PRs and flips a
+// bug to MERGED when its PR has merged on GitHub, so manual merges reflect on
+// the Contribute dashboard even when the webhook isn't delivering. Idempotent;
+// no-ops when the GitHub integration is unconfigured. See ADR-029 Phase 3.
+
+crons.cron(
+  "dev-assistant-pr-merge-reconcile",
+  "*/15 * * * *",
+  internal.functions.devAssistant.actions.reconcileMergedPrs,
+  {}
+);
+
 export default crons;

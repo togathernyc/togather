@@ -237,7 +237,9 @@ export function BugDetailScreen() {
                 </Text>
               </TouchableOpacity>
             ) : null}
-            {bug.status === "READY_TO_MERGE" ? (
+            {(bug.status === "READY_TO_MERGE" ||
+              bug.status === "CODE_REVIEW") &&
+            bug.prUrl ? (
               <TouchableOpacity
                 style={[styles.actionBtn, { backgroundColor: "#34C75920" }]}
                 disabled={busy}

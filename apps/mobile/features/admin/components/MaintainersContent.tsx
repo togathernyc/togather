@@ -36,6 +36,19 @@ import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { Avatar } from "@components/ui/Avatar";
 
+type Severity = "none" | "low" | "medium" | "high";
+
+/**
+ * Auto-merge cap options, low→high. A maintainer's contributions auto-merge only
+ * up to the selected risk level; "None" opts them out of auto-merge entirely.
+ */
+const SEVERITY_OPTIONS: { key: Severity; label: string }[] = [
+  { key: "none", label: "None" },
+  { key: "low", label: "Low" },
+  { key: "medium", label: "Med" },
+  { key: "high", label: "High" },
+];
+
 type UserResult = {
   _id: Id<"users">;
   firstName: string | null;
@@ -45,6 +58,7 @@ type UserResult = {
   profilePhoto: string | null;
   alreadyMaintainer?: boolean;
   isSuperuser?: boolean;
+  autoMergeMaxSeverity?: Severity;
 };
 
 export function MaintainersContent() {
@@ -79,6 +93,9 @@ export function MaintainersContent() {
   const revoke = useAuthenticatedMutation(
     api.functions.devAssistant.maintainers.revokeMaintainer,
   );
+  const setSeverity = useAuthenticatedMutation(
+    api.functions.devAssistant.maintainers.setAutoMergeMaxSeverity,
+  );
 
   const handleGrant = async (userId: Id<"users">) => {
     setBusyUserId(userId);
@@ -88,6 +105,23 @@ export function MaintainersContent() {
     } catch (err) {
       Alert.alert(
         "Add failed",
+        err instanceof Error ? err.message : "Unknown error",
+      );
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const handleSetSeverity = async (
+    userId: Id<"users">,
+    maxSeverity: Severity,
+  ) => {
+    setBusyUserId(userId);
+    try {
+      await setSeverity({ userId, maxSeverity });
+    } catch (err) {
+      Alert.alert(
+        "Update failed",
         err instanceof Error ? err.message : "Unknown error",
       );
     } finally {
@@ -166,24 +200,41 @@ export function MaintainersContent() {
           No maintainers yet. Staff and superusers always have access.
         </Text>
       ) : (
-        <View style={{ gap: 8 }}>
-          {maintainers.map((u) => (
-            <UserRow
-              key={u._id}
-              user={u}
-              busy={busyUserId === u._id}
-              trailing={
-                <TouchableOpacity
-                  onPress={() => handleRevoke(u._id)}
+        <>
+          <Text style={[styles.caption, { color: colors.textSecondary }]}>
+            “Auto-merge up to” sets the highest risk level whose approved PRs
+            merge automatically for this person’s contributions. “None” means
+            every one waits for a manual merge.
+          </Text>
+          <View style={{ gap: 12 }}>
+            {maintainers.map((u) => (
+              <View key={u._id} style={{ gap: 8 }}>
+                <UserRow
+                  user={u}
+                  busy={busyUserId === u._id}
+                  trailing={
+                    // Staff/superusers have implicit access (no revocable
+                    // role) — show the cap selector but not a Remove button.
+                    u.isSuperuser ? null : (
+                      <TouchableOpacity
+                        onPress={() => handleRevoke(u._id)}
+                        disabled={busyUserId === u._id}
+                        style={styles.revokeBtn}
+                      >
+                        <Text style={styles.revokeBtnText}>Remove</Text>
+                      </TouchableOpacity>
+                    )
+                  }
+                />
+                <SeverityStrip
+                  value={u.autoMergeMaxSeverity ?? "low"}
                   disabled={busyUserId === u._id}
-                  style={styles.revokeBtn}
-                >
-                  <Text style={styles.revokeBtnText}>Remove</Text>
-                </TouchableOpacity>
-              }
-            />
-          ))}
-        </View>
+                  onChange={(sev) => handleSetSeverity(u._id, sev)}
+                />
+              </View>
+            ))}
+          </View>
+        </>
       )}
 
       <Text
@@ -331,6 +382,62 @@ function UserRow({
   );
 }
 
+/**
+ * Per-maintainer auto-merge cap selector: a labeled row of severity pills. The
+ * active level is highlighted; tapping another sets it. Sits under the
+ * maintainer's row so the whole entry reads as one control group.
+ */
+function SeverityStrip({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: Severity;
+  onChange: (sev: Severity) => void;
+  disabled: boolean;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={styles.sevStrip}>
+      <Text style={[styles.sevLabel, { color: colors.textSecondary }]}>
+        Auto-merge up to
+      </Text>
+      <View style={styles.sevPills}>
+        {SEVERITY_OPTIONS.map((o) => {
+          const active = value === o.key;
+          return (
+            <TouchableOpacity
+              key={o.key}
+              disabled={disabled || active}
+              onPress={() => onChange(o.key)}
+              style={[
+                styles.sevPill,
+                { borderColor: colors.border },
+                active && {
+                  backgroundColor: colors.text,
+                  borderColor: colors.text,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`Auto-merge up to ${o.label}`}
+            >
+              <Text
+                style={[
+                  styles.sevPillText,
+                  { color: active ? colors.background : colors.textSecondary },
+                ]}
+              >
+                {o.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 async function confirmRevoke(): Promise<boolean> {
   const title = "Remove maintainer?";
   const message = "They'll lose dev-assistant access immediately.";
@@ -377,6 +484,36 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.4,
     marginBottom: 8,
+  },
+  caption: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  sevStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  sevLabel: {
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  sevPills: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  sevPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  sevPillText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   searchBar: {
     flexDirection: "row",
