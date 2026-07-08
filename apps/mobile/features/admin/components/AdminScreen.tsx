@@ -138,7 +138,7 @@ export function AdminScreen() {
           // whole roster (showAllMembers), and reach per-member admin controls
           // (role, transfer primary admin, remove) via the person's detail
           // screen. Replaces the old standalone PeopleContent list.
-          <PeopleTabScreen showAllMembers />
+          <PeopleTabScreen showAllMembers embedded />
         ) : activeTab === "stats" ? (
           <StatsContent />
         ) : (

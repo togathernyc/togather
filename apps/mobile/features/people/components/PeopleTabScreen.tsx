@@ -8,12 +8,17 @@ import { FollowupMobileCards } from "@features/leader-tools/components/FollowupM
 
 export function PeopleTabScreen({
   showAllMembers = false,
+  embedded = false,
 }: {
   // Leader-tools People tab (default) pins the roster to the current leader's
   // assigned members. The admin "People" surface passes showAllMembers so
   // admins see the whole community roster (this is the merged Admin → People
   // view — the same check-in roster, unfiltered).
   showAllMembers?: boolean;
+  // True when rendered inside the Admin screen, which already applies the top
+  // safe-area inset via its header. Forwarded to the native card list so it
+  // doesn't add the inset a second time.
+  embedded?: boolean;
 } = {}) {
   const { user, community } = useAuth();
   const currentUserId = user?.id;
@@ -59,6 +64,7 @@ export function PeopleTabScreen({
       enforcedAssigneeUserId={enforcedAssigneeUserId}
       returnTo={returnTo}
       hideHeader
+      embedded={embedded}
     />
   );
 }
