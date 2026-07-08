@@ -17,12 +17,49 @@
  */
 
 import { v, ConvexError } from "convex/values";
-import { query, mutation } from "../../_generated/server";
+import { query, mutation, internalQuery } from "../../_generated/server";
 import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import type { Doc } from "../../_generated/dataModel";
 import { requireAuth, requireAuthUser } from "../../lib/auth";
 
 export const DEV_MAINTAINER_ROLE = "dev_maintainer" as const;
+
+// ============================================================================
+// Auto-merge severity cap (ADR-029 Phase 3)
+// ============================================================================
+
+/**
+ * Per-user cap on the contribution risk level that may auto-merge. Keyed off a
+ * bug's originator: an item auto-merges only when its `riskLevel` is at or below
+ * this cap. Managed on the maintainers screen.
+ */
+export const autoMergeSeverityValidator = v.union(
+  v.literal("none"),
+  v.literal("low"),
+  v.literal("medium"),
+  v.literal("high"),
+);
+
+export type AutoMergeSeverity = "none" | "low" | "medium" | "high";
+
+/**
+ * Ordinal rank for the severity gate. A contribution auto-merges only when its
+ * riskLevel rank is <= the originator's cap rank. "none" (-1) sits below every
+ * real risk level, so those contributions never auto-merge.
+ */
+export const AUTO_MERGE_SEVERITY_ORDER: Record<AutoMergeSeverity, number> = {
+  none: -1,
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+/**
+ * Default cap for a user without an explicit setting. "low" preserves the
+ * original global policy (only low-risk contributions auto-merge); an operator
+ * raises it per person on the maintainers screen.
+ */
+export const DEFAULT_AUTO_MERGE_MAX_SEVERITY: AutoMergeSeverity = "low";
 
 // ============================================================================
 // Access helpers
@@ -102,6 +139,8 @@ export const listMaintainers = query({
         phone: u.phone ?? null,
         profilePhoto: u.profilePhoto ?? null,
         isSuperuser: u.isSuperuser === true || u.isStaff === true,
+        autoMergeMaxSeverity:
+          u.autoMergeMaxSeverity ?? DEFAULT_AUTO_MERGE_MAX_SEVERITY,
       }));
   },
 });
@@ -164,5 +203,42 @@ export const revokeMaintainer = mutation({
     const next = current.filter((r) => r !== DEV_MAINTAINER_ROLE);
     await ctx.db.patch(args.userId, { platformRoles: next });
     return { ok: true };
+  },
+});
+
+/**
+ * Set a user's auto-merge severity cap (superuser-only). Governs the max
+ * contribution risk level that may auto-merge for items this user originated —
+ * "none" opts them out, "high" auto-merges everything up to high risk.
+ */
+export const setAutoMergeMaxSeverity = mutation({
+  args: {
+    token: v.string(),
+    userId: v.id("users"),
+    maxSeverity: autoMergeSeverityValidator,
+  },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    await requireSuperAdmin(ctx, args.token);
+    const target = await ctx.db.get(args.userId);
+    if (!target) throw new ConvexError("User not found");
+    await ctx.db.patch(args.userId, { autoMergeMaxSeverity: args.maxSeverity });
+    return { ok: true };
+  },
+});
+
+// ============================================================================
+// Internal — auto-merge gate lookup
+// ============================================================================
+
+/**
+ * The effective auto-merge severity cap for a user (default when unset). Called
+ * by the auto-merge action, which runs outside a DB context.
+ */
+export const getAutoMergeCapForUser = internalQuery({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args): Promise<AutoMergeSeverity> => {
+    const user = await ctx.db.get(args.userId);
+    return (user?.autoMergeMaxSeverity ??
+      DEFAULT_AUTO_MERGE_MAX_SEVERITY) as AutoMergeSeverity;
   },
 });

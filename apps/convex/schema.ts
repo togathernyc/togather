@@ -176,6 +176,18 @@ export default defineSchema({
     // Granular platform-level roles for delegated operator access.
     // Values: "poster_admin" (may expand later). isSuperuser/isStaff bypass this check.
     platformRoles: v.optional(v.array(v.string())),
+    // Max contribution risk level whose PR may auto-merge, for dashboard
+    // contributions this user originated (ADR-029 Phase 3). Set per person on
+    // the maintainers screen; unset defaults to "low" (see
+    // maintainers.DEFAULT_AUTO_MERGE_MAX_SEVERITY). "none" opts out entirely.
+    autoMergeMaxSeverity: v.optional(
+      v.union(
+        v.literal("none"),
+        v.literal("low"),
+        v.literal("medium"),
+        v.literal("high"),
+      ),
+    ),
     username: v.optional(v.string()),
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),

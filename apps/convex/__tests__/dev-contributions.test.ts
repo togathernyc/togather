@@ -2388,6 +2388,49 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  test("a raised per-originator cap lets a higher-risk item auto-merge", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    // This originator is trusted up to high risk.
+    await t.run(async (ctx) =>
+      ctx.db.patch(maintainerId, { autoMergeMaxSeverity: "high" }),
+    );
+    const id = await seedMergeBug(t, maintainerId, { riskLevel: "high" });
+    const fetchMock = stubMergeFetch(
+      () => new Response(JSON.stringify({ merged: true }), { status: 200 }),
+    );
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+  });
+
+  test("a 'none' cap blocks auto-merge even for a low-risk item", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    enableAutoMerge();
+    await t.run(async (ctx) =>
+      ctx.db.patch(maintainerId, { autoMergeMaxSeverity: "none" }),
+    );
+    const id = await seedMergeBug(t, maintainerId, { riskLevel: "low" });
+    const fetchMock = stubMergeFetch(() => new Response(null, { status: 200 }));
+
+    await t.action(internal.functions.devAssistant.actions.attemptAutoMerge, {
+      bugId: id,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+  });
+
   test("all gates passing merges via squash and applies MERGED directly", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
@@ -3638,5 +3681,103 @@ describe("archive pauses the pipeline", () => {
       id,
     });
     expect((await t.run((ctx) => ctx.db.get(id)))?.archivedAt).toBeUndefined();
+  });
+});
+
+describe("reconcileMergedPrs (manual-merge backstop)", () => {
+  const PR_URL = "https://github.com/togathernyc/togather/pull/77";
+  const PR_GET_URL =
+    "https://api.github.com/repos/togathernyc/togather/pulls/77";
+
+  async function seedOpenPrBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    status: "CODE_REVIEW" | "READY_TO_MERGE",
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status,
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        riskLevel: "medium",
+        reviewVerdict: status === "READY_TO_MERGE" ? "approved" : undefined,
+        routineRunId: "run-merge",
+        prUrl: PR_URL,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("flips an open-PR bug to MERGED when GitHub reports it merged", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_MIRROR_TOKEN = "gh-merge-pat";
+    const id = await seedOpenPrBug(t, maintainerId, "READY_TO_MERGE");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ merged: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.action(
+      internal.functions.devAssistant.actions.reconcileMergedPrs,
+      {},
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // Polled the PR's GitHub endpoint, then applied the merge.
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(PR_GET_URL);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+  });
+
+  test("leaves the bug untouched when the PR isn't merged yet", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_MIRROR_TOKEN = "gh-merge-pat";
+    const id = await seedOpenPrBug(t, maintainerId, "CODE_REVIEW");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ merged: false }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.action(
+      internal.functions.devAssistant.actions.reconcileMergedPrs,
+      {},
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("CODE_REVIEW");
+  });
+
+  test("no-ops when the GitHub integration is unconfigured", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    // GH_MIRROR_TOKEN intentionally unset.
+    const id = await seedOpenPrBug(t, maintainerId, "READY_TO_MERGE");
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ merged: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.action(
+      internal.functions.devAssistant.actions.reconcileMergedPrs,
+      {},
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
   });
 });

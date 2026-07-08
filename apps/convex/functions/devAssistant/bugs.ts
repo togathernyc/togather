@@ -384,6 +384,26 @@ export const getBug = internalQuery({
   },
 });
 
+/**
+ * Bugs whose PR is open (CODE_REVIEW / READY_TO_MERGE) and has a prUrl. The
+ * reconciliation cron (actions.reconcileMergedPrs) polls these against GitHub to
+ * catch manual merges the webhook missed.
+ */
+export const listOpenPrBugs = internalQuery({
+  args: {},
+  handler: async (ctx): Promise<Doc<"devBugs">[]> => {
+    const out: Doc<"devBugs">[] = [];
+    for (const status of ["CODE_REVIEW", "READY_TO_MERGE"] as const) {
+      const rows = await ctx.db
+        .query("devBugs")
+        .withIndex("by_status", (q) => q.eq("status", status))
+        .collect();
+      for (const b of rows) if (b.prUrl) out.push(b);
+    }
+    return out;
+  },
+});
+
 // ============================================================================
 // Mobile review screen (token-authed, staff only)
 // ============================================================================
