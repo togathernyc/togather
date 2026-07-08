@@ -11,6 +11,7 @@ import { Id } from "../_generated/dataModel";
 import { now, normalizePagination } from "../lib/utils";
 import { paginationArgs } from "../lib/validators";
 import { requireAuth, requireAuthAllowArchivedCommunity } from "../lib/auth";
+import { assertCommunityNotArchived } from "../lib/permissions";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic, syncAnnouncementGroupMembership } from "./sync/memberships";
@@ -309,6 +310,9 @@ export const getMembers = query({
   handler: async (ctx, args) => {
     // Require authentication
     const userId = await requireAuth(ctx, args.token);
+
+    // Archived (closed) communities are inaccessible even by id.
+    await assertCommunityNotArchived(ctx, args.communityId);
 
     // Verify caller is a member of this community
     const callerMembership = await ctx.db

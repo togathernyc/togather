@@ -12,6 +12,7 @@
  * - communityWideEvents.ts
  */
 
+import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 
 // ============================================================================
@@ -59,6 +60,28 @@ export const LEADER_ROLES = ["leader"] as const;
 // ============================================================================
 // Permission Check Helpers
 // ============================================================================
+
+/**
+ * Throw if the target community has been archived (closed).
+ *
+ * The universal `requireAuth` gate (lib/auth.ts) already rejects any request
+ * whose JWT is *scoped* to an archived community, which covers all normal
+ * sessions. This helper closes the complementary by-id vector: a caller holding
+ * a community-less or other-community token that passes an archived community's
+ * id as an argument. It's wired into the shared authorization helpers below
+ * (admin/member checks) so those paths reject archived communities regardless
+ * of token scope. Throws the same `COMMUNITY_ARCHIVED` error the client uses to
+ * route users back to community selection.
+ */
+export async function assertCommunityNotArchived(
+  ctx: { db: any },
+  communityId: Id<"communities">
+): Promise<void> {
+  const community = await ctx.db.get(communityId);
+  if (community?.isArchived) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
+}
 
 /**
  * Check if user is a community admin (Admin or Primary Admin).
@@ -129,6 +152,8 @@ export async function requireCommunityAdmin(
   if (!isAdmin) {
     throw new Error("Community admin role required");
   }
+  // Even an admin cannot act on an archived (closed) community.
+  await assertCommunityNotArchived(ctx, communityId);
 }
 
 /**

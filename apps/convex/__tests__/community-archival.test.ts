@@ -220,11 +220,44 @@ describe("archiveCommunity mutation", () => {
       communityId: setup.communityId,
     });
 
-    const after = await t.query(api.functions.admin.settings.getCommunitySettings, {
+    // Once archived, even the admin settings endpoints reject by id — the
+    // community is inaccessible. Verify the flag directly instead.
+    await expect(
+      t.query(api.functions.admin.settings.getCommunitySettings, {
+        token: setup.primaryAdminToken,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
+    const community = await t.run((ctx) => ctx.db.get(setup.communityId));
+    expect(community?.isArchived).toBe(true);
+  });
+
+  test("admin-by-id paths reject an archived community", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
       token: setup.primaryAdminToken,
       communityId: setup.communityId,
     });
-    expect(after.isArchived).toBe(true);
+
+    // Editing settings by id is blocked even with a valid admin token that is
+    // NOT scoped to the archived community (requireCommunityAdmin gate).
+    await expect(
+      t.mutation(api.functions.admin.settings.updateCommunitySettings, {
+        token: setup.primaryAdminToken,
+        communityId: setup.communityId,
+        name: "Renamed",
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
+
+    // Browsing the member list by id is likewise blocked.
+    await expect(
+      t.query(api.functions.communities.getMembers, {
+        token: setup.memberToken,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
   });
 });
 
