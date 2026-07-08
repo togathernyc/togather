@@ -107,6 +107,7 @@ export function FollowupMobileCards({
   enforcedAssigneeUserId,
   returnTo,
   hideHeader = false,
+  embedded = false,
 }: {
   groupId: string;
   enforcedAssigneeUserId?: string;
@@ -114,6 +115,10 @@ export function FollowupMobileCards({
   // Tab surfaces (Admin → People) hide the "Check-in" title/back header so the
   // search bar sits at the top; the group-scoped check-in keeps it for nav.
   hideHeader?: boolean;
+  // True when rendered inside a parent that already applies the top safe-area
+  // inset (e.g. the Admin header). Suppresses our own top inset so it isn't
+  // applied twice, which otherwise leaves a large empty gap above the search bar.
+  embedded?: boolean;
 }) {
   const { colors } = useTheme();
   const router = useRouter();
@@ -364,7 +369,11 @@ export function FollowupMobileCards({
         style={[
           styles.searchWrap,
           { borderBottomColor: colors.border },
-          hideHeader && { paddingTop: insets.top + 8 },
+          // Only add the top safe-area inset when we're the top-most element on
+          // screen (standalone People tab route). When embedded under a parent
+          // header (Admin → People), the parent already applies it — adding it
+          // here too produced the empty white gap above the search bar.
+          hideHeader && !embedded && { paddingTop: insets.top + 8 },
         ]}
       >
         <View
@@ -500,6 +509,50 @@ function MemberCard({
   const connectionLabel =
     connection < 40 ? "low" : connection < 70 ? "watch" : "strong";
 
+  // Assignee state, rendered inline on the sub-row. Three cases: unassigned,
+  // assigned to a group leader (star), or assigned community-only (warning).
+  const assigneeNode =
+    assigneeIds.length === 0 ? (
+      <Text
+        style={[styles.assigneeText, { color: colors.textTertiary }]}
+        numberOfLines={1}
+      >
+        Unassigned · tap to assign
+      </Text>
+    ) : groupLeaderAssignees.length > 0 ? (
+      <View style={styles.assigneeRow}>
+        <Ionicons name="star" size={11} color={primaryColor} />
+        <Text
+          style={[styles.assigneeText, { color: colors.textSecondary }]}
+          numberOfLines={1}
+        >
+          {groupLeaderAssignees
+            .map((id) => {
+              const l = leaderMap.get(id);
+              return l ? `${l.firstName} ${l.lastName}`.trim() : "";
+            })
+            .filter(Boolean)
+            .join(", ")}
+          {communityOnlyAssignees.length > 0 &&
+            `  +${communityOnlyAssignees.length} community`}
+        </Text>
+      </View>
+    ) : (
+      <View style={styles.assigneeRow}>
+        <Ionicons
+          name="alert-circle-outline"
+          size={11}
+          color={colors.warning}
+        />
+        <Text
+          style={[styles.assigneeText, { color: colors.warning }]}
+          numberOfLines={1}
+        >
+          No group leader · {leaderMap.get(communityOnlyAssignees[0])?.firstName ?? "community"}
+        </Text>
+      </View>
+    );
+
   return (
     <TouchableOpacity
       activeOpacity={0.7}
@@ -509,71 +562,61 @@ function MemberCard({
         { backgroundColor: colors.surface, borderColor: colors.border },
       ]}
     >
-      {/* Top row: avatar + name + assignee chip */}
-      <View style={styles.cardTopRow}>
-        <Avatar
-          name={`${member.firstName} ${member.lastName}`.trim()}
-          imageUrl={member.avatarUrl}
-          size={40}
-        />
-        <View style={styles.cardTopRowText}>
+      <Avatar
+        name={`${member.firstName} ${member.lastName}`.trim()}
+        imageUrl={member.avatarUrl}
+        size={42}
+      />
+
+      <View style={styles.cardBody}>
+        {/* Row 1: full name + reach out */}
+        <View style={styles.cardTitleRow}>
           <Text
             style={[styles.cardName, { color: colors.text }]}
             numberOfLines={1}
           >
             {member.firstName} {member.lastName}
           </Text>
-          <Pressable onPress={onAssign} hitSlop={6}>
-            {assigneeIds.length === 0 ? (
-              <Text
-                style={[styles.assigneeUnassigned, { color: colors.textTertiary }]}
-              >
-                Unassigned · tap to assign
-              </Text>
-            ) : groupLeaderAssignees.length > 0 ? (
-              <View style={styles.assigneeRow}>
-                <Ionicons name="star" size={11} color={primaryColor} />
-                <Text
-                  style={[styles.assigneeText, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {groupLeaderAssignees
-                    .map((id) => {
-                      const l = leaderMap.get(id);
-                      return l ? `${l.firstName} ${l.lastName}`.trim() : "";
-                    })
-                    .filter(Boolean)
-                    .join(", ")}
-                  {communityOnlyAssignees.length > 0 &&
-                    `  +${communityOnlyAssignees.length} community`}
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.assigneeRow}>
-                <Ionicons
-                  name="alert-circle-outline"
-                  size={11}
-                  color={colors.warning}
-                />
-                <Text
-                  style={[styles.assigneeText, { color: colors.warning }]}
-                  numberOfLines={1}
-                >
-                  No group leader · {leaderMap.get(communityOnlyAssignees[0])?.firstName ?? "community"}
-                </Text>
-              </View>
-            )}
+          <Pressable
+            onPress={onReachOut}
+            style={[
+              styles.reachOutBtn,
+              { backgroundColor: primaryColor + "1A", borderColor: primaryColor },
+            ]}
+            hitSlop={4}
+          >
+            <Text style={[styles.reachOutBtnText, { color: primaryColor }]}>
+              Reach out
+            </Text>
+            <Ionicons name="arrow-forward" size={12} color={primaryColor} />
           </Pressable>
         </View>
-      </View>
 
-      {/* Scores */}
-      <View style={styles.scoresRow}>
-        <View style={styles.scoreCol}>
-          <Text style={[styles.scoreLabel, { color: colors.textTertiary }]}>
-            Connection
+        {/* Row 2: assignee (tap to assign) + follow-up reason. Only the
+            assignee is pressable; tapping the reason falls through to the
+            card's onPress (opens the person), matching the old footer. */}
+        <View style={styles.cardSubRow}>
+          <Pressable
+            onPress={onAssign}
+            hitSlop={6}
+            style={styles.cardSubAssignee}
+          >
+            {assigneeNode}
+          </Pressable>
+          <Text style={[styles.cardSubDivider, { color: colors.textTertiary }]}>
+            ·
           </Text>
-          <View style={styles.scoreValueRow}>
+          <Text
+            style={[styles.reasonLine, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {reasonLine}
+          </Text>
+        </View>
+
+        {/* Row 3: scores as an inline strip */}
+        <View style={styles.scoresRow}>
+          <View style={styles.metric}>
             <View
               style={[
                 styles.scoreDot,
@@ -581,74 +624,39 @@ function MemberCard({
               ]}
             />
             <Text
-              style={[
-                styles.scoreValueHero,
-                { color: scoreColor(connection, colors) },
-              ]}
+              style={[styles.metricValue, { color: scoreColor(connection, colors) }]}
             >
               {Math.round(connection)}
             </Text>
+            <Text
+              style={[styles.metricTag, { color: scoreColor(connection, colors) }]}
+            >
+              {connectionLabel}
+            </Text>
           </View>
-          <Text
-            style={[
-              styles.scoreSubLabel,
-              { color: scoreColor(connection, colors) },
-            ]}
-          >
-            {connectionLabel}
-          </Text>
-        </View>
 
-        <View style={styles.scoreCol}>
-          <Text style={[styles.scoreLabel, { color: colors.textTertiary }]}>
-            Attendance
-          </Text>
-          <Text
-            style={[
-              styles.scoreValueSecondary,
-              { color: scoreColor(attendance, colors) },
-            ]}
-          >
-            {Math.round(attendance)}%
-          </Text>
-        </View>
+          <View style={styles.metric}>
+            <Text
+              style={[styles.metricValue, { color: scoreColor(attendance, colors) }]}
+            >
+              {Math.round(attendance)}%
+            </Text>
+            <Text style={[styles.metricLabel, { color: colors.textTertiary }]}>
+              att
+            </Text>
+          </View>
 
-        <View style={styles.scoreCol}>
-          <Text style={[styles.scoreLabel, { color: colors.textTertiary }]}>
-            Serving
-          </Text>
-          <Text
-            style={[
-              styles.scoreValueSecondary,
-              { color: scoreColor(service, colors) },
-            ]}
-          >
-            {Math.round(service)}%
-          </Text>
+          <View style={styles.metric}>
+            <Text
+              style={[styles.metricValue, { color: scoreColor(service, colors) }]}
+            >
+              {Math.round(service)}%
+            </Text>
+            <Text style={[styles.metricLabel, { color: colors.textTertiary }]}>
+              serve
+            </Text>
+          </View>
         </View>
-      </View>
-
-      {/* Reason + reach out */}
-      <View style={styles.cardFooter}>
-        <Text
-          style={[styles.reasonLine, { color: colors.textSecondary }]}
-          numberOfLines={1}
-        >
-          {reasonLine}
-        </Text>
-        <Pressable
-          onPress={onReachOut}
-          style={[
-            styles.reachOutBtn,
-            { backgroundColor: primaryColor + "1A", borderColor: primaryColor },
-          ]}
-          hitSlop={4}
-        >
-          <Text style={[styles.reachOutBtnText, { color: primaryColor }]}>
-            Reach out
-          </Text>
-          <Ionicons name="arrow-forward" size={12} color={primaryColor} />
-        </Pressable>
       </View>
     </TouchableOpacity>
   );
@@ -1094,50 +1102,26 @@ const styles = StyleSheet.create({
   sectionHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
   sectionTitle: { fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   cardList: { gap: 8 },
+  // Compact card: avatar on the left, a three-row body (name+action,
+  // assignee+reason, inline scores) on the right. Roughly half the height of
+  // the old stacked-column layout so more people are visible at once.
   card: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    padding: 12,
-    gap: 10,
+    padding: 11,
   },
-  cardTopRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  cardTopRowText: { flex: 1 },
-  cardName: { fontSize: 15, fontWeight: "600" },
-  assigneeUnassigned: { fontSize: 12, marginTop: 2 },
-  assigneeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 2,
-  },
+  cardBody: { flex: 1, gap: 3 },
+  cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  cardName: { flex: 1, fontSize: 15, fontWeight: "600" },
+  cardSubRow: { flexDirection: "row", alignItems: "center", gap: 5 },
+  cardSubAssignee: { flexShrink: 1 },
+  cardSubDivider: { fontSize: 12 },
+  assigneeRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   assigneeText: { fontSize: 12, flexShrink: 1 },
-  scoresRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 4,
-  },
-  scoreCol: { flex: 1, alignItems: "flex-start" },
-  scoreLabel: {
-    fontSize: 10,
-    fontWeight: "600",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
-    marginBottom: 2,
-  },
-  scoreValueRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  scoreDot: { width: 6, height: 6, borderRadius: 3 },
-  scoreValueHero: { fontSize: 26, fontWeight: "700", lineHeight: 30 },
-  scoreSubLabel: { fontSize: 10, fontWeight: "600", marginTop: 0 },
-  scoreValueSecondary: { fontSize: 16, fontWeight: "600", marginTop: 2 },
-  cardFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  reasonLine: { fontSize: 12, flex: 1 },
+  reasonLine: { fontSize: 12, flexShrink: 1 },
   reachOutBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1148,6 +1132,31 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   reachOutBtnText: { fontSize: 12, fontWeight: "600" },
+  scoresRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    marginTop: 2,
+  },
+  metric: { flexDirection: "row", alignItems: "center", gap: 5 },
+  scoreDot: { width: 6, height: 6, borderRadius: 3 },
+  metricValue: {
+    fontSize: 15,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  metricLabel: {
+    fontSize: 10,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  metricTag: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
 
   // Modal / sheet
   modalBackdrop: {
