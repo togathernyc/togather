@@ -680,27 +680,61 @@ function StepAboutChurch({
         </View>
       </View>
 
-      {/* Informational callout — guidance, not an input. */}
+      {/* Capacity note — guidance, not an input. */}
       <View
-        style={[styles.callout, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderLight }]}
+        style={[styles.guideCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
       >
-        <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} style={styles.calloutIcon} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
-            One community can hold up to 1,000,000 people — but this demo is
-            capped at 100 sample members so it stays fast to explore.
-          </Text>
-          <Text style={[styles.calloutHeading, { color: colors.text }]}>
-            One community, or several?
-          </Text>
-          <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
-            Put campuses people can reasonably commute between in ONE community
-            (e.g. Brooklyn / Queens / Manhattan, or DC / Maryland / Virginia),
-            and keep the community name broad enough to cover them all. If
-            locations are far apart — different states or regions like Maryland
-            vs. New York — create SEPARATE communities instead.
+        <View style={styles.guideHeader}>
+          <View style={[styles.guideIconBadge, { backgroundColor: colors.link + "1A" }]}>
+            <Ionicons name="information-circle" size={18} color={colors.link} />
+          </View>
+          <Text style={[styles.guideTitle, { color: colors.text }]}>Good to know</Text>
+        </View>
+        <Text style={[styles.guideText, { color: colors.textSecondary }]}>
+          One community holds up to{" "}
+          <Text style={{ color: colors.text, fontWeight: "600" }}>1M people</Text>
+          {" "}— this demo is capped at 100 members so it stays fast to explore.
+        </Text>
+      </View>
+
+      {/* Decision guidance: one community vs. several, split so each scenario
+          is a scannable card rather than one dense paragraph. */}
+      <Text style={[styles.guideSectionLabel, { color: colors.text }]}>
+        One community, or several?
+      </Text>
+
+      <View
+        style={[styles.guideCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+      >
+        <View style={styles.guideHeader}>
+          <View style={[styles.guideIconBadge, { backgroundColor: colors.success + "1A" }]}>
+            <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+          </View>
+          <Text style={[styles.guideTitle, { color: colors.text }]}>
+            Keep it as ONE community
           </Text>
         </View>
+        <Text style={[styles.guideText, { color: colors.textSecondary }]}>
+          Campuses people can commute between — e.g. Brooklyn / Queens /
+          Manhattan. Use one broad name that covers them all.
+        </Text>
+      </View>
+
+      <View
+        style={[styles.guideCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+      >
+        <View style={styles.guideHeader}>
+          <View style={[styles.guideIconBadge, { backgroundColor: colors.warning + "1A" }]}>
+            <Ionicons name="git-branch" size={18} color={colors.warning} />
+          </View>
+          <Text style={[styles.guideTitle, { color: colors.text }]}>
+            Make SEPARATE communities
+          </Text>
+        </View>
+        <Text style={[styles.guideText, { color: colors.textSecondary }]}>
+          Locations far apart — different states or regions, like Maryland vs.
+          New York. Give each its own community.
+        </Text>
       </View>
     </>
   );
@@ -1229,6 +1263,41 @@ const styles = StyleSheet.create({
   calloutText: {
     fontSize: 13,
     lineHeight: 19,
+  },
+  // Richer guidance card (Step 1) — header badge + divided sections.
+  guideCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 18,
+    marginBottom: 20,
+  },
+  guideHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  guideIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  guideTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    flex: 1,
+  },
+  guideSectionLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  guideText: {
+    fontSize: 13.5,
+    lineHeight: 20,
   },
   fieldGroup: {
     marginBottom: 16,
