@@ -20,6 +20,8 @@ import {
   canUseDevAssistant,
   isDevAssistantSuperAdmin,
   DEV_MAINTAINER_ROLE,
+  AUTO_MERGE_SEVERITY_ORDER,
+  DEFAULT_AUTO_MERGE_MAX_SEVERITY,
 } from "../functions/devAssistant/maintainers";
 import type { Doc } from "../_generated/dataModel";
 
@@ -227,10 +229,13 @@ describe("maintainer management", () => {
     ).rejects.toThrow();
   });
 
-  test("listMaintainers returns only granted users", async () => {
+  test("listMaintainers returns explicit maintainers and implicit staff, not plain users", async () => {
     const t = convexTest(schema, modules);
     const superId = await t.run((ctx) =>
       ctx.db.insert("users", user({ isSuperuser: true })),
+    );
+    const staffId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ firstName: "Stan", isStaff: true })),
     );
     const maintainerId = await t.run((ctx) =>
       ctx.db.insert(
@@ -238,7 +243,7 @@ describe("maintainer management", () => {
         user({ firstName: "Maint", platformRoles: [DEV_MAINTAINER_ROLE] }),
       ),
     );
-    await t.run((ctx) =>
+    const otherId = await t.run((ctx) =>
       ctx.db.insert("users", user({ firstName: "Other" })),
     );
 
@@ -246,7 +251,150 @@ describe("maintainer management", () => {
       api.functions.devAssistant.maintainers.listMaintainers,
       { token: superId },
     );
-    expect(list.map((u) => u._id)).toEqual([maintainerId]);
+    const ids = list.map((u) => u._id);
+    // Explicit maintainers AND implicit staff/superusers are manageable here
+    // (the auto-merge cap gate applies to them as originators); plain users
+    // are excluded.
+    expect(ids).toContain(maintainerId);
+    expect(ids).toContain(staffId);
+    expect(ids).toContain(superId);
+    expect(ids).not.toContain(otherId);
+  });
+});
+
+// ============================================================================
+// Auto-merge severity cap (ADR-029 Phase 3)
+// ============================================================================
+
+describe("auto-merge severity cap", () => {
+  test("severity order ranks none < low < medium < high", () => {
+    expect(AUTO_MERGE_SEVERITY_ORDER.none).toBeLessThan(
+      AUTO_MERGE_SEVERITY_ORDER.low,
+    );
+    expect(AUTO_MERGE_SEVERITY_ORDER.low).toBeLessThan(
+      AUTO_MERGE_SEVERITY_ORDER.medium,
+    );
+    expect(AUTO_MERGE_SEVERITY_ORDER.medium).toBeLessThan(
+      AUTO_MERGE_SEVERITY_ORDER.high,
+    );
+  });
+
+  test("getAutoMergeCapForUser defaults to low, reflects an explicit value", async () => {
+    const t = convexTest(schema, modules);
+    const defId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ platformRoles: [DEV_MAINTAINER_ROLE] })),
+    );
+    const highId = await t.run((ctx) =>
+      ctx.db.insert(
+        "users",
+        user({
+          platformRoles: [DEV_MAINTAINER_ROLE],
+          autoMergeMaxSeverity: "high",
+        }),
+      ),
+    );
+
+    expect(
+      await t.query(
+        internal.functions.devAssistant.maintainers.getAutoMergeCapForUser,
+        { userId: defId },
+      ),
+    ).toBe(DEFAULT_AUTO_MERGE_MAX_SEVERITY);
+    expect(
+      await t.query(
+        internal.functions.devAssistant.maintainers.getAutoMergeCapForUser,
+        { userId: highId },
+      ),
+    ).toBe("high");
+  });
+
+  test("super admin sets a cap; it persists and surfaces in listMaintainers", async () => {
+    const t = convexTest(schema, modules);
+    const superId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ isSuperuser: true })),
+    );
+    const maintainerId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ platformRoles: [DEV_MAINTAINER_ROLE] })),
+    );
+
+    // Defaults to "low" in the list before any set.
+    let list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === maintainerId)?.autoMergeMaxSeverity).toBe(
+      "low",
+    );
+
+    await t.mutation(
+      api.functions.devAssistant.maintainers.setAutoMergeMaxSeverity,
+      { token: superId, userId: maintainerId, maxSeverity: "high" },
+    );
+
+    const target = await t.run((ctx) => ctx.db.get(maintainerId));
+    expect(target?.autoMergeMaxSeverity).toBe("high");
+    list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === maintainerId)?.autoMergeMaxSeverity).toBe(
+      "high",
+    );
+  });
+
+  test("a staff originator's cap surfaces and is settable (no dev_maintainer role needed)", async () => {
+    const t = convexTest(schema, modules);
+    const superId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ isSuperuser: true })),
+    );
+    const staffId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ firstName: "Stan", isStaff: true })),
+    );
+
+    // Defaults to "low" and appears in the list despite holding no role.
+    let list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === staffId)?.autoMergeMaxSeverity).toBe(
+      "low",
+    );
+
+    await t.mutation(
+      api.functions.devAssistant.maintainers.setAutoMergeMaxSeverity,
+      { token: superId, userId: staffId, maxSeverity: "high" },
+    );
+
+    list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === staffId)?.autoMergeMaxSeverity).toBe(
+      "high",
+    );
+    // And the gate lookup reflects it.
+    expect(
+      await t.query(
+        internal.functions.devAssistant.maintainers.getAutoMergeCapForUser,
+        { userId: staffId },
+      ),
+    ).toBe("high");
+  });
+
+  test("non-superusers cannot set a cap", async () => {
+    const t = convexTest(schema, modules);
+    const maintainerId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ platformRoles: [DEV_MAINTAINER_ROLE] })),
+    );
+    const targetId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ platformRoles: [DEV_MAINTAINER_ROLE] })),
+    );
+    await expect(
+      t.mutation(
+        api.functions.devAssistant.maintainers.setAutoMergeMaxSeverity,
+        { token: maintainerId, userId: targetId, maxSeverity: "high" },
+      ),
+    ).rejects.toThrow();
   });
 });
 

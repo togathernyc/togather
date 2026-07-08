@@ -21,6 +21,7 @@ import {
   scopeValidator,
   splitSlicesValidator,
 } from "./bugs";
+import { AUTO_MERGE_SEVERITY_ORDER } from "./maintainers";
 import type { ToolExecutionContext } from "./tools";
 
 const FLAG_KEY = "dev-assistant-bot";
@@ -721,8 +722,10 @@ export const dispatchFix = internalAction({
  * itself, so double-scheduling is harmless.
  *
  * Gates (all must hold): AUTO_MERGE_ENABLED === "true" (master safety switch —
- * anything else means the feature is off), status READY_TO_MERGE, riskLevel
- * "low", reviewVerdict "approved", staging verified when required, prUrl set.
+ * anything else means the feature is off), status READY_TO_MERGE, reviewVerdict
+ * "approved", prUrl set, and the bug's riskLevel at or below the auto-merge cap
+ * configured for its originator (default "low"; "none" opts out). Staging is
+ * NOT a gate — it happens post-merge.
  *
  * Merges via the GitHub REST API with GH_MIRROR_TOKEN (the PAT needs Contents
  * read/write in addition to Issues). On success it posts a system thread
@@ -754,7 +757,6 @@ export const attemptAutoMerge = internalAction({
     // production deploy instead. Merge gates on review + CI + low-risk only.
     if (
       bug.status !== "READY_TO_MERGE" ||
-      bug.riskLevel !== "low" ||
       bug.reviewVerdict !== "approved" ||
       !bug.prUrl
     ) {
@@ -762,6 +764,25 @@ export const attemptAutoMerge = internalAction({
         "[DevAssistant] Auto-merge gates not met for bug",
         args.bugId,
       );
+      return;
+    }
+
+    // Per-person severity cap (ADR-029 Phase 3): a contribution auto-merges only
+    // when its risk level is at or below the cap configured for its originator
+    // on the maintainers screen (default "low"; "none" opts them out entirely).
+    const cap = await ctx.runQuery(
+      internal.functions.devAssistant.maintainers.getAutoMergeCapForUser,
+      { userId: bug.originatorUserId },
+    );
+    const riskRank =
+      bug.riskLevel !== undefined
+        ? AUTO_MERGE_SEVERITY_ORDER[bug.riskLevel]
+        : undefined;
+    if (riskRank === undefined || riskRank > AUTO_MERGE_SEVERITY_ORDER[cap]) {
+      console.log("[DevAssistant] Auto-merge blocked by severity cap", args.bugId, {
+        riskLevel: bug.riskLevel,
+        cap,
+      });
       return;
     }
 
@@ -852,6 +873,62 @@ export const attemptAutoMerge = internalAction({
       await blocked(reason);
     } catch (error) {
       await blocked(String(error));
+    }
+  },
+});
+
+/**
+ * Reconcile open dev-dashboard PRs against GitHub (ADR-029 Phase 3 backstop).
+ *
+ * The /github/webhook flips a bug to MERGED when its PR merges, but webhook
+ * delivery isn't guaranteed (unconfigured repo, secret mismatch, transient
+ * failure), and items that don't auto-merge (higher risk than their cap) wait on
+ * a human merge the dashboard would otherwise never notice. This cron polls each
+ * open-PR bug's merge state directly and applies merges through the same
+ * webhook-correlation path, so a manual GitHub merge always reflects within a
+ * cron interval even with no webhook configured at all. Idempotent:
+ * already-MERGED rows no-op inside handleGithubPrClosed.
+ */
+export const reconcileMergedPrs = internalAction({
+  args: {},
+  handler: async (ctx): Promise<void> => {
+    const token = githubMirrorToken();
+    if (!token) return; // GitHub integration not configured — nothing to poll.
+
+    const bugs = await ctx.runQuery(
+      internal.functions.devAssistant.bugs.listOpenPrBugs,
+      {},
+    );
+    for (const bug of bugs) {
+      if (!bug.prUrl) continue;
+      const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
+      if (!prMatch) continue;
+      try {
+        const res = await fetch(`${GITHUB_PULLS_ENDPOINT}/${prMatch[1]}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+        });
+        if (!res.ok) continue;
+        const pr = (await res.json()) as { merged?: boolean };
+        if (pr.merged === true) {
+          // Reuse the webhook path: an empty branchRef falls through to the
+          // prUrl-match fallback, which scans exactly these open-PR states and
+          // applies MERGED idempotently.
+          await ctx.runMutation(
+            internal.functions.devAssistant.bugs.handleGithubPrClosed,
+            { branchRef: "", prUrl: bug.prUrl, merged: true },
+          );
+        }
+      } catch (error) {
+        console.error(
+          "[DevAssistant] reconcileMergedPrs failed for",
+          bug.prUrl,
+          String(error),
+        );
+      }
     }
   },
 });
