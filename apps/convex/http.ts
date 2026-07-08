@@ -16,6 +16,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
 import { hashApiKey } from "./lib/apiKeys";
+import { putR2Object } from "./lib/r2";
 
 const http = httpRouter();
 
@@ -1150,6 +1151,21 @@ http.route({
         status: 400,
       });
     }
+    // Screenshots must be fetchable http(s) URLs — a `data:` URI is dropped by
+    // getMediaUrl and would render blank. Routines publish images via
+    // POST /dev-assistant/upload and send back the returned URL.
+    if (
+      screenshots !== undefined &&
+      (!Array.isArray(screenshots) ||
+        !screenshots.every(
+          (s) => typeof s === "string" && /^https?:\/\//.test(s)
+        ))
+    ) {
+      return new Response(
+        "Invalid screenshots: must be an array of http(s) URLs",
+        { status: 400 }
+      );
+    }
 
     await ctx.scheduler.runAfter(
       0,
@@ -1185,6 +1201,117 @@ http.route({
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  }),
+});
+
+/** Image content types a routine may upload for before/after mocks. */
+const DEV_ASSISTANT_UPLOAD_CONTENT_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+];
+
+/** Max decoded upload size (5 MB) — mock screenshots are far smaller. */
+const DEV_ASSISTANT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * POST /dev-assistant/upload
+ *
+ * Lets a headless Claude Code Routine publish a generated image (e.g. a
+ * before/after mock) to R2 and get back a fetchable https URL to drop into the
+ * `screenshots` array of its callback. A routine has no user auth token and no
+ * image host, and `getMediaUrl` rejects `data:` URIs — so without this the
+ * dashboard could only ever show inline ASCII/markdown mocks.
+ *
+ * Auth reuses the callback's HMAC scheme: `x-togather-signature` =
+ * HMAC-SHA256(DEV_ASSISTANT_CALLBACK_SECRET, rawBody). No new secret.
+ *
+ * Body: { dataBase64: string, contentType?: string, fileName?: string }
+ * Returns: { url: string } — a public `${R2_PUBLIC_URL}/<key>` URL.
+ */
+http.route({
+  path: "/dev-assistant/upload",
+  method: "POST",
+  handler: httpAction(async (_ctx, request) => {
+    const body = await request.text();
+    const signature = request.headers.get("x-togather-signature");
+    if (!signature) {
+      return new Response("Missing x-togather-signature header", { status: 401 });
+    }
+
+    const secret = process.env.DEV_ASSISTANT_CALLBACK_SECRET;
+    if (!secret) {
+      console.error("[DevAssistant] DEV_ASSISTANT_CALLBACK_SECRET not configured");
+      return new Response("Upload not configured", { status: 500 });
+    }
+
+    const isValid = await verifyDevAssistantSignature(body, signature, secret);
+    if (!isValid) {
+      console.error("[DevAssistant] Invalid upload signature");
+      return new Response("Invalid signature", { status: 401 });
+    }
+
+    let payload: {
+      dataBase64?: string;
+      contentType?: string;
+      fileName?: string;
+    };
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return new Response("Invalid JSON", { status: 400 });
+    }
+
+    const contentType = payload.contentType ?? "image/png";
+    if (!DEV_ASSISTANT_UPLOAD_CONTENT_TYPES.includes(contentType)) {
+      return new Response(`Unsupported contentType: ${contentType}`, {
+        status: 400,
+      });
+    }
+    if (typeof payload.dataBase64 !== "string" || payload.dataBase64.length === 0) {
+      return new Response("Missing dataBase64", { status: 400 });
+    }
+
+    const publicBase = process.env.R2_PUBLIC_URL;
+    if (!publicBase) {
+      console.error("[DevAssistant] R2_PUBLIC_URL not configured");
+      return new Response("Storage not configured", { status: 500 });
+    }
+
+    // Tolerate a full `data:<type>;base64,<data>` URI by taking the tail.
+    const base64 = payload.dataBase64.includes(",")
+      ? payload.dataBase64.slice(payload.dataBase64.indexOf(",") + 1)
+      : payload.dataBase64;
+
+    let buffer: ArrayBuffer;
+    try {
+      const binary = atob(base64);
+      buffer = new ArrayBuffer(binary.length);
+      const view = new Uint8Array(buffer);
+      for (let i = 0; i < binary.length; i++) {
+        view[i] = binary.charCodeAt(i);
+      }
+    } catch {
+      return new Response("Invalid base64", { status: 400 });
+    }
+    if (buffer.byteLength === 0) {
+      return new Response("Empty image", { status: 400 });
+    }
+    if (buffer.byteLength > DEV_ASSISTANT_UPLOAD_MAX_BYTES) {
+      return new Response("Image too large", { status: 413 });
+    }
+
+    const { key } = await putR2Object({
+      folder: "dev-assistant",
+      fileName: payload.fileName ?? "mock.png",
+      contentType,
+      body: buffer,
+    });
+
+    return new Response(
+      JSON.stringify({ url: `${publicBase}/${key}` }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
   }),
 });
 
