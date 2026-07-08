@@ -31,7 +31,10 @@ import {
   calculateAllSystemScores,
   evaluateSystemAlerts,
 } from "./systemScoring";
-import { countNativeServing } from "../lib/nativeServing";
+import {
+  nativeServingDays,
+  combineServingDayCount,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Constants
@@ -271,16 +274,28 @@ export const computeCommunityScoresBatch = internalQuery({
     const currentTime = now();
     const announcementGroup = await ctx.db.get(args.announcementGroupId);
 
-    // Serving combines BOTH sources: the cached PCO pcoServingCounts snapshot
-    // (built below) AND native rostering (roleAssignments, added per member).
-    // Native-origin plans exclude PCO-imported ones, so the two are disjoint.
+    // Serving combines BOTH sources, counted by DAY: the cached PCO snapshot
+    // (dates below) AND native rostering (roleAssignments, per member). Any day
+    // served on either source counts once; a day on both counts once.
 
-    // Build PCO serving map from announcement group doc
-    const pcoServingMap = new Map<string, number>();
+    // PCO serving DATES per user (for day-dedup) plus the PCO serve COUNT per
+    // user (the floor used when servingDetails is absent/truncated so a valid
+    // count is never dropped).
+    const pcoServingDatesMap = new Map<string, string[]>();
+    if (announcementGroup?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of announcementGroup.pcoServingCounts
+        .servingDetails) {
+        const key = userId.toString();
+        const arr = pcoServingDatesMap.get(key);
+        if (arr) arr.push(date);
+        else pcoServingDatesMap.set(key, [date]);
+      }
+    }
+    const pcoServingCountMap = new Map<string, number>();
     if (announcementGroup?.pcoServingCounts?.counts) {
       for (const { userId, count } of announcementGroup.pcoServingCounts
         .counts) {
-        pcoServingMap.set(userId.toString(), count);
+        pcoServingCountMap.set(userId.toString(), count);
       }
     }
 
@@ -503,9 +518,6 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // PCO serving count (fallback source)
-        const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
-
         // Serving activity = most recent of PCO serving and native rostering
         // (roleAssignments). A non-declined assignment means the person is
         // rostered to serve, which counts as activity for archiving. Not
@@ -526,18 +538,22 @@ export const computeCommunityScoresBatch = internalQuery({
           lastRosteredAt,
         );
 
-        // Combined Serving count = cached PCO count + native-origin distinct
-        // plans in the past ~60 days with a non-declined roleAssignment
-        // (reuses recentAssignments, no extra read). The native helper excludes
-        // PCO-imported plans, so the two sources don't double-count.
-        const servingCount =
-          pcoCount +
-          (await countNativeServing(
-            ctx,
-            recentAssignments,
-            currentTime,
-            args.communityId,
-          ));
+        // Combined Serving count = distinct calendar DAYS served across native
+        // rostering and PCO in the past ~60 days (reuses recentAssignments, no
+        // extra read). A day served on both sources — or on multiple plans —
+        // counts once.
+        const nativeDays = await nativeServingDays(
+          ctx,
+          recentAssignments,
+          currentTime,
+          args.communityId,
+        );
+        const servingCount = combineServingDayCount(
+          nativeDays,
+          pcoServingDatesMap.get(member.userId.toString()) ?? [],
+          pcoServingCountMap.get(member.userId.toString()) ?? 0,
+          currentTime,
+        );
 
         // Extract system raw values
         const rawValues = extractSystemRawValues({

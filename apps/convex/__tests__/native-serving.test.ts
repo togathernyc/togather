@@ -1,11 +1,11 @@
 /**
- * Combined (PCO + native) serving tests.
+ * Combined (PCO + native) serving tests — counted BY DAY.
  *
- * The profile "Serving" system score (sys_service / pco_services_past_2mo) and
- * the serving-history card combine BOTH sources: the cached PCO
- * `pcoServingCounts` snapshot AND native rostering (`roleAssignments`). Native
- * counts/rows exclude PCO-imported plans (`eventPlans.pcoPlanId`) so a migrated
- * plan isn't double-counted.
+ * The profile "Serving" system score (sys_service / pco_services_past_2mo)
+ * counts distinct calendar DAYS served across BOTH sources: the cached PCO
+ * `pcoServingCounts` snapshot AND native rostering (`roleAssignments`). Any day
+ * served on either source — one plan or several — counts once; a day on both
+ * counts once. The serving-history card is a separate per-serve view.
  *
  * Run with: cd apps/convex && pnpm test __tests__/native-serving.test.ts
  */
@@ -17,20 +17,22 @@ import { internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import {
-  countNativeServing,
+  nativeServingDays,
+  combineServingDayCount,
   nativeServingHistory,
   mergeServingHistory,
 } from "../lib/nativeServing";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const dayStr = (ms: number) => new Date(ms).toISOString().split("T")[0];
 
 // ============================================================================
-// countNativeServing (community-scoped: distinct plans, window, declined,
-// and cross-community exclusion)
+// Serving day counting: distinct calendar days across native + PCO, deduped;
+// same-day collapse, cross-community exclusion, window, declined.
 // ============================================================================
 
-describe("countNativeServing", () => {
-  test("counts distinct in-window non-declined plans, scoped to the community", async () => {
+describe("serving day counting", () => {
+  test("counts distinct calendar days across native + PCO, deduped", async () => {
     const t = convexTest(schema, modules);
     const nowTs = Date.now();
 
@@ -106,29 +108,20 @@ describe("countNativeServing", () => {
         return planId;
       };
 
-      // Community 1: 3 distinct in-window plans (one with a duplicate slot),
-      // 1 declined, 1 out-of-window → distinct in-window non-declined = 3.
-      const p1 = await addPlan(c1.communityId, a, "P1", nowTs - 10 * DAY_MS);
-      await ctx.db.insert("roleAssignments", {
-        planId: p1,
-        teamId: a.teamId,
-        roleId: a.roleId,
-        userId,
-        eventDate: nowTs - 10 * DAY_MS,
-        status: "unconfirmed",
-        assignedById: userId,
-        assignedAt: nowTs,
-      });
+      // Community 1 native, in-window, non-declined:
+      //   day -10: TWO plans (9am + 11am services) → one serving day
+      await addPlan(c1.communityId, a, "AM", nowTs - 10 * DAY_MS);
+      await addPlan(c1.communityId, a, "PM", nowTs - 10 * DAY_MS);
+      //   day -20, day -30: one plan each
       await addPlan(c1.communityId, a, "P2", nowTs - 20 * DAY_MS);
       await addPlan(c1.communityId, a, "P3", nowTs - 30 * DAY_MS);
+      //   day -25: a PCO-imported plan (pcoPlanId set) — day-dedup means it is
+      //   still counted (it collapses with any same-day PCO record).
+      await addPlan(c1.communityId, a, "Imported", nowTs - 25 * DAY_MS, "confirmed", "pco-plan-123");
+      // Excluded: declined, out-of-window, future, other community.
       await addPlan(c1.communityId, a, "Declined", nowTs - 5 * DAY_MS, "declined");
       await addPlan(c1.communityId, a, "Old", nowTs - 90 * DAY_MS);
-      // Future plan — rostered ahead but not yet served → must NOT count.
       await addPlan(c1.communityId, a, "Future", nowTs + 5 * DAY_MS);
-      // PCO-imported plan (pcoPlanId set) — already in the PCO snapshot the
-      // caller adds, so the native count must NOT include it.
-      await addPlan(c1.communityId, a, "Imported", nowTs - 8 * DAY_MS, "confirmed", "pco-plan-123");
-      // Community 2: an in-window plan that must NOT count toward community 1.
       await addPlan(c2.communityId, b, "OtherComm", nowTs - 3 * DAY_MS);
 
       const assignments = await ctx.db
@@ -139,18 +132,35 @@ describe("countNativeServing", () => {
       return { communityId: c1.communityId, assignments };
     });
 
-    const count = await t.run((ctx) =>
-      countNativeServing(ctx, assignments, nowTs, communityId),
-    );
-    // 3 native-origin distinct plans in this community's window; duplicate
-    // slot, declined, out-of-window, FUTURE, PCO-imported, and the other
-    // community's plan are all excluded.
-    expect(count).toBe(3);
-
-    const zero = await t.run((ctx) =>
-      countNativeServing(ctx, [], nowTs, communityId),
-    );
-    expect(zero).toBe(0);
+    // Compute inside one t.run and return primitives (a Set isn't a Convex
+    // value, so it can't cross the t.run boundary).
+    const result = await t.run(async (ctx) => {
+      const nd = await nativeServingDays(ctx, assignments, nowTs, communityId);
+      // PCO dates: one on a native day (-20 → dedup), one new day (-15), and
+      // two that must be ignored (out-of-window -90, future +5).
+      const pcoDates = [
+        dayStr(nowTs - 20 * DAY_MS),
+        dayStr(nowTs - 15 * DAY_MS),
+        dayStr(nowTs - 90 * DAY_MS),
+        dayStr(nowTs + 5 * DAY_MS),
+      ];
+      return {
+        nativeSize: nd.size,
+        // 2 dated in-window PCO rows (-20 dup, -15 new); pcoCount 2 → no undated.
+        count: combineServingDayCount(nd, pcoDates, 2, nowTs),
+        empty: combineServingDayCount(new Set<string>(), [], 0, nowTs),
+        // No dates but a PCO count of 3 → must not be dropped.
+        undated: combineServingDayCount(new Set<string>(), [], 3, nowTs),
+      };
+    });
+    // Native days -10 (two plans → one), -20, -25 (imported), -30 = 4.
+    expect(result.nativeSize).toBe(4);
+    // {-10, -20, -25, -30} ∪ {-20, -15} = {-10,-15,-20,-25,-30} = 5.
+    expect(result.count).toBe(5);
+    // Empty inputs → 0.
+    expect(result.empty).toBe(0);
+    // PCO count with no dates falls back to the count (never dropped).
+    expect(result.undated).toBe(3);
   });
 });
 
@@ -405,16 +415,25 @@ describe("PCO + native combined", () => {
         eventDate: nowTs + 7 * DAY_MS,
       });
 
-      // Cached PCO snapshot: 1 past service, plus one servingDetails row for a
-      // PCO-only service the native side never sees.
+      // Cached PCO snapshot with complete details: 2 dated serves (count 2), so
+      // there is no undated fallback and serving is a pure day de-dup. One PCO
+      // date lands on a native day (-20 Wednesday → dedup); the other is a
+      // PCO-only day (-40).
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
-          counts: [{ userId, count: 1 }],
+          counts: [{ userId, count: 2 }],
           servingDetails: [
             {
               userId,
-              date: new Date(nowTs - 40 * DAY_MS).toISOString().split("T")[0],
+              date: dayStr(nowTs - 20 * DAY_MS),
+              serviceTypeName: "PCO Wednesday",
+              teamName: "PCO Team",
+              position: "Usher",
+            },
+            {
+              userId,
+              date: dayStr(nowTs - 40 * DAY_MS),
               serviceTypeName: "PCO Service",
               teamName: "PCO Team",
               position: "Usher",
@@ -427,7 +446,8 @@ describe("PCO + native combined", () => {
     });
 
     const scored = await callScoreBatch(t, world);
-    // Combined = PCO count (1) + native distinct plans (3) = 4.
+    // Native serving days: -10 (Sunday AM+PM slots collapse), -20 (Wednesday),
+    // -30 (Sunday PM) = 3. PCO adds -40 (new); PCO -20 dedups. Total = 4 days.
     expect(scored.rawValues.pco_services_past_2mo).toBe(4);
     // sys_service = min(100, 4 * 20) = 80.
     expect(scored.score1).toBe(80);
@@ -452,11 +472,11 @@ describe("PCO + native combined", () => {
 });
 
 // ============================================================================
-// (b) No native plans → serving = cached PCO count only
+// (b) No native plans → serving = distinct PCO days only
 // ============================================================================
 
 describe("PCO only (no native plans)", () => {
-  test("serving score uses the cached PCO count when there is no native rostering", async () => {
+  test("serving score counts distinct PCO days when there is no native rostering", async () => {
     const t = convexTest(schema, modules);
     const nowTs = Date.now();
 
@@ -472,11 +492,66 @@ describe("PCO only (no native plans)", () => {
         userId,
       );
 
-      // No eventPlans at all → native contributes 0. Cached PCO count = 4.
+      // No eventPlans → native contributes 0. PCO served 5 records across 4
+      // distinct in-window days (two on the same day collapse to one), plus one
+      // out-of-window day that is ignored.
+      const detail = (ms: number, name: string) => ({
+        userId,
+        date: dayStr(nowTs - ms),
+        serviceTypeName: name,
+        teamName: "PCO Team",
+        position: "Usher",
+      });
+      // count 5 == the 5 in-window detail rows, so details are complete and the
+      // score is a pure day de-dup (the two same-day rows collapse → 4 days).
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
-          counts: [{ userId, count: 4 }],
+          counts: [{ userId, count: 5 }],
+          servingDetails: [
+            detail(5 * DAY_MS, "A"),
+            detail(5 * DAY_MS, "A-second-team"), // same day → collapses
+            detail(12 * DAY_MS, "B"),
+            detail(19 * DAY_MS, "C"),
+            detail(40 * DAY_MS, "D"),
+            detail(90 * DAY_MS, "Old"), // out of window → ignored
+          ],
+        },
+      });
+
+      return { communityId, announcementGroupId, groupMemberId, userId };
+    });
+
+    const scored = await callScoreBatch(t, world);
+    // 4 distinct in-window PCO days (the two same-day records collapse, the
+    // 90-day-old one is out of window).
+    expect(scored.rawValues.pco_services_past_2mo).toBe(4);
+    // sys_service = min(100, 4 * 20) = 80.
+    expect(scored.score1).toBe(80);
+  });
+
+  test("keeps PCO counts when servingDetails is missing (demo/legacy/truncated)", async () => {
+    const t = convexTest(schema, modules);
+    const nowTs = Date.now();
+
+    const world = await t.run(async (ctx): Promise<ServingWorld> => {
+      const { communityId, announcementGroupId } = await seedCommunity(
+        ctx,
+        "PCO Count Only",
+      );
+      const userId = await seedUser(ctx, "Pat");
+      const groupMemberId = await joinAnnouncementGroup(
+        ctx,
+        announcementGroupId,
+        userId,
+      );
+
+      // A count with NO servingDetails — the state demo seeding and truncated
+      // caches leave behind. Must NOT be dropped to zero.
+      await ctx.db.patch(announcementGroupId, {
+        pcoServingCounts: {
+          updatedAt: nowTs,
+          counts: [{ userId, count: 3 }],
           servingDetails: [],
         },
       });
@@ -485,10 +560,10 @@ describe("PCO only (no native plans)", () => {
     });
 
     const scored = await callScoreBatch(t, world);
-    // native (0) + PCO (4) = 4.
-    expect(scored.rawValues.pco_services_past_2mo).toBe(4);
-    // sys_service = min(100, 4 * 20) = 80.
-    expect(scored.score1).toBe(80);
+    // No dates to dedupe → falls back to the count of 3.
+    expect(scored.rawValues.pco_services_past_2mo).toBe(3);
+    // sys_service = min(100, 3 * 20) = 60.
+    expect(scored.score1).toBe(60);
   });
 });
 
