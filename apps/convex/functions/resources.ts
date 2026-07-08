@@ -117,7 +117,9 @@ export const communitySearchBySubdomain = query({
       )
       .first();
 
-    if (!community) {
+    // Archived (closed) communities are not discoverable, even by exact
+    // subdomain — treat them as if they don't exist.
+    if (!community || community.isArchived) {
       throw new Error("Community not found");
     }
 
@@ -188,6 +190,8 @@ export const communitySearch = query({
       // Demo sandboxes (functions/demo.ts) are joinable only by demo code,
       // never discoverable through search.
       if (c.isDemo) return false;
+      // Archived (closed) communities are never discoverable.
+      if (c.isArchived) return false;
       const nameMatch = c.name?.toLowerCase().includes(searchQuery);
       const subdomainMatch = c.subdomain?.toLowerCase().includes(searchQuery);
       return nameMatch || subdomainMatch;

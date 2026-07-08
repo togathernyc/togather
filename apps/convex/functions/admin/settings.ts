@@ -11,7 +11,7 @@ import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
 import { now, getMediaUrl } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { requireCommunityAdmin } from "./auth";
+import { requireCommunityAdmin, requirePrimaryAdmin } from "./auth";
 
 // ============================================================================
 // Community Settings
@@ -53,7 +53,48 @@ export const getCommunitySettings = query({
         prayerEnabled: false,
         eventTasksEnabled: false,
       },
+      isArchived: community.isArchived ?? false,
     };
+  },
+});
+
+/**
+ * Archive (close) a community.
+ *
+ * This is a one-way soft delete: it flags the community as archived so that no
+ * one can enter, switch into, or join it, and it disappears from search and
+ * discovery. Existing sessions are booted the next time their token refreshes.
+ *
+ * Only the Primary Admin (the single community owner) may archive — reversing
+ * this is a manual DB action, so it is deliberately gated to the owner.
+ */
+export const archiveCommunity = mutation({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requirePrimaryAdmin(ctx, args.communityId, userId);
+
+    const community = await ctx.db.get(args.communityId);
+    if (!community) {
+      throw new Error("Community not found");
+    }
+
+    // Idempotent: archiving an already-archived community is a no-op.
+    if (community.isArchived) {
+      return community;
+    }
+
+    await ctx.db.patch(args.communityId, {
+      isArchived: true,
+      archivedAt: now(),
+      archivedById: userId,
+      updatedAt: now(),
+    });
+
+    return await ctx.db.get(args.communityId);
   },
 });
 

@@ -92,6 +92,9 @@ export const getUserWithCommunitiesInternal = internalQuery({
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
         if (!community) return null;
+        // Archived (closed) communities are hidden — a user can neither see
+        // nor re-enter them from the login / community-selection flow.
+        if (community.isArchived) return null;
         const logoUrl = getMediaUrl(community.logo);
         console.log('[getUserWithCommunitiesInternal] Community logo resolution:', {
           communityName: community.name,
@@ -114,7 +117,7 @@ export const getUserWithCommunitiesInternal = internalQuery({
     let activeCommunity = null;
     if (user.activeCommunityId) {
       const active = await ctx.db.get(user.activeCommunityId);
-      if (active) {
+      if (active && !active.isArchived) {
         const logoUrl = getMediaUrl(active.logo);
         console.log('[getUserWithCommunitiesInternal] Active community logo resolution:', {
           communityName: active.name,
@@ -350,6 +353,12 @@ export const createUserWithPasswordInternal = internalMutation({
   handler: async (ctx, args) => {
     const timestamp = now();
 
+    // Cannot sign up into an archived (closed) community.
+    const community = await ctx.db.get(args.communityId);
+    if (!community || community.isArchived) {
+      throw new Error("This community is not available");
+    }
+
     // Check if email already exists
     const existingByEmail = await ctx.db
       .query("users")
@@ -450,6 +459,12 @@ export const ensureAndActivateCommunityInternal = internalMutation({
   handler: async (ctx, args) => {
     const timestamp = now();
 
+    // Archived (closed) communities cannot be entered or activated.
+    const community = await ctx.db.get(args.communityId);
+    if (community?.isArchived) {
+      throw new Error("This community has been archived");
+    }
+
     // Check if membership already exists
     const existing = await ctx.db
       .query("userCommunities")
@@ -506,6 +521,12 @@ export const ensureUserCommunityInternal = internalMutation({
   },
   handler: async (ctx, args) => {
     const timestamp = now();
+
+    // Archived (closed) communities cannot be entered or activated.
+    const community = await ctx.db.get(args.communityId);
+    if (community?.isArchived) {
+      throw new Error("This community has been archived");
+    }
 
     // Check if membership already exists
     const existing = await ctx.db
@@ -1036,6 +1057,13 @@ export const selectCommunityForUser = mutation({
     const community = await ctx.db.get(args.communityId);
     if (!community) {
       throw new Error("Community not found");
+    }
+
+    // Archived (closed) communities cannot be entered.
+    if (community.isArchived) {
+      throw new Error(
+        "This community has been archived and is no longer accessible",
+      );
     }
 
     const timestamp = now();
