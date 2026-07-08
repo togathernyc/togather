@@ -96,6 +96,7 @@ export const getGroupInfo = internalQuery({
       groupPhotoUrl,
       communityLogoUrl,
       groupAvatarUrl,
+      joinApprovalMode: group.joinApprovalMode,
     };
   },
 });

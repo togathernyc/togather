@@ -21,6 +21,7 @@
 
 import { v } from "convex/values";
 import { query, mutation } from "../_generated/server";
+import type { QueryCtx, MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id, Doc } from "../_generated/dataModel";
 import { now, normalizePagination, getDisplayName, getMediaUrl } from "../lib/utils";
@@ -28,6 +29,7 @@ import { paginationArgs, groupRoleValidator, memberStatusValidator } from "../li
 import { requireAuth, getOptionalAuth } from "../lib/auth";
 import { isCommunityAdmin, ADMIN_ROLE_THRESHOLD } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic } from "./sync/memberships";
+import { applyJoinRequestReview } from "./groups/joinRequestReview";
 import { isActiveMembership, isActiveLeader, hasLeft } from "../lib/helpers";
 import { getUsersWithNotificationsDisabled } from "../lib/notifications/enabledStatus";
 
@@ -1057,6 +1059,254 @@ export const listJoinRequests = query({
     });
 
     return requestsWithUsers.filter((r) => r.user !== null);
+  },
+});
+
+/**
+ * Whether `userId` may review (accept/decline) join requests for `group`.
+ *
+ * Community admins always may. Group leaders may only when the group has handed
+ * approval off to leaders (`joinApprovalMode === "leaders"`).
+ */
+async function canReviewGroupRequests(
+  ctx: QueryCtx | MutationCtx,
+  group: Doc<"groups">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  if (await isCommunityAdmin(ctx, group.communityId, userId)) {
+    return true;
+  }
+  if (group.joinApprovalMode !== "leaders") {
+    return false;
+  }
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", group._id).eq("userId", userId),
+    )
+    .first();
+  return membership ? isActiveLeader(membership) : false;
+}
+
+/**
+ * Review (accept or decline) a pending join request from the group page.
+ *
+ * Authorization: community admins always; group leaders only when the group's
+ * `joinApprovalMode === "leaders"`. Shares all accept/decline side effects
+ * (channel sync, scoring, welcome bots, approval notification) with the admin
+ * dashboard via `applyJoinRequestReview`.
+ */
+export const reviewGroupJoinRequest = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    membershipId: v.id("groupMembers"),
+    action: v.union(v.literal("accept"), v.literal("decline")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    if (!(await canReviewGroupRequests(ctx, group, userId))) {
+      throw new Error("You are not allowed to review requests for this group");
+    }
+
+    const request = await ctx.db.get(args.membershipId);
+    if (
+      !request ||
+      request.groupId !== args.groupId ||
+      request.requestStatus !== "pending"
+    ) {
+      throw new Error("Pending request not found");
+    }
+
+    const updated = await applyJoinRequestReview(ctx, {
+      membership: request,
+      action: args.action,
+      reviewerId: userId,
+    });
+
+    return { id: updated?._id, status: updated?.requestStatus };
+  },
+});
+
+/**
+ * List pending join requests for a single group, with the rich per-requester
+ * context the group-page Requests screen renders: profile + phone, the groups
+ * they currently belong to, membership counts by type, and their request
+ * history within this community.
+ *
+ * Authorization mirrors `reviewGroupJoinRequest`: community admins always;
+ * group leaders only when `joinApprovalMode === "leaders"`. Unauthorized callers
+ * get an empty list (so we never leak that requests exist).
+ */
+export const listGroupJoinRequests = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      return [];
+    }
+
+    if (!(await canReviewGroupRequests(ctx, group, userId))) {
+      return [];
+    }
+
+    // Pending requests for this group only.
+    const pendingRequests = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_requestStatus", (q) =>
+        q.eq("groupId", args.groupId).eq("requestStatus", "pending"),
+      )
+      .collect();
+
+    if (pendingRequests.length === 0) {
+      return [];
+    }
+
+    // Resolve every community group + group type once for name lookups (used by
+    // current memberships and request history). Include archived groups so
+    // history entries for archived groups still render a name.
+    const communityGroups = await ctx.db
+      .query("groups")
+      .withIndex("by_community", (q) => q.eq("communityId", group.communityId))
+      .collect();
+    const groupMap = new Map(communityGroups.map((g) => [g._id, g]));
+    const communityGroupIds = new Set(communityGroups.map((g) => g._id));
+
+    const groupTypes = await ctx.db
+      .query("groupTypes")
+      .withIndex("by_community", (q) => q.eq("communityId", group.communityId))
+      .collect();
+    const groupTypeMap = new Map(groupTypes.map((gt) => [gt._id, gt]));
+
+    const groupTypeName = (groupId: Id<"groups">): string => {
+      const g = groupMap.get(groupId);
+      const gt = g?.groupTypeId ? groupTypeMap.get(g.groupTypeId) : null;
+      return gt?.name ?? "";
+    };
+
+    return await Promise.all(
+      pendingRequests.map(async (request) => {
+        const user = await ctx.db.get(request.userId);
+
+        // All of this requester's memberships (for current groups + history).
+        const allMemberships = await ctx.db
+          .query("groupMembers")
+          .withIndex("by_user", (q) => q.eq("userId", request.userId))
+          .collect();
+
+        const inCommunity = allMemberships.filter((m) =>
+          communityGroupIds.has(m.groupId),
+        );
+
+        // Active memberships (joined, not left, not a still-pending request).
+        const currentMemberships = inCommunity
+          .filter(
+            (m) =>
+              !m.leftAt &&
+              // Exclude archived groups from the "current" set (they stay in
+              // requestHistory for name resolution), matching the admin
+              // dashboard's active-only "Member of" summary.
+              !groupMap.get(m.groupId)?.isArchived &&
+              (m.requestStatus === null ||
+                m.requestStatus === undefined ||
+                m.requestStatus === "accepted"),
+          )
+          .map((m) => ({
+            groupId: m.groupId,
+            groupName: groupMap.get(m.groupId)?.name ?? "",
+            groupTypeName: groupTypeName(m.groupId),
+            role: m.role,
+          }));
+
+        const membershipCountsByType: Record<string, number> = {};
+        for (const m of currentMemberships) {
+          const key = m.groupTypeName || "Other";
+          membershipCountsByType[key] = (membershipCountsByType[key] ?? 0) + 1;
+        }
+
+        // Request history: any row that carries a request status, newest first.
+        const requestHistory = inCommunity
+          .filter((m) => !!m.requestStatus)
+          .sort(
+            (a, b) =>
+              (b.requestedAt ?? b.joinedAt) - (a.requestedAt ?? a.joinedAt),
+          )
+          .map((m) => ({
+            groupId: m.groupId,
+            groupName: groupMap.get(m.groupId)?.name ?? "",
+            groupTypeName: groupTypeName(m.groupId),
+            status: m.requestStatus ?? "",
+            requestedAt: m.requestedAt ?? m.joinedAt,
+            reviewedAt: m.requestReviewedAt ?? null,
+          }));
+
+        return {
+          membershipId: request._id,
+          requestedAt: request.requestedAt ?? request.joinedAt,
+          user: user
+            ? {
+                id: user._id,
+                firstName: user.firstName || "",
+                lastName: user.lastName || "",
+                email: user.email || "",
+                phone: user.phone || null,
+                profilePhoto: getMediaUrl(user.profilePhoto),
+              }
+            : null,
+          currentMemberships,
+          membershipCountsByType,
+          requestHistory,
+        };
+      }),
+    ).then((rows) =>
+      rows
+        .filter((r) => r.user !== null)
+        .sort((a, b) => b.requestedAt - a.requestedAt),
+    );
+  },
+});
+
+/**
+ * Lightweight count of pending join requests the caller may review for a group.
+ *
+ * Powers the "Requests" row on the group page (badge + whether to show it at
+ * all). Returns 0 for callers who cannot review this group's requests.
+ */
+export const countGroupJoinRequests = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      return 0;
+    }
+    if (!(await canReviewGroupRequests(ctx, group, userId))) {
+      return 0;
+    }
+
+    const pending = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_requestStatus", (q) =>
+        q.eq("groupId", args.groupId).eq("requestStatus", "pending"),
+      )
+      .collect();
+
+    return pending.length;
   },
 });
 

@@ -380,6 +380,13 @@ export default defineSchema({
     // community landing page list, search/browse). Direct share links still
     // work and existing members retain access. Community-admin toggle only.
     hiddenFromDiscovery: v.optional(v.boolean()),
+    // Who approves join requests for this (private) group.
+    //   undefined | "admins" -> community admins approve (default, admin dashboard)
+    //   "leaders"            -> group leaders approve (group-page Requests section)
+    // Only community admins can change this value.
+    joinApprovalMode: v.optional(
+      v.union(v.literal("admins"), v.literal("leaders")),
+    ),
     shortId: v.optional(v.string()), // For shareable links (/g/[shortId])
     coordinates: v.optional(
       v.object({

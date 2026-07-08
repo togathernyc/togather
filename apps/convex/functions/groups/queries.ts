@@ -153,6 +153,7 @@ export const getById = query({
         zipCode: group.zipCode,
         externalChatLink: group.externalChatLink,
         hiddenFromDiscovery: group.hiddenFromDiscovery ?? false,
+        joinApprovalMode: group.joinApprovalMode ?? "admins",
         leaderToolbarTools: group.leaderToolbarTools,
         showToolbarToMembers: group.showToolbarToMembers,
         toolVisibility: group.toolVisibility,

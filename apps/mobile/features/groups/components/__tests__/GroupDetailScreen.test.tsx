@@ -17,6 +17,7 @@ jest.mock("convex/react", () => ({
 jest.mock("@services/api/convex", () => ({
   useQuery: jest.fn(),
   useMutation: jest.fn(() => jest.fn()),
+  useAuthenticatedQuery: jest.fn(),
   api: {
     functions: {
       groups: {
@@ -30,10 +31,17 @@ jest.mock("@services/api/convex", () => ({
       },
       groupMembers: {
         list: "api.functions.groupMembers.list",
+        countGroupJoinRequests:
+          "api.functions.groupMembers.countGroupJoinRequests",
       },
       groupJoinRequests: {
         create: "api.functions.groupJoinRequests.create",
         cancel: "api.functions.groupJoinRequests.cancel",
+      },
+      scheduling: {
+        events: {
+          listEvents: "api.functions.scheduling.events.listEvents",
+        },
       },
     },
   },
