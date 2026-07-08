@@ -1009,10 +1009,32 @@ export const createDemoCommunity = mutation({
     zipCode: v.optional(v.string()),
     logo: v.optional(v.string()), // "r2:..." storage path from getR2UploadUrl
     primaryColor: v.optional(v.string()),
-    // Home coordinates (client geocodes the zip) — seeded groups and events
-    // spread around this point on the map.
+    // Home coordinates (client geocodes the zip) — the church-wide anchor and
+    // the fallback center for seeded events.
     baseCoordinates: v.optional(
       v.object({ latitude: v.number(), longitude: v.number() }),
+    ),
+    // Real ZIP placements (client-computed from the bundled US zip database).
+    // The explore map geocodes groups from their zipCode, so distinct ZIPs are
+    // what actually spread the pins. Campuses each take a distinct adjacent ZIP;
+    // small groups/teams scatter across the nearby-ZIP pool.
+    campusPlacements: v.optional(
+      v.array(
+        v.object({
+          zipCode: v.string(),
+          latitude: v.number(),
+          longitude: v.number(),
+        }),
+      ),
+    ),
+    areaPlacements: v.optional(
+      v.array(
+        v.object({
+          zipCode: v.string(),
+          latitude: v.number(),
+          longitude: v.number(),
+        }),
+      ),
     ),
     // Structured campuses (authoritative for campus COUNT when present).
     campuses: v.optional(
@@ -1186,14 +1208,59 @@ export const createDemoCommunity = mutation({
       });
     }
 
-    const zipCode = args.zipCode?.trim() || undefined;
+    const homeZip = args.zipCode?.trim() || undefined;
     const channelCounts = new Map<Id<"chatChannels">, number>();
-    // Distinct scatter index per group so nothing stacks on one map pin.
-    let scatterIndex = 0;
-    const coordsFor = () =>
-      args.baseCoordinates
-        ? scatterCoordinates(args.baseCoordinates, scatterIndex++)
-        : (scatterIndex++, undefined);
+
+    // ---- Map placement ----
+    // The explore map geocodes each group from its stored zipCode, so realistic
+    // spread comes from handing every group a *different real ZIP* (we also
+    // store matching coordinates for the Haversine "nearby" query). The
+    // church-wide announcement group anchors the home ZIP; campuses take a
+    // distinct adjacent ZIP each; small groups/teams cycle through the nearby
+    // pool. When the client couldn't geocode the ZIP, fall back to the old
+    // single-ZIP + deterministic scatter so nothing stacks on one pin.
+    const campusPlacements = args.campusPlacements ?? [];
+    const areaPlacements = args.areaPlacements ?? [];
+    type Placement = {
+      zipCode?: string;
+      coordinates?: { latitude: number; longitude: number };
+    };
+    const homePlacement: Placement = {
+      zipCode: homeZip,
+      coordinates: args.baseCoordinates,
+    };
+    let groupPlaceIndex = 0;
+    const placeGroup = (): Placement => {
+      const i = groupPlaceIndex++;
+      if (areaPlacements.length > 0) {
+        const p = areaPlacements[i % areaPlacements.length];
+        return {
+          zipCode: p.zipCode,
+          coordinates: { latitude: p.latitude, longitude: p.longitude },
+        };
+      }
+      return {
+        zipCode: homeZip,
+        coordinates: args.baseCoordinates
+          ? scatterCoordinates(args.baseCoordinates, i)
+          : undefined,
+      };
+    };
+    const placeCampus = (i: number): Placement => {
+      const p = campusPlacements[i];
+      if (p) {
+        return {
+          zipCode: p.zipCode,
+          coordinates: { latitude: p.latitude, longitude: p.longitude },
+        };
+      }
+      return {
+        zipCode: homeZip,
+        coordinates: args.baseCoordinates
+          ? scatterCoordinates(args.baseCoordinates, 1000 + i)
+          : undefined,
+      };
+    };
 
     /**
      * Rotate placeholder members into a group (first = leader), seed its main
@@ -1265,8 +1332,8 @@ export const createDemoCommunity = mutation({
       isAnnouncementGroup: true,
       includeAnnouncementsChannel: true,
       preview: args.logo ?? demoStockPhoto(`${slug}-announcements`, 400, 400),
-      zipCode,
-      coordinates: coordsFor(),
+      // Church-wide group anchors the home ZIP.
+      ...homePlacement,
     });
     for (const member of members) {
       await addGroupMember(ctx, announcement.groupId, member.userId, "member");
@@ -1306,8 +1373,7 @@ export const createDemoCommunity = mutation({
         defaultStartTime: "19:00",
         defaultEndTime: "21:00",
         preview: demoStockPhoto(`${slug}-sg-${i}`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 6 + (i % 3), SMALL_GROUP_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: smallGroupNames[i], channels: created.channels, groupMembers: gm, isSmallGroup: true });
@@ -1323,8 +1389,7 @@ export const createDemoCommunity = mutation({
         description: "Ministry team serving in weekend services",
         isPublic: true,
         preview: demoStockPhoto(`${slug}-team-${i}`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 6 + (i % 3), TEAM_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: teamGroupNames[i], channels: created.channels, groupMembers: gm, isSmallGroup: false });
@@ -1340,8 +1405,7 @@ export const createDemoCommunity = mutation({
         description: "Introduction to our community for new attendees",
         isPublic: true,
         preview: demoStockPhoto(`${slug}-class`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 7, CLASS_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: "New Members Class", channels: created.channels, groupMembers: gm, isSmallGroup: false });
@@ -1359,8 +1423,8 @@ export const createDemoCommunity = mutation({
           isPublic: true,
           // Same brand logo as the announcement group so campuses lead with it.
           preview: args.logo ?? demoStockPhoto(`${slug}-campus-${i}`, 400, 400),
-          zipCode,
-          coordinates: coordsFor(),
+          // Each campus lands in its own distinct adjacent ZIP.
+          ...placeCampus(i),
         });
         // Larger pool so a campus reads like a campus and can support rostering.
         const gm = await populateGroup(created, ROSTER_POOL_SIZE, CAMPUS_CHAT, poolOffset++);
@@ -1412,7 +1476,7 @@ export const createDemoCommunity = mutation({
           scheduledAt: timestamp + (3 + g) * DAY,
           note: "Regular weekly gathering",
           coverImage: demoStockPhoto(`${slug}-event-${g}`),
-          locationOverride: zipCode ? `${group.name} · ${zipCode}` : undefined,
+          locationOverride: homeZip ? `${group.name} · ${homeZip}` : undefined,
         }),
       );
       if (group.isSmallGroup) {
@@ -1426,7 +1490,7 @@ export const createDemoCommunity = mutation({
             note: "All small groups serving our city together.",
             communityWideEventId: cweId,
             coverImage: demoStockPhoto(`${slug}-serve-day`),
-            locationOverride: zipCode ? `City-wide · ${zipCode}` : undefined,
+            locationOverride: homeZip ? `City-wide · ${homeZip}` : undefined,
           }),
         );
       }
@@ -1459,7 +1523,7 @@ export const createDemoCommunity = mutation({
       scheduledAt: serveDayAt,
       note: "Join us as we serve our city together — everyone welcome!",
       coverImage: demoStockPhoto(`${slug}-serve-day-card`),
-      locationOverride: zipCode ? `Serve Day · ${zipCode}` : undefined,
+      locationOverride: homeZip ? `Serve Day · ${homeZip}` : undefined,
       shortId: serveDayShortId,
       visibility: "community",
     });
@@ -1675,9 +1739,20 @@ export const createDemoCommunity = mutation({
     const hostGroupId = isMultiCampus
       ? (firstCampusGroupId as Id<"groups">)
       : announcement.groupId;
-    const rosterPool = (
-      isMultiCampus ? (firstCampusMembers as typeof members) : members
-    ).slice(0, ROSTER_POOL_SIZE);
+    // Put the creator first in the pool so they always receive upcoming
+    // assignments — otherwise the roster only touches placeholder members and
+    // the creator's own "My Schedule" is empty. (The creator is already a
+    // member of the host group via the leadership seeding below/above, so no
+    // membership row is added here.)
+    const creatorMember = {
+      userId,
+      name: callerName,
+      photo: caller.profilePhoto ?? "",
+    };
+    const rosterPool = [
+      creatorMember,
+      ...(isMultiCampus ? (firstCampusMembers as typeof members) : members),
+    ].slice(0, ROSTER_POOL_SIZE);
 
     if (rosterPool.length > 0) {
       const serviceTimes = campusServiceTimes(0);

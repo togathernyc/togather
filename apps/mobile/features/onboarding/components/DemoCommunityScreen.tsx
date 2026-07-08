@@ -37,7 +37,7 @@ import { useSelectCommunity } from "@features/auth/hooks/useAuth";
 import { useTheme } from "@hooks/useTheme";
 import { ImagePicker } from "@components/ui";
 import { ColorPicker } from "@features/admin/components/ColorPicker";
-import { geocodeZipCode } from "@features/groups/utils/geocodeLocation";
+import { computeDemoGeoPlacements } from "@features/groups/utils/geocodeLocation";
 
 type ThemeColors = ReturnType<typeof useTheme>["colors"];
 
@@ -217,9 +217,15 @@ export function DemoCommunityScreen() {
     setSubmitting(true);
     try {
       const logo = logoUri ? await uploadLogo(logoUri) : undefined;
-      // Best-effort: resolve the zip to coordinates (bundled US zip database)
-      // so seeded groups and events land on the map around their area.
-      const coords = geocodeZipCode(zipCode.trim() || null);
+      // Best-effort: resolve the home ZIP into a realistic map layout (bundled
+      // US zip database) — a home anchor, one distinct adjacent ZIP per campus,
+      // and a pool of nearby ZIPs to scatter groups across. The explore map
+      // geocodes each group from its zipCode, so this spreads them for real
+      // instead of stacking on one pin.
+      const geo = computeDemoGeoPlacements(
+        zipCode.trim() || null,
+        effectiveCampusCount,
+      );
       const cleanNames = (names: string[]) =>
         names.map((n) => n.trim()).filter((n) => n.length > 0);
 
@@ -248,7 +254,11 @@ export function DemoCommunityScreen() {
         zipCode: zipCode.trim() || undefined,
         logo,
         primaryColor,
-        baseCoordinates: coords ?? undefined,
+        baseCoordinates: geo.base ?? undefined,
+        campusPlacements:
+          geo.campusPlacements.length > 0 ? geo.campusPlacements : undefined,
+        areaPlacements:
+          geo.areaPlacements.length > 0 ? geo.areaPlacements : undefined,
         smallGroupCount: parseCount(smallGroupCount),
         // Structured campuses are authoritative for campus count when present.
         campuses: campusesArray,

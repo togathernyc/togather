@@ -436,6 +436,80 @@ describe("demo v3: feedback fixes", () => {
     expect(roles.filter((r) => r.role === "member").length).toBeGreaterThan(0);
   });
 
+  test("the creator is rostered, so their My Schedule isn't empty", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Rota", "+15555550180");
+
+    await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Roster Church",
+    });
+
+    // The real My Schedule query: the creator must have upcoming assignments,
+    // otherwise the demo's schedule screen shows the empty state.
+    const schedule = await t.query(
+      api.functions.scheduling.mySchedule.myAssignments,
+      { token },
+    );
+    expect(schedule.length).toBeGreaterThan(0);
+    expect(schedule.every((a) => a.eventTitle === "Sunday Service")).toBe(true);
+  });
+
+  test("campuses and groups spread across the provided real ZIPs", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "Geo", "+15555550181");
+
+    const campusPlacements = [
+      { zipCode: "10001", latitude: 40.75, longitude: -73.99 },
+      { zipCode: "11201", latitude: 40.69, longitude: -73.99 },
+    ];
+    const areaPlacements = [
+      { zipCode: "10002", latitude: 40.71, longitude: -73.98 },
+      { zipCode: "10003", latitude: 40.73, longitude: -73.98 },
+      { zipCode: "10009", latitude: 40.72, longitude: -73.97 },
+    ];
+
+    const result = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Geo Church",
+      zipCode: "10001",
+      baseCoordinates: { latitude: 40.75, longitude: -73.99 },
+      campuses: [{ name: "Downtown" }, { name: "Uptown" }],
+      smallGroupCount: 4,
+      campusPlacements,
+      areaPlacements,
+    });
+
+    const { campusZips, smallGroupZips } = await t.run(async (ctx) => {
+      const groupTypes = await ctx.db
+        .query("groupTypes")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect();
+      const slugById = new Map(groupTypes.map((gt) => [String(gt._id), gt.slug]));
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", result.communityId))
+        .collect();
+      const campusZips: string[] = [];
+      const smallGroupZips: string[] = [];
+      for (const g of groups) {
+        const slug = slugById.get(String(g.groupTypeId));
+        if (slug === "campuses" && g.zipCode) campusZips.push(g.zipCode);
+        if (slug === "small-groups" && g.zipCode) smallGroupZips.push(g.zipCode);
+      }
+      return { campusZips, smallGroupZips };
+    });
+
+    // Each campus took a distinct provided campus ZIP.
+    expect(new Set(campusZips)).toEqual(new Set(["10001", "11201"]));
+    // Small groups scattered across the pool — more than one distinct ZIP, all
+    // drawn from the provided area placements (no stacking on the home ZIP).
+    expect(new Set(smallGroupZips).size).toBeGreaterThan(1);
+    expect(
+      smallGroupZips.every((z) => areaPlacements.some((p) => p.zipCode === z)),
+    ).toBe(true);
+  });
+
   test("seeds DMs, a group DM, and the Getting Started channel", async () => {
     const t = convexTest(schema, modules);
     const { token } = await createUser(t, "Inbox", "+15555550173");
