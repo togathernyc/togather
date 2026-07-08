@@ -473,6 +473,45 @@ function nextSundays(from: number, count: number): number[] {
   return sundays;
 }
 
+// Every demo community is seeded in this timezone (see the community insert).
+const COMMUNITY_TIMEZONE = "America/New_York";
+
+/**
+ * Convert a wall-clock local time (hour:minute) on `dayMidnightUtc`'s calendar
+ * day to a UTC ms instant in COMMUNITY_TIMEZONE, so a service labeled "9:00 AM"
+ * is stored as 9 AM local — not 9:00 UTC (which would display as ~5 AM ET on
+ * the roster). Mirrors the offset approach in lib/scheduling.ts; the per-day
+ * offset means DST across the seeded weeks is handled correctly. Intl is
+ * deterministic inside Convex.
+ */
+function localTimeToUtc(
+  dayMidnightUtc: number,
+  hour: number,
+  minute: number,
+): number {
+  const d = new Date(dayMidnightUtc);
+  const asUtc = Date.UTC(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    hour,
+    minute,
+  );
+  const tzHour =
+    parseInt(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: COMMUNITY_TIMEZONE,
+        hour: "numeric",
+        hour12: false,
+      }).format(new Date(asUtc)),
+      10,
+    ) % 24;
+  let offsetHours = tzHour - hour;
+  if (offsetHours > 12) offsetHours -= 24;
+  else if (offsetHours < -12) offsetHours += 24;
+  return asUtc - offsetHours * HOUR;
+}
+
 function isValidHex(hex: string): boolean {
   return /^#[0-9A-Fa-f]{6}$/.test(hex);
 }
@@ -1688,10 +1727,14 @@ export const createDemoCommunity = mutation({
 
       for (let w = 0; w < sundays.length; w++) {
         const sunday = sundays[w];
-        const eventDate = sunday + firstService.hour * HOUR + firstService.minute * 60000;
+        const eventDate = localTimeToUtc(
+          sunday,
+          firstService.hour,
+          firstService.minute,
+        );
         const times = serviceTimes.map((s) => ({
           label: s.label,
-          startsAt: sunday + s.hour * HOUR + s.minute * 60000,
+          startsAt: localTimeToUtc(sunday, s.hour, s.minute),
         }));
 
         const planId = await ctx.db.insert("eventPlans", {
@@ -2090,7 +2133,12 @@ export const getDemoProgress = query({
             (c) =>
               c.channelType === "custom" &&
               c.slug !== "getting-started" &&
-              realUserIdSet.has(String(c.createdById)),
+              realUserIdSet.has(String(c.createdById)) &&
+              // Exclude channels created by the seeder itself (per-campus team
+              // channels are custom and authored by the real creator). Every
+              // seeded row shares the mutation's fixed now() == the community's
+              // createdAt; a channel the admin creates later is strictly newer.
+              c.createdAt > (community.createdAt ?? community._creationTime),
           )
         ) {
           createdChannel = true;
@@ -2477,13 +2525,19 @@ export const purgeDemoSeedUsers = internalMutation({
         await ctx.db.patch(group._id, { preview: undefined });
       }
 
-      // Delete the demo-only "Partner with us" giving link if untouched.
+      // Delete the demo-only "Partner with us" giving link ONLY if it still
+      // points at the placeholder Pushpay URL. If the church edited it (the
+      // "Make giving yours" mission), it's their real giving link now — keep it
+      // even though isDemoSeed is still set (groupResources.update doesn't
+      // clear the flag).
       const resources = await ctx.db
         .query("groupResources")
         .withIndex("by_group", (q) => q.eq("groupId", group._id))
         .collect();
       for (const resource of resources) {
-        if (resource.isDemoSeed) await ctx.db.delete(resource._id);
+        if (resource.isDemoSeed && resource.linkUrl === DEMO_GIVING_URL) {
+          await ctx.db.delete(resource._id);
+        }
       }
 
       const channels = await ctx.db

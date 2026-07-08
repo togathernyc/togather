@@ -593,6 +593,12 @@ export function DemoCommunityScreen() {
                     )}
                   </Pressable>
                 </View>
+                {/* Join-by-code errors surface here — the create-flow error
+                    banner only renders on the Branding step, so without this a
+                    failed join on step 0 would look like a no-op. */}
+                {error && (
+                  <Text style={[styles.errorText, { color: colors.error, marginTop: 12 }]}>{error}</Text>
+                )}
               </View>
             </>
           )}
