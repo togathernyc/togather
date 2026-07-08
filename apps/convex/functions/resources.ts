@@ -188,6 +188,8 @@ export const communitySearch = query({
       // Demo sandboxes (functions/demo.ts) are joinable only by demo code,
       // never discoverable through search.
       if (c.isDemo) return false;
+      // Archived (closed) communities are never discoverable.
+      if (c.isArchived) return false;
       const nameMatch = c.name?.toLowerCase().includes(searchQuery);
       const subdomainMatch = c.subdomain?.toLowerCase().includes(searchQuery);
       return nameMatch || subdomainMatch;

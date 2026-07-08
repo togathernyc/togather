@@ -217,10 +217,12 @@ export const listPublic = query({
   handler: async (ctx, args) => {
     const { limit } = normalizePagination(args);
 
-    const communities = await ctx.db
-      .query("communities")
-      .withIndex("by_public", (q) => q.eq("isPublic", true))
-      .take(limit + 1);
+    const communities = (
+      await ctx.db
+        .query("communities")
+        .withIndex("by_public", (q) => q.eq("isPublic", true))
+        .take(limit + 1)
+    ).filter((c) => !c.isArchived); // Archived (closed) communities aren't listed.
 
     const hasMore = communities.length > limit;
     const items = hasMore ? communities.slice(0, limit) : communities;
@@ -255,7 +257,8 @@ export const listForUser = query({
     const communities = await Promise.all(
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
-        return community
+        // Hide archived (closed) communities from the user's own list.
+        return community && !community.isArchived
           ? {
               ...community,
               roles: membership.roles,
@@ -434,6 +437,12 @@ export const join = mutation({
       userId,
       communityId: args.communityId,
     });
+
+    // Archived (closed) communities cannot be joined.
+    const community = await ctx.db.get(args.communityId);
+    if (!community || community.isArchived) {
+      throw new Error("This community is not available to join");
+    }
 
     // Check if already a member
     const existing = await ctx.db
