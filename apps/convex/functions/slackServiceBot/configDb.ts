@@ -7,9 +7,57 @@
 
 import { v } from "convex/values";
 import { internalQuery, internalMutation } from "../../_generated/server";
+import { Doc } from "../../_generated/dataModel";
+import {
+  getNativeCampusGroupName,
+  getNativeRoleMapping,
+  type NativeRoleMapping,
+} from "./config";
 
 /** Max processed message timestamps to keep (circular buffer) */
 const MAX_PROCESSED_MESSAGES = 100;
+
+// ============================================================================
+// Native Config Accessors (DB-first, config.ts constants as fallback)
+// ============================================================================
+//
+// The native campus-group-name and role→{teamName,roleName} mappings live in
+// the `slackBotConfig.nativeConfig` DB section (seeded from the hardcoded
+// `config.ts` constants). These accessors read that section and fall back to
+// the constants when the DB config is absent/empty — exactly how the PCO path's
+// `*FromConfig` helpers degrade. They are plain functions (not Convex queries)
+// so callers that already hold the config can resolve without another read.
+
+/** The optional native config section of a slackBotConfig row. */
+export type NativeDbConfig = Doc<"slackBotConfig">["nativeConfig"];
+
+/**
+ * Native campus group name for a location, preferring the DB config and
+ * falling back to the `NATIVE_CAMPUS_GROUP_NAMES` constant. Returns null when
+ * neither has a mapping.
+ */
+export function getNativeCampusGroupNameFromConfig(
+  nativeConfig: NativeDbConfig,
+  location: string,
+): string | null {
+  const fromDb = nativeConfig?.campusGroupNames?.[location];
+  if (fromDb) return fromDb;
+  return getNativeCampusGroupName(location);
+}
+
+/**
+ * Native team+role for a semantic role id, preferring the DB config and
+ * falling back to the `NATIVE_ROLE_MAPPINGS` constant. Returns null when
+ * neither has a mapping.
+ */
+export function getNativeRoleMappingFromConfig(
+  nativeConfig: NativeDbConfig,
+  role: string,
+): NativeRoleMapping | null {
+  const fromDb = nativeConfig?.roleMappings?.[role];
+  if (fromDb) return { teamName: fromDb.teamName, roleName: fromDb.roleName };
+  return getNativeRoleMapping(role);
+}
 
 // ============================================================================
 // Config Read/Write

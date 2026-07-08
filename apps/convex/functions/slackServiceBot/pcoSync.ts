@@ -26,9 +26,12 @@ import {
   PCO_COMMUNITY_ID,
   PCO_SERVICE_TYPE_IDS,
   PCO_ROLE_MAPPINGS,
-  getNativeCampusGroupName,
-  getNativeRoleMapping,
 } from "./config";
+import {
+  getNativeCampusGroupNameFromConfig,
+  getNativeRoleMappingFromConfig,
+  type NativeDbConfig,
+} from "./configDb";
 import { ActionCtx } from "../../_generated/server";
 import { Doc } from "../../_generated/dataModel";
 import { internal } from "../../_generated/api";
@@ -52,6 +55,29 @@ interface NativeWriteOutcome {
 }
 
 /**
+ * Load the community's native rostering config (the `nativeConfig` section of
+ * its `slackBotConfig` row) so the native accessors can resolve DB-configured
+ * campus groups / role mappings. Returns undefined when the community has no
+ * config row (or on error) — the accessors then fall back to the hardcoded
+ * `config.ts` constants, preserving the pre-DB behavior.
+ */
+async function loadNativeConfig(
+  ctx: ActionCtx,
+  communityId: Doc<"communities">["_id"],
+): Promise<NativeDbConfig> {
+  try {
+    const config = await ctx.runQuery(
+      internal.functions.slackServiceBot.index.getConfig,
+      { communityId },
+    );
+    return config?.nativeConfig;
+  } catch (error) {
+    console.warn("[Native Sync] loadNativeConfig failed:", error);
+    return undefined;
+  }
+}
+
+/**
  * Fetch native plan context for a location if the community rosters natively.
  * Returns null when there's no native campus group / upcoming plan (⇒ PCO).
  */
@@ -60,7 +86,8 @@ async function fetchNativeContext(
   location: string,
   communityId: Doc<"communities">["_id"],
 ): Promise<PcoContext | null> {
-  const campusGroupName = getNativeCampusGroupName(location);
+  const nativeConfig = await loadNativeConfig(ctx, communityId);
+  const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
   if (!campusGroupName) return null;
   try {
     return await ctx.runQuery(
@@ -81,8 +108,9 @@ async function nativeAssign(
   personName: string,
   communityId: Doc<"communities">["_id"],
 ): Promise<NativeWriteOutcome> {
-  const campusGroupName = getNativeCampusGroupName(location);
-  const mapping = getNativeRoleMapping(role);
+  const nativeConfig = await loadNativeConfig(ctx, communityId);
+  const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
+  const mapping = getNativeRoleMappingFromConfig(nativeConfig, role);
   if (!campusGroupName || !mapping) {
     return { handled: false, success: false, detail: "No native mapping" };
   }
@@ -106,8 +134,9 @@ async function nativeUnassign(
   personName: string,
   communityId: Doc<"communities">["_id"],
 ): Promise<NativeWriteOutcome> {
-  const campusGroupName = getNativeCampusGroupName(location);
-  const mapping = getNativeRoleMapping(role);
+  const nativeConfig = await loadNativeConfig(ctx, communityId);
+  const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
+  const mapping = getNativeRoleMappingFromConfig(nativeConfig, role);
   if (!campusGroupName || !mapping) {
     return { handled: false, success: false, detail: "No native mapping" };
   }
@@ -136,7 +165,8 @@ async function nativeUpdateItem(
   },
   communityId: Doc<"communities">["_id"],
 ): Promise<NativeWriteOutcome> {
-  const campusGroupName = getNativeCampusGroupName(location);
+  const nativeConfig = await loadNativeConfig(ctx, communityId);
+  const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
   if (!campusGroupName) {
     return { handled: false, success: false, detail: "No native campus group" };
   }
@@ -153,7 +183,8 @@ async function nativeSyncSetlist(
   songs: string[],
   communityId: Doc<"communities">["_id"],
 ): Promise<NativeWriteOutcome & { songsAdded?: number }> {
-  const campusGroupName = getNativeCampusGroupName(location);
+  const nativeConfig = await loadNativeConfig(ctx, communityId);
+  const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
   if (!campusGroupName) {
     return { handled: false, success: false, detail: "No native campus group" };
   }
@@ -656,7 +687,8 @@ export async function searchPcoPeopleCore(
   try {
     // Native-first: search campus-group members when the community rosters
     // natively. A non-null result (even empty) means native is authoritative.
-    const campusGroupName = getNativeCampusGroupName(location);
+    const nativeConfig = await loadNativeConfig(ctx, communityId);
+    const campusGroupName = getNativeCampusGroupNameFromConfig(nativeConfig, location);
     if (campusGroupName) {
       const nativeResults = await ctx.runQuery(
         internal.functions.slackServiceBot.nativeSync.searchNativePeople,

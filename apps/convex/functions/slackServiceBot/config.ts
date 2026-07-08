@@ -250,14 +250,15 @@ export const PCO_ROLE_MAPPINGS: Record<
 // `teams`, `teamRoles`, `eventItems`) instead of Planning Center. The PCO
 // config above stays as the fallback for communities without a native plan.
 //
-// NOTE: These mappings live here in code (not in the `slackBotConfig` DB row)
-// on purpose — adding them to the DB config would require a schema change to
-// the shared `apps/convex/schema.ts`, which is intentionally out of scope for
-// this migration (three migrations run in parallel; touching the shared schema
-// risks conflicts). This is consistent with the hardcoded PCO config above.
-// A future enhancement can promote these to `slackBotConfig` once the schema
-// can be changed safely. The bot is currently single-tenant (FOUNT), so global
-// constants are sufficient.
+// NOTE: These mappings have been promoted into the `slackBotConfig.nativeConfig`
+// DB section (seeded from the constants below by `seedConfig.ts`). At runtime
+// the DB config is the source of truth; the constants below remain as the seed
+// defaults and as the fallback when a community's config row is missing the
+// mapping. Native resolution goes through the DB-config accessors in
+// `configDb.ts` (`getNativeCampusGroupNameFromConfig` /
+// `getNativeRoleMappingFromConfig`), which read `nativeConfig` and fall back
+// here — mirroring the PCO `*FromConfig` accessors. Keep these constants in
+// sync with the seed defaults so a fresh seed reproduces current behavior.
 
 export interface NativeRoleMapping {
   /** Native serving-team name — case-insensitive substring match within the campus group. */
