@@ -8,11 +8,10 @@
 
 import { v } from "convex/values";
 import { query, mutation } from "../../_generated/server";
-import { internal } from "../../_generated/api";
 import { Id } from "../../_generated/dataModel";
 import { now, getMediaUrl, generateShortId } from "../../lib/utils";
 import { requireAuth } from "../../lib/auth";
-import { syncUserChannelMembershipsLogic } from "../sync/memberships";
+import { applyJoinRequestReview } from "../groups/joinRequestReview";
 import { initializeGroupAfterCreation } from "../groups/mutations";
 import { requireCommunityAdmin, LEADER_ROLES } from "./auth";
 
@@ -66,10 +65,18 @@ export const listPendingRequests = query({
     const groupTypeMap = new Map(groupTypes.map((gt) => [gt._id, gt]));
 
     // Get pending requests per group using compound index (much more efficient than global scan)
-    // This queries only pending requests for groups in this community
+    // This queries only pending requests for groups in this community.
+    //
+    // Groups set to "leaders" approval have handed their requests off to group
+    // leaders (they surface on the group page instead), so they are excluded
+    // from the admin dashboard. Membership counts below still consider every
+    // group, so a requester's "member of" summary stays accurate.
+    const adminApprovedGroups = groups.filter(
+      (group) => group.joinApprovalMode !== "leaders"
+    );
     const pendingRequests = (
       await Promise.all(
-        groups.map((group) =>
+        adminApprovedGroups.map((group) =>
           ctx.db
             .query("groupMembers")
             .withIndex("by_group_requestStatus", (q) =>
@@ -219,73 +226,12 @@ export const reviewPendingRequest = mutation({
       throw new Error("Request not found in this community");
     }
 
-    const timestamp = now();
+    const updatedRequest = await applyJoinRequestReview(ctx, {
+      membership: request,
+      action: args.action,
+      reviewerId: userId,
+    });
 
-    if (args.action === "accept") {
-      await ctx.db.patch(args.membershipId, {
-        requestStatus: "accepted",
-        leftAt: undefined,
-        joinedAt: timestamp,
-        requestReviewedAt: timestamp,
-        requestReviewedById: userId,
-      });
-
-      console.log(`[reviewPendingRequest] Approved join request for user ${request.userId} in group ${request.groupId}, syncing channel memberships...`);
-
-      // Sync channel memberships so the user can access group chat (transactional)
-      await syncUserChannelMembershipsLogic(ctx, request.userId, request.groupId);
-
-      console.log(`[reviewPendingRequest] Channel membership sync complete for user ${request.userId}`);
-
-      // Create/update followup score for the approved member
-      await ctx.scheduler.runAfter(
-        0,
-        internal.functions.followupScoreComputation.computeSingleMemberScore,
-        { groupId: request.groupId, groupMemberId: args.membershipId }
-      );
-
-      await ctx.scheduler.runAfter(
-        0,
-        internal.functions.communityScoreComputation.recomputeForGroupMember,
-        { groupId: request.groupId, userId: request.userId }
-      );
-
-      // Check if this is a returning member (had a previous membership before this join request)
-      // When a new member creates a join request, joinedAt, leftAt, and requestedAt are all set
-      // to the same timestamp. When a returning member creates a join request, their original
-      // joinedAt is preserved, so joinedAt !== requestedAt indicates a returning member.
-      const isReturningMember = request.joinedAt !== request.requestedAt;
-
-      // Only trigger welcome + followup bots for NEW members, not returning members (non-blocking)
-      if (!isReturningMember) {
-        await ctx.scheduler.runAfter(
-          0,
-          internal.functions.scheduledJobs.sendWelcomeMessage,
-          {
-            groupId: request.groupId,
-            userId: request.userId,
-          }
-        );
-        await ctx.scheduler.runAfter(
-          0,
-          internal.functions.scheduledJobs.assignNewMemberFollowup,
-          {
-            groupId: request.groupId,
-            userId: request.userId,
-          }
-        );
-      } else {
-        console.log(`[reviewPendingRequest] Skipping welcome message for returning member ${request.userId} in group ${request.groupId}`);
-      }
-    } else {
-      await ctx.db.patch(args.membershipId, {
-        requestStatus: "declined",
-        requestReviewedAt: timestamp,
-        requestReviewedById: userId,
-      });
-    }
-
-    const updatedRequest = await ctx.db.get(args.membershipId);
     return {
       id: updatedRequest?._id,
       status: updatedRequest?.requestStatus,

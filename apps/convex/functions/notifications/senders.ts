@@ -20,6 +20,7 @@ type NotificationGroupInfo = {
   groupPhotoUrl?: string;
   communityLogoUrl?: string;
   groupAvatarUrl?: string;
+  joinApprovalMode?: "admins" | "leaders";
 };
 
 function getSenderNotificationImage(groupInfo: NotificationGroupInfo): string | undefined {
@@ -33,8 +34,15 @@ function getSenderNotificationImage(groupInfo: NotificationGroupInfo): string | 
 // ============================================================================
 
 /**
- * Notify community admins when a join request is received
- * Called from createJoinRequest mutation
+ * Notify the appropriate reviewers when a join request is received.
+ *
+ * Recipients depend on the group's approval mode:
+ *   - "leaders" -> the group's leaders; the push deep-links to the group's
+ *     Requests page (/groups/{id}/requests).
+ *   - "admins" (default) -> the community admins; the push opens the admin
+ *     dashboard (default routing for the `join_request_received` type).
+ *
+ * Called from createJoinRequest mutation.
  */
 export const notifyJoinRequestReceived = internalAction({
   args: {
@@ -57,19 +65,29 @@ export const notifyJoinRequestReceived = internalAction({
         userId: args.requesterId,
       });
 
-      // Get community admins
-      const adminIds: Id<"users">[] = await ctx.runQuery(internal.functions.notifications.internal.getCommunityAdmins, {
-        communityId: groupInfo.communityId as Id<"communities">,
-      });
+      // Route to leaders when the group has handed approval off to leaders,
+      // otherwise to community admins (the default).
+      const leadersApprove = groupInfo.joinApprovalMode === "leaders";
 
-      if (adminIds.length === 0) {
-        console.log("[NotifyJoinRequest] No community admins found");
+      const recipientIds: Id<"users">[] = leadersApprove
+        ? await ctx.runQuery(internal.functions.notifications.internal.getGroupMembersForNotification, {
+            groupId: args.groupId,
+            filter: "leaders",
+          })
+        : await ctx.runQuery(internal.functions.notifications.internal.getCommunityAdmins, {
+            communityId: groupInfo.communityId as Id<"communities">,
+          });
+
+      if (recipientIds.length === 0) {
+        console.log(
+          `[NotifyJoinRequest] No ${leadersApprove ? "leaders" : "community admins"} found`,
+        );
         return { success: true, sent: 0 };
       }
 
-      // Get push tokens for all admins
+      // Get push tokens for all recipients
       const tokenResults: Array<{ userId: string; tokens: string[] }> = await ctx.runQuery(internal.functions.notifications.tokens.getActiveTokensForUsers, {
-        userIds: adminIds,
+        userIds: recipientIds,
       });
 
       // Build notifications
@@ -84,13 +102,18 @@ export const notifyJoinRequestReceived = internalAction({
             groupId: args.groupId,
             communityId: groupInfo.communityId,
             groupAvatarUrl: notificationImageUrl,
+            // Leaders deep-link straight to the group's Requests page; admins
+            // fall through to the default admin-dashboard route.
+            ...(leadersApprove
+              ? { url: `/groups/${args.groupId}/requests` }
+              : {}),
           },
           imageUrl: notificationImageUrl,
         }))
       );
 
       if (notifications.length === 0) {
-        console.log("[NotifyJoinRequest] No push tokens found for admins");
+        console.log("[NotifyJoinRequest] No push tokens found for recipients");
         return { success: true, sent: 0 };
       }
 

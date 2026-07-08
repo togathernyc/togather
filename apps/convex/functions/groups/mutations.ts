@@ -1142,6 +1142,43 @@ export const setHiddenFromDiscovery = mutation({
 });
 
 /**
+ * Set who approves join requests for a group.
+ *
+ *   "admins"  -> community admins approve via the admin dashboard (default)
+ *   "leaders" -> group leaders approve via the group-page Requests section;
+ *                requests are handed off (removed from the admin dashboard) and
+ *                leaders receive the incoming-request push notification.
+ *
+ * Community admins only — leaders must not be able to grant themselves (or
+ * revoke) approval authority for their own group.
+ */
+export const setJoinApprovalMode = mutation({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    mode: v.union(v.literal("admins"), v.literal("leaders")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new Error("Group not found");
+    }
+
+    // Community-admin-only gate
+    await requireCommunityAdmin(ctx, group.communityId, userId);
+
+    await ctx.db.patch(args.groupId, {
+      joinApprovalMode: args.mode,
+      updatedAt: now(),
+    });
+
+    return { success: true, joinApprovalMode: args.mode };
+  },
+});
+
+/**
  * Update a custom display name for a built-in tool.
  * Pass an empty string or undefined to reset to the default label.
  */

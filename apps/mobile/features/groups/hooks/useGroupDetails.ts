@@ -190,6 +190,8 @@ export function useGroupDetails(groupId: string | null | undefined) {
         externalChatLink: (effectiveGroup as any)?.externalChatLink || null,
         hidden_from_discovery:
           (effectiveGroup as any)?.hiddenFromDiscovery ?? false,
+        join_approval_mode:
+          (effectiveGroup as any)?.joinApprovalMode ?? "admins",
         // Member preview for non-members (shows avatars without full access)
         member_preview: effectiveMemberPreview?.members?.map((m: any) => ({
           id: m.id || "",

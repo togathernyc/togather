@@ -605,6 +605,18 @@ export function GroupsAndChannels() {
             Run the group&rsquo;s events, rostering, and follow-ups.
           </Step>
         </Steps>
+
+        <Callout tone="tip" title="Who approves people who ask to join">
+          By default, a community admin approves requests to join a group (from
+          the admin dashboard). A community admin can hand that off per group:
+          in <Term>Edit group</Term> &rarr; <Term>Approvals</Term>, turning on{" "}
+          &ldquo;Let group leaders approve requests&rdquo; moves it to the
+          leaders. When it&rsquo;s on, a <Term>Requests</Term> section appears on
+          the group page whenever someone is waiting, the group&rsquo;s leaders
+          get a notification for each new request, and those requests no longer
+          show in the admin dashboard. Only community admins can change this
+          setting.
+        </Callout>
       </Section>
 
       <Section id="make-leader" title="Making someone a leader">
