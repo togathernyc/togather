@@ -130,7 +130,16 @@ export const listMaintainers = query({
     // this list is small and the page is operator-only (mirrors listPosterAdmins).
     const users = await ctx.db.query("users").collect();
     return users
-      .filter((u) => u.platformRoles?.includes(DEV_MAINTAINER_ROLE))
+      .filter(
+        (u) =>
+          // Explicit maintainers, plus staff/superusers who have implicit
+          // access. Staff can originate dashboard items too, so the auto-merge
+          // cap gate applies to them — surface them here so their cap is
+          // manageable (they just can't be granted/revoked the role).
+          u.platformRoles?.includes(DEV_MAINTAINER_ROLE) ||
+          u.isSuperuser === true ||
+          u.isStaff === true,
+      )
       .map((u) => ({
         _id: u._id,
         firstName: u.firstName ?? null,

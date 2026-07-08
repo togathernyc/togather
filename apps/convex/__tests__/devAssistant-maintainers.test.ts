@@ -229,10 +229,13 @@ describe("maintainer management", () => {
     ).rejects.toThrow();
   });
 
-  test("listMaintainers returns only granted users", async () => {
+  test("listMaintainers returns explicit maintainers and implicit staff, not plain users", async () => {
     const t = convexTest(schema, modules);
     const superId = await t.run((ctx) =>
       ctx.db.insert("users", user({ isSuperuser: true })),
+    );
+    const staffId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ firstName: "Stan", isStaff: true })),
     );
     const maintainerId = await t.run((ctx) =>
       ctx.db.insert(
@@ -240,7 +243,7 @@ describe("maintainer management", () => {
         user({ firstName: "Maint", platformRoles: [DEV_MAINTAINER_ROLE] }),
       ),
     );
-    await t.run((ctx) =>
+    const otherId = await t.run((ctx) =>
       ctx.db.insert("users", user({ firstName: "Other" })),
     );
 
@@ -248,7 +251,14 @@ describe("maintainer management", () => {
       api.functions.devAssistant.maintainers.listMaintainers,
       { token: superId },
     );
-    expect(list.map((u) => u._id)).toEqual([maintainerId]);
+    const ids = list.map((u) => u._id);
+    // Explicit maintainers AND implicit staff/superusers are manageable here
+    // (the auto-merge cap gate applies to them as originators); plain users
+    // are excluded.
+    expect(ids).toContain(maintainerId);
+    expect(ids).toContain(staffId);
+    expect(ids).toContain(superId);
+    expect(ids).not.toContain(otherId);
   });
 });
 
@@ -330,6 +340,45 @@ describe("auto-merge severity cap", () => {
     expect(list.find((u) => u._id === maintainerId)?.autoMergeMaxSeverity).toBe(
       "high",
     );
+  });
+
+  test("a staff originator's cap surfaces and is settable (no dev_maintainer role needed)", async () => {
+    const t = convexTest(schema, modules);
+    const superId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ isSuperuser: true })),
+    );
+    const staffId = await t.run((ctx) =>
+      ctx.db.insert("users", user({ firstName: "Stan", isStaff: true })),
+    );
+
+    // Defaults to "low" and appears in the list despite holding no role.
+    let list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === staffId)?.autoMergeMaxSeverity).toBe(
+      "low",
+    );
+
+    await t.mutation(
+      api.functions.devAssistant.maintainers.setAutoMergeMaxSeverity,
+      { token: superId, userId: staffId, maxSeverity: "high" },
+    );
+
+    list = await t.query(
+      api.functions.devAssistant.maintainers.listMaintainers,
+      { token: superId },
+    );
+    expect(list.find((u) => u._id === staffId)?.autoMergeMaxSeverity).toBe(
+      "high",
+    );
+    // And the gate lookup reflects it.
+    expect(
+      await t.query(
+        internal.functions.devAssistant.maintainers.getAutoMergeCapForUser,
+        { userId: staffId },
+      ),
+    ).toBe("high");
   });
 
   test("non-superusers cannot set a cap", async () => {

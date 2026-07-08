@@ -213,13 +213,17 @@ export function MaintainersContent() {
                   user={u}
                   busy={busyUserId === u._id}
                   trailing={
-                    <TouchableOpacity
-                      onPress={() => handleRevoke(u._id)}
-                      disabled={busyUserId === u._id}
-                      style={styles.revokeBtn}
-                    >
-                      <Text style={styles.revokeBtnText}>Remove</Text>
-                    </TouchableOpacity>
+                    // Staff/superusers have implicit access (no revocable
+                    // role) — show the cap selector but not a Remove button.
+                    u.isSuperuser ? null : (
+                      <TouchableOpacity
+                        onPress={() => handleRevoke(u._id)}
+                        disabled={busyUserId === u._id}
+                        style={styles.revokeBtn}
+                      >
+                        <Text style={styles.revokeBtnText}>Remove</Text>
+                      </TouchableOpacity>
+                    )
                   }
                 />
                 <SeverityStrip
