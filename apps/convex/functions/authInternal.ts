@@ -16,7 +16,11 @@ import {
 } from "../_generated/server";
 import { api, internal } from "../_generated/api";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth, requireAuthIgnoringRevocation } from "../auth";
+import {
+  requireAuth,
+  requireAuthAllowArchivedCommunity,
+  requireAuthIgnoringRevocation,
+} from "../auth";
 import {
   isRevokedForJwtSubject,
   REFRESH_TOKEN_MAX_AGE_MS,
@@ -1051,7 +1055,9 @@ export const selectCommunityForUser = mutation({
     communityId: string;
     communityName: string;
   }> => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: allow switching away even when the caller's current token
+    // is scoped to an archived community. The target is archived-checked below.
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
 
     // Verify community exists
     const community = await ctx.db.get(args.communityId);

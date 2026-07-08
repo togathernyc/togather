@@ -220,11 +220,44 @@ describe("archiveCommunity mutation", () => {
       communityId: setup.communityId,
     });
 
-    const after = await t.query(api.functions.admin.settings.getCommunitySettings, {
+    // Once archived, even the admin settings endpoints reject by id — the
+    // community is inaccessible. Verify the flag directly instead.
+    await expect(
+      t.query(api.functions.admin.settings.getCommunitySettings, {
+        token: setup.primaryAdminToken,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
+    const community = await t.run((ctx) => ctx.db.get(setup.communityId));
+    expect(community?.isArchived).toBe(true);
+  });
+
+  test("admin-by-id paths reject an archived community", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
       token: setup.primaryAdminToken,
       communityId: setup.communityId,
     });
-    expect(after.isArchived).toBe(true);
+
+    // Editing settings by id is blocked even with a valid admin token that is
+    // NOT scoped to the archived community (requireCommunityAdmin gate).
+    await expect(
+      t.mutation(api.functions.admin.settings.updateCommunitySettings, {
+        token: setup.primaryAdminToken,
+        communityId: setup.communityId,
+        name: "Renamed",
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
+
+    // Browsing the member list by id is likewise blocked.
+    await expect(
+      t.query(api.functions.communities.getMembers, {
+        token: setup.memberToken,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
   });
 });
 
@@ -401,5 +434,83 @@ describe("archived communities block additional entry paths", () => {
         communityId: setup.communityId,
       })
     ).rejects.toThrow("not available");
+  });
+});
+
+// ============================================================================
+// A live session scoped to an archived community is hard-blocked
+// ============================================================================
+
+describe("archived communities are inaccessible to a live session", () => {
+  test("requireAuth rejects a request scoped to an archived community", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+    // A real login mints a token scoped to the active community.
+    const scopedToken = (
+      await generateTokens(setup.memberId, setup.communityId)
+    ).accessToken;
+
+    // Works before archiving.
+    await t.mutation(api.functions.users.recordActivity, { token: scopedToken });
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    // Any community-scoped request is now hard-blocked, even with a still-valid
+    // 30-day access token.
+    await expect(
+      t.mutation(api.functions.users.recordActivity, { token: scopedToken })
+    ).rejects.toThrow("COMMUNITY_ARCHIVED");
+  });
+
+  test("escape hatches still work with an archived-scoped token", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+    const scopedToken = (
+      await generateTokens(setup.memberId, setup.communityId)
+    ).accessToken;
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    // Listing communities and clearing the active community must still work so
+    // the stuck user can get to community selection.
+    await expect(
+      t.query(api.functions.communities.listForUser, { token: scopedToken })
+    ).resolves.toBeDefined();
+    await expect(
+      t.mutation(api.functions.users.clearActiveCommunity, { token: scopedToken })
+    ).resolves.toEqual({ success: true });
+  });
+
+  test("users.me hides an archived active community and flags it", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+    // Point the member's stored active community at the one we'll archive.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(setup.memberId, {
+        activeCommunityId: setup.communityId,
+      });
+    });
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    const me = await t.query(api.functions.users.me, {
+      token: setup.memberToken,
+    });
+    expect(me?.activeCommunityArchived).toBe(true);
+    expect(me?.activeCommunityId).toBeNull();
+    expect(
+      (me?.communityMemberships ?? []).some(
+        (m: any) => m.communityId === setup.communityId
+      )
+    ).toBe(false);
   });
 });
