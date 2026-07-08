@@ -27,16 +27,24 @@ import { SegmentedTabs } from "@components/ui/SegmentedTabs";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useAllContributions, useMyContributions } from "../hooks/useMyContributions";
 import { GithubCreditRow } from "./GithubCreditRow";
-import { conversationDotColor, displayTitle, isYourTurn } from "../utils/status";
+import {
+  conversationDotColor,
+  displayTitle,
+  isArchived,
+  isInProgress,
+  isYourTurn,
+} from "../utils/status";
+import type { Id } from "@services/api/convex";
 import type { ContributionListItem } from "../types";
 
-type Segment = "yourTurn" | "all" | "shipped";
+type Segment = "yourTurn" | "inProgress" | "done" | "archived";
 type Owner = "mine" | "everyone";
 
 const SEGMENT_OPTIONS: { key: Segment; label: string }[] = [
   { key: "yourTurn", label: "Your turn" },
-  { key: "all", label: "All" },
-  { key: "shipped", label: "Shipped" },
+  { key: "inProgress", label: "In progress" },
+  { key: "done", label: "Done" },
+  { key: "archived", label: "Archived" },
 ];
 
 const OWNER_OPTIONS: { key: Owner; label: string }[] = [
@@ -49,13 +57,17 @@ const EMPTY_COPY: Record<Segment, { title: string; text: string }> = {
     title: "Nothing needs you right now",
     text: "When the AI drafts a plan for your review or a change is ready to try out, it shows up here.",
   },
-  all: {
-    title: "No conversations yet",
-    text: "Spotted something broken, or have an idea to make Togather better? Start a conversation and the AI takes it from there — you'll see every step as it gets built and shipped.",
+  inProgress: {
+    title: "Nothing being built right now",
+    text: "Fire something off — a bug or an idea — and once it's approved you'll watch it move through here as the AI builds, reviews, and ships it.",
   },
-  shipped: {
-    title: "Nothing shipped yet",
-    text: "Once a conversation's change makes it into the app, it lands here.",
+  done: {
+    title: "Nothing wrapped up yet",
+    text: "Once a conversation is finished — shipped into the app, or set aside — it lands here.",
+  },
+  archived: {
+    title: "Nothing archived",
+    text: "Conversations set aside — abandoned, or not doable — land here. You can restore any of them.",
   },
 };
 
@@ -72,14 +84,20 @@ function snippetFor(item: ContributionListItem): string {
 function ConversationRow({
   item,
   onPress,
+  selected = false,
 }: {
   item: ContributionListItem;
   onPress: () => void;
+  selected?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <TouchableOpacity
-      style={[styles.row, { borderBottomColor: colors.borderLight }]}
+      style={[
+        styles.row,
+        { borderBottomColor: colors.borderLight },
+        selected && [styles.rowSelected, { backgroundColor: colors.surfaceSecondary }],
+      ]}
       onPress={onPress}
       activeOpacity={0.7}
     >
@@ -101,7 +119,26 @@ function ConversationRow({
   );
 }
 
-export function ContributeListScreen() {
+export interface ContributeListScreenProps {
+  /**
+   * Desktop-web split view (ContributeSplitView): row taps call this with the
+   * conversation id instead of navigating to /(user)/dev/[id].
+   */
+  onSelectConversation?: (id: Id<"devBugs">) => void;
+  /** Highlight this conversation's row as the active one (split view). */
+  selectedId?: Id<"devBugs"> | null;
+  /**
+   * True when rendered as the split view's sidebar: hides the header back
+   * button (the list is the persistent left pane; there's nothing to pop).
+   */
+  embedded?: boolean;
+}
+
+export function ContributeListScreen({
+  onSelectConversation,
+  selectedId,
+  embedded = false,
+}: ContributeListScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -125,10 +162,21 @@ export function ContributeListScreen() {
   const visible = useMemo(() => {
     const items = contributions ?? [];
     const filtered = items.filter((item) => {
+      // Archived items live only in their own tab, out of the active ones.
+      if (segment === "archived") return isArchived(item);
+      if (isArchived(item)) return false;
       if (segment === "yourTurn") return isYourTurn(item);
-      if (segment === "shipped") return item.status === "MERGED";
-      // "All" = everything not waiting on you and not shipped.
-      return !isYourTurn(item) && item.status !== "MERGED";
+      // "Done" = terminal conversations, shipped or set aside. A merged item
+      // still awaiting the contributor's staging try-it is "your turn", not
+      // done yet (ADR-029: staging check happens after merge), so keep it out
+      // of Done until it's verified.
+      if (segment === "done")
+        return (
+          (item.status === "MERGED" || item.status === "REJECTED") &&
+          !isYourTurn(item)
+        );
+      // "In progress" = fired off and actively being built/reviewed.
+      return isInProgress(item);
     });
     return [...filtered].sort((a, b) => b.updatedAt - a.updatedAt);
   }, [contributions, segment]);
@@ -180,14 +228,19 @@ export function ContributeListScreen() {
           renderItem={({ item }) => (
             <ConversationRow
               item={item}
-              onPress={() => router.push(`/(user)/contribute/${item._id}`)}
+              selected={item._id === selectedId}
+              onPress={() =>
+                onSelectConversation
+                  ? onSelectConversation(item._id)
+                  : router.push(`/(user)/dev/${item._id}`)
+              }
             />
           )}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={
             <TouchableOpacity
               style={[styles.newButton, { backgroundColor: primaryColor }]}
-              onPress={() => router.push("/(user)/contribute/submit")}
+              onPress={() => router.push("/(user)/dev/submit")}
               activeOpacity={0.8}
             >
               <Ionicons name="add" size={20} color="#ffffff" />
@@ -215,9 +268,13 @@ export function ContributeListScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </TouchableOpacity>
+        {embedded ? (
+          <View style={styles.backBtn} />
+        ) : (
+          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </TouchableOpacity>
+        )}
         <Text style={[styles.headerTitle, { color: colors.text }]}>Contribute</Text>
         <View style={styles.backBtn} />
       </View>
@@ -271,6 +328,14 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  // Active-row highlight for the desktop split view. The negative margin
+  // bleeds the background into the list's horizontal padding without moving
+  // the row content, so highlighted and plain rows stay pixel-aligned.
+  rowSelected: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    marginHorizontal: -10,
   },
   dot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   rowBody: { flex: 1, gap: 3 },

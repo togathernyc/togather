@@ -27,6 +27,8 @@ export const APP_SCHEME = "togather://";
 export const appLinks = {
   /** Community switcher (`(auth)/select-community`) — request/join a community. */
   communitySwitcher: `${APP_BASE}/select-community`,
+  /** Demo community questionnaire (`onboarding/demo`) — instant seeded sandbox. */
+  demo: `${APP_BASE}/onboarding/demo`,
   /** Admin settings screen (`(tabs)/admin`). */
   admin: `${APP_BASE}/admin`,
   /** Branding lives in the admin settings screen (Basic Information / Branding Colors). */

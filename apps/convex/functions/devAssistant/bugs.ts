@@ -60,6 +60,14 @@ export const reviewVerdictValidator = v.union(
 );
 
 /**
+ * Buildable slices proposed by the spec routine for a "split"-scope item, each
+ * with a copy-paste-ready prompt for a fresh dev session (ADR-029).
+ */
+export const splitSlicesValidator = v.array(
+  v.object({ title: v.string(), prompt: v.string() }),
+);
+
+/**
  * Where a callback came from. Internal-only — threaded by trusted callers
  * (handleRoutineCallback → "routine", handleGithubPrClosed → "webhook",
  * attemptAutoMerge → "automerge") and NEVER exposed through the public HTTP
@@ -172,12 +180,15 @@ export async function insertThreadMessage(
   authorType: "user" | "assistant" | "system",
   body: string,
   userId?: Id<"users">,
+  imageUrls?: string[],
 ): Promise<Id<"devBugMessages">> {
   return await ctx.db.insert("devBugMessages", {
     bugId,
     authorType,
     userId,
     body,
+    // Store only a non-empty array — keeps text-only messages clean.
+    ...(imageUrls && imageUrls.length > 0 ? { imageUrls } : {}),
     createdAt: Date.now(),
   });
 }
@@ -190,13 +201,18 @@ const STATUS_SYSTEM_MESSAGES: Partial<Record<BugStatus, string>> = {
   IN_PROGRESS: "Build started",
   CODE_REVIEW: "Pull request opened",
   READY_TO_MERGE: "Ready to merge",
-  MERGED: "Shipped 🎉",
+  // Merge auto-deploys to staging; production is a separate manual step, so the
+  // honest line is "live on staging", not "shipped" (ADR-029).
+  MERGED: "Merged — live on staging",
 };
 
 export type ThreadHistoryEntry = {
   authorType: "user" | "assistant" | "system";
   authorName?: string;
   body: string;
+  // R2 storage paths for any pictures on this message (unresolved — the
+  // dispatch action resolves them to public URLs for the routine).
+  imageUrls?: string[];
 };
 
 /**
@@ -221,7 +237,14 @@ export const getThreadHistory = internalQuery({
           ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || undefined
           : undefined;
       }
-      entries.push({ authorType: m.authorType, authorName, body: m.body });
+      entries.push({
+        authorType: m.authorType,
+        authorName,
+        body: m.body,
+        ...(m.imageUrls && m.imageUrls.length > 0
+          ? { imageUrls: m.imageUrls }
+          : {}),
+      });
     }
     return entries;
   },
@@ -539,8 +562,8 @@ export const PR_CLOSED_UNMERGED_MESSAGE =
  * merged === true replays the bug's own routineRunId through the existing
  * handleRoutineCallback machinery with source "webhook" (the trusted channel
  * allowed to apply MERGED), which validates the transition, stamps shippedAt,
- * logs the "Shipped 🎉" system turn, pushes the originator, and (for chat
- * items) posts the sourceKey-idempotent bot message. The early-return on an
+ * logs the "Merged — live on staging" system turn, pushes the originator, and
+ * (for chat items) posts the sourceKey-idempotent bot message. The early-return on an
  * already-MERGED bug makes replayed webhooks — and the race with the
  * auto-merge action's own MERGED apply — no-ops.
  *
@@ -616,7 +639,12 @@ export const handleGithubPrClosed = internalMutation({
             ...(target.shippedAt ? {} : { shippedAt: Date.now() }),
             updatedAt: Date.now(),
           });
-          await insertThreadMessage(ctx, target._id, "system", "Shipped 🎉");
+          await insertThreadMessage(
+            ctx,
+            target._id,
+            "system",
+            "Merged — live on staging",
+          );
         } else {
           console.error(
             "[DevAssistant] GitHub merge webhook ignored: bug in status",
@@ -844,6 +872,7 @@ export const applyCallback = internalMutation({
     aiTitle: v.optional(v.string()),
     area: v.optional(v.string()),
     scope: v.optional(scopeValidator),
+    splitSlices: v.optional(splitSlicesValidator),
     verifyOnStaging: v.optional(v.boolean()),
     reviewVerdict: v.optional(reviewVerdictValidator),
     reviewSummary: v.optional(v.string()),
@@ -944,6 +973,14 @@ export const applyCallback = internalMutation({
     if (args.aiTitle !== undefined) patch.aiTitle = args.aiTitle;
     if (args.area !== undefined) patch.area = args.area;
     if (args.scope !== undefined) patch.scope = args.scope;
+    // Split slices track the scope: a routine explicitly delivers them (only
+    // meaningful for "split"), and a revision that re-triages to any non-split
+    // scope (buildable or design_needed) clears the now-stale slices.
+    if (args.splitSlices !== undefined) {
+      patch.splitSlices = args.splitSlices;
+    } else if (args.scope !== undefined && args.scope !== "split") {
+      patch.splitSlices = undefined;
+    }
     if (args.verifyOnStaging !== undefined) {
       patch.verifyOnStaging = args.verifyOnStaging;
     }

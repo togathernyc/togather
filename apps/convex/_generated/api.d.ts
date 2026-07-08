@@ -44,6 +44,7 @@ import type * as functions_communityLandingPageActions from "../functions/commun
 import type * as functions_communityPeople from "../functions/communityPeople.js";
 import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
+import type * as functions_demo from "../functions/demo.js";
 import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
 import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
 import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
@@ -84,6 +85,7 @@ import type * as functions_meetings_migrations from "../functions/meetings/migra
 import type * as functions_meetings_myEvents from "../functions/meetings/myEvents.js";
 import type * as functions_meetings_queries from "../functions/meetings/queries.js";
 import type * as functions_meetings_reports from "../functions/meetings/reports.js";
+import type * as functions_memberActivity from "../functions/memberActivity.js";
 import type * as functions_memberArchiveNotice from "../functions/memberArchiveNotice.js";
 import type * as functions_memberFollowups from "../functions/memberFollowups.js";
 import type * as functions_messaging_availabilityRequests from "../functions/messaging/availabilityRequests.js";
@@ -273,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   "functions/communityPeople": typeof functions_communityPeople;
   "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
+  "functions/demo": typeof functions_demo;
   "functions/devAssistant/actions": typeof functions_devAssistant_actions;
   "functions/devAssistant/agent": typeof functions_devAssistant_agent;
   "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
@@ -313,6 +316,7 @@ declare const fullApi: ApiFromModules<{
   "functions/meetings/myEvents": typeof functions_meetings_myEvents;
   "functions/meetings/queries": typeof functions_meetings_queries;
   "functions/meetings/reports": typeof functions_meetings_reports;
+  "functions/memberActivity": typeof functions_memberActivity;
   "functions/memberArchiveNotice": typeof functions_memberArchiveNotice;
   "functions/memberFollowups": typeof functions_memberFollowups;
   "functions/messaging/availabilityRequests": typeof functions_messaging_availabilityRequests;

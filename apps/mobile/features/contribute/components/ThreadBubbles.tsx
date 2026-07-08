@@ -9,7 +9,7 @@
  * chat plumbing.
  */
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, Image, StyleSheet } from "react-native";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
@@ -21,13 +21,43 @@ function bubbleTime(createdAt: number): string {
   return format(new Date(createdAt), "MMM d, h:mm a");
 }
 
-/** The contributor's own message — right-aligned, chat "own" bubble color. */
-export function UserBubble({ body, createdAt }: { body: string; createdAt?: number }) {
+/** Attached pictures on a contributor message, stacked above the text. */
+function BubbleImages({ imageUrls }: { imageUrls: string[] }) {
   const { colors } = useTheme();
+  return (
+    <View style={styles.imageStack}>
+      {imageUrls.map((uri) => (
+        <Image
+          key={uri}
+          source={{ uri }}
+          style={[styles.bubbleImage, { backgroundColor: colors.surfaceSecondary }]}
+          resizeMode="contain"
+          accessibilityLabel="Attached screenshot"
+        />
+      ))}
+    </View>
+  );
+}
+
+/** The contributor's own message — right-aligned, chat "own" bubble color. */
+export function UserBubble({
+  body,
+  createdAt,
+  imageUrls,
+}: {
+  body: string;
+  createdAt?: number;
+  imageUrls?: string[];
+}) {
+  const { colors } = useTheme();
+  const hasImages = !!imageUrls && imageUrls.length > 0;
   return (
     <View style={styles.userRow}>
       <View style={[styles.bubble, styles.userBubble, { backgroundColor: colors.chatBubbleOwn }]}>
-        <Text style={[styles.bodyText, { color: colors.chatBubbleOwnText }]}>{body}</Text>
+        {hasImages ? <BubbleImages imageUrls={imageUrls} /> : null}
+        {body ? (
+          <Text style={[styles.bodyText, { color: colors.chatBubbleOwnText }]}>{body}</Text>
+        ) : null}
         {createdAt ? (
           <Text style={[styles.timeText, { color: colors.textSecondary }]}>
             {bubbleTime(createdAt)}
@@ -67,7 +97,7 @@ export function AssistantBubble({ body, createdAt }: { body: string; createdAt?:
   );
 }
 
-/** A system event ("Build started", "Shipped 🎉") — small centered caption. */
+/** A system event ("Build started", "Merged — live on staging") — small centered caption. */
 export function SystemCaption({ body, createdAt }: { body: string; createdAt?: number }) {
   const { colors } = useTheme();
   return (
@@ -86,7 +116,13 @@ export function SystemCaption({ body, createdAt }: { body: string; createdAt?: n
 export function ThreadMessageBubble({ message }: { message: ThreadMessage }) {
   switch (message.authorType) {
     case "user":
-      return <UserBubble body={message.body} createdAt={message.createdAt} />;
+      return (
+        <UserBubble
+          body={message.body}
+          createdAt={message.createdAt}
+          imageUrls={message.imageUrls}
+        />
+      );
     case "assistant":
       return <AssistantBubble body={message.body} createdAt={message.createdAt} />;
     case "system":
@@ -103,6 +139,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   bodyText: { fontSize: 15, lineHeight: 21 },
+  imageStack: { gap: 6, marginBottom: 6 },
+  bubbleImage: { width: 220, height: 260, borderRadius: 10 },
   timeText: { fontSize: 10, marginTop: 4, alignSelf: "flex-end" },
   userRow: { alignItems: "flex-end", marginTop: 10 },
   userBubble: { borderBottomRightRadius: 3 },

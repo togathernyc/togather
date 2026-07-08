@@ -96,16 +96,17 @@ no chat thread. (Convex allows loosening required → optional without
 migration.) Chat-originated items keep their chat fields and also appear in
 the originator's dashboard list (unified history — see resolved question 5).
 
-### 3. Mobile surface — `features/contribute/` + `app/(user)/contribute/`
+### 3. Mobile surface — `features/contribute/` + `app/(user)/dev/`
 
-New feature folder per ADR-002 conventions, modeled on `features/settings/`:
+New feature folder per ADR-002 conventions, modeled on `features/settings/`.
+The routes live under `/dev`, so the public URL is `togather.nyc/dev`:
 
-- `app/(user)/contribute/index.tsx` — "My contributions" list with status
+- `app/(user)/dev/index.tsx` — "My contributions" list with status
   chips, plus submit CTA. Entry point in the profile/settings screen, visible
   only to users with `dev_maintainer` (the `canUseDevAssistant()` gate).
-- `app/(user)/contribute/submit.tsx` — bug/feature form: title, what happened
+- `app/(user)/dev/submit.tsx` — bug/feature form: title, what happened
   vs. expected, why it matters, screenshots (reuse existing upload → R2 flow).
-- `app/(user)/contribute/[id].tsx` — detail screen: status timeline, the
+- `app/(user)/dev/[id].tsx` — detail screen: status timeline, the
   AI-drafted spec with an **Approve spec** action (the contributor's product
   review), risk badge, and deep links to the GitHub issue/PR.
 
@@ -131,8 +132,9 @@ spec, kind) but keep their existing role gates.
   callback (`IN_PROGRESS → CODE_REVIEW → READY_TO_MERGE → MERGED`).
 
 > **Phase 1.5 adds two gates around this flow:** a scope verdict before any
-> spec can be approved, and reporter staging verification before merge for
-> interactive changes — see
+> spec can be approved, and reporter staging verification **after merge, before
+> the production deploy** for interactive changes (nothing reaches staging until
+> the merge auto-deploys it) — see
 > [Phase 1.5](#phase-15--conversation-first-dashboard-accepted).
 
 ### 5. Risk levels — blast radius, assigned by AI, human-overridable
@@ -196,8 +198,9 @@ machine, Routine dispatch, signed callbacks, role gate) is unchanged.
 Rationale: non-coders already know how to read a chat, so the pipeline
 becomes messages instead of a form-shaped detail screen; the scope gate turns
 "too big" into momentum by answering with buildable slices instead of a bad
-build; staging verification puts the reporter's hands on the change before
-merge, closing the loop the way decision 4's spec gate opened it.
+build; staging verification puts the reporter's hands on the change once it's
+merged and live on staging — gating the production deploy, not the merge —
+closing the loop the way decision 4's spec gate opened it.
 
 ### 1. Conversation-first — every contribution is a thread
 
@@ -237,8 +240,11 @@ The spec agent's **first** verdict is
 - `area: "events" | "chat" | "groups" | "prayer" | "settings" | "other"` —
   items file themselves; used as a filter/tag.
 - `verifyOnStaging: boolean` — anything **interactive** requires the reporter
-  to test the change on the staging app and tap **"Works — ship it"** before
-  merge, even at low risk. Pure copy/color changes skip it.
+  to test the change on the staging app and tap **"Works — ship it"** once it's
+  **merged and live on staging**, even at low risk. Nothing reaches staging
+  until the merge auto-deploys it, so this check happens *after* merge and
+  gates the manual production deploy — not the merge. Pure copy/color changes
+  skip it.
 
 New `devBugs` fields: `aiTitle`, `area`, `scope`, `verifyOnStaging`,
 `stagingVerifiedAt`. New functions: `getThread`, `postMessage`,
@@ -315,17 +321,20 @@ is pushed.
 ### Policy auto-merge
 
 A single self-gating action, `attemptAutoMerge`, is scheduled whenever a gate
-might have just been satisfied: on a genuine entry into `READY_TO_MERGE` and
-after `confirmStaging` stamps `stagingVerifiedAt`. It re-reads the bug and
-merges the PR via the GitHub REST API **only when every gate holds**:
+might have just been satisfied: on a genuine entry into `READY_TO_MERGE`. It
+re-reads the bug and merges the PR via the GitHub REST API **only when every
+gate holds**:
 
 - `AUTO_MERGE_ENABLED === "true"` — master safety switch; anything else means
   the feature is off (double-scheduling is harmless because the action
   re-checks everything itself).
 - `status === "READY_TO_MERGE"`, `riskLevel === "low"`,
   `reviewVerdict === "approved"`.
-- Staging verified (`stagingVerifiedAt`) whenever `verifyOnStaging` is set.
 - A `prUrl` to merge.
+
+Staging verification is **not** a merge gate: nothing reaches staging until the
+merge, so the reporter's staging try-it happens *after* merge and gates the
+manual production deploy instead. Merge gates on review + CI + low-risk only.
 
 The merge uses `GH_MIRROR_TOKEN` (the Phase 2 mirroring PAT, which now needs
 **Contents read/write** in addition to Issues) and the merge method from
@@ -336,6 +345,39 @@ passed (…)"; the action never sets `MERGED` itself — the `/github/webhook`
 failure (branch protection, conflict, auth) the thread gets "Auto-merge
 blocked: <reason> — needs a maintainer" and nothing retries — branch
 protection remains the backstop.
+
+## Phase 1.7 — low-friction filing, pictures, and copyable split prompts (Accepted)
+
+Owner-requested follow-up to make filing feel like chatting and to turn a
+"split" verdict into one-tap momentum. The pipeline underneath is unchanged.
+
+- **Chat-first filing.** The submit screen drops the title/repro form for a
+  single message box plus the bug/feature toggle (`submit`'s `title` is now
+  optional and derived from the message — `deriveTitle` — until the spec
+  agent's `aiTitle` lands).
+- **Pictures in the conversation.** Contributors attach screenshots when
+  filing and when replying. New `devBugMessages.imageUrls` (R2 storage paths);
+  `getThread` resolves them to public URLs via `getMediaUrl` for rendering,
+  and `dispatchSpec` aggregates the report's + thread replies' images and
+  resolves them so the (vision-capable) spec routine receives fetchable URLs.
+  This supersedes the Phase 1.5 "screenshots omitted in v1" note — the
+  `getMediaUrl` resolver already used by the chat-originated flow removes the
+  original r2:-path blocker.
+- **"In progress" tab.** The contributor list's middle segment is now "In
+  progress" (`isInProgress` — fired-off items actively being built/reviewed),
+  replacing the catch-all "All"; "Your turn" and "Shipped" are unchanged.
+- **Archive.** Contributors can set a conversation aside — abandoned, or its
+  scope judged not doable — via new `devBugs.archivedAt` (orthogonal to
+  `status`, so any pipeline state can be archived and restored) and the
+  originator-only (plus staff) `archive`/`unarchive` mutations. Archived items
+  leave the active tabs into an "Archived" tab.
+- **Copyable split prompts.** For `scope: "split"`, the spec routine also
+  returns `splitSlices: [{ title, prompt }]` (new `devBugs.splitSlices`,
+  validated in `http.ts`, persisted by `applyCallback`, cleared when a
+  revision re-triages to `buildable`). The detail screen renders a
+  "Copy prompt" button per slice so a maintainer can paste a self-contained
+  build prompt straight into a fresh dev session. See
+  `docs/dev-assistant/ROUTINE-PROMPT.md`.
 
 ## Deliberately out of scope (v1)
 
@@ -363,10 +405,10 @@ protection remains the backstop.
 
 - We own state sync with GitHub (webhook + mirroring) — a second source of
   truth to keep consistent; the webhook must be idempotent.
-- Staging verification (Phase 1.5) adds a human wait state before merge:
-  interactive changes sit in `READY_TO_MERGE` until the reporter confirms on
-  staging, so stale items need nudges (push reminders) or a maintainer
-  override.
+- Staging verification (Phase 1.5) adds a human wait state after merge, before
+  the production deploy: interactive changes sit in `MERGED` (live on staging)
+  until the reporter confirms on staging, so stale items need nudges (push
+  reminders) or a maintainer to ship to production without the sign-off.
 - A PAT with write access to the repo lives in Convex env; needs rotation
   policy and least-privilege scoping (issues only — the Routine, not Convex,
   pushes code).

@@ -16,7 +16,10 @@ import {
 export function StatusChip({
   contribution,
 }: {
-  contribution: Pick<Contribution, "status" | "spec" | "specApprovedAt">;
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >;
 }) {
   const { label, color, icon } = statusPresentation(contribution);
   return (

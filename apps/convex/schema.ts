@@ -92,6 +92,13 @@ export default defineSchema({
     // this field in a follow-up once every environment has been migrated.
     knicksMode: v.optional(v.boolean()),
     isPublic: v.optional(v.boolean()), // Whether community is publicly listed
+    // Self-serve demo communities (see functions/demo.ts): seeded sandboxes a
+    // prospective church spins up from a short questionnaire. Excluded from
+    // community search/discovery; everyone who joins via the demo code becomes
+    // an admin so a whole staff team can click around and re-brand together.
+    isDemo: v.optional(v.boolean()),
+    // The user who created the demo (for attribution and future cleanup).
+    demoCreatedById: v.optional(v.id("users")),
     // Explore page default filters (admin-configurable)
     exploreDefaultGroupTypes: v.optional(v.array(v.id("groupTypes"))),
     exploreDefaultMeetingType: v.optional(v.number()), // 1=In-Person, 2=Online
@@ -139,6 +146,10 @@ export default defineSchema({
     subscriptionStatus: v.optional(v.string()), // "active" | "past_due" | "canceled" etc.
     subscriptionPriceMonthly: v.optional(v.number()),
     billingEmail: v.optional(v.string()),
+    // "per_active_user" = $1/month per billable active member (see
+    // functions/memberActivity.ts); a monthly cron syncs the Stripe
+    // subscription quantity. Absent = legacy fixed-price subscription.
+    billingModel: v.optional(v.string()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_subdomain", ["subdomain"])
@@ -179,6 +190,11 @@ export default defineSchema({
     // `functions/scheduling/assignments.ts` and the claim path in
     // `verifyPhoneOTP` / `registerNewUser`.
     isPlaceholder: v.optional(v.boolean()),
+    // True only for the fake members seeded into a demo community
+    // (functions/demo.ts). Distinguishes them from other placeholder users
+    // (e.g. scheduling's invite-new-person flow) so the go-live purge deletes
+    // exactly the seeded accounts and never a real pending invitee.
+    isDemoSeed: v.optional(v.boolean()),
     dateJoined: v.optional(v.number()), // Unix timestamp ms
     roles: v.optional(v.number()), // Was: SmallInt bitmask
     profilePhoto: v.optional(v.string()),
@@ -244,7 +260,11 @@ export default defineSchema({
     updatedAt: v.optional(v.number()), // Unix timestamp ms
     communityAnniversary: v.optional(v.number()), // Unix timestamp ms (date only)
     status: v.optional(v.number()), // Was: SmallInt
-    lastLogin: v.optional(v.number()), // Unix timestamp ms - updated when user switches to this community
+    // Unix timestamp ms — per-community activity: stamped on login, on
+    // switching to this community, and on app foreground while it's the
+    // active community (users.recordActivity). Drives the admin "Active
+    // Members" stat and per-active-user billing (functions/memberActivity.ts).
+    lastLogin: v.optional(v.number()),
     // External integrations - stores IDs from external systems per community membership
     // e.g., { planningCenterId: "12345" }
     externalIds: v.optional(
@@ -257,6 +277,13 @@ export default defineSchema({
     // Denormalized PCO person ID for efficient indexed lookups
     // This mirrors externalIds.planningCenterId but is top-level for indexing
     pcoPersonId: v.optional(v.string()),
+    // DEPRECATED — unused. Was a manual "mark this member non-billable"
+    // override, removed because it let a community zero out its bill while
+    // members kept using the app; billing is now purely the automatic 30-day
+    // activity rule (functions/memberActivity.ts). No code reads or writes
+    // this field. Kept in the schema only so any row that already has a value
+    // still validates; drop it in a follow-up after a clear migration.
+    billingInactive: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_user", ["userId"])
@@ -733,6 +760,10 @@ export default defineSchema({
     // Search support (denormalized)
     communityId: v.optional(v.id("communities")), // Denormalized from group for search filtering
     searchText: v.optional(v.string()), // Denormalized: title + location + group name
+    // True only for events seeded into a demo community (functions/demo.ts).
+    // Lets getDemoProgress tell a seeded event from one the church created,
+    // without a wall-clock heuristic.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])
@@ -1835,11 +1866,18 @@ export default defineSchema({
     // For mirrored text blasts — backlink to the eventBlasts row so the UI
     // can render an "Also sent via SMS" badge and deep-link to delivery stats.
     blastId: v.optional(v.id("eventBlasts")),
+    // True only for messages seeded into a demo community (functions/demo.ts):
+    // the scripted group/DM conversations and the Getting Started tour. Lets
+    // getDemoProgress tell a seeded message from one a real user sent.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_channel", ["channelId"])
     .index("by_channel_createdAt", ["channelId", "createdAt"])
     .index("by_channel_lastActivityAt", ["channelId", "lastActivityAt"])
     .index("by_sender", ["senderId"])
+    // Bounds getDemoProgress's "did this real user send a message here" check
+    // to one community instead of scanning the sender's cross-community history.
+    .index("by_sender_community", ["senderId", "communityId"])
     .index("by_parentMessage", ["parentMessageId"])
     .index("by_createdAt", ["createdAt"])
     .index("by_sourceKey", ["sourceKey"])
@@ -2199,6 +2237,13 @@ export default defineSchema({
       v.union(v.literal("approved"), v.literal("changes_requested")),
     ),
     reviewSummary: v.optional(v.string()),
+    // For "split"-scope items (ADR-029): the spec routine proposes the
+    // buildable slices, each with a self-contained prompt a maintainer can
+    // copy straight into a fresh dev session to build that slice on its own.
+    // Cleared when a revision re-triages the item back to "buildable".
+    splitSlices: v.optional(
+      v.array(v.object({ title: v.string(), prompt: v.string() })),
+    ),
     // Count of auto-fix dispatches (ADR-029 Phase 3 review→fix→re-review
     // loop). Capped at 3 — after that a changes_requested verdict escalates
     // to a human instead of dispatching another fix run.
@@ -2206,6 +2251,11 @@ export default defineSchema({
     githubIssueNumber: v.optional(v.number()),
     githubIssueUrl: v.optional(v.string()),
     shippedAt: v.optional(v.number()), // set when status reaches MERGED
+    // Contributor set the conversation aside (abandoned it, or the scope was
+    // judged not doable) — ADR-029. Orthogonal to `status`: an item can be
+    // archived from any pipeline state and unarchived to restore it. Archived
+    // items drop out of the active dashboard tabs into an "Archived" view.
+    archivedAt: v.optional(v.number()),
 
     prUrl: v.optional(v.string()),
     reviewLink: v.optional(v.string()),
@@ -2251,6 +2301,10 @@ export default defineSchema({
     ),
     userId: v.optional(v.id("users")), // set when authorType === "user"
     body: v.string(),
+    // Screenshots/pictures attached to a "user" message (contributors can file
+    // and chat with images — ADR-029). Stored as R2 storage paths ("r2:…");
+    // read paths (getThread) resolve them to public URLs via getMediaUrl.
+    imageUrls: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index("by_bug", ["bugId", "createdAt"]),
 

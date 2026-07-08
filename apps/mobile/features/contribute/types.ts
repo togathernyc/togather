@@ -34,6 +34,15 @@ export type ContributionScope = "buildable" | "split" | "design_needed";
 /** Who wrote a thread message. */
 export type MessageAuthorType = "user" | "assistant" | "system";
 
+/**
+ * One buildable slice of a "split" contribution — a short title plus a
+ * self-contained prompt a maintainer can paste into a fresh dev session.
+ */
+export interface SplitSlice {
+  title: string;
+  prompt: string;
+}
+
 /** A devBugs doc as returned by the contributions queries. */
 export interface Contribution {
   _id: Id<"devBugs">;
@@ -57,6 +66,11 @@ export interface Contribution {
   area?: string;
   /** AI scope verdict — unset counts as "buildable". */
   scope?: ContributionScope;
+  /**
+   * For "split" items: the buildable slices the AI proposed, each with a
+   * copy-paste-ready prompt for a fresh dev session (ADR-029).
+   */
+  splitSlices?: SplitSlice[];
   /** True when the contributor should try the change on staging before merge. */
   verifyOnStaging?: boolean;
   /** Set once the contributor confirmed the change works on staging. */
@@ -64,6 +78,8 @@ export interface Contribution {
   prUrl?: string;
   githubIssueUrl?: string;
   screenshotUrls?: string[];
+  /** Set when the contributor set the conversation aside (abandoned/not doable). */
+  archivedAt?: number;
   createdAt: number;
   updatedAt: number;
   shippedAt?: number;
@@ -85,6 +101,8 @@ export interface ThreadMessage {
   authorType: MessageAuthorType;
   userId?: string;
   body: string;
+  /** Pictures on a "user" message, resolved to public URLs by getThread. */
+  imageUrls?: string[];
   createdAt: number;
 }
 

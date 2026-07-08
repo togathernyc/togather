@@ -96,6 +96,23 @@ describe("resolveNotificationNavigation — type-based routing still works", () 
     expect(mockPush).toHaveBeenCalledWith("/groups/groupB");
   });
 
+  it("routes a dev_contribution_update to the contribution's conversation", async () => {
+    await resolveNotificationNavigation({
+      type: "dev_contribution_update",
+      bugId: "bug123",
+    });
+
+    expect(mockPush).toHaveBeenCalledWith("/(user)/dev/bug123");
+  });
+
+  it("does nothing for a dev_contribution_update without a bugId", async () => {
+    await resolveNotificationNavigation({
+      type: "dev_contribution_update",
+    });
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
   it("includes channelId in the shared_channel_invite deep link to disambiguate same-slug invites", async () => {
     await resolveNotificationNavigation({
       type: "shared_channel_invite",

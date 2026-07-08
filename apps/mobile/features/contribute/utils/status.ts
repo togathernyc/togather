@@ -57,7 +57,10 @@ export function needsSpecApproval(
 
 /**
  * The contributor should try the change on the staging app: it's flagged for
- * staging verification, not yet verified, and far enough along to test.
+ * staging verification, not yet verified, and merged. Nothing reaches staging
+ * until the PR merges to `main` (deploys auto-run on merge), so the try-it
+ * window opens at MERGED — never while the PR is still open. The sign-off then
+ * gates the manual production deploy (ADR-029).
  */
 export function needsStagingVerify(
   contribution: Pick<Contribution, "status" | "verifyOnStaging" | "stagingVerifiedAt">,
@@ -65,7 +68,38 @@ export function needsStagingVerify(
   return (
     !!contribution.verifyOnStaging &&
     !contribution.stagingVerifiedAt &&
-    (contribution.status === "CODE_REVIEW" || contribution.status === "READY_TO_MERGE")
+    contribution.status === "MERGED"
+  );
+}
+
+/**
+ * The AI judged the item too big/architectural to build in one go and is now
+ * waiting on the maintainer — to copy a split's slice prompts into new
+ * sessions, or to make the design_needed call. There's nothing the pipeline
+ * can do until then, so it's the contributor's turn.
+ */
+export function needsSplitDecision(
+  contribution: Pick<Contribution, "status" | "spec" | "scope">,
+): boolean {
+  return (
+    contribution.status === "IN_REVIEW" &&
+    !!contribution.spec &&
+    !isBuildableScope(contribution.scope)
+  );
+}
+
+/**
+ * An approved buildable item still sitting in IN_REVIEW is a medium/high-risk
+ * change waiting on an explicit "Start build" tap (low risk auto-dispatches).
+ * That tap is the contributor's, so it's their turn.
+ */
+export function needsBuildStart(
+  contribution: Pick<Contribution, "status" | "specApprovedAt" | "scope">,
+): boolean {
+  return (
+    contribution.status === "IN_REVIEW" &&
+    !!contribution.specApprovedAt &&
+    isBuildableScope(contribution.scope)
   );
 }
 
@@ -76,7 +110,31 @@ export function isYourTurn(
     "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
   >,
 ): boolean {
-  return needsSpecApproval(contribution) || needsStagingVerify(contribution);
+  return (
+    needsSpecApproval(contribution) ||
+    needsStagingVerify(contribution) ||
+    needsSplitDecision(contribution) ||
+    needsBuildStart(contribution)
+  );
+}
+
+/**
+ * True when the item is actively being worked on by the AI/pipeline — the
+ * contributor "fired it off" and it's moving, not waiting on them and not
+ * finished. Powers the "In progress" tab. Rejected/closed items and anything
+ * awaiting the contributor (spec approval, staging check) are excluded.
+ */
+export function isInProgress(
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >,
+): boolean {
+  return (
+    !isYourTurn(contribution) &&
+    contribution.status !== "MERGED" &&
+    contribution.status !== "REJECTED"
+  );
 }
 
 /** Conversation-list dot color: purple = your turn, amber = AI working, green = shipped. */
@@ -92,6 +150,13 @@ export function conversationDotColor(
   return PALETTE.aiWorking;
 }
 
+/** The contributor set this conversation aside (abandoned / not doable). */
+export function isArchived(
+  contribution: Pick<Contribution, "archivedAt">,
+): boolean {
+  return !!contribution.archivedAt;
+}
+
 /** Conversational display title — the AI's friendly title when it exists. */
 export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle">): string {
   return contribution.aiTitle ?? contribution.title;
@@ -105,7 +170,10 @@ export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle
  * explicit build start).
  */
 export function statusPresentation(
-  contribution: Pick<Contribution, "status" | "spec" | "specApprovedAt" | "scope">,
+  contribution: Pick<
+    Contribution,
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+  >,
 ): StatusPresentation {
   switch (contribution.status) {
     case "IN_REVIEW":
@@ -128,11 +196,30 @@ export function statusPresentation(
     case "IN_PROGRESS":
       return { label: "Building", color: "#FF9500", icon: "construct-outline" };
     case "CODE_REVIEW":
+      // The PR is still open — nothing is on staging yet.
       return { label: "In code review", color: "#007AFF", icon: "git-pull-request-outline" };
     case "READY_TO_MERGE":
-      return { label: "Awaiting merge", color: "#34C759", icon: "git-merge-outline" };
+      // Reviewed and approved, but not merged — still nothing on staging.
+      return { label: "Awaiting merge", color: "#FF9500", icon: "git-merge-outline" };
     case "MERGED":
-      return { label: "Shipped", color: "#34C759", icon: "checkmark-circle-outline" };
+      // A merge auto-deploys to staging; production is a separate manual step.
+      // For interactive items the contributor tries it on staging first (their
+      // turn), then a maintainer ships to production (ADR-029).
+      if (contribution.verifyOnStaging && !contribution.stagingVerifiedAt) {
+        return {
+          label: "On staging — ready for you to try",
+          color: "#5856D6",
+          icon: "flask-outline",
+        };
+      }
+      if (contribution.stagingVerifiedAt) {
+        return {
+          label: "Verified — ready to ship to production",
+          color: "#34C759",
+          icon: "checkmark-circle-outline",
+        };
+      }
+      return { label: "Merged — live on staging", color: "#34C759", icon: "checkmark-circle-outline" };
     case "REJECTED":
       return { label: "Not planned", color: "#999999", icon: "close-circle-outline" };
     case "DRAFT":

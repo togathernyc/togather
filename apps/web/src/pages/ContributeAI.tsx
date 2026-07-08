@@ -173,26 +173,27 @@ export function ContributeAI() {
                   ),
                 },
                 {
-                  title: "You try it on the staging app",
+                  title: "It gets merged",
                   body: (
                     <>
-                      For anything interactive, you'll get a push notification
-                      when your change is live on the staging app. Try it
-                      against your acceptance criteria and tap "Works — ship
-                      it" — merging waits for your confirmation, even for
-                      low-risk changes. (Pure text or color tweaks skip this
-                      step.)
+                      A maintainer makes the final merge decision on GitHub
+                      (low-risk changes can merge automatically once review and
+                      CI pass). Merging to <code>main</code> auto-deploys the
+                      change to the staging app — every status change lands in
+                      your conversation as it happens.
                     </>
                   ),
                 },
                 {
-                  title: "A maintainer merges",
+                  title: "You try it on the staging app",
                   body: (
                     <>
-                      A maintainer makes the final merge decision on GitHub —
-                      every status change lands in your conversation as it
-                      happens, and you'll get a push notification when your
-                      change ships.
+                      For anything interactive, you'll get a push notification
+                      once your change is merged and live on staging. Try it
+                      against your acceptance criteria and tap "Works — ship
+                      it" — your confirmation is what clears it for the manual
+                      production deploy, even for low-risk changes. (Pure text
+                      or color tweaks skip this step.)
                     </>
                   ),
                 },
@@ -231,9 +232,10 @@ export function ContributeAI() {
           <p className="text-neutral-600 leading-relaxed mb-6">
             For changes that are clearly low risk, the pipeline runs from your
             approval onward without a maintainer in the middle: the change is
-            implemented, verified, and merged automatically. It pauses for a
-            human only twice — your approved spec, and (for anything
-            interactive) your confirmation on the staging app — which is
+            implemented, verified, and merged automatically once review and CI
+            pass. It pauses for a human only twice — your approved spec, and
+            (for anything interactive) your confirmation on staging after it's
+            merged, which is what clears it to ship to production — which is
             exactly why writing a good spec matters.
           </p>
 
@@ -248,9 +250,9 @@ export function ContributeAI() {
                   <strong className="text-neutral-700">Low risk:</strong> the
                   build starts the moment you approve the spec. AI implements,
                   verifies with automated tests and screenshots, and merges on
-                  its own — pausing first for your "Works — ship it" on the
-                  staging app if the change is interactive. It ships in the
-                  next release.
+                  its own once review and CI pass. The merge deploys it to
+                  staging; if the change is interactive, your "Works — ship it"
+                  there is what clears it for the next production release.
                 </>,
                 <>
                   <strong className="text-neutral-700">Medium or high risk:</strong>{" "}

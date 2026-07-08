@@ -19,12 +19,11 @@ import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { PendingRequestsContent } from "./PendingRequestsContent";
 import { StatsContent } from "./StatsContent";
-import { PeopleContent } from "./PeopleContent";
+import { PeopleTabScreen } from "@features/people/components/PeopleTabScreen";
 import { SettingsContent } from "./SettingsContent";
 import { SuperAdminDashboardContent } from "./SuperAdminDashboardContent";
-import { NotificationsContent } from "./NotificationsContent";
 
-type TabKey = "dashboard" | "requests" | "people" | "stats" | "notifications" | "settings";
+type TabKey = "dashboard" | "requests" | "people" | "stats" | "settings";
 
 interface Tab {
   key: TabKey;
@@ -54,7 +53,6 @@ export function AdminScreen() {
           { key: "requests", label: "Requests" },
           { key: "people", label: "People" },
           { key: "stats", label: "Stats" },
-          { key: "notifications", label: "Notify" },
           { key: "settings", label: "Settings" },
           { key: "dashboard", label: "Dashboard" },
         ];
@@ -64,7 +62,6 @@ export function AdminScreen() {
         { key: "requests", label: "Requests" },
         { key: "people", label: "People" },
         { key: "stats", label: "Stats" },
-        { key: "notifications", label: "Notify" },
         { key: "settings", label: "Settings" },
       ];
     },
@@ -137,11 +134,13 @@ export function AdminScreen() {
         ) : activeTab === "requests" ? (
           <PendingRequestsContent />
         ) : activeTab === "people" ? (
-          <PeopleContent />
+          // Merged with the community-wide check-in roster: admins see the
+          // whole roster (showAllMembers), and reach per-member admin controls
+          // (role, transfer primary admin, remove) via the person's detail
+          // screen. Replaces the old standalone PeopleContent list.
+          <PeopleTabScreen showAllMembers />
         ) : activeTab === "stats" ? (
           <StatsContent />
-        ) : activeTab === "notifications" ? (
-          <NotificationsContent />
         ) : (
           <SettingsContent />
         )}

@@ -688,6 +688,7 @@ http.route({
               monthlyPrice: session.metadata.monthlyPrice
                 ? Number(session.metadata.monthlyPrice)
                 : undefined,
+              demoConversion: session.metadata.demoConversion === "true",
             }
           );
           break;
@@ -1086,6 +1087,7 @@ http.route({
       aiTitle?: string;
       area?: string;
       scope?: string;
+      splitSlices?: unknown;
       verifyOnStaging?: boolean;
       reviewVerdict?: string;
       reviewSummary?: string;
@@ -1108,6 +1110,7 @@ http.route({
       aiTitle,
       area,
       scope,
+      splitSlices,
       verifyOnStaging,
       reviewVerdict,
       reviewSummary,
@@ -1132,6 +1135,29 @@ http.route({
     }
     if (scope !== undefined && !DEV_ASSISTANT_SCOPES.includes(scope)) {
       return new Response(`Unsupported scope: ${scope}`, { status: 400 });
+    }
+    let validatedSplitSlices:
+      | { title: string; prompt: string }[]
+      | undefined;
+    if (splitSlices !== undefined) {
+      if (
+        !Array.isArray(splitSlices) ||
+        !splitSlices.every(
+          (s) =>
+            s &&
+            typeof s === "object" &&
+            typeof (s as { title?: unknown }).title === "string" &&
+            typeof (s as { prompt?: unknown }).prompt === "string",
+        )
+      ) {
+        return new Response(
+          "Invalid splitSlices: must be an array of { title, prompt } strings",
+          { status: 400 },
+        );
+      }
+      validatedSplitSlices = (
+        splitSlices as { title: string; prompt: string }[]
+      ).map((s) => ({ title: s.title, prompt: s.prompt }));
     }
     if (verifyOnStaging !== undefined && typeof verifyOnStaging !== "boolean") {
       return new Response("Invalid verifyOnStaging: must be a boolean", {
@@ -1188,6 +1214,7 @@ http.route({
         aiTitle,
         area,
         scope: scope as "buildable" | "split" | "design_needed" | undefined,
+        splitSlices: validatedSplitSlices,
         verifyOnStaging,
         reviewVerdict: reviewVerdict as
           | "approved"

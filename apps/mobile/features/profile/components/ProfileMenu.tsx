@@ -139,7 +139,7 @@ export function ProfileMenu() {
         {hasDevAccess ? (
           <TouchableOpacity
             style={[styles.menuItem, { borderBottomColor: colors.border }]}
-            onPress={() => router.push('/(user)/contribute')}
+            onPress={() => router.push('/(user)/dev')}
             activeOpacity={0.7}
           >
             <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>

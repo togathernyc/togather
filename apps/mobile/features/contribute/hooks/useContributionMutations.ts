@@ -44,3 +44,13 @@ export function useConfirmStaging() {
 export function useReportStagingIssue() {
   return useAuthenticatedMutation(contributions.reportStagingIssue);
 }
+
+/** Archive (set aside) a conversation the contributor is abandoning. */
+export function useArchiveContribution() {
+  return useAuthenticatedMutation(contributions.archive);
+}
+
+/** Restore an archived conversation to the active dashboard. */
+export function useUnarchiveContribution() {
+  return useAuthenticatedMutation(contributions.unarchive);
+}

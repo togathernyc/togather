@@ -202,6 +202,52 @@ When adding a new `EXPO_PUBLIC_*` environment variable:
 
 ## CI/CD Integration
 
+### Secret Update Flow (the one true path)
+
+Secrets always flow **1Password → GitHub → Convex/Expo**. Never shortcut either hop:
+
+```
+1Password (source of truth)
+   │  sync-secrets.yml  (manual: op read → gh secret set, per environment)
+   ▼
+GitHub environment secrets  (staging / production)
+   │  deploy-convex.yml / mobile deploys  (on every deploy)
+   ▼
+Convex env vars + Expo/EAS env
+```
+
+**Why 1Password → GitHub first (not straight into GitHub)?** GitHub secrets are
+write-only — you can't read a value back out. 1Password is the single source of
+truth, so you set the value there and sync it forward. Editing a value directly
+in the GitHub UI means the next sync silently overwrites it and nothing else
+knows the real value.
+
+**Why GitHub → Convex/Expo on deploy (not 1Password → Convex/Expo directly)?**
+Every deploy re-pushes the full secret set. Reading all of them from 1Password on
+each deploy hits 1Password rate limits, so GitHub acts as the buffer: 1Password →
+GitHub happens once per change; GitHub → Convex/Expo happens on every deploy.
+
+**To add or rotate a secret:**
+
+1. Add/update the item in **1Password** vault `Togather` — one item per `KEY`,
+   with `staging` and `production` fields (`op://Togather/<KEY>/<env>`).
+2. Add `<KEY>` to the allowlist array in
+   `ee/scripts/sync-1password-to-github.sh` — `COMMON_SECRETS` (required; logs a
+   loud skip if missing) or `OPTIONAL_SECRETS` (silently skipped if absent). **A
+   key that isn't listed here is never synced.** Note: GitHub reserves the
+   `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't sync under its
+   own name — name the item without that prefix (e.g. `GH_MIRROR_TOKEN`, not
+   `GITHUB_MIRROR_TOKEN`), or add an alias block (see `IMAGE_CDN_URL`) to rename
+   it on the way in.
+3. **Only if a Convex function needs it at runtime**, also add `<KEY>` to
+   `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh`. CI-only tokens (repo
+   automation, mirror pushes, etc.) stop at GitHub — leave them out.
+4. Push the value into GitHub by running the **Sync Secrets from 1Password**
+   workflow (needs `op` in CI): `gh workflow run sync-secrets.yml -f environment=both`.
+5. On the next deploy, `deploy-convex.yml` forwards GitHub → Convex/Expo
+   automatically (`.github/actions/load-secrets` exports every GitHub secret).
+6. Add a row to the tables in this doc.
+
 ### GitHub Secrets
 
 Store service tokens as GitHub repository secrets for use in CI workflows. Example secrets:
@@ -211,6 +257,7 @@ Store service tokens as GitHub repository secrets for use in CI workflows. Examp
 | `EXPO_TOKEN` | Expo/EAS authentication | Build and deploy workflows |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare Workers deployment | Landing page and worker deployments |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identifier | Worker deployments |
+| `GH_MIRROR_TOKEN` | PAT for mirroring the repo to another remote (named `GH_*` not `GITHUB_*` because GitHub reserves the `GITHUB_` secret-name prefix) | Repo mirror workflow (CI-only; not forwarded to Convex) |
 
 ---
 

@@ -97,8 +97,31 @@ callback rejects non-http(s) entries.
 
 The status lifecycle is forward-only — never send an earlier status after a
 later one. NEVER send status "MERGED": merges are detected from GitHub, not
-claimed by you. If you get blocked, send your current status with an extra
-"message" field explaining the blocker, then stop.
+claimed by you.
+
+Run fully autonomously. No human is watching this run, so a request for
+interactive approval does not get answered — it just hangs and blocks the
+person who triggered you. Never wait on a permission prompt. Take the
+actions your job needs without asking, and when a tool or path needs
+approval you cannot get, route around it: pick a non-interactive
+alternative and keep going rather than stopping to ask. Do not narrate
+options or request confirmation mid-run — decide and act.
+
+If you hit a genuine hard block — you cannot finish the job without a
+human decision, a missing credential, or access you don't have — do NOT
+sit waiting. Send a push notification (the PushNotification tool)
+describing the blocker and what you need, AND send a callback with your
+current status plus a "message" field explaining it, then stop. The
+notification is the only thing that reaches the person while they're away;
+a blocker you only wrote into the transcript never reaches them.
+
+Verification adapts to the environment. These runs execute on a headless
+Linux runner with NO iOS simulator, so never block waiting for one. Verify
+with what you have — unit/component tests, type-checks, the web build via
+Playwright — and when a device screenshot is impossible, produce a faithful
+rendered mock of the affected UI (built from the real component styles) and
+say plainly in the PR that it is a rendered mock, not a device capture.
+Missing a simulator is never a reason to stall or to skip verification.
 ```
 
 ---
@@ -117,7 +140,9 @@ can, and produce:
    - "split": too big as stated but decomposable. The spec body must explain
      why in product terms (infrastructure, decisions, blast radius — no
      jargon) and propose 2–3 smaller buildable slices, each with its own
-     risk estimate.
+     risk estimate. You MUST also return a `splitSlices` array (one entry per
+     proposed slice) — see field 4 — so the dashboard can offer a
+     copy-the-prompt button per slice.
    - "design_needed": genuinely architectural (new services, provider/cost/
      privacy decisions). The spec body must name the decisions a maintainer
      has to make first. Do NOT write an implementation spec for these.
@@ -136,12 +161,24 @@ can, and produce:
      offline).
    - area: one of "events", "chat", "groups", "prayer", "settings", "other".
    - verifyOnStaging: true for anything the user taps, types into, or
-     navigates through; false only for pure copy/color changes.
+     navigates through; false only for pure copy/color changes. Verification
+     happens on staging **after merge** (nothing reaches staging until the
+     merge auto-deploys it) and gates the manual **production** deploy, not the
+     merge.
    - aiTitle: a short imperative headline for the conversation list, e.g.
      "Fix RSVP message after tapping Going". Keep it under ~60 characters.
 
+4. **splitSlices** (required only when scope is "split"; omit otherwise) — an
+   array of `{ title, prompt }`, one per proposed slice. `title` is the
+   slice's short name; `prompt` is a self-contained instruction a maintainer
+   can paste straight into a fresh dev session to build THAT slice alone. Each
+   prompt must state the slice's goal, the files/areas involved, its
+   "Done when" checklist, and that it is one slice of a larger split (so the
+   sibling slices are explicitly out of scope). The dashboard renders a
+   "Copy build prompt" button per slice from this array.
+
 Callback: { bugId, routineRunId, status: "IN_REVIEW", spec, riskLevel,
-aiTitle, area, scope, verifyOnStaging, screenshots? }.
+aiTitle, area, scope, splitSlices?, verifyOnStaging, screenshots? }.
 
 If the payload has `revision: true`, this is a revision round: the payload
 includes the full conversation thread. Respond to the latest user message,

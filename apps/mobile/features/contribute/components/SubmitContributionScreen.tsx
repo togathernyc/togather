@@ -1,12 +1,11 @@
 /**
  * SubmitContributionScreen — start a conversation with the AI builder
- * (ADR-029 Phase 1.5).
+ * (ADR-029 Phase 1.5, chat-first filing).
  *
- * Deliberately non-technical: contributors describe what they saw (or what
- * they want) in their own words; the AI spec agent does the investigation
- * and replies in the conversation thread. Screenshots are omitted in v1 —
- * the existing chat upload flow returns r2: storage paths, not the public
- * URLs this contract expects.
+ * Deliberately non-technical and low-friction: contributors pick bug vs.
+ * feature, then just describe the thing in one message and optionally attach
+ * screenshots — no title/repro form. The AI spec agent investigates, writes a
+ * headline, and replies in the conversation thread.
  */
 import React, { useState } from "react";
 import {
@@ -17,7 +16,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
@@ -27,7 +25,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { formatError } from "@/utils/error-handling";
+import { notify } from "@/utils/platformAlert";
 import { useSubmitContribution } from "../hooks/useContributionMutations";
+import { useImageAttachments } from "../hooks/useImageAttachments";
+import { useWebImagePaste } from "../hooks/useWebImagePaste";
+import { AttachmentStrip } from "./AttachmentStrip";
 import type { ContributionKind } from "../types";
 
 export function SubmitContributionScreen() {
@@ -36,14 +38,18 @@ export function SubmitContributionScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const submit = useSubmitContribution();
+  const images = useImageAttachments();
+
+  // Web: paste a copied screenshot straight into the box (matches chat).
+  const inputPasteRef = useWebImagePaste(images.addUris);
 
   const [kind, setKind] = useState<ContributionKind>("bug");
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [repro, setRepro] = useState("");
+  const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const canSubmit = title.trim().length > 0 && body.trim().length > 0 && !submitting;
+  const hasContent =
+    message.trim().length > 0 || images.storagePaths.length > 0;
+  const canSubmit = hasContent && !submitting && !images.uploading;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -51,26 +57,18 @@ export function SubmitContributionScreen() {
     try {
       const id = await submit({
         kind,
-        title: title.trim(),
-        body: body.trim(),
-        ...(repro.trim() ? { repro: repro.trim() } : {}),
+        body: message.trim(),
+        ...(images.storagePaths.length > 0
+          ? { screenshotUrls: images.storagePaths }
+          : {}),
       });
       // Land on the new item's detail screen instead of back on the form.
-      router.replace(`/(user)/contribute/${id}`);
+      router.replace(`/(user)/dev/${id}`);
     } catch (error) {
-      Alert.alert("Couldn't submit", formatError(error));
+      notify("Couldn't submit", formatError(error));
       setSubmitting(false);
     }
   };
-
-  const inputStyle = [
-    styles.input,
-    {
-      backgroundColor: colors.surface,
-      borderColor: colors.border,
-      color: colors.text,
-    },
-  ];
 
   return (
     <KeyboardAvoidingView
@@ -92,13 +90,11 @@ export function SubmitContributionScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={[styles.intro, { color: colors.textSecondary }]}>
-          Start a conversation — describe what you saw or what you want, and
-          the AI replies with a plan you can chat about.
+          Just describe it in your own words — what you saw or what you want.
+          Add screenshots if they help. The AI reads it, drafts a plan, and
+          replies here so you can chat it through.
         </Text>
 
-        <Text style={[styles.label, { color: colors.textSecondary }]}>
-          What's this about?
-        </Text>
         <View style={[styles.kindToggle, { backgroundColor: colors.surfaceSecondary }]}>
           {(
             [
@@ -135,53 +131,41 @@ export function SubmitContributionScreen() {
           })}
         </View>
 
-        <Text style={[styles.label, { color: colors.textSecondary }]}>Title</Text>
         <TextInput
-          style={inputStyle}
-          value={title}
-          onChangeText={setTitle}
-          placeholder={
-            kind === "bug" ? "e.g. Event photos won't open" : "e.g. Let me RSVP for my kids"
-          }
-          placeholderTextColor={colors.textTertiary}
-          maxLength={120}
-        />
-
-        <Text style={[styles.label, { color: colors.textSecondary }]}>
-          {kind === "bug" ? "What happened, and what did you expect?" : "What should happen?"}
-        </Text>
-        <TextInput
-          style={[...inputStyle, styles.multiline]}
-          value={body}
-          onChangeText={setBody}
+          ref={inputPasteRef}
+          style={[
+            styles.input,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              color: colors.text,
+            },
+          ]}
+          value={message}
+          onChangeText={setMessage}
           placeholder={
             kind === "bug"
-              ? "Describe what went wrong in your own words — no technical detail needed."
-              : "Describe the idea and why it would help — no technical detail needed."
+              ? "What went wrong? Where did you see it? No technical detail needed."
+              : "What should happen, and why would it help? No technical detail needed."
           }
           placeholderTextColor={colors.textTertiary}
           multiline
           textAlignVertical="top"
+          autoFocus
         />
 
-        <Text style={[styles.label, { color: colors.textSecondary }]}>
-          How to see it (optional)
-        </Text>
-        <TextInput
-          style={[...inputStyle, styles.multiline]}
-          value={repro}
-          onChangeText={setRepro}
-          placeholder="Where in the app would we look? e.g. Open a group, tap Events, then…"
-          placeholderTextColor={colors.textTertiary}
-          multiline
-          textAlignVertical="top"
-        />
+        <AttachmentStrip attachments={images.attachments} onRemove={images.remove} />
 
-        <Text style={[styles.hint, { color: colors.textTertiary }]}>
-          The AI reads this, drafts a plan, and replies in the conversation.
-          You'll confirm the plan says what you meant before anything is built
-          — and you can keep chatting to refine it.
-        </Text>
+        <TouchableOpacity
+          style={styles.attachButton}
+          onPress={images.pick}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="image-outline" size={18} color={primaryColor} />
+          <Text style={[styles.attachButtonText, { color: primaryColor }]}>
+            Add screenshots
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={[
@@ -196,7 +180,9 @@ export function SubmitContributionScreen() {
           {submitting ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.submitButtonText}>Start conversation</Text>
+            <Text style={styles.submitButtonText}>
+              {images.uploading ? "Uploading…" : "Start conversation"}
+            </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -216,20 +202,13 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, justifyContent: "center", alignItems: "center" },
   headerTitle: { fontSize: 17, fontWeight: "600" },
   scroll: { padding: 16, paddingBottom: 48 },
-  intro: { fontSize: 14, lineHeight: 21 },
-  label: {
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 20,
-    marginBottom: 6,
-  },
+  intro: { fontSize: 14, lineHeight: 21, marginBottom: 18 },
   kindToggle: {
     flexDirection: "row",
     borderRadius: 12,
     padding: 4,
     gap: 4,
+    marginBottom: 16,
   },
   kindOption: {
     flex: 1,
@@ -249,9 +228,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+    minHeight: 140,
+    paddingTop: 10,
   },
-  multiline: { minHeight: 110, paddingTop: 10 },
-  hint: { fontSize: 13, lineHeight: 19, marginTop: 20 },
+  attachButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  attachButtonText: { fontSize: 14, fontWeight: "600" },
   submitButton: {
     alignItems: "center",
     justifyContent: "center",

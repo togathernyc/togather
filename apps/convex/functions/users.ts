@@ -561,6 +561,23 @@ export const recordActivity = mutation({
     }
 
     await ctx.db.patch(userId, { lastActiveAt: nowMs });
+
+    // Opening the app also counts as activity in the community you're in.
+    // This per-community timestamp is what the admin "Active Members" stat
+    // and the $1/month per-active-member bill are computed from (see
+    // functions/memberActivity.ts) — without it, members who stay in one
+    // community would look inactive there despite opening the app daily.
+    if (user.activeCommunityId) {
+      const membership = await ctx.db
+        .query("userCommunities")
+        .withIndex("by_user_community", (q) =>
+          q.eq("userId", userId).eq("communityId", user.activeCommunityId!),
+        )
+        .first();
+      if (membership && membership.status === 1) {
+        await ctx.db.patch(membership._id, { lastLogin: nowMs });
+      }
+    }
   },
 });
 
