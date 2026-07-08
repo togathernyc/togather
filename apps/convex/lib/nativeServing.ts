@@ -1,20 +1,19 @@
 /**
- * Serving helpers — combined PCO + native rostering.
+ * Serving helpers — combined PCO + native rostering, counted BY DAY.
  *
- * The profile "Serving" score and the serving-history card show BOTH sources:
- * the cached Planning Center (PCO) snapshot on `groups.pcoServingCounts` AND
- * native rostering (`roleAssignments`). This gives a community mid-migration its
- * full serving picture instead of one source hiding the other.
+ * The profile "Serving" score counts BOTH sources — the cached Planning Center
+ * (PCO) snapshot on `groups.pcoServingCounts` AND native rostering
+ * (`roleAssignments`) — but de-duplicates by calendar day: a day on which the
+ * person is scheduled on ANY plan (PCO or native, one team or several) counts
+ * as exactly one serve. So two plans on the same day, or a PCO plan and a native
+ * plan on the same day, are a single serve.
  *
- * De-duplication: a native plan imported from PCO carries `eventPlans.pcoPlanId`.
- * Those plans are already represented in the PCO snapshot, so the native helpers
- * below exclude `pcoPlanId`-linked plans — the caller then adds the PCO count /
- * rows on top, and the two sets are disjoint (native-origin vs PCO-origin).
+ * Because de-dup is by day, PCO-imported native plans (`eventPlans.pcoPlanId`)
+ * need no special handling — a migrated plan lands on the same day as its PCO
+ * record and collapses to one automatically.
  *
- * "Native serving count" for a user = number of DISTINCT native-origin event
- * plans in the past ~60 days where the user has a non-declined role assignment.
- * This mirrors how PCO counts distinct plans served (see
- * pcoServices/servingHistory.ts).
+ * The serving-history CARD is a separate view (`nativeServingHistory` +
+ * `mergeServingHistory`) that still lists individual serves, not days.
  */
 
 import type { Id } from "../_generated/dataModel";
@@ -37,52 +36,86 @@ type AssignmentLike = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ReadCtx = { db: any };
 
+/** Calendar day (UTC, `YYYY-MM-DD`) for a timestamp — the serving dedup key. */
+function dayOf(ts: number): string {
+  return new Date(ts).toISOString().split("T")[0];
+}
+
 /**
- * Native-origin serving count for a user, scoped to one community: number of
- * DISTINCT event plans in the past ~60 days where the user has a non-declined
- * role assignment, the plan belongs to `communityId`, and the plan did NOT come
- * from PCO (no `pcoPlanId`). The caller adds the cached PCO count on top; the
- * two are disjoint, so this is native + PCO without double-counting.
+ * The set of calendar days a user served natively in the past ~60 days, scoped
+ * to `communityId`. One entry per distinct day, regardless of how many plans /
+ * teams the person was on that day.
  *
  * Scoping matters because `roleAssignments` (and its `by_user_eventDate` index)
- * is not community-scoped — a user who serves in two communities must not have
- * one community's serving inflate the other's score (the PCO counts this
- * augments were always per-community).
+ * is not community-scoped — serving in another community must not inflate this
+ * community's score (the PCO snapshot this combines with is per-community).
  *
  * Takes a pre-fetched, newest-first assignment list (e.g. the archive-activity
  * lookup) so the caller avoids a second assignment read; only the small set of
- * in-window candidate plans is fetched to resolve community + origin.
+ * in-window candidate plans is fetched to resolve community + canonical date.
  */
-export async function countNativeServing(
+export async function nativeServingDays(
   ctx: ReadCtx,
   assignments: AssignmentLike[],
   nowTs: number,
   communityId: Id<"communities">,
-): Promise<number> {
+): Promise<Set<string>> {
   const cutoff = nowTs - SERVING_WINDOW_MS;
   const candidatePlanIds = new Set<string>();
   for (const a of assignments) {
     if (a.status === "declined") continue;
     // Past ~60 days only. Volunteers are rostered onto *upcoming* plans, so
     // roleAssignments routinely carry future eventDates; counting those would
-    // inflate the Serving score the moment someone is scheduled ahead. The PCO
-    // value this augments is built from past plans only.
+    // inflate the score. The PCO snapshot this combines with is past-only.
     if (a.eventDate < cutoff || a.eventDate > nowTs) continue;
     candidatePlanIds.add(a.planId.toString());
   }
-  if (candidatePlanIds.size === 0) return 0;
+  const days = new Set<string>();
+  if (candidatePlanIds.size === 0) return days;
   const plans = await Promise.all(
     [...candidatePlanIds].map((id) => ctx.db.get(id as Id<"eventPlans">)),
   );
-  let count = 0;
   for (const plan of plans) {
-    // Exclude PCO-imported plans (pcoPlanId set): already counted in the PCO
-    // snapshot the caller adds, so counting them here double-counts.
-    if (plan && plan.communityId === communityId && plan.pcoPlanId == null) {
-      count++;
+    if (plan && plan.communityId === communityId) {
+      days.add(dayOf(plan.eventDate));
     }
   }
-  return count;
+  return days;
+}
+
+/** PCO serving dates (`YYYY-MM-DD`) for one user from the cached servingDetails. */
+export function pcoServingDatesForUser(
+  servingDetails:
+    | Array<{ userId: Id<"users">; date: string }>
+    | undefined,
+  userId: Id<"users">,
+): string[] {
+  if (!servingDetails) return [];
+  const key = userId.toString();
+  return servingDetails
+    .filter((d) => d.userId.toString() === key)
+    .map((d) => d.date)
+    .filter(Boolean);
+}
+
+/**
+ * Combined serving count for a user = number of DISTINCT calendar days served
+ * across native rostering and PCO in the past ~60 days. Any day appearing in
+ * either source counts once; a day in both counts once.
+ */
+export function combineServingDayCount(
+  nativeDays: Set<string>,
+  pcoDates: string[],
+  nowTs: number,
+): number {
+  const cutoffDay = dayOf(nowTs - SERVING_WINDOW_MS);
+  const todayDay = dayOf(nowTs);
+  const days = new Set(nativeDays);
+  for (const d of pcoDates) {
+    // PCO dates are already `YYYY-MM-DD`; keep only in-window (past) days.
+    if (d && d >= cutoffDay && d <= todayDay) days.add(d);
+  }
+  return days.size;
 }
 
 export interface ServingHistoryRow {

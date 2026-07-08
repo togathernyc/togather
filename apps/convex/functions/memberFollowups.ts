@@ -45,7 +45,9 @@ import {
 } from "./followupScoring";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import {
-  countNativeServing,
+  nativeServingDays,
+  combineServingDayCount,
+  pcoServingDatesForUser,
   nativeServingHistory,
   mergeServingHistory,
 } from "../lib/nativeServing";
@@ -422,17 +424,18 @@ export const internalScoreBatch = internalQuery({
     const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
     const useCustomScoring = !!group?.followupScoreConfig;
 
-    // Build PCO serving map from group doc (fallback source)
-    const pcoServingMap = new Map<string, PcoServingData>();
-    if (group?.pcoServingCounts?.counts) {
-      for (const { userId, count } of group.pcoServingCounts.counts) {
-        pcoServingMap.set(userId.toString(), { servicesPast2Months: count });
+    // PCO serving DATES per user from the cached servingDetails on the group
+    // doc. Serving is counted by DAY, combining these with native rostering
+    // (per member below); a day on either source counts once.
+    const pcoServingDatesMap = new Map<string, string[]>();
+    if (group?.pcoServingCounts?.servingDetails) {
+      for (const { userId, date } of group.pcoServingCounts.servingDetails) {
+        const key = userId.toString();
+        const arr = pcoServingDatesMap.get(key);
+        if (arr) arr.push(date);
+        else pcoServingDatesMap.set(key, [date]);
       }
     }
-
-    // Serving combines BOTH sources: the cached PCO map above AND native
-    // rostering (added per member below). Native-origin plans exclude
-    // PCO-imported ones, so the two are disjoint.
 
     const results = await Promise.all(
       args.members.map(async (member) => {
@@ -534,6 +537,31 @@ export const internalScoreBatch = internalQuery({
           ? (args.crossGroupAttendanceMap?.[member.userId.toString()] as number | undefined)
           : undefined;
 
+        // Serving = distinct calendar DAYS served across native rostering and
+        // PCO in the past ~60 days (feeds the custom score AND the displayed
+        // pcoServingCount). A day on either source — or on several plans —
+        // counts once. Computed once for both scoring branches.
+        const pcoDates = pcoServingDatesMap.get(member.userId.toString()) ?? [];
+        let nativeServeDays = new Set<string>();
+        if (group?.communityId) {
+          const recentAssignments = await ctx.db
+            .query("roleAssignments")
+            .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
+            .order("desc")
+            .take(100);
+          nativeServeDays = await nativeServingDays(
+            ctx,
+            recentAssignments,
+            currentTime,
+            group.communityId,
+          );
+        }
+        const servingDayCount = combineServingDayCount(
+          nativeServeDays,
+          pcoDates,
+          currentTime,
+        );
+
         // Compute configurable scores
         let memberScores: Record<string, number>;
         let triggeredAlerts: string[] = [];
@@ -547,26 +575,10 @@ export const internalScoreBatch = internalQuery({
           const connectionParts = computeConnectionParts(
             meetingData, followupData, isSnoozed, currentTime
           );
-          let pcoServing = pcoServingMap.get(member.userId.toString());
-          if (group?.communityId) {
-            const recentAssignments = await ctx.db
-              .query("roleAssignments")
-              .withIndex("by_user_eventDate", (q) =>
-                q.eq("userId", member.userId),
-              )
-              .order("desc")
-              .take(100);
-            const nativeCount = await countNativeServing(
-              ctx,
-              recentAssignments,
-              currentTime,
-              group.communityId,
-            );
-            pcoServing = {
-              servicesPast2Months:
-                (pcoServing?.servicesPast2Months ?? 0) + nativeCount,
-            };
-          }
+          const pcoServing: PcoServingData | undefined =
+            servingDayCount > 0
+              ? { servicesPast2Months: servingDayCount }
+              : undefined;
           const rawValues = extractRawValues(
             meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing,
             crossGroupAttendancePct
@@ -613,8 +625,7 @@ export const internalScoreBatch = internalQuery({
           snoozedUntil,
           scoreFactors: legacyScores.scoreFactors,
           triggeredAlerts,
-          pcoServingCount:
-            pcoServingMap.get(member.userId.toString())?.servicesPast2Months ?? 0,
+          pcoServingCount: servingDayCount,
           latestNoteContent,
           latestNoteAt,
         };
@@ -1435,33 +1446,35 @@ export const history = query({
       meetingData, followupData, isSnoozed, currentTime
     );
 
-    // Build serving data — combines BOTH sources: the cached PCO count AND
-    // native-origin distinct plans served in the past ~60 days from
-    // roleAssignments (native excludes PCO-imported plans, so no double-count).
-    const pcoCount =
-      group?.pcoServingCounts?.counts?.find(
-        (c: { userId: Id<"users">; count: number }) =>
-          c.userId.toString() === member.userId.toString(),
-      )?.count ?? 0;
-
-    let nativeCount = 0;
+    // Build serving data — distinct calendar DAYS served across BOTH sources
+    // (native rostering + cached PCO dates) in the past ~60 days. A day on both
+    // sources, or on multiple plans, counts once.
+    const pcoDates = pcoServingDatesForUser(
+      group?.pcoServingCounts?.servingDetails,
+      member.userId,
+    );
+    let nativeDays = new Set<string>();
     if (group?.communityId) {
       const recentAssignments = await ctx.db
         .query("roleAssignments")
         .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
         .order("desc")
         .take(100);
-      nativeCount = await countNativeServing(
+      nativeDays = await nativeServingDays(
         ctx,
         recentAssignments,
         currentTime,
         group.communityId,
       );
     }
-
+    const servingDayCount = combineServingDayCount(
+      nativeDays,
+      pcoDates,
+      currentTime,
+    );
     const pcoServing: PcoServingData | undefined =
-      pcoCount + nativeCount > 0
-        ? { servicesPast2Months: pcoCount + nativeCount }
+      servingDayCount > 0
+        ? { servicesPast2Months: servingDayCount }
         : undefined;
 
     // ---- Cross-group attendance ----
