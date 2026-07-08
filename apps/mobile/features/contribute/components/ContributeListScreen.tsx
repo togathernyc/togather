@@ -12,6 +12,7 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  ScrollView,
   ActivityIndicator,
   TouchableOpacity,
   KeyboardAvoidingView,
@@ -121,12 +122,19 @@ function ConversationRow({
 
 export interface ContributeListScreenProps {
   /**
-   * Desktop-web split view (ContributeSplitView): row taps call this with the
-   * conversation id instead of navigating to /(user)/dev/[id].
+   * Desktop-web split view (the persistent sidebar in app/(user)/dev/_layout.tsx):
+   * row taps call this with the conversation id instead of navigating to
+   * /(user)/dev/[id] themselves.
    */
   onSelectConversation?: (id: Id<"devBugs">) => void;
   /** Highlight this conversation's row as the active one (split view). */
   selectedId?: Id<"devBugs"> | null;
+  /**
+   * True when the compose form is open in the right pane (`/dev/submit`): the
+   * "New conversation" button reads as selected so the sidebar reflects the
+   * active right-pane surface.
+   */
+  composing?: boolean;
   /**
    * True when rendered as the split view's sidebar: hides the header back
    * button (the list is the persistent left pane; there's nothing to pop).
@@ -137,12 +145,13 @@ export interface ContributeListScreenProps {
 export function ContributeListScreen({
   onSelectConversation,
   selectedId,
+  composing = false,
   embedded = false,
 }: ContributeListScreenProps = {}) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, primaryColorDark } = useCommunityTheme();
   const { access, hasAccess, isLoading: accessLoading } = useDevAccess();
 
   const [segment, setSegment] = useState<Segment>("yourTurn");
@@ -207,12 +216,23 @@ export function ContributeListScreen({
     return (
       <>
         <View style={styles.controls}>
-          <SegmentedTabs<Segment>
-            options={SEGMENT_OPTIONS}
-            value={segment}
-            onChange={setSegment}
-            accessibilityLabel="Filter conversations"
-          />
+          {/* The four status tabs don't fit the 340px sidebar, so let them
+              scroll horizontally instead of clipping the last one. flex:1
+              bounds the scroll frame to the row's free space; the Mine/Everyone
+              toggle keeps its natural width beside it. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.segmentScroll}
+            contentContainerStyle={styles.segmentScrollContent}
+          >
+            <SegmentedTabs<Segment>
+              options={SEGMENT_OPTIONS}
+              value={segment}
+              onChange={setSegment}
+              accessibilityLabel="Filter conversations"
+            />
+          </ScrollView>
           {canSeeEveryone ? (
             <SegmentedTabs<Owner>
               options={OWNER_OPTIONS}
@@ -239,7 +259,11 @@ export function ContributeListScreen({
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={
             <TouchableOpacity
-              style={[styles.newButton, { backgroundColor: primaryColor }]}
+              style={[
+                styles.newButton,
+                { backgroundColor: primaryColor },
+                composing && [styles.newButtonActive, { borderColor: primaryColorDark }],
+              ]}
               onPress={() => router.push("/(user)/dev/submit")}
               activeOpacity={0.8}
             >
@@ -304,13 +328,16 @@ const styles = StyleSheet.create({
   lockedText: { fontSize: 15, lineHeight: 22, textAlign: "center" },
   controls: {
     flexDirection: "row",
-    flexWrap: "wrap",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 8,
     paddingHorizontal: 16,
     paddingBottom: 4,
   },
+  // Bounds the horizontal scroll frame to the row's free space so the status
+  // tabs scroll within it rather than pushing the Mine/Everyone toggle out.
+  segmentScroll: { flex: 1 },
+  // Keep the track left-aligned; alignItems:center matches the row's baseline.
+  segmentScrollContent: { alignItems: "center" },
   listContent: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 48 },
   newButton: {
     flexDirection: "row",
@@ -321,6 +348,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 8,
   },
+  // Ring shown while the compose form is open in the right pane (desktop split).
+  newButtonActive: { borderWidth: 2 },
   newButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "600" },
   row: {
     flexDirection: "row",
