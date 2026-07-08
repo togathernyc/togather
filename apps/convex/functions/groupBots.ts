@@ -861,7 +861,11 @@ export const sendCommunicationNow = action({
     try {
       resolvedMessage = await ctx.runAction(
         internal.functions.pcoServices.actions.resolvePositionPlaceholdersInternal,
-        { communityId: group.communityId, message: args.message }
+        {
+          communityId: group.communityId,
+          message: args.message,
+          groupId: args.groupId,
+        }
       );
     } catch (error) {
       console.warn(

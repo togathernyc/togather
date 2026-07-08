@@ -26,11 +26,142 @@ import {
   PCO_COMMUNITY_ID,
   PCO_SERVICE_TYPE_IDS,
   PCO_ROLE_MAPPINGS,
+  getNativeCampusGroupName,
+  getNativeRoleMapping,
 } from "./config";
 import { ActionCtx } from "../../_generated/server";
 import { Doc } from "../../_generated/dataModel";
+import { internal } from "../../_generated/api";
 
 const PCO_SERVICES_BASE = "https://api.planningcenteronline.com/services/v2";
+
+// ============================================================================
+// Native-first routing helpers
+// ============================================================================
+//
+// The bot is native-first: when the location's campus group has an upcoming
+// native `eventPlans`, reads/writes go to the native tables (see
+// `nativeSync.ts`); otherwise they fall back to the PCO path in this file. The
+// write helpers below return `{ handled }` — `handled: false` means "no native
+// plan, fall back to PCO"; `handled: true` means native owns the outcome.
+
+interface NativeWriteOutcome {
+  handled: boolean;
+  success: boolean;
+  detail: string;
+}
+
+/**
+ * Fetch native plan context for a location if the community rosters natively.
+ * Returns null when there's no native campus group / upcoming plan (⇒ PCO).
+ */
+async function fetchNativeContext(
+  ctx: ActionCtx,
+  location: string,
+  communityId: Doc<"communities">["_id"],
+): Promise<PcoContext | null> {
+  const campusGroupName = getNativeCampusGroupName(location);
+  if (!campusGroupName) return null;
+  try {
+    return await ctx.runQuery(
+      internal.functions.slackServiceBot.nativeSync.getNativeContext,
+      { communityId, campusGroupName },
+    );
+  } catch (error) {
+    console.warn("[Native Sync] getNativeContext failed:", error);
+    return null;
+  }
+}
+
+/** Native assign; `handled: false` ⇒ caller should fall back to PCO. */
+async function nativeAssign(
+  ctx: ActionCtx,
+  location: string,
+  role: string,
+  personName: string,
+  communityId: Doc<"communities">["_id"],
+): Promise<NativeWriteOutcome> {
+  const campusGroupName = getNativeCampusGroupName(location);
+  const mapping = getNativeRoleMapping(role);
+  if (!campusGroupName || !mapping) {
+    return { handled: false, success: false, detail: "No native mapping" };
+  }
+  return await ctx.runMutation(
+    internal.functions.slackServiceBot.nativeSync.nativeAssignRole,
+    {
+      communityId,
+      campusGroupName,
+      teamName: mapping.teamName,
+      roleName: mapping.roleName,
+      personName,
+    },
+  );
+}
+
+/** Native unassign; `handled: false` ⇒ caller should fall back to PCO. */
+async function nativeUnassign(
+  ctx: ActionCtx,
+  location: string,
+  role: string,
+  personName: string,
+  communityId: Doc<"communities">["_id"],
+): Promise<NativeWriteOutcome> {
+  const campusGroupName = getNativeCampusGroupName(location);
+  const mapping = getNativeRoleMapping(role);
+  if (!campusGroupName || !mapping) {
+    return { handled: false, success: false, detail: "No native mapping" };
+  }
+  return await ctx.runMutation(
+    internal.functions.slackServiceBot.nativeSync.nativeUnassignRole,
+    {
+      communityId,
+      campusGroupName,
+      teamName: mapping.teamName,
+      roleName: mapping.roleName,
+      personName,
+    },
+  );
+}
+
+/** Native run-sheet item update; `handled: false` ⇒ fall back to PCO. */
+async function nativeUpdateItem(
+  ctx: ActionCtx,
+  location: string,
+  opts: {
+    titlePattern: string;
+    field: string;
+    content: string;
+    preserveSections?: string[];
+    noteCategory?: string;
+  },
+  communityId: Doc<"communities">["_id"],
+): Promise<NativeWriteOutcome> {
+  const campusGroupName = getNativeCampusGroupName(location);
+  if (!campusGroupName) {
+    return { handled: false, success: false, detail: "No native campus group" };
+  }
+  return await ctx.runMutation(
+    internal.functions.slackServiceBot.nativeSync.nativeUpdateItem,
+    { communityId, campusGroupName, ...opts },
+  );
+}
+
+/** Native setlist sync; `handled: false` ⇒ fall back to PCO. */
+async function nativeSyncSetlist(
+  ctx: ActionCtx,
+  location: string,
+  songs: string[],
+  communityId: Doc<"communities">["_id"],
+): Promise<NativeWriteOutcome & { songsAdded?: number }> {
+  const campusGroupName = getNativeCampusGroupName(location);
+  if (!campusGroupName) {
+    return { handled: false, success: false, detail: "No native campus group" };
+  }
+  return await ctx.runMutation(
+    internal.functions.slackServiceBot.nativeSync.nativeSyncSetlist,
+    { communityId, campusGroupName, songs },
+  );
+}
 
 // ============================================================================
 // Helpers
@@ -247,6 +378,10 @@ export async function assignPersonToRoleCore(
   communityId: Id<"communities">
 ): Promise<{ success: boolean; detail: string }> {
   try {
+    // Native-first: if the community has an upcoming native plan, write there.
+    const native = await nativeAssign(ctx, location, role, personName, communityId);
+    if (native.handled) return { success: native.success, detail: native.detail };
+
     const plan = await getUpcomingSundayPlanFromConfig(ctx, location, pcoConfig, communityId);
     if (!plan) return { success: false, detail: "No upcoming plan found" };
 
@@ -292,6 +427,10 @@ export async function removePersonFromRoleCore(
   communityId: Id<"communities">
 ): Promise<{ success: boolean; detail: string }> {
   try {
+    // Native-first: if the community has an upcoming native plan, write there.
+    const native = await nativeUnassign(ctx, location, role, personName, communityId);
+    if (native.handled) return { success: native.success, detail: native.detail };
+
     const plan = await getUpcomingSundayPlanFromConfig(ctx, location, pcoConfig, communityId);
     if (!plan) return { success: false, detail: "No upcoming plan found" };
 
@@ -324,6 +463,40 @@ export interface PlanItemConfig {
 }
 
 /**
+ * Resolve the native run-sheet target (title pattern + field) for a plan-item
+ * update, mirroring the V2/V1 branches in `updatePlanItemCore`. Returns null
+ * for an unsupported V1 item type (so the PCO branch reports it).
+ */
+function resolveNativeItemSpec(
+  itemType: string,
+  itemConfig?: PlanItemConfig,
+): {
+  titlePattern: string;
+  field: string;
+  preserveSections?: string[];
+  noteCategory?: string;
+} | null {
+  if (itemConfig) {
+    return {
+      titlePattern: itemConfig.pcoItemTitlePattern,
+      field: itemConfig.pcoItemField === "notes" ? "notes" : "description",
+      preserveSections: itemConfig.preserveSections,
+    };
+  }
+  if (itemType === "preach_notes") {
+    return { titlePattern: "message|preach|sermon", field: "description" };
+  }
+  if (itemType === "announcements") {
+    return {
+      titlePattern: "announcement",
+      field: "description",
+      preserveSections: ["GIVING"],
+    };
+  }
+  return null;
+}
+
+/**
  * Core: Update a plan item (preach notes, announcements, or any V2-configured item).
  *
  * When `itemConfig` is provided (V2 path), uses its patterns for item matching
@@ -339,6 +512,20 @@ export async function updatePlanItemCore(
   itemConfig?: PlanItemConfig
 ): Promise<{ success: boolean; detail: string }> {
   try {
+    // Native-first: resolve the title pattern / field the same way the PCO
+    // branches below do, then write to the native run sheet if a native plan
+    // exists. `handled: false` falls through to the PCO path.
+    const nativeItemSpec = resolveNativeItemSpec(itemType, itemConfig);
+    if (nativeItemSpec) {
+      const native = await nativeUpdateItem(
+        ctx,
+        location,
+        { ...nativeItemSpec, content },
+        communityId,
+      );
+      if (native.handled) return { success: native.success, detail: native.detail };
+    }
+
     const plan = await getUpcomingSundayPlanFromConfig(ctx, location, pcoConfig, communityId);
     if (!plan) return { success: false, detail: "No upcoming plan found" };
 
@@ -467,6 +654,17 @@ export async function searchPcoPeopleCore(
   communityId: Id<"communities">
 ): Promise<{ results: Array<{ name: string; position: string | null }> }> {
   try {
+    // Native-first: search campus-group members when the community rosters
+    // natively. A non-null result (even empty) means native is authoritative.
+    const campusGroupName = getNativeCampusGroupName(location);
+    if (campusGroupName) {
+      const nativeResults = await ctx.runQuery(
+        internal.functions.slackServiceBot.nativeSync.searchNativePeople,
+        { communityId, campusGroupName, query },
+      );
+      if (nativeResults) return nativeResults;
+    }
+
     const accessToken = await getPcoAccessTokenFromConfig(ctx, communityId);
 
     // Search the broad PCO People directory first
@@ -526,6 +724,11 @@ export async function fetchPcoContextCore(
   communityId: Id<"communities">
 ): Promise<PcoContext | null> {
   try {
+    // Native-first: return native plan context when the community rosters
+    // natively; otherwise fall back to reading from PCO below.
+    const native = await fetchNativeContext(ctx, location, communityId);
+    if (native) return native;
+
     const plan = await getUpcomingSundayPlanFromConfig(ctx, location, pcoConfig, communityId);
     if (!plan) return null;
 
@@ -721,6 +924,20 @@ export const syncPreacherToPCO = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: write to the native plan when the community rosters natively.
+      const native = await nativeAssign(
+        ctx,
+        args.location,
+        "preacher",
+        args.preacherName,
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true, detail: native.detail }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -780,6 +997,20 @@ export const syncMeetingLeaderToPCO = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: write to the native plan when the community rosters natively.
+      const native = await nativeAssign(
+        ctx,
+        args.location,
+        "meetingLead",
+        args.meetingLeaderName,
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true, detail: native.detail }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -838,6 +1069,20 @@ export const removeFromPcoPlan = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: remove from the native plan when the community rosters natively.
+      const native = await nativeUnassign(
+        ctx,
+        args.location,
+        args.role,
+        args.personName,
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -873,6 +1118,23 @@ export const syncPreachNotesToPCO = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: write preach notes to the native run sheet when available.
+      const native = await nativeUpdateItem(
+        ctx,
+        args.location,
+        {
+          titlePattern: "message|preach|sermon",
+          field: "description",
+          content: args.preachNotes,
+        },
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true, detail: native.detail }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -934,6 +1196,19 @@ export const syncSetlistToPCO = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: add songs to the native run sheet when available.
+      const native = await nativeSyncSetlist(
+        ctx,
+        args.location,
+        args.songs,
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true, songsAdded: native.songsAdded ?? 0 }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -981,6 +1256,24 @@ export const syncAnnouncementsToPCO = internalAction({
   },
   handler: async (ctx, args) => {
     try {
+      // Native-first: write announcements to the native run sheet when available.
+      const native = await nativeUpdateItem(
+        ctx,
+        args.location,
+        {
+          titlePattern: "announcement",
+          field: "description",
+          content: args.announcements,
+          preserveSections: ["GIVING"],
+        },
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native.handled) {
+        return native.success
+          ? { success: true, native: true, detail: native.detail }
+          : { success: false, reason: native.detail };
+      }
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return { success: false, reason: "No upcoming plan found" };
 
@@ -1065,6 +1358,14 @@ export const fetchPcoContext = internalAction({
   },
   handler: async (ctx, args): Promise<PcoContext | null> => {
     try {
+      // Native-first: return native plan context when the community rosters natively.
+      const native = await fetchNativeContext(
+        ctx,
+        args.location,
+        PCO_COMMUNITY_ID as Id<"communities">,
+      );
+      if (native) return native;
+
       const plan = await getUpcomingSundayPlan(ctx, args.location);
       if (!plan) return null;
 

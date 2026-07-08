@@ -31,6 +31,10 @@ import {
   calculateAllSystemScores,
   evaluateSystemAlerts,
 } from "./systemScoring";
+import {
+  communityUsesNativeRostering,
+  countNativeServing,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Constants
@@ -270,6 +274,15 @@ export const computeCommunityScoresBatch = internalQuery({
     const currentTime = now();
     const announcementGroup = await ctx.db.get(args.announcementGroupId);
 
+    // Serving is native-first: if the community has any native rostering
+    // (an eventPlans row), the Serving score comes from roleAssignments;
+    // otherwise it falls back to the cached PCO pcoServingCounts below.
+    // Decided once per batch (not per member).
+    const communityUsesNative = await communityUsesNativeRostering(
+      ctx,
+      args.communityId,
+    );
+
     // Build PCO serving map from announcement group doc
     const pcoServingMap = new Map<string, number>();
     if (announcementGroup?.pcoServingCounts?.counts) {
@@ -498,7 +511,7 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // PCO serving count
+        // PCO serving count (fallback source)
         const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
 
         // Serving activity = most recent of PCO serving and native rostering
@@ -521,6 +534,19 @@ export const computeCommunityScoresBatch = internalQuery({
           lastRosteredAt,
         );
 
+        // Native-first Serving count: distinct plans in the past ~60 days with
+        // a non-declined roleAssignment. Reuses recentAssignments (no extra
+        // read). Falls back to the cached PCO count when the community has no
+        // native rostering.
+        const servingCount = communityUsesNative
+          ? await countNativeServing(
+              ctx,
+              recentAssignments,
+              currentTime,
+              args.communityId,
+            )
+          : pcoCount;
+
         // Extract system raw values
         const rawValues = extractSystemRawValues({
           crossGroupAttendancePct: crossGroupPct,
@@ -532,7 +558,7 @@ export const computeCommunityScoresBatch = internalQuery({
           daysSinceLastInPerson: daysSince(lastInPerson),
           daysSinceLastCall: daysSince(lastCall),
           daysSinceLastText: daysSince(lastText),
-          pcoServicesCount: pcoCount,
+          pcoServicesCount: servingCount,
         });
 
         // Calculate scores and alerts

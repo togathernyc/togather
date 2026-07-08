@@ -6,8 +6,18 @@
  */
 
 import { v } from "convex/values";
-import { action, internalAction, internalMutation, internalQuery } from "../../_generated/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  type ActionCtx,
+} from "../../_generated/server";
 import { internal } from "../../_generated/api";
+import {
+  parseNativePlaceholders,
+  type NativePlaceholder,
+} from "../scheduling/nativePlaceholders";
 import {
   fetchServiceTypes,
   fetchTeamsForServiceType,
@@ -1243,22 +1253,112 @@ async function resolvePlaceholdersCore(
 }
 
 /**
- * Resolve PCO position placeholders in a message (public action).
- * Used for testing/preview in the UI.
+ * Native-first placeholder resolution shared by the public + internal actions.
  *
- * Placeholders format: {{ServiceType > Team > Position}}
- * Example: "Hey {{Sunday Service > Worship > Vocals}}, you're on this week!"
+ * Each placeholder is resolved against native rostering FIRST (see
+ * `scheduling/nativePlaceholders.ts`). A native match — the referenced team +
+ * role exist in the community's scheduling data — wins, and the placeholder is
+ * replaced with the first names of everyone non-declined on the next upcoming
+ * plan. Only placeholders WITHOUT a native match, and that carry the legacy
+ * 3-part `ServiceType > Team > Position` shape, fall back to the PCO resolver
+ * (and only when PCO is connected). Anything left unresolved is rendered
+ * exactly as the PCO path renders "no data" ("[TBD]" for a native match with
+ * nobody scheduled; the raw placeholder when neither source has it).
  *
- * Matches team members from the upcoming plan who:
- * - Are on the specified team
- * - Have the specified position
- * - Have "C" (confirmed) status
+ * @param throwOnError - true for the public preview action (surface PCO errors),
+ *   false for scheduled jobs (best-effort).
+ */
+async function resolvePlaceholdersNativeFirst(
+  ctx: ActionCtx,
+  communityId: Id<"communities">,
+  groupId: Id<"groups"> | undefined,
+  message: string,
+  throwOnError: boolean
+): Promise<string> {
+  const placeholders = parseNativePlaceholders(message);
+  if (placeholders.length === 0) {
+    return message;
+  }
+
+  // --- Native-first pass. ---
+  const nativeResults = await ctx.runQuery(
+    internal.functions.scheduling.nativePlaceholders.resolveNativePlaceholders,
+    {
+      communityId,
+      groupId,
+      placeholders: placeholders.map((p) => ({
+        fullMatch: p.fullMatch,
+        teamName: p.teamName,
+        roleName: p.roleName,
+      })),
+    }
+  );
+  const nativeByMatch = new Map(nativeResults.map((r) => [r.fullMatch, r]));
+
+  let resolvedMessage = message;
+  const unmatched: NativePlaceholder[] = [];
+  for (const ph of placeholders) {
+    const native = nativeByMatch.get(ph.fullMatch);
+    if (native?.matched) {
+      resolvedMessage = resolvedMessage.replace(
+        ph.fullMatch,
+        formatNamesList(native.names) || "[TBD]"
+      );
+    } else {
+      unmatched.push(ph);
+    }
+  }
+
+  // --- PCO fallback pass (only legacy 3-part placeholders can resolve here). ---
+  const pcoPlaceholders: Placeholder[] = unmatched
+    .filter((p) => p.serviceTypeName)
+    .map((p) => ({
+      fullMatch: p.fullMatch,
+      serviceTypeName: p.serviceTypeName as string,
+      teamName: p.teamName,
+      positionName: p.roleName,
+    }));
+
+  if (pcoPlaceholders.length > 0) {
+    let accessToken: string | null = null;
+    try {
+      accessToken = await getValidAccessToken(ctx, communityId);
+    } catch (error) {
+      if (throwOnError) throw error;
+      console.warn("No valid PCO integration found for community:", error);
+      accessToken = null;
+    }
+    if (accessToken) {
+      resolvedMessage = await resolvePlaceholdersCore(
+        accessToken,
+        resolvedMessage,
+        pcoPlaceholders,
+        throwOnError
+      );
+    }
+  }
+
+  return resolvedMessage;
+}
+
+/**
+ * Resolve position placeholders in a message (public action).
+ * Used for testing/preview in the UI. Native-first, PCO fallback.
+ *
+ * Placeholder formats:
+ *   - Native:  {{Team > Role}}
+ *   - Legacy:  {{ServiceType > Team > Position}}
+ * Example: "Hey {{Worship > Vocals}}, you're on this week!"
+ *
+ * Native match → first names of everyone non-declined on the upcoming plan.
+ * No native match + PCO connected → the existing PCO resolution.
  */
 export const resolvePositionPlaceholders = action({
   args: {
     token: v.string(),
     communityId: v.id("communities"),
     message: v.string(),
+    groupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args): Promise<string> => {
     // Verify access
@@ -1267,50 +1367,40 @@ export const resolvePositionPlaceholders = action({
       { token: args.token, communityId: args.communityId }
     );
 
-    // Get valid access token
-    const accessToken = await getValidAccessToken(ctx, args.communityId);
-    if (!accessToken) {
-      throw new Error("No valid PCO integration found");
-    }
-
-    // Parse placeholders
-    const placeholders = parsePlaceholders(args.message);
-    if (placeholders.length === 0) {
-      return args.message;
-    }
-
     // Resolve placeholders (throw on errors for public action)
-    return await resolvePlaceholdersCore(accessToken, args.message, placeholders, true);
+    return await resolvePlaceholdersNativeFirst(
+      ctx,
+      args.communityId,
+      args.groupId,
+      args.message,
+      true
+    );
   },
 });
 
 /**
- * Internal action to resolve PCO position placeholders.
- * Used by scheduled jobs (communication bot) to resolve placeholders without auth token.
+ * Internal action to resolve position placeholders.
+ * Used by scheduled jobs (communication bot) to resolve placeholders without
+ * an auth token. Native-first, PCO fallback.
  *
- * Placeholders format: {{ServiceType > Team > Position}}
+ * Placeholder formats: {{Team > Role}} or {{ServiceType > Team > Position}}
  */
 export const resolvePositionPlaceholdersInternal = internalAction({
   args: {
     communityId: v.id("communities"),
     message: v.string(),
+    /** Bot group — scopes native team/plan matching to this group when set. */
+    groupId: v.optional(v.id("groups")),
   },
   handler: async (ctx, args): Promise<string> => {
-    // Get valid access token (no auth verification needed for internal action)
-    const accessToken = await getValidAccessToken(ctx, args.communityId);
-    if (!accessToken) {
-      console.warn("No valid PCO integration found for community");
-      return args.message;
-    }
-
-    // Parse placeholders
-    const placeholders = parsePlaceholders(args.message);
-    if (placeholders.length === 0) {
-      return args.message;
-    }
-
     // Resolve placeholders (don't throw on errors for internal action)
-    return await resolvePlaceholdersCore(accessToken, args.message, placeholders, false);
+    return await resolvePlaceholdersNativeFirst(
+      ctx,
+      args.communityId,
+      args.groupId,
+      args.message,
+      false
+    );
   },
 });
 

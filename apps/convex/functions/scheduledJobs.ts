@@ -2486,7 +2486,11 @@ export const processCommunicationBotBucket = internalAction({
                   resolvedMessage = await ctx.runAction(
                     internal.functions.pcoServices.actions
                       .resolvePositionPlaceholdersInternal,
-                    { communityId: config.communityId, message: msg.message },
+                    {
+                      communityId: config.communityId,
+                      message: msg.message,
+                      groupId: config.groupId,
+                    },
                   );
                 } catch (error) {
                   console.warn(
@@ -2566,7 +2570,11 @@ export const processCommunicationBotBucket = internalAction({
               resolvedMessage = await ctx.runAction(
                 internal.functions.pcoServices.actions
                   .resolvePositionPlaceholdersInternal,
-                { communityId: config.communityId, message },
+                {
+                  communityId: config.communityId,
+                  message,
+                  groupId: config.groupId,
+                },
               );
             } catch (error) {
               console.warn(

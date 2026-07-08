@@ -152,6 +152,7 @@ import type * as functions_scheduling_eventTasks from "../functions/scheduling/e
 import type * as functions_scheduling_events from "../functions/scheduling/events.js";
 import type * as functions_scheduling_index from "../functions/scheduling/index.js";
 import type * as functions_scheduling_mySchedule from "../functions/scheduling/mySchedule.js";
+import type * as functions_scheduling_nativePlaceholders from "../functions/scheduling/nativePlaceholders.js";
 import type * as functions_scheduling_people from "../functions/scheduling/people.js";
 import type * as functions_scheduling_permissions from "../functions/scheduling/permissions.js";
 import type * as functions_scheduling_planTemplates from "../functions/scheduling/planTemplates.js";
@@ -177,6 +178,7 @@ import type * as functions_slackServiceBot_config from "../functions/slackServic
 import type * as functions_slackServiceBot_configDb from "../functions/slackServiceBot/configDb.js";
 import type * as functions_slackServiceBot_configHelpers from "../functions/slackServiceBot/configHelpers.js";
 import type * as functions_slackServiceBot_index from "../functions/slackServiceBot/index.js";
+import type * as functions_slackServiceBot_nativeSync from "../functions/slackServiceBot/nativeSync.js";
 import type * as functions_slackServiceBot_pcoSync from "../functions/slackServiceBot/pcoSync.js";
 import type * as functions_slackServiceBot_prompts from "../functions/slackServiceBot/prompts.js";
 import type * as functions_slackServiceBot_seedConfig from "../functions/slackServiceBot/seedConfig.js";
@@ -383,6 +385,7 @@ declare const fullApi: ApiFromModules<{
   "functions/scheduling/events": typeof functions_scheduling_events;
   "functions/scheduling/index": typeof functions_scheduling_index;
   "functions/scheduling/mySchedule": typeof functions_scheduling_mySchedule;
+  "functions/scheduling/nativePlaceholders": typeof functions_scheduling_nativePlaceholders;
   "functions/scheduling/people": typeof functions_scheduling_people;
   "functions/scheduling/permissions": typeof functions_scheduling_permissions;
   "functions/scheduling/planTemplates": typeof functions_scheduling_planTemplates;
@@ -408,6 +411,7 @@ declare const fullApi: ApiFromModules<{
   "functions/slackServiceBot/configDb": typeof functions_slackServiceBot_configDb;
   "functions/slackServiceBot/configHelpers": typeof functions_slackServiceBot_configHelpers;
   "functions/slackServiceBot/index": typeof functions_slackServiceBot_index;
+  "functions/slackServiceBot/nativeSync": typeof functions_slackServiceBot_nativeSync;
   "functions/slackServiceBot/pcoSync": typeof functions_slackServiceBot_pcoSync;
   "functions/slackServiceBot/prompts": typeof functions_slackServiceBot_prompts;
   "functions/slackServiceBot/seedConfig": typeof functions_slackServiceBot_seedConfig;

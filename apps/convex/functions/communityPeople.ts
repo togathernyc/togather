@@ -22,6 +22,10 @@ import { isActiveMembership, isLeaderRole } from "../lib/helpers";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl, safeSliceForJson } from "../lib/utils";
+import {
+  communityUsesNativeRostering,
+  nativeServingHistory,
+} from "../lib/nativeServing";
 
 // ============================================================================
 // Auth Helpers
@@ -2052,15 +2056,29 @@ export const history = query({
         }) ?? [],
     }));
 
-    // Serving history from announcement group's PCO data
-    const servingHistory: Array<{
+    // Serving history — native-first. If the community uses native rostering,
+    // build the card from roleAssignments; otherwise fall back to the cached
+    // PCO servingDetails on the announcement group doc.
+    let servingHistory: Array<{
       date: string;
       serviceTypeName: string;
       teamName: string;
       position: string | null;
     }> = [];
 
-    if (announcementGroup) {
+    const usesNativeRostering = await communityUsesNativeRostering(
+      ctx,
+      cpRecord.communityId,
+    );
+
+    if (usesNativeRostering) {
+      servingHistory = await nativeServingHistory(
+        ctx,
+        cpRecord.userId,
+        cpRecord.communityId,
+        15,
+      );
+    } else if (announcementGroup) {
       const allDetails =
         (announcementGroup as any)?.pcoServingCounts?.servingDetails ?? [];
       const userDetails = allDetails
