@@ -74,7 +74,11 @@ export async function countNativeServing(
   const candidatePlanIds = new Set<string>();
   for (const a of assignments) {
     if (a.status === "declined") continue;
-    if (a.eventDate < cutoff) continue;
+    // Past ~60 days only. Volunteers are rostered onto *upcoming* plans, so
+    // roleAssignments routinely carry future eventDates; counting those would
+    // inflate the Serving score the moment someone is scheduled ahead. The PCO
+    // value this replaces is built from past plans only.
+    if (a.eventDate < cutoff || a.eventDate > nowTs) continue;
     candidatePlanIds.add(a.planId.toString());
   }
   if (candidatePlanIds.size === 0) return 0;
@@ -109,12 +113,18 @@ export async function nativeServingHistory(
   userId: Id<"users">,
   communityId: Id<"communities">,
   cap: number = SERVING_HISTORY_CAP,
+  nowTs: number = Date.now(),
 ): Promise<ServingHistoryRow[]> {
-  // Newest-first by event date. take(200) leaves generous headroom to skip
-  // declined + other-community rows and still fill the cap.
+  // Past events only, newest-first. The index range excludes future-dated
+  // assignments (volunteers rostered onto upcoming plans) so the card shows
+  // serving history, not upcoming commitments — matching the past-only PCO
+  // card it replaces. take(200) leaves headroom to skip declined +
+  // other-community rows and still fill the cap.
   const assignments = await ctx.db
     .query("roleAssignments")
-    .withIndex("by_user_eventDate", (q: any) => q.eq("userId", userId))
+    .withIndex("by_user_eventDate", (q: any) =>
+      q.eq("userId", userId).lte("eventDate", nowTs),
+    )
     .order("desc")
     .take(200);
 

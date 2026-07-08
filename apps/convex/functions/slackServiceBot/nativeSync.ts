@@ -247,7 +247,12 @@ export const getNativeContext = internalQuery({
         pcoPersonId: a.userId as string,
       });
 
-      if (position) {
+      // Only the Platform team's positions are "platform roles" (preacher,
+      // meeting leader, …) — the same gate the PCO path applies
+      // (pcoSync teamName.includes("platform")). Without it, every rostered
+      // position on every team (Worship, Production, …) would be surfaced as a
+      // platform role and a same-named role on another team could collide.
+      if (position && teamName?.toLowerCase().includes("platform")) {
         if (status === "C") platformRoles[position] = name;
         if (status === "C" || status === "U") {
           platformRolesAll[position] = { name, status };
@@ -437,7 +442,27 @@ export const nativeAssignRole = internalMutation({
         q.eq("planId", plan._id).eq("roleId", role._id),
       )
       .collect();
-    if (existing.some((a) => a.userId === user._id)) {
+    const existingForUser = existing.find((a) => a.userId === user._id);
+    if (existingForUser) {
+      if (existingForUser.status === "declined") {
+        // Reopen a previously declined assignment. Returning a no-op success
+        // here would tell Slack the person is assigned while the status
+        // builders + placeholder resolver (which exclude declined rows) still
+        // treat the role as unfilled and the team channel is never restored.
+        await ctx.db.patch(existingForUser._id, {
+          status: "unconfirmed",
+          declineNote: undefined,
+          respondedAt: undefined,
+          assignedById: plan.createdById,
+          assignedAt: Date.now(),
+        });
+        await scheduleTeamChannelReconcile(ctx, team._id);
+        return {
+          handled: true,
+          success: true,
+          detail: `Re-assigned ${displayName(user)} as ${args.roleName} (was declined)`,
+        };
+      }
       return {
         handled: true,
         success: true,
@@ -509,15 +534,32 @@ export const nativeUnassignRole = internalMutation({
       .collect();
 
     const needle = args.personName.trim().toLowerCase();
+    const withNames = await Promise.all(
+      rows.map(async (a) => ({
+        a,
+        name: displayName(await ctx.db.get(a.userId)).toLowerCase(),
+      })),
+    );
+    // Prefer an exact full-name match; fall back to an unambiguous partial.
+    // Never delete on a loose match when several people match the needle —
+    // this is a hard-delete, so "remove Jon" must not delete Jonathan.
+    let matches = withNames.filter((m) => m.name === needle);
+    if (matches.length === 0) {
+      matches = withNames.filter(
+        (m) => m.name.includes(needle) || needle.includes(m.name),
+      );
+    }
+    if (matches.length > 1) {
+      return {
+        handled: true,
+        success: false,
+        detail: `"${args.personName}" matches ${matches.length} people on ${args.roleName} — be more specific`,
+      };
+    }
     let removed: Id<"roleAssignments"> | null = null;
-    for (const a of rows) {
-      const user = await ctx.db.get(a.userId);
-      const name = displayName(user).toLowerCase();
-      if (name.includes(needle) || needle.includes(name)) {
-        await ctx.db.delete(a._id);
-        removed = a._id;
-        break;
-      }
+    if (matches.length === 1) {
+      await ctx.db.delete(matches[0].a._id);
+      removed = matches[0].a._id;
     }
 
     if (!removed) {

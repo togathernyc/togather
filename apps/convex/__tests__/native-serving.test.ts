@@ -120,6 +120,8 @@ describe("countNativeServing", () => {
       await addPlan(c1.communityId, a, "P3", nowTs - 30 * DAY_MS);
       await addPlan(c1.communityId, a, "Declined", nowTs - 5 * DAY_MS, "declined");
       await addPlan(c1.communityId, a, "Old", nowTs - 90 * DAY_MS);
+      // Future plan — rostered ahead but not yet served → must NOT count.
+      await addPlan(c1.communityId, a, "Future", nowTs + 5 * DAY_MS);
       // Community 2: an in-window plan that must NOT count toward community 1.
       await addPlan(c2.communityId, b, "OtherComm", nowTs - 3 * DAY_MS);
 
@@ -135,7 +137,7 @@ describe("countNativeServing", () => {
       countNativeServing(ctx, assignments, nowTs, communityId),
     );
     // 3 distinct plans in this community's window; duplicate slot, declined,
-    // out-of-window, and the other community's plan are all excluded.
+    // out-of-window, FUTURE, and the other community's plan are all excluded.
     expect(count).toBe(3);
 
     const zero = await t.run((ctx) =>
@@ -373,7 +375,8 @@ describe("native rostering present", () => {
         eventDate: nowTs - 5 * DAY_MS,
         status: "declined",
       });
-      // Outside the 60-day window — excluded.
+      // Outside the 60-day window — excluded from the count, still shown on
+      // the (unbounded) history card.
       await seedPlanWithAssignment(ctx, {
         communityId,
         groupId,
@@ -382,6 +385,17 @@ describe("native rostering present", () => {
         userId,
         title: "Old Day",
         eventDate: nowTs - 90 * DAY_MS,
+      });
+      // Future assignment (rostered ahead) — must NOT appear on the past-only
+      // serving-history card.
+      await seedPlanWithAssignment(ctx, {
+        communityId,
+        groupId,
+        teamId,
+        roleId,
+        userId,
+        title: "Future Day",
+        eventDate: nowTs + 7 * DAY_MS,
       });
 
       // Stale PCO cache that would (wrongly) win if we weren't native-first.
@@ -416,6 +430,8 @@ describe("native rostering present", () => {
     expect(titles).toContain("Sunday PM");
     // Declined assignment never appears.
     expect(titles).not.toContain("Declined Day");
+    // Future assignment never appears on the past-only serving-history card.
+    expect(titles).not.toContain("Future Day");
 
     const usesNative = await t.run((ctx) =>
       communityUsesNativeRostering(ctx, world.communityId),

@@ -317,6 +317,54 @@ describe("native assign (nativeAssignRole)", () => {
     expect(rows).toHaveLength(1); // no duplicate
   });
 
+  it("reopens a previously declined assignment instead of a no-op success", async () => {
+    const t = setup();
+    const world = await buildNativeWorld(t);
+
+    // Tameeka previously declined Meeting Leader.
+    const declinedId = await t.run((ctx) =>
+      ctx.db.insert("roleAssignments", {
+        planId: world.planId,
+        teamId: world.teamId,
+        roleId: world.mlRoleId,
+        userId: world.mlUserId,
+        eventDate: Date.now() + DAY,
+        status: "declined",
+        declineNote: "can't make it",
+        respondedAt: Date.now(),
+        assignedById: world.leaderId,
+        assignedAt: Date.now(),
+      }),
+    );
+
+    const result = await t.mutation(
+      internal.functions.slackServiceBot.nativeSync.nativeAssignRole,
+      {
+        communityId: world.communityId,
+        campusGroupName: "Manhattan",
+        teamName: "Platform",
+        roleName: "Meeting Leader",
+        personName: "Tameeka Walker",
+      },
+    );
+    expect(result).toMatchObject({ handled: true, success: true });
+    expect(result.detail.toLowerCase()).toContain("declined");
+
+    // Same row reopened (no duplicate), decline metadata cleared.
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan_role", (q) =>
+          q.eq("planId", world.planId).eq("roleId", world.mlRoleId),
+        )
+        .collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]._id).toBe(declinedId);
+    expect(rows[0].status).toBe("unconfirmed");
+    expect(rows[0].declineNote).toBeUndefined();
+  });
+
   it("returns handled:false when there is no upcoming native plan", async () => {
     const t = setup();
     const world = await buildNativeWorld(t);
