@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -107,11 +107,17 @@ export function FollowupMobileCards({
   enforcedAssigneeUserId,
   returnTo,
   onSwitchToTable,
+  hideHeader = false,
 }: {
   groupId: string;
   enforcedAssigneeUserId?: string;
   returnTo?: string | null;
-  onSwitchToTable: () => void;
+  // When present, renders a toggle to the table view. Omitted now that the
+  // People surfaces are platform-fixed (tile on native, list on web).
+  onSwitchToTable?: () => void;
+  // Tab surfaces (Admin → People) hide the "Check-in" title/back header so the
+  // search bar sits at the top; the group-scoped check-in keeps it for nav.
+  hideHeader?: boolean;
 }) {
   const { colors } = useTheme();
   const router = useRouter();
@@ -328,39 +334,54 @@ export function FollowupMobileCards({
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View
-        style={[
-          styles.header,
-          { paddingTop: insets.top + 8, borderBottomColor: colors.border },
-        ]}
-      >
-        <Pressable onPress={handleBack} hitSlop={12} style={styles.headerIcon}>
-          <Ionicons name="chevron-back" size={26} color={colors.text} />
-        </Pressable>
-        <View style={styles.headerCenter}>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Check-in</Text>
-          {groupData?.name && (
-            <Text
-              style={[styles.headerSubtitle, { color: colors.textSecondary }]}
-              numberOfLines={1}
+      {/* Header (hidden on the People tab surface — search sits at the top) */}
+      {!hideHeader && (
+        <View
+          style={[
+            styles.header,
+            { paddingTop: insets.top + 8, borderBottomColor: colors.border },
+          ]}
+        >
+          <Pressable onPress={handleBack} hitSlop={12} style={styles.headerIcon}>
+            <Ionicons name="chevron-back" size={26} color={colors.text} />
+          </Pressable>
+          <View style={styles.headerCenter}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Check-in</Text>
+            {groupData?.name && (
+              <Text
+                style={[styles.headerSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {groupData.name}
+              </Text>
+            )}
+          </View>
+          {onSwitchToTable ? (
+            <Pressable
+              onPress={onSwitchToTable}
+              hitSlop={12}
+              style={styles.headerIcon}
+              accessibilityLabel="Switch to table view"
             >
-              {groupData.name}
-            </Text>
+              <Ionicons name="grid-outline" size={22} color={colors.text} />
+            </Pressable>
+          ) : (
+            // Spacer keeps the title centered when there's no toggle button.
+            <View style={styles.headerIcon}>
+              <Ionicons name="grid-outline" size={22} color="transparent" />
+            </View>
           )}
         </View>
-        <Pressable
-          onPress={onSwitchToTable}
-          hitSlop={12}
-          style={styles.headerIcon}
-          accessibilityLabel="Switch to table view"
-        >
-          <Ionicons name="grid-outline" size={22} color={colors.text} />
-        </Pressable>
-      </View>
+      )}
 
       {/* Search */}
-      <View style={[styles.searchWrap, { borderBottomColor: colors.border }]}>
+      <View
+        style={[
+          styles.searchWrap,
+          { borderBottomColor: colors.border },
+          hideHeader && { paddingTop: insets.top + 8 },
+        ]}
+      >
         <View
           style={[
             styles.searchInner,
