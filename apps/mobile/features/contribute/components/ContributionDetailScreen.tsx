@@ -258,11 +258,12 @@ export function ContributionDetailScreen({
   const [issueMode, setIssueMode] = useState(false);
   const [issueNote, setIssueNote] = useState("");
   const scrollRef = useRef<ScrollView>(null);
-  const composerRef = useRef<TextInput>(null);
   const images = useImageAttachments();
 
   // Web: paste a copied screenshot straight into the composer (matches chat).
-  useWebImagePaste(composerRef, images.addUris);
+  // Callback ref so the listener re-attaches if the composer remounts (e.g.
+  // archive → restore).
+  const composerPasteRef = useWebImagePaste(images.addUris);
 
   const handleApprove = useCallback(async () => {
     if (!id) return;
@@ -782,7 +783,7 @@ export function ContributionDetailScreen({
           <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
         <TextInput
-          ref={composerRef}
+          ref={composerPasteRef}
           style={[
             styles.composerInput,
             {

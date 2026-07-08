@@ -7,7 +7,7 @@
  * screenshots — no title/repro form. The AI spec agent investigates, writes a
  * headline, and replies in the conversation thread.
  */
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -39,10 +39,9 @@ export function SubmitContributionScreen() {
   const { primaryColor } = useCommunityTheme();
   const submit = useSubmitContribution();
   const images = useImageAttachments();
-  const inputRef = useRef<TextInput>(null);
 
   // Web: paste a copied screenshot straight into the box (matches chat).
-  useWebImagePaste(inputRef, images.addUris);
+  const inputPasteRef = useWebImagePaste(images.addUris);
 
   const [kind, setKind] = useState<ContributionKind>("bug");
   const [message, setMessage] = useState("");
@@ -133,7 +132,7 @@ export function SubmitContributionScreen() {
         </View>
 
         <TextInput
-          ref={inputRef}
+          ref={inputPasteRef}
           style={[
             styles.input,
             {
