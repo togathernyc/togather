@@ -146,7 +146,7 @@ export function FollowupMobileCards({
 
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {},
+    community?.id ? { communityId: community.id as Id<"communities"> } : "skip",
   );
   const perGroupLeaders = useAuthenticatedQuery(
     api.functions.groups.members.getLeaders,

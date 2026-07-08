@@ -284,7 +284,7 @@ export function FollowupMobileGrid({
   // Cross-group config — fetched so we have community-wide leaders for assignee picker
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {},
+    communityId ? { communityId } : "skip",
   );
 
   const debouncedSearch = useDebounce(searchQuery, 450);

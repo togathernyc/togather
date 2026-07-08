@@ -3,7 +3,7 @@ import { View, ActivityIndicator } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, usePathname } from "expo-router";
 import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
-import { useAuthenticatedQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { FollowupDesktopTable } from "@features/leader-tools/components/FollowupDesktopTable";
 import { FollowupMobileGrid } from "@features/leader-tools/components/FollowupMobileGrid";
@@ -22,8 +22,9 @@ export function PeopleTabScreen({
   showAllMembers?: boolean;
 } = {}) {
   const isDesktop = useIsDesktopWeb();
-  const { user } = useAuth();
+  const { user, community } = useAuth();
   const currentUserId = user?.id;
+  const communityId = community?.id as Id<"communities"> | undefined;
   const enforcedAssigneeUserId = showAllMembers ? undefined : currentUserId;
   const params = useLocalSearchParams<{ returnTo?: string }>();
   const pathname = usePathname();
@@ -55,7 +56,7 @@ export function PeopleTabScreen({
 
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {},
+    communityId ? { communityId } : "skip",
   );
   const announcementGroupId = crossGroupConfig?.announcementGroupId ?? "";
 

@@ -1135,9 +1135,16 @@ export const searchAssignedToMe = query({
 /**
  * Get cross-group config for the People page.
  * Returns the union of score configs and leaders across all leader groups.
+ *
+ * A leader/admin can belong to more than one community, so the caller must
+ * pass the currently-active `communityId` to scope the result (announcement
+ * group, leaders, score config) to that community. Without it, the People
+ * roster would resolve to whichever community's announcement group happened to
+ * come first across all of the user's leader groups — showing the wrong
+ * community's people after switching communities (e.g. into a demo).
  */
 export const getCrossGroupConfig = query({
-  args: { token: v.string() },
+  args: { token: v.string(), communityId: v.id("communities") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const leaderGroupIds = await getActiveLeaderGroupIds(ctx, userId);
@@ -1154,8 +1161,11 @@ export const getCrossGroupConfig = query({
 
     // Exclude archived groups — their leaders should not be suggested as
     // assignees and their members should not appear on the People page.
+    // Scope to the active community so a multi-community leader sees only the
+    // active community's announcement group, leaders, and roster.
     const activeGroups = groups.filter(
-      (g): g is NonNullable<typeof g> => !!g && !g.isArchived,
+      (g): g is NonNullable<typeof g> =>
+        !!g && !g.isArchived && g.communityId === args.communityId,
     );
     const activeLeaderGroupIds = activeGroups.map((g) => g._id);
 

@@ -55,41 +55,67 @@ export function CreateCommunity() {
 
       <Section id="demo" title="Start in demo mode">
         <P>
-          Creating a community is a short questionnaire — just enough for us to
-          build something that looks and feels like your church:
+          Creating a community is a short <Term>4-step wizard</Term> — just
+          enough for us to build something that looks and feels like your
+          church:
         </P>
         <Steps>
           <Step n={1}>
-            <Term>Church name</Term> — your community is named after your
-            church from the start.
+            <Term>About your church</Term> — your <Term>church name</Term>,{" "}
+            <Term>size</Term>, and <Term>zip code</Term>. Your community is
+            named after your church, and your groups and events are placed on
+            the map around your area. One community can hold up to a million
+            people, though the demo is capped at 100 sample members so it stays
+            easy to explore. This step also helps you decide whether you're{" "}
+            <em>one</em> community or <em>several</em>: campuses within
+            commuting distance (think Brooklyn, Queens, and Manhattan, or DC,
+            Maryland, and Virginia) belong in <em>one</em> community, so name it
+            broadly enough to cover them all; far-apart locations (Maryland vs.
+            New York) should be <em>separate</em> communities.
           </Step>
           <Step n={2}>
-            <Term>Church size</Term>, <Term>Campuses</Term>, and{" "}
-            <Term>Small groups</Term> — we create a group for every campus and
-            small group you enter. Naming them is optional: skip it and we'll
-            use friendly placeholders you can rename anytime.
+            <Term>Campuses &amp; teams</Term> — how many <Term>campuses</Term>{" "}
+            you have (name each with a chip), how many <Term>small groups</Term>
+            , and your <Term>teams</Term>. With a single campus, each team —{" "}
+            <Term>Worship</Term>, <Term>Welcome</Term>, <Term>Production</Term>,{" "}
+            <Term>Kids</Term>, and <Term>Prayer</Term> by default — becomes its
+            own team group. With two or more campuses,{" "}
+            <Term>centralized teams</Term> (Worship, Production, Kids) become one
+            shared group each, while <Term>teams at each campus</Term> (Welcome,
+            Prayer) become a channel inside every campus. Naming is optional —
+            skip it and we'll use friendly placeholders you can rename anytime.
           </Step>
           <Step n={3}>
-            <Term>Main zip code</Term> — your groups and events are placed on
-            the map around your area.
+            <Term>Service times</Term> — your Sunday service times for each
+            campus, prefilled with <Term>9:00</Term> and <Term>11:00 AM</Term>.
+            We use them to pre-seed the next six Sundays of service plans, run
+            sheets, and serving assignments, so rostering is explorable the
+            moment you open the app.
           </Step>
           <Step n={4}>
-            <Term>Logo</Term> and <Term>brand color</Term> — pick from preset
-            swatches that all work well (richer, darker shades carry the white
-            text used on buttons and tabs). The whole app is themed with your
-            look before you ever open it.
+            <Term>Branding</Term> — your <Term>logo</Term> and{" "}
+            <Term>brand color</Term>. Pick from preset swatches that all work
+            well (richer, darker shades carry the white text used on buttons and
+            tabs). The whole app is themed with your look before you ever open
+            it.
           </Step>
         </Steps>
         <P>
           Choose <Term>Create my community</Term> and in a few seconds you're
           the admin of a working community in demo mode: 100 seeded demo
-          members with real profile photos, groups with avatars and real
-          channel conversations, direct messages, upcoming events with cover
-          photos and RSVPs, prayer requests, and the full admin settings
-          screen. A <Term>🎓 Getting Started</Term> conversation in your inbox
-          walks you through the best things to try, and the Go Live screen
-          tracks your progress. Everything works — rename it, re-brand it,
-          create events, post messages.
+          members with real profile photos, each added to a realistic handful of
+          groups (announcements plus a couple of campuses, small groups, and
+          teams) rather than every group. You'll find groups with avatars and
+          real channel conversations, direct messages, six weeks of service
+          plans and serving assignments, upcoming events with cover photos and
+          RSVPs — including a <Term>Serve Day</Term> event shared natively in
+          chat with lots of RSVPs — prayer requests, a{" "}
+          <Term>Partner with us</Term> giving link under the announcements, and
+          the full admin settings screen. A{" "}
+          <Term>🎓 Getting Started</Term> guided-tour channel walks you through
+          the best things to try, and the Go Live screen tracks your progress.
+          Everything works — rename it, re-brand it, create events, post
+          messages.
         </P>
         <Callout tone="note" title="You'll always know it's a demo">
           While your community is in demo mode, a banner appears across the

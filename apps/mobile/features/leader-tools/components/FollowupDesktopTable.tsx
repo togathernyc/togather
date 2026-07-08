@@ -370,10 +370,11 @@ export function FollowupDesktopTable({
     slot: string;
   } | null>(null);
 
-  // Cross-group config query — always fetch so we have community-wide leaders for assignee display
+  // Cross-group config query — scoped to the active community so we surface the
+  // right community's leaders for assignee display
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
-    {},
+    communityId ? { communityId } : "skip",
   );
 
 

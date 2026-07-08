@@ -165,6 +165,7 @@ async function seedFixture(t: ReturnType<typeof convexTest>) {
     );
 
     return {
+      communityId,
       activeGroupId,
       archivedGroupId,
       leaderUserId,
@@ -226,12 +227,12 @@ describe("memberFollowups.listAssignedToMe archived-group hardening", () => {
 describe("memberFollowups.getCrossGroupConfig assignee picker filtering", () => {
   test("excludes archived-group leaders and archived users", async () => {
     const t = convexTest(schema, modules);
-    const { leaderToken, leaderUserId, coLeaderUserId, archivedLeaderUserId } =
+    const { leaderToken, communityId, leaderUserId, coLeaderUserId, archivedLeaderUserId } =
       await seedFixture(t);
 
     const config: any = await t.query(
       api.functions.memberFollowups.getCrossGroupConfig,
-      { token: leaderToken },
+      { token: leaderToken, communityId },
     );
 
     const leaderIds = config.leaders.map((l: any) => l.userId.toString());

@@ -21,6 +21,7 @@ import {
   Linking,
   ActivityIndicator,
   Animated,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -52,6 +53,13 @@ import { getMediaUrl } from '@/utils/media';
 import { colors } from '@utils/styles';
 import { useTheme } from '@hooks/useTheme';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
+
+/**
+ * The Togather brand mark, shown as the avatar for automated bot messages
+ * (contentType "bot" with no human sender) so the bot reads as first-party
+ * rather than an initials placeholder.
+ */
+const TOGATHER_BOT_AVATAR = require('@/assets/gatherful-logo.png');
 
 interface MessageItemProps {
   message: {
@@ -1051,16 +1059,20 @@ function MessageItemInner({
               onAvatarPress ? `View ${message.senderName || 'user'}'s profile` : undefined
             }
           >
-            <AppImage
-              source={message.senderProfilePhoto}
-              style={styles.avatar}
-              optimizedWidth={50}
-              placeholder={{
-                type: 'initials',
-                name: message.senderName || 'User',
-                backgroundColor: '#E5E5E5',
-              }}
-            />
+            {!message.senderId && message.contentType === 'bot' && !message.senderProfilePhoto ? (
+              <Image source={TOGATHER_BOT_AVATAR} style={styles.avatar} resizeMode="cover" />
+            ) : (
+              <AppImage
+                source={message.senderProfilePhoto}
+                style={styles.avatar}
+                optimizedWidth={50}
+                placeholder={{
+                  type: 'initials',
+                  name: message.senderName || 'User',
+                  backgroundColor: '#E5E5E5',
+                }}
+              />
+            )}
             {message.senderNotificationsDisabled ? (
               <NotificationsDisabledBadge
                 avatarSize={24}
