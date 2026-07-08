@@ -1,15 +1,20 @@
 /**
- * Native serving helpers.
+ * Serving helpers — combined PCO + native rostering.
  *
- * The profile "Serving" score and the serving-history card are native-first:
- * when a community uses native rostering (it has at least one `eventPlans`
- * row), serving is computed from `roleAssignments`. Only communities with no
- * native rostering fall back to the cached Planning Center (PCO) counts on
- * `groups.pcoServingCounts`.
+ * The profile "Serving" score and the serving-history card show BOTH sources:
+ * the cached Planning Center (PCO) snapshot on `groups.pcoServingCounts` AND
+ * native rostering (`roleAssignments`). This gives a community mid-migration its
+ * full serving picture instead of one source hiding the other.
  *
- * "Native serving count" for a user = number of DISTINCT event plans in the
- * past ~60 days where the user has a non-declined role assignment. This mirrors
- * how PCO counts distinct plans served (see pcoServices/servingHistory.ts).
+ * De-duplication: a native plan imported from PCO carries `eventPlans.pcoPlanId`.
+ * Those plans are already represented in the PCO snapshot, so the native helpers
+ * below exclude `pcoPlanId`-linked plans — the caller then adds the PCO count /
+ * rows on top, and the two sets are disjoint (native-origin vs PCO-origin).
+ *
+ * "Native serving count" for a user = number of DISTINCT native-origin event
+ * plans in the past ~60 days where the user has a non-declined role assignment.
+ * This mirrors how PCO counts distinct plans served (see
+ * pcoServices/servingHistory.ts).
  */
 
 import type { Id } from "../_generated/dataModel";
@@ -33,36 +38,20 @@ type AssignmentLike = {
 type ReadCtx = { db: any };
 
 /**
- * A community "uses native rostering" if it has at least one event plan.
- * When true, serving score + history are computed from native
- * `roleAssignments`; when false, callers fall back to cached PCO counts.
- *
- * O(1): a single indexed `first()` on `by_community_date`.
- */
-export async function communityUsesNativeRostering(
-  ctx: ReadCtx,
-  communityId: Id<"communities">,
-): Promise<boolean> {
-  const plan = await ctx.db
-    .query("eventPlans")
-    .withIndex("by_community_date", (q: any) => q.eq("communityId", communityId))
-    .first();
-  return plan !== null;
-}
-
-/**
- * Native serving count for a user, scoped to one community: number of DISTINCT
- * event plans in the past ~60 days where the user has a non-declined role
- * assignment AND the plan belongs to `communityId`.
+ * Native-origin serving count for a user, scoped to one community: number of
+ * DISTINCT event plans in the past ~60 days where the user has a non-declined
+ * role assignment, the plan belongs to `communityId`, and the plan did NOT come
+ * from PCO (no `pcoPlanId`). The caller adds the cached PCO count on top; the
+ * two are disjoint, so this is native + PCO without double-counting.
  *
  * Scoping matters because `roleAssignments` (and its `by_user_eventDate` index)
- * is not community-scoped — a user who serves in two native-rostering
- * communities must not have one community's serving inflate the other's score
- * (the PCO counts this replaces were always per-community).
+ * is not community-scoped — a user who serves in two communities must not have
+ * one community's serving inflate the other's score (the PCO counts this
+ * augments were always per-community).
  *
  * Takes a pre-fetched, newest-first assignment list (e.g. the archive-activity
  * lookup) so the caller avoids a second assignment read; only the small set of
- * in-window candidate plans is fetched to resolve their community.
+ * in-window candidate plans is fetched to resolve community + origin.
  */
 export async function countNativeServing(
   ctx: ReadCtx,
@@ -77,7 +66,7 @@ export async function countNativeServing(
     // Past ~60 days only. Volunteers are rostered onto *upcoming* plans, so
     // roleAssignments routinely carry future eventDates; counting those would
     // inflate the Serving score the moment someone is scheduled ahead. The PCO
-    // value this replaces is built from past plans only.
+    // value this augments is built from past plans only.
     if (a.eventDate < cutoff || a.eventDate > nowTs) continue;
     candidatePlanIds.add(a.planId.toString());
   }
@@ -87,7 +76,11 @@ export async function countNativeServing(
   );
   let count = 0;
   for (const plan of plans) {
-    if (plan && plan.communityId === communityId) count++;
+    // Exclude PCO-imported plans (pcoPlanId set): already counted in the PCO
+    // snapshot the caller adds, so counting them here double-counts.
+    if (plan && plan.communityId === communityId && plan.pcoPlanId == null) {
+      count++;
+    }
   }
   return count;
 }
@@ -100,10 +93,11 @@ export interface ServingHistoryRow {
 }
 
 /**
- * Build the serving-history card from native `roleAssignments` for one user,
- * scoped to `communityId` (assignments in other communities are excluded — see
- * countNativeServing for why). Newest event first, capped at `cap`. Plan/team/
- * role lookups are deduped to stay under Convex read limits.
+ * Build the native-origin serving-history rows for one user, scoped to
+ * `communityId` and excluding PCO-imported plans (the caller merges these with
+ * the cached PCO rows via `mergeServingHistory`). Past events only, newest event
+ * first, capped at `cap`. Plan/team/role lookups are deduped to stay under
+ * Convex read limits.
  *
  * `date` is formatted `YYYY-MM-DD` to match the shape the PCO card produces
  * (and stays lexicographically sortable).
@@ -118,8 +112,8 @@ export async function nativeServingHistory(
   // Past events only, newest-first. The index range excludes future-dated
   // assignments (volunteers rostered onto upcoming plans) so the card shows
   // serving history, not upcoming commitments — matching the past-only PCO
-  // card it replaces. take(200) leaves headroom to skip declined +
-  // other-community rows and still fill the cap.
+  // card it augments. take(200) leaves headroom to skip declined,
+  // other-community, and PCO-imported rows and still fill the cap.
   const assignments = await ctx.db
     .query("roleAssignments")
     .withIndex("by_user_eventDate", (q: any) =>
@@ -131,7 +125,8 @@ export async function nativeServingHistory(
   const nonDeclined = assignments.filter((a: any) => a.status !== "declined");
   if (nonDeclined.length === 0) return [];
 
-  // Resolve plans first so rows can be scoped to this community before capping.
+  // Resolve plans first so rows can be scoped to this community + origin
+  // before capping.
   const allPlanIds = [
     ...new Set(nonDeclined.map((a: any) => a.planId.toString())),
   ];
@@ -142,11 +137,14 @@ export async function nativeServingHistory(
     allPlans.filter(Boolean).map((p: any) => [p._id.toString(), p]),
   );
 
-  // Keep only this community's assignments (newest-first order preserved), cap.
+  // Keep only this community's native-origin assignments (newest-first order
+  // preserved), cap. PCO-imported plans come from the PCO rows instead.
   const scoped = nonDeclined
     .filter((a: any) => {
       const plan = planMap.get(a.planId.toString());
-      return plan && plan.communityId === communityId;
+      return (
+        plan && plan.communityId === communityId && plan.pcoPlanId == null
+      );
     })
     .slice(0, cap);
   if (scoped.length === 0) return [];
@@ -181,4 +179,30 @@ export async function nativeServingHistory(
     });
   }
   return rows;
+}
+
+/**
+ * Merge native-origin + PCO serving-history rows into one card. Both sources are
+ * shown so a community mid-migration sees its full history. Sorted newest-first,
+ * deduped on (date, team, service, position) as a defensive guard against any
+ * overlap, capped at `cap`.
+ */
+export function mergeServingHistory(
+  nativeRows: ServingHistoryRow[],
+  pcoRows: ServingHistoryRow[],
+  cap: number = SERVING_HISTORY_CAP,
+): ServingHistoryRow[] {
+  const all = [...nativeRows, ...pcoRows].sort((a, b) =>
+    b.date.localeCompare(a.date),
+  );
+  const seen = new Set<string>();
+  const merged: ServingHistoryRow[] = [];
+  for (const r of all) {
+    const key = `${r.date}|${r.teamName.toLowerCase()}|${r.serviceTypeName.toLowerCase()}|${(r.position ?? "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(r);
+    if (merged.length >= cap) break;
+  }
+  return merged;
 }

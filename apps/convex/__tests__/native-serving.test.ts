@@ -1,10 +1,11 @@
 /**
- * Native-first serving tests.
+ * Combined (PCO + native) serving tests.
  *
  * The profile "Serving" system score (sys_service / pco_services_past_2mo) and
- * the serving-history card are native-first: when a community uses native
- * rostering (has ≥1 eventPlans row) serving comes from `roleAssignments`; when
- * it has no native rostering it falls back to cached PCO `pcoServingCounts`.
+ * the serving-history card combine BOTH sources: the cached PCO
+ * `pcoServingCounts` snapshot AND native rostering (`roleAssignments`). Native
+ * counts/rows exclude PCO-imported plans (`eventPlans.pcoPlanId`) so a migrated
+ * plan isn't double-counted.
  *
  * Run with: cd apps/convex && pnpm test __tests__/native-serving.test.ts
  */
@@ -17,8 +18,8 @@ import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import {
   countNativeServing,
-  communityUsesNativeRostering,
   nativeServingHistory,
+  mergeServingHistory,
 } from "../lib/nativeServing";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -78,6 +79,7 @@ describe("countNativeServing", () => {
         title: string,
         eventDate: number,
         status = "confirmed",
+        pcoPlanId?: string,
       ) => {
         const planId = await ctx.db.insert("eventPlans", {
           groupId: gtr.groupId,
@@ -86,6 +88,7 @@ describe("countNativeServing", () => {
           eventDate,
           times: [{ label: "9:00 AM", startsAt: eventDate }],
           status: "published",
+          ...(pcoPlanId ? { pcoPlanId } : {}),
           createdAt: nowTs,
           createdById: userId,
           updatedAt: nowTs,
@@ -122,6 +125,9 @@ describe("countNativeServing", () => {
       await addPlan(c1.communityId, a, "Old", nowTs - 90 * DAY_MS);
       // Future plan — rostered ahead but not yet served → must NOT count.
       await addPlan(c1.communityId, a, "Future", nowTs + 5 * DAY_MS);
+      // PCO-imported plan (pcoPlanId set) — already in the PCO snapshot the
+      // caller adds, so the native count must NOT include it.
+      await addPlan(c1.communityId, a, "Imported", nowTs - 8 * DAY_MS, "confirmed", "pco-plan-123");
       // Community 2: an in-window plan that must NOT count toward community 1.
       await addPlan(c2.communityId, b, "OtherComm", nowTs - 3 * DAY_MS);
 
@@ -136,8 +142,9 @@ describe("countNativeServing", () => {
     const count = await t.run((ctx) =>
       countNativeServing(ctx, assignments, nowTs, communityId),
     );
-    // 3 distinct plans in this community's window; duplicate slot, declined,
-    // out-of-window, FUTURE, and the other community's plan are all excluded.
+    // 3 native-origin distinct plans in this community's window; duplicate
+    // slot, declined, out-of-window, FUTURE, PCO-imported, and the other
+    // community's plan are all excluded.
     expect(count).toBe(3);
 
     const zero = await t.run((ctx) =>
@@ -280,11 +287,11 @@ async function callScoreBatch(
 }
 
 // ============================================================================
-// (a) Native rostering present → serving from roleAssignments
+// (a) Native rostering present → serving = PCO count + native plans
 // ============================================================================
 
-describe("native rostering present", () => {
-  test("serving score uses distinct native plans, ignoring stale PCO counts", async () => {
+describe("PCO + native combined", () => {
+  test("serving score sums cached PCO count and distinct native plans", async () => {
     const t = convexTest(schema, modules);
     const nowTs = Date.now();
 
@@ -398,12 +405,21 @@ describe("native rostering present", () => {
         eventDate: nowTs + 7 * DAY_MS,
       });
 
-      // Stale PCO cache that would (wrongly) win if we weren't native-first.
+      // Cached PCO snapshot: 1 past service, plus one servingDetails row for a
+      // PCO-only service the native side never sees.
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
-          counts: [{ userId, count: 99 }],
-          servingDetails: [],
+          counts: [{ userId, count: 1 }],
+          servingDetails: [
+            {
+              userId,
+              date: new Date(nowTs - 40 * DAY_MS).toISOString().split("T")[0],
+              serviceTypeName: "PCO Service",
+              teamName: "PCO Team",
+              position: "Usher",
+            },
+          ],
         },
       });
 
@@ -411,10 +427,10 @@ describe("native rostering present", () => {
     });
 
     const scored = await callScoreBatch(t, world);
-    // Native count = 3 distinct plans (PCO's 99 is ignored).
-    expect(scored.rawValues.pco_services_past_2mo).toBe(3);
-    // sys_service = min(100, 3 * 20) = 60.
-    expect(scored.score1).toBe(60);
+    // Combined = PCO count (1) + native distinct plans (3) = 4.
+    expect(scored.rawValues.pco_services_past_2mo).toBe(4);
+    // sys_service = min(100, 4 * 20) = 80.
+    expect(scored.score1).toBe(80);
 
     // Serving-history card lists native rows, newest event first.
     const history = await t.run((ctx) =>
@@ -432,20 +448,15 @@ describe("native rostering present", () => {
     expect(titles).not.toContain("Declined Day");
     // Future assignment never appears on the past-only serving-history card.
     expect(titles).not.toContain("Future Day");
-
-    const usesNative = await t.run((ctx) =>
-      communityUsesNativeRostering(ctx, world.communityId),
-    );
-    expect(usesNative).toBe(true);
   });
 });
 
 // ============================================================================
-// (b) No native rostering → fall back to PCO pcoServingCounts
+// (b) No native plans → serving = cached PCO count only
 // ============================================================================
 
-describe("no native rostering", () => {
-  test("serving score falls back to cached PCO counts", async () => {
+describe("PCO only (no native plans)", () => {
+  test("serving score uses the cached PCO count when there is no native rostering", async () => {
     const t = convexTest(schema, modules);
     const nowTs = Date.now();
 
@@ -461,7 +472,7 @@ describe("no native rostering", () => {
         userId,
       );
 
-      // No eventPlans at all → PCO fallback. Cached count = 4.
+      // No eventPlans at all → native contributes 0. Cached PCO count = 4.
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
@@ -474,13 +485,46 @@ describe("no native rostering", () => {
     });
 
     const scored = await callScoreBatch(t, world);
+    // native (0) + PCO (4) = 4.
     expect(scored.rawValues.pco_services_past_2mo).toBe(4);
     // sys_service = min(100, 4 * 20) = 80.
     expect(scored.score1).toBe(80);
+  });
+});
 
-    const usesNative = await t.run((ctx) =>
-      communityUsesNativeRostering(ctx, world.communityId),
-    );
-    expect(usesNative).toBe(false);
+// ============================================================================
+// (c) mergeServingHistory — union of native + PCO rows, deduped, newest-first
+// ============================================================================
+
+describe("mergeServingHistory", () => {
+  test("merges native + PCO rows newest-first and dedupes overlap", () => {
+    const native = [
+      { date: "2026-06-01", serviceTypeName: "Sunday", teamName: "Worship", position: "Drums" },
+      { date: "2026-05-15", serviceTypeName: "Sunday", teamName: "Worship", position: "Drums" },
+    ];
+    const pco = [
+      // Same service as the first native row → deduped.
+      { date: "2026-06-01", serviceTypeName: "Sunday", teamName: "Worship", position: "Drums" },
+      { date: "2026-06-10", serviceTypeName: "PCO Service", teamName: "Hospitality", position: "Usher" },
+    ];
+    const merged = mergeServingHistory(native, pco, 15);
+    // Newest first: 06-10 (PCO), 06-01 (deduped), 05-15 (native).
+    expect(merged.map((r) => r.date)).toEqual([
+      "2026-06-10",
+      "2026-06-01",
+      "2026-05-15",
+    ]);
+    // The overlapping 06-01 row appears exactly once.
+    expect(merged.filter((r) => r.date === "2026-06-01")).toHaveLength(1);
+  });
+
+  test("respects the cap", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      date: `2026-06-${String(i + 1).padStart(2, "0")}`,
+      serviceTypeName: "S",
+      teamName: "T",
+      position: null,
+    }));
+    expect(mergeServingHistory(rows, [], 15)).toHaveLength(15);
   });
 });

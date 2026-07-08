@@ -31,10 +31,7 @@ import {
   calculateAllSystemScores,
   evaluateSystemAlerts,
 } from "./systemScoring";
-import {
-  communityUsesNativeRostering,
-  countNativeServing,
-} from "../lib/nativeServing";
+import { countNativeServing } from "../lib/nativeServing";
 
 // ============================================================================
 // Constants
@@ -274,14 +271,9 @@ export const computeCommunityScoresBatch = internalQuery({
     const currentTime = now();
     const announcementGroup = await ctx.db.get(args.announcementGroupId);
 
-    // Serving is native-first: if the community has any native rostering
-    // (an eventPlans row), the Serving score comes from roleAssignments;
-    // otherwise it falls back to the cached PCO pcoServingCounts below.
-    // Decided once per batch (not per member).
-    const communityUsesNative = await communityUsesNativeRostering(
-      ctx,
-      args.communityId,
-    );
+    // Serving combines BOTH sources: the cached PCO pcoServingCounts snapshot
+    // (built below) AND native rostering (roleAssignments, added per member).
+    // Native-origin plans exclude PCO-imported ones, so the two are disjoint.
 
     // Build PCO serving map from announcement group doc
     const pcoServingMap = new Map<string, number>();
@@ -534,18 +526,18 @@ export const computeCommunityScoresBatch = internalQuery({
           lastRosteredAt,
         );
 
-        // Native-first Serving count: distinct plans in the past ~60 days with
-        // a non-declined roleAssignment. Reuses recentAssignments (no extra
-        // read). Falls back to the cached PCO count when the community has no
-        // native rostering.
-        const servingCount = communityUsesNative
-          ? await countNativeServing(
-              ctx,
-              recentAssignments,
-              currentTime,
-              args.communityId,
-            )
-          : pcoCount;
+        // Combined Serving count = cached PCO count + native-origin distinct
+        // plans in the past ~60 days with a non-declined roleAssignment
+        // (reuses recentAssignments, no extra read). The native helper excludes
+        // PCO-imported plans, so the two sources don't double-count.
+        const servingCount =
+          pcoCount +
+          (await countNativeServing(
+            ctx,
+            recentAssignments,
+            currentTime,
+            args.communityId,
+          ));
 
         // Extract system raw values
         const rawValues = extractSystemRawValues({

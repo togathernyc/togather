@@ -45,9 +45,9 @@ import {
 } from "./followupScoring";
 import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import {
-  communityUsesNativeRostering,
   countNativeServing,
   nativeServingHistory,
+  mergeServingHistory,
 } from "../lib/nativeServing";
 
 // ============================================================================
@@ -430,12 +430,9 @@ export const internalScoreBatch = internalQuery({
       }
     }
 
-    // Serving is native-first: when the community has native rostering, the
-    // per-member serving value comes from roleAssignments (below); otherwise
-    // the cached PCO map is used. Decided once per batch.
-    const communityUsesNative = group?.communityId
-      ? await communityUsesNativeRostering(ctx, group.communityId)
-      : false;
+    // Serving combines BOTH sources: the cached PCO map above AND native
+    // rostering (added per member below). Native-origin plans exclude
+    // PCO-imported ones, so the two are disjoint.
 
     const results = await Promise.all(
       args.members.map(async (member) => {
@@ -551,7 +548,7 @@ export const internalScoreBatch = internalQuery({
             meetingData, followupData, isSnoozed, currentTime
           );
           let pcoServing = pcoServingMap.get(member.userId.toString());
-          if (communityUsesNative) {
+          if (group?.communityId) {
             const recentAssignments = await ctx.db
               .query("roleAssignments")
               .withIndex("by_user_eventDate", (q) =>
@@ -559,13 +556,15 @@ export const internalScoreBatch = internalQuery({
               )
               .order("desc")
               .take(100);
+            const nativeCount = await countNativeServing(
+              ctx,
+              recentAssignments,
+              currentTime,
+              group.communityId,
+            );
             pcoServing = {
-              servicesPast2Months: await countNativeServing(
-                ctx,
-                recentAssignments,
-                currentTime,
-                group!.communityId,
-              ),
+              servicesPast2Months:
+                (pcoServing?.servicesPast2Months ?? 0) + nativeCount,
             };
           }
           const rawValues = extractRawValues(
@@ -1436,36 +1435,34 @@ export const history = query({
       meetingData, followupData, isSnoozed, currentTime
     );
 
-    // Build serving data — native-first. When the community uses native
-    // rostering, count distinct plans served in the past ~60 days from
-    // roleAssignments; otherwise fall back to the cached PCO counts.
-    const usesNativeRostering = group?.communityId
-      ? await communityUsesNativeRostering(ctx, group.communityId)
-      : false;
+    // Build serving data — combines BOTH sources: the cached PCO count AND
+    // native-origin distinct plans served in the past ~60 days from
+    // roleAssignments (native excludes PCO-imported plans, so no double-count).
+    const pcoCount =
+      group?.pcoServingCounts?.counts?.find(
+        (c: { userId: Id<"users">; count: number }) =>
+          c.userId.toString() === member.userId.toString(),
+      )?.count ?? 0;
 
-    let pcoServing: PcoServingData | undefined;
-    if (usesNativeRostering) {
+    let nativeCount = 0;
+    if (group?.communityId) {
       const recentAssignments = await ctx.db
         .query("roleAssignments")
         .withIndex("by_user_eventDate", (q) => q.eq("userId", member.userId))
         .order("desc")
         .take(100);
-      pcoServing = {
-        servicesPast2Months: await countNativeServing(
-          ctx,
-          recentAssignments,
-          currentTime,
-          group!.communityId,
-        ),
-      };
-    } else if (group?.pcoServingCounts?.counts) {
-      const entry = group.pcoServingCounts.counts.find(
-        (c: { userId: Id<"users">; count: number }) => c.userId.toString() === member.userId.toString()
+      nativeCount = await countNativeServing(
+        ctx,
+        recentAssignments,
+        currentTime,
+        group.communityId,
       );
-      if (entry) {
-        pcoServing = { servicesPast2Months: entry.count };
-      }
     }
+
+    const pcoServing: PcoServingData | undefined =
+      pcoCount + nativeCount > 0
+        ? { servicesPast2Months: pcoCount + nativeCount }
+        : undefined;
 
     // ---- Cross-group attendance ----
     // Find all other groups the user belongs to
@@ -1557,39 +1554,29 @@ export const history = query({
     const crossGroupAttendancePct =
       allGroupsTotal > 0 ? Math.round((allGroupsAttended / allGroupsTotal) * 100) : 0;
 
-    // ---- Serving history — native-first ----
-    // Native rostering builds the card from roleAssignments; otherwise fall
-    // back to the cached PCO serving details on the group doc.
-    let servingHistory: Array<{
+    // ---- Serving history — combines BOTH sources ----
+    // Native-origin rows from roleAssignments AND the cached PCO serving
+    // details on the group doc, merged newest-first and deduped.
+    const nativeRows = group?.communityId
+      ? await nativeServingHistory(ctx, member.userId, group.communityId, 15)
+      : [];
+    const pcoRows: Array<{
       date: string;
       serviceTypeName: string;
       teamName: string;
       position: string | null;
     }> = [];
-
-    if (usesNativeRostering) {
-      servingHistory = await nativeServingHistory(
-        ctx,
-        member.userId,
-        group!.communityId,
-        15,
-      );
-    } else {
-      const allDetails = group?.pcoServingCounts?.servingDetails ?? [];
-      const userDetails = allDetails
-        .filter((d: { userId: Id<"users"> }) => d.userId.toString() === member.userId.toString())
-        .sort((a: { date: string }, b: { date: string }) => b.date.localeCompare(a.date));
-
-      for (const d of userDetails) {
-        servingHistory.push({
-          date: d.date,
-          serviceTypeName: d.serviceTypeName,
-          teamName: d.teamName,
-          position: d.position ?? null,
-        });
-        if (servingHistory.length >= 15) break;
-      }
+    const allDetails = group?.pcoServingCounts?.servingDetails ?? [];
+    for (const d of allDetails) {
+      if (d.userId.toString() !== member.userId.toString()) continue;
+      pcoRows.push({
+        date: d.date,
+        serviceTypeName: d.serviceTypeName,
+        teamName: d.teamName,
+        position: d.position ?? null,
+      });
     }
+    const servingHistory = mergeServingHistory(nativeRows, pcoRows, 15);
 
     const rawValues = extractRawValues(
       meetingData, followupData, isSnoozed, currentTime, connectionParts, pcoServing, crossGroupAttendancePct

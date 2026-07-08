@@ -23,8 +23,8 @@ import { VALID_CUSTOM_SLOTS } from "../lib/followupConstants";
 import { SYSTEM_SCORES, SYSTEM_VARIABLE_IDS } from "./systemScoring";
 import { getMediaUrl, safeSliceForJson } from "../lib/utils";
 import {
-  communityUsesNativeRostering,
   nativeServingHistory,
+  mergeServingHistory,
 } from "../lib/nativeServing";
 
 // ============================================================================
@@ -2056,45 +2056,35 @@ export const history = query({
         }) ?? [],
     }));
 
-    // Serving history — native-first. If the community uses native rostering,
-    // build the card from roleAssignments; otherwise fall back to the cached
-    // PCO servingDetails on the announcement group doc.
-    let servingHistory: Array<{
+    // Serving history combines BOTH sources: native-origin rows from
+    // roleAssignments AND the cached PCO servingDetails on the announcement
+    // group doc, merged newest-first and deduped.
+    const nativeRows = await nativeServingHistory(
+      ctx,
+      cpRecord.userId,
+      cpRecord.communityId,
+      15,
+    );
+    const pcoRows: Array<{
       date: string;
       serviceTypeName: string;
       teamName: string;
       position: string | null;
     }> = [];
-
-    const usesNativeRostering = await communityUsesNativeRostering(
-      ctx,
-      cpRecord.communityId,
-    );
-
-    if (usesNativeRostering) {
-      servingHistory = await nativeServingHistory(
-        ctx,
-        cpRecord.userId,
-        cpRecord.communityId,
-        15,
-      );
-    } else if (announcementGroup) {
+    if (announcementGroup) {
       const allDetails =
         (announcementGroup as any)?.pcoServingCounts?.servingDetails ?? [];
-      const userDetails = allDetails
-        .filter((d: any) => d.userId.toString() === cpRecord.userId.toString())
-        .sort((a: any, b: any) => b.date.localeCompare(a.date));
-
-      for (const d of userDetails) {
-        servingHistory.push({
+      for (const d of allDetails) {
+        if (d.userId.toString() !== cpRecord.userId.toString()) continue;
+        pcoRows.push({
           date: d.date,
           serviceTypeName: d.serviceTypeName,
           teamName: d.teamName,
           position: d.position ?? null,
         });
-        if (servingHistory.length >= 15) break;
       }
     }
+    const servingHistory = mergeServingHistory(nativeRows, pcoRows, 15);
 
     // Get profile image URL
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
