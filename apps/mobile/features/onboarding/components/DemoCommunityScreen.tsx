@@ -682,25 +682,34 @@ function StepAboutChurch({
 
       {/* Informational callout — guidance, not an input. */}
       <View
-        style={[styles.callout, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderLight }]}
+        style={[styles.guideCard, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
       >
-        <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} style={styles.calloutIcon} />
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
-            One community can hold up to 1,000,000 people — but this demo is
-            capped at 100 sample members so it stays fast to explore.
-          </Text>
-          <Text style={[styles.calloutHeading, { color: colors.text }]}>
-            One community, or several?
-          </Text>
-          <Text style={[styles.calloutText, { color: colors.textSecondary }]}>
-            Put campuses people can reasonably commute between in ONE community
-            (e.g. Brooklyn / Queens / Manhattan, or DC / Maryland / Virginia),
-            and keep the community name broad enough to cover them all. If
-            locations are far apart — different states or regions like Maryland
-            vs. New York — create SEPARATE communities instead.
-          </Text>
+        <View style={styles.guideHeader}>
+          <View style={[styles.guideIconBadge, { backgroundColor: colors.link + "1A" }]}>
+            <Ionicons name="information-circle" size={18} color={colors.link} />
+          </View>
+          <Text style={[styles.guideTitle, { color: colors.text }]}>Good to know</Text>
         </View>
+
+        <Text style={[styles.guideText, { color: colors.textSecondary }]}>
+          One community can hold up to{" "}
+          <Text style={{ color: colors.text, fontWeight: "600" }}>1,000,000 people</Text>
+          {" "}— but this demo is capped at 100 sample members so it stays fast
+          to explore.
+        </Text>
+
+        <View style={[styles.guideDivider, { backgroundColor: colors.borderLight }]} />
+
+        <Text style={[styles.guideHeading, { color: colors.text }]}>
+          One community, or several?
+        </Text>
+        <Text style={[styles.guideText, { color: colors.textSecondary }]}>
+          Put campuses people can reasonably commute between in ONE community
+          (e.g. Brooklyn / Queens / Manhattan, or DC / Maryland / Virginia), and
+          keep the community name broad enough to cover them all. If locations
+          are far apart — different states or regions like Maryland vs. New York
+          — create SEPARATE communities instead.
+        </Text>
       </View>
     </>
   );
@@ -1229,6 +1238,44 @@ const styles = StyleSheet.create({
   calloutText: {
     fontSize: 13,
     lineHeight: 19,
+  },
+  // Richer guidance card (Step 1) — header badge + divided sections.
+  guideCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 18,
+    marginBottom: 20,
+  },
+  guideHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  guideIconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 9,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  guideTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  guideDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 14,
+    marginBottom: 14,
+  },
+  guideHeading: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 5,
+  },
+  guideText: {
+    fontSize: 13.5,
+    lineHeight: 20,
   },
   fieldGroup: {
     marginBottom: 16,
