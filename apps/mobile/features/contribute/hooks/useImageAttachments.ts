@@ -27,6 +27,12 @@ export interface UseImageAttachments {
   attachments: ImageAttachment[];
   /** Open the library and upload the chosen pictures. */
   pick: () => Promise<void>;
+  /**
+   * Attach + upload pictures that are already available as local URIs — e.g.
+   * `blob:` object URLs for screenshots pasted from the clipboard on web.
+   * Shares the same optimistic-thumbnail + R2 upload flow as {@link pick}.
+   */
+  addUris: (uris: string[]) => Promise<void>;
   remove: (id: string) => void;
   reset: () => void;
   /** True while any attachment is still uploading. */
@@ -40,6 +46,54 @@ export function useImageAttachments(): UseImageAttachments {
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const nextId = useRef(0);
 
+  const addUris = useCallback(
+    async (uris: string[]) => {
+      if (uris.length === 0) return;
+
+      const picked = uris.map((uri) => {
+        const id = `att-${nextId.current++}`;
+        return { id, localUri: uri };
+      });
+      setAttachments((prev) => [
+        ...prev,
+        ...picked.map((p) => ({
+          id: p.id,
+          localUri: p.localUri,
+          uploading: true,
+          failed: false,
+        })),
+      ]);
+
+      await Promise.all(
+        picked.map(async ({ id, localUri }) => {
+          try {
+            const { url, error } = await uploadImage(localUri);
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === id
+                  ? error
+                    ? { ...a, uploading: false, failed: true }
+                    : { ...a, uploading: false, storagePath: url }
+                  : a,
+              ),
+            );
+            if (error) {
+              notify("Upload failed", "That picture couldn't be uploaded.");
+            }
+          } catch {
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === id ? { ...a, uploading: false, failed: true } : a,
+              ),
+            );
+            notify("Upload failed", "That picture couldn't be uploaded.");
+          }
+        }),
+      );
+    },
+    [uploadImage],
+  );
+
   const pick = useCallback(async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
@@ -49,47 +103,8 @@ export function useImageAttachments(): UseImageAttachments {
     });
     if (result.canceled) return;
 
-    const picked = result.assets.map((asset) => {
-      const id = `att-${nextId.current++}`;
-      return { id, localUri: asset.uri };
-    });
-    setAttachments((prev) => [
-      ...prev,
-      ...picked.map((p) => ({
-        id: p.id,
-        localUri: p.localUri,
-        uploading: true,
-        failed: false,
-      })),
-    ]);
-
-    await Promise.all(
-      picked.map(async ({ id, localUri }) => {
-        try {
-          const { url, error } = await uploadImage(localUri);
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.id === id
-                ? error
-                  ? { ...a, uploading: false, failed: true }
-                  : { ...a, uploading: false, storagePath: url }
-                : a,
-            ),
-          );
-          if (error) {
-            notify("Upload failed", "That picture couldn't be uploaded.");
-          }
-        } catch {
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.id === id ? { ...a, uploading: false, failed: true } : a,
-            ),
-          );
-          notify("Upload failed", "That picture couldn't be uploaded.");
-        }
-      }),
-    );
-  }, [uploadImage]);
+    await addUris(result.assets.map((asset) => asset.uri));
+  }, [addUris]);
 
   const remove = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
@@ -100,6 +115,7 @@ export function useImageAttachments(): UseImageAttachments {
   return {
     attachments,
     pick,
+    addUris,
     remove,
     reset,
     uploading: attachments.some((a) => a.uploading),

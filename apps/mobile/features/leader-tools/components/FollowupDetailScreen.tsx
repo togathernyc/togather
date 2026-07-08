@@ -744,7 +744,26 @@ export function FollowupDetailContent({
           <Ionicons name={onClose ? "close" : "arrow-back"} size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{history?.toolDisplayName ?? "People"}</Text>
-        <View style={styles.headerSpacer} />
+        {/* Community admins reach the member-management controls (change role,
+            transfer primary admin, remove) from here — those live on the admin
+            person screen, which this check-in detail links out to. The member
+            id passed to that route is the Convex user id the backend returns on
+            the history member record. */}
+        {user?.is_admin && historyData?.member?.odUserId ? (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() =>
+              router.push(
+                `/(user)/admin/person/${historyData.member.odUserId}` as any,
+              )
+            }
+            accessibilityLabel="Manage member"
+          >
+            <Ionicons name="settings-outline" size={22} color={colors.text} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
       <KeyboardAvoidingView
