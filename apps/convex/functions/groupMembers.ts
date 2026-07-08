@@ -1214,6 +1214,10 @@ export const listGroupJoinRequests = query({
           .filter(
             (m) =>
               !m.leftAt &&
+              // Exclude archived groups from the "current" set (they stay in
+              // requestHistory for name resolution), matching the admin
+              // dashboard's active-only "Member of" summary.
+              !groupMap.get(m.groupId)?.isArchived &&
               (m.requestStatus === null ||
                 m.requestStatus === undefined ||
                 m.requestStatus === "accepted"),

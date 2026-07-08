@@ -138,13 +138,17 @@ export function GroupDetailScreen() {
   ) as number | undefined;
   const hasPendingRequests = (pendingRequestCount ?? 0) > 0;
 
-  // Whether the group has ever had an event plan. Rostering keeps its inline
-  // position only once plans exist; before that it drops to a bottom group
-  // action so the tile order stays focused on the common path. Convex dedupes
-  // this subscription with RosteringSection's own listEvents query.
+  // Whether the group has ever had an event plan (past OR upcoming). Rostering
+  // keeps its inline position only once plans exist; before that it drops to a
+  // bottom group action so the tile order stays focused on the common path.
+  // `includePast: true` so a group that ran events but has none scheduled ahead
+  // still counts as "has plans" (matches the "has there been a plan before?"
+  // intent rather than "is one coming up?").
   const eventPlans = useAuthenticatedQuery(
     api.functions.scheduling.events.listEvents,
-    group?._id && isLeader ? { groupId: group._id as Id<"groups"> } : "skip",
+    group?._id && isLeader
+      ? { groupId: group._id as Id<"groups">, includePast: true }
+      : "skip",
   ) as unknown[] | undefined;
   const hasEventPlans = Array.isArray(eventPlans) && eventPlans.length > 0;
 
