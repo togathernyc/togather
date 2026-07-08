@@ -469,28 +469,26 @@ const MEMBER_TENURE_MS = 63 * DAY;
 const ACTIVITY_WEEKS = 9;
 
 /**
- * Deterministic member-health profile for seeded placeholder member `i`.
+ * Deterministic member-health activity plan for seeded placeholder member `i`.
  *
- * Produces a realistic spread across the roster — ~45% healthy, ~33% watch,
- * ~22% needs-attention — by choosing which of the ACTIVITY_WEEKS past weekly
- * gatherings the member attended, how often they served, and whether they have
- * a recent follow-up. The three scores are computed with the SAME formulas the
- * production pipeline uses (functions/systemScoring.ts `calculateSystemScore`),
- * so the numbers we write directly match what the daily score cron will later
- * recompute from this seeded activity — the member stays in the same band.
+ * Chooses which of the ACTIVITY_WEEKS past weekly gatherings the member
+ * attended, how often they served, and whether they have a recent follow-up —
+ * shaped to produce a realistic spread once the real scoring pipeline runs over
+ * it: ~45% healthy, ~33% watch, ~22% needs-attention.
  *
- * Weeks are indexed 0 = most recent … ACTIVITY_WEEKS-1 = oldest.
- * `consecutiveMissed` = how many of the most-recent weeks were skipped before
- * the first attended week (drives the connection score's decay).
+ * We only plan the ACTIVITY here; the scores themselves are computed by
+ * `computeCommunityScores` (functions/systemScoring.ts) from this seeded
+ * activity — the same code the daily cron uses — so there's a single source of
+ * truth and the seeded snapshot never drifts from later recomputes.
+ *
+ * Weeks are indexed 0 = most recent … ACTIVITY_WEEKS-1 = oldest. The member
+ * skips the `consecutiveMissed` most-recent weeks, then attends `attendedCount`
+ * consecutive weeks (fewer missed recent weeks → higher connection score).
  */
 function memberHealthProfile(i: number): {
-  band: "healthy" | "watch" | "needs";
   attendedWeeks: number[];
   servingCount: number;
   followup: { channel: "followed_up" | "call"; daysAgo: number } | null;
-  score1: number;
-  score2: number;
-  score3: number;
 } {
   const band = i % 100 < 45 ? "healthy" : i % 100 < 78 ? "watch" : "needs";
   const sub = i % 3;
@@ -525,34 +523,8 @@ function memberHealthProfile(i: number): {
   ) {
     attendedWeeks.push(w);
   }
-  const attended = attendedWeeks.length;
 
-  // score1 — Serving: 20 pts per service in the last 2 months, capped at 100.
-  const score1 = Math.min(100, servingCount * 20);
-
-  // score2 — Attendance: % of the window's weeks with an attendance.
-  const score2 = Math.round(
-    Math.max(0, Math.min(100, (attended / ACTIVITY_WEEKS) * 100)),
-  );
-
-  // score3 — Connection: attendance base (max 70, −15/consecutive missed week)
-  // plus a follow-up fill of the remainder, decaying by channel recency.
-  let attendancePortion = 0;
-  if (attended > 0) {
-    const attendancePct = Math.max(0, 100 - consecutiveMissed * 15);
-    attendancePortion = Math.round(70 * (attendancePct / 100));
-  }
-  const remaining = 100 - attendancePortion;
-  const decayMultiplier = attended === 0 ? 0.5 : 1;
-  let fill = 0;
-  if (followup) {
-    const weight = followup.channel === "followed_up" ? 1.0 : 0.75;
-    const decayDays = followup.channel === "followed_up" ? 100 : 85;
-    fill = weight * Math.max(0, 1 - followup.daysAgo / (decayDays * decayMultiplier));
-  }
-  const score3 = Math.min(attendancePortion + Math.round(remaining * fill), 100);
-
-  return { band, attendedWeeks, servingCount, followup, score1, score2, score3 };
+  return { attendedWeeks, servingCount, followup };
 }
 
 /** Unix epoch day 0 (1970-01-01) was a Thursday; +4 aligns 0 = Sunday. */
@@ -2064,11 +2036,11 @@ export const createDemoCommunity = mutation({
  *
  * Scheduled (not inline) from createDemoCommunity to keep that mutation under
  * Convex's per-transaction write limit. Creates ACTIVITY_WEEKS of PAST weekly
- * gatherings on the announcement group, records attendance/serving/follow-up
- * history per member (see memberHealthProfile), and writes each member's
- * communityPeople row with scores computed to match the production scoring
- * pipeline — so Admin → People shows a realistic spread immediately, and the
- * daily score cron keeps it in sync from the same seeded activity.
+ * gatherings on the announcement group and records attendance/serving/follow-up
+ * history per member (see memberHealthProfile), then schedules the real
+ * `computeCommunityScores` pipeline to derive each member's communityPeople row
+ * from that activity — so Admin → People shows a realistic spread immediately
+ * and it exactly matches what the daily score cron recomputes.
  *
  * The past gatherings are marked isDemoActivitySeed so purgeDemoSeedUsers
  * deletes them on go-live; otherwise their empty past sessions would drag down
@@ -2103,15 +2075,22 @@ export const seedMemberActivity = internalMutation({
 
     // Past weekly gatherings: week 0 ~2 days ago … week 8 ~58 days ago, each in
     // a distinct calendar week and inside the 60-day scoring window.
+    // Precompute each week's timestamp once so a meeting's scheduledAt and its
+    // attendance rows' recordedAt can never drift apart. Week 0 ~2 days ago …
+    // week 8 ~58 days ago — each in a distinct calendar week and inside the
+    // 60-day scoring window.
+    const weekScheduledAt = Array.from(
+      { length: ACTIVITY_WEEKS },
+      (_, w) => t - (w * 7 + 2) * DAY,
+    );
     const meetingByWeek: Id<"meetings">[] = [];
     for (let w = 0; w < ACTIVITY_WEEKS; w++) {
-      const scheduledAt = t - (w * 7 + 2) * DAY;
       const meetingId = await ctx.db.insert("meetings", {
         groupId: args.announcementGroupId,
         createdById: authorId,
         hostUserIds: [authorId],
         title: "Sunday Gathering",
-        scheduledAt,
+        scheduledAt: weekScheduledAt[w],
         meetingType: 1,
         status: "scheduled",
         shortId: generateShortId(),
@@ -2129,39 +2108,33 @@ export const seedMemberActivity = internalMutation({
       meetingByWeek.push(meetingId);
     }
 
+    // Per-member attendance / serving / follow-up history. Scores are NOT
+    // written here — computeCommunityScores (scheduled below) derives them from
+    // this activity, so the demo's numbers are exactly what the daily cron
+    // produces (single source of truth, no drift).
     const servingCounts: Array<{ userId: Id<"users">; count: number }> = [];
     for (let i = 0; i < roster.length; i++) {
       const membership = roster[i];
       const userId = membership.userId;
-      const user = await ctx.db.get(userId);
-      if (!user) continue;
       const profile = memberHealthProfile(i);
 
-      // Attendance rows for the weeks this member attended.
-      let lastAttendedAt: number | undefined;
       for (const w of profile.attendedWeeks) {
-        const scheduledAt = t - (w * 7 + 2) * DAY;
         await ctx.db.insert("meetingAttendances", {
           meetingId: meetingByWeek[w],
           userId,
           status: 1, // attended
-          recordedAt: scheduledAt,
+          recordedAt: weekScheduledAt[w],
           recordedById: authorId,
         });
-        if (lastAttendedAt === undefined || scheduledAt > lastAttendedAt) {
-          lastAttendedAt = scheduledAt;
-        }
       }
 
-      // Serving history (feeds score1 via the announcement group's counts).
+      // Serving history (feeds the Serving score via the group's counts).
       if (profile.servingCount > 0) {
         servingCounts.push({ userId, count: profile.servingCount });
       }
 
       // A recent follow-up (authored by a seeded leader) for members with one.
-      let lastFollowupAt: number | undefined;
       if (profile.followup) {
-        lastFollowupAt = t - profile.followup.daysAgo * DAY;
         await ctx.db.insert("memberFollowups", {
           groupMemberId: membership._id,
           createdById: authorId,
@@ -2170,35 +2143,25 @@ export const seedMemberActivity = internalMutation({
             profile.followup.channel === "followed_up"
               ? "Caught up after service — doing well."
               : "Gave them a quick call to check in.",
-          createdAt: lastFollowupAt,
+          createdAt: t - profile.followup.daysAgo * DAY,
         });
       }
-
-      await ctx.db.insert("communityPeople", {
-        communityId: args.communityId,
-        groupId: args.announcementGroupId,
-        userId,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        avatarUrl: user.profilePhoto,
-        searchText: user.searchText,
-        isActive: true,
-        score1: profile.score1,
-        score2: profile.score2,
-        score3: profile.score3,
-        alerts: profile.band === "needs" ? ["Low Attendance"] : [],
-        lastAttendedAt,
-        lastFollowupAt,
-        addedAt: t,
-        createdAt: t,
-        updatedAt: t,
-      });
     }
 
-    // Serving counts live on the announcement group (score1 reads them here).
+    // Serving counts live on the announcement group (the Serving score reads
+    // them). No PCO connection exists at demo creation, so this is a fresh set.
     await ctx.db.patch(args.announcementGroupId, {
       pcoServingCounts: { updatedAt: t, counts: servingCounts },
     });
+
+    // Compute health scores from the seeded activity with the REAL pipeline —
+    // the same code the daily cron uses — so scores show immediately and never
+    // diverge from later recomputes.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.computeCommunityScores,
+      { communityId: args.communityId },
+    );
   },
 });
 
@@ -2649,6 +2612,9 @@ export const purgeDemoSeedUsers = internalMutation({
     }
 
     let purged = 0;
+    // Track which users we delete so we can scrub only THEIR entries from
+    // shared caches (e.g. pcoServingCounts) without touching real data.
+    const purgedUserIds = new Set<string>();
     for (const membership of memberships) {
       const user = await ctx.db.get(membership.userId);
       // Only the accounts this module seeded (isDemoSeed) — other flows also
@@ -2743,6 +2709,7 @@ export const purgeDemoSeedUsers = internalMutation({
       for (const row of seedAvailability) await ctx.db.delete(row._id);
 
       await ctx.db.delete(membership._id);
+      purgedUserIds.add(String(user._id));
       await ctx.db.delete(user._id);
       purged++;
     }
@@ -2766,10 +2733,32 @@ export const purgeDemoSeedUsers = internalMutation({
         await ctx.db.patch(group._id, { preview: undefined });
       }
 
-      // Seeded PCO serving counts (member-health score1) reference now-purged
-      // placeholder members — drop them so the live community starts clean.
-      if (group.pcoServingCounts) {
-        await ctx.db.patch(group._id, { pcoServingCounts: undefined });
+      // Scrub the seeded placeholder entries from the PCO serving cache (the
+      // member-health Serving score reads it), but PRESERVE any real counts —
+      // a church that connected Planning Center during the demo may already
+      // have real serving data cached here, and wiping it would zero real
+      // Serving scores until the next sync.
+      const serving = group.pcoServingCounts;
+      if (serving) {
+        const kept = serving.counts.filter(
+          (c) => !purgedUserIds.has(String(c.userId)),
+        );
+        const keptDetails = serving.servingDetails?.filter(
+          (d) => !purgedUserIds.has(String(d.userId)),
+        );
+        if (kept.length === serving.counts.length) {
+          // Nothing seeded here — real data only, leave it untouched.
+        } else if (kept.length === 0 && (keptDetails?.length ?? 0) === 0) {
+          await ctx.db.patch(group._id, { pcoServingCounts: undefined });
+        } else {
+          await ctx.db.patch(group._id, {
+            pcoServingCounts: {
+              ...serving,
+              counts: kept,
+              servingDetails: keptDetails,
+            },
+          });
+        }
       }
 
       // Delete the demo-only "Partner with us" giving link ONLY if it still

@@ -106,15 +106,11 @@ export function FollowupMobileCards({
   groupId,
   enforcedAssigneeUserId,
   returnTo,
-  onSwitchToTable,
   hideHeader = false,
 }: {
   groupId: string;
   enforcedAssigneeUserId?: string;
   returnTo?: string | null;
-  // When present, renders a toggle to the table view. Omitted now that the
-  // People surfaces are platform-fixed (tile on native, list on web).
-  onSwitchToTable?: () => void;
   // Tab surfaces (Admin → People) hide the "Check-in" title/back header so the
   // search bar sits at the top; the group-scoped check-in keeps it for nav.
   hideHeader?: boolean;
@@ -356,21 +352,10 @@ export function FollowupMobileCards({
               </Text>
             )}
           </View>
-          {onSwitchToTable ? (
-            <Pressable
-              onPress={onSwitchToTable}
-              hitSlop={12}
-              style={styles.headerIcon}
-              accessibilityLabel="Switch to table view"
-            >
-              <Ionicons name="grid-outline" size={22} color={colors.text} />
-            </Pressable>
-          ) : (
-            // Spacer keeps the title centered when there's no toggle button.
-            <View style={styles.headerIcon}>
-              <Ionicons name="grid-outline" size={22} color="transparent" />
-            </View>
-          )}
+          {/* Spacer balances the back button so the title stays centered. */}
+          <View style={styles.headerIcon}>
+            <Ionicons name="chevron-back" size={26} color="transparent" />
+          </View>
         </View>
       )}
 

@@ -1490,7 +1490,7 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
 
   test("seeds a realistic member-health spread for the whole roster", async () => {
     const t = convexTest(schema, modules);
-    const { token } = await createUser(t, "HealthT", "+15555550213");
+    const { userId, token } = await createUser(t, "HealthT", "+15555550213");
 
     const result = await t.mutation(api.functions.demo.createDemoCommunity, {
       token,
@@ -1498,7 +1498,9 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
       smallGroupCount: 2,
     });
 
-    // Member-health activity is seeded off-thread — run the scheduled work.
+    // Member-health activity is seeded off-thread, then the real scoring
+    // pipeline (computeCommunityScores) is scheduled to derive the rows — run
+    // all of it.
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const data = await t.run(async (ctx) => {
@@ -1542,21 +1544,24 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
       };
     });
 
-    // Every placeholder member gets a health row — the whole roster, not a slice.
-    expect(data.people.length).toBe(100);
+    // Every placeholder member gets a pipeline-computed health row (the whole
+    // roster, not a slice). The creator also gets a row but is a leader, so
+    // scope the spread assertions to the placeholder members.
+    const placeholders = data.people.filter((p) => p.userId !== userId);
+    expect(placeholders.length).toBe(100);
     // Connection scores span all three bands (needs < 40 <= watch < 70 <= healthy).
-    const s3 = data.people.map((p) => p.score3 ?? 0);
+    const s3 = placeholders.map((p) => p.score3 ?? 0);
     expect(s3.some((v) => v < 40)).toBe(true);
     expect(s3.some((v) => v >= 40 && v < 70)).toBe(true);
     expect(s3.some((v) => v >= 70)).toBe(true);
-    // Nobody is stuck at zero across all three scores.
+    // No placeholder is stuck at zero across all three scores.
     expect(
-      data.people.every(
+      placeholders.every(
         (p) => (p.score1 ?? 0) + (p.score2 ?? 0) + (p.score3 ?? 0) > 0,
       ),
     ).toBe(true);
     // Scores are backed by real seeded activity (past gatherings + attendance +
-    // serving counts), so the daily cron recomputes the same bands.
+    // serving counts), so the daily cron recomputes the same values.
     expect(data.activityMeetings.length).toBe(9);
     expect(data.attendances.length).toBeGreaterThan(0);
     expect((data.serving?.counts.length ?? 0)).toBeGreaterThan(0);
@@ -1702,8 +1707,10 @@ describe("demo v4: unread suppression + go-live purge of new tables", () => {
     expect(data.eventAvailability).toHaveLength(0);
     // The demo-only giving link is gone.
     expect(data.givingLinks).toHaveLength(0);
-    // Seeded member-health rows and their junctions/follow-ups are gone.
-    expect(data.people).toHaveLength(0);
+    // Seeded (placeholder) member-health rows and their follow-ups are gone.
+    // The creator's own pipeline-computed row correctly SURVIVES (they're a
+    // real, active member of the now-live community).
+    expect(data.people.filter((p) => p.userId !== userId)).toHaveLength(0);
     expect(data.assignees).toHaveLength(0);
     expect(data.followups).toHaveLength(0);
     // The past attendance-history gatherings + their attendance rows and the
