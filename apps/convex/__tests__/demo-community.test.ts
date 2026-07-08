@@ -1605,3 +1605,167 @@ describe("demo v4: unread suppression + go-live purge of new tables", () => {
     expect(data.creatorMembership).not.toBeNull();
   });
 });
+
+describe("demo v5: review-fix follow-ups", () => {
+  test("multi-campus seeded per-campus channels don't pre-complete the create_channel mission", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, token } = await createUser(t, "ChanT", "+15555550220");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Channel Church",
+      campusCount: 2,
+      smallGroupCount: 1,
+    });
+
+    // Sanity: per-campus custom channels WERE seeded, authored by the creator
+    // (channelType "custom", not the Getting Started tour).
+    const seededCustom = await t.run(async (ctx) => {
+      const groups = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .collect();
+      let count = 0;
+      for (const g of groups) {
+        const channels = await ctx.db
+          .query("chatChannels")
+          .withIndex("by_group", (q) => q.eq("groupId", g._id))
+          .collect();
+        count += channels.filter(
+          (c) => c.channelType === "custom" && c.slug !== "getting-started",
+        ).length;
+      }
+      return count;
+    });
+    expect(seededCustom).toBeGreaterThan(0);
+
+    // No real activity yet: the mission is NOT pre-completed even though seeded
+    // custom channels exist, because they share the community's createdAt.
+    let progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(
+      progress?.missions.find((m) => m.key === "create_channel")?.done,
+    ).toBe(false);
+
+    // The creator genuinely creates a new custom channel later (strictly newer
+    // than the community) -> the mission flips to done.
+    await t.run(async (ctx) => {
+      const community = await ctx.db.get(demo.communityId);
+      const base = community!.createdAt ?? community!._creationTime;
+      const group = await ctx.db
+        .query("groups")
+        .withIndex("by_community", (q) => q.eq("communityId", demo.communityId))
+        .first();
+      await ctx.db.insert("chatChannels", {
+        groupId: group!._id,
+        slug: "prayer",
+        channelType: "custom",
+        name: "Prayer",
+        createdById: userId,
+        createdAt: base + 1000,
+        updatedAt: base + 1000,
+        isArchived: false,
+        isEnabled: true,
+        memberCount: 0,
+      });
+    });
+    progress = await t.query(api.functions.demo.getDemoProgress, {
+      token,
+      communityId: demo.communityId,
+    });
+    expect(
+      progress?.missions.find((m) => m.key === "create_channel")?.done,
+    ).toBe(true);
+  });
+
+  test("an edited giving link survives go-live; an untouched one is purged", async () => {
+    const t = convexTest(schema, modules);
+    const { token: tokenA } = await createUser(t, "GiveKeep", "+15555550221");
+    const { token: tokenB } = await createUser(t, "GiveDrop", "+15555550222");
+
+    const edited = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token: tokenA,
+      name: "Edited Giving Church",
+    });
+    const untouched = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token: tokenB,
+      name: "Untouched Giving Church",
+    });
+
+    // Helper: fetch the announcement group's giving resource for a community.
+    const givingResource = async (communityId: Id<"communities">) =>
+      await t.run(async (ctx) => {
+        const groups = await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) => q.eq("communityId", communityId))
+          .collect();
+        const ann = groups.find((g) => g.isAnnouncementGroup)!;
+        return await ctx.db
+          .query("groupResources")
+          .withIndex("by_group", (q) => q.eq("groupId", ann._id))
+          .first();
+      });
+
+    // The church points "Partner with us" at its real giving page before going
+    // live (linkUrl no longer the seeded placeholder).
+    const EDITED_URL = "https://givelify.com/mychurch";
+    const seededEdited = await givingResource(edited.communityId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seededEdited!._id, { linkUrl: EDITED_URL });
+    });
+
+    await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
+      communityId: edited.communityId,
+    });
+    await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
+      communityId: untouched.communityId,
+    });
+
+    // Edited link survives with the church's URL…
+    const survivedResource = await givingResource(edited.communityId);
+    expect(survivedResource).not.toBeNull();
+    expect(survivedResource?.linkUrl).toBe(EDITED_URL);
+
+    // …but the untouched placeholder link is deleted.
+    const purgedResource = await givingResource(untouched.communityId);
+    expect(purgedResource).toBeNull();
+  });
+
+  test("roster service times are stored in the community's local timezone", async () => {
+    const t = convexTest(schema, modules);
+    const { token } = await createUser(t, "TzT", "+15555550223");
+
+    const demo = await t.mutation(api.functions.demo.createDemoCommunity, {
+      token,
+      name: "Timezone Church",
+      smallGroupCount: 1,
+    });
+
+    const plans = await t.run(async (ctx) =>
+      (
+        await ctx.db
+          .query("eventPlans")
+          .withIndex("by_community_date", (q) =>
+            q.eq("communityId", demo.communityId),
+          )
+          .collect()
+      ).filter((p) => p.isDemoSeed),
+    );
+    expect(plans.length).toBeGreaterThan(0);
+
+    // The first service ("9:00 AM") should land at 9 AM ET, not 9:00 UTC.
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      hour12: false,
+    });
+    for (const plan of plans) {
+      const first = plan.times?.[0];
+      expect(first?.label).toBe("9:00 AM");
+      const hour = parseInt(fmt.format(new Date(first!.startsAt)), 10) % 24;
+      expect(hour).toBe(9);
+    }
+  });
+});
