@@ -92,6 +92,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   setCommunity: (community: Community) => Promise<void>;
   clearCommunity: () => Promise<void>;
+  exitToCommunitySelection: () => Promise<void>;
   signIn: (userId: string, tokens?: { accessToken?: string; refreshToken?: string }) => Promise<void>;
 }
 
@@ -812,6 +813,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient, token]);
 
   /**
+   * Leave the current community WITHOUT logging out of the app — used when the
+   * active community becomes archived (closed). Unlike `clearCommunity`, this
+   * also re-mints a community-less access token (so requests stop being scoped
+   * to the archived community, which the server now hard-rejects) and wipes the
+   * per-community caches so no stale, archived content stays browsable. The
+   * caller is responsible for navigating to community selection afterward.
+   */
+  const exitToCommunitySelection = useCallback(async () => {
+    console.log("🔄 AuthProvider: Exiting to community selection (archived)");
+
+    // Clear the server-side active community (tolerated for archived).
+    await clearCommunity();
+
+    // Re-mint a token with NO community so requireAuth stops rejecting requests
+    // as COMMUNITY_ARCHIVED while the user is on the selection screen.
+    await refreshAuthTokens();
+
+    // Wipe per-community caches (mirror logout's cache teardown, minus the auth
+    // tokens/user) so archived-community data isn't left browsable offline.
+    await clearCachedProfile();
+    await Promise.all(
+      [
+        "inbox-cache",
+        "message-cache",
+        "group-cache",
+        "channels-cache",
+        "runsheet-cache",
+        "serving-runsheet-cache",
+        "serving-tasks-cache",
+        "serving-task-queue",
+        "grid-column-widths",
+      ].map((key) =>
+        AsyncStorage.removeItem(key).catch((err) =>
+          console.warn(`Failed to remove ${key}:`, err)
+        )
+      )
+    );
+    useInboxCache.getState().clear();
+    useMessageCache.getState().clearAll();
+    useGroupCache.getState().clearAll();
+    useChannelsCache.getState().clearAll();
+    useRunSheetCache.getState().clearAll();
+    useServingRunSheetCache.getState().clearAll();
+    useServingTasksCache.getState().clearAll();
+    useServingTaskQueue.getState().clear();
+    useGridColumnWidths.getState().clearAll();
+
+    setCommunityState(null);
+  }, [clearCommunity, refreshAuthTokens]);
+
+  /**
    * Initialize auth state on mount
    */
   useEffect(() => {
@@ -1088,6 +1140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       setCommunity,
       clearCommunity,
+      exitToCommunitySelection,
       signIn,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- token excluded to prevent app-wide re-renders on JWT refresh
@@ -1100,6 +1153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshUser,
       setCommunity,
       clearCommunity,
+      exitToCommunitySelection,
       signIn,
     ]
   );
@@ -1137,6 +1191,9 @@ export function useAuth() {
         throw new Error("AuthProvider not available");
       },
       clearCommunity: async () => {
+        throw new Error("AuthProvider not available");
+      },
+      exitToCommunitySelection: async () => {
         throw new Error("AuthProvider not available");
       },
       signIn: async () => {

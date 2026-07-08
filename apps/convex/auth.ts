@@ -16,6 +16,7 @@
 // Re-export auth helpers from lib/auth.ts
 export {
   requireAuth,
+  requireAuthAllowArchivedCommunity,
   requireAuthIgnoringRevocation,
   getOptionalAuth,
   requireAuthUser,

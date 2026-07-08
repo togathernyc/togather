@@ -10,7 +10,7 @@ import { api, internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, normalizePagination } from "../lib/utils";
 import { paginationArgs } from "../lib/validators";
-import { requireAuth } from "../lib/auth";
+import { requireAuth, requireAuthAllowArchivedCommunity } from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ADMIN_THRESHOLD, PRIMARY_ADMIN_ROLE } from "../lib/permissions";
 import { syncUserChannelMembershipsLogic, syncAnnouncementGroupMembership } from "./sync/memberships";
@@ -245,7 +245,9 @@ export const listForUser = query({
     ...paginationArgs,
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: a user whose active community was archived must still be
+    // able to list their communities to switch away.
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
     const { limit } = normalizePagination(args);
 
     // Only get active memberships (status=1)
@@ -432,7 +434,9 @@ export const join = mutation({
       communityId: args.communityId,
     });
 
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: allow a user whose active community was archived to join a
+    // different community. The target is still archived-checked below.
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
     const timestamp = now();
 
     console.log("[communities.join] Authenticated user", {
@@ -775,7 +779,8 @@ export const leave = mutation({
     communityId: v.id("communities"),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: a user can leave a community even if it's archived.
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
 
     const membership = await ctx.db
       .query("userCommunities")
