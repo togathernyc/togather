@@ -61,7 +61,11 @@ togathernyc/togather. Each run begins with a JSON payload in the trigger
 message. Follow the repo's CLAUDE.md at all times. Never push to main.
 Never bump runtimeVersion. Do only this run's job — nothing beyond it.
 
-Parse the payload first. Keep bugId and routineRunId — echo BOTH on every
+Parse the payload first. If the trigger message carries NO payload — no
+bugId, routineRunId, callbackUrl, or mode — this is an empty fire with no
+work item: do NOT improvise, do NOT send a callback (nowhere to POST,
+nothing to echo), do NOT send a push notification; just end the run.
+Otherwise keep bugId and routineRunId — echo BOTH on every
 callback. Send callbacks to the payload's callbackUrl by signing the EXACT
 body bytes (Bash):
 
@@ -74,6 +78,22 @@ body bytes (Bash):
     -d "$PAYLOAD"
 
 DEV_ASSISTANT_CALLBACK_SECRET=<paste the secret here>
+
+To attach an image (e.g. a before/after mock) to a callback's `screenshots`
+array you must first publish it — you have no image host and `data:` URIs
+are rejected. POST the PNG to `<CONVEX_SITE_URL>/dev-assistant/upload`,
+signed the SAME way as a callback, and use the https URL it returns:
+
+  IMG=$(jq -nc --arg d "$(base64 -i mock.png)" \
+    '{fileName:"mock.png",contentType:"image/png",dataBase64:$d}')
+  SIG=$(printf '%s' "$IMG" | openssl dgst -sha256 \
+    -hmac "$DEV_ASSISTANT_CALLBACK_SECRET" | awk '{print $2}')
+  URL=$(curl -sS -X POST "<CONVEX_SITE_URL>/dev-assistant/upload" \
+    -H "Content-Type: application/json" \
+    -H "x-togather-signature: $SIG" -d "$IMG" | jq -r .url)
+
+Put $URL (an https URL) into the callback's `screenshots` array — the
+callback rejects non-http(s) entries.
 
 The status lifecycle is forward-only — never send an earlier status after a
 later one. NEVER send status "MERGED": merges are detected from GitHub, not
@@ -211,12 +231,13 @@ it.
 
 Post the surviving findings on GitHub as inline PR comments on the
 relevant lines (summary comment for anything that doesn't anchor to a
-line), so the review trail is public on the PR. If a reviewer PAT is
-provided in your instructions, also submit a formal review
-(approve/request-changes) using it via GH_TOKEN; without one, skip the
-formal review — GitHub forbids approving your own PR, and the verdict
-reaches the dashboard through the callback either way. Never author code
-or push from a review run.
+line), using the session's authorized GitHub access — inline comments are
+allowed even on your own PR — so the review trail is public on the PR. Do
+NOT attempt a formal approve/request-changes review: routine sessions
+cannot submit them (the session type blocks APPROVE, and the bot PAT is
+blocked by the org proxy). Your approved/changes_requested verdict reaches
+the dashboard through the callback instead. Never author code or push from
+a review run.
 
 Verdict: "approved" only if no surviving finding would block a merge;
 otherwise "changes_requested". Scale scrutiny to riskLevel — low is a
@@ -269,13 +290,10 @@ when/if the split happens. Paste, in order:
    - otherwise → follow the IMPLEMENT instructions below
    ```
 3. All four blocks, labeled SPEC / IMPLEMENT / REVIEW / FIX.
-4. Optional: a reviewer PAT (from the Phase 2 bot account, Pull requests
-   read/write) in the REVIEW block so formal approve/request-changes
-   reviews post from a non-author identity. Without it, review findings
-   still post as inline comments (allowed on your own PR) and the verdict
-   reaches the dashboard via the callback — a formal GitHub approval only
-   becomes load-bearing if branch protection ever requires approving
-   reviews (e.g. for Phase 3 auto-merge).
+4. The secrets the blocks reference (the callback secret) — injected via the
+   Routine's Instructions, not committed here. No reviewer PAT: routine
+   sessions can't post formal reviews (see Operational notes), so review
+   findings post as inline comments and the verdict travels via the callback.
 
 Trade-off vs. three Routines: least-privilege credential separation becomes
 a prompt rule instead of a hard boundary, and the longer prompt slightly
@@ -284,13 +302,17 @@ set the per-mode env vars.
 
 ## Operational notes
 
-- **Reviewer identity**: GitHub rejects approve/request-changes reviews from
-  a PR's own author, but inline comments on your own PR are fine. So a
-  second identity is OPTIONAL — without one, findings post as comments and
-  the verdict lives in the dashboard. When the Phase 2 bot account exists,
-  give its PAT **Pull requests: read/write** (in addition to Issues) and
-  formal reviews post from it. Required only once branch protection demands
-  approving reviews (Phase 3 auto-merge).
+- **Reviewer identity**: routine sessions currently CANNOT submit formal
+  approve/request-changes reviews — the session type blocks APPROVE, and the
+  bot reviewer PAT is blocked by the org proxy (it needs the GitHub App
+  connected). The supported path is inline PR comments (allowed even on your
+  own PR) plus the verdict via callback; the dashboard reflects approved /
+  changes_requested regardless. **Implication for Phase 3 auto-merge:** it
+  must gate on the callback verdict, NOT on a GitHub "approving review" —
+  that condition can't be met until a real reviewer identity is wired up
+  (connect the bot via the GitHub App, or route reviews through a session
+  that can post formal reviews). Do not enable approval-gated auto-merge
+  until then.
 - The Convex side auto-dispatches the review Routine when an implementation
   callback reports `CODE_REVIEW` with a `prUrl` — no human trigger needed.
   Likewise a `changes_requested` verdict auto-dispatches a fix-mode run (3

@@ -28,6 +28,7 @@ import { formatError } from "@/utils/error-handling";
 import { notify } from "@/utils/platformAlert";
 import { useSubmitContribution } from "../hooks/useContributionMutations";
 import { useImageAttachments } from "../hooks/useImageAttachments";
+import { useWebImagePaste } from "../hooks/useWebImagePaste";
 import { AttachmentStrip } from "./AttachmentStrip";
 import type { ContributionKind } from "../types";
 
@@ -38,6 +39,9 @@ export function SubmitContributionScreen() {
   const { primaryColor } = useCommunityTheme();
   const submit = useSubmitContribution();
   const images = useImageAttachments();
+
+  // Web: paste a copied screenshot straight into the box (matches chat).
+  const inputPasteRef = useWebImagePaste(images.addUris);
 
   const [kind, setKind] = useState<ContributionKind>("bug");
   const [message, setMessage] = useState("");
@@ -128,6 +132,7 @@ export function SubmitContributionScreen() {
         </View>
 
         <TextInput
+          ref={inputPasteRef}
           style={[
             styles.input,
             {
