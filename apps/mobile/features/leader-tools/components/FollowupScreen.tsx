@@ -1,10 +1,8 @@
-import React, { useEffect, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React from "react";
+import { Platform } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
-import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { FollowupDesktopTable } from "./FollowupDesktopTable";
-import { FollowupMobileGrid } from "./FollowupMobileGrid";
 import { FollowupMobileCards } from "./FollowupMobileCards";
 
 export {
@@ -13,54 +11,13 @@ export {
   getScoreValue,
 } from "./followupShared";
 
-type ViewMode = "cards" | "table";
-const VIEW_MODE_KEY = "people_view_mode_v1";
-
 export function FollowupScreen() {
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
-  const isDesktop = useIsDesktopWeb();
   const groupId = group_id || "";
 
-  const [viewMode, setViewMode] = useState<ViewMode>("cards");
-  const [viewModeLoaded, setViewModeLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    AsyncStorage.getItem(VIEW_MODE_KEY)
-      .then((stored) => {
-        if (cancelled) return;
-        if (stored === "table" || stored === "cards") setViewMode(stored);
-        setViewModeLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setViewModeLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const setViewModePersisted = (mode: ViewMode) => {
-    setViewMode(mode);
-    AsyncStorage.setItem(VIEW_MODE_KEY, mode).catch(() => {});
-  };
-
-  if (isDesktop) return <FollowupDesktopTable groupId={groupId} />;
-  if (!viewModeLoaded) return null;
-
-  if (viewMode === "cards") {
-    return (
-      <FollowupMobileCards
-        groupId={groupId}
-        onSwitchToTable={() => setViewModePersisted("table")}
-      />
-    );
-  }
-
-  return (
-    <FollowupMobileGrid
-      groupId={groupId}
-      onSwitchToCards={() => setViewModePersisted("cards")}
-    />
-  );
+  // Fixed per platform (no in-app toggle): web shows the list/table, native
+  // shows the tile/card view. The group-scoped check-in keeps its header so the
+  // back button and group name stay available.
+  if (Platform.OS === "web") return <FollowupDesktopTable groupId={groupId} />;
+  return <FollowupMobileCards groupId={groupId} />;
 }

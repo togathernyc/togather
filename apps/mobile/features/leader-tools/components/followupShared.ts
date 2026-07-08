@@ -149,7 +149,7 @@ export function applyDevZipCodeSample<T extends MemberWithZipCode>(members: T[])
 
 /**
  * Adapt a communityPeople record into the FollowupMember shape
- * expected by FollowupDesktopTable and FollowupMobileGrid.
+ * expected by FollowupDesktopTable.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function adaptCommunityPerson(cp: any) {

@@ -1,16 +1,10 @@
-import React, { useEffect, useState } from "react";
-import { View, ActivityIndicator } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React from "react";
+import { View, ActivityIndicator, Platform } from "react-native";
 import { useLocalSearchParams, usePathname } from "expo-router";
-import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { useAuthenticatedQuery, api, Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { FollowupDesktopTable } from "@features/leader-tools/components/FollowupDesktopTable";
-import { FollowupMobileGrid } from "@features/leader-tools/components/FollowupMobileGrid";
 import { FollowupMobileCards } from "@features/leader-tools/components/FollowupMobileCards";
-
-type ViewMode = "cards" | "table";
-const VIEW_MODE_KEY = "people_view_mode_v1";
 
 export function PeopleTabScreen({
   showAllMembers = false,
@@ -21,7 +15,6 @@ export function PeopleTabScreen({
   // view — the same check-in roster, unfiltered).
   showAllMembers?: boolean;
 } = {}) {
-  const isDesktop = useIsDesktopWeb();
   const { user, community } = useAuth();
   const currentUserId = user?.id;
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -34,33 +27,13 @@ export function PeopleTabScreen({
       : null;
   const returnTo = returnToParam && returnToParam !== pathname ? returnToParam : null;
 
-  const [viewMode, setViewMode] = useState<ViewMode>("cards");
-  const [viewModeLoaded, setViewModeLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    AsyncStorage.getItem(VIEW_MODE_KEY).then((stored) => {
-      if (cancelled) return;
-      if (stored === "table" || stored === "cards") setViewMode(stored);
-      setViewModeLoaded(true);
-    }).catch(() => {
-      if (!cancelled) setViewModeLoaded(true);
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  const setViewModePersisted = (mode: ViewMode) => {
-    setViewMode(mode);
-    AsyncStorage.setItem(VIEW_MODE_KEY, mode).catch(() => {});
-  };
-
   const crossGroupConfig = useAuthenticatedQuery(
     api.functions.memberFollowups.getCrossGroupConfig,
     communityId ? { communityId } : "skip",
   );
   const announcementGroupId = crossGroupConfig?.announcementGroupId ?? "";
 
-  if (!announcementGroupId || !currentUserId || !viewModeLoaded) {
+  if (!announcementGroupId || !currentUserId) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" />
@@ -68,7 +41,9 @@ export function PeopleTabScreen({
     );
   }
 
-  if (isDesktop) {
+  // Fixed per platform (no in-app toggle): web shows the list/table, native
+  // shows the tile/card view.
+  if (Platform.OS === "web") {
     return (
       <FollowupDesktopTable
         groupId={announcementGroupId}
@@ -78,23 +53,12 @@ export function PeopleTabScreen({
     );
   }
 
-  if (viewMode === "cards") {
-    return (
-      <FollowupMobileCards
-        groupId={announcementGroupId}
-        enforcedAssigneeUserId={enforcedAssigneeUserId}
-        returnTo={returnTo}
-        onSwitchToTable={() => setViewModePersisted("table")}
-      />
-    );
-  }
-
   return (
-    <FollowupMobileGrid
+    <FollowupMobileCards
       groupId={announcementGroupId}
       enforcedAssigneeUserId={enforcedAssigneeUserId}
       returnTo={returnTo}
-      onSwitchToCards={() => setViewModePersisted("cards")}
+      hideHeader
     />
   );
 }

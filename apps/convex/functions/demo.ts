@@ -32,6 +32,7 @@
 
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuth } from "../lib/auth";
@@ -458,6 +459,74 @@ const ROSTER_POOL_SIZE = 24;
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 
+/**
+ * Health-score seeding constants. Attendance/connection scores look back over a
+ * 60-day window measured from each member's join date, so seeded members are
+ * back-dated to have tenure, and we seed ~9 weekly past "gatherings" they can
+ * have attended.
+ */
+const MEMBER_TENURE_MS = 63 * DAY;
+const ACTIVITY_WEEKS = 9;
+
+/**
+ * Deterministic member-health activity plan for seeded placeholder member `i`.
+ *
+ * Chooses which of the ACTIVITY_WEEKS past weekly gatherings the member
+ * attended, how often they served, and whether they have a recent follow-up —
+ * shaped to produce a realistic spread once the real scoring pipeline runs over
+ * it: ~45% healthy, ~33% watch, ~22% needs-attention.
+ *
+ * We only plan the ACTIVITY here; the scores themselves are computed by
+ * `computeCommunityScores` (functions/systemScoring.ts) from this seeded
+ * activity — the same code the daily cron uses — so there's a single source of
+ * truth and the seeded snapshot never drifts from later recomputes.
+ *
+ * Weeks are indexed 0 = most recent … ACTIVITY_WEEKS-1 = oldest. The member
+ * skips the `consecutiveMissed` most-recent weeks, then attends `attendedCount`
+ * consecutive weeks (fewer missed recent weeks → higher connection score).
+ */
+function memberHealthProfile(i: number): {
+  attendedWeeks: number[];
+  servingCount: number;
+  followup: { channel: "followed_up" | "call"; daysAgo: number } | null;
+} {
+  const band = i % 100 < 45 ? "healthy" : i % 100 < 78 ? "watch" : "needs";
+  const sub = i % 3;
+
+  let consecutiveMissed: number;
+  let attendedCount: number;
+  let servingCount: number;
+  let followup: { channel: "followed_up" | "call"; daysAgo: number } | null;
+  if (band === "healthy") {
+    consecutiveMissed = 0; // attended the most recent gathering
+    attendedCount = 7 + sub; // 7–9 of 9 weeks
+    servingCount = 3 + sub; // 3–5 services
+    // Roughly half have a fresh in-person touch (pushes connection well past 70).
+    followup = i % 2 === 0 ? { channel: "followed_up", daysAgo: 3 + (i % 5) } : null;
+  } else if (band === "watch") {
+    consecutiveMissed = 1 + (i % 2); // missed the last 1–2 weeks
+    attendedCount = 5;
+    servingCount = 1 + (i % 2);
+    followup = null;
+  } else {
+    consecutiveMissed = 3 + (i % 2); // missed the last 3–4 weeks
+    attendedCount = 3 - (i % 2); // 2–3 attended weeks
+    servingCount = i % 3 === 0 ? 1 : 0;
+    followup = null;
+  }
+
+  const attendedWeeks: number[] = [];
+  for (
+    let w = consecutiveMissed;
+    w < consecutiveMissed + attendedCount && w < ACTIVITY_WEEKS;
+    w++
+  ) {
+    attendedWeeks.push(w);
+  }
+
+  return { attendedWeeks, servingCount, followup };
+}
+
 /** Unix epoch day 0 (1970-01-01) was a Thursday; +4 aligns 0 = Sunday. */
 function dayOfWeekUTC(t: number): number {
   return Math.floor(t / DAY + 4) % 7;
@@ -655,12 +724,15 @@ async function addGroupMember(
   groupId: Id<"groups">,
   userId: Id<"users">,
   role: "leader" | "member",
+  // Back-date the join for seeded members so health scoring has a real window
+  // to look back over (attendance is measured from joinedAt). Defaults to now.
+  joinedAt?: number,
 ): Promise<void> {
   await ctx.db.insert("groupMembers", {
     groupId,
     userId,
     role,
-    joinedAt: now(),
+    joinedAt: joinedAt ?? now(),
     notificationsEnabled: true,
   });
 }
@@ -1009,10 +1081,32 @@ export const createDemoCommunity = mutation({
     zipCode: v.optional(v.string()),
     logo: v.optional(v.string()), // "r2:..." storage path from getR2UploadUrl
     primaryColor: v.optional(v.string()),
-    // Home coordinates (client geocodes the zip) — seeded groups and events
-    // spread around this point on the map.
+    // Home coordinates (client geocodes the zip) — the church-wide anchor and
+    // the fallback center for seeded events.
     baseCoordinates: v.optional(
       v.object({ latitude: v.number(), longitude: v.number() }),
+    ),
+    // Real ZIP placements (client-computed from the bundled US zip database).
+    // The explore map geocodes groups from their zipCode, so distinct ZIPs are
+    // what actually spread the pins. Campuses each take a distinct adjacent ZIP;
+    // small groups/teams scatter across the nearby-ZIP pool.
+    campusPlacements: v.optional(
+      v.array(
+        v.object({
+          zipCode: v.string(),
+          latitude: v.number(),
+          longitude: v.number(),
+        }),
+      ),
+    ),
+    areaPlacements: v.optional(
+      v.array(
+        v.object({
+          zipCode: v.string(),
+          latitude: v.number(),
+          longitude: v.number(),
+        }),
+      ),
     ),
     // Structured campuses (authoritative for campus COUNT when present).
     campuses: v.optional(
@@ -1186,14 +1280,59 @@ export const createDemoCommunity = mutation({
       });
     }
 
-    const zipCode = args.zipCode?.trim() || undefined;
+    const homeZip = args.zipCode?.trim() || undefined;
     const channelCounts = new Map<Id<"chatChannels">, number>();
-    // Distinct scatter index per group so nothing stacks on one map pin.
-    let scatterIndex = 0;
-    const coordsFor = () =>
-      args.baseCoordinates
-        ? scatterCoordinates(args.baseCoordinates, scatterIndex++)
-        : (scatterIndex++, undefined);
+
+    // ---- Map placement ----
+    // The explore map geocodes each group from its stored zipCode, so realistic
+    // spread comes from handing every group a *different real ZIP* (we also
+    // store matching coordinates for the Haversine "nearby" query). The
+    // church-wide announcement group anchors the home ZIP; campuses take a
+    // distinct adjacent ZIP each; small groups/teams cycle through the nearby
+    // pool. When the client couldn't geocode the ZIP, fall back to the old
+    // single-ZIP + deterministic scatter so nothing stacks on one pin.
+    const campusPlacements = args.campusPlacements ?? [];
+    const areaPlacements = args.areaPlacements ?? [];
+    type Placement = {
+      zipCode?: string;
+      coordinates?: { latitude: number; longitude: number };
+    };
+    const homePlacement: Placement = {
+      zipCode: homeZip,
+      coordinates: args.baseCoordinates,
+    };
+    let groupPlaceIndex = 0;
+    const placeGroup = (): Placement => {
+      const i = groupPlaceIndex++;
+      if (areaPlacements.length > 0) {
+        const p = areaPlacements[i % areaPlacements.length];
+        return {
+          zipCode: p.zipCode,
+          coordinates: { latitude: p.latitude, longitude: p.longitude },
+        };
+      }
+      return {
+        zipCode: homeZip,
+        coordinates: args.baseCoordinates
+          ? scatterCoordinates(args.baseCoordinates, i)
+          : undefined,
+      };
+    };
+    const placeCampus = (i: number): Placement => {
+      const p = campusPlacements[i];
+      if (p) {
+        return {
+          zipCode: p.zipCode,
+          coordinates: { latitude: p.latitude, longitude: p.longitude },
+        };
+      }
+      return {
+        zipCode: homeZip,
+        coordinates: args.baseCoordinates
+          ? scatterCoordinates(args.baseCoordinates, 1000 + i)
+          : undefined,
+      };
+    };
 
     /**
      * Rotate placeholder members into a group (first = leader), seed its main
@@ -1265,11 +1404,15 @@ export const createDemoCommunity = mutation({
       isAnnouncementGroup: true,
       includeAnnouncementsChannel: true,
       preview: args.logo ?? demoStockPhoto(`${slug}-announcements`, 400, 400),
-      zipCode,
-      coordinates: coordsFor(),
+      // Church-wide group anchors the home ZIP.
+      ...homePlacement,
     });
+    // Back-date announcement-group joins so member-health scoring (measured
+    // from joinedAt) has a real ~9-week window to look back over. Seeded
+    // attendance/serving history is filled in by seedMemberActivity below.
+    const memberJoinedAt = timestamp - MEMBER_TENURE_MS;
     for (const member of members) {
-      await addGroupMember(ctx, announcement.groupId, member.userId, "member");
+      await addGroupMember(ctx, announcement.groupId, member.userId, "member", memberJoinedAt);
       await addChannelMemberCounted(ctx, channelCounts, announcement.channels.mainChannelId, member.userId, "member", member.name, member.photo);
       if (announcement.channels.announcementsChannelId) {
         await addChannelMemberCounted(ctx, channelCounts, announcement.channels.announcementsChannelId, member.userId, "member", member.name, member.photo);
@@ -1306,8 +1449,7 @@ export const createDemoCommunity = mutation({
         defaultStartTime: "19:00",
         defaultEndTime: "21:00",
         preview: demoStockPhoto(`${slug}-sg-${i}`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 6 + (i % 3), SMALL_GROUP_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: smallGroupNames[i], channels: created.channels, groupMembers: gm, isSmallGroup: true });
@@ -1323,8 +1465,7 @@ export const createDemoCommunity = mutation({
         description: "Ministry team serving in weekend services",
         isPublic: true,
         preview: demoStockPhoto(`${slug}-team-${i}`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 6 + (i % 3), TEAM_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: teamGroupNames[i], channels: created.channels, groupMembers: gm, isSmallGroup: false });
@@ -1340,8 +1481,7 @@ export const createDemoCommunity = mutation({
         description: "Introduction to our community for new attendees",
         isPublic: true,
         preview: demoStockPhoto(`${slug}-class`, 400, 400),
-        zipCode,
-        coordinates: coordsFor(),
+        ...placeGroup(),
       });
       const gm = await populateGroup(created, 7, CLASS_CHAT, poolOffset++);
       seededGroups.push({ groupId: created.groupId, name: "New Members Class", channels: created.channels, groupMembers: gm, isSmallGroup: false });
@@ -1359,8 +1499,8 @@ export const createDemoCommunity = mutation({
           isPublic: true,
           // Same brand logo as the announcement group so campuses lead with it.
           preview: args.logo ?? demoStockPhoto(`${slug}-campus-${i}`, 400, 400),
-          zipCode,
-          coordinates: coordsFor(),
+          // Each campus lands in its own distinct adjacent ZIP.
+          ...placeCampus(i),
         });
         // Larger pool so a campus reads like a campus and can support rostering.
         const gm = await populateGroup(created, ROSTER_POOL_SIZE, CAMPUS_CHAT, poolOffset++);
@@ -1412,7 +1552,7 @@ export const createDemoCommunity = mutation({
           scheduledAt: timestamp + (3 + g) * DAY,
           note: "Regular weekly gathering",
           coverImage: demoStockPhoto(`${slug}-event-${g}`),
-          locationOverride: zipCode ? `${group.name} · ${zipCode}` : undefined,
+          locationOverride: homeZip ? `${group.name} · ${homeZip}` : undefined,
         }),
       );
       if (group.isSmallGroup) {
@@ -1426,7 +1566,7 @@ export const createDemoCommunity = mutation({
             note: "All small groups serving our city together.",
             communityWideEventId: cweId,
             coverImage: demoStockPhoto(`${slug}-serve-day`),
-            locationOverride: zipCode ? `City-wide · ${zipCode}` : undefined,
+            locationOverride: homeZip ? `City-wide · ${homeZip}` : undefined,
           }),
         );
       }
@@ -1459,7 +1599,7 @@ export const createDemoCommunity = mutation({
       scheduledAt: serveDayAt,
       note: "Join us as we serve our city together — everyone welcome!",
       coverImage: demoStockPhoto(`${slug}-serve-day-card`),
-      locationOverride: zipCode ? `Serve Day · ${zipCode}` : undefined,
+      locationOverride: homeZip ? `Serve Day · ${homeZip}` : undefined,
       shortId: serveDayShortId,
       visibility: "community",
     });
@@ -1572,101 +1712,20 @@ export const createDemoCommunity = mutation({
     });
 
     // ---- Member health (Admin → People roster) ----
-    // A varied slice of the roster on the announcement group: some needing
-    // attention, some assigned to a (seeded) leader with follow-up history, some
-    // healthy. Leaders come from the seeded group leaders (placeholders), so a
-    // REAL admin assigning someone cleanly signals they used the feature.
-    const healthLeaders = seededGroups
-      .map((g) => g.groupMembers[0])
-      .filter((m): m is (typeof members)[number] => Boolean(m))
-      .slice(0, 2);
-    if (healthLeaders.length > 0) {
-      const healthMembers = members.slice(70, 82); // 12 distinct placeholders
-      const assignedHealthMembers: Array<{ userId: Id<"users">; name: string }> = [];
-      for (let h = 0; h < healthMembers.length; h++) {
-        const person = healthMembers[h];
-        const [firstName, ...rest] = person.name.split(" ");
-        const lastName = rest.join(" ");
-        const base = {
-          communityId,
-          groupId: announcement.groupId,
-          userId: person.userId,
-          firstName,
-          lastName,
-          avatarUrl: person.photo,
-          searchText: person.name.toLowerCase(),
-          isActive: true,
-          addedAt: timestamp,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        };
-        if (h < 5) {
-          // Needs attention: low attendance/togather scores, an alert, stale
-          // last-attended, unassigned.
-          await ctx.db.insert("communityPeople", {
-            ...base,
-            score1: 22 + h,
-            score2: 15 + h * 3,
-            score3: 18 + h * 2,
-            status: "Needs follow-up",
-            alerts: [h % 2 === 0 ? "Low Attendance" : "No recent attendance"],
-            lastAttendedAt: timestamp - (30 + h * 4) * DAY,
-          });
-        } else if (h < 9) {
-          // Assigned to a leader, with a recent note.
-          const leader = healthLeaders[h % healthLeaders.length];
-          const cpId = await ctx.db.insert("communityPeople", {
-            ...base,
-            score1: 45,
-            score2: 38,
-            score3: 41,
-            status: "Following up",
-            assigneeId: leader.userId,
-            assigneeIds: [leader.userId],
-            assigneeSortKey: leader.name,
-            latestNote: "Left a voicemail — will try again this week.",
-            latestNoteAt: timestamp - 2 * DAY,
-            lastFollowupAt: timestamp - 2 * DAY,
-          });
-          await ctx.db.insert("communityPeopleAssignees", {
-            communityPersonId: cpId,
-            assigneeUserId: leader.userId,
-            groupId: announcement.groupId,
-            communityId,
-          });
-          assignedHealthMembers.push({ userId: person.userId, name: person.name });
-        } else {
-          // Healthy: high scores, no alerts.
-          await ctx.db.insert("communityPeople", {
-            ...base,
-            score1: 88,
-            score2: 92,
-            score3: 85,
-            alerts: [],
-          });
-        }
-      }
-
-      // A couple of follow-up history entries authored by a seeded leader.
-      for (let k = 0; k < Math.min(2, assignedHealthMembers.length); k++) {
-        const target = assignedHealthMembers[k];
-        const gm = await ctx.db
-          .query("groupMembers")
-          .withIndex("by_group_user", (q) =>
-            q.eq("groupId", announcement.groupId).eq("userId", target.userId),
-          )
-          .first();
-        if (gm) {
-          await ctx.db.insert("memberFollowups", {
-            groupMemberId: gm._id,
-            createdById: healthLeaders[0].userId,
-            type: k % 2 === 0 ? "call" : "note",
-            content: "Left a voicemail — will try again this week.",
-            createdAt: timestamp - (k + 1) * DAY,
-          });
-        }
-      }
-    }
+    // Seeded off-thread: the whole roster (all 100 placeholders) gets realistic
+    // health scores by seeding real attendance/serving/follow-up history and
+    // writing their communityPeople rows. Split into a scheduled internal
+    // mutation so this synchronous mutation stays comfortably under Convex's
+    // per-transaction write limit. A seeded group leader authors the follow-up
+    // history (never the real creator, so it doesn't pre-complete a mission).
+    const healthLeaderUserId = seededGroups
+      .map((g) => g.groupMembers[0]?.userId)
+      .find((id): id is Id<"users"> => Boolean(id));
+    await ctx.scheduler.runAfter(0, internal.functions.demo.seedMemberActivity, {
+      communityId,
+      announcementGroupId: announcement.groupId,
+      leaderUserId: healthLeaderUserId,
+    });
 
     // ---- Rostering: six upcoming Sundays of service planning ----
     // Host group: first campus (multi-campus) or the announcement group (single-
@@ -1675,9 +1734,20 @@ export const createDemoCommunity = mutation({
     const hostGroupId = isMultiCampus
       ? (firstCampusGroupId as Id<"groups">)
       : announcement.groupId;
-    const rosterPool = (
-      isMultiCampus ? (firstCampusMembers as typeof members) : members
-    ).slice(0, ROSTER_POOL_SIZE);
+    // Put the creator first in the pool so they always receive upcoming
+    // assignments — otherwise the roster only touches placeholder members and
+    // the creator's own "My Schedule" is empty. (The creator is already a
+    // member of the host group via the leadership seeding below/above, so no
+    // membership row is added here.)
+    const creatorMember = {
+      userId,
+      name: callerName,
+      photo: caller.profilePhoto ?? "",
+    };
+    const rosterPool = [
+      creatorMember,
+      ...(isMultiCampus ? (firstCampusMembers as typeof members) : members),
+    ].slice(0, ROSTER_POOL_SIZE);
 
     if (rosterPool.length > 0) {
       const serviceTimes = campusServiceTimes(0);
@@ -1958,6 +2028,140 @@ export const createDemoCommunity = mutation({
       // Shareable code teammates enter to join this demo as co-admins.
       demoCode: slug,
     };
+  },
+});
+
+/**
+ * Seed member-health activity for a demo community's placeholder roster.
+ *
+ * Scheduled (not inline) from createDemoCommunity to keep that mutation under
+ * Convex's per-transaction write limit. Creates ACTIVITY_WEEKS of PAST weekly
+ * gatherings on the announcement group and records attendance/serving/follow-up
+ * history per member (see memberHealthProfile), then schedules the real
+ * `computeCommunityScores` pipeline to derive each member's communityPeople row
+ * from that activity — so Admin → People shows a realistic spread immediately
+ * and it exactly matches what the daily score cron recomputes.
+ *
+ * The past gatherings are marked isDemoActivitySeed so purgeDemoSeedUsers
+ * deletes them on go-live; otherwise their empty past sessions would drag down
+ * real members' attendance scores for up to 60 days.
+ */
+export const seedMemberActivity = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    announcementGroupId: v.id("groups"),
+    // A seeded group leader authors the follow-up history (never the real
+    // creator, so it doesn't pre-complete a Getting Started mission).
+    leaderUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const t = now();
+    const group = await ctx.db.get(args.announcementGroupId);
+    if (!group) return;
+
+    // Announcement-group members ("member" role excludes the creator/leaders).
+    const memberships = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group", (q) => q.eq("groupId", args.announcementGroupId))
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .collect();
+    const roster = memberships.filter((m) => m.role === "member");
+    if (roster.length === 0) return;
+
+    // Author the seeded gatherings and follow-ups with a placeholder (a seeded
+    // leader, else a roster member) — never the real creator, so it never
+    // pre-completes a Getting Started mission.
+    const authorId = args.leaderUserId ?? roster[0].userId;
+
+    // Past weekly gatherings: week 0 ~2 days ago … week 8 ~58 days ago, each in
+    // a distinct calendar week and inside the 60-day scoring window.
+    // Precompute each week's timestamp once so a meeting's scheduledAt and its
+    // attendance rows' recordedAt can never drift apart. Week 0 ~2 days ago …
+    // week 8 ~58 days ago — each in a distinct calendar week and inside the
+    // 60-day scoring window.
+    const weekScheduledAt = Array.from(
+      { length: ACTIVITY_WEEKS },
+      (_, w) => t - (w * 7 + 2) * DAY,
+    );
+    const meetingByWeek: Id<"meetings">[] = [];
+    for (let w = 0; w < ACTIVITY_WEEKS; w++) {
+      const meetingId = await ctx.db.insert("meetings", {
+        groupId: args.announcementGroupId,
+        createdById: authorId,
+        hostUserIds: [authorId],
+        title: "Sunday Gathering",
+        scheduledAt: weekScheduledAt[w],
+        meetingType: 1,
+        status: "scheduled",
+        shortId: generateShortId(),
+        rsvpEnabled: false,
+        visibility: "group",
+        locationMode: "tbd",
+        communityId: args.communityId,
+        searchText: "sunday gathering",
+        isDemoSeed: true,
+        isDemoActivitySeed: true,
+        createdAt: t,
+        reminderSent: false,
+        attendanceConfirmationSent: false,
+      });
+      meetingByWeek.push(meetingId);
+    }
+
+    // Per-member attendance / serving / follow-up history. Scores are NOT
+    // written here — computeCommunityScores (scheduled below) derives them from
+    // this activity, so the demo's numbers are exactly what the daily cron
+    // produces (single source of truth, no drift).
+    const servingCounts: Array<{ userId: Id<"users">; count: number }> = [];
+    for (let i = 0; i < roster.length; i++) {
+      const membership = roster[i];
+      const userId = membership.userId;
+      const profile = memberHealthProfile(i);
+
+      for (const w of profile.attendedWeeks) {
+        await ctx.db.insert("meetingAttendances", {
+          meetingId: meetingByWeek[w],
+          userId,
+          status: 1, // attended
+          recordedAt: weekScheduledAt[w],
+          recordedById: authorId,
+        });
+      }
+
+      // Serving history (feeds the Serving score via the group's counts).
+      if (profile.servingCount > 0) {
+        servingCounts.push({ userId, count: profile.servingCount });
+      }
+
+      // A recent follow-up (authored by a seeded leader) for members with one.
+      if (profile.followup) {
+        await ctx.db.insert("memberFollowups", {
+          groupMemberId: membership._id,
+          createdById: authorId,
+          type: profile.followup.channel,
+          content:
+            profile.followup.channel === "followed_up"
+              ? "Caught up after service — doing well."
+              : "Gave them a quick call to check in.",
+          createdAt: t - profile.followup.daysAgo * DAY,
+        });
+      }
+    }
+
+    // Serving counts live on the announcement group (the Serving score reads
+    // them). No PCO connection exists at demo creation, so this is a fresh set.
+    await ctx.db.patch(args.announcementGroupId, {
+      pcoServingCounts: { updatedAt: t, counts: servingCounts },
+    });
+
+    // Compute health scores from the seeded activity with the REAL pipeline —
+    // the same code the daily cron uses — so scores show immediately and never
+    // diverge from later recomputes.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.communityScoreComputation.computeCommunityScores,
+      { communityId: args.communityId },
+    );
   },
 });
 
@@ -2408,6 +2612,9 @@ export const purgeDemoSeedUsers = internalMutation({
     }
 
     let purged = 0;
+    // Track which users we delete so we can scrub only THEIR entries from
+    // shared caches (e.g. pcoServingCounts) without touching real data.
+    const purgedUserIds = new Set<string>();
     for (const membership of memberships) {
       const user = await ctx.db.get(membership.userId);
       // Only the accounts this module seeded (isDemoSeed) — other flows also
@@ -2502,6 +2709,7 @@ export const purgeDemoSeedUsers = internalMutation({
       for (const row of seedAvailability) await ctx.db.delete(row._id);
 
       await ctx.db.delete(membership._id);
+      purgedUserIds.add(String(user._id));
       await ctx.db.delete(user._id);
       purged++;
     }
@@ -2523,6 +2731,34 @@ export const purgeDemoSeedUsers = internalMutation({
       // path on the announcement/campus groups) is kept.
       if (isDemoStockUrl(group.preview)) {
         await ctx.db.patch(group._id, { preview: undefined });
+      }
+
+      // Scrub the seeded placeholder entries from the PCO serving cache (the
+      // member-health Serving score reads it), but PRESERVE any real counts —
+      // a church that connected Planning Center during the demo may already
+      // have real serving data cached here, and wiping it would zero real
+      // Serving scores until the next sync.
+      const serving = group.pcoServingCounts;
+      if (serving) {
+        const kept = serving.counts.filter(
+          (c) => !purgedUserIds.has(String(c.userId)),
+        );
+        const keptDetails = serving.servingDetails?.filter(
+          (d) => !purgedUserIds.has(String(d.userId)),
+        );
+        if (kept.length === serving.counts.length) {
+          // Nothing seeded here — real data only, leave it untouched.
+        } else if (kept.length === 0 && (keptDetails?.length ?? 0) === 0) {
+          await ctx.db.patch(group._id, { pcoServingCounts: undefined });
+        } else {
+          await ctx.db.patch(group._id, {
+            pcoServingCounts: {
+              ...serving,
+              counts: kept,
+              servingDetails: keptDetails,
+            },
+          });
+        }
       }
 
       // Delete the demo-only "Partner with us" giving link ONLY if it still
@@ -2597,6 +2833,19 @@ export const purgeDemoSeedUsers = internalMutation({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
     for (const meeting of survivingMeetings) {
+      // The PAST attendance-history gatherings (isDemoActivitySeed) are pure
+      // scoring scaffolding — delete them and their attendance rows. Left in
+      // place, their empty past sessions would depress real members' attendance
+      // scores for up to 60 days after going live.
+      if (meeting.isDemoActivitySeed) {
+        const attendances = await ctx.db
+          .query("meetingAttendances")
+          .withIndex("by_meeting", (q) => q.eq("meetingId", meeting._id))
+          .collect();
+        for (const a of attendances) await ctx.db.delete(a._id);
+        await ctx.db.delete(meeting._id);
+        continue;
+      }
       if (isDemoStockUrl(meeting.coverImage)) {
         await ctx.db.patch(meeting._id, { coverImage: undefined });
       }
