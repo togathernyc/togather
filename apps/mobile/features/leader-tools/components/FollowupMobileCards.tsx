@@ -592,9 +592,17 @@ function MemberCard({
           </Pressable>
         </View>
 
-        {/* Row 2: assignee + reason */}
-        <Pressable onPress={onAssign} hitSlop={6} style={styles.cardSubRow}>
-          <View style={styles.cardSubAssignee}>{assigneeNode}</View>
+        {/* Row 2: assignee (tap to assign) + follow-up reason. Only the
+            assignee is pressable; tapping the reason falls through to the
+            card's onPress (opens the person), matching the old footer. */}
+        <View style={styles.cardSubRow}>
+          <Pressable
+            onPress={onAssign}
+            hitSlop={6}
+            style={styles.cardSubAssignee}
+          >
+            {assigneeNode}
+          </Pressable>
           <Text style={[styles.cardSubDivider, { color: colors.textTertiary }]}>
             ·
           </Text>
@@ -604,7 +612,7 @@ function MemberCard({
           >
             {reasonLine}
           </Text>
-        </Pressable>
+        </View>
 
         {/* Row 3: scores as an inline strip */}
         <View style={styles.scoresRow}>
