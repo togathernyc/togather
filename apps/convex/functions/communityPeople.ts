@@ -50,6 +50,12 @@ async function requireCommunityMember(
     throw new ConvexError("Not a community member");
   }
 
+  // Archived (closed) communities are inaccessible even to members.
+  const community = await ctx.db.get(communityId);
+  if (community?.isArchived) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
+
   return membership;
 }
 

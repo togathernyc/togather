@@ -33,6 +33,7 @@ import { ImagePicker } from "@components/ui";
 import * as Linking from "expo-linking";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
 import { GroupTypeEditModal } from "./GroupTypeEditModal";
+import { ArchiveCommunityModal } from "./ArchiveCommunityModal";
 import { useAvailableIntegrations } from "../../integrations/hooks/useIntegrations";
 import { ColorPicker } from "./ColorPicker";
 import { ColorPreview } from "./ColorPreview";
@@ -70,7 +71,7 @@ export function SettingsContent() {
   } = useGroupTypes();
 
   // Billing data
-  const { community, token, user, logout } = useAuth();
+  const { community, token, user, exitToCommunitySelection } = useAuth();
   const isPrimaryAdmin = user?.is_primary_admin ?? false;
   const billing = useQuery(
     api.functions.ee.billing.getSubscriptionStatus,
@@ -116,6 +117,7 @@ export function SettingsContent() {
 
   // Archive (close) community state
   const [isArchiving, setIsArchiving] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
 
   // Populate form with current settings
   useEffect(() => {
@@ -280,46 +282,17 @@ export function SettingsContent() {
     setIsArchiving(true);
     try {
       await archiveCommunity();
-      // The community is now closed for everyone, including this admin, so
-      // there's nowhere to return to — sign out and drop back to login.
-      Alert.alert(
-        "Community Archived",
-        "This community has been archived. You'll now be signed out.",
-        [{ text: "OK", onPress: () => logout() }],
-      );
+      // Archiving closes the community for everyone, but it should only sign
+      // the admin out of *this community*, not the whole app. Drop them to
+      // community selection (re-mints a community-less token + clears caches).
+      await exitToCommunitySelection();
+      setShowArchiveModal(false);
+      router.replace("/(auth)/select-community");
     } catch (error: any) {
-      setIsArchiving(false);
       Alert.alert("Error", formatError(error, "Failed to archive community"));
+    } finally {
+      setIsArchiving(false);
     }
-  };
-
-  const handleArchiveCommunity = () => {
-    const communityName = settings?.name || "this community";
-    // Two-step confirmation — archiving is permanent and locks everyone out.
-    Alert.alert(
-      "Archive Community?",
-      `Archiving "${communityName}" closes it permanently. No one — including you — will be able to log in, and it will disappear from search. This cannot be undone from the app.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Continue",
-          style: "destructive",
-          onPress: () =>
-            Alert.alert(
-              "Are you absolutely sure?",
-              `This will archive "${communityName}" for everyone. There is no in-app way to reopen it.`,
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Archive Community",
-                  style: "destructive",
-                  onPress: performArchive,
-                },
-              ],
-            ),
-        },
-      ],
-    );
   };
 
   const toggleExploreGroupType = (groupTypeId: string) => {
@@ -961,7 +934,7 @@ export function SettingsContent() {
             </Text>
             <TouchableOpacity
               style={[styles.dangerButton, { borderColor: colors.error }, isArchiving && styles.saveButtonDisabled]}
-              onPress={handleArchiveCommunity}
+              onPress={() => setShowArchiveModal(true)}
               disabled={isArchiving}
             >
               {isArchiving ? (
@@ -1009,6 +982,17 @@ export function SettingsContent() {
         }}
         onSave={handleSaveGroupType}
         isSaving={isUpdatingGroupType || isCreating}
+      />
+
+      {/* Archive Community confirmation (type-to-confirm) */}
+      <ArchiveCommunityModal
+        visible={showArchiveModal}
+        communityName={settings?.name || ""}
+        onCancel={() => {
+          if (!isArchiving) setShowArchiveModal(false);
+        }}
+        onConfirm={performArchive}
+        isLoading={isArchiving}
       />
     </View>
   );

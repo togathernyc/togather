@@ -529,6 +529,45 @@ export async function requireAuth(
   ctx: QueryCtx | MutationCtx,
   token: string,
 ): Promise<Id<"users">> {
+  const { userId, communityId } = await requireAuthResolved(ctx, token);
+
+  // Reject any request whose session is scoped to an archived (closed)
+  // community. Archived communities must be inaccessible in every way — not
+  // just un-enterable — so a still-live JWT (access tokens last 30 days) can't
+  // keep reading/writing community data. Users escape by switching or leaving,
+  // which use requireAuthAllowArchivedCommunity below.
+  if (communityId && (await isCommunityArchived(ctx, communityId))) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
+
+  return userId;
+}
+
+/**
+ * Like {@link requireAuth} but does NOT reject when the token is scoped to an
+ * archived community. Use ONLY for the handful of "escape hatch" operations a
+ * user stuck in an archived community needs to get out — listing their
+ * communities, clearing/switching the active community, leaving, or joining a
+ * different (non-archived) community. Every one of those still independently
+ * rejects an archived *target* community, so this does not weaken the block.
+ */
+export async function requireAuthAllowArchivedCommunity(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<Id<"users">> {
+  const { userId } = await requireAuthResolved(ctx, token);
+  return userId;
+}
+
+/**
+ * Shared core for {@link requireAuth}: verifies the access token, resolves the
+ * user, and enforces revocation. Returns the userId plus the community the
+ * token is scoped to (if any), without applying the archived-community gate.
+ */
+async function requireAuthResolved(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<{ userId: Id<"users">; communityId?: string }> {
   if (!token) {
     throw new ConvexError("Not authenticated");
   }
@@ -549,7 +588,24 @@ export async function requireAuth(
     throw new ConvexError("Not authenticated");
   }
 
-  return userId;
+  return { userId, communityId: payload.communityId };
+}
+
+/**
+ * Whether the given community id (a string from a JWT) points to an archived
+ * community. Tolerates malformed ids by returning false — a bad id fails other
+ * checks, and we never want to mistakenly hard-block a valid session.
+ */
+async function isCommunityArchived(
+  ctx: QueryCtx | MutationCtx,
+  communityId: string,
+): Promise<boolean> {
+  try {
+    const community = await ctx.db.get(communityId as Id<"communities">);
+    return community?.isArchived === true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -246,6 +246,11 @@ export async function requireCommunityMember(
   if (!membership || membership.status !== 1) {
     throw new ConvexError("You must be a member of this community");
   }
+  // Archived (closed) communities are inaccessible even to members.
+  const community = await ctx.db.get(communityId);
+  if (community?.isArchived) {
+    throw new ConvexError("COMMUNITY_ARCHIVED");
+  }
 }
 
 /**

@@ -15,7 +15,11 @@ import { query, mutation, internalMutation, internalQuery } from "../_generated/
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { now, normalizePhone, getMediaUrl, buildSearchText } from "../lib/utils";
-import { requireAuth, getOptionalAuth } from "../lib/auth";
+import {
+  requireAuth,
+  requireAuthAllowArchivedCommunity,
+  getOptionalAuth,
+} from "../lib/auth";
 import { parseDate } from "../lib/validation";
 import { COMMUNITY_ROLES, COMMUNITY_ADMIN_THRESHOLD } from "../lib/permissions";
 import { adjustEnabledCounter } from "../lib/notifications/enabledCounter";
@@ -529,7 +533,9 @@ export const update = mutation({
 export const clearActiveCommunity = mutation({
   args: { token: v.string() },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    // Escape hatch: dropping the active community must work even when that
+    // community is archived (this is how a stuck user gets to selection).
+    const userId = await requireAuthAllowArchivedCommunity(ctx, args.token);
 
     await ctx.db.patch(userId, {
       activeCommunityId: undefined,
@@ -642,6 +648,9 @@ export const me = query({
       memberships.map(async (membership) => {
         const community = await ctx.db.get(membership.communityId);
         if (!community) return null;
+        // Archived (closed) communities are hidden — never listed as one of the
+        // user's communities, so the switcher/selection can't re-enter them.
+        if (community.isArchived) return null;
         const roleLevel = membership.roles ?? COMMUNITY_ROLES.MEMBER;
         return {
           communityId: community._id,
@@ -662,10 +671,19 @@ export const me = query({
     let activeCommunityPrimaryColor: string | null = null;
     let activeCommunitySecondaryColor: string | null = null;
     let activeCommunityChurchFeatures: { prayerEnabled: boolean } | null = null;
+    // When the active community has been archived (closed), surface it as if the
+    // user has no active community, so the client drops to community selection
+    // instead of resuming into a dead community. `activeCommunityArchived` lets
+    // the client react explicitly (clear it + navigate to selection).
+    let activeCommunityArchived = false;
+    let effectiveActiveCommunityId = user.activeCommunityId || null;
 
     if (user.activeCommunityId) {
       const activeCommunity = await ctx.db.get(user.activeCommunityId);
-      if (activeCommunity) {
+      if (activeCommunity?.isArchived) {
+        activeCommunityArchived = true;
+        effectiveActiveCommunityId = null;
+      } else if (activeCommunity) {
         activeCommunityName = activeCommunity.name || null;
         activeCommunityPrimaryColor = activeCommunity.primaryColor || null;
         activeCommunitySecondaryColor = activeCommunity.secondaryColor || null;
@@ -716,13 +734,16 @@ export const me = query({
       birthdayMonth: user.birthdayMonth ?? null,
       birthdayDay: user.birthdayDay ?? null,
       location: user.location ?? null,
-      activeCommunityId: user.activeCommunityId || null,
+      activeCommunityId: effectiveActiveCommunityId,
       activeCommunityName,
       activeCommunityPrimaryColor,
       activeCommunitySecondaryColor,
       // Legacy field name, kept for old-client back-compat (see comment above).
       activeCommunityKnicksMode: knicksMode,
       activeCommunityChurchFeatures,
+      // True when the user's stored active community has been archived — the
+      // client should clear it and route to community selection.
+      activeCommunityArchived,
       communityMemberships: communityMemberships.filter(Boolean),
     };
   },
