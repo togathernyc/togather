@@ -146,8 +146,11 @@ describe("serving day counting", () => {
       ];
       return {
         nativeSize: nd.size,
-        count: combineServingDayCount(nd, pcoDates, nowTs),
-        empty: combineServingDayCount(new Set<string>(), [], nowTs),
+        // 2 dated in-window PCO rows (-20 dup, -15 new); pcoCount 2 → no undated.
+        count: combineServingDayCount(nd, pcoDates, 2, nowTs),
+        empty: combineServingDayCount(new Set<string>(), [], 0, nowTs),
+        // No dates but a PCO count of 3 → must not be dropped.
+        undated: combineServingDayCount(new Set<string>(), [], 3, nowTs),
       };
     });
     // Native days -10 (two plans → one), -20, -25 (imported), -30 = 4.
@@ -156,6 +159,8 @@ describe("serving day counting", () => {
     expect(result.count).toBe(5);
     // Empty inputs → 0.
     expect(result.empty).toBe(0);
+    // PCO count with no dates falls back to the count (never dropped).
+    expect(result.undated).toBe(3);
   });
 });
 
@@ -410,14 +415,14 @@ describe("PCO + native combined", () => {
         eventDate: nowTs + 7 * DAY_MS,
       });
 
-      // Cached PCO snapshot. `counts` is deliberately bogus (99) to prove the
-      // score no longer reads it — serving is day-deduped from servingDetails.
-      // One PCO date lands on a native day (-20 Wednesday → dedup); the other
-      // is a PCO-only day (-40).
+      // Cached PCO snapshot with complete details: 2 dated serves (count 2), so
+      // there is no undated fallback and serving is a pure day de-dup. One PCO
+      // date lands on a native day (-20 Wednesday → dedup); the other is a
+      // PCO-only day (-40).
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
-          counts: [{ userId, count: 99 }],
+          counts: [{ userId, count: 2 }],
           servingDetails: [
             {
               userId,
@@ -443,7 +448,6 @@ describe("PCO + native combined", () => {
     const scored = await callScoreBatch(t, world);
     // Native serving days: -10 (Sunday AM+PM slots collapse), -20 (Wednesday),
     // -30 (Sunday PM) = 3. PCO adds -40 (new); PCO -20 dedups. Total = 4 days.
-    // The bogus PCO count of 99 is ignored.
     expect(scored.rawValues.pco_services_past_2mo).toBe(4);
     // sys_service = min(100, 4 * 20) = 80.
     expect(scored.score1).toBe(80);
@@ -498,10 +502,12 @@ describe("PCO only (no native plans)", () => {
         teamName: "PCO Team",
         position: "Usher",
       });
+      // count 5 == the 5 in-window detail rows, so details are complete and the
+      // score is a pure day de-dup (the two same-day rows collapse → 4 days).
       await ctx.db.patch(announcementGroupId, {
         pcoServingCounts: {
           updatedAt: nowTs,
-          counts: [{ userId, count: 99 }], // ignored
+          counts: [{ userId, count: 5 }],
           servingDetails: [
             detail(5 * DAY_MS, "A"),
             detail(5 * DAY_MS, "A-second-team"), // same day → collapses
@@ -518,10 +524,46 @@ describe("PCO only (no native plans)", () => {
 
     const scored = await callScoreBatch(t, world);
     // 4 distinct in-window PCO days (the two same-day records collapse, the
-    // 90-day-old one is out of window). The bogus count of 99 is ignored.
+    // 90-day-old one is out of window).
     expect(scored.rawValues.pco_services_past_2mo).toBe(4);
     // sys_service = min(100, 4 * 20) = 80.
     expect(scored.score1).toBe(80);
+  });
+
+  test("keeps PCO counts when servingDetails is missing (demo/legacy/truncated)", async () => {
+    const t = convexTest(schema, modules);
+    const nowTs = Date.now();
+
+    const world = await t.run(async (ctx): Promise<ServingWorld> => {
+      const { communityId, announcementGroupId } = await seedCommunity(
+        ctx,
+        "PCO Count Only",
+      );
+      const userId = await seedUser(ctx, "Pat");
+      const groupMemberId = await joinAnnouncementGroup(
+        ctx,
+        announcementGroupId,
+        userId,
+      );
+
+      // A count with NO servingDetails — the state demo seeding and truncated
+      // caches leave behind. Must NOT be dropped to zero.
+      await ctx.db.patch(announcementGroupId, {
+        pcoServingCounts: {
+          updatedAt: nowTs,
+          counts: [{ userId, count: 3 }],
+          servingDetails: [],
+        },
+      });
+
+      return { communityId, announcementGroupId, groupMemberId, userId };
+    });
+
+    const scored = await callScoreBatch(t, world);
+    // No dates to dedupe → falls back to the count of 3.
+    expect(scored.rawValues.pco_services_past_2mo).toBe(3);
+    // sys_service = min(100, 3 * 20) = 60.
+    expect(scored.score1).toBe(60);
   });
 });
 

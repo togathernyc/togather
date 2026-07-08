@@ -102,20 +102,35 @@ export function pcoServingDatesForUser(
  * Combined serving count for a user = number of DISTINCT calendar days served
  * across native rostering and PCO in the past ~60 days. Any day appearing in
  * either source counts once; a day in both counts once.
+ *
+ * `pcoDates` are the user's cached PCO serving dates (from `servingDetails`) and
+ * `pcoCount` is their cached PCO serve total (from `counts`). Those dates can be
+ * absent or truncated — `servingDetails` is optional (demo seeding writes only
+ * `counts`) and the PCO sync caps detail rows to 500 group-wide while preserving
+ * per-user `counts`. PCO serves we have NO date for can't be day-deduped, so
+ * they're added from `pcoCount` rather than dropped. When details are complete
+ * (`pcoCount` <= dated rows) this term is 0 and the result is a pure day de-dup.
  */
 export function combineServingDayCount(
   nativeDays: Set<string>,
   pcoDates: string[],
+  pcoCount: number,
   nowTs: number,
 ): number {
   const cutoffDay = dayOf(nowTs - SERVING_WINDOW_MS);
   const todayDay = dayOf(nowTs);
   const days = new Set(nativeDays);
+  let datedPcoRows = 0;
   for (const d of pcoDates) {
     // PCO dates are already `YYYY-MM-DD`; keep only in-window (past) days.
-    if (d && d >= cutoffDay && d <= todayDay) days.add(d);
+    if (d && d >= cutoffDay && d <= todayDay) {
+      days.add(d);
+      datedPcoRows++;
+    }
   }
-  return days.size;
+  // PCO serves whose dates we don't have — never drop a valid `counts` value.
+  const undatedPco = Math.max(0, pcoCount - datedPcoRows);
+  return days.size + undatedPco;
 }
 
 export interface ServingHistoryRow {

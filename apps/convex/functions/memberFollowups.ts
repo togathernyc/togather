@@ -424,9 +424,10 @@ export const internalScoreBatch = internalQuery({
     const scoreConfig: ScoreConfig = group?.followupScoreConfig ?? DEFAULT_SCORE_CONFIG;
     const useCustomScoring = !!group?.followupScoreConfig;
 
-    // PCO serving DATES per user from the cached servingDetails on the group
-    // doc. Serving is counted by DAY, combining these with native rostering
-    // (per member below); a day on either source counts once.
+    // PCO serving DATES per user (for day-dedup) + the PCO serve COUNT per user
+    // (the floor used when servingDetails is absent/truncated so a valid count
+    // is never dropped). Serving is counted by DAY, combining these with native
+    // rostering (per member below); a day on either source counts once.
     const pcoServingDatesMap = new Map<string, string[]>();
     if (group?.pcoServingCounts?.servingDetails) {
       for (const { userId, date } of group.pcoServingCounts.servingDetails) {
@@ -434,6 +435,12 @@ export const internalScoreBatch = internalQuery({
         const arr = pcoServingDatesMap.get(key);
         if (arr) arr.push(date);
         else pcoServingDatesMap.set(key, [date]);
+      }
+    }
+    const pcoServingCountMap = new Map<string, number>();
+    if (group?.pcoServingCounts?.counts) {
+      for (const { userId, count } of group.pcoServingCounts.counts) {
+        pcoServingCountMap.set(userId.toString(), count);
       }
     }
 
@@ -559,6 +566,7 @@ export const internalScoreBatch = internalQuery({
         const servingDayCount = combineServingDayCount(
           nativeServeDays,
           pcoDates,
+          pcoServingCountMap.get(member.userId.toString()) ?? 0,
           currentTime,
         );
 
@@ -1448,11 +1456,17 @@ export const history = query({
 
     // Build serving data — distinct calendar DAYS served across BOTH sources
     // (native rostering + cached PCO dates) in the past ~60 days. A day on both
-    // sources, or on multiple plans, counts once.
+    // sources, or on multiple plans, counts once; PCO serves without a cached
+    // date fall back to the `counts` value so they're never dropped.
     const pcoDates = pcoServingDatesForUser(
       group?.pcoServingCounts?.servingDetails,
       member.userId,
     );
+    const pcoCount =
+      group?.pcoServingCounts?.counts?.find(
+        (c: { userId: Id<"users">; count: number }) =>
+          c.userId.toString() === member.userId.toString(),
+      )?.count ?? 0;
     let nativeDays = new Set<string>();
     if (group?.communityId) {
       const recentAssignments = await ctx.db
@@ -1470,6 +1484,7 @@ export const history = query({
     const servingDayCount = combineServingDayCount(
       nativeDays,
       pcoDates,
+      pcoCount,
       currentTime,
     );
     const pcoServing: PcoServingData | undefined =

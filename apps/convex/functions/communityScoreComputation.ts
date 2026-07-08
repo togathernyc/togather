@@ -278,8 +278,9 @@ export const computeCommunityScoresBatch = internalQuery({
     // (dates below) AND native rostering (roleAssignments, per member). Any day
     // served on either source counts once; a day on both counts once.
 
-    // PCO serving DATES per user, from the cached servingDetails on the group
-    // doc. (The `counts` integer can't be day-deduped, so we use the dates.)
+    // PCO serving DATES per user (for day-dedup) plus the PCO serve COUNT per
+    // user (the floor used when servingDetails is absent/truncated so a valid
+    // count is never dropped).
     const pcoServingDatesMap = new Map<string, string[]>();
     if (announcementGroup?.pcoServingCounts?.servingDetails) {
       for (const { userId, date } of announcementGroup.pcoServingCounts
@@ -288,6 +289,13 @@ export const computeCommunityScoresBatch = internalQuery({
         const arr = pcoServingDatesMap.get(key);
         if (arr) arr.push(date);
         else pcoServingDatesMap.set(key, [date]);
+      }
+    }
+    const pcoServingCountMap = new Map<string, number>();
+    if (announcementGroup?.pcoServingCounts?.counts) {
+      for (const { userId, count } of announcementGroup.pcoServingCounts
+        .counts) {
+        pcoServingCountMap.set(userId.toString(), count);
       }
     }
 
@@ -543,6 +551,7 @@ export const computeCommunityScoresBatch = internalQuery({
         const servingCount = combineServingDayCount(
           nativeDays,
           pcoServingDatesMap.get(member.userId.toString()) ?? [],
+          pcoServingCountMap.get(member.userId.toString()) ?? 0,
           currentTime,
         );
 
