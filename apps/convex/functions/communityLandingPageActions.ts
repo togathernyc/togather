@@ -89,6 +89,11 @@ export const submitForm = action({
 
     const { community, landingPage } = result;
 
+    // Archived (closed) communities no longer accept landing-page signups.
+    if (community.isArchived) {
+      throw new Error("This community is no longer accepting signups");
+    }
+
     // Enforce required fields from landing page config
     if (landingPage.requireZipCode && !args.zipCode?.trim()) {
       throw new Error("ZIP code is required");

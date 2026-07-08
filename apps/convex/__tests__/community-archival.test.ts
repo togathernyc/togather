@@ -15,7 +15,7 @@
 import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "../schema";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
@@ -328,5 +328,78 @@ describe("archived communities hidden from discovery", () => {
       query: "grace",
     });
     expect(after.data.some((c) => c.id === setup.communityId)).toBe(false);
+  });
+
+  test("communitySearchBySubdomain rejects archived communities", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    // Resolvable by exact subdomain before archiving.
+    const before = await t.query(
+      api.functions.resources.communitySearchBySubdomain,
+      { subdomain: "grace" }
+    );
+    expect(before.id).toBe(setup.communityId);
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    // Exact-subdomain lookup no longer returns the archived community.
+    await expect(
+      t.query(api.functions.resources.communitySearchBySubdomain, {
+        subdomain: "grace",
+      })
+    ).rejects.toThrow("Community not found");
+  });
+});
+
+// ============================================================================
+// Additional entry-path guards (regression coverage)
+// ============================================================================
+
+describe("archived communities block additional entry paths", () => {
+  test("selectCommunityForUser rejects an archived community", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    // Even an existing member can't re-enter via the direct picker mutation.
+    await expect(
+      t.mutation(api.functions.authInternal.selectCommunityForUser, {
+        token: setup.memberToken,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("archived");
+  });
+
+  test("password signup cannot create a session in an archived community", async () => {
+    const t = convexTest(schema, modules);
+    const setup = await seedTestData(t);
+
+    await t.mutation(api.functions.admin.settings.archiveCommunity, {
+      token: setup.primaryAdminToken,
+      communityId: setup.communityId,
+    });
+
+    // The signup action delegates to createUserWithPasswordInternal, which is
+    // where the guard lives — exercise it directly.
+    await expect(
+      t.mutation(internal.functions.authInternal.createUserWithPasswordInternal, {
+        firstName: "New",
+        lastName: "User",
+        email: "newuser@test.com",
+        passwordHash: "hashed",
+        dateOfBirth: 0,
+        phone: "+12025559999",
+        phoneVerified: true,
+        communityId: setup.communityId,
+      })
+    ).rejects.toThrow("not available");
   });
 });

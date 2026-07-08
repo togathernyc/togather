@@ -117,7 +117,9 @@ export const communitySearchBySubdomain = query({
       )
       .first();
 
-    if (!community) {
+    // Archived (closed) communities are not discoverable, even by exact
+    // subdomain — treat them as if they don't exist.
+    if (!community || community.isArchived) {
       throw new Error("Community not found");
     }
 

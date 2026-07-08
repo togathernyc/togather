@@ -353,6 +353,12 @@ export const createUserWithPasswordInternal = internalMutation({
   handler: async (ctx, args) => {
     const timestamp = now();
 
+    // Cannot sign up into an archived (closed) community.
+    const community = await ctx.db.get(args.communityId);
+    if (!community || community.isArchived) {
+      throw new Error("This community is not available");
+    }
+
     // Check if email already exists
     const existingByEmail = await ctx.db
       .query("users")
@@ -1051,6 +1057,13 @@ export const selectCommunityForUser = mutation({
     const community = await ctx.db.get(args.communityId);
     if (!community) {
       throw new Error("Community not found");
+    }
+
+    // Archived (closed) communities cannot be entered.
+    if (community.isArchived) {
+      throw new Error(
+        "This community has been archived and is no longer accessible",
+      );
     }
 
     const timestamp = now();

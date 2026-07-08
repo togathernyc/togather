@@ -217,12 +217,14 @@ export const listPublic = query({
   handler: async (ctx, args) => {
     const { limit } = normalizePagination(args);
 
-    const communities = (
-      await ctx.db
-        .query("communities")
-        .withIndex("by_public", (q) => q.eq("isPublic", true))
-        .take(limit + 1)
-    ).filter((c) => !c.isArchived); // Archived (closed) communities aren't listed.
+    // Archived (closed) communities aren't listed. Filter in the query (before
+    // pagination) so archived rows don't consume the page window and cause a
+    // short page with a wrong hasMore.
+    const communities = await ctx.db
+      .query("communities")
+      .withIndex("by_public", (q) => q.eq("isPublic", true))
+      .filter((q) => q.neq(q.field("isArchived"), true))
+      .take(limit + 1);
 
     const hasMore = communities.length > limit;
     const items = hasMore ? communities.slice(0, limit) : communities;
