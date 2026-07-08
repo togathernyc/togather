@@ -597,6 +597,9 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     createdBy: v.id("users"),
+    // True only for the placeholder "Partner with us" giving link seeded into a
+    // demo community (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
   }).index("by_group", ["groupId"]),
 
   // =============================================================================
@@ -2843,6 +2846,9 @@ export default defineSchema({
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
+    // True only for serving teams seeded into a demo community
+    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
     .index("by_community", ["communityId"])
@@ -2924,6 +2930,9 @@ export default defineSchema({
     createdAt: v.number(),
     createdById: v.id("users"),
     updatedAt: v.number(),
+    // True only for event plans seeded into a demo community
+    // (functions/demo.ts). Removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
     .index("by_community_date", ["communityId", "eventDate"])
@@ -2959,6 +2968,10 @@ export default defineSchema({
     assignedAt: v.number(),
     respondedAt: v.optional(v.number()),
     pcoAssignmentId: v.optional(v.string()),
+    // True only for role assignments seeded into a demo community
+    // (functions/demo.ts). Lets getDemoProgress tell a seeded assignment from
+    // one the church created; removed on go-live by purgeDemoSeedUsers.
+    isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_plan", ["planId"])
     .index("by_user", ["userId"])
