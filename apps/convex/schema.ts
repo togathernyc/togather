@@ -2430,6 +2430,27 @@ export default defineSchema({
       ),
     }),
 
+    // Native rostering config (native-first, PCO fallback). Mirrors pcoConfig's
+    // map representation: campusGroupNames parallels serviceTypeIds
+    // (location -> value), roleMappings parallels the PCO roleMappings record.
+    // Optional: rows created before native config was promoted to the DB (and
+    // any key omitted here) fall back to the hardcoded config.ts constants.
+    nativeConfig: v.optional(
+      v.object({
+        // location -> native campus group name (case-insensitive substring
+        // match against `groups.name`).
+        campusGroupNames: v.record(v.string(), v.string()),
+        // semantic role id -> native team + role name.
+        roleMappings: v.record(
+          v.string(),
+          v.object({
+            teamName: v.string(),
+            roleName: v.string(),
+          }),
+        ),
+      }),
+    ),
+
     // AI/Prompt config
     aiConfig: v.object({
       model: v.string(),

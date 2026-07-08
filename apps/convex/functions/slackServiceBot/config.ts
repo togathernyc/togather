@@ -239,3 +239,65 @@ export const PCO_ROLE_MAPPINGS: Record<
   preacher: { teamNamePattern: "platform", positionName: "Preacher" },
   meetingLead: { teamNamePattern: "platform", positionName: "Meeting Leader" },
 };
+
+// ============================================================================
+// Native Rostering Configuration (native-first, PCO fallback)
+// ============================================================================
+//
+// When a community uses Togather's own native rostering (an upcoming
+// `eventPlans` row exists for the location's campus group), the bot reads plan
+// context from and writes changes to the native tables (`roleAssignments`,
+// `teams`, `teamRoles`, `eventItems`) instead of Planning Center. The PCO
+// config above stays as the fallback for communities without a native plan.
+//
+// NOTE: These mappings have been promoted into the `slackBotConfig.nativeConfig`
+// DB section (seeded from the constants below by `seedConfig.ts`). At runtime
+// the DB config is the source of truth; the constants below remain as the seed
+// defaults and as the fallback when a community's config row is missing the
+// mapping. Native resolution goes through the DB-config accessors in
+// `configDb.ts` (`getNativeCampusGroupNameFromConfig` /
+// `getNativeRoleMappingFromConfig`), which read `nativeConfig` and fall back
+// here — mirroring the PCO `*FromConfig` accessors. Keep these constants in
+// sync with the seed defaults so a fresh seed reproduces current behavior.
+
+export interface NativeRoleMapping {
+  /** Native serving-team name — case-insensitive substring match within the campus group. */
+  teamName: string;
+  /**
+   * Native `teamRoles.name` — case-insensitive exact match within that team.
+   * Kept equal to the corresponding PCO `positionName` so the existing prompt
+   * status logic (which keys off `pcoPositionName`) works unchanged on native
+   * context.
+   */
+  roleName: string;
+}
+
+/**
+ * Maps a bot location to the native campus group's name (case-insensitive
+ * substring match against `groups.name` within the community). Parallels
+ * `PCO_SERVICE_TYPE_IDS`.
+ */
+export const NATIVE_CAMPUS_GROUP_NAMES: Record<string, string> = {
+  Manhattan: "Manhattan",
+  Brooklyn: "Brooklyn",
+};
+
+/**
+ * Maps a semantic service-plan role id to a native team + role. Parallels
+ * `PCO_ROLE_MAPPINGS`. Role ids match the `assign_role` item ids in the V2
+ * service-plan config (e.g. "preacher", "meetingLead").
+ */
+export const NATIVE_ROLE_MAPPINGS: Record<string, NativeRoleMapping> = {
+  preacher: { teamName: "Platform", roleName: "Preacher" },
+  meetingLead: { teamName: "Platform", roleName: "Meeting Leader" },
+};
+
+/** Native campus group name for a location, or null if none configured. */
+export function getNativeCampusGroupName(location: string): string | null {
+  return NATIVE_CAMPUS_GROUP_NAMES[location] ?? null;
+}
+
+/** Native team+role for a semantic role id, or null if none configured. */
+export function getNativeRoleMapping(role: string): NativeRoleMapping | null {
+  return NATIVE_ROLE_MAPPINGS[role] ?? null;
+}

@@ -31,6 +31,7 @@ import {
   calculateAllSystemScores,
   evaluateSystemAlerts,
 } from "./systemScoring";
+import { countNativeServing } from "../lib/nativeServing";
 
 // ============================================================================
 // Constants
@@ -270,6 +271,10 @@ export const computeCommunityScoresBatch = internalQuery({
     const currentTime = now();
     const announcementGroup = await ctx.db.get(args.announcementGroupId);
 
+    // Serving combines BOTH sources: the cached PCO pcoServingCounts snapshot
+    // (built below) AND native rostering (roleAssignments, added per member).
+    // Native-origin plans exclude PCO-imported ones, so the two are disjoint.
+
     // Build PCO serving map from announcement group doc
     const pcoServingMap = new Map<string, number>();
     if (announcementGroup?.pcoServingCounts?.counts) {
@@ -498,7 +503,7 @@ export const computeCommunityScoresBatch = internalQuery({
           }
         }
 
-        // PCO serving count
+        // PCO serving count (fallback source)
         const pcoCount = pcoServingMap.get(member.userId.toString()) ?? 0;
 
         // Serving activity = most recent of PCO serving and native rostering
@@ -521,6 +526,19 @@ export const computeCommunityScoresBatch = internalQuery({
           lastRosteredAt,
         );
 
+        // Combined Serving count = cached PCO count + native-origin distinct
+        // plans in the past ~60 days with a non-declined roleAssignment
+        // (reuses recentAssignments, no extra read). The native helper excludes
+        // PCO-imported plans, so the two sources don't double-count.
+        const servingCount =
+          pcoCount +
+          (await countNativeServing(
+            ctx,
+            recentAssignments,
+            currentTime,
+            args.communityId,
+          ));
+
         // Extract system raw values
         const rawValues = extractSystemRawValues({
           crossGroupAttendancePct: crossGroupPct,
@@ -532,7 +550,7 @@ export const computeCommunityScoresBatch = internalQuery({
           daysSinceLastInPerson: daysSince(lastInPerson),
           daysSinceLastCall: daysSince(lastCall),
           daysSinceLastText: daysSince(lastText),
-          pcoServicesCount: pcoCount,
+          pcoServicesCount: servingCount,
         });
 
         // Calculate scores and alerts
