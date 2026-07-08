@@ -787,6 +787,12 @@ export default defineSchema({
     // Lets getDemoProgress tell a seeded event from one the church created,
     // without a wall-clock heuristic.
     isDemoSeed: v.optional(v.boolean()),
+    // True only for the PAST "attendance-history" meetings the demo seeds to
+    // give the 100 placeholder members realistic health scores. Unlike normal
+    // demo events (which survive go-live), these are deleted by
+    // purgeDemoSeedUsers — otherwise their empty past sessions would depress
+    // real members' attendance scores for up to 60 days after going live.
+    isDemoActivitySeed: v.optional(v.boolean()),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_group", ["groupId"])

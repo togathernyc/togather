@@ -1488,7 +1488,7 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
     ).toBe(true);
   });
 
-  test("seeds a varied member-health roster on the announcement group", async () => {
+  test("seeds a realistic member-health spread for the whole roster", async () => {
     const t = convexTest(schema, modules);
     const { token } = await createUser(t, "HealthT", "+15555550213");
 
@@ -1497,6 +1497,9 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
       name: "Health Church",
       smallGroupCount: 2,
     });
+
+    // Member-health activity is seeded off-thread — run the scheduled work.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const data = await t.run(async (ctx) => {
       const groups = await ctx.db
@@ -1508,18 +1511,6 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
         .query("communityPeople")
         .withIndex("by_group", (q) => q.eq("groupId", ann._id))
         .collect();
-      const assigned = people.filter((p) => p.assigneeId);
-      const junctions: any[] = [];
-      for (const person of assigned) {
-        junctions.push(
-          ...(await ctx.db
-            .query("communityPeopleAssignees")
-            .withIndex("by_communityPerson", (q) =>
-              q.eq("communityPersonId", person._id),
-            )
-            .collect()),
-        );
-      }
       const gms = await ctx.db
         .query("groupMembers")
         .withIndex("by_group", (q) => q.eq("groupId", ann._id))
@@ -1533,21 +1524,44 @@ describe("demo v4: native Serve Day card, giving link, roster, member health", (
             .collect()),
         );
       }
-      return { people, assigned, junctions, followups };
+      const attendances = await ctx.db.query("meetingAttendances").collect();
+      const activityMeetings = (
+        await ctx.db
+          .query("meetings")
+          .withIndex("by_community", (q) =>
+            q.eq("communityId", result.communityId),
+          )
+          .collect()
+      ).filter((m) => m.isDemoActivitySeed);
+      return {
+        people,
+        followups,
+        attendances,
+        activityMeetings,
+        serving: ann.pcoServingCounts,
+      };
     });
 
-    // ~12 people with varied statuses; some assigned to a leader.
-    expect(data.people).toHaveLength(12);
-    const statuses = new Set(
-      data.people.map((p) => p.status).filter((s): s is string => Boolean(s)),
-    );
-    expect(statuses.size).toBeGreaterThan(1);
-    expect(data.assigned.length).toBeGreaterThanOrEqual(1);
-    // Each assigned person has a matching assignee junction row.
-    expect(data.junctions.length).toBe(data.assigned.length);
-    expect(data.junctions.every((j) => !!j.assigneeUserId)).toBe(true);
-    // At least one follow-up history entry.
-    expect(data.followups.length).toBeGreaterThanOrEqual(1);
+    // Every placeholder member gets a health row — the whole roster, not a slice.
+    expect(data.people.length).toBe(100);
+    // Connection scores span all three bands (needs < 40 <= watch < 70 <= healthy).
+    const s3 = data.people.map((p) => p.score3 ?? 0);
+    expect(s3.some((v) => v < 40)).toBe(true);
+    expect(s3.some((v) => v >= 40 && v < 70)).toBe(true);
+    expect(s3.some((v) => v >= 70)).toBe(true);
+    // Nobody is stuck at zero across all three scores.
+    expect(
+      data.people.every(
+        (p) => (p.score1 ?? 0) + (p.score2 ?? 0) + (p.score3 ?? 0) > 0,
+      ),
+    ).toBe(true);
+    // Scores are backed by real seeded activity (past gatherings + attendance +
+    // serving counts), so the daily cron recomputes the same bands.
+    expect(data.activityMeetings.length).toBe(9);
+    expect(data.attendances.length).toBeGreaterThan(0);
+    expect((data.serving?.counts.length ?? 0)).toBeGreaterThan(0);
+    // Some members have a seeded follow-up in their history.
+    expect(data.followups.length).toBeGreaterThan(0);
   });
 });
 
@@ -1623,6 +1637,9 @@ describe("demo v4: unread suppression + go-live purge of new tables", () => {
       smallGroupCount: 2,
     });
 
+    // Run the scheduled member-health seeding so go-live has to clean it up.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
     await t.mutation(internal.functions.demo.purgeDemoSeedUsers, {
       communityId: result.communityId,
     });
@@ -1643,6 +1660,23 @@ describe("demo v4: unread suppression + go-live purge of new tables", () => {
       people: await ctx.db.query("communityPeople").collect(),
       assignees: await ctx.db.query("communityPeopleAssignees").collect(),
       followups: await ctx.db.query("memberFollowups").collect(),
+      attendances: await ctx.db.query("meetingAttendances").collect(),
+      activityMeetings: (
+        await ctx.db
+          .query("meetings")
+          .withIndex("by_community", (q) =>
+            q.eq("communityId", result.communityId),
+          )
+          .collect()
+      ).filter((m) => m.isDemoActivitySeed),
+      groupsWithServing: (
+        await ctx.db
+          .query("groups")
+          .withIndex("by_community", (q) =>
+            q.eq("communityId", result.communityId),
+          )
+          .collect()
+      ).filter((g) => g.pcoServingCounts),
       landingPage: await ctx.db
         .query("communityLandingPages")
         .withIndex("by_community", (q) =>
@@ -1672,6 +1706,11 @@ describe("demo v4: unread suppression + go-live purge of new tables", () => {
     expect(data.people).toHaveLength(0);
     expect(data.assignees).toHaveLength(0);
     expect(data.followups).toHaveLength(0);
+    // The past attendance-history gatherings + their attendance rows and the
+    // seeded serving counts are gone (they'd otherwise skew real scores).
+    expect(data.activityMeetings).toHaveLength(0);
+    expect(data.attendances).toHaveLength(0);
+    expect(data.groupsWithServing).toHaveLength(0);
     // …but the landing page and the real creator survive.
     expect(data.landingPage?.isEnabled).toBe(true);
     expect(data.landingPage?.title).toBe("Welcome to Purge Extras Church");
