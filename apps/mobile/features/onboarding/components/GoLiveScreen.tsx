@@ -212,11 +212,8 @@ export function GoLiveScreen() {
                   We only grow as you grow.
                 </Text>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                  An active member is someone who opened the app in your
-                  community in the past 30 days — the same number as the Active
-                  Members card on your admin Stats tab. It's fully automatic:
-                  anyone who stops opening the app rolls off next month, so your
-                  bill always tracks who's actually using Togather.
+                  An active member is anyone who's opened the app in the last 30
+                  days — the same count on your admin Stats tab.
                 </Text>
                 {monthlyPrice !== null && (
                   <View style={[styles.estimate, { borderTopColor: colors.borderLight }]}>
@@ -245,9 +242,9 @@ export function GoLiveScreen() {
                   Estimate your bill
                 </Text>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                  Only about a third of a congregation is active in a given
-                  month, so you pay for far fewer people than your full roster.
-                  Pick your church size:
+                  We've generally seen around a third of a congregation active
+                  in a given month — though it depends on how often your church
+                  uses the app. Pick your size to estimate:
                 </Text>
                 <View style={styles.chipRow}>
                   {SIZE_PRESETS.map((size) => {
