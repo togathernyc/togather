@@ -102,7 +102,7 @@ pnpm dev
 |--------|-------------|-------------|
 | `STRIPE_SECRET_KEY` | Stripe API secret key (starts with `sk_test_` or `sk_live_`) | Billing disabled |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (starts with `whsec_`) | Billing disabled |
-| `STRIPE_PRODUCT_ID` | Stripe Product ID for "Togather Community Hosting" (optional — auto-created if not set) | Auto-created on first use |
+| `STRIPE_PRODUCT_ID` | Canonical Stripe Product id for "Togather Community Hosting" — **must be pinned** (source of truth in 1Password, synced 1Password → GitHub → Convex like every other secret). All per-community prices attach to this one product. | If unset, `getOrCreateProductId` **creates a brand-new duplicate product on every checkout/migration** (this is how prod accumulated 9 dupes). Always pin it. |
 
 > **Note**: These variables are configured in the Convex deployment dashboard. The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
 
