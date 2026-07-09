@@ -13,6 +13,7 @@ import { CommunityRedirect } from './pages/CommunityRedirect.tsx'
 import { Developers } from './pages/Developers.tsx'
 import { Guides } from './pages/Guides.tsx'
 import { CreateCommunity } from './pages/guides/CreateCommunity.tsx'
+import { Pricing } from './pages/guides/Pricing.tsx'
 import { Branding } from './pages/guides/Branding.tsx'
 import { GroupTypes } from './pages/guides/GroupTypes.tsx'
 import { GroupsAndChannels } from './pages/guides/GroupsAndChannels.tsx'
@@ -36,6 +37,7 @@ createRoot(document.getElementById('root')!).render(
         <Route path="/issue" element={<ReportIssue />} />
         <Route path="/guides" element={<Guides />} />
         <Route path="/guides/create-your-community" element={<CreateCommunity />} />
+        <Route path="/guides/pricing" element={<Pricing />} />
         <Route path="/guides/branding" element={<Branding />} />
         <Route path="/guides/group-types" element={<GroupTypes />} />
         <Route path="/guides/groups-and-channels" element={<GroupsAndChannels />} />

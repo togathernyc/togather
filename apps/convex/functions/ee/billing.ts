@@ -38,14 +38,166 @@ import { addUserToAnnouncementGroup } from "../communities";
 import { countBillableActiveUsers } from "../memberActivity";
 import { notifyCommunityAdmins } from "../../lib/notifications/send";
 
-/** Per-active-user pricing: $1/month per billable active member. */
+/** Per-active-user pricing: $1/month per billable active member. Fee-free. */
 const PER_ACTIVE_USER_CENTS = 100;
 
 import type { Id } from "../../_generated/dataModel";
 
 // ============================================================================
+// Fees & tax pass-through (see ADR-031)
+// ============================================================================
+//
+// The advertised price ($1/active member, or a legacy fixed monthly price) is
+// the price of the *software* and never absorbs payment fees or tax. Both are
+// pushed to the customer instead:
+//
+//  - Sales tax is added on top via Stripe Tax (`automatic_tax`), with prices
+//    marked `tax_behavior: "exclusive"` so tax is layered on rather than baked
+//    into the shown price.
+//  - Card processing is passed through as a separate, disclosed "Payment
+//    processing" subscription line, priced as a fraction of the base and
+//    mirrored to the same quantity so it scales with the base and never
+//    inflates the per-member price.
+//
+// Both are OFF unless explicitly enabled, so merging this changes nothing in
+// production until ops turns them on:
+//  - BILLING_TAX_ENABLED requires Stripe Tax registrations to be configured
+//    first (otherwise checkout errors).
+//  - BILLING_PROCESSING_SURCHARGE is card *surcharging*, which is legally
+//    regulated: prohibited in some US states, capped at the cost of
+//    acceptance, and requires card-network registration + 30-day notice. Do
+//    NOT enable it without legal sign-off. See ADR-031.
+
+// Stripe's blended cost is 2.9% + $0.30/txn. We pass through exactly the
+// percentage component (2.9%), never more — so the surcharge always stays at or
+// under the cost of acceptance (the fixed $0.30 is deliberately left absorbed,
+// keeping us safely under-cost on every invoice size). Priced with Stripe's
+// fractional-cent `unit_amount_decimal` so the fee is exactly 2.9% of the base
+// at any quantity, rather than a coarse per-member rounding that would drift
+// above cost on large invoices.
+const PROCESSING_FEE_RATE = 0.029;
+
+function taxPassThroughEnabled(): boolean {
+  return process.env.BILLING_TAX_ENABLED === "true";
+}
+
+function processingSurchargeEnabled(): boolean {
+  return process.env.BILLING_PROCESSING_SURCHARGE === "true";
+}
+
+/**
+ * The processing-fee amount (in cents, possibly fractional) for a given base
+ * amount — exactly `PROCESSING_FEE_RATE` of the base. Used for disclosure math
+ * and tests; the Stripe price uses the decimal string form below.
+ */
+export function processingFeeCentsForBase(baseUnitCents: number): number {
+  return baseUnitCents * PROCESSING_FEE_RATE;
+}
+
+/** The processing fee (fractional cents) charged per active member ($1 base). */
+export function processingFeeCentsPerMember(): number {
+  return processingFeeCentsForBase(PER_ACTIVE_USER_CENTS);
+}
+
+/**
+ * The fee line's `unit_amount_decimal` for Stripe (a cents string, up to 12
+ * decimal places). Keeping it fractional means the surcharge is exactly 2.9%
+ * of the base for any member count.
+ */
+function processingFeeUnitAmountDecimal(baseUnitCents: number): string {
+  return processingFeeCentsForBase(baseUnitCents).toFixed(6);
+}
+
+/**
+ * Split a subscription's line items into the base line and the (optional)
+ * processing-fee line, identified by the `lineType` we stamp on each price.
+ * Legacy subscriptions created before the fee line have no `lineType` and are
+ * treated as the base. Pure + exported so the monthly sync's item handling is
+ * unit-testable without live Stripe.
+ */
+export function selectSubscriptionItems<
+  T extends { price?: { metadata?: Record<string, string> | null } | null },
+>(items: T[]): { base: T | undefined; fee: T | undefined } {
+  const fee = items.find(
+    (i) => i.price?.metadata?.lineType === "processing_fee",
+  );
+  const base =
+    items.find((i) => i.price?.metadata?.lineType === "base") ??
+    items.find((i) => i !== fee) ??
+    items[0];
+  return { base, fee };
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Checkout-session params that push sales tax to the customer (added on top of
+ * the price) when BILLING_TAX_ENABLED is set. Empty otherwise, so tax handling
+ * is a no-op until Stripe Tax is configured and the flag is flipped.
+ */
+function checkoutTaxParams() {
+  if (!taxPassThroughEnabled()) return {} as Record<string, never>;
+  return {
+    automatic_tax: { enabled: true },
+    billing_address_collection: "required" as const,
+    customer_update: { address: "auto" as const },
+    tax_id_collection: { enabled: true },
+  };
+}
+
+/**
+ * Build the subscription line items: the base price, plus a separate disclosed
+ * "Payment processing" line when BILLING_PROCESSING_SURCHARGE is enabled. Both
+ * carry the same `quantity` so the fee scales with the base and the base price
+ * is never inflated. `tax_behavior: "exclusive"` (when tax is enabled) keeps
+ * sales tax on top of, not baked into, the shown price.
+ */
+async function buildSubscriptionLineItems(
+  stripe: InstanceType<typeof import("stripe").default>,
+  opts: {
+    productId: string;
+    communityId: string;
+    baseUnitCents: number;
+    quantity: number;
+    billingModel?: string;
+  },
+): Promise<Array<{ price: string; quantity: number }>> {
+  const taxBehavior = taxPassThroughEnabled()
+    ? ("exclusive" as const)
+    : undefined;
+
+  const basePrice = await stripe.prices.create({
+    unit_amount: opts.baseUnitCents,
+    currency: "usd",
+    recurring: { interval: "month" },
+    product: opts.productId,
+    tax_behavior: taxBehavior,
+    metadata: {
+      communityId: opts.communityId,
+      lineType: "base",
+      ...(opts.billingModel ? { billingModel: opts.billingModel } : {}),
+    },
+  });
+
+  const items = [{ price: basePrice.id, quantity: opts.quantity }];
+
+  if (processingSurchargeEnabled()) {
+    const feePrice = await stripe.prices.create({
+      // Fractional cents: exactly 2.9% of the base per unit, at any quantity.
+      unit_amount_decimal: processingFeeUnitAmountDecimal(opts.baseUnitCents),
+      currency: "usd",
+      recurring: { interval: "month" },
+      product: opts.productId,
+      tax_behavior: taxBehavior,
+      metadata: { communityId: opts.communityId, lineType: "processing_fee" },
+    });
+    items.push({ price: feePrice.id, quantity: opts.quantity });
+  }
+
+  return items;
+}
 
 /**
  * Create the Togather product in Stripe if STRIPE_PRODUCT_ID is not configured.
@@ -248,16 +400,14 @@ export const createCheckoutSession = action({
         customerId = customer.id;
       }
 
-      // Create a recurring price for this community's subscription
+      // Create the recurring line items for this community's subscription
+      // (base price + optional processing-fee line; tax added on top).
       const productId = await getOrCreateProductId(stripe);
-      const price = await stripe.prices.create({
-        unit_amount: proposal.proposedMonthlyPrice * 100, // Convert dollars to cents
-        currency: "usd",
-        recurring: { interval: "month" },
-        product: productId,
-        metadata: {
-          communityId,
-        },
+      const lineItems = await buildSubscriptionLineItems(stripe, {
+        productId,
+        communityId,
+        baseUnitCents: proposal.proposedMonthlyPrice * 100,
+        quantity: 1,
       });
 
       // Create the checkout session
@@ -265,7 +415,8 @@ export const createCheckoutSession = action({
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: "subscription",
-        line_items: [{ price: price.id, quantity: 1 }],
+        line_items: lineItems,
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -289,7 +440,7 @@ export const createCheckoutSession = action({
         {
           proposalId: proposal._id,
           stripeCustomerId: customerId,
-          stripePriceId: price.id,
+          stripePriceId: lineItems[0].price,
         }
       );
 
@@ -444,16 +595,14 @@ export const createSubscriptionForCommunity = action({
         );
       }
 
-      // Create a recurring price for this community's subscription
+      // Create the recurring line items for this community's subscription
+      // (base price + optional processing-fee line; tax added on top).
       const productId = await getOrCreateProductId(stripe);
-      const price = await stripe.prices.create({
-        unit_amount: args.monthlyPrice * 100, // Convert dollars to cents
-        currency: "usd",
-        recurring: { interval: "month" },
-        product: productId,
-        metadata: {
-          communityId: args.communityId,
-        },
+      const lineItems = await buildSubscriptionLineItems(stripe, {
+        productId,
+        communityId: args.communityId,
+        baseUnitCents: args.monthlyPrice * 100,
+        quantity: 1,
       });
 
       // Create the checkout session
@@ -461,7 +610,8 @@ export const createSubscriptionForCommunity = action({
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: "subscription",
-        line_items: [{ price: price.id, quantity: 1 }],
+        line_items: lineItems,
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -573,20 +723,23 @@ export const convertDemoToLive = action({
         );
       }
 
+      // Base $1/member line + optional processing-fee line, both at the current
+      // billable count; sales tax added on top at checkout.
       const productId = await getOrCreateProductId(stripe);
-      const price = await stripe.prices.create({
-        unit_amount: PER_ACTIVE_USER_CENTS,
-        currency: "usd",
-        recurring: { interval: "month" },
-        product: productId,
-        metadata: { communityId: args.communityId, billingModel: "per_active_user" },
+      const lineItems = await buildSubscriptionLineItems(stripe, {
+        productId,
+        communityId: args.communityId,
+        baseUnitCents: PER_ACTIVE_USER_CENTS,
+        quantity: info.billableActiveUsers,
+        billingModel: "per_active_user",
       });
 
       // Anchor billing to the 1st of next month — Stripe prorates the first partial period
       const session = await stripe.checkout.sessions.create({
         customer: customerId,
         mode: "subscription",
-        line_items: [{ price: price.id, quantity: info.billableActiveUsers }],
+        line_items: lineItems,
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -1075,21 +1228,26 @@ export const syncPerUserSubscriptionQuantities = internalAction({
         const subscription = await stripe.subscriptions.retrieve(
           community.stripeSubscriptionId,
         );
-        const item = subscription.items.data[0];
-        if (!item) {
+        // Update both the base and the processing-fee line (when present) so
+        // the fee stays mirrored to the member count. proration_behavior
+        // "none": the quantity reflects the coming month, don't back-bill.
+        const { base, fee } = selectSubscriptionItems(
+          subscription.items.data,
+        );
+        if (!base) {
           failures.push(
             `${community.name} (${community.communityId}): subscription ${community.stripeSubscriptionId} has no items`,
           );
           continue;
         }
 
-        if (item.quantity !== community.billableActiveUsers) {
-          await stripe.subscriptionItems.update(item.id, {
-            quantity: community.billableActiveUsers,
-            // Quantity reflects the coming month's roster; don't back-bill
-            // the current period.
-            proration_behavior: "none",
-          });
+        for (const item of [base, fee]) {
+          if (item && item.quantity !== community.billableActiveUsers) {
+            await stripe.subscriptionItems.update(item.id, {
+              quantity: community.billableActiveUsers,
+              proration_behavior: "none",
+            });
+          }
         }
 
         await ctx.runMutation(
@@ -1127,6 +1285,14 @@ export const syncPerUserSubscriptionQuantities = internalAction({
             communityName: community.name,
             billableActiveUsers: community.billableActiveUsers,
             monthlyPriceUsd: community.billableActiveUsers,
+            processingFeeUsd: processingSurchargeEnabled()
+              ? Math.round(
+                  (community.billableActiveUsers *
+                    processingFeeCentsPerMember()) /
+                    100,
+                )
+              : undefined,
+            taxAddedOnTop: taxPassThroughEnabled(),
           },
         });
       } catch (error) {
@@ -1332,7 +1498,9 @@ export const migrateToPerUserBilling = internalAction({
         const subscription = await stripe!.subscriptions.retrieve(
           community.stripeSubscriptionId,
         );
-        const item = subscription.items.data[0];
+        const { base: item } = selectSubscriptionItems(
+          subscription.items.data,
+        );
         if (!item) {
           report.push({
             ...entry,
@@ -1341,28 +1509,25 @@ export const migrateToPerUserBilling = internalAction({
           continue;
         }
 
+        // Build the per-member base line (+ optional processing-fee line, tax
+        // on top), then swap the existing item onto the base price.
         const productId = await getOrCreateProductId(stripe!);
-        const price = await stripe!.prices.create({
-          unit_amount: PER_ACTIVE_USER_CENTS,
-          currency: "usd",
-          recurring: { interval: "month" },
-          product: productId,
-          metadata: {
-            communityId: String(community.communityId),
-            billingModel: "per_active_user",
-          },
+        const newLines = await buildSubscriptionLineItems(stripe!, {
+          productId,
+          communityId: String(community.communityId),
+          baseUnitCents: PER_ACTIVE_USER_CENTS,
+          quantity: community.billableActiveUsers,
+          billingModel: "per_active_user",
         });
 
-        // Swap the item to the per-member price at the current billable
-        // count. proration_behavior "none" defers the change to the next
-        // renewal invoice — no mid-cycle charge or credit.
+        // Swap the existing item to the per-member base price at the current
+        // billable count, appending any additional (fee) lines.
+        // proration_behavior "none" defers the change to the next renewal
+        // invoice — no mid-cycle charge or credit.
         await stripe!.subscriptions.update(community.stripeSubscriptionId, {
           items: [
-            {
-              id: item.id,
-              price: price.id,
-              quantity: community.billableActiveUsers,
-            },
+            { id: item.id, price: newLines[0].price, quantity: newLines[0].quantity },
+            ...newLines.slice(1),
           ],
           proration_behavior: "none",
         });

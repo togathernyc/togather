@@ -13,7 +13,12 @@ import { expect, test, describe, vi } from "vitest";
 import schema from "../schema";
 import { internal } from "../_generated/api";
 import { modules } from "../test.setup";
-import { isAnomalousCountChange } from "../functions/ee/billing";
+import {
+  isAnomalousCountChange,
+  processingFeeCentsForBase,
+  processingFeeCentsPerMember,
+  selectSubscriptionItems,
+} from "../functions/ee/billing";
 import type { Id } from "../_generated/dataModel";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -32,6 +37,61 @@ describe("isAnomalousCountChange", () => {
     expect(isAnomalousCountChange(5, 15)).toBe(false);
     expect(isAnomalousCountChange(9, 1)).toBe(false);
     expect(isAnomalousCountChange(10, 20)).toBe(true);
+  });
+});
+
+describe("processing fee pass-through", () => {
+  test("fee per member is exactly 2.9% of the $1 base (2.9¢)", () => {
+    expect(processingFeeCentsPerMember()).toBeCloseTo(2.9);
+    expect(processingFeeCentsForBase(100)).toBeCloseTo(2.9);
+  });
+
+  test("fee is exactly 2.9% of any base amount", () => {
+    expect(processingFeeCentsForBase(20000)).toBeCloseTo(580); // $200 -> $5.80
+    expect(processingFeeCentsForBase(0)).toBe(0);
+  });
+
+  test("never exceeds Stripe's blended cost of acceptance, at any size", () => {
+    // Stripe cost: 2.9% + $0.30. Surcharging must not exceed the cost of
+    // acceptance; passing only the 2.9% component keeps us under it always
+    // (the fixed $0.30 is absorbed), including on very large invoices where
+    // a flat 3% would have drifted above cost.
+    for (const baseCents of [3000, 30000, 300000, 3000000]) {
+      const surcharge = processingFeeCentsForBase(baseCents);
+      const stripeCost = baseCents * 0.029 + 30;
+      expect(surcharge).toBeLessThanOrEqual(stripeCost);
+    }
+  });
+});
+
+describe("selectSubscriptionItems", () => {
+  const item = (id: string, lineType?: string) => ({
+    id,
+    price: { metadata: lineType ? { lineType } : {} },
+  });
+
+  test("splits base and processing-fee lines by metadata", () => {
+    const { base, fee } = selectSubscriptionItems([
+      item("si_base", "base"),
+      item("si_fee", "processing_fee"),
+    ]);
+    expect(base?.id).toBe("si_base");
+    expect(fee?.id).toBe("si_fee");
+  });
+
+  test("legacy single item with no lineType is treated as base", () => {
+    const { base, fee } = selectSubscriptionItems([item("si_legacy")]);
+    expect(base?.id).toBe("si_legacy");
+    expect(fee).toBeUndefined();
+  });
+
+  test("finds the base even when only the fee line is tagged", () => {
+    const { base, fee } = selectSubscriptionItems([
+      item("si_untagged"),
+      item("si_fee", "processing_fee"),
+    ]);
+    expect(base?.id).toBe("si_untagged");
+    expect(fee?.id).toBe("si_fee");
   });
 });
 

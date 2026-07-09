@@ -726,6 +726,12 @@ function FeaturesSection() {
 function FAQSection() {
   const faqs = [
     {
+      question: "How much does Togather cost?",
+      answer:
+        "Togather is $1/month per active member — someone who opened the app in your community in the last 30 days — so you only pay for who's actually using it. A typical church has about a third of its members active in a given month, so a 1,000-member church pays around $300/month, not $1,000. It's beta pricing you can lock in by starting now, and card processing fees plus any applicable sales tax are added on top as separate lines.",
+      link: "/guides/pricing",
+    },
+    {
       question: "What does it mean that Togather is open source?",
       answer:
         "It means the entire codebase is public on GitHub under the AGPL-3.0 license. For your church or organization, that means full transparency into how your data is handled, no vendor lock-in, and a product shaped by the community that uses it. You don't need to think about any of that to get started though — we offer shared hosting so you can sign up and go in minutes.",

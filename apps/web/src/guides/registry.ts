@@ -35,6 +35,15 @@ export const guides: Guide[] = [
     emoji: "⛪️",
   },
   {
+    slug: "pricing",
+    title: "Pricing: how $1 per active member works",
+    summary:
+      "$1/month per active member, so you only pay for who's actually using the app. About a third of a church is typically active — and it's beta pricing you can lock in.",
+    series: CHURCH_ONBOARDING_SERIES,
+    readMinutes: 6,
+    emoji: "💵",
+  },
+  {
     slug: "branding",
     title: "Set up your name, logo & brand colors",
     summary:

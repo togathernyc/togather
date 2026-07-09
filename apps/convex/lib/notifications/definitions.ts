@@ -1029,6 +1029,10 @@ interface BillingMonthlyPreviewData {
   communityName: string;
   billableActiveUsers: number;
   monthlyPriceUsd: number;
+  /** Separate card-processing line added on top, when surcharging is enabled. */
+  processingFeeUsd?: number;
+  /** Whether applicable sales tax is added on top of the price at invoice. */
+  taxAddedOnTop?: boolean;
 }
 
 /**
@@ -1045,6 +1049,22 @@ export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreview
     email: (ctx) => {
       const members = ctx.data.billableActiveUsers;
       const memberWord = members === 1 ? 'active member' : 'active members';
+      const fee = ctx.data.processingFeeUsd;
+      const hasFee = typeof fee === 'number' && fee > 0;
+      // Only the base ($1 × members) is disclosed in the subject; processing
+      // and tax are itemized in the body so the headline stays the clean price.
+      const parts: string[] = [];
+      if (hasFee) parts.push(`a <strong>$${fee} payment processing</strong> line`);
+      if (ctx.data.taxAddedOnTop) parts.push('any applicable sales tax');
+      const extras =
+        parts.length > 0
+          ? `<p class="text">
+          On top of the per-member price, your invoice also includes
+          ${parts.join(' and ')}, shown as separate line${
+            parts.length > 1 ? 's' : ''
+          }.
+        </p>`
+          : '';
       return {
         subject: `${ctx.data.communityName}: $${ctx.data.monthlyPriceUsd} on the 1st (${members} ${memberWord})`,
         htmlBody: baseEmailLayout(`
@@ -1058,6 +1078,7 @@ export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreview
           On the 1st you'll be billed <strong>$${ctx.data.monthlyPriceUsd}</strong>
           ($1 per active member).
         </p>
+        ${extras}
         <p class="text">
           This is the same number as the Active Members card on your admin
           Stats tab. It updates automatically each month &mdash; anyone who
