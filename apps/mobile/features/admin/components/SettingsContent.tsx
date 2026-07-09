@@ -29,6 +29,8 @@ import { DEFAULT_PRIMARY_COLOR, DEFAULT_SECONDARY_COLOR } from "../../../utils/s
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
+import * as Linking from "expo-linking";
+import { getLocales } from "expo-localization";
 import { ImagePicker } from "@components/ui";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
 import { GroupTypeEditModal } from "./GroupTypeEditModal";
@@ -42,6 +44,13 @@ import { useAuth } from "@providers/AuthProvider";
 import { useQuery, api } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 import type { Id } from "@services/api/convex";
+
+// Device region as a practical proxy for the App Store storefront (no API
+// exposes the storefront country). We only surface the outbound billing-
+// management link on US devices, where post-Epic App Store rules permit
+// linking out to an external web payment page (guideline 3.1.1 anti-steering
+// no longer applies in the US). Elsewhere the section stays read-only.
+const isUSRegion = getLocales()[0]?.regionCode === "US";
 
 export function SettingsContent() {
   const router = useRouter();
@@ -933,10 +942,11 @@ export function SettingsContent() {
           )}
 
           {/*
-            Web keeps the management link (Stripe portal, invoices, plan). On
-            native iOS this is read-only — an outbound link to an external
+            Web and US iOS expose a tappable link out to the web billing
+            dashboard (whole card is the button). On non-US native devices the
+            section stays read-only — an outbound link to an external
             payment/management page risks App Store anti-steering rejection
-            (guideline 3.1.1), so we only state where billing is managed.
+            (guideline 3.1.1) outside the US, where post-Epic rules don't apply.
           */}
           {Platform.OS === "web" ? (
             <TouchableOpacity
@@ -958,6 +968,27 @@ export function SettingsContent() {
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+            </TouchableOpacity>
+          ) : isUSRegion ? (
+            <TouchableOpacity
+              style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              onPress={() => {
+                if (community?.id) {
+                  Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`);
+                }
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Manage billing on the web"
+            >
+              <View style={styles.groupTypeInfo}>
+                <Text style={[styles.groupTypeName, { color: colors.text }]}>
+                  Manage billing on the web
+                </Text>
+                <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
+                  Update your payment method, view invoices, or manage your plan.
+                </Text>
+              </View>
+              <Ionicons name="open-outline" size={20} color={themePrimaryColor} />
             </TouchableOpacity>
           ) : (
             <View style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
