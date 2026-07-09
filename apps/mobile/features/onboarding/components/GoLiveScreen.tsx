@@ -35,6 +35,39 @@ import {
 } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 
+/** Congregation sizes offered in the "estimate your bill" picker. */
+const SIZE_PRESETS = [100, 250, 500, 1000, 2500] as const;
+
+/**
+ * Rule of thumb for the estimator: only about a third of a congregation opens
+ * the app in a given month, so churches pay for far fewer people than their
+ * full roster (a 1,000-member church lands around $300/month, not $1,000).
+ */
+const ACTIVE_SHARE = 1 / 3;
+
+/** Static facts about how billing works, shown as an icon list. */
+const BILL_FACTS: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  title: string;
+  body: string;
+}[] = [
+  {
+    icon: "calendar-outline",
+    title: "Counted on the 28th, charged on the 1st",
+    body: "You're billed in advance for the month ahead. A few days before, we email you the exact amount — so there are never surprises.",
+  },
+  {
+    icon: "pulse-outline",
+    title: "Watch it live",
+    body: "Your active-member count updates in real time on the admin Stats → Active Members card — the same number you're billed for.",
+  },
+  {
+    icon: "receipt-outline",
+    title: "Just $1 per member, plus tax",
+    body: "Card processing is included in the $1. Only applicable sales tax is added on top, where it applies.",
+  },
+];
+
 export function GoLiveScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -62,6 +95,8 @@ export function GoLiveScreen() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [estSize, setEstSize] = useState<(typeof SIZE_PRESETS)[number]>(500);
+  const estActive = Math.round(estSize * ACTIVE_SHARE);
 
   async function handleGoLive() {
     if (!communityId || submitting) return;
@@ -160,6 +195,7 @@ export function GoLiveScreen() {
                 with your real congregation.
               </Text>
 
+              {/* Pricing headline */}
               <View
                 style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
               >
@@ -172,13 +208,15 @@ export function GoLiveScreen() {
                     / month per active member
                   </Text>
                 </View>
+                <Text style={[styles.tagline, { color: colors.text }]}>
+                  We only grow as you grow.
+                </Text>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
                   An active member is someone who opened the app in your
-                  community within the past month — the same number as the
-                  Active Members card on your admin Stats tab. It's fully
-                  automatic: anyone who stops opening the app rolls off next
-                  month, so your bill always tracks who's actually using
-                  Togather.
+                  community in the past 30 days — the same number as the Active
+                  Members card on your admin Stats tab. It's fully automatic:
+                  anyone who stops opening the app rolls off next month, so your
+                  bill always tracks who's actually using Togather.
                 </Text>
                 {monthlyPrice !== null && (
                   <View style={[styles.estimate, { borderTopColor: colors.borderLight }]}>
@@ -191,6 +229,109 @@ export function GoLiveScreen() {
                     </Text>
                   </View>
                 )}
+                {billing?.billableActiveUsers === 1 && (
+                  <Text style={[styles.hint, { color: colors.textTertiary }]}>
+                    Go live for just $1 today, then invite your congregation —
+                    your bill grows only as they start using it.
+                  </Text>
+                )}
+              </View>
+
+              {/* Estimate your bill */}
+              <View
+                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+              >
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  Estimate your bill
+                </Text>
+                <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
+                  Only about a third of a congregation is active in a given
+                  month, so you pay for far fewer people than your full roster.
+                  Pick your church size:
+                </Text>
+                <View style={styles.chipRow}>
+                  {SIZE_PRESETS.map((size) => {
+                    const selected = size === estSize;
+                    return (
+                      <Pressable
+                        key={size}
+                        onPress={() => setEstSize(size)}
+                        style={[
+                          styles.chip,
+                          {
+                            borderColor: selected ? colors.buttonPrimary : colors.borderLight,
+                            backgroundColor: selected ? colors.buttonPrimary : "transparent",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            { color: selected ? colors.buttonPrimaryText : colors.textSecondary },
+                          ]}
+                        >
+                          {size.toLocaleString()}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <View style={[styles.estimate, { borderTopColor: colors.borderLight }]}>
+                  <Text style={[styles.estimateLabel, { color: colors.textSecondary }]}>
+                    ~{estActive.toLocaleString()} active members
+                  </Text>
+                  <Text style={[styles.estimateValue, { color: colors.text }]}>
+                    ≈ ${estActive.toLocaleString()}/month
+                  </Text>
+                </View>
+                <Text style={[styles.hint, { color: colors.textTertiary }]}>
+                  A realistic estimate — your actual number depends on how your
+                  church uses the app.
+                </Text>
+              </View>
+
+              {/* How your bill works */}
+              <View
+                style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
+              >
+                <Text style={[styles.cardTitle, { color: colors.text }]}>
+                  How your bill works
+                </Text>
+                {BILL_FACTS.map((fact) => (
+                  <View key={fact.title} style={styles.factRow}>
+                    <View style={[styles.factIcon, { backgroundColor: colors.surfaceSecondary }]}>
+                      <Ionicons name={fact.icon} size={16} color={colors.textSecondary} />
+                    </View>
+                    <View style={styles.factText}>
+                      <Text style={[styles.factTitle, { color: colors.text }]}>
+                        {fact.title}
+                      </Text>
+                      <Text style={[styles.factBody, { color: colors.textSecondary }]}>
+                        {fact.body}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              {/* Beta pricing lock-in */}
+              <View
+                style={[
+                  styles.lockInCard,
+                  { backgroundColor: colors.warning + "14", borderColor: colors.warning + "40" },
+                ]}
+              >
+                <View style={styles.lockInHeader}>
+                  <Ionicons name="lock-closed" size={17} color={colors.warning} />
+                  <Text style={[styles.lockInTitle, { color: colors.text }]}>
+                    Lock in beta pricing
+                  </Text>
+                </View>
+                <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
+                  $1 per active member is our beta price. As Togather grows,
+                  prices will rise — but start now and you keep $1/member for as
+                  long as your subscription stays active.
+                </Text>
               </View>
 
               {progress && (
@@ -354,6 +495,73 @@ const styles = StyleSheet.create({
   cardBody: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  tagline: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  hint: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 12,
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 14,
+  },
+  chip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+  },
+  chipText: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  factRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginTop: 14,
+  },
+  factIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  factText: {
+    flex: 1,
+  },
+  factTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  factBody: {
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  lockInCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    marginBottom: 20,
+  },
+  lockInHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  lockInTitle: {
+    fontSize: 16,
+    fontWeight: "700",
   },
   estimate: {
     flexDirection: "row",
