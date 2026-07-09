@@ -38,14 +38,58 @@ import { addUserToAnnouncementGroup } from "../communities";
 import { countBillableActiveUsers } from "../memberActivity";
 import { notifyCommunityAdmins } from "../../lib/notifications/send";
 
-/** Per-active-user pricing: $1/month per billable active member. */
+/** Per-active-user pricing: $1/month per billable active member. Fee-free. */
 const PER_ACTIVE_USER_CENTS = 100;
 
 import type { Id } from "../../_generated/dataModel";
 
 // ============================================================================
+// Sales-tax pass-through (see ADR-031)
+// ============================================================================
+//
+// The advertised price ($1/active member, or a legacy fixed monthly price) is
+// the price of the *software* and never bakes in sales tax. Tax is added on top
+// via Stripe Tax (`automatic_tax`), with prices marked `tax_behavior:
+// "exclusive"` so tax layers on rather than being absorbed into the shown
+// price. Gated behind BILLING_TAX_ENABLED, which requires Stripe Tax
+// registrations to be configured in the Stripe account first (otherwise
+// checkout errors). This is an operational gate, not a legal one — passing
+// sales tax through to the customer is standard and legal everywhere.
+//
+// (Card processing fees are deliberately NOT passed through — the $1 base
+// absorbs them. See ADR-031 for why we dropped surcharging.)
+
+function taxPassThroughEnabled(): boolean {
+  return process.env.BILLING_TAX_ENABLED === "true";
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
+
+/**
+ * Checkout-session params that push sales tax to the customer (added on top of
+ * the price) when BILLING_TAX_ENABLED is set. Empty otherwise, so tax handling
+ * is a no-op until Stripe Tax is configured and the flag is flipped.
+ */
+function checkoutTaxParams() {
+  if (!taxPassThroughEnabled()) return {} as Record<string, never>;
+  return {
+    automatic_tax: { enabled: true },
+    billing_address_collection: "required" as const,
+    customer_update: { address: "auto" as const },
+    tax_id_collection: { enabled: true },
+  };
+}
+
+/**
+ * `tax_behavior` for a recurring price: "exclusive" (sales tax added on top of
+ * the shown price) when tax pass-through is enabled, otherwise undefined so the
+ * price behaves exactly as before.
+ */
+function priceTaxBehavior(): "exclusive" | undefined {
+  return taxPassThroughEnabled() ? "exclusive" : undefined;
+}
 
 /**
  * Create the Togather product in Stripe if STRIPE_PRODUCT_ID is not configured.
@@ -249,12 +293,14 @@ export const createCheckoutSession = action({
       }
 
       // Create a recurring price for this community's subscription
+      // (sales tax added on top when tax pass-through is enabled).
       const productId = await getOrCreateProductId(stripe);
       const price = await stripe.prices.create({
         unit_amount: proposal.proposedMonthlyPrice * 100, // Convert dollars to cents
         currency: "usd",
         recurring: { interval: "month" },
         product: productId,
+        tax_behavior: priceTaxBehavior(),
         metadata: {
           communityId,
         },
@@ -266,6 +312,7 @@ export const createCheckoutSession = action({
         customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: 1 }],
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -445,12 +492,14 @@ export const createSubscriptionForCommunity = action({
       }
 
       // Create a recurring price for this community's subscription
+      // (sales tax added on top when tax pass-through is enabled).
       const productId = await getOrCreateProductId(stripe);
       const price = await stripe.prices.create({
         unit_amount: args.monthlyPrice * 100, // Convert dollars to cents
         currency: "usd",
         recurring: { interval: "month" },
         product: productId,
+        tax_behavior: priceTaxBehavior(),
         metadata: {
           communityId: args.communityId,
         },
@@ -462,6 +511,7 @@ export const createSubscriptionForCommunity = action({
         customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: 1 }],
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -573,12 +623,15 @@ export const convertDemoToLive = action({
         );
       }
 
+      // $1/member base price at the current billable count; sales tax added on
+      // top at checkout when tax pass-through is enabled.
       const productId = await getOrCreateProductId(stripe);
       const price = await stripe.prices.create({
         unit_amount: PER_ACTIVE_USER_CENTS,
         currency: "usd",
         recurring: { interval: "month" },
         product: productId,
+        tax_behavior: priceTaxBehavior(),
         metadata: { communityId: args.communityId, billingModel: "per_active_user" },
       });
 
@@ -587,6 +640,7 @@ export const convertDemoToLive = action({
         customer: customerId,
         mode: "subscription",
         line_items: [{ price: price.id, quantity: info.billableActiveUsers }],
+        ...checkoutTaxParams(),
         subscription_data: {
           billing_cycle_anchor: getNextFirstOfMonth(),
         },
@@ -1127,6 +1181,7 @@ export const syncPerUserSubscriptionQuantities = internalAction({
             communityName: community.name,
             billableActiveUsers: community.billableActiveUsers,
             monthlyPriceUsd: community.billableActiveUsers,
+            taxAddedOnTop: taxPassThroughEnabled(),
           },
         });
       } catch (error) {
@@ -1347,6 +1402,7 @@ export const migrateToPerUserBilling = internalAction({
           currency: "usd",
           recurring: { interval: "month" },
           product: productId,
+          tax_behavior: priceTaxBehavior(),
           metadata: {
             communityId: String(community.communityId),
             billingModel: "per_active_user",

@@ -86,7 +86,10 @@ rolling 30-day activity window, per community.**
   (alert when the cron *didn't run*) still requires external monitoring.
 - Small invoices carry fee drag (a $30 invoice loses ~3.9% to Stripe's
   2.9% + 30¢; the nonprofit discount does not apply to our SaaS charges).
-  An annual-prepay option (12 × current count) is the natural future add.
+  This card-processing drag stays absorbed in the $1 base; only sales tax is
+  passed through to the customer (Stripe Tax, added on top). See ADR-031 for
+  why card surcharging was scoped out. An annual-prepay option (12 × current
+  count) is the natural future add.
 - Stripe's legacy usage-records API is removed in current API versions; if
   we ever move to arrears billing, the path is Billing Meters with `last`
   aggregation.

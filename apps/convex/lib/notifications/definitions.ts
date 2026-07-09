@@ -1029,6 +1029,8 @@ interface BillingMonthlyPreviewData {
   communityName: string;
   billableActiveUsers: number;
   monthlyPriceUsd: number;
+  /** Whether applicable sales tax is added on top of the price at invoice. */
+  taxAddedOnTop?: boolean;
 }
 
 /**
@@ -1045,6 +1047,14 @@ export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreview
     email: (ctx) => {
       const members = ctx.data.billableActiveUsers;
       const memberWord = members === 1 ? 'active member' : 'active members';
+      // The subject shows the clean base ($1 × members); when sales tax is
+      // passed through it's added on top of that at invoice time.
+      const extras = ctx.data.taxAddedOnTop
+        ? `<p class="text">
+          Any applicable sales tax is added on top of this amount at checkout,
+          shown as a separate line on your invoice.
+        </p>`
+        : '';
       return {
         subject: `${ctx.data.communityName}: $${ctx.data.monthlyPriceUsd} on the 1st (${members} ${memberWord})`,
         htmlBody: baseEmailLayout(`
@@ -1058,6 +1068,7 @@ export const billingMonthlyPreview: NotificationDefinition<BillingMonthlyPreview
           On the 1st you'll be billed <strong>$${ctx.data.monthlyPriceUsd}</strong>
           ($1 per active member).
         </p>
+        ${extras}
         <p class="text">
           This is the same number as the Active Members card on your admin
           Stats tab. It updates automatically each month &mdash; anyone who
