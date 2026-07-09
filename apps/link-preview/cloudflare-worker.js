@@ -86,15 +86,22 @@ function generateAppleAppSiteAssociation(hostname) {
     ? `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.staging}`
     : `${APPLE_TEAM_ID}.${IOS_BUNDLE_IDS.production}`;
 
-  // Paths to exclude from universal links (landing/static pages)
+  // Paths to exclude from universal links (landing/static pages).
+  // These are served by the Vite web app (apps/web), not the Expo app — if the
+  // app claimed them it would render a "Page Not Found" screen. Every content
+  // route needs BOTH its exact path and a `/*` variant, otherwise sub-pages
+  // (e.g. /contribute/ai, /guides/branding) fall through to the `*` catch-all
+  // below and get captured by the app. Keep this in sync with the web routes in
+  // apps/web/src/main.tsx and WEB_ONLY_ROOTS in apps/mobile/app/+native-intent.ts.
   const excludedPaths = [
     "/",
     "/android",
     "/android-staging",
     "/download",
-    "/privacy",
-    "/terms",
+    "/legal",
+    "/legal/*",
     "/contribute",
+    "/contribute/*",
     "/issue",
     "/guides",
     "/guides/*",
@@ -183,8 +190,9 @@ const LANDING_PAGE_PATHS = ["/", "/download", "/legal", "/legal/privacy", "/lega
 
 // Multi-segment landing page routes served by the Vite site.
 // "/guides/" covers the church onboarding guide pages (e.g. /guides/branding).
+// "/contribute/" covers the contribution sub-pages (e.g. /contribute/ai).
 // Trailing slash keeps these from matching community slugs like /guidesxyz.
-const LANDING_PAGE_PREFIXES = ["/guides/"];
+const LANDING_PAGE_PREFIXES = ["/guides/", "/contribute/"];
 
 // Known single-segment app routes that should NOT be redirected to /c/:slug.
 // These come from Expo Router route groups: (tabs), (auth), (user), (landing), and root-level routes.

@@ -286,6 +286,12 @@ test("/.well-known/apple-app-site-association returns correct JSON for productio
   assert.ok(components.some(c => c["/"] === "/guides/*" && c.exclude === true), "should exclude guides sub-pages");
   assert.ok(components.some(c => c["/"] === "/developers" && c.exclude === true), "should exclude developer docs");
   assert.ok(components.some(c => c["/"] === "/developers/*" && c.exclude === true), "should exclude developer docs sub-pages");
+  // Content sub-pages must be excluded too, otherwise they fall through to the
+  // "*" catch-all and get captured by the app (renders "Page Not Found").
+  assert.ok(components.some(c => c["/"] === "/contribute" && c.exclude === true), "should exclude contribute page");
+  assert.ok(components.some(c => c["/"] === "/contribute/*" && c.exclude === true), "should exclude contribute sub-pages (e.g. /contribute/ai)");
+  assert.ok(components.some(c => c["/"] === "/legal" && c.exclude === true), "should exclude legal hub");
+  assert.ok(components.some(c => c["/"] === "/legal/*" && c.exclude === true), "should exclude legal sub-pages (privacy/terms)");
 });
 
 test("/.well-known/apple-app-site-association returns correct JSON for staging domain", async () => {
@@ -574,6 +580,37 @@ test("/developers passes through to landing page", async () => {
 
   try {
     const req = new Request("https://togather.nyc/developers", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+    });
+
+    const res = await worker.fetch(req, {});
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(LANDING_PAGE_URL),
+      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// The contribution sub-pages (e.g. /contribute/ai) are browser-only Vite routes.
+// Without a "/contribute/" landing prefix they fall through to passToApp and hit
+// the Expo app's 404 instead of the contribution page.
+test("/contribute/:slug sub-pages pass through to landing page", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("contribute ai", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/contribute/ai", {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
     });
 
