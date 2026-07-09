@@ -30,7 +30,6 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { uploadAsync, FileSystemUploadType } from "expo-file-system/legacy";
 import { ImagePicker } from "@components/ui";
-import * as Linking from "expo-linking";
 import { useCommunitySettings, useGroupTypes, GroupType } from "../hooks";
 import { GroupTypeEditModal } from "./GroupTypeEditModal";
 import { ArchiveCommunityModal } from "./ArchiveCommunityModal";
@@ -76,6 +75,14 @@ export function SettingsContent() {
   const billing = useQuery(
     api.functions.ee.billing.getSubscriptionStatus,
     community?.id && token
+      ? { token, communityId: community.id as Id<"communities"> }
+      : "skip"
+  );
+  // Live billable active-member count → estimated upcoming bill. Only needed
+  // for communities on the $1/active-member model; skip otherwise.
+  const billableSummary = useQuery(
+    api.functions.memberActivity.getBillableSummary,
+    community?.id && token && billing?.billingModel === "per_active_user"
       ? { token, communityId: community.id as Id<"communities"> }
       : "skip"
   );
@@ -861,10 +868,62 @@ export function SettingsContent() {
                   </Text>
                 </View>
               </View>
-              {billing.subscriptionPriceMonthly != null && (
-                <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
-                  ${billing.subscriptionPriceMonthly}/month
-                </Text>
+
+              {billing.billingModel === "per_active_user" ? (
+                <>
+                  <Text style={[styles.sectionDescription, { color: colors.textSecondary, marginBottom: 8 }]}>
+                    $1/month per active member
+                  </Text>
+
+                  {/* Current bill — set at the last count, charged this cycle. */}
+                  {billing.subscriptionPriceMonthly != null && (
+                    <View style={[styles.billingRow, { borderTopColor: colors.border }]}>
+                      <View style={styles.groupTypeInfo}>
+                        <Text style={[styles.billingRowLabel, { color: colors.text }]}>Current bill</Text>
+                        <Text style={[styles.billingRowHint, { color: colors.textSecondary }]}>
+                          {billing.subscriptionPriceMonthly} active {billing.subscriptionPriceMonthly === 1 ? "member" : "members"} at the last count
+                        </Text>
+                      </View>
+                      <Text style={[styles.billingRowValue, { color: colors.text }]}>
+                        ${billing.subscriptionPriceMonthly}/mo
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Estimated next bill — live count, finalized on the 28th. */}
+                  {billableSummary != null && (
+                    <View style={[styles.billingRow, { borderTopColor: colors.border }]}>
+                      <View style={styles.groupTypeInfo}>
+                        <Text style={[styles.billingRowLabel, { color: colors.text }]}>Estimated next bill</Text>
+                        <Text style={[styles.billingRowHint, { color: colors.textSecondary }]}>
+                          {billableSummary.billableActiveUsers} active {billableSummary.billableActiveUsers === 1 ? "member" : "members"} right now
+                        </Text>
+                      </View>
+                      <Text style={[styles.billingRowValue, { color: colors.text }]}>
+                        ${billableSummary.monthlyPriceUsd}/mo
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Cycle reminder — mirror the Go Live screen's wording. */}
+                  <View style={[styles.billingNote, { backgroundColor: colors.surfaceSecondary }]}>
+                    <Ionicons name="calendar-outline" size={16} color={colors.textSecondary} style={{ marginTop: 1 }} />
+                    <Text style={[styles.billingNoteText, { color: colors.textSecondary }]}>
+                      Active members are counted on the 28th and charged on the 1st, billed a month ahead — we email the exact amount first. Only applicable sales tax is added on top.
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                billing.subscriptionPriceMonthly != null && (
+                  <>
+                    <Text style={[styles.sectionDescription, { color: colors.textSecondary, marginBottom: 4 }]}>
+                      ${billing.subscriptionPriceMonthly}/month
+                    </Text>
+                    <Text style={[styles.sectionDescription, { color: colors.textTertiary }]}>
+                      Moving to $1/month per active member.
+                    </Text>
+                  </>
+                )
               )}
             </>
           ) : (
@@ -873,6 +932,12 @@ export function SettingsContent() {
             </Text>
           )}
 
+          {/*
+            Web keeps the management link (Stripe portal, invoices, plan). On
+            native iOS this is read-only — an outbound link to an external
+            payment/management page risks App Store anti-steering rejection
+            (guideline 3.1.1), so we only state where billing is managed.
+          */}
           {Platform.OS === "web" ? (
             <TouchableOpacity
               style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
@@ -898,21 +963,12 @@ export function SettingsContent() {
             <View style={[styles.integrationItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.groupTypeInfo}>
                 <Text style={[styles.groupTypeName, { color: colors.text }]}>
-                  Manage on Web
+                  Managed on the web
                 </Text>
                 <Text style={[styles.groupTypeDescription, { color: colors.textSecondary }]}>
-                  Billing is managed through the web app. Tap to open in your browser.
+                  Payment methods and invoices are handled from the Togather web dashboard.
                 </Text>
               </View>
-              <TouchableOpacity
-                onPress={() => {
-                  if (community?.id) {
-                    Linking.openURL(`${DOMAIN_CONFIG.landingUrl}/billing/${community.id}`);
-                  }
-                }}
-              >
-                <Ionicons name="open-outline" size={20} color={themePrimaryColor} />
-              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -1137,6 +1193,40 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 12,
     borderWidth: 1,
+  },
+  billingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  billingRowLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  billingRowHint: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  billingRowValue: {
+    fontSize: 17,
+    fontWeight: "700",
+  },
+  billingNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  billingNoteText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
   },
   connectedBadge: {
     flexDirection: "row",
