@@ -1476,6 +1476,11 @@ export const getSubscriptionStatus = query({
       subscriptionPriceMonthly: community.subscriptionPriceMonthly ?? null,
       stripeCustomerId: community.stripeCustomerId ?? null,
       billingEmail: community.billingEmail ?? null,
+      // "per_active_user" = $1/month per active member; null/absent = legacy
+      // flat price. Drives which billing UI the admin app renders. Note that
+      // for per_active_user communities `subscriptionPriceMonthly` holds the
+      // last-synced active-member count (= $1 each), not a fixed price.
+      billingModel: community.billingModel ?? null,
     };
   },
 });
