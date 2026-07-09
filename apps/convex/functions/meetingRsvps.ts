@@ -14,6 +14,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
+import { canEditMeeting } from "../lib/meetingPermissions";
 import { PAST_EVENT_BUFFER_MS, isNotifiedRsvpOptionId } from "../lib/meetingConfig";
 import {
   getMaxGuestsForMeeting,
@@ -100,8 +101,15 @@ export const list = query({
         .first();
     }
 
-    // If user is NOT authenticated OR has NOT RSVPed, return limited access response
-    if (!userId || !userRsvp) {
+    // Event leaders/hosts/community admins can see the full guest list without
+    // having RSVP'd themselves (matches the edit-access rule in ADR-022 and the
+    // markAttendance permission check). This lets leaders check who's coming
+    // without being forced to RSVP.
+    const canManage = userId ? await canEditMeeting(ctx, userId, meeting) : false;
+
+    // If user is NOT authenticated OR (has NOT RSVPed AND cannot manage), return
+    // limited access response
+    if (!userId || (!userRsvp && !canManage)) {
       // Get RSVP options from meeting
       const rsvpOptions = (meeting.rsvpOptions as RsvpOption[] | null) || [];
 
@@ -238,6 +246,7 @@ export const list = query({
       rsvps: groupedRsvps,
       total: rsvps.length,
       totalWithGuests: rsvps.length + totalGuests,
+      limitedAccess: false,
     };
   },
 });

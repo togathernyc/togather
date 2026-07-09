@@ -14,7 +14,7 @@ import { useQuery, api } from "@services/api/convex";
 import { useAuth } from "@/providers/AuthProvider";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { BlurView } from "expo-blur";
+import { SafeBlurView } from "@components/ui/SafeBlurView";
 import {
   getEmojiForOption,
   getCleanLabel,
@@ -61,6 +61,14 @@ export default function GuestListScreen() {
   const rsvpOptions = (event?.hasAccess && event?.rsvpOptions ? event.rsvpOptions : []) as any[];
   const hasRsvpd = !!myRsvp?.optionId;
 
+  // The backend grants the full guest list to users who have RSVP'd AND to
+  // event leaders/hosts/community admins (see meetingRsvps.list). It signals a
+  // gated response with `limitedAccess`, so drive the restricted overlay off
+  // that instead of the viewer's own RSVP — otherwise a leader who hasn't
+  // RSVP'd would be blocked from a list the backend already returned. Fall back
+  // to the user's own RSVP state while the list query is still loading.
+  const hasFullAccess = rsvpData ? !rsvpData.limitedAccess : hasRsvpd;
+
   const isLoading = isLoadingEvent || isLoadingMyRsvp || isLoadingRsvp;
 
   if (isLoading) {
@@ -98,7 +106,7 @@ export default function GuestListScreen() {
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={styles.scrollContent}
-      scrollEnabled={hasRsvpd}
+      scrollEnabled={hasFullAccess}
     >
       {rsvpData?.rsvps.map((rsvpGroup) => {
         if (rsvpGroup.count === 0) return null;
@@ -181,8 +189,8 @@ export default function GuestListScreen() {
         {renderGuestList()}
 
         {/* Restricted Access Overlay - covers full content area */}
-        {!hasRsvpd && (
-          <BlurView
+        {!hasFullAccess && (
+          <SafeBlurView
             intensity={50}
             tint="dark"
             style={styles.blurOverlay}
@@ -210,7 +218,7 @@ export default function GuestListScreen() {
                 </Text>
               </View>
             </View>
-          </BlurView>
+          </SafeBlurView>
         )}
       </View>
     </SafeAreaView>

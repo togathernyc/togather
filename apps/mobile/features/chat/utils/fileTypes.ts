@@ -225,6 +225,7 @@ export function formatFileSize(bytes: number): string {
 let _documentPickerSupported: boolean | null = null;
 let _audioVideoSupported: boolean | null = null;
 let _linearGradientSupported: boolean | null = null;
+let _blurSupported: boolean | null = null;
 let _videoSupported: boolean | null = null;
 let _audioSupported: boolean | null = null;
 
@@ -356,6 +357,39 @@ export function isLinearGradientSupported(): boolean {
 }
 
 /**
+ * Check if expo-blur (BlurView) is available
+ *
+ * Mirrors isLinearGradientSupported: on native with the New Architecture
+ * (Fabric), ExpoBlurView's view adapter crashes at render time even though
+ * the module registers successfully — the Fabric ViewManagerAdapter can't
+ * find the underlying view manager for ExpoView subclasses. A module-presence
+ * probe is therefore insufficient (it registers, then still crashes), so we
+ * disable it on native and let SafeBlurView fall back to a solid overlay.
+ * Re-enable once expo-blur ships reliable Fabric support and a native build
+ * verifies it. See ADR-013 and the RSVP guest-list crash.
+ */
+export function isBlurSupported(): boolean {
+  if (_blurSupported !== null) {
+    return _blurSupported;
+  }
+
+  // On web, BlurView is JS/CSS-only and always available
+  if (Platform.OS === 'web') {
+    try {
+      const BlurModule = require('expo-blur');
+      _blurSupported = !!BlurModule?.BlurView;
+      return _blurSupported;
+    } catch {
+      _blurSupported = false;
+      return false;
+    }
+  }
+
+  _blurSupported = false;
+  return false;
+}
+
+/**
  * Check if expo-video is available
  *
  * This module is only available after a native build update.
@@ -437,6 +471,7 @@ export function resetModuleDetectionCache(): void {
   _documentPickerSupported = null;
   _audioVideoSupported = null;
   _linearGradientSupported = null;
+  _blurSupported = null;
   _videoSupported = null;
   _audioSupported = null;
 }
