@@ -178,6 +178,7 @@ export const list = query({
         total: rsvps.length,
         totalWithGuests: rsvps.length + totalGuests,
         limitedAccess: true,
+        canManage: false,
       };
     }
 
@@ -247,6 +248,9 @@ export const list = query({
       total: rsvps.length,
       totalWithGuests: rsvps.length + totalGuests,
       limitedAccess: false,
+      // True when access is granted by a leader/host/admin role (so the client
+      // can note that the list is hidden from members who haven't RSVP'd).
+      canManage,
     };
   },
 });

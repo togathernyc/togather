@@ -69,6 +69,10 @@ export default function GuestListScreen() {
   // to the user's own RSVP state while the list query is still loading.
   const hasFullAccess = rsvpData ? !rsvpData.limitedAccess : hasRsvpd;
 
+  // Full access granted by a leader/host/admin role rather than the viewer's own
+  // RSVP. Used to remind them the list is hidden from members who haven't RSVP'd.
+  const canManage = !!rsvpData?.canManage;
+
   const isLoading = isLoadingEvent || isLoadingMyRsvp || isLoadingRsvp;
 
   if (isLoading) {
@@ -183,6 +187,17 @@ export default function GuestListScreen() {
         <View style={styles.headerSpacer} />
       </View>
 
+      {/* Leader notice — this list is restricted to RSVP'd members for others */}
+      {canManage && (
+        <View style={styles.leaderNotice}>
+          <Ionicons name="eye-outline" size={16} color="#8a6d1f" />
+          <Text style={styles.leaderNoticeText}>
+            You can see this as a leader. Members who haven't RSVP'd only see a
+            preview until they RSVP.
+          </Text>
+        </View>
+      )}
+
       {/* Content Area */}
       <View style={styles.contentWrapper}>
         {/* Guest List */}
@@ -275,6 +290,24 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 32,
+  },
+
+  // Leader notice
+  leaderNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#fdf6e3",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0e6c8",
+  },
+  leaderNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#8a6d1f",
+    lineHeight: 18,
   },
 
   // Content
