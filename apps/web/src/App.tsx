@@ -728,7 +728,7 @@ function FAQSection() {
     {
       question: "How much does Togather cost?",
       answer:
-        "Togather is $1/month per active member — someone who opened the app in your community in the last 30 days — so you only pay for who's actually using it. A typical church has about a third of its members active in a given month, so a 1,000-member church pays around $300/month, not $1,000. It's beta pricing you can lock in by starting now, and card processing fees plus any applicable sales tax are added on top as separate lines.",
+        "Togather is $1/month per active member — someone who opened the app in your community in the last 30 days — so you only pay for who's actually using it. A typical church has about a third of its members active in a given month, so a 1,000-member church pays around $300/month, not $1,000. It's beta pricing you can lock in by starting now. The only thing added on top is any applicable sales tax; card processing is already included.",
       link: "/guides/pricing",
     },
     {

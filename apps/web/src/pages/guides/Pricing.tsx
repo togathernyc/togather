@@ -149,17 +149,17 @@ export function Pricing() {
 
       <Section id="fees" title="Are there any extra fees?">
         <P>
-          The <Term>$1 per active member</Term> is the clean software price, and
-          we keep it fee-free on purpose so it's easy to reason about. Two small
-          amounts are added on top at checkout and on each invoice, shown as
-          their own separate lines: <strong>card processing fees</strong> and{" "}
-          <strong>any applicable sales tax</strong>. These are paid by the
-          church.
+          No hidden ones. The <Term>$1 per active member</Term> is the whole
+          software price — payment processing is already included, so there's
+          no card fee tacked on. The only thing added on top is{" "}
+          <strong>sales tax</strong>, where applicable, which is calculated at
+          checkout and shown as its own line on your invoice.
         </P>
-        <Callout tone="note" title="Fees and tax are separate lines, not baked in">
-          Keeping processing and tax as their own line items is what lets the
-          per-member price stay honest and simple. It's standard for any card
-          payment — the $1/member never quietly absorbs a markup.
+        <Callout tone="note" title="Just $1/member, plus tax where it applies">
+          Sales tax on software is required in a number of states, so like any
+          SaaS you'll see it added on top when it applies to your church.
+          Everything else — including card processing — is covered by the
+          $1/member.
         </Callout>
       </Section>
 
