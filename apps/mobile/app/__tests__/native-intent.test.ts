@@ -36,6 +36,8 @@ describe("redirectSystemPath — web-only bounce", () => {
     "https://togather.nyc/nearme",
     "https://togather.nyc/e/abc123",
     "https://togather.nyc/g/xyz789",
+    // Bare "/admin" is the native admin tab — must NOT bounce (only /admin/... subpaths do).
+    "https://togather.nyc/admin",
   ];
 
   it.each(appRoutes)("does not bounce app route %s", (url) => {

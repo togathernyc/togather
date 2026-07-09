@@ -596,6 +596,37 @@ test("/developers passes through to landing page", async () => {
   }
 });
 
+// The contribution sub-pages (e.g. /contribute/ai) are browser-only Vite routes.
+// Without a "/contribute/" landing prefix they fall through to passToApp and hit
+// the Expo app's 404 instead of the contribution page.
+test("/contribute/:slug sub-pages pass through to landing page", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("contribute ai", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/contribute/ai", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+    });
+
+    const res = await worker.fetch(req, {});
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(LANDING_PAGE_URL),
+      `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 // Channel invite link preview tests (/ch/:shortId)
 test("bot /ch/:shortId fetches from Convex and returns OG tags", async () => {
   const calls = [];
