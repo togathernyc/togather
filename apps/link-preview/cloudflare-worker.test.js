@@ -286,6 +286,12 @@ test("/.well-known/apple-app-site-association returns correct JSON for productio
   assert.ok(components.some(c => c["/"] === "/guides/*" && c.exclude === true), "should exclude guides sub-pages");
   assert.ok(components.some(c => c["/"] === "/developers" && c.exclude === true), "should exclude developer docs");
   assert.ok(components.some(c => c["/"] === "/developers/*" && c.exclude === true), "should exclude developer docs sub-pages");
+  // Content sub-pages must be excluded too, otherwise they fall through to the
+  // "*" catch-all and get captured by the app (renders "Page Not Found").
+  assert.ok(components.some(c => c["/"] === "/contribute" && c.exclude === true), "should exclude contribute page");
+  assert.ok(components.some(c => c["/"] === "/contribute/*" && c.exclude === true), "should exclude contribute sub-pages (e.g. /contribute/ai)");
+  assert.ok(components.some(c => c["/"] === "/legal" && c.exclude === true), "should exclude legal hub");
+  assert.ok(components.some(c => c["/"] === "/legal/*" && c.exclude === true), "should exclude legal sub-pages (privacy/terms)");
 });
 
 test("/.well-known/apple-app-site-association returns correct JSON for staging domain", async () => {
