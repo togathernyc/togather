@@ -8,14 +8,22 @@
  * (/onboarding/go-live); everyone else sees a plain "demo" notice.
  */
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, api, Id } from "@services/api/convex";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 
+/**
+ * Routes where the "you're in a demo, go live" strip is redundant or wrong:
+ * the go-live screen (they're already converting) and the community switcher
+ * (they're between communities, not inside the demo).
+ */
+const HIDDEN_ON_ROUTES = ["/onboarding/go-live", "/select-community"];
+
 export function DemoBanner() {
   const router = useRouter();
+  const pathname = usePathname();
   const { community, isAuthenticated } = useAuth();
   const { primaryColor } = useCommunityTheme();
 
@@ -25,6 +33,10 @@ export function DemoBanner() {
       ? { communityId: community.id as Id<"communities"> }
       : "skip",
   );
+
+  if (HIDDEN_ON_ROUTES.some((route) => pathname?.startsWith(route))) {
+    return null;
+  }
 
   if (!status?.isDemo) {
     return null;
