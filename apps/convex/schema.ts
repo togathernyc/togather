@@ -3641,6 +3641,29 @@ export default defineSchema({
   }).index("by_prayer", ["prayerId"]),
 
   /**
+   * Lightweight emoji reactions on a prayer request or one of its follow-ups
+   * (updates / praise reports). Mirrors `chatMessageReactions`, but because a
+   * reaction can target two different row kinds, the target is polymorphic:
+   * `targetType` picks the table and `targetId` holds the string id of a
+   * `prayers` or `prayerFollowUps` row. One row per (target, user, emoji);
+   * uniqueness is enforced in the mutation via `by_target_user`. `emoji` is
+   * validated against a server-side allowlist before insert.
+   *
+   * `communityId` is denormalized for scoping and to make cleanup/queries
+   * cheap without joining back through the prayer.
+   */
+  prayerReactions: defineTable({
+    communityId: v.id("communities"),
+    targetType: v.union(v.literal("prayer"), v.literal("followUp")),
+    targetId: v.string(), // a prayers._id or prayerFollowUps._id
+    userId: v.id("users"),
+    emoji: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_target", ["targetType", "targetId"])
+    .index("by_target_user", ["targetType", "targetId", "userId"]),
+
+  /**
    * Member-filed reports against a published prayer — the last-line
    * defense after our LLM and any author-side nudges. Each report is one
    * (prayer, reporter) pair; we enforce uniqueness in the mutation via
