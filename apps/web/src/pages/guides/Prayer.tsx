@@ -110,6 +110,15 @@ export function Prayer() {
           request get to share the joy.
         </P>
         <P>
+          Praying a full session is a meaningful, deliberate act — but people
+          also want a lighter way to say "I'm with you." On a prayer's detail
+          view, everyone who prayed can add an emoji <Term>reaction</Term> to
+          the request and to each update or praise report: tap the{" "}
+          <Term>＋</Term> to pick from a small, warm set (❤️ 🙏 🎉 🙌 🕊️ 🥹),
+          tap a reaction again to remove it, and long-press one to see who
+          reacted. Reactions are quiet — they don't send a notification.
+        </P>
+        <P>
           Once a request has run its course, the author can <Term>Archive</Term>{" "}
           it — that hides it from the feed but keeps it under their own My
           Prayers list. Older requests are tidied away on their own over time,

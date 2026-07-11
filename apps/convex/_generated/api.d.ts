@@ -139,6 +139,7 @@ import type * as functions_peopleSavedViews from "../functions/peopleSavedViews.
 import type * as functions_posters from "../functions/posters.js";
 import type * as functions_prayers from "../functions/prayers.js";
 import type * as functions_prayers_notifications from "../functions/prayers/notifications.js";
+import type * as functions_prayers_reactions from "../functions/prayers/reactions.js";
 import type * as functions_proposals from "../functions/proposals.js";
 import type * as functions_publicApi from "../functions/publicApi.js";
 import type * as functions_resources from "../functions/resources.js";
@@ -372,6 +373,7 @@ declare const fullApi: ApiFromModules<{
   "functions/posters": typeof functions_posters;
   "functions/prayers": typeof functions_prayers;
   "functions/prayers/notifications": typeof functions_prayers_notifications;
+  "functions/prayers/reactions": typeof functions_prayers_reactions;
   "functions/proposals": typeof functions_proposals;
   "functions/publicApi": typeof functions_publicApi;
   "functions/resources": typeof functions_resources;

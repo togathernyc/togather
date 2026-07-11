@@ -25,6 +25,7 @@ import { requireAuth } from "../lib/auth";
 import { now } from "../lib/utils";
 import { moderatePrayerText, type ModerationResult } from "../lib/moderation/prayer";
 import { notify, notifyBatch, notifyCommunityAdmins } from "../lib/notifications/send";
+import { aggregateReactionsForTargets } from "./prayers/reactions";
 
 const MAX_BODY_LENGTH = 500;
 const FEED_LIMIT = 3;
@@ -417,6 +418,18 @@ export const getDetail = query({
       .collect();
     followUps.sort((a, b) => a.createdAt - b.createdAt);
 
+    // Fold emoji reactions for the request card + every follow-up card into
+    // this one query so both detail screens render reaction badges without an
+    // extra round-trip (no per-card N+1). Aggregated to { emoji, count,
+    // hasReacted }, the same shape chat returns.
+    const reactionsByTarget = await aggregateReactionsForTargets(ctx, userId, [
+      { targetType: "prayer", targetId: prayer._id },
+      ...followUps.map((f) => ({
+        targetType: "followUp" as const,
+        targetId: f._id,
+      })),
+    ]);
+
     // Author display: shown only when the prayer is not anonymous. The
     // author themselves always sees themselves; prayed-for viewers see
     // "First L." for non-anon prayers and nothing for anonymous ones.
@@ -435,6 +448,7 @@ export const getDetail = query({
       isAuthor,
       authorDisplayName,
       crisisFlag: prayer.crisisFlag === true,
+      reactions: reactionsByTarget[prayer._id] ?? [],
       // Only include author-only fields when caller is the author. The
       // moderationDetail (with category + admin note) is for author
       // transparency on rejected/pending prayers — never leaked to viewers.
@@ -450,6 +464,7 @@ export const getDetail = query({
         kind: f.kind,
         bodyText: f.bodyText,
         createdAt: f.createdAt,
+        reactions: reactionsByTarget[f._id] ?? [],
       })),
     };
   },

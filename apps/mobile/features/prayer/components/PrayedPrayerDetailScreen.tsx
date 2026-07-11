@@ -25,6 +25,7 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { CrisisResourceCard } from './CrisisResourceCard';
+import { PrayerReactions } from './PrayerReactions';
 
 const COMPLETED_GREEN = '#34C759';
 
@@ -120,6 +121,11 @@ export function PrayedPrayerDetailScreen() {
               {new Date(detail.createdAt).toLocaleDateString()}
             </Text>
           </View>
+          <PrayerReactions
+            targetType="prayer"
+            targetId={detail.id}
+            reactions={detail.reactions}
+          />
         </View>
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Updates</Text>
@@ -155,6 +161,11 @@ export function PrayedPrayerDetailScreen() {
                 </Text>
               </View>
               <Text style={[styles.followUpBody, { color: colors.text }]}>{f.bodyText}</Text>
+              <PrayerReactions
+                targetType="followUp"
+                targetId={f.id}
+                reactions={f.reactions}
+              />
             </View>
           ))
         )}
