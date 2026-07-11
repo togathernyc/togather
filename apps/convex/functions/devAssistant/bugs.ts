@@ -144,15 +144,14 @@ const GITHUB_MERGEABLE_STATUSES: BugStatus[] = [
  * Apply a validated status transition and persist it. Throws on an illegal
  * transition. When a bug lands on READY_FOR_IMPL we schedule the dispatch
  * action immediately (event-driven, no cron) so the routine fires the instant
- * the bug is marked ready. `opts.stagingRedo` rides along to dispatchBug so a
- * staging-redo round (reportStagingIssue) carries the thread context and
- * "open a NEW PR" instructions to the routine.
+ * the bug is marked ready. Staging-redo rounds need no flag here: dispatchBug
+ * infers redo mode from the row's persisted redoRounds counter, so redo
+ * context survives retries and re-dispatches.
  */
 export async function applyStatusTransition(
   ctx: MutationCtx,
   bug: Doc<"devBugs">,
   newStatus: BugStatus,
-  opts?: { stagingRedo?: boolean },
 ): Promise<void> {
   if (!canTransition(bug.status, newStatus)) {
     throw new Error(
@@ -174,10 +173,7 @@ export async function applyStatusTransition(
     await ctx.scheduler.runAfter(
       0,
       internal.functions.devAssistant.actions.dispatchBug,
-      {
-        bugId: bug._id,
-        ...(opts?.stagingRedo ? { stagingRedo: true } : {}),
-      },
+      { bugId: bug._id },
     );
   }
 }
@@ -650,6 +646,32 @@ export const handleGithubPrClosed = internalMutation({
       // Idempotent with auto-merge's own MERGED apply (and with webhook
       // redeliveries): once merged, there is nothing left to apply.
       if (target.status === "MERGED") return;
+      // Staging-redo guard: MERGED is no longer terminal, so the early-return
+      // above no longer catches a REDELIVERED merge event for a PREVIOUS
+      // round's PR (the branch name claude/devbug-<bugId> is identical every
+      // round, so branch correlation alone can't tell rounds apart). A stale
+      // event applied mid-redo would falsely flip the in-flight round back to
+      // MERGED and orphan its new PR. Two checks:
+      //  - the event names a PR that isn't the row's current one → stale;
+      //  - the row has no current PR but has already shipped once → it's in
+      //    a redo round before its new PR opened; only a stale event can
+      //    reference it. (Never-shipped rows keep the legacy behavior: a PR
+      //    merged before the CODE_REVIEW callback landed must still apply.)
+      //    A redo PR merged in that same pre-callback window is not lost —
+      //    the reconcile cron applies it once the callback stores prUrl.
+      if (args.prUrl) {
+        const staleForCurrentRound = target.prUrl
+          ? target.prUrl !== args.prUrl
+          : !!target.shippedAt;
+        if (staleForCurrentRound) {
+          console.log(
+            "[DevAssistant] Ignoring stale PR-merged event for a previous round",
+            target._id,
+            args.prUrl,
+          );
+          return;
+        }
+      }
       if (target.routineRunId) {
         await ctx.scheduler.runAfter(
           0,
@@ -856,16 +878,42 @@ export const recordProductionDeployOutcome = internalMutation({
         "system",
         "Production deploy started — the silent update reaches users next time they open the app",
       );
+      await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
     } else {
-      await ctx.db.patch(args.bugId, { productionRequestedAt: undefined });
       await insertThreadMessage(
         ctx,
         args.bugId,
         "system",
         `Production deploy couldn't start${args.detail ? `: ${args.detail}` : ""} — needs a maintainer`,
       );
+      await ctx.db.patch(args.bugId, {
+        productionRequestedAt: undefined,
+        updatedAt: Date.now(),
+      });
     }
-    await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+  },
+});
+
+/**
+ * Record that an in-app merge attempt (actions.mergeFromApp) failed: post the
+ * reason and clear mergeRequestedAt so the merge card comes back — the
+ * message tells the maintainer to "try again", which must be possible.
+ */
+export const recordMergeFromAppFailure = internalMutation({
+  args: { bugId: v.id("devBugs"), reason: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return;
+    await insertThreadMessage(
+      ctx,
+      args.bugId,
+      "system",
+      `Merge failed: ${args.reason} — try again, or merge the PR on GitHub`,
+    );
+    await ctx.db.patch(args.bugId, {
+      mergeRequestedAt: undefined,
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -1327,7 +1375,11 @@ export const getThreadContext = internalQuery({
         (b) =>
           b.threadRootMessageId === threadRootMessageId &&
           b.status !== "MERGED" &&
-          b.status !== "REJECTED",
+          b.status !== "REJECTED" &&
+          // A shipped bug in a staging-redo round is non-terminal again, but
+          // its brief is the payload-of-record for an in-flight rebuild — a
+          // new chat mention must file a fresh bug, not mutate the redo.
+          !b.shippedAt,
       )
       .sort((a, b) => b.createdAt - a.createdAt)[0];
 

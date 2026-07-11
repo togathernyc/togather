@@ -29,11 +29,9 @@ import { Markdown } from "@components/ui/Markdown";
 import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
+import { LOOKS_LIKE_CONVEX_ID } from "../utils/devRoute";
 import { displayTitle, isBuildableScope, PALETTE } from "../utils/status";
 import type { Contribution } from "../types";
-
-/** Mirrors the malformed-deep-link guard in ContributionDetailScreen. */
-const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
 
 /** The plan body: approval/scope context + the spec markdown. */
 export function PlanContent({ contribution }: { contribution: Contribution }) {
@@ -77,9 +75,11 @@ export function PlanContent({ contribution }: { contribution: Contribution }) {
 
 /**
  * Desktop-web right panel: rendered by ContributionDetailScreen beside the
- * conversation when the plan is open.
+ * conversation when the plan is open. Memoized — the parent re-renders on
+ * every composer keystroke, and reconciling a long markdown tree per
+ * keystroke would jank typing.
  */
-export function PlanPanel({
+export const PlanPanel = React.memo(function PlanPanel({
   contribution,
   onClose,
 }: {
@@ -111,7 +111,7 @@ export function PlanPanel({
       </ScrollView>
     </View>
   );
-}
+});
 
 /** Phone route: /dev/plan/[id] — the plan as its own full screen. */
 export function PlanScreen() {

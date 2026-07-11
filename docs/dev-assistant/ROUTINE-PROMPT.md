@@ -181,10 +181,12 @@ Callback: { bugId, routineRunId, status: "IN_REVIEW", spec, riskLevel,
 aiTitle, area, scope, splitSlices?, verifyOnStaging, screenshots? }.
 
 If the payload has `revision: true`, this is a revision round: the payload
-includes the full conversation thread. Respond to the latest user message,
-re-check the code where their correction demands it, and return the COMPLETE
-updated spec (not a diff), updating any triage fields that changed. Keep
-aiTitle stable unless the item's nature changed.
+includes the full conversation thread AND the current spec draft in its
+`spec` field (the thread itself only carries short "plan ready/updated"
+pointers, never the plan text). Respond to the latest user message, re-check
+the code where their correction demands it, and return the COMPLETE updated
+spec (not a diff), updating any triage fields that changed. Keep aiTitle
+stable unless the item's nature changed.
 ```
 
 ---
@@ -218,7 +220,8 @@ ends at the CODE_REVIEW callback.
 If the payload has `redo: true`, this is a STAGING-REDO round: an earlier
 PR for this item was already merged, but the contributor found problems
 while trying the change on staging. The payload includes the full
-conversation `thread` — the latest user messages describe what's wrong.
+conversation `thread` — the latest user messages describe what's wrong —
+and `screenshotUrls` includes any pictures they attached to thread replies.
 Start from the latest main (the merged code is already in it), fix the
 reported problems, and open a NEW pull request on a fresh
 claude/devbug-<bugId> branch. Same callbacks as a normal run.

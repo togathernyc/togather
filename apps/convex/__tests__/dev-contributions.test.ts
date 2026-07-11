@@ -1361,6 +1361,7 @@ describe("staging verification", () => {
     expect(bug?.reviewVerdict).toBeUndefined();
     expect(bug?.reviewSummary).toBeUndefined();
     expect(bug?.fixRounds).toBe(0);
+    expect(bug?.redoRounds).toBe(1); // persisted — dispatch infers redo from it
     expect(bug?.activeRunMode).toBe("implement");
     // Fresh routineRunId — stale callbacks from the merged round are orphaned.
     expect(bug?.routineRunId).toBeTruthy();
@@ -1378,6 +1379,144 @@ describe("staging verification", () => {
       brief.thread.map((m: { authorType: string }) => m.authorType),
     ).toEqual(["user", "system"]);
     expect(brief.thread[0]?.body).toBe("The RSVP toast still says Going.");
+  });
+
+  test("a retried redo dispatch keeps the redo context (inferred from redoRounds)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { otherMaintainerId, maintainerId } = await seedUsers(t);
+
+    const id = await seedStagingBug(t, maintainerId, { status: "MERGED" });
+    // No routine env: the redo dispatch fails before markDispatched, leaving
+    // the row in READY_FOR_IMPL with lastError — the retry window.
+    await t.mutation(
+      api.functions.devAssistant.contributions.reportStagingIssue,
+      { token: maintainerId, id, note: "Still broken on staging." },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    let bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_FOR_IMPL");
+    expect(bug?.lastError).toBeTruthy();
+
+    // Superuser retries once the env is back — the redo context must survive
+    // because it's inferred from the persisted redoRounds, not a dispatch arg.
+    const fetchMock = stubRoutineEnv();
+    await t.mutation(api.functions.devAssistant.bugs.retryDispatch, {
+      token: otherMaintainerId,
+      bugId: id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({ bugId: id, redo: true });
+    expect(brief.instructions).toMatch(/REDO ROUND/);
+    expect(brief.thread[0]?.body).toBe("Still broken on staging.");
+
+    bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
+  });
+
+  test("redo dispatch carries pictures attached to thread replies", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    const id = await seedStagingBug(t, maintainerId, { status: "MERGED" });
+    // Contributor screenshots the broken staging behavior in a reply…
+    await t.run(async (ctx) => {
+      await ctx.db.insert("devBugMessages", {
+        bugId: id,
+        authorType: "user",
+        userId: maintainerId,
+        body: "See the screenshot",
+        imageUrls: ["r2:devassistant/staging-broken.png"],
+        createdAt: Date.now(),
+      });
+    });
+    process.env.R2_PUBLIC_URL = "https://media.example.com";
+    const fetchMock = stubRoutineEnv();
+
+    // …then reports the staging issue.
+    await t.mutation(
+      api.functions.devAssistant.contributions.reportStagingIssue,
+      { token: maintainerId, id, note: "see the screenshot above" },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief.redo).toBe(true);
+    expect(brief.screenshotUrls).toEqual([
+      "https://media.example.com/devassistant/staging-broken.png",
+    ]);
+    delete process.env.R2_PUBLIC_URL;
+  });
+
+  test("a stale merged-PR webhook for a previous round cannot kill the redo", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // Redo in flight: shipped once (round 1 merged), building again, no new
+    // PR yet.
+    const now = Date.now();
+    const id = await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "IN_PROGRESS",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix RSVP message",
+        body: "B",
+        routineRunId: "run-redo",
+        activeRunMode: "implement" as const,
+        verifyOnStaging: true,
+        redoRounds: 1,
+        shippedAt: now - 1000,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    // GitHub redelivers round 1's closed(merged) event — same branch name.
+    await t.mutation(internal.functions.devAssistant.bugs.handleGithubPrClosed, {
+      branchRef: `claude/devbug-${id}`,
+      prUrl: "https://github.com/togathernyc/togather/pull/41",
+      merged: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The redo round survives untouched.
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
+
+    // Once the redo's own PR is stored, only ITS url may apply a merge.
+    await t.run(async (ctx) =>
+      ctx.db.patch(id, {
+        status: "CODE_REVIEW" as const,
+        prUrl: "https://github.com/togathernyc/togather/pull/52",
+      }),
+    );
+    await t.mutation(internal.functions.devAssistant.bugs.handleGithubPrClosed, {
+      branchRef: `claude/devbug-${id}`,
+      prUrl: "https://github.com/togathernyc/togather/pull/41", // round 1
+      merged: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run(async (ctx) => ctx.db.get(id)))?.status).toBe(
+      "CODE_REVIEW",
+    );
+
+    // The current round's PR still merges normally.
+    await t.mutation(internal.functions.devAssistant.bugs.handleGithubPrClosed, {
+      branchRef: `claude/devbug-${id}`,
+      prUrl: "https://github.com/togathernyc/togather/pull/52",
+      merged: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run(async (ctx) => ctx.db.get(id)))?.status).toBe("MERGED");
   });
 });
 
@@ -1428,6 +1567,19 @@ describe("in-app merge (mergeNow)", () => {
       token: maintainerId,
       id,
     });
+
+    // Server-side in-flight latch: stamped immediately so the merge card
+    // hides for every viewer and a concurrent second tap is rejected.
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.mergeRequestedAt,
+    ).toBeTruthy();
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+        token: maintainerId,
+        id,
+      }),
+    ).rejects.toThrow(/already in flight/);
+
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     // The GitHub merge endpoint was hit with the squash default.
@@ -1476,6 +1628,9 @@ describe("in-app merge (mergeNow)", () => {
 
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("READY_TO_MERGE");
+    // Failure clears the in-flight latch so the merge card returns and the
+    // "try again" in the message is actually possible.
+    expect(bug?.mergeRequestedAt).toBeUndefined();
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -1484,6 +1639,43 @@ describe("in-app merge (mergeNow)", () => {
     expect(thread[thread.length - 1]?.body).toMatch(
       /Merge failed: GitHub merge returned 409 \(Base branch was modified\)/,
     );
+  });
+
+  test("losing the race to auto-merge is a success, not a spurious failure", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    // The merge PUT 405s (someone else merged first), but the follow-up PR
+    // GET reports merged: true.
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith("/merge")) {
+        return new Response(
+          JSON.stringify({ message: "Pull Request is not mergeable" }),
+          { status: 405 },
+        );
+      }
+      return new Response(JSON.stringify({ merged: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    // No "Merge failed" line — the change merged, whoever's PUT landed.
+    expect(thread.some((m) => /Merge failed/.test(m.body))).toBe(false);
   });
 
   test("rejects when the item is not ready (status, verdict, or missing PR)", async () => {
@@ -1681,7 +1873,7 @@ describe("in-app production promote (silent OTA)", () => {
       ),
     ).rejects.toThrow(/Only merged changes/);
 
-    // Already triggered.
+    // Already triggered (within the cooldown).
     const done = await seedMergedBug(t, maintainerId, {
       productionRequestedAt: Date.now(),
     });
@@ -1691,6 +1883,29 @@ describe("in-app production promote (silent OTA)", () => {
         { token: maintainerId, id: done },
       ),
     ).rejects.toThrow(/already triggered/);
+
+    // Legacy row: verifyOnStaging UNSET (predates the feature) — must not
+    // grow a production trigger retroactively.
+    const legacy = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "MERGED",
+        kind: "bug",
+        source: "dashboard",
+        title: "T",
+        body: "B",
+        shippedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      t.mutation(
+        api.functions.devAssistant.contributions.promoteToProduction,
+        { token: maintainerId, id: legacy },
+      ),
+    ).rejects.toThrow(/works on staging/);
 
     // Non-interactive items skip the staging gate entirely.
     const copyOnly = await seedMergedBug(t, maintainerId, {
@@ -1709,6 +1924,29 @@ describe("in-app production promote (silent OTA)", () => {
       (await t.run(async (ctx) => ctx.db.get(copyOnly)))
         ?.productionRequestedAt,
     ).toBeTruthy();
+  });
+
+  test("the trigger latch is a cooldown: a stale request can be re-triggered", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // Triggered 16 minutes ago — the workflow run may have failed on GitHub
+    // with no callback to clear the latch; past the cooldown the maintainer
+    // may re-trigger from the app.
+    const id = await seedMergedBug(t, maintainerId, {
+      productionRequestedAt: Date.now() - 16 * 60 * 1000,
+    });
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2931,7 +3169,10 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       bugId: id,
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Two calls, no retry loop: the merge PUT, then the merged-state GET that
+    // rules out a lost race before reporting a failure. No further merges.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toMatch(/\/merge$/);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merge blocked: GitHub merge returned 409 (Pull Request is not mergeable) — needs a maintainer",
     ]);

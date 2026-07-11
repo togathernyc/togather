@@ -120,6 +120,11 @@ async function notifyOriginatorUnlessSelf(
   );
 }
 
+/** "First Last" for thread/system messages, with a role-appropriate fallback. */
+function displayName(user: Doc<"users">, fallback: string): string {
+  return `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || fallback;
+}
+
 /**
  * Triage gate (ADR-029 P1.5), shared by approveSpec and startBuild:
  * non-buildable items must not enter the build pipeline as-is — the spec body
@@ -537,8 +542,7 @@ export const confirmStaging = mutation({
     const now = Date.now();
     await ctx.db.patch(args.id, { stagingVerifiedAt: now, updatedAt: now });
 
-    const name =
-      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A contributor";
+    const name = displayName(user, "A contributor");
     await insertThreadMessage(
       ctx,
       args.id,
@@ -590,12 +594,15 @@ export const reportStagingIssue = mutation({
     // the merged PR is history (a redo opens a new one), the old verdict and
     // fix-round budget belong to that PR, and clearing routineRunId orphans
     // any stale callbacks from finished runs while the redo dispatch stamps
-    // a fresh id.
+    // a fresh id. The PERSISTED redoRounds counter is what makes this a redo:
+    // dispatchBug infers redo mode from it (so retryDispatch keeps the redo
+    // context) and chat idempotency keys are scoped per round.
     await ctx.db.patch(args.id, {
       prUrl: undefined,
       reviewVerdict: undefined,
       reviewSummary: undefined,
       fixRounds: 0,
+      redoRounds: (bug.redoRounds ?? 0) + 1,
       routineRunId: undefined,
       activeRunMode: undefined,
       lastError: undefined,
@@ -604,10 +611,8 @@ export const reportStagingIssue = mutation({
 
     const fresh = await ctx.db.get(args.id);
     if (fresh) {
-      // MERGED -> READY_FOR_IMPL schedules dispatchBug({ stagingRedo: true }).
-      await applyStatusTransition(ctx, fresh, "READY_FOR_IMPL", {
-        stagingRedo: true,
-      });
+      // MERGED -> READY_FOR_IMPL schedules the redo dispatch.
+      await applyStatusTransition(ctx, fresh, "READY_FOR_IMPL");
     }
 
     await notifyOriginatorUnlessSelf(ctx, bug, user._id, {
@@ -647,16 +652,24 @@ export const mergeNow = mutation({
     if (!bug.prUrl) {
       throw new ConvexError("This item has no pull request to merge");
     }
+    // Server-side in-flight latch: hides the merge card for EVERY viewer
+    // (not just the tapping device) and blocks a concurrent second merge.
+    // mergeFromApp's failure path clears it so "try again" works.
+    if (bug.mergeRequestedAt) {
+      throw new ConvexError("A merge is already in flight for this item");
+    }
 
-    const name =
-      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A maintainer";
+    const name = displayName(user, "A maintainer");
     await insertThreadMessage(
       ctx,
       args.id,
       "system",
       `${name} asked to merge this from the app — merging…`,
     );
-    await ctx.db.patch(args.id, { updatedAt: Date.now() });
+    await ctx.db.patch(args.id, {
+      mergeRequestedAt: Date.now(),
+      updatedAt: Date.now(),
+    });
 
     await ctx.scheduler.runAfter(
       0,
@@ -669,14 +682,28 @@ export const mergeNow = mutation({
 });
 
 /**
- * Ship the merged (and staging-verified, when required) change to production
- * from the app. Always a SILENT OTA — users pick the update up on their next
- * app open, no forced reload; anything needing a forced update still goes
- * through the GitHub workflow UI by hand. Triggers the existing
- * deploy-to-production.yml workflow, which ships everything currently on
- * `main` (i.e. staging), not just this one item. productionRequestedAt is
- * stamped up front so the button can't be double-tapped; the dispatch action
- * clears it again if the trigger fails.
+ * The production trigger acts as a COOLDOWN, not a one-shot: a 204 from
+ * workflow_dispatch only means "queued", and the workflow run itself can
+ * still fail on GitHub with no callback to clear the latch. After the
+ * cooldown the button returns so a maintainer can re-trigger from the app
+ * instead of being stranded at "deploy triggered" forever. The mobile card
+ * mirrors this constant.
+ */
+export const PRODUCTION_RETRIGGER_COOLDOWN_MS = 15 * 60 * 1000;
+
+/**
+ * Ship the merged, staging-verified change to production from the app.
+ * Always a SILENT OTA — users pick the update up on their next app open, no
+ * forced reload; anything needing a forced update still goes through the
+ * GitHub workflow UI by hand. Triggers the existing deploy-to-production.yml
+ * workflow, which ships everything currently on `main` (i.e. staging), not
+ * just this one item.
+ *
+ * Staging gate: an explicit sign-off (stagingVerifiedAt) is required unless
+ * the AI triaged the item as non-interactive (verifyOnStaging === false).
+ * Legacy rows with verifyOnStaging UNSET don't qualify — they predate this
+ * feature and are usually long since shipped, so they must not grow a live
+ * "Ship to production" button retroactively.
  */
 export const promoteToProduction = mutation({
   args: { token: v.string(), id: v.id("devBugs") },
@@ -691,25 +718,27 @@ export const promoteToProduction = mutation({
         `Only merged changes can ship to production (current status: ${bug.status})`,
       );
     }
-    if (bug.verifyOnStaging && !bug.stagingVerifiedAt) {
+    if (bug.verifyOnStaging !== false && !bug.stagingVerifiedAt) {
       throw new ConvexError(
         "Confirm the change works on staging before shipping it to production",
       );
     }
-    if (bug.productionRequestedAt) {
+    const now = Date.now();
+    if (
+      bug.productionRequestedAt &&
+      now - bug.productionRequestedAt < PRODUCTION_RETRIGGER_COOLDOWN_MS
+    ) {
       throw new ConvexError(
-        "A production deploy was already triggered for this item",
+        "A production deploy was already triggered for this item — give it a few minutes",
       );
     }
 
-    const now = Date.now();
     await ctx.db.patch(args.id, {
       productionRequestedAt: now,
       updatedAt: now,
     });
 
-    const name =
-      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A maintainer";
+    const name = displayName(user, "A maintainer");
     await insertThreadMessage(
       ctx,
       args.id,
@@ -757,15 +786,15 @@ async function withLastMessage(
   ctx: QueryCtx,
   bugs: Doc<"devBugs">[],
 ): Promise<ContributionListItem[]> {
-  const names = new Map<Id<"users">, string | undefined>();
-  for (const bug of bugs) {
-    if (!names.has(bug.originatorUserId)) {
-      names.set(
-        bug.originatorUserId,
-        await originatorDisplayName(ctx, bug.originatorUserId),
-      );
-    }
-  }
+  const distinctIds = [...new Set(bugs.map((b) => b.originatorUserId))];
+  const names = new Map<Id<"users">, string | undefined>(
+    await Promise.all(
+      distinctIds.map(
+        async (id) =>
+          [id, await originatorDisplayName(ctx, id)] as const,
+      ),
+    ),
+  );
   return await Promise.all(
     bugs.map(async (bug) => {
       const last = await ctx.db

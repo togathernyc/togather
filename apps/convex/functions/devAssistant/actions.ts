@@ -7,9 +7,9 @@
  */
 
 import { v } from "convex/values";
-import { internalAction } from "../../_generated/server";
+import { internalAction, type ActionCtx } from "../../_generated/server";
 import { api, internal } from "../../_generated/api";
-import { Id } from "../../_generated/dataModel";
+import { Doc, Id } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
@@ -182,20 +182,20 @@ function buildGithubIssueBody(bug: {
 }
 
 export const dispatchBug = internalAction({
-  args: {
-    bugId: v.id("devBugs"),
-    forceRedispatch: v.optional(v.boolean()),
-    // Staging-redo round (reportStagingIssue): the item's original PR is
-    // already merged, but the contributor found problems on staging. The
-    // payload carries the conversation thread + instructions to fix the
-    // reported problems and open a NEW PR against latest main.
-    stagingRedo: v.optional(v.boolean()),
-  },
+  args: { bugId: v.id("devBugs"), forceRedispatch: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<void> => {
     const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
       bugId: args.bugId,
     });
     if (!bug) return;
+
+    // Staging-redo round (reportStagingIssue): the item's original PR is
+    // already merged, but the contributor found problems on staging. Inferred
+    // from the PERSISTED counter — not a dispatch arg — so the redo context
+    // survives every re-entry point (including the manual "Retry dispatch").
+    // The payload carries the conversation thread + instructions to fix the
+    // reported problems and open a NEW PR against latest main.
+    const stagingRedo = (bug.redoRounds ?? 0) > 0;
 
     const { triggerUrl, token } = routineTrigger("implement");
     if (!triggerUrl || !token) {
@@ -283,11 +283,27 @@ export const dispatchBug = internalAction({
 
     // A staging-redo run needs the conversation: the latest user messages
     // describe what went wrong on staging.
-    const thread = args.stagingRedo
+    const thread = stagingRedo
       ? await ctx.runQuery(
           internal.functions.devAssistant.bugs.getThreadHistory,
           { bugId: args.bugId },
         )
+      : null;
+
+    // Redo rounds also carry every picture in play — the report's shots PLUS
+    // any attached to thread replies (contributors screenshot the broken
+    // staging behavior right before tapping "Something's off"). Mirrors
+    // dispatchSpec's resolution: de-dupe, then resolve r2: paths to public
+    // URLs the vision-capable routine can fetch.
+    const redoShots = stagingRedo
+      ? Array.from(
+          new Set([
+            ...(bug.screenshotUrls ?? []),
+            ...(thread ?? []).flatMap((m) => m.imageUrls ?? []),
+          ]),
+        )
+          .map((u) => getMediaUrl(u))
+          .filter((u): u is string => !!u)
       : null;
 
     const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
@@ -297,7 +313,8 @@ export const dispatchBug = internalAction({
       title: bug.title,
       body: bug.body,
       repro: bug.repro,
-      screenshotUrls: bug.screenshotUrls,
+      screenshotUrls:
+        redoShots && redoShots.length > 0 ? redoShots : bug.screenshotUrls,
       // Approved spec + risk level so the Routine builds against the plan the
       // contributor signed off on (undefined for chat-originated bugs).
       spec: bug.spec,
@@ -308,7 +325,7 @@ export const dispatchBug = internalAction({
       originatorName: originator?.name,
       originatorGithubUsername: originator?.githubUsername,
       callbackUrl,
-      ...(args.stagingRedo && thread
+      ...(stagingRedo && thread
         ? {
             redo: true,
             thread: thread.map((m) => ({
@@ -320,7 +337,8 @@ export const dispatchBug = internalAction({
               "REDO ROUND: an earlier PR for this item was already merged, " +
               "but the contributor found problems while trying the change on " +
               "staging — the latest user messages in `thread` describe " +
-              "what's wrong. Start from the latest main (the merged code is " +
+              "what's wrong (screenshotUrls includes any pictures they " +
+              "attached). Start from the latest main (the merged code is " +
               "already in it), fix the reported problems, and open a NEW " +
               "pull request on a fresh claude/devbug-<bugId> branch. Report " +
               "callbacks as usual (IN_PROGRESS when you start, CODE_REVIEW " +
@@ -450,9 +468,11 @@ export const dispatchSpec = internalAction({
       '"IN_REVIEW", spec, riskLevel, aiTitle, area, scope, splitSlices?, ' +
       "verifyOnStaging }.";
     const instructions = args.revision
-      ? "REVISION ROUND: this contribution already has a spec draft, and the " +
+      ? "REVISION ROUND: this contribution already has a spec draft — the " +
+        "payload's `spec` field carries its CURRENT full text (the thread " +
+        "only contains short pointers to it, not the plan itself) — and the " +
         "contributor replied in the conversation thread (see `thread` — the " +
-        "latest user message is what you must respond to). Revise the spec " +
+        "latest user message is what you must respond to). Revise that spec " +
         "and triage accordingly. " +
         baseInstructions
       : baseInstructions;
@@ -478,6 +498,11 @@ export const dispatchSpec = internalAction({
       title: bug.title,
       body: bug.body,
       repro: bug.repro,
+      // The current spec draft, so revision rounds see the plan they're
+      // revising. The thread no longer carries the spec text (it holds only
+      // short "plan ready/updated" pointers), so omitting this would leave
+      // the reviser blind to what it's amending.
+      spec: bug.spec,
       screenshotUrls: screenshotUrls.length > 0 ? screenshotUrls : undefined,
       // Full conversation history: [{ authorType, authorName?, body }, ...].
       // (Image paths are folded into screenshotUrls above, not the thread.)
@@ -751,6 +776,34 @@ export const dispatchFix = internalAction({
 // Policy auto-merge (ADR-029 Phase 3)
 // ============================================================================
 
+/** Standard GitHub REST headers, shared by every call in this module. */
+function githubJsonHeaders(token: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Content-Type": "application/json",
+  };
+}
+
+/**
+ * Human-readable failure detail from a GitHub error response:
+ * "<prefix> returned <status> (<message>)" when the body carries a message.
+ */
+async function githubErrorDetail(
+  res: Response,
+  prefix: string,
+): Promise<string> {
+  let detail = `${prefix} returned ${res.status}`;
+  try {
+    const errBody = (await res.json()) as { message?: string };
+    if (errBody?.message) detail = `${detail} (${errBody.message})`;
+  } catch {
+    // Non-JSON error body; the status code is reason enough.
+  }
+  return detail;
+}
+
 /**
  * Merge a PR via the GitHub REST API with the configured merge method
  * (AUTO_MERGE_METHOD, default squash), retrying once with a plain merge on
@@ -764,12 +817,7 @@ async function mergePullRequestOnGithub(
   const mergePr = async (mergeMethod: string): Promise<Response> =>
     await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}/merge`, {
       method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
-      },
+      headers: githubJsonHeaders(token),
       body: JSON.stringify({ merge_method: mergeMethod }),
     });
 
@@ -779,6 +827,29 @@ async function mergePullRequestOnGithub(
     res = await mergePr("merge");
   }
   return res;
+}
+
+/**
+ * Whether the PR is already merged on GitHub — the tie-breaker when a merge
+ * PUT fails: the in-app merge and policy auto-merge can race (both pass their
+ * gates while the row is still READY_TO_MERGE), and the loser's 405 must not
+ * post a "Merge failed" message for a change that actually merged. Returns
+ * null when the state can't be determined (report the original failure).
+ */
+async function fetchPrMerged(
+  prNumber: string,
+  token: string,
+): Promise<boolean | null> {
+  try {
+    const res = await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}`, {
+      headers: githubJsonHeaders(token),
+    });
+    if (!res.ok) return null;
+    const pr = (await res.json()) as { merged?: boolean };
+    return pr.merged === true;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -887,45 +958,54 @@ export const attemptAutoMerge = internalAction({
             body: "Auto-merged ✓ — all gates passed (low risk, review approved)",
           },
         );
-        // GitHub just confirmed the merge, so apply MERGED directly through
-        // the trusted "automerge" source instead of waiting on the webhook
-        // (which may be unconfigured or delayed and would strand the row).
-        // Route through handleRoutineCallback so the shipped push + chat bot
-        // message fire too; the webhook redelivery no-ops on a MERGED row.
-        if (bug.routineRunId) {
-          await ctx.runAction(
-            internal.functions.devAssistant.actions.handleRoutineCallback,
-            {
-              bugId: args.bugId,
-              routineRunId: bug.routineRunId,
-              status: "MERGED",
-              source: "automerge",
-            },
-          );
-        } else {
-          // No run to correlate (shouldn't happen past the gates above) —
-          // still don't lose the merge.
-          await ctx.runMutation(
-            internal.functions.devAssistant.bugs.applyCallback,
-            { bugId: args.bugId, status: "MERGED", source: "automerge" },
-          );
-        }
+        await applyGithubConfirmedMerge(ctx, bug);
         return;
       }
 
-      let reason = `GitHub merge returned ${res.status}`;
-      try {
-        const errBody = (await res.json()) as { message?: string };
-        if (errBody?.message) reason = `${reason} (${errBody.message})`;
-      } catch {
-        // Non-JSON error body; the status code is reason enough.
+      // Lost a race? The in-app merge (or a human on GitHub) may have merged
+      // the PR between this action's gates and its PUT — the resulting 405
+      // must not read as a failure for a change that actually merged.
+      if (await fetchPrMerged(prMatch[1], mirrorToken)) {
+        await applyGithubConfirmedMerge(ctx, bug);
+        return;
       }
-      await blocked(reason);
+
+      await blocked(await githubErrorDetail(res, "GitHub merge"));
     } catch (error) {
       await blocked(String(error));
     }
   },
 });
+
+/**
+ * Apply MERGED through the trusted "automerge" callback source after GitHub
+ * confirmed a merge. Routing through handleRoutineCallback makes the shipped
+ * push + chat bot message fire too; rows with no run to correlate fall back
+ * to a direct applyCallback. Idempotent on already-MERGED rows (and the
+ * webhook redelivery no-ops afterward).
+ */
+async function applyGithubConfirmedMerge(
+  ctx: ActionCtx,
+  bug: Pick<Doc<"devBugs">, "_id" | "routineRunId">,
+): Promise<void> {
+  if (bug.routineRunId) {
+    await ctx.runAction(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: bug._id,
+        routineRunId: bug.routineRunId,
+        status: "MERGED",
+        source: "automerge",
+      },
+    );
+  } else {
+    await ctx.runMutation(internal.functions.devAssistant.bugs.applyCallback, {
+      bugId: bug._id,
+      status: "MERGED",
+      source: "automerge",
+    });
+  }
+}
 
 /**
  * Maintainer-triggered merge from the app (scheduled by contributions.mergeNow).
@@ -944,16 +1024,19 @@ export const mergeFromApp = internalAction({
     });
     if (!bug) return;
 
+    // Failure path posts the reason AND clears mergeRequestedAt so the merge
+    // card returns — the message says "try again", which must be possible.
     const failed = async (reason: string): Promise<void> => {
       console.error("[DevAssistant] In-app merge failed:", reason, args.bugId);
       await ctx.runMutation(
-        internal.functions.devAssistant.bugs.addSystemThreadMessage,
-        {
-          bugId: args.bugId,
-          body: `Merge failed: ${reason} — try again, or merge the PR on GitHub`,
-        },
+        internal.functions.devAssistant.bugs.recordMergeFromAppFailure,
+        { bugId: args.bugId, reason },
       );
     };
+
+    // Already merged (auto-merge or a human won the race before this action
+    // ran) — the tap achieved its goal; nothing to do and nothing to report.
+    if (bug.status === "MERGED") return;
 
     if (
       bug.status !== "READY_TO_MERGE" ||
@@ -979,38 +1062,19 @@ export const mergeFromApp = internalAction({
     try {
       const res = await mergePullRequestOnGithub(prMatch[1], mirrorToken);
 
-      if (res.ok) {
+      // A failed PUT can still mean "merged": policy auto-merge (scheduled on
+      // the same READY_TO_MERGE entry) or a human may have merged first, and
+      // the loser's 405 must not tell the thread a successful merge failed.
+      if (res.ok || (await fetchPrMerged(prMatch[1], mirrorToken))) {
         // GitHub confirmed the merge — apply MERGED through the trusted
         // "automerge" source (same as attemptAutoMerge) so the shipped push,
         // system message, and chat bot message all fire; the webhook
         // redelivery no-ops on a MERGED row.
-        if (bug.routineRunId) {
-          await ctx.runAction(
-            internal.functions.devAssistant.actions.handleRoutineCallback,
-            {
-              bugId: args.bugId,
-              routineRunId: bug.routineRunId,
-              status: "MERGED",
-              source: "automerge",
-            },
-          );
-        } else {
-          await ctx.runMutation(
-            internal.functions.devAssistant.bugs.applyCallback,
-            { bugId: args.bugId, status: "MERGED", source: "automerge" },
-          );
-        }
+        await applyGithubConfirmedMerge(ctx, bug);
         return;
       }
 
-      let reason = `GitHub merge returned ${res.status}`;
-      try {
-        const errBody = (await res.json()) as { message?: string };
-        if (errBody?.message) reason = `${reason} (${errBody.message})`;
-      } catch {
-        // Non-JSON error body; the status code is reason enough.
-      }
-      await failed(reason);
+      await failed(await githubErrorDetail(res, "GitHub merge"));
     } catch (error) {
       await failed(String(error));
     }
@@ -1064,12 +1128,7 @@ export const dispatchProductionDeploy = internalAction({
     try {
       const res = await fetch(GITHUB_PROD_DEPLOY_WORKFLOW_ENDPOINT, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "Content-Type": "application/json",
-        },
+        headers: githubJsonHeaders(token),
         body: JSON.stringify({
           ref: "main",
           // The workflow's own safety gate expects the literal "deploy";
@@ -1083,14 +1142,10 @@ export const dispatchProductionDeploy = internalAction({
         await outcome(true);
         return;
       }
-      let detail = `GitHub workflow dispatch returned ${res.status}`;
-      try {
-        const errBody = (await res.json()) as { message?: string };
-        if (errBody?.message) detail = `${detail} (${errBody.message})`;
-      } catch {
-        // Non-JSON error body; the status code is reason enough.
-      }
-      await outcome(false, detail);
+      await outcome(
+        false,
+        await githubErrorDetail(res, "GitHub workflow dispatch"),
+      );
     } catch (error) {
       await outcome(false, String(error));
     }
@@ -1124,16 +1179,8 @@ export const reconcileMergedPrs = internalAction({
       const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
       if (!prMatch) continue;
       try {
-        const res = await fetch(`${GITHUB_PULLS_ENDPOINT}/${prMatch[1]}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
-        });
-        if (!res.ok) continue;
-        const pr = (await res.json()) as { merged?: boolean };
-        if (pr.merged === true) {
+        const merged = await fetchPrMerged(prMatch[1], token);
+        if (merged === true) {
           // Reuse the webhook path: an empty branchRef falls through to the
           // prUrl-match fallback, which scans exactly these open-PR states and
           // applies MERGED idempotently.
@@ -1388,7 +1435,13 @@ export const handleRoutineCallback = internalAction({
       parentMessageId: updated.threadRootMessageId,
       mentionedUserIds,
       // Idempotency: re-delivered callbacks for the same status are dropped.
-      sourceKey: `bug:${args.bugId}:${effectiveStatus}`,
+      // Staging-redo rounds re-reach statuses from earlier rounds, so the key
+      // is scoped per round — otherwise round 2's "PR opened"/"merged" posts
+      // would be silently deduped against round 1's.
+      sourceKey:
+        (updated.redoRounds ?? 0) > 0
+          ? `bug:${args.bugId}:${effectiveStatus}:r${updated.redoRounds}`
+          : `bug:${args.bugId}:${effectiveStatus}`,
     });
   },
 });
