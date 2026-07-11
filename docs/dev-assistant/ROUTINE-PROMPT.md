@@ -313,6 +313,13 @@ set the per-mode env vars.
   `WebFetch`/`WebSearch`, and `PushNotification` (the blocker-escalation
   path). If a Routine gets stuck on a new prompt, add that tool to the
   allowlist rather than working around it in the prompt.
+- **GitHub MCP tools are pre-allowed server-wide** (`mcp__github`) — review
+  runs post inline PR comments and implement runs open PRs, so a permission
+  prompt there hangs the run at the finish line. `deny` rules block the
+  operations Routines must never perform (`merge_pull_request`,
+  `enable_pr_auto_merge` — merging is Convex-side only, per Phase 3 — plus
+  `create_repository` and `delete_file`), turning the "Routines never merge"
+  prompt rule into a hard permission boundary.
 - **Reviewer identity**: routine sessions currently CANNOT submit formal
   approve/request-changes reviews — the session type blocks APPROVE, and the
   bot reviewer PAT is blocked by the org proxy (it needs the GitHub App
