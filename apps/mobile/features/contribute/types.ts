@@ -75,9 +75,28 @@ export interface Contribution {
   verifyOnStaging?: boolean;
   /** Set once the contributor confirmed the change works on staging. */
   stagingVerifiedAt?: number;
+  /**
+   * Set when a maintainer triggered the production deploy from the app
+   * (always a silent OTA); cleared again if the workflow dispatch failed.
+   * Acts as a cooldown, not a one-shot (see promoteToProduction).
+   */
+  productionRequestedAt?: number;
+  /**
+   * Set while an in-app merge (mergeNow) is in flight; cleared if the merge
+   * failed so the merge card can offer a retry.
+   */
+  mergeRequestedAt?: number;
+  /** AI review verdict on the open PR — "approved" unlocks the in-app merge. */
+  reviewVerdict?: "approved" | "changes_requested";
+  reviewSummary?: string;
   prUrl?: string;
   githubIssueUrl?: string;
   screenshotUrls?: string[];
+  /**
+   * Display name of whoever started the conversation — attached by both
+   * getContribution (detail header) and the list queries ("Everyone" view).
+   */
+  originatorName?: string;
   /** Set when the contributor set the conversation aside (abandoned/not doable). */
   archivedAt?: number;
   createdAt: number;

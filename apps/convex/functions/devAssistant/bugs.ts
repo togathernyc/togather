@@ -99,6 +99,16 @@ type BugStatus = Doc<"devBugs">["status"];
  * webhook (ADR-029 Phase 2) reports that merge. Still monotonic. Note that
  * MERGED is only reachable via webhook/auto-merge callback sources (or the
  * human markBugMerged) — applyCallback rejects routine-claimed merges.
+ *
+ * MERGED -> READY_FOR_IMPL is the ONE deliberate cycle: the staging-redo loop
+ * (reportStagingIssue). A contributor who finds the merged change broken on
+ * staging sends the item back through the whole pipeline — a fresh implement
+ * run opens a NEW PR against latest main. It is human-triggered only (never
+ * reachable from a callback: applyCallback still rejects routine MERGEDs and
+ * no run mode may deliver READY_FOR_IMPL), so stale-callback protection is
+ * unaffected. Redo rounds re-reach later statuses, so the chat sourceKey
+ * dedupe suppresses repeat bot messages for chat-originated items — an
+ * accepted trade-off (the staging window only opens for dashboard items).
  */
 const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   DRAFT: ["IN_REVIEW", "REJECTED"],
@@ -107,7 +117,7 @@ const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   IN_PROGRESS: ["CODE_REVIEW", "REJECTED"],
   CODE_REVIEW: ["READY_TO_MERGE", "MERGED", "REJECTED"],
   READY_TO_MERGE: ["MERGED", "REJECTED"],
-  MERGED: [],
+  MERGED: ["READY_FOR_IMPL"],
   REJECTED: [],
 };
 
@@ -134,7 +144,9 @@ const GITHUB_MERGEABLE_STATUSES: BugStatus[] = [
  * Apply a validated status transition and persist it. Throws on an illegal
  * transition. When a bug lands on READY_FOR_IMPL we schedule the dispatch
  * action immediately (event-driven, no cron) so the routine fires the instant
- * the bug is marked ready.
+ * the bug is marked ready. Staging-redo rounds need no flag here: dispatchBug
+ * infers redo mode from the row's persisted redoRounds counter, so redo
+ * context survives retries and re-dispatches.
  */
 export async function applyStatusTransition(
   ctx: MutationCtx,
@@ -634,6 +646,32 @@ export const handleGithubPrClosed = internalMutation({
       // Idempotent with auto-merge's own MERGED apply (and with webhook
       // redeliveries): once merged, there is nothing left to apply.
       if (target.status === "MERGED") return;
+      // Staging-redo guard: MERGED is no longer terminal, so the early-return
+      // above no longer catches a REDELIVERED merge event for a PREVIOUS
+      // round's PR (the branch name claude/devbug-<bugId> is identical every
+      // round, so branch correlation alone can't tell rounds apart). A stale
+      // event applied mid-redo would falsely flip the in-flight round back to
+      // MERGED and orphan its new PR. Two checks:
+      //  - the event names a PR that isn't the row's current one → stale;
+      //  - the row has no current PR but has already shipped once → it's in
+      //    a redo round before its new PR opened; only a stale event can
+      //    reference it. (Never-shipped rows keep the legacy behavior: a PR
+      //    merged before the CODE_REVIEW callback landed must still apply.)
+      //    A redo PR merged in that same pre-callback window is not lost —
+      //    the reconcile cron applies it once the callback stores prUrl.
+      if (args.prUrl) {
+        const staleForCurrentRound = target.prUrl
+          ? target.prUrl !== args.prUrl
+          : !!target.shippedAt;
+        if (staleForCurrentRound) {
+          console.log(
+            "[DevAssistant] Ignoring stale PR-merged event for a previous round",
+            target._id,
+            args.prUrl,
+          );
+          return;
+        }
+      }
       if (target.routineRunId) {
         await ctx.scheduler.runAfter(
           0,
@@ -814,6 +852,68 @@ export const addSystemThreadMessage = internalMutation({
     if (!bug) return;
     await insertThreadMessage(ctx, args.bugId, "system", args.body);
     await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+  },
+});
+
+/**
+ * Record the outcome of an in-app production deploy trigger
+ * (actions.dispatchProductionDeploy). Success just logs the progress line; a
+ * failure ALSO clears productionRequestedAt so the dashboard's "Ship to
+ * production" button comes back instead of stranding the item in a
+ * "triggered" state that never happened.
+ */
+export const recordProductionDeployOutcome = internalMutation({
+  args: {
+    bugId: v.id("devBugs"),
+    ok: v.boolean(),
+    detail: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return;
+    if (args.ok) {
+      await insertThreadMessage(
+        ctx,
+        args.bugId,
+        "system",
+        "Production deploy started — the silent update reaches users next time they open the app",
+      );
+      await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+    } else {
+      await insertThreadMessage(
+        ctx,
+        args.bugId,
+        "system",
+        `Production deploy couldn't start${args.detail ? `: ${args.detail}` : ""} — needs a maintainer`,
+      );
+      await ctx.db.patch(args.bugId, {
+        productionRequestedAt: undefined,
+        updatedAt: Date.now(),
+      });
+    }
+  },
+});
+
+/**
+ * Record that an in-app merge attempt (actions.mergeFromApp) failed: post the
+ * reason and clear mergeRequestedAt so the merge card comes back — the
+ * message tells the maintainer to "try again", which must be possible.
+ */
+export const recordMergeFromAppFailure = internalMutation({
+  args: { bugId: v.id("devBugs"), reason: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return;
+    await insertThreadMessage(
+      ctx,
+      args.bugId,
+      "system",
+      `Merge failed: ${args.reason} — try again, or merge the PR on GitHub`,
+    );
+    await ctx.db.patch(args.bugId, {
+      mergeRequestedAt: undefined,
+      updatedAt: Date.now(),
+    });
   },
 });
 
@@ -1078,20 +1178,21 @@ export const applyCallback = internalMutation({
       );
     }
 
-    // Spec text lands in the conversation as the assistant's turn. Comparing
-    // against the previously stored spec is the idempotency guard for
-    // re-delivered callbacks (and skips no-op revisions). When the change
-    // invalidated an approval, say so right below the new plan.
+    // A delivered spec is announced with a short pointer, NOT pasted into the
+    // conversation — the full plan renders once behind "The plan" card, which
+    // opens its own screen/panel. (Earlier versions appended the whole spec as
+    // an assistant turn on every revision, so a few revision rounds buried the
+    // thread under repeated walls of text.) Comparing against the previously
+    // stored spec is the idempotency guard for re-delivered callbacks (and
+    // skips no-op revisions).
     if (args.spec !== undefined && args.spec !== bug.spec) {
-      await insertThreadMessage(ctx, args.bugId, "assistant", args.spec);
-      if (bug.specApprovedAt) {
-        await insertThreadMessage(
-          ctx,
-          args.bugId,
-          "system",
-          "Plan updated — needs your approval again",
-        );
-      }
+      const pointer =
+        bug.spec === undefined
+          ? "The plan is ready — read it under \"The plan\" below"
+          : bug.specApprovedAt
+            ? "Plan updated — it needs your approval again"
+            : "Plan updated — the latest version is under \"The plan\" below";
+      await insertThreadMessage(ctx, args.bugId, "system", pointer);
     }
 
     // Review verdict lands as a system turn, before the status progress line
@@ -1274,7 +1375,11 @@ export const getThreadContext = internalQuery({
         (b) =>
           b.threadRootMessageId === threadRootMessageId &&
           b.status !== "MERGED" &&
-          b.status !== "REJECTED",
+          b.status !== "REJECTED" &&
+          // A shipped bug in a staging-redo round is non-terminal again, but
+          // its brief is the payload-of-record for an in-flight rebuild — a
+          // new chat mention must file a fresh bug, not mutate the redo.
+          !b.shippedAt,
       )
       .sort((a, b) => b.createdAt - a.createdAt)[0];
 

@@ -9,11 +9,12 @@
  * chat plumbing.
  */
 import React from "react";
-import { View, Text, Image, StyleSheet } from "react-native";
+import { View, Text, Image, StyleSheet, TouchableOpacity } from "react-native";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { Markdown } from "@components/ui/Markdown";
+import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import { PALETTE } from "../utils/status";
 import type { ThreadMessage } from "../types";
 
@@ -21,19 +22,28 @@ function bubbleTime(createdAt: number): string {
   return format(new Date(createdAt), "MMM d, h:mm a");
 }
 
-/** Attached pictures on a contributor message, stacked above the text. */
+/**
+ * Attached pictures on a contributor message, stacked above the text. Tapping
+ * one opens the full-screen viewer (zoom + swipe between the message's shots).
+ */
 function BubbleImages({ imageUrls }: { imageUrls: string[] }) {
   const { colors } = useTheme();
   return (
     <View style={styles.imageStack}>
-      {imageUrls.map((uri) => (
-        <Image
+      {imageUrls.map((uri, index) => (
+        <TouchableOpacity
           key={uri}
-          source={{ uri }}
-          style={[styles.bubbleImage, { backgroundColor: colors.surfaceSecondary }]}
-          resizeMode="contain"
-          accessibilityLabel="Attached screenshot"
-        />
+          onPress={() => ImageViewerManager.show(imageUrls, index)}
+          activeOpacity={0.85}
+          accessibilityRole="imagebutton"
+          accessibilityLabel="Attached screenshot — tap to view full screen"
+        >
+          <Image
+            source={{ uri }}
+            style={[styles.bubbleImage, { backgroundColor: colors.surfaceSecondary }]}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
       ))}
     </View>
   );

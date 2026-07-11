@@ -40,9 +40,23 @@ export function useConfirmStaging() {
   return useAuthenticatedMutation(contributions.confirmStaging);
 }
 
-/** Report that the staging build isn't right, with a short note. */
+/**
+ * Report that the staging build isn't right, with a short note. Sends the
+ * item back through the build pipeline — a fresh AI run fixes the reported
+ * problems and opens a new PR.
+ */
 export function useReportStagingIssue() {
   return useAuthenticatedMutation(contributions.reportStagingIssue);
+}
+
+/** Merge the review-approved PR from the app (ships it to staging). */
+export function useMergeNow() {
+  return useAuthenticatedMutation(contributions.mergeNow);
+}
+
+/** Trigger the production deploy from the app (always a silent update). */
+export function usePromoteToProduction() {
+  return useAuthenticatedMutation(contributions.promoteToProduction);
 }
 
 /** Archive (set aside) a conversation the contributor is abandoning. */

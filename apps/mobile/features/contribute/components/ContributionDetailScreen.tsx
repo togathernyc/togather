@@ -31,9 +31,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { Markdown } from "@components/ui/Markdown";
+import { useIsDesktopWeb } from "@hooks/useIsDesktopWeb";
 import { formatError } from "@/utils/error-handling";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
@@ -44,11 +45,14 @@ import {
   useApproveSpec,
   useArchiveContribution,
   useConfirmStaging,
+  useMergeNow,
   usePostMessage,
+  usePromoteToProduction,
   useReportStagingIssue,
   useStartBuild,
   useUnarchiveContribution,
 } from "../hooks/useContributionMutations";
+import { LOOKS_LIKE_CONVEX_ID } from "../utils/devRoute";
 import {
   displayTitle,
   isBuildableScope,
@@ -59,53 +63,71 @@ import {
 } from "../utils/status";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { FromChatTag, KindPill, RiskBadge, StatusChip } from "./ContributionBadges";
+import { PlanPanel } from "./PlanView";
 import { SystemCaption, ThreadMessageBubble, UserBubble } from "./ThreadBubbles";
 import type { Contribution, SplitSlice } from "../types";
 
 /**
- * The latest AI plan, rendered once at the bottom of the thread. When the AI
- * judged the item too big to build in one go (scope "split"/"design_needed"),
- * it becomes a "Too big for one build" card and approval is off the table.
+ * Compact pointer to the latest AI plan, pinned at the bottom of the thread.
+ * Plans are long, so the full text no longer renders inline — tapping the
+ * card opens it on its own screen (phones) or in a right-side panel (desktop
+ * web). When the AI judged the item too big to build in one go (scope
+ * "split"/"design_needed") the card flags that and approval is off the table.
  */
-function SpecCard({ contribution }: { contribution: Contribution }) {
+function SpecCard({
+  contribution,
+  onOpenPlan,
+}: {
+  contribution: Contribution;
+  onOpenPlan: () => void;
+}) {
   const { colors } = useTheme();
-  const spec = contribution.spec;
-  if (!spec) return null;
+  const { primaryColor } = useCommunityTheme();
+  if (!contribution.spec) return null;
 
-  if (!isBuildableScope(contribution.scope)) {
-    return (
-      <View
-        style={[
-          styles.specCard,
-          { backgroundColor: colors.surface, borderColor: PALETTE.aiWorking },
-        ]}
-      >
-        <View style={styles.specHeader}>
-          <Ionicons name="git-branch-outline" size={16} color={PALETTE.aiWorking} />
-          <Text style={[styles.specHeaderText, { color: PALETTE.aiWorking }]}>
-            Too big for one build
-          </Text>
-        </View>
-        <Text style={[styles.specSubtitle, { color: colors.textSecondary }]}>
-          {contribution.scope === "design_needed"
-            ? "This one needs some design thinking before anything gets built. Here's the AI's take:"
-            : "This one covers more than a single build can safely take on. Here's how the AI suggests breaking it up:"}
-        </Text>
-        <Markdown source={spec} />
-      </View>
-    );
-  }
+  const nonBuildable = !isBuildableScope(contribution.scope);
+  const tint = nonBuildable ? PALETTE.aiWorking : colors.textSecondary;
 
   return (
-    <View style={[styles.specCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+    <TouchableOpacity
+      style={[
+        styles.specCard,
+        {
+          backgroundColor: colors.surface,
+          borderColor: nonBuildable ? PALETTE.aiWorking : colors.border,
+        },
+      ]}
+      onPress={onOpenPlan}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel="Read the plan"
+    >
       <View style={styles.specHeader}>
-        <Ionicons name="reader-outline" size={16} color={colors.textSecondary} />
-        <Text style={[styles.specHeaderText, { color: colors.textSecondary }]}>
-          The plan{contribution.specApprovedAt ? " — approved" : ""}
+        <Ionicons
+          name={nonBuildable ? "git-branch-outline" : "reader-outline"}
+          size={16}
+          color={tint}
+        />
+        <Text style={[styles.specHeaderText, { color: tint }]}>
+          {nonBuildable
+            ? "Too big for one build"
+            : `The plan${contribution.specApprovedAt ? " — approved" : ""}`}
         </Text>
       </View>
-      <Markdown source={spec} />
-    </View>
+      <Text style={[styles.specSubtitle, { color: colors.textSecondary }]}>
+        {nonBuildable
+          ? contribution.scope === "design_needed"
+            ? "This one needs some design thinking before anything gets built — the AI explains in the plan."
+            : "This one is too big for a single build — the AI's reasoning is in the plan, and the proposed pieces are below."
+          : "The full write-up of what will change and how you'll know it worked."}
+      </Text>
+      <View style={styles.specOpenRow}>
+        <Text style={[styles.specOpenText, { color: primaryColor }]}>
+          Read the plan
+        </Text>
+        <Ionicons name="chevron-forward" size={15} color={primaryColor} />
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -200,15 +222,88 @@ function SplitSlicesCard({ contribution }: { contribution: Contribution }) {
 }
 
 /**
- * Cheap shape check for a Convex document id. Convex ids are opaque and can't
- * be truly validated client-side, but a clearly malformed deep link (e.g.
- * /dev/foo) would make getContribution/getThread throw an
- * ArgumentValidationError through render and land on the root error boundary
- * instead of this screen's not-found state. Skipping the queries for
- * malformed ids covers that case; a well-formed-but-wrong id already returns
- * null from the query, which renders the same not-found state.
+ * Mirror of the server's production re-trigger cooldown
+ * (contributions.PRODUCTION_RETRIGGER_COOLDOWN_MS): while a trigger is
+ * fresh the card shows "deploy triggered"; after the cooldown the ship
+ * button returns, because a 204 dispatch only means "queued" and the
+ * workflow run itself can still fail with no callback to clear the latch.
  */
-const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
+const PRODUCTION_RETRIGGER_COOLDOWN_MS = 15 * 60 * 1000;
+
+/** Card shell shared by the merge / staging / production action cards. */
+function ActionCard({
+  icon,
+  tint,
+  borderTint,
+  title,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  /** Border color when it should differ from the header tint. */
+  borderTint?: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={[
+        styles.stagingCard,
+        { backgroundColor: colors.surface, borderColor: borderTint ?? tint },
+      ]}
+    >
+      <View style={styles.specHeader}>
+        <Ionicons name={icon} size={16} color={tint} />
+        <Text style={[styles.specHeaderText, { color: tint }]}>{title}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+/** Primary action button with the shared busy-spinner treatment. */
+function BusyButton({
+  label,
+  icon,
+  color,
+  busy,
+  disabled = false,
+  onPress,
+  grow = false,
+}: {
+  label: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  color: string;
+  busy: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  /** flex:1 inside a button row. */
+  grow?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[
+        styles.primaryButton,
+        { backgroundColor: color },
+        grow && styles.stagingButton,
+        (busy || disabled) && styles.buttonDisabled,
+      ]}
+      onPress={onPress}
+      disabled={busy || disabled}
+      activeOpacity={0.8}
+    >
+      {busy ? (
+        <ActivityIndicator color="#ffffff" />
+      ) : (
+        <>
+          {icon ? <Ionicons name={icon} size={20} color="#ffffff" /> : null}
+          <Text style={styles.primaryButtonText}>{label}</Text>
+        </>
+      )}
+    </TouchableOpacity>
+  );
+}
 
 export interface ContributionDetailScreenProps {
   /**
@@ -249,14 +344,21 @@ export function ContributionDetailScreen({
   const postMessage = usePostMessage();
   const confirmStaging = useConfirmStaging();
   const reportStagingIssue = useReportStagingIssue();
+  const mergeNow = useMergeNow();
+  const promoteToProduction = usePromoteToProduction();
   const archiveContribution = useArchiveContribution();
   const unarchiveContribution = useUnarchiveContribution();
+  const isDesktopWeb = useIsDesktopWeb();
 
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [issueMode, setIssueMode] = useState(false);
   const [issueNote, setIssueNote] = useState("");
+  // Desktop web shows the plan in a right-side panel next to the thread;
+  // phones push the /dev/plan/[id] screen instead.
+  const [planOpen, setPlanOpen] = useState(false);
+  const handleClosePlan = useCallback(() => setPlanOpen(false), []);
   const scrollRef = useRef<ScrollView>(null);
   const images = useImageAttachments();
 
@@ -325,6 +427,56 @@ export function ContributionDetailScreen({
     }
   }, [id, issueNote, reportStagingIssue]);
 
+  const handleOpenPlan = useCallback(() => {
+    if (isDesktopWeb) {
+      setPlanOpen(true);
+      return;
+    }
+    if (id) router.push(`/(user)/dev/plan/${id}`);
+  }, [isDesktopWeb, id, router]);
+
+  const handleMergeNow = useCallback(async () => {
+    if (!id) return;
+    const confirmed = await confirmAsync({
+      title: "Merge this change?",
+      message:
+        "It lands on main and deploys to the staging app — you can try it there right after.",
+      confirmText: "Merge",
+      cancelText: "Not yet",
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      // The in-flight latch is server-side (mergeRequestedAt): the card hides
+      // for every viewer and comes back if the async merge fails.
+      await mergeNow({ id });
+    } catch (error) {
+      notify("Couldn't merge", formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [id, mergeNow]);
+
+  const handlePromoteToProduction = useCallback(async () => {
+    if (!id) return;
+    const confirmed = await confirmAsync({
+      title: "Ship to production?",
+      message:
+        "This ships everything currently on staging as a silent update — users get it next time they open the app.",
+      confirmText: "Ship it",
+      cancelText: "Not yet",
+    });
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      await promoteToProduction({ id });
+    } catch (error) {
+      notify("Couldn't start the deploy", formatError(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [id, promoteToProduction]);
+
   const handleSend = useCallback(async () => {
     if (!id || sending || images.uploading) return;
     const body = draft.trim();
@@ -392,6 +544,14 @@ export function ContributionDetailScreen({
     return !(first?.authorType === "user" && first.body.trim() === contribution.body.trim());
   }, [contribution, messages]);
 
+  // Hoisted out of the message loop: plans are long and this component
+  // re-renders per composer keystroke — don't re-trim a multi-KB string per
+  // assistant message per keystroke.
+  const trimmedSpec = useMemo(
+    () => contribution?.spec?.trim(),
+    [contribution?.spec],
+  );
+
   // No `id` means the queries were skipped (missing or malformed route
   // param) — fall through to the not-found state instead of spinning forever.
   if (accessLoading || (hasAccess && id && contribution === undefined)) {
@@ -436,6 +596,30 @@ export function ContributionDetailScreen({
     contribution.status === "IN_REVIEW" &&
     isBuildableScope(contribution.scope);
   const showStagingCard = !archived && needsStagingVerify(contribution);
+  // In-app merge: review approved but not yet merged (auto-merge didn't take
+  // it — higher risk than the originator's cap, or the feature is off).
+  // mergeRequestedAt is the server-side in-flight latch: it hides the card
+  // for every viewer and is cleared again if the async merge fails.
+  const showMergeCard =
+    !archived &&
+    !contribution.mergeRequestedAt &&
+    contribution.status === "READY_TO_MERGE" &&
+    contribution.reviewVerdict === "approved" &&
+    !!contribution.prUrl;
+  // In-app production promote: merged and past the staging gate. An explicit
+  // sign-off is required unless the AI triaged the item as non-interactive
+  // (verifyOnStaging === false); legacy rows with the field UNSET predate
+  // this feature and must not grow a live production button retroactively.
+  const stagingCleared =
+    contribution.verifyOnStaging === false || !!contribution.stagingVerifiedAt;
+  const showProductionCard =
+    !archived && contribution.status === "MERGED" && stagingCleared;
+  // Fresh trigger → "deploy triggered" card; past the cooldown the button
+  // returns (the dispatch only queues the workflow — the run can still fail).
+  const productionRecentlyRequested =
+    !!contribution.productionRequestedAt &&
+    Date.now() - contribution.productionRequestedAt <
+      PRODUCTION_RETRIGGER_COOLDOWN_MS;
   const awaitingSpec =
     (contribution.status === "DRAFT" || contribution.status === "IN_REVIEW") &&
     !contribution.spec;
@@ -462,8 +646,11 @@ export function ContributionDetailScreen({
     : contribution.body;
 
   return (
+    // Desktop web can open the plan as a right-side panel beside the thread;
+    // the row wrapper is inert (single flex child) everywhere else.
+    <View style={[styles.detailRow, { backgroundColor: colors.background }]}>
     <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
+      style={[styles.container, { paddingTop: insets.top }]}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       // This screen opens as an iOS sheet (the `(user)` route group is a modal),
       // where "padding" alone doesn't lift the composer above the keyboard — it
@@ -498,6 +685,11 @@ export function ContributionDetailScreen({
             </Text>
           </View>
         ) : null}
+        {contribution.originatorName ? (
+          <Text style={[styles.startedBy, { color: colors.textTertiary }]}>
+            Started by {contribution.originatorName}
+          </Text>
+        ) : null}
       </View>
 
       <ScrollView
@@ -521,8 +713,21 @@ export function ContributionDetailScreen({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.screenshotRow}
           >
-            {contribution.screenshotUrls.map((url) => (
-              <Image key={url} source={{ uri: url }} style={styles.screenshot} />
+            {contribution.screenshotUrls.map((url, index) => (
+              <TouchableOpacity
+                key={url}
+                onPress={() =>
+                  ImageViewerManager.show(
+                    contribution.screenshotUrls as string[],
+                    index,
+                  )
+                }
+                activeOpacity={0.85}
+                accessibilityRole="imagebutton"
+                accessibilityLabel="Screenshot — tap to view full screen"
+              >
+                <Image source={{ uri: url }} style={styles.screenshot} />
+              </TouchableOpacity>
             ))}
           </ScrollView>
         ) : null}
@@ -530,16 +735,35 @@ export function ContributionDetailScreen({
         {messages === undefined ? (
           <ActivityIndicator style={styles.threadSpinner} color={colors.textSecondary} />
         ) : (
-          messages.map((message) => (
-            <ThreadMessageBubble key={message._id} message={message} />
-          ))
+          messages.map((message) => {
+            // Older backends pasted the full plan into the thread as an
+            // assistant turn on every revision. The plan now lives behind
+            // "The plan" card, so collapse the copy matching the current plan
+            // into a one-line caption instead of a wall of text.
+            if (
+              message.authorType === "assistant" &&
+              trimmedSpec &&
+              message.body.trim() === trimmedSpec
+            ) {
+              return (
+                <SystemCaption
+                  key={message._id}
+                  body={'Plan posted — read it under "The plan" below'}
+                  createdAt={message.createdAt}
+                />
+              );
+            }
+            return <ThreadMessageBubble key={message._id} message={message} />;
+          })
         )}
 
         {awaitingSpec ? (
           <SystemCaption body="The AI is reading your report and drafting a plan — it'll reply here." />
         ) : null}
 
-        {contribution.spec ? <SpecCard contribution={contribution} /> : null}
+        {contribution.spec ? (
+          <SpecCard contribution={contribution} onOpenPlan={handleOpenPlan} />
+        ) : null}
 
         <SplitSlicesCard contribution={contribution} />
 
@@ -549,21 +773,13 @@ export function ContributionDetailScreen({
               Read the plan and confirm it says what you meant — you're checking
               the idea, not the code. If something's off, just reply below.
             </Text>
-            <TouchableOpacity
-              style={[styles.primaryButton, { backgroundColor: primaryColor }, busy && styles.buttonDisabled]}
+            <BusyButton
+              label="Approve spec"
+              icon="checkmark-circle-outline"
+              color={primaryColor}
+              busy={busy}
               onPress={handleApprove}
-              disabled={busy}
-              activeOpacity={0.8}
-            >
-              {busy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <>
-                  <Ionicons name="checkmark-circle-outline" size={20} color="#ffffff" />
-                  <Text style={styles.primaryButtonText}>Approve spec</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            />
           </View>
         ) : null}
 
@@ -573,37 +789,34 @@ export function ContributionDetailScreen({
               You've approved the plan. Because this change touches more of the
               app, it needs an explicit go-ahead to start building.
             </Text>
-            <TouchableOpacity
-              style={[styles.primaryButton, { backgroundColor: primaryColor }, busy && styles.buttonDisabled]}
+            <BusyButton
+              label="Start build"
+              icon="rocket-outline"
+              color={primaryColor}
+              busy={busy}
               onPress={handleStartBuild}
-              disabled={busy}
-              activeOpacity={0.8}
-            >
-              {busy ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <>
-                  <Ionicons name="rocket-outline" size={20} color="#ffffff" />
-                  <Text style={styles.primaryButtonText}>Start build</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            />
           </View>
         ) : null}
 
+        {showMergeCard ? (
+          <ActionCard icon="git-merge-outline" tint={PALETTE.yourTurn} title="Ready to merge">
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>
+              Code review passed. Merging lands the change on main and puts it
+              on the staging app — no trip to GitHub needed.
+            </Text>
+            <BusyButton
+              label="Merge & put it on staging"
+              icon="git-merge-outline"
+              color={primaryColor}
+              busy={busy}
+              onPress={handleMergeNow}
+            />
+          </ActionCard>
+        ) : null}
+
         {showStagingCard ? (
-          <View
-            style={[
-              styles.stagingCard,
-              { backgroundColor: colors.surface, borderColor: PALETTE.yourTurn },
-            ]}
-          >
-            <View style={styles.specHeader}>
-              <Ionicons name="flask-outline" size={16} color={PALETTE.yourTurn} />
-              <Text style={[styles.specHeaderText, { color: PALETTE.yourTurn }]}>
-                Ready for you to try
-              </Text>
-            </View>
+          <ActionCard icon="flask-outline" tint={PALETTE.yourTurn} title="Ready for you to try">
             <Text style={[styles.hint, { color: colors.textSecondary }]}>
               Your change is now merged and live on the staging app. Open it,
               try the thing you reported, and tell us how it went — your
@@ -638,44 +851,25 @@ export function ContributionDetailScreen({
                       Cancel
                     </Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.primaryButton,
-                      styles.stagingButton,
-                      { backgroundColor: primaryColor },
-                      (busy || !issueNote.trim()) && styles.buttonDisabled,
-                    ]}
+                  <BusyButton
+                    label="Send"
+                    color={primaryColor}
+                    busy={busy}
+                    disabled={!issueNote.trim()}
                     onPress={handleReportIssue}
-                    disabled={busy || !issueNote.trim()}
-                    activeOpacity={0.8}
-                  >
-                    {busy ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <Text style={styles.primaryButtonText}>Send</Text>
-                    )}
-                  </TouchableOpacity>
+                    grow
+                  />
                 </View>
               </>
             ) : (
               <View style={styles.stagingButtonRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.primaryButton,
-                    styles.stagingButton,
-                    { backgroundColor: PALETTE.shipped },
-                    busy && styles.buttonDisabled,
-                  ]}
+                <BusyButton
+                  label="✓ Works — ship it"
+                  color={PALETTE.shipped}
+                  busy={busy}
                   onPress={handleConfirmStaging}
-                  disabled={busy}
-                  activeOpacity={0.8}
-                >
-                  {busy ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>✓ Works — ship it</Text>
-                  )}
-                </TouchableOpacity>
+                  grow
+                />
                 <TouchableOpacity
                   style={[styles.secondaryButton, { borderColor: colors.border }]}
                   onPress={() => setIssueMode(true)}
@@ -688,7 +882,42 @@ export function ContributionDetailScreen({
                 </TouchableOpacity>
               </View>
             )}
-          </View>
+          </ActionCard>
+        ) : null}
+
+        {showProductionCard ? (
+          productionRecentlyRequested ? (
+            <ActionCard
+              icon="checkmark-circle-outline"
+              tint={PALETTE.shipped}
+              borderTint={colors.border}
+              title="Production deploy triggered"
+            >
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>
+                The silent update rolls out as users open the app — no forced
+                reload.
+              </Text>
+            </ActionCard>
+          ) : (
+            <ActionCard
+              icon="rocket-outline"
+              tint={PALETTE.shipped}
+              title="Ready for production"
+            >
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>
+                Ships everything currently on staging as a silent update —
+                users get it next time they open the app. Forced updates still
+                go through the GitHub workflow by hand.
+              </Text>
+              <BusyButton
+                label="Ship to production (silent update)"
+                icon="rocket-outline"
+                color={PALETTE.shipped}
+                busy={busy}
+                onPress={handlePromoteToProduction}
+              />
+            </ActionCard>
+          )
         ) : null}
 
         {contribution.githubIssueUrl ? (
@@ -814,10 +1043,16 @@ export function ContributionDetailScreen({
         </>
       )}
     </KeyboardAvoidingView>
+
+    {isDesktopWeb && planOpen && contribution.spec ? (
+      <PlanPanel contribution={contribution} onClose={handleClosePlan} />
+    ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  detailRow: { flex: 1, flexDirection: "row" },
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 12 },
   lockedText: { fontSize: 15, lineHeight: 22, textAlign: "center" },
@@ -862,6 +1097,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   specSubtitle: { fontSize: 13, lineHeight: 19 },
+  specOpenRow: { flexDirection: "row", alignItems: "center", gap: 2 },
+  specOpenText: { fontSize: 14, fontWeight: "600" },
+  startedBy: { fontSize: 11, alignSelf: "center", marginLeft: 2 },
   sliceRow: {
     gap: 8,
     borderTopWidth: StyleSheet.hairlineWidth,

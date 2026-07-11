@@ -14,10 +14,12 @@
  */
 import type { Id } from "@services/api/convex";
 
-// A Convex document id is 16–64 lowercase alphanumerics. Mirrors the guard in
-// ContributionDetailScreen so a non-id segment (e.g. "submit", "feature-flags")
-// never masquerades as an open conversation.
-const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
+// A Convex document id is 16–64 lowercase alphanumerics — the shared guard
+// for every contribute surface that takes an id from a URL, so a non-id
+// segment (e.g. "submit", "feature-flags") or malformed deep link never
+// reaches the Convex queries (which would throw an ArgumentValidationError
+// through render).
+export const LOOKS_LIKE_CONVEX_ID = /^[a-z0-9]{16,64}$/;
 
 export interface DevRoute {
   /** The open conversation id (for the sidebar row highlight), or null. */

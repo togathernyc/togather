@@ -2264,6 +2264,19 @@ export default defineSchema({
     // change on staging before merge; false for pure copy/color tweaks.
     verifyOnStaging: v.optional(v.boolean()),
     stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
+    // Stamped when a maintainer triggers the production deploy from the app
+    // (promoteToProduction — always a silent OTA). Cleared again if the
+    // GitHub workflow dispatch fails; treated as a cooldown (not a one-shot)
+    // so a workflow run that fails AFTER dispatch doesn't strand the item.
+    productionRequestedAt: v.optional(v.number()),
+    // Stamped when a maintainer asks to merge from the app (mergeNow) so the
+    // merge card hides for EVERY viewer while the merge is in flight; cleared
+    // by mergeFromApp's failure path so "try again" is actually possible.
+    mergeRequestedAt: v.optional(v.number()),
+    // How many staging-redo rounds (reportStagingIssue) this item has been
+    // through. Drives redo-mode dispatch and round-scoped chat idempotency
+    // keys (bug:<id>:<status>:r<N>).
+    redoRounds: v.optional(v.number()),
     // AI review cycle: verdict reported by the review-mode routine via the
     // signed callback after it reviews the PR ("approved" promotes the bug to
     // READY_TO_MERGE; "changes_requested" leaves it in CODE_REVIEW). Cleared
