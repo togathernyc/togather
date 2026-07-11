@@ -26,11 +26,14 @@ import {
   InteractionManager,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import type { Id } from '@services/api/convex';
 import { useMessages } from '../hooks/useMessages';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { MessageItem } from './MessageItem';
+import { GhostThreadPointer } from './GhostThreadPointer';
+import { buildThreadAwareTimeline } from '../utils/threadTimeline';
 import { ReactionsProvider } from '../context/ReactionsContext';
 import { useChatPrefetch } from '../context/ChatPrefetchContext';
 
@@ -58,9 +61,14 @@ interface Message {
   }>;
   mentionedUserIds?: Id<"users">[];
   threadReplyCount?: number;
+  // Thread bump timestamp — later than createdAt once the message has been
+  // replied to. Drives the floating "ghost" thread pointer (see below).
+  lastActivityAt?: number;
   // Denormalized sender info
   senderName?: string;
   senderProfilePhoto?: string;
+  // Decorated by getMessages (attachSenderNotifsDisabled) — used to badge the row.
+  senderNotificationsDisabled?: boolean;
   // Link preview control
   hideLinkPreview?: boolean;
   // Reach out request reference
@@ -140,10 +148,11 @@ function formatDateSeparator(timestamp: number): string {
   return `${month} ${day}`;
 }
 
-// List item type (message or date separator)
+// List item type (message, date separator, or floating "ghost" thread pointer)
 type ListItem =
   | { type: 'message'; data: Message; showSenderInfo: boolean; isOptimistic?: boolean; optimisticStatus?: string }
-  | { type: 'dateSeparator'; date: string };
+  | { type: 'dateSeparator'; date: string }
+  | { type: 'ghost'; parentId: Id<"chatMessages">; channelId: Id<"chatChannels">; replyCount: number };
 
 /**
  * MessageList renders a virtualized list of messages with pagination.
@@ -167,8 +176,16 @@ export function MessageList({
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
+  const router = useRouter();
   const listRef = useRef<FlatList<ListItem>>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+
+  // Internal scroll-to-original target for tapping a "ghost" thread pointer.
+  // Kept separate from the `highlightMessageId` prop (inbox search) but funneled
+  // through the same anchor/scroll/highlight machinery. The nonce lets tapping
+  // the same ghost re-scroll. The prop always wins when both are set.
+  const [ghostTarget, setGhostTarget] = useState<{ id: Id<"chatMessages">; nonce: number } | null>(null);
+  const effectiveHighlightId = highlightMessageId ?? ghostTarget?.id ?? null;
 
   // Wait for navigation animation to complete before loading messages
   // This prevents choppy animations when entering the chat
@@ -192,14 +209,14 @@ export function MessageList({
   // Fetch messages with pagination (live query for updates)
   // Start immediately if we have prefetched data, otherwise wait for animation
   const shouldStartQuery = hasPrefetchedMessages || isAnimationComplete;
-  // Larger page size while jumping to a search result so the anchor catch-up
-  // reaches older messages in fewer round-trips.
-  const pageSize = highlightMessageId ? 40 : 20;
+  // Larger page size while jumping to a message (inbox search OR a ghost tap)
+  // so the anchor catch-up reaches older messages in fewer round-trips.
+  const pageSize = effectiveHighlightId ? 40 : 20;
   const { messages: liveMessages, loadMore, hasMore, isLoading: liveIsLoading, isStale } = useMessages(
     shouldStartQuery ? channelId : null,
     pageSize,
     groupId ?? null,
-    highlightMessageId ?? null
+    effectiveHighlightId
   );
 
   // Use prefetched messages while live query is loading
@@ -221,30 +238,43 @@ export function MessageList({
   const listItems = useMemo<ListItem[]>(() => {
     const items: ListItem[] = [];
 
-    // Process messages in chronological order first to determine grouping
-    messages.forEach((msg, index) => {
-      const previousMsg = index > 0 ? messages[index - 1] : undefined;
+    // Build a thread-aware timeline: every real message stays at its createdAt
+    // slot, and each replied-to message additionally floats a content-free
+    // "ghost" pointer at its lastActivityAt slot. Date separators and sender
+    // grouping are derived while walking the ordered timeline.
+    const timeline = buildThreadAwareTimeline(messages);
+    let previousMsg: Message | undefined;
+    let previousDateKey: string | undefined;
 
-      // Date separator goes BEFORE the first message of each date
-      const isFirstOfDate = !previousMsg ||
-        new Date(msg.createdAt).toDateString() !== new Date(previousMsg.createdAt).toDateString();
+    timeline.forEach((entry) => {
+      const msg = entry.message;
+      // A ghost is positioned by the thread's latest activity; a message by its
+      // own createdAt.
+      const ts = entry.kind === 'ghost' ? msg.lastActivityAt ?? msg.createdAt : msg.createdAt;
 
-      // Show sender info if previous message is from different sender
-      const showSenderInfo = !previousMsg || msg.senderId !== previousMsg.senderId;
-
-      // Add date separator before the first message of each date
-      if (isFirstOfDate) {
-        items.push({
-          type: 'dateSeparator',
-          date: formatDateSeparator(msg.createdAt),
-        });
+      // Date separator goes BEFORE the first entry of each date.
+      const dateKey = new Date(ts).toDateString();
+      if (dateKey !== previousDateKey) {
+        items.push({ type: 'dateSeparator', date: formatDateSeparator(ts) });
+        previousDateKey = dateKey;
       }
 
-      items.push({
-        type: 'message',
-        data: msg,
-        showSenderInfo,
-      });
+      if (entry.kind === 'ghost') {
+        items.push({
+          type: 'ghost',
+          parentId: msg._id,
+          channelId: msg.channelId,
+          replyCount: msg.threadReplyCount ?? 0,
+        });
+        // A ghost visually breaks the sender-grouping run.
+        previousMsg = undefined;
+        return;
+      }
+
+      // Show sender info if previous message is from a different sender.
+      const showSenderInfo = !previousMsg || msg.senderId !== previousMsg.senderId;
+      items.push({ type: 'message', data: msg, showSenderInfo });
+      previousMsg = msg;
     });
 
     // Append optimistic messages at the end (newest, after all server messages)
@@ -295,22 +325,28 @@ export function MessageList({
     return items.reverse();
   }, [messages, optimisticMessages]);
 
-  // Scroll to and highlight a target message (e.g. tapped from inbox search).
-  // The hook auto-loads older pages until the message is present; this runs
-  // once it appears in listItems. Tracked per-anchor so it fires exactly once.
+  // Scroll to and highlight a target message — either from inbox search
+  // (`highlightMessageId` prop) or from tapping a ghost thread pointer
+  // (`ghostTarget`). The hook auto-loads older pages until the message is
+  // present; this runs once it appears in listItems. Tracked per-anchor (the
+  // ghost nonce makes re-tapping the same ghost re-scroll) so it fires once.
   const scrolledAnchorRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!highlightMessageId) {
+    const anchorId = highlightMessageId ?? ghostTarget?.id ?? null;
+    if (!anchorId) {
       scrolledAnchorRef.current = null;
       return;
     }
-    if (scrolledAnchorRef.current === highlightMessageId) return;
+    const anchorKey = highlightMessageId
+      ? `hl:${highlightMessageId}`
+      : `ghost:${ghostTarget!.id}:${ghostTarget!.nonce}`;
+    if (scrolledAnchorRef.current === anchorKey) return;
     const targetIndex = listItems.findIndex(
-      (it) => it.type === 'message' && it.data._id === highlightMessageId
+      (it) => it.type === 'message' && it.data._id === anchorId
     );
     if (targetIndex < 0) return; // not loaded yet — catch-up loop will fetch more
 
-    scrolledAnchorRef.current = highlightMessageId;
+    scrolledAnchorRef.current = anchorKey;
     const handle = InteractionManager.runAfterInteractions(() => {
       try {
         listRef.current?.scrollToIndex({
@@ -323,7 +359,32 @@ export function MessageList({
       }
     });
     return () => handle.cancel();
-  }, [highlightMessageId, listItems]);
+  }, [highlightMessageId, ghostTarget, listItems]);
+
+  // Tap a ghost's "N replies" pill → open the thread screen. Group channels and
+  // DMs have parallel routes (mirrors MessageItem.handleThreadPress).
+  const handleGhostOpenThread = useCallback(
+    (parentId: Id<"chatMessages">, ghostChannelId: Id<"chatChannels">) => {
+      if (groupId) {
+        router.push({
+          pathname: `/inbox/${groupId}/thread/${parentId}` as any,
+          params: { channelName: channelName || 'general' },
+        });
+      } else {
+        router.push({
+          pathname: `/inbox/dm/${ghostChannelId}/thread/${parentId}` as any,
+        });
+      }
+    },
+    [router, groupId, channelName]
+  );
+
+  // Tap a ghost's body → scroll up to the real original message and highlight
+  // it. Funnels through the shared anchor machinery, which auto-loads older
+  // pages first if the original is above the currently loaded window.
+  const handleGhostScrollToOriginal = useCallback((parentId: Id<"chatMessages">) => {
+    setGhostTarget((prev) => ({ id: parentId, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
 
   // Handle scroll to detect if user is near bottom (for scroll-to-bottom button)
   // In inverted list, "near bottom" means near index 0
@@ -369,6 +430,18 @@ export function MessageList({
             <Text style={[styles.dateSeparatorText, { color: themeColors.textTertiary }]}>{item.date}</Text>
             <View style={[styles.dateSeparatorLine, { backgroundColor: themeColors.border }]} />
           </View>
+        );
+      }
+
+      if (item.type === 'ghost') {
+        return (
+          <GhostThreadPointer
+            parentMessageId={item.parentId}
+            channelId={item.channelId}
+            replyCount={item.replyCount}
+            onOpenThread={() => handleGhostOpenThread(item.parentId, item.channelId)}
+            onScrollToOriginal={() => handleGhostScrollToOriginal(item.parentId)}
+          />
         );
       }
 
@@ -421,17 +494,20 @@ export function MessageList({
           optimisticStatus={item.optimisticStatus as any}
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}
           onAvatarPress={onAvatarPress}
-          isHighlighted={highlightMessageId != null && message._id === highlightMessageId}
+          isHighlighted={effectiveHighlightId != null && message._id === effectiveHighlightId}
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, highlightMessageId]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, effectiveHighlightId, handleGhostOpenThread, handleGhostScrollToOriginal]
   );
 
   // Key extractor
   const keyExtractor = useCallback(
-    (item: ListItem, index: number) =>
-      item.type === 'dateSeparator' ? `date-${item.date}-${index}` : `msg-${item.data._id}`,
+    (item: ListItem, index: number) => {
+      if (item.type === 'dateSeparator') return `date-${item.date}-${index}`;
+      if (item.type === 'ghost') return `ghost-${item.parentId}`;
+      return `msg-${item.data._id}`;
+    },
     []
   );
 

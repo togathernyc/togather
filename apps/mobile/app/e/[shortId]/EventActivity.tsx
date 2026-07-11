@@ -16,24 +16,29 @@
  * an enabled option). The backend is authoritative — this is just UI gating.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  ScrollView,
+  findNodeHandle,
 } from "react-native";
 import {
   useQuery,
   api,
   type Id,
 } from "@services/api/convex";
+import { useRouter } from "expo-router";
 import { useTheme } from "@hooks/useTheme";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { ReactionsProvider } from "@/features/chat/context/ReactionsContext";
 import { useReadState } from "@/features/chat/hooks/useReadState";
 import { dismissChannelNotifications } from "@features/notifications/utils/dismissChannelNotifications";
+import { buildThreadAwareTimeline } from "@features/chat/utils/threadTimeline";
+import { GhostThreadPointer } from "@features/chat/components/GhostThreadPointer";
 import { Ionicons } from "@expo/vector-icons";
 import { EventComment } from "./EventComment";
 import { EventCommentSheet } from "./EventCommentSheet";
@@ -55,6 +60,9 @@ export interface EventActivityProps {
   /** Pre-resolved channel id (if the channel exists). Null = still materializing. */
   channelId: Id<"chatChannels"> | null;
   authToken: string;
+  /** Outer page ScrollView (owned by EventPageClient). Used to scroll up to
+   *  the real original comment when a thread "ghost" pointer is tapped. */
+  outerScrollRef?: React.RefObject<ScrollView | null>;
 }
 
 export function EventActivity({
@@ -67,8 +75,10 @@ export function EventActivity({
   isChatEnabled,
   channelId,
   authToken,
+  outerScrollRef,
 }: EventActivityProps) {
   const { colors } = useTheme();
+  const router = useRouter();
 
   // Fetch messages (single-page, ascending). Re-queries reactively as new
   // messages come in since we're watching the latest page.
@@ -183,6 +193,70 @@ export function EventActivity({
     setLoadOlderCursor(olderCursor);
   }, [olderCursor, hasMoreOlder, isLoadingOlder]);
 
+  // -------------------- Thread ghost pointers --------------------
+  // Mirror the chat surface (MessageList): replying keeps the real comment in
+  // its chronological place, and a content-free "ghost" pointer floats at the
+  // thread's latest-activity slot. The derivation is the same pure helper.
+  const timelineEntries = useMemo(
+    () => buildThreadAwareTimeline(messages).reverse(), // newest-first for display
+    [messages]
+  );
+
+  // Per-comment view refs (for measureLayout) + a transient highlight target.
+  const rowRefs = useRef<Map<string, View | null>>(new Map());
+  const [highlightedId, setHighlightedId] = useState<Id<"chatMessages"> | null>(
+    null
+  );
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    },
+    []
+  );
+
+  // Tap the ghost's "N replies" pill → open the event-scoped thread page
+  // (same target as EventComment's Reply button).
+  const handleGhostOpenThread = useCallback(
+    (parentId: Id<"chatMessages">) => {
+      router.push(
+        `/e/${shortId}/thread/${parentId}?groupId=${groupId}&channelName=${encodeURIComponent(
+          eventTitle
+        )}` as any
+      );
+    },
+    [router, shortId, groupId, eventTitle]
+  );
+
+  // Tap the ghost body → scroll the page up to the real original comment and
+  // briefly highlight it. The original is always loaded (the ghost is derived
+  // from it), so no catch-up paging is needed here. Highlight fires regardless
+  // of whether the native measurement succeeds, so the affordance never no-ops.
+  const handleGhostScrollToOriginal = useCallback(
+    (parentId: Id<"chatMessages">) => {
+      const row = rowRefs.current.get(parentId);
+      const scrollNode = outerScrollRef?.current;
+      if (row && scrollNode) {
+        const handle = findNodeHandle(scrollNode);
+        if (handle != null) {
+          row.measureLayout(
+            handle,
+            (_x, y) => {
+              scrollNode.scrollTo({ y: Math.max(y - 80, 0), animated: true });
+            },
+            () => {
+              // Measurement gap — highlight still applies below.
+            }
+          );
+        }
+      }
+      setHighlightedId(parentId);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+      highlightTimerRef.current = setTimeout(() => setHighlightedId(null), 2000);
+    },
+    [outerScrollRef]
+  );
+
   // -------------------- Render --------------------
   if (!canAccess) return null;
 
@@ -191,10 +265,6 @@ export function EventActivity({
   // "no channel yet" state, not a spinner case.
   const isLoadingMessages =
     channelId !== null && canAccess && messagesResult === undefined;
-
-  // Partiful-style: newest first. The paginated query returns ascending; reverse
-  // for display without mutating the source array.
-  const displayMessages = [...messages].reverse();
 
   return (
     <View style={styles.root}>
@@ -235,7 +305,7 @@ export function EventActivity({
           <View style={styles.loadingBlock}>
             <ActivityIndicator size="small" color={DEFAULT_PRIMARY_COLOR} />
           </View>
-        ) : displayMessages.length === 0 ? (
+        ) : timelineEntries.length === 0 ? (
           <View style={styles.emptyBlock}>
             <Text
               style={[styles.emptyText, { color: colors.textSecondary }]}
@@ -247,31 +317,63 @@ export function EventActivity({
           </View>
         ) : (
           <View style={styles.messagesList}>
-            {displayMessages.map((msg: any) => (
-              <EventComment
-                key={msg._id}
-                message={{
-                  _id: msg._id,
-                  channelId: msg.channelId,
-                  senderId: msg.senderId,
-                  content: msg.content || "",
-                  contentType: msg.contentType || "text",
-                  attachments: msg.attachments,
-                  createdAt: msg.createdAt,
-                  editedAt: msg.editedAt,
-                  isDeleted: msg.isDeleted,
-                  senderName: msg.senderName,
-                  senderProfilePhoto: msg.senderProfilePhoto,
-                  mentionedUserIds: msg.mentionedUserIds,
-                  threadReplyCount: msg.threadReplyCount,
-                  blastId: msg.blastId,
-                }}
-                currentUserId={currentUserId}
-                groupId={groupId}
-                eventShortId={shortId}
-                eventTitle={eventTitle}
-              />
-            ))}
+            {timelineEntries.map((entry) => {
+              const msg: any = entry.message;
+              if (entry.kind === "ghost") {
+                return (
+                  <GhostThreadPointer
+                    key={`ghost-${msg._id}`}
+                    parentMessageId={msg._id}
+                    channelId={msg.channelId}
+                    replyCount={msg.threadReplyCount ?? 0}
+                    onOpenThread={() => handleGhostOpenThread(msg._id)}
+                    onScrollToOriginal={() =>
+                      handleGhostScrollToOriginal(msg._id)
+                    }
+                  />
+                );
+              }
+              return (
+                <View
+                  key={msg._id}
+                  ref={(r) => {
+                    if (r) rowRefs.current.set(msg._id, r);
+                    else rowRefs.current.delete(msg._id);
+                  }}
+                  style={
+                    highlightedId === msg._id
+                      ? [
+                          styles.highlightedRow,
+                          { backgroundColor: colors.surfaceSecondary },
+                        ]
+                      : undefined
+                  }
+                >
+                  <EventComment
+                    message={{
+                      _id: msg._id,
+                      channelId: msg.channelId,
+                      senderId: msg.senderId,
+                      content: msg.content || "",
+                      contentType: msg.contentType || "text",
+                      attachments: msg.attachments,
+                      createdAt: msg.createdAt,
+                      editedAt: msg.editedAt,
+                      isDeleted: msg.isDeleted,
+                      senderName: msg.senderName,
+                      senderProfilePhoto: msg.senderProfilePhoto,
+                      mentionedUserIds: msg.mentionedUserIds,
+                      threadReplyCount: msg.threadReplyCount,
+                      blastId: msg.blastId,
+                    }}
+                    currentUserId={currentUserId}
+                    groupId={groupId}
+                    eventShortId={shortId}
+                    eventTitle={eventTitle}
+                  />
+                </View>
+              );
+            })}
           </View>
         )}
       </ReactionsProvider>
@@ -365,5 +467,9 @@ const styles = StyleSheet.create({
   },
   messagesList: {
     // EventComment owns its own padding. Newest comment on top.
+  },
+  // Transient highlight when a thread ghost pointer jumps to the original.
+  highlightedRow: {
+    borderRadius: 10,
   },
 });

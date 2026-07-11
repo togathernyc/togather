@@ -1213,6 +1213,65 @@ describe("Get Messages", () => {
 
     expect(result2.hasMore).toBe(false);
   });
+
+  test("paginates correctly when many messages share the same createdAt (tie-break at a page boundary)", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, channelId, accessToken } = await seedTestData(t);
+
+    // Insert 6 top-level messages that ALL share an identical createdAt, so the
+    // page boundary lands inside a run of tied timestamps. The cursor encodes
+    // `createdAt:seenIds` precisely to skip already-returned ids at that shared
+    // timestamp — this exercises that seenIds skip path directly.
+    const SHARED_TS = 1_700_000_000_000;
+    const TOTAL = 6;
+    const insertedIds = await t.run(async (ctx) => {
+      const ids: Id<"chatMessages">[] = [];
+      for (let i = 0; i < TOTAL; i++) {
+        ids.push(
+          await ctx.db.insert("chatMessages", {
+            channelId,
+            senderId: userId,
+            content: `Tied message ${i}`,
+            contentType: "text",
+            createdAt: SHARED_TS,
+            isDeleted: false,
+            lastActivityAt: SHARED_TS,
+          })
+        );
+      }
+      return ids;
+    });
+
+    // Page through with a limit smaller than the tie run so a boundary falls
+    // between tied messages, collecting every returned id.
+    const seen: string[] = [];
+    let cursor: string | undefined = undefined;
+    let guard = 0;
+    while (guard++ < 20) {
+      const page: {
+        messages: Array<{ _id: Id<"chatMessages"> }>;
+        hasMore: boolean;
+        cursor?: string;
+      } = await t.query(api.functions.messaging.messages.getMessages, {
+        token: accessToken,
+        channelId,
+        limit: 2,
+        cursor,
+      });
+      for (const m of page.messages) seen.push(m._id);
+      if (!page.hasMore || !page.cursor) break;
+      cursor = page.cursor;
+    }
+
+    // Complete: every inserted message is returned exactly once.
+    expect(seen).toHaveLength(TOTAL);
+    // Disjoint: no message appears on two pages.
+    expect(new Set(seen).size).toBe(TOTAL);
+    // Every inserted id is present.
+    for (const id of insertedIds) {
+      expect(seen).toContain(id);
+    }
+  });
 });
 
 // ============================================================================
@@ -1576,7 +1635,7 @@ describe("Thread Reply Count in Message List", () => {
 // ============================================================================
 
 describe("Thread Bump (lastActivityAt)", () => {
-  test("replying to a thread bumps it to most recent position", async () => {
+  test("replying to a message keeps it in its chronological position (does not move it)", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { channelId, accessToken } = await seedTestData(t);
@@ -1603,7 +1662,7 @@ describe("Thread Bump (lastActivityAt)", () => {
 
     vi.advanceTimersByTime(100);
 
-    // Reply to A — should bump A's lastActivityAt
+    // Reply to A — bumps A's lastActivityAt but must NOT move A in the list
     await t.mutation(api.functions.messaging.messages.sendMessage, {
       token: accessToken,
       channelId,
@@ -1613,16 +1672,24 @@ describe("Thread Bump (lastActivityAt)", () => {
     vi.runAllTimers();
     await t.finishInProgressScheduledFunctions();
 
-    // Fetch messages — A should appear AFTER B (most recent) in chronological order
     const result = await t.query(api.functions.messaging.messages.getMessages, {
       token: accessToken,
       channelId,
     });
 
-    // Chronological order (oldest activity first): B first, then A (bumped)
+    // Messages are ordered by createdAt, so A (created first) stays before B
+    // even though A was just replied to. The client floats a "ghost" pointer
+    // at A's lastActivityAt slot instead of moving the real message.
     expect(result.messages).toHaveLength(2);
-    expect(result.messages[0]._id).toBe(msgB);
-    expect(result.messages[1]._id).toBe(msgA);
+    expect(result.messages[0]._id).toBe(msgA);
+    expect(result.messages[1]._id).toBe(msgB);
+
+    // The bump still happened on the field, so the client can derive a ghost:
+    // A's lastActivityAt is now later than B's createdAt.
+    const returnedA = result.messages.find((m: { _id: typeof msgA }) => m._id === msgA);
+    const returnedB = result.messages.find((m: { _id: typeof msgB }) => m._id === msgB);
+    expect(returnedA?.lastActivityAt).toBeGreaterThan(returnedA!.createdAt);
+    expect(returnedA?.lastActivityAt).toBeGreaterThan(returnedB!.createdAt);
   });
 
   test("lastActivityAt is set on parent message after a reply", async () => {

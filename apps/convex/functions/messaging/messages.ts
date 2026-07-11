@@ -413,10 +413,17 @@ export const getMessages = query({
 
     const blockedUserIds = new Set(blockedUsers.map((b) => b.blockedId));
 
-    // --- Index-driven pagination using by_channel_lastActivityAt ---
+    // --- Index-driven pagination using by_channel_createdAt ---
     // Instead of .collect() on ALL messages, scan the index in desc order
     // and only read enough to fill one page. This is O(page_size) instead
     // of O(total_messages).
+    //
+    // Ordering is keyed on `createdAt` (not `lastActivityAt`) so a replied-to
+    // message keeps its original chronological position — replying no longer
+    // floats the parent to the bottom of the chat. `lastActivityAt` is still
+    // returned on each message; the client uses it to float a content-free
+    // "ghost" thread pointer at the bottom (see MessageList). Inbox room
+    // ordering, which relies on the `lastActivityAt` bump, is unaffected.
 
     // Decode cursor: "timestamp:seenIds" for correct tie-breaking.
     // seenIds is a comma-separated list of message IDs already returned at the
@@ -445,13 +452,13 @@ export const getMessages = query({
     // Fetch in batches until we have enough accepted messages or run out
     let candidates = await ctx.db
       .query("chatMessages")
-      .withIndex("by_channel_lastActivityAt", (q) => {
+      .withIndex("by_channel_createdAt", (q) => {
         const q1 = q.eq("channelId", args.channelId);
         // Use lte to include messages at the cursor timestamp (we skip
         // already-seen ones by ID below). This avoids dropping messages
         // that share the same timestamp as the cursor.
         if (scanCursorTime !== undefined) {
-          return q1.lte("lastActivityAt", scanCursorTime);
+          return q1.lte("createdAt", scanCursorTime);
         }
         return q1;
       })
@@ -500,12 +507,12 @@ export const getMessages = query({
 
       // Advance scan cursor to the last candidate's timestamp for next batch
       const lastCandidate = candidates[candidates.length - 1];
-      scanCursorTime = lastCandidate.lastActivityAt ?? lastCandidate.createdAt;
+      scanCursorTime = lastCandidate.createdAt;
 
       candidates = await ctx.db
         .query("chatMessages")
-        .withIndex("by_channel_lastActivityAt", (q) =>
-          q.eq("channelId", args.channelId).lte("lastActivityAt", scanCursorTime!)
+        .withIndex("by_channel_createdAt", (q) =>
+          q.eq("channelId", args.channelId).lte("createdAt", scanCursorTime!)
         )
         .order("desc")
         .take(fetchBatch);
@@ -515,20 +522,27 @@ export const getMessages = query({
     const pageMessages = accepted.slice(0, limit);
 
     // Encode cursor: "timestamp:id1,id2,..." — includes all message IDs at the
-    // last page entry's timestamp so the next page can skip them correctly.
+    // last page entry's createdAt so the next page can skip them correctly.
     let cursor: string | undefined;
     if (pageMessages.length > 0) {
       const lastMsg = pageMessages[pageMessages.length - 1];
-      const lastActivityAt = lastMsg.lastActivityAt ?? lastMsg.createdAt;
+      const boundaryTime = lastMsg.createdAt;
       // Collect all accepted message IDs at the boundary timestamp
-      const boundaryIds: string[] = [];
+      const boundaryIds = new Set<string>();
       for (const m of pageMessages) {
-        const t = m.lastActivityAt ?? m.createdAt;
-        if (t === lastActivityAt) {
-          boundaryIds.push(m._id);
+        if (m.createdAt === boundaryTime) {
+          boundaryIds.add(m._id);
         }
       }
-      cursor = `${lastActivityAt}:${boundaryIds.join(",")}`;
+      // Carry forward IDs already returned at this timestamp on EARLIER pages.
+      // When a run of messages shares one createdAt and spans more than two
+      // pages, the incoming cursor's seenIds (at the same boundaryTime) must be
+      // preserved — otherwise messages returned two-or-more pages ago would be
+      // re-served (the boundary-id list only covers the current page).
+      if (cursorTime === boundaryTime && cursorSeenIds) {
+        for (const id of cursorSeenIds) boundaryIds.add(id);
+      }
+      cursor = `${boundaryTime}:${[...boundaryIds].join(",")}`;
     }
 
     // Reverse to chronological order (oldest first, newest at bottom)
