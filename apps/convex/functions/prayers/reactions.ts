@@ -54,10 +54,13 @@ export interface AggregatedReaction {
 /**
  * Resolve the `prayers` row that owns a reaction target and confirm the caller
  * may see it. Returns the prayer when the caller is a member of its community
- * and is either the author or has a `prayerResponses` row; otherwise `null`.
+ * and is either the author or has a `prayerResponses` row on an **approved**
+ * prayer; otherwise `null`.
  *
  * This is the same gate `prayers.getDetail` enforces — reactions are strictly
- * a subset of "can view this prayer detail".
+ * a subset of "can view this prayer detail" — plus a moderation guard so a
+ * stale detail screen or deep link can't keep reacting to a prayer that was
+ * later admin-rejected (see below).
  */
 async function resolveAccessiblePrayer(
   ctx: QueryCtx,
@@ -65,11 +68,19 @@ async function resolveAccessiblePrayer(
   targetType: PrayerReactionTargetType,
   targetId: string,
 ): Promise<Doc<"prayers"> | null> {
+  // `targetId` is a bare string (the target is polymorphic, so it can't be a
+  // typed `v.id`). `normalizeId` returns null for a malformed id instead of
+  // letting `ctx.db.get` throw Convex's "invalid id" error — a bad id should
+  // deny cleanly, not surface a raw 500.
   let prayer: Doc<"prayers"> | null;
   if (targetType === "prayer") {
-    prayer = await ctx.db.get(targetId as Id<"prayers">);
+    const prayerId = ctx.db.normalizeId("prayers", targetId);
+    if (!prayerId) return null;
+    prayer = await ctx.db.get(prayerId);
   } else {
-    const followUp = await ctx.db.get(targetId as Id<"prayerFollowUps">);
+    const followUpId = ctx.db.normalizeId("prayerFollowUps", targetId);
+    if (!followUpId) return null;
+    const followUp = await ctx.db.get(followUpId);
     if (!followUp) return null;
     prayer = await ctx.db.get(followUp.prayerId);
   }
@@ -98,7 +109,16 @@ async function resolveAccessiblePrayer(
       q.eq("prayerId", prayer!._id).eq("userId", userId),
     )
     .first());
-  return hasPrayed ? prayer : null;
+  if (!hasPrayed) return null;
+
+  // Non-author viewers may only react to (or read reactors of) an approved
+  // prayer. The feed and `myPrayedFor` already hide rejected/pending prayers,
+  // but a previously-prayed prayer that was later admin-rejected could still be
+  // reached via a stale detail screen or notification deep link — without this
+  // guard, removed/moderated content would keep accumulating visible
+  // reactions. The author keeps access to their own prayer (matching
+  // getDetail) regardless of moderation state.
+  return prayer.moderationStatus === "approved" ? prayer : null;
 }
 
 // ============================================================================
@@ -188,6 +208,18 @@ export const toggleReaction = mutation({
     );
     if (!prayer) {
       throw new ConvexError("prayer_not_accessible");
+    }
+
+    // Anonymity guard: the author of an *anonymous* prayer must not react to
+    // their own request or follow-ups. Reactors are attributed by real name in
+    // the "who reacted" list, so a self-reaction would surface the author's
+    // identity there (and via `hasReacted`/counts) and defeat the prayer's
+    // anonymity. Reacting to *other* people's prayers is unaffected; this only
+    // blocks a self-reaction that would unmask an anonymous author. The mobile
+    // UI hides the reaction affordance on an anonymous author's own cards, so
+    // this is defense in depth against a stale client or deep link.
+    if (prayer.isAnonymous && prayer.authorUserId === userId) {
+      throw new ConvexError("anonymous_author_cannot_react");
     }
 
     const existing = await ctx.db

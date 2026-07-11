@@ -337,6 +337,196 @@ describe("prayer reactions", () => {
     expect(authorId).toBeDefined();
   });
 
+  test("anonymous prayer's author cannot react to their own request (no unmasking)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seed(t);
+    const { userId: anonAuthorId, token: anonAuthorToken } = await makeUser(
+      t,
+      communityId,
+      "Anon",
+      "+15555550007",
+    );
+    const anonPrayerId = await t.run(async (ctx) =>
+      ctx.db.insert("prayers", {
+        communityId,
+        authorUserId: anonAuthorId,
+        isAnonymous: true,
+        bodyText: "Please pray, but keep me anonymous",
+        status: "active",
+        prayedForCount: 0,
+        moderationStatus: "approved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    await expect(
+      t.mutation(api.functions.prayers.reactions.toggleReaction, {
+        token: anonAuthorToken,
+        targetType: "prayer",
+        targetId: anonPrayerId,
+        emoji: HEART,
+      }),
+    ).rejects.toThrow(/anonymous_author_cannot_react/);
+
+    // No row was created, so the author can never surface in the reactor list.
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("prayerReactions").collect(),
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  test("anonymous prayer's author cannot react to their own follow-up", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seed(t);
+    const { userId: anonAuthorId, token: anonAuthorToken } = await makeUser(
+      t,
+      communityId,
+      "Anon",
+      "+15555550008",
+    );
+    const { anonFollowUpId } = await t.run(async (ctx) => {
+      const anonPrayerId = await ctx.db.insert("prayers", {
+        communityId,
+        authorUserId: anonAuthorId,
+        isAnonymous: true,
+        bodyText: "Anonymous prayer with an update",
+        status: "active",
+        prayedForCount: 0,
+        moderationStatus: "approved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      const anonFollowUpId = await ctx.db.insert("prayerFollowUps", {
+        prayerId: anonPrayerId,
+        authorUserId: anonAuthorId,
+        kind: "update",
+        bodyText: "A small update",
+        createdAt: Date.now(),
+      });
+      return { anonFollowUpId };
+    });
+
+    await expect(
+      t.mutation(api.functions.prayers.reactions.toggleReaction, {
+        token: anonAuthorToken,
+        targetType: "followUp",
+        targetId: anonFollowUpId,
+        emoji: PRAY,
+      }),
+    ).rejects.toThrow(/anonymous_author_cannot_react/);
+  });
+
+  test("a prayed-for viewer can still react to an anonymous prayer (only the author is blocked)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seed(t);
+    const { userId: anonAuthorId } = await makeUser(
+      t,
+      communityId,
+      "Anon",
+      "+15555550009",
+    );
+    const anonPrayerId = await t.run(async (ctx) =>
+      ctx.db.insert("prayers", {
+        communityId,
+        authorUserId: anonAuthorId,
+        isAnonymous: true,
+        bodyText: "Anonymous prayer others can react to",
+        status: "active",
+        prayedForCount: 0,
+        moderationStatus: "approved",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const { userId: reactorId, token: reactorToken } = await makeUser(
+      t,
+      communityId,
+      "Reactor",
+      "+15555550010",
+    );
+    await recordPrayed(t, anonPrayerId, communityId, reactorId);
+
+    await t.mutation(api.functions.prayers.reactions.toggleReaction, {
+      token: reactorToken,
+      targetType: "prayer",
+      targetId: anonPrayerId,
+      emoji: HEART,
+    });
+
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("prayerReactions").collect(),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(reactorId);
+  });
+
+  test("a non-author cannot react to a prayer that was later rejected", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seed(t);
+    const { userId: rejectedAuthorId } = await makeUser(
+      t,
+      communityId,
+      "RejectedAuthor",
+      "+15555550011",
+    );
+    const rejectedPrayerId = await t.run(async (ctx) =>
+      ctx.db.insert("prayers", {
+        communityId,
+        authorUserId: rejectedAuthorId,
+        isAnonymous: false,
+        bodyText: "This prayer was moderated out",
+        status: "active",
+        prayedForCount: 0,
+        moderationStatus: "rejected",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const { userId: viewerId, token: viewerToken } = await makeUser(
+      t,
+      communityId,
+      "Viewer",
+      "+15555550012",
+    );
+    // The viewer prayed for it before it was rejected (stale deep link).
+    await recordPrayed(t, rejectedPrayerId, communityId, viewerId);
+
+    await expect(
+      t.mutation(api.functions.prayers.reactions.toggleReaction, {
+        token: viewerToken,
+        targetType: "prayer",
+        targetId: rejectedPrayerId,
+        emoji: HEART,
+      }),
+    ).rejects.toThrow(/prayer_not_accessible/);
+  });
+
+  test("a malformed targetId denies cleanly instead of raising a raw id error", async () => {
+    const t = convexTest(schema, modules);
+    const { authorToken } = await seed(t);
+
+    await expect(
+      t.mutation(api.functions.prayers.reactions.toggleReaction, {
+        token: authorToken,
+        targetType: "prayer",
+        targetId: "not-a-real-id",
+        emoji: HEART,
+      }),
+    ).rejects.toThrow(/prayer_not_accessible/);
+
+    const reactors = await t.query(
+      api.functions.prayers.reactions.getReactionDetails,
+      {
+        token: authorToken,
+        targetType: "prayer",
+        targetId: "not-a-real-id",
+        emoji: HEART,
+      },
+    );
+    expect(reactors).toEqual([]);
+  });
+
   test("getReactionDetails lists who reacted with an emoji", async () => {
     const t = convexTest(schema, modules);
     const { prayerId, communityId, authorToken } = await seed(t);

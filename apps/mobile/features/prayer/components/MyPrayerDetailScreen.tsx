@@ -216,6 +216,7 @@ export function MyPrayerDetailScreen() {
             targetType="prayer"
             targetId={detail.id}
             reactions={detail.reactions}
+            canReact={!(detail as any).isAnonymous}
           />
         </View>
 
@@ -276,6 +277,7 @@ export function MyPrayerDetailScreen() {
                 targetType="followUp"
                 targetId={f.id}
                 reactions={f.reactions}
+                canReact={!(detail as any).isAnonymous}
               />
             </View>
           ))

@@ -55,12 +55,22 @@ interface PrayerReactionsProps {
   targetType: PrayerReactionTargetType;
   targetId: string;
   reactions: AggregatedReaction[];
+  /**
+   * Whether the current viewer may add/toggle a reaction. Defaults to true.
+   * Set to false on an anonymous prayer's author's *own* cards: reacting there
+   * would attribute the author by real name in the "who reacted" list and
+   * defeat the prayer's anonymity (the server enforces the same block). When
+   * false, existing badges still render and long-press "who reacted" still
+   * works, but the ＋ picker is hidden and tapping a badge does not toggle.
+   */
+  canReact?: boolean;
 }
 
 export function PrayerReactions({
   targetType,
   targetId,
   reactions,
+  canReact = true,
 }: PrayerReactionsProps) {
   const { colors } = useTheme();
   const toggleReaction = useAuthenticatedMutation(
@@ -121,7 +131,7 @@ export function PrayerReactions({
               borderColor: OWN_REACTION_BORDER,
             },
           ]}
-          onPress={() => handleToggle(reaction.emoji)}
+          onPress={canReact ? () => handleToggle(reaction.emoji) : undefined}
           onLongPress={() => setDetailsEmoji(reaction.emoji)}
           delayLongPress={300}
         >
@@ -134,16 +144,19 @@ export function PrayerReactions({
         </Pressable>
       ))}
 
-      {/* ＋ button opens the curated reaction bar */}
-      <Pressable
-        ref={addButtonRef}
-        onPress={openPicker}
-        style={[styles.addButton, { borderColor: colors.border }]}
-        accessibilityRole="button"
-        accessibilityLabel="Add a reaction"
-      >
-        <Ionicons name="add" size={16} color={colors.textTertiary} />
-      </Pressable>
+      {/* ＋ button opens the curated reaction bar (hidden when the viewer may
+          not react — e.g. an anonymous prayer's author on their own card). */}
+      {canReact && (
+        <Pressable
+          ref={addButtonRef}
+          onPress={openPicker}
+          style={[styles.addButton, { borderColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Add a reaction"
+        >
+          <Ionicons name="add" size={16} color={colors.textTertiary} />
+        </Pressable>
+      )}
 
       {/* Picker popover */}
       <Modal
