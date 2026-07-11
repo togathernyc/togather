@@ -4,7 +4,19 @@
   },
   "permissions": {
     "allow": [
-      "mcp__Claude_Code_Remote__send_later"
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__playwright",
+      "mcp__ios-simulator",
+      "mcp__github",
+      "WebFetch",
+      "WebSearch",
+      "PushNotification"
+    ],
+    "deny": [
+      "mcp__github__merge_pull_request",
+      "mcp__github__enable_pr_auto_merge",
+      "mcp__github__create_repository",
+      "mcp__github__delete_file"
     ]
   }
 }
