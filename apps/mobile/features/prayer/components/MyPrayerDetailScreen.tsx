@@ -26,6 +26,7 @@ import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useAuthenticatedQuery, useAuthenticatedMutation, api } from '@services/api/convex';
 import { formatError } from '@/utils/error-handling';
 import { CrisisResourceCard } from './CrisisResourceCard';
+import { PrayerReactions } from './PrayerReactions';
 import type { Id } from '@services/api/convex';
 
 // Human-readable copy for moderation outcomes shown on the author's detail
@@ -211,6 +212,11 @@ export function MyPrayerDetailScreen() {
               {new Date(detail.createdAt).toLocaleDateString()}
             </Text>
           </View>
+          <PrayerReactions
+            targetType="prayer"
+            targetId={detail.id}
+            reactions={detail.reactions}
+          />
         </View>
 
         {/* Author-only lifecycle actions */}
@@ -266,6 +272,11 @@ export function MyPrayerDetailScreen() {
                 </Text>
               </View>
               <Text style={[styles.followUpBody, { color: colors.text }]}>{f.bodyText}</Text>
+              <PrayerReactions
+                targetType="followUp"
+                targetId={f.id}
+                reactions={f.reactions}
+              />
             </View>
           ))
         )}
