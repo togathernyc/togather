@@ -307,12 +307,20 @@ set the per-mode env vars.
   Playwright `browser_navigate` while rendering a mock) blocks forever — the
   "never wait on a permission prompt" instruction in the preamble can't
   prevent it because the dialog comes from the harness, not the model. Tools
-  the Routines rely on must be pre-allowed in this repo's checked-in
-  `.claude/settings.json` (`permissions.allow`), which every session loads
-  after cloning: currently the `playwright` and `ios-simulator` MCP servers,
-  `WebFetch`/`WebSearch`, and `PushNotification` (the blocker-escalation
-  path). If a Routine gets stuck on a new prompt, add that tool to the
-  allowlist rather than working around it in the prompt.
+  the Routines rely on are pre-allowed in this repo's checked-in
+  `.claude/settings.json` (`permissions.allow`): currently the `playwright`
+  and `ios-simulator` MCP servers, `WebFetch`/`WebSearch`, and
+  `PushNotification` (the blocker-escalation path). **The checked-in
+  allowlist does not apply by itself on a fresh unattended clone**: project
+  `permissions.allow` rules are gated behind the workspace-trust dialog,
+  which non-interactive sessions never show, so the rules are read but
+  ignored (`deny` rules apply regardless). The Routine environment's setup
+  script must therefore run `scripts/setup-claude-runner-permissions.sh`
+  after cloning — it copies the allowlist into user-level settings (never
+  trust-gated) and pre-seeds workspace trust for the clone. If a Routine
+  gets stuck on a new prompt, add that tool to the checked-in allowlist
+  (the setup script picks it up automatically) rather than working around
+  it in the prompt.
 - **GitHub MCP tools are pre-allowed server-wide** (`mcp__github`) — review
   runs post inline PR comments and implement runs open PRs, so a permission
   prompt there hangs the run at the finish line. `deny` rules block the
