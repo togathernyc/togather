@@ -1576,7 +1576,7 @@ describe("Thread Reply Count in Message List", () => {
 // ============================================================================
 
 describe("Thread Bump (lastActivityAt)", () => {
-  test("replying to a thread bumps it to most recent position", async () => {
+  test("replying to a message keeps it in its chronological position (does not move it)", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const { channelId, accessToken } = await seedTestData(t);
@@ -1603,7 +1603,7 @@ describe("Thread Bump (lastActivityAt)", () => {
 
     vi.advanceTimersByTime(100);
 
-    // Reply to A — should bump A's lastActivityAt
+    // Reply to A — bumps A's lastActivityAt but must NOT move A in the list
     await t.mutation(api.functions.messaging.messages.sendMessage, {
       token: accessToken,
       channelId,
@@ -1613,16 +1613,24 @@ describe("Thread Bump (lastActivityAt)", () => {
     vi.runAllTimers();
     await t.finishInProgressScheduledFunctions();
 
-    // Fetch messages — A should appear AFTER B (most recent) in chronological order
     const result = await t.query(api.functions.messaging.messages.getMessages, {
       token: accessToken,
       channelId,
     });
 
-    // Chronological order (oldest activity first): B first, then A (bumped)
+    // Messages are ordered by createdAt, so A (created first) stays before B
+    // even though A was just replied to. The client floats a "ghost" pointer
+    // at A's lastActivityAt slot instead of moving the real message.
     expect(result.messages).toHaveLength(2);
-    expect(result.messages[0]._id).toBe(msgB);
-    expect(result.messages[1]._id).toBe(msgA);
+    expect(result.messages[0]._id).toBe(msgA);
+    expect(result.messages[1]._id).toBe(msgB);
+
+    // The bump still happened on the field, so the client can derive a ghost:
+    // A's lastActivityAt is now later than B's createdAt.
+    const returnedA = result.messages.find((m: { _id: typeof msgA }) => m._id === msgA);
+    const returnedB = result.messages.find((m: { _id: typeof msgB }) => m._id === msgB);
+    expect(returnedA?.lastActivityAt).toBeGreaterThan(returnedA!.createdAt);
+    expect(returnedA?.lastActivityAt).toBeGreaterThan(returnedB!.createdAt);
   });
 
   test("lastActivityAt is set on parent message after a reply", async () => {
