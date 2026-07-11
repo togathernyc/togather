@@ -75,9 +75,19 @@ export interface Contribution {
   verifyOnStaging?: boolean;
   /** Set once the contributor confirmed the change works on staging. */
   stagingVerifiedAt?: number;
+  /**
+   * Set when a maintainer triggered the production deploy from the app
+   * (always a silent OTA); cleared again if the workflow dispatch failed.
+   */
+  productionRequestedAt?: number;
+  /** AI review verdict on the open PR — "approved" unlocks the in-app merge. */
+  reviewVerdict?: "approved" | "changes_requested";
+  reviewSummary?: string;
   prUrl?: string;
   githubIssueUrl?: string;
   screenshotUrls?: string[];
+  /** Display name of whoever started the conversation (getContribution). */
+  originatorName?: string;
   /** Set when the contributor set the conversation aside (abandoned/not doable). */
   archivedAt?: number;
   createdAt: number;
@@ -92,6 +102,8 @@ export interface Contribution {
 export interface ContributionListItem extends Contribution {
   lastMessageBody?: string;
   lastMessageAuthorType?: MessageAuthorType;
+  /** Who started the conversation — shown in the "Everyone" view. */
+  originatorName?: string;
 }
 
 /** One message in a contribution's conversation thread (getThread, ascending). */

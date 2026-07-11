@@ -99,6 +99,16 @@ type BugStatus = Doc<"devBugs">["status"];
  * webhook (ADR-029 Phase 2) reports that merge. Still monotonic. Note that
  * MERGED is only reachable via webhook/auto-merge callback sources (or the
  * human markBugMerged) — applyCallback rejects routine-claimed merges.
+ *
+ * MERGED -> READY_FOR_IMPL is the ONE deliberate cycle: the staging-redo loop
+ * (reportStagingIssue). A contributor who finds the merged change broken on
+ * staging sends the item back through the whole pipeline — a fresh implement
+ * run opens a NEW PR against latest main. It is human-triggered only (never
+ * reachable from a callback: applyCallback still rejects routine MERGEDs and
+ * no run mode may deliver READY_FOR_IMPL), so stale-callback protection is
+ * unaffected. Redo rounds re-reach later statuses, so the chat sourceKey
+ * dedupe suppresses repeat bot messages for chat-originated items — an
+ * accepted trade-off (the staging window only opens for dashboard items).
  */
 const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   DRAFT: ["IN_REVIEW", "REJECTED"],
@@ -107,7 +117,7 @@ const ALLOWED_TRANSITIONS: Record<BugStatus, BugStatus[]> = {
   IN_PROGRESS: ["CODE_REVIEW", "REJECTED"],
   CODE_REVIEW: ["READY_TO_MERGE", "MERGED", "REJECTED"],
   READY_TO_MERGE: ["MERGED", "REJECTED"],
-  MERGED: [],
+  MERGED: ["READY_FOR_IMPL"],
   REJECTED: [],
 };
 
@@ -134,12 +144,15 @@ const GITHUB_MERGEABLE_STATUSES: BugStatus[] = [
  * Apply a validated status transition and persist it. Throws on an illegal
  * transition. When a bug lands on READY_FOR_IMPL we schedule the dispatch
  * action immediately (event-driven, no cron) so the routine fires the instant
- * the bug is marked ready.
+ * the bug is marked ready. `opts.stagingRedo` rides along to dispatchBug so a
+ * staging-redo round (reportStagingIssue) carries the thread context and
+ * "open a NEW PR" instructions to the routine.
  */
 export async function applyStatusTransition(
   ctx: MutationCtx,
   bug: Doc<"devBugs">,
   newStatus: BugStatus,
+  opts?: { stagingRedo?: boolean },
 ): Promise<void> {
   if (!canTransition(bug.status, newStatus)) {
     throw new Error(
@@ -161,7 +174,10 @@ export async function applyStatusTransition(
     await ctx.scheduler.runAfter(
       0,
       internal.functions.devAssistant.actions.dispatchBug,
-      { bugId: bug._id },
+      {
+        bugId: bug._id,
+        ...(opts?.stagingRedo ? { stagingRedo: true } : {}),
+      },
     );
   }
 }
@@ -817,6 +833,42 @@ export const addSystemThreadMessage = internalMutation({
   },
 });
 
+/**
+ * Record the outcome of an in-app production deploy trigger
+ * (actions.dispatchProductionDeploy). Success just logs the progress line; a
+ * failure ALSO clears productionRequestedAt so the dashboard's "Ship to
+ * production" button comes back instead of stranding the item in a
+ * "triggered" state that never happened.
+ */
+export const recordProductionDeployOutcome = internalMutation({
+  args: {
+    bugId: v.id("devBugs"),
+    ok: v.boolean(),
+    detail: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.db.get(args.bugId);
+    if (!bug) return;
+    if (args.ok) {
+      await insertThreadMessage(
+        ctx,
+        args.bugId,
+        "system",
+        "Production deploy started — the silent update reaches users next time they open the app",
+      );
+    } else {
+      await ctx.db.patch(args.bugId, { productionRequestedAt: undefined });
+      await insertThreadMessage(
+        ctx,
+        args.bugId,
+        "system",
+        `Production deploy couldn't start${args.detail ? `: ${args.detail}` : ""} — needs a maintainer`,
+      );
+    }
+    await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+  },
+});
+
 /** Max characters of reviewSummary quoted in the thread's system message. */
 const REVIEW_SUMMARY_THREAD_LIMIT = 200;
 
@@ -1078,20 +1130,21 @@ export const applyCallback = internalMutation({
       );
     }
 
-    // Spec text lands in the conversation as the assistant's turn. Comparing
-    // against the previously stored spec is the idempotency guard for
-    // re-delivered callbacks (and skips no-op revisions). When the change
-    // invalidated an approval, say so right below the new plan.
+    // A delivered spec is announced with a short pointer, NOT pasted into the
+    // conversation — the full plan renders once behind "The plan" card, which
+    // opens its own screen/panel. (Earlier versions appended the whole spec as
+    // an assistant turn on every revision, so a few revision rounds buried the
+    // thread under repeated walls of text.) Comparing against the previously
+    // stored spec is the idempotency guard for re-delivered callbacks (and
+    // skips no-op revisions).
     if (args.spec !== undefined && args.spec !== bug.spec) {
-      await insertThreadMessage(ctx, args.bugId, "assistant", args.spec);
-      if (bug.specApprovedAt) {
-        await insertThreadMessage(
-          ctx,
-          args.bugId,
-          "system",
-          "Plan updated — needs your approval again",
-        );
-      }
+      const pointer =
+        bug.spec === undefined
+          ? "The plan is ready — read it under \"The plan\" below"
+          : bug.specApprovedAt
+            ? "Plan updated — it needs your approval again"
+            : "Plan updated — the latest version is under \"The plan\" below";
+      await insertThreadMessage(ctx, args.bugId, "system", pointer);
     }
 
     // Review verdict lands as a system turn, before the status progress line

@@ -34,12 +34,14 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 import React, { useMemo } from 'react';
-import { View, Text, Linking, StyleSheet } from 'react-native';
+import { View, Text, Linking, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import type { ThemeColors } from '@/theme/colors';
 import { AppImage } from '@components/ui/AppImage';
 import { VideoPlayer } from '@features/chat/components/VideoPlayer';
+import { ImageViewerManager } from '@/providers/ImageViewerProvider';
+import { getMediaUrl } from '@/utils/media';
 
 interface MarkdownProps {
   source: string;
@@ -352,6 +354,10 @@ function renderBlock(
   key: number,
   colors: ThemeColors,
   styles: ReturnType<typeof createStyles>,
+  // All image URLs in the document (resolved) + this block's position among
+  // them, so tapping an image opens the viewer with swipe-through paging.
+  imageUrls: string[],
+  imageOrdinal: number,
 ): React.ReactNode {
   switch (block.kind) {
     case 'heading': {
@@ -449,7 +455,15 @@ function renderBlock(
 
     case 'image':
       return (
-        <View key={key} style={styles.mediaBlock}>
+        <Pressable
+          key={key}
+          style={styles.mediaBlock}
+          onPress={() => ImageViewerManager.show(imageUrls, imageOrdinal)}
+          accessibilityRole="imagebutton"
+          accessibilityLabel={
+            block.alt ? `${block.alt} — tap to view full screen` : 'Image — tap to view full screen'
+          }
+        >
           <AppImage
             source={block.src}
             style={styles.image}
@@ -458,7 +472,7 @@ function renderBlock(
             optimizedWidth={1200}
             placeholder={{ type: 'icon', icon: 'image-outline' }}
           />
-        </View>
+        </Pressable>
       );
 
     case 'video':
@@ -485,11 +499,26 @@ export function Markdown({ source }: MarkdownProps) {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const blocks = useMemo(() => parseBlocks(source ?? ''), [source]);
 
+  // Every image in the document, resolved to a fetchable URL, so a tapped
+  // image opens the full-screen viewer at its own slide with paging through
+  // the rest.
+  const imageUrls = useMemo(
+    () =>
+      blocks
+        .filter((b): b is Extract<Block, { kind: 'image' }> => b.kind === 'image')
+        .map((b) => getMediaUrl(b.src) ?? b.src),
+    [blocks],
+  );
+
   if (blocks.length === 0) return null;
 
+  let imageOrdinal = -1;
   return (
     <View>
-      {blocks.map((block, idx) => renderBlock(block, idx, colors, styles))}
+      {blocks.map((block, idx) => {
+        if (block.kind === 'image') imageOrdinal += 1;
+        return renderBlock(block, idx, colors, styles, imageUrls, imageOrdinal);
+      })}
     </View>
   );
 }

@@ -86,10 +86,13 @@ function ConversationRow({
   item,
   onPress,
   selected = false,
+  showOriginator = false,
 }: {
   item: ContributionListItem;
   onPress: () => void;
   selected?: boolean;
+  /** "Everyone" view: show who's driving this conversation. */
+  showOriginator?: boolean;
 }) {
   const { colors } = useTheme();
   return (
@@ -112,6 +115,17 @@ function ConversationRow({
             {formatDistanceToNow(new Date(item.updatedAt), { addSuffix: true })}
           </Text>
         </View>
+        {showOriginator && item.originatorName ? (
+          <View style={styles.rowOriginator}>
+            <Ionicons name="person-outline" size={11} color={colors.textTertiary} />
+            <Text
+              style={[styles.rowOriginatorText, { color: colors.textTertiary }]}
+              numberOfLines={1}
+            >
+              {item.originatorName}
+            </Text>
+          </View>
+        ) : null}
         <Text style={[styles.rowSnippet, { color: colors.textSecondary }]} numberOfLines={1}>
           {snippetFor(item)}
         </Text>
@@ -249,6 +263,7 @@ export function ContributeListScreen({
             <ConversationRow
               item={item}
               selected={item._id === selectedId}
+              showOriginator={showEveryone}
               onPress={() =>
                 onSelectConversation
                   ? onSelectConversation(item._id)
@@ -376,6 +391,8 @@ const styles = StyleSheet.create({
   },
   rowTitle: { fontSize: 15, fontWeight: "600", flex: 1 },
   rowTime: { fontSize: 12 },
+  rowOriginator: { flexDirection: "row", alignItems: "center", gap: 3 },
+  rowOriginatorText: { fontSize: 12, fontWeight: "500" },
   rowSnippet: { fontSize: 13, lineHeight: 18 },
   emptyState: {
     alignItems: "center",

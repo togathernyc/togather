@@ -182,7 +182,15 @@ function buildGithubIssueBody(bug: {
 }
 
 export const dispatchBug = internalAction({
-  args: { bugId: v.id("devBugs"), forceRedispatch: v.optional(v.boolean()) },
+  args: {
+    bugId: v.id("devBugs"),
+    forceRedispatch: v.optional(v.boolean()),
+    // Staging-redo round (reportStagingIssue): the item's original PR is
+    // already merged, but the contributor found problems on staging. The
+    // payload carries the conversation thread + instructions to fix the
+    // reported problems and open a NEW PR against latest main.
+    stagingRedo: v.optional(v.boolean()),
+  },
   handler: async (ctx, args): Promise<void> => {
     const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
       bugId: args.bugId,
@@ -273,6 +281,15 @@ export const dispatchBug = internalAction({
       { bugId: args.bugId },
     );
 
+    // A staging-redo run needs the conversation: the latest user messages
+    // describe what went wrong on staging.
+    const thread = args.stagingRedo
+      ? await ctx.runQuery(
+          internal.functions.devAssistant.bugs.getThreadHistory,
+          { bugId: args.bugId },
+        )
+      : null;
+
     const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
     const payload = {
       bugId: args.bugId,
@@ -291,6 +308,26 @@ export const dispatchBug = internalAction({
       originatorName: originator?.name,
       originatorGithubUsername: originator?.githubUsername,
       callbackUrl,
+      ...(args.stagingRedo && thread
+        ? {
+            redo: true,
+            thread: thread.map((m) => ({
+              authorType: m.authorType,
+              ...(m.authorName ? { authorName: m.authorName } : {}),
+              body: m.body,
+            })),
+            instructions:
+              "REDO ROUND: an earlier PR for this item was already merged, " +
+              "but the contributor found problems while trying the change on " +
+              "staging — the latest user messages in `thread` describe " +
+              "what's wrong. Start from the latest main (the merged code is " +
+              "already in it), fix the reported problems, and open a NEW " +
+              "pull request on a fresh claude/devbug-<bugId> branch. Report " +
+              "callbacks as usual (IN_PROGRESS when you start, CODE_REVIEW " +
+              "with the new prUrl once the PR is open and CI is green). " +
+              "Never merge the PR.",
+          }
+        : {}),
     };
 
     try {
@@ -715,6 +752,36 @@ export const dispatchFix = internalAction({
 // ============================================================================
 
 /**
+ * Merge a PR via the GitHub REST API with the configured merge method
+ * (AUTO_MERGE_METHOD, default squash), retrying once with a plain merge on
+ * 405 ("merge method not allowed"). Shared by policy auto-merge and the
+ * maintainer-triggered in-app merge.
+ */
+async function mergePullRequestOnGithub(
+  prNumber: string,
+  token: string,
+): Promise<Response> {
+  const mergePr = async (mergeMethod: string): Promise<Response> =>
+    await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}/merge`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ merge_method: mergeMethod }),
+    });
+
+  const method = process.env.AUTO_MERGE_METHOD ?? "squash";
+  let res = await mergePr(method);
+  if (res.status === 405 && method !== "merge") {
+    res = await mergePr("merge");
+  }
+  return res;
+}
+
+/**
  * Attempt to merge a bug's PR under the Phase 3 auto-merge policy. Scheduled
  * (never inlined) whenever a gate might have just been satisfied: a genuine
  * entry into READY_TO_MERGE (applyCallback) and staging sign-off
@@ -809,25 +876,8 @@ export const attemptAutoMerge = internalAction({
       return;
     }
 
-    const mergePr = async (mergeMethod: string): Promise<Response> =>
-      await fetch(`${GITHUB_PULLS_ENDPOINT}/${prMatch[1]}/merge`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${mirrorToken}`,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ merge_method: mergeMethod }),
-      });
-
     try {
-      const method = process.env.AUTO_MERGE_METHOD ?? "squash";
-      let res = await mergePr(method);
-      // 405 covers "merge method not allowed" — retry once with plain merge.
-      if (res.status === 405 && method !== "merge") {
-        res = await mergePr("merge");
-      }
+      const res = await mergePullRequestOnGithub(prMatch[1], mirrorToken);
 
       if (res.ok) {
         await ctx.runMutation(
@@ -873,6 +923,176 @@ export const attemptAutoMerge = internalAction({
       await blocked(reason);
     } catch (error) {
       await blocked(String(error));
+    }
+  },
+});
+
+/**
+ * Maintainer-triggered merge from the app (scheduled by contributions.mergeNow).
+ * Unlike policy auto-merge this is an explicit human decision, so it skips the
+ * AUTO_MERGE_ENABLED switch and the per-user severity cap — but it re-checks
+ * the hard gates itself (READY_TO_MERGE + review approved + prUrl), so a stale
+ * tap after the state moved on is a polite thread message, not a rogue merge.
+ * Success lands MERGED through the same trusted "automerge" callback source as
+ * policy auto-merge; failure posts the reason for a maintainer.
+ */
+export const mergeFromApp = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+
+    const failed = async (reason: string): Promise<void> => {
+      console.error("[DevAssistant] In-app merge failed:", reason, args.bugId);
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.addSystemThreadMessage,
+        {
+          bugId: args.bugId,
+          body: `Merge failed: ${reason} — try again, or merge the PR on GitHub`,
+        },
+      );
+    };
+
+    if (
+      bug.status !== "READY_TO_MERGE" ||
+      bug.reviewVerdict !== "approved" ||
+      !bug.prUrl
+    ) {
+      await failed("the item is no longer ready to merge");
+      return;
+    }
+
+    const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
+    if (!prMatch) {
+      await failed(`could not parse a PR number from ${bug.prUrl}`);
+      return;
+    }
+
+    const mirrorToken = githubMirrorToken();
+    if (!mirrorToken) {
+      await failed("GH_MIRROR_TOKEN not configured");
+      return;
+    }
+
+    try {
+      const res = await mergePullRequestOnGithub(prMatch[1], mirrorToken);
+
+      if (res.ok) {
+        // GitHub confirmed the merge — apply MERGED through the trusted
+        // "automerge" source (same as attemptAutoMerge) so the shipped push,
+        // system message, and chat bot message all fire; the webhook
+        // redelivery no-ops on a MERGED row.
+        if (bug.routineRunId) {
+          await ctx.runAction(
+            internal.functions.devAssistant.actions.handleRoutineCallback,
+            {
+              bugId: args.bugId,
+              routineRunId: bug.routineRunId,
+              status: "MERGED",
+              source: "automerge",
+            },
+          );
+        } else {
+          await ctx.runMutation(
+            internal.functions.devAssistant.bugs.applyCallback,
+            { bugId: args.bugId, status: "MERGED", source: "automerge" },
+          );
+        }
+        return;
+      }
+
+      let reason = `GitHub merge returned ${res.status}`;
+      try {
+        const errBody = (await res.json()) as { message?: string };
+        if (errBody?.message) reason = `${reason} (${errBody.message})`;
+      } catch {
+        // Non-JSON error body; the status code is reason enough.
+      }
+      await failed(reason);
+    } catch (error) {
+      await failed(String(error));
+    }
+  },
+});
+
+// ============================================================================
+// In-app production deploy (silent OTA)
+// ============================================================================
+
+/**
+ * The manual production pipeline's workflow_dispatch endpoint. The in-app
+ * "Ship to production" button fires the SAME workflow a maintainer would run
+ * from the GitHub Actions UI — nothing bespoke ships from here.
+ */
+const GITHUB_PROD_DEPLOY_WORKFLOW_ENDPOINT =
+  "https://api.github.com/repos/togathernyc/togather/actions/workflows/deploy-to-production.yml/dispatches";
+
+/**
+ * Trigger the production deploy workflow (scheduled by
+ * contributions.promoteToProduction). Always update_mode "silent" — the
+ * in-app button never forces a reload on users; forced updates remain a
+ * hand-run workflow decision. Requires GH_MIRROR_TOKEN to ALSO have
+ * Actions: read/write on the repo (in addition to Issues + Contents).
+ * The outcome lands in the thread via recordProductionDeployOutcome, which
+ * clears productionRequestedAt on failure so the button comes back.
+ */
+export const dispatchProductionDeploy = internalAction({
+  args: { bugId: v.id("devBugs") },
+  handler: async (ctx, args): Promise<void> => {
+    const outcome = async (ok: boolean, detail?: string): Promise<void> => {
+      if (!ok) {
+        console.error(
+          "[DevAssistant] Production deploy dispatch failed:",
+          detail,
+          args.bugId,
+        );
+      }
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordProductionDeployOutcome,
+        { bugId: args.bugId, ok, detail },
+      );
+    };
+
+    const token = githubMirrorToken();
+    if (!token) {
+      await outcome(false, "GH_MIRROR_TOKEN not configured");
+      return;
+    }
+
+    try {
+      const res = await fetch(GITHUB_PROD_DEPLOY_WORKFLOW_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ref: "main",
+          // The workflow's own safety gate expects the literal "deploy";
+          // update_mode is pinned to silent by design (see doc comment).
+          inputs: { confirm: "deploy", update_mode: "silent" },
+        }),
+      });
+
+      // A successful workflow_dispatch returns 204 No Content.
+      if (res.status === 204) {
+        await outcome(true);
+        return;
+      }
+      let detail = `GitHub workflow dispatch returned ${res.status}`;
+      try {
+        const errBody = (await res.json()) as { message?: string };
+        if (errBody?.message) detail = `${detail} (${errBody.message})`;
+      } catch {
+        // Non-JSON error body; the status code is reason enough.
+      }
+      await outcome(false, detail);
+    } catch (error) {
+      await outcome(false, String(error));
     }
   },
 });

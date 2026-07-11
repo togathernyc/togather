@@ -559,8 +559,12 @@ describe("queries", () => {
       api.functions.devAssistant.contributions.myContributions,
       { token: maintainerId },
     );
-    expect(mine[0]?.lastMessageBody).toBe("## Plan\nChange the string.");
-    expect(mine[0]?.lastMessageAuthorType).toBe("assistant");
+    // The plan itself is NOT posted into the thread (it lives behind "The
+    // plan" card) — the latest turn is the plan-ready pointer.
+    expect(mine[0]?.lastMessageBody).toBe(
+      'The plan is ready — read it under "The plan" below',
+    );
+    expect(mine[0]?.lastMessageAuthorType).toBe("system");
   });
 });
 
@@ -594,7 +598,7 @@ describe("conversation thread (Phase 1.5)", () => {
     });
   });
 
-  test("spec callback stores triage fields and appends an assistant message", async () => {
+  test("spec callback stores triage fields and logs a plan-ready pointer", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -617,9 +621,12 @@ describe("conversation thread (Phase 1.5)", () => {
       api.functions.devAssistant.contributions.getThread,
       { token: maintainerId, id },
     );
-    // Report (user) then spec (assistant), oldest first.
-    expect(thread.map((m) => m.authorType)).toEqual(["user", "assistant"]);
-    expect(thread[1]?.body).toBe("## Plan\nChange the string.");
+    // Report (user) then the plan-ready pointer (system), oldest first — the
+    // spec text itself stays on the row and renders behind "The plan" card.
+    expect(thread.map((m) => m.authorType)).toEqual(["user", "system"]);
+    expect(thread[1]?.body).toBe(
+      'The plan is ready — read it under "The plan" below',
+    );
   });
 
   test("postMessage appends a user turn and fires a spec-revision dispatch while IN_REVIEW", async () => {
@@ -647,10 +654,11 @@ describe("conversation thread (Phase 1.5)", () => {
     const brief = JSON.parse(JSON.parse(init.body as string).text);
     expect(brief).toMatchObject({ mode: "spec", revision: true, bugId: id });
     expect(brief.instructions).toMatch(/REVISION ROUND/);
-    // Full thread history rides along: report, spec, and the new reply.
+    // Full thread history rides along: report, the plan-ready pointer, and
+    // the new reply (the spec text itself travels in the payload's `spec`).
     expect(
       brief.thread.map((m: { authorType: string }) => m.authorType),
-    ).toEqual(["user", "assistant", "user"]);
+    ).toEqual(["user", "system", "user"]);
     expect(brief.thread[2]?.body).toBe("Please also cover the settings tab.");
     expect(brief.thread[2]?.authorName).toBe("Connie Tributor");
 
@@ -1308,7 +1316,7 @@ describe("staging verification", () => {
     ).rejects.toThrow(/current status/);
   });
 
-  test("reportStagingIssue logs the note plus a failure marker (no dispatch)", async () => {
+  test("reportStagingIssue sends the item back through the pipeline (staging-redo dispatch)", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -1316,14 +1324,22 @@ describe("staging verification", () => {
     const id = await seedStagingBug(t, maintainerId, {
       status: "MERGED",
     });
+    // Seed the merged round's leftovers so the reset is observable.
+    await t.run(async (ctx) =>
+      ctx.db.patch(id, {
+        prUrl: "https://github.com/togathernyc/togather/pull/41",
+        reviewVerdict: "approved" as const,
+        reviewSummary: "LGTM",
+        fixRounds: 2,
+        activeRunMode: "review" as const,
+      }),
+    );
     const fetchMock = stubRoutineEnv();
 
     await t.mutation(
       api.functions.devAssistant.contributions.reportStagingIssue,
       { token: maintainerId, id, note: "The RSVP toast still says Going." },
     );
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(fetchMock).not.toHaveBeenCalled();
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -1331,12 +1347,368 @@ describe("staging verification", () => {
     );
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
       ["user", "The RSVP toast still says Going."],
-      ["system", "Staging check failed — needs another look"],
+      ["system", "Staging check failed — sending it back to the AI to fix"],
     ]);
 
+    // The previous round's pipeline state is reset and the item re-enters the
+    // build pipeline (MERGED -> READY_FOR_IMPL -> IN_PROGRESS via dispatch).
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
     const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("IN_PROGRESS");
     expect(bug?.stagingVerifiedAt).toBeUndefined();
+    expect(bug?.verifyOnStaging).toBe(true); // re-merge reopens the window
+    expect(bug?.prUrl).toBeUndefined();
+    expect(bug?.reviewVerdict).toBeUndefined();
+    expect(bug?.reviewSummary).toBeUndefined();
+    expect(bug?.fixRounds).toBe(0);
+    expect(bug?.activeRunMode).toBe("implement");
+    // Fresh routineRunId — stale callbacks from the merged round are orphaned.
+    expect(bug?.routineRunId).toBeTruthy();
+    expect(bug?.routineRunId).not.toBe("run-staging");
+
+    // A redo-mode implement dispatch fired, carrying the conversation and the
+    // "open a NEW PR" instructions.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    expect(brief).toMatchObject({ bugId: id, redo: true });
+    expect(brief.instructions).toMatch(/REDO ROUND/);
+    expect(brief.instructions).toMatch(/NEW\s+pull request/);
+    expect(
+      brief.thread.map((m: { authorType: string }) => m.authorType),
+    ).toEqual(["user", "system"]);
+    expect(brief.thread[0]?.body).toBe("The RSVP toast still says Going.");
+  });
+});
+
+describe("in-app merge (mergeNow)", () => {
+  async function seedReadyToMerge(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      status: "CODE_REVIEW" | "READY_TO_MERGE" | "MERGED";
+      reviewVerdict: "approved" | "changes_requested";
+      prUrl: string | undefined;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: overrides.status ?? "READY_TO_MERGE",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix RSVP message",
+        body: "B",
+        routineRunId: "run-merge",
+        reviewVerdict:
+          "reviewVerdict" in overrides ? overrides.reviewVerdict : "approved",
+        prUrl:
+          "prUrl" in overrides
+            ? overrides.prUrl
+            : "https://github.com/togathernyc/togather/pull/77",
+        verifyOnStaging: true,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("merges the PR via GitHub and lands MERGED through the trusted source", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The GitHub merge endpoint was hit with the squash default.
+    const mergeCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/pulls/77/merge"),
+    );
+    expect(mergeCall).toBeTruthy();
+    expect(JSON.parse((mergeCall![1] as RequestInit).body as string)).toEqual({
+      merge_method: "squash",
+    });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toEqual([
+      "Connie Tributor asked to merge this from the app — merging…",
+      "Merged — live on staging",
+    ]);
+  });
+
+  test("a failed GitHub merge posts the reason instead of advancing", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ message: "Base branch was modified" }), {
+          status: 409,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[thread.length - 1]?.body).toMatch(
+      /Merge failed: GitHub merge returned 409 \(Base branch was modified\)/,
+    );
+  });
+
+  test("rejects when the item is not ready (status, verdict, or missing PR)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId, regularUserId } = await seedUsers(t);
+
+    const notReady = await seedReadyToMerge(t, maintainerId, {
+      status: "CODE_REVIEW",
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+        token: maintainerId,
+        id: notReady,
+      }),
+    ).rejects.toThrow(/isn't ready to merge/);
+
+    const notApproved = await seedReadyToMerge(t, maintainerId, {
+      reviewVerdict: "changes_requested",
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+        token: maintainerId,
+        id: notApproved,
+      }),
+    ).rejects.toThrow(/hasn't approved/);
+
+    const noPr = await seedReadyToMerge(t, maintainerId, { prUrl: undefined });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+        token: maintainerId,
+        id: noPr,
+      }),
+    ).rejects.toThrow(/no pull request/);
+
+    // Non-contributors can't reach the surface at all.
+    const ready = await seedReadyToMerge(t, maintainerId);
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+        token: regularUserId,
+        id: ready,
+      }),
+    ).rejects.toThrow(/Not authorized/);
+  });
+});
+
+describe("in-app production promote (silent OTA)", () => {
+  async function seedMergedBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    overrides: Partial<{
+      verifyOnStaging: boolean;
+      stagingVerifiedAt: number;
+      productionRequestedAt: number;
+    }> = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: "MERGED",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix RSVP message",
+        body: "B",
+        verifyOnStaging: overrides.verifyOnStaging ?? true,
+        stagingVerifiedAt:
+          "stagingVerifiedAt" in overrides ? overrides.stagingVerifiedAt : now,
+        productionRequestedAt: overrides.productionRequestedAt,
+        shippedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  test("triggers the production workflow with silent update_mode and logs it", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedMergedBug(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const dispatchCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("deploy-to-production.yml/dispatches"),
+    );
+    expect(dispatchCall).toBeTruthy();
+    expect(
+      JSON.parse((dispatchCall![1] as RequestInit).body as string),
+    ).toEqual({
+      ref: "main",
+      inputs: { confirm: "deploy", update_mode: "silent" },
+    });
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.productionRequestedAt).toBeTruthy();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toEqual([
+      "Connie Tributor triggered the production deploy (silent update)",
+      "Production deploy started — the silent update reaches users next time they open the app",
+    ]);
+  });
+
+  test("a failed workflow dispatch clears productionRequestedAt so the button returns", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedMergedBug(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ message: "Resource not accessible" }), {
+          status: 403,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.productionRequestedAt).toBeUndefined();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[thread.length - 1]?.body).toMatch(
+      /Production deploy couldn't start: GitHub workflow dispatch returned 403 \(Resource not accessible\) — needs a maintainer/,
+    );
+  });
+
+  test("gates: unmerged, staging-unverified, and double triggers are rejected", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // Staging flagged but not verified.
+    const unverified = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "MERGED",
+        kind: "bug",
+        source: "dashboard",
+        title: "T",
+        body: "B",
+        verifyOnStaging: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      t.mutation(
+        api.functions.devAssistant.contributions.promoteToProduction,
+        { token: maintainerId, id: unverified },
+      ),
+    ).rejects.toThrow(/works on staging/);
+
+    // Not merged yet.
+    const open = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("devBugs", {
+        originatorUserId: maintainerId,
+        status: "READY_TO_MERGE",
+        kind: "bug",
+        source: "dashboard",
+        title: "T",
+        body: "B",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      t.mutation(
+        api.functions.devAssistant.contributions.promoteToProduction,
+        { token: maintainerId, id: open },
+      ),
+    ).rejects.toThrow(/Only merged changes/);
+
+    // Already triggered.
+    const done = await seedMergedBug(t, maintainerId, {
+      productionRequestedAt: Date.now(),
+    });
+    await expect(
+      t.mutation(
+        api.functions.devAssistant.contributions.promoteToProduction,
+        { token: maintainerId, id: done },
+      ),
+    ).rejects.toThrow(/already triggered/);
+
+    // Non-interactive items skip the staging gate entirely.
+    const copyOnly = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+    });
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id: copyOnly },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(copyOnly)))
+        ?.productionRequestedAt,
+    ).toBeTruthy();
   });
 });
 
@@ -2698,14 +3070,15 @@ describe("run-mode callback policy", () => {
     expect(bug?.specApprovedAt).toBeUndefined();
     expect(bug?.status).toBe("IN_REVIEW");
 
-    // Thread: new plan as the assistant turn + the re-approval system line.
+    // Thread: the revision lands as ONE re-approval pointer (the plan text
+    // itself is not reposted — it renders behind "The plan" card).
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
       { token: maintainerId, id },
     );
     expect(thread.slice(-2).map((m) => [m.authorType, m.body])).toEqual([
-      ["assistant", "## Plan v2\nChange the string on both tabs."],
-      ["system", "Plan updated — needs your approval again"],
+      ["user", "Actually, also fix the settings tab."],
+      ["system", "Plan updated — it needs your approval again"],
     ]);
 
     // The originator was pushed about the revision (status didn't change, so

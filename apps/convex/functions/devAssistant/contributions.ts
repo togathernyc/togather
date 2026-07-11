@@ -558,10 +558,13 @@ export const confirmStaging = mutation({
 
 /**
  * Contributor hit a problem while checking staging. Same validity window as
- * confirmStaging. Logs the note as their "user" turn plus a system marker —
- * no automated re-fix dispatch (the spec-revision path only exists for
- * DRAFT/IN_REVIEW, and the item is past that); a maintainer picks it up from
- * the thread.
+ * confirmStaging. Logs the note as their "user" turn, then sends the item
+ * BACK THROUGH THE PIPELINE (the staging-redo loop): the review-cycle state
+ * is reset and the MERGED -> READY_FOR_IMPL transition dispatches a fresh
+ * implement run in redo mode — it carries the conversation thread (the note
+ * is the latest user turn) and opens a NEW PR against latest main, since the
+ * original PR is already merged. The re-merge reopens the staging window
+ * (verifyOnStaging stays set, stagingVerifiedAt stays unset).
  */
 export const reportStagingIssue = mutation({
   args: { token: v.string(), id: v.id("devBugs"), note: v.string() },
@@ -580,10 +583,145 @@ export const reportStagingIssue = mutation({
       ctx,
       args.id,
       "system",
-      "Staging check failed — needs another look",
+      "Staging check failed — sending it back to the AI to fix",
     );
 
+    // Reset the previous round's pipeline state so the redo starts clean:
+    // the merged PR is history (a redo opens a new one), the old verdict and
+    // fix-round budget belong to that PR, and clearing routineRunId orphans
+    // any stale callbacks from finished runs while the redo dispatch stamps
+    // a fresh id.
+    await ctx.db.patch(args.id, {
+      prUrl: undefined,
+      reviewVerdict: undefined,
+      reviewSummary: undefined,
+      fixRounds: 0,
+      routineRunId: undefined,
+      activeRunMode: undefined,
+      lastError: undefined,
+      updatedAt: Date.now(),
+    });
+
+    const fresh = await ctx.db.get(args.id);
+    if (fresh) {
+      // MERGED -> READY_FOR_IMPL schedules dispatchBug({ stagingRedo: true }).
+      await applyStatusTransition(ctx, fresh, "READY_FOR_IMPL", {
+        stagingRedo: true,
+      });
+    }
+
+    await notifyOriginatorUnlessSelf(ctx, bug, user._id, {
+      title: "Back to the shop",
+      body: `"${bug.title}" didn't pass the staging check — the AI is working on a fix.`,
+      status: "READY_FOR_IMPL",
+    });
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Merge the change from the app (ADR-029 follow-up): any dev maintainer can
+ * merge once the AI review approved the PR, instead of going to GitHub. The
+ * actual GitHub merge happens in an action (actions.mergeFromApp), which
+ * re-checks every gate itself and reports the outcome into the thread; the
+ * MERGED transition lands through the same trusted callback path as policy
+ * auto-merge.
+ */
+export const mergeNow = mutation({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertNotArchived(bug);
+    if (bug.status !== "READY_TO_MERGE") {
+      throw new ConvexError(
+        `This item isn't ready to merge (current status: ${bug.status})`,
+      );
+    }
+    if (bug.reviewVerdict !== "approved") {
+      throw new ConvexError("Code review hasn't approved this change yet");
+    }
+    if (!bug.prUrl) {
+      throw new ConvexError("This item has no pull request to merge");
+    }
+
+    const name =
+      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A maintainer";
+    await insertThreadMessage(
+      ctx,
+      args.id,
+      "system",
+      `${name} asked to merge this from the app — merging…`,
+    );
     await ctx.db.patch(args.id, { updatedAt: Date.now() });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.actions.mergeFromApp,
+      { bugId: args.id },
+    );
+
+    return { ok: true };
+  },
+});
+
+/**
+ * Ship the merged (and staging-verified, when required) change to production
+ * from the app. Always a SILENT OTA — users pick the update up on their next
+ * app open, no forced reload; anything needing a forced update still goes
+ * through the GitHub workflow UI by hand. Triggers the existing
+ * deploy-to-production.yml workflow, which ships everything currently on
+ * `main` (i.e. staging), not just this one item. productionRequestedAt is
+ * stamped up front so the button can't be double-tapped; the dispatch action
+ * clears it again if the trigger fails.
+ */
+export const promoteToProduction = mutation({
+  args: { token: v.string(), id: v.id("devBugs") },
+  handler: async (ctx, args): Promise<{ ok: true }> => {
+    const user = await requireContributor(ctx, args.token);
+
+    const bug = await ctx.db.get(args.id);
+    if (!bug) throw new ConvexError("Contribution not found");
+    assertNotArchived(bug);
+    if (bug.status !== "MERGED") {
+      throw new ConvexError(
+        `Only merged changes can ship to production (current status: ${bug.status})`,
+      );
+    }
+    if (bug.verifyOnStaging && !bug.stagingVerifiedAt) {
+      throw new ConvexError(
+        "Confirm the change works on staging before shipping it to production",
+      );
+    }
+    if (bug.productionRequestedAt) {
+      throw new ConvexError(
+        "A production deploy was already triggered for this item",
+      );
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      productionRequestedAt: now,
+      updatedAt: now,
+    });
+
+    const name =
+      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || "A maintainer";
+    await insertThreadMessage(
+      ctx,
+      args.id,
+      "system",
+      `${name} triggered the production deploy (silent update)`,
+    );
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.devAssistant.actions.dispatchProductionDeploy,
+      { bugId: args.id },
+    );
 
     return { ok: true };
   },
@@ -597,13 +735,37 @@ export const reportStagingIssue = mutation({
 export type ContributionListItem = Doc<"devBugs"> & {
   lastMessageBody: string | undefined;
   lastMessageAuthorType: "user" | "assistant" | "system" | undefined;
+  /** Who started the conversation — the "Everyone" view shows this. */
+  originatorName: string | undefined;
 };
 
-/** Attach the most recent thread message (indexed .first() per item). */
+/** Display name for a user id, or undefined when unknown/empty. */
+async function originatorDisplayName(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<string | undefined> {
+  const user = await ctx.db.get(userId);
+  if (!user) return undefined;
+  return `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || undefined;
+}
+
+/**
+ * Attach the most recent thread message (indexed .first() per item) and the
+ * originator's display name (resolved once per distinct user).
+ */
 async function withLastMessage(
   ctx: QueryCtx,
   bugs: Doc<"devBugs">[],
 ): Promise<ContributionListItem[]> {
+  const names = new Map<Id<"users">, string | undefined>();
+  for (const bug of bugs) {
+    if (!names.has(bug.originatorUserId)) {
+      names.set(
+        bug.originatorUserId,
+        await originatorDisplayName(ctx, bug.originatorUserId),
+      );
+    }
+  }
   return await Promise.all(
     bugs.map(async (bug) => {
       const last = await ctx.db
@@ -615,6 +777,7 @@ async function withLastMessage(
         ...bug,
         lastMessageBody: last?.body,
         lastMessageAuthorType: last?.authorType,
+        originatorName: names.get(bug.originatorUserId),
       };
     }),
   );
@@ -672,8 +835,16 @@ export const listAll = query({
 /** A single contribution — any dev maintainer may view any item. */
 export const getContribution = query({
   args: { token: v.string(), id: v.id("devBugs") },
-  handler: async (ctx, args): Promise<Doc<"devBugs"> | null> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<(Doc<"devBugs"> & { originatorName?: string }) | null> => {
     await requireContributor(ctx, args.token);
-    return await ctx.db.get(args.id);
+    const bug = await ctx.db.get(args.id);
+    if (!bug) return null;
+    return {
+      ...bug,
+      originatorName: await originatorDisplayName(ctx, bug.originatorUserId),
+    };
   },
 });

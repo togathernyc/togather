@@ -2264,6 +2264,10 @@ export default defineSchema({
     // change on staging before merge; false for pure copy/color tweaks.
     verifyOnStaging: v.optional(v.boolean()),
     stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
+    // Stamped when a maintainer triggers the production deploy from the app
+    // (promoteToProduction — always a silent OTA). Cleared again if the
+    // GitHub workflow dispatch fails, so the button reappears.
+    productionRequestedAt: v.optional(v.number()),
     // AI review cycle: verdict reported by the review-mode routine via the
     // signed callback after it reviews the PR ("approved" promotes the bug to
     // READY_TO_MERGE; "changes_requested" leaves it in CODE_REVIEW). Cleared

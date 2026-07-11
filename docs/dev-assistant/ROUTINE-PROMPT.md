@@ -214,6 +214,14 @@ Callbacks as you progress: status "IN_PROGRESS" when you start,
 Routine is dispatched automatically from that callback — do NOT review,
 approve, or merge your own PR, and do not poll the PR afterward; your run
 ends at the CODE_REVIEW callback.
+
+If the payload has `redo: true`, this is a STAGING-REDO round: an earlier
+PR for this item was already merged, but the contributor found problems
+while trying the change on staging. The payload includes the full
+conversation `thread` — the latest user messages describe what's wrong.
+Start from the latest main (the merged code is already in it), fix the
+reported problems, and open a NEW pull request on a fresh
+claude/devbug-<bugId> branch. Same callbacks as a normal run.
 ```
 
 ---
@@ -347,7 +355,23 @@ set the per-mode env vars.
   uses the `GH_MIRROR_TOKEN` PAT — which therefore needs **Contents:
   read/write** in addition to Issues — behind the `AUTO_MERGE_ENABLED`
   master switch (merge method from `AUTO_MERGE_METHOD`, default squash).
-  Routines never merge PRs in any mode.
+  Routines never merge PRs in any mode. The **in-app merge button**
+  (`contributions.mergeNow` → `actions.mergeFromApp`) reuses the same PAT and
+  merge path but is an explicit maintainer decision, so it skips the
+  `AUTO_MERGE_ENABLED` switch and the per-user severity cap (the hard gates —
+  review approved + READY_TO_MERGE — are still re-checked server-side).
+- **In-app production deploy** (`contributions.promoteToProduction` →
+  `actions.dispatchProductionDeploy`) fires the existing
+  `deploy-to-production.yml` workflow via `workflow_dispatch`, always with
+  `update_mode: silent` (forced updates remain a hand-run workflow decision).
+  For this, `GH_MIRROR_TOKEN` ALSO needs **Actions: read/write** on the repo;
+  without it the trigger fails and the thread shows "Production deploy
+  couldn't start", clearing the request so the button returns.
+- **Staging-redo rounds** (`reportStagingIssue`): a contributor rejecting the
+  staging check no longer dead-ends — the item transitions MERGED →
+  READY_FOR_IMPL and re-dispatches the implement Routine with `redo: true`
+  (see the dev-implement prompt), which opens a NEW PR against latest main
+  and re-enters the normal review → merge → staging cycle.
 - Until the three-Routine split is done, one Routine with all three prompt
   sections and a `mode` switch ("spec" / "implement" / "review") works — the
   per-mode trigger URLs fall back to `CLAUDE_ROUTINES_TRIGGER_URL`.

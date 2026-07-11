@@ -402,6 +402,42 @@ Owner-requested follow-up to make filing feel like chatting and to turn a
   build prompt straight into a fresh dev session. See
   `docs/dev-assistant/ROUTINE-PROMPT.md`.
 
+## Phase 1.8 — maintainer flow: plan surface, staging redo, in-app merge & production promote (Accepted)
+
+Follow-ups from maintainer feedback on the conversation flow:
+
+- **The plan gets its own surface.** Spec callbacks no longer paste the full
+  plan into the thread as an assistant turn (revision rounds were burying the
+  conversation under repeated walls of text) — the thread gets a one-line
+  "plan ready/updated" system pointer, and the pinned "The plan" card is a
+  compact summary that opens the full plan on its own screen (phones,
+  `/dev/plan/[id]`) or in a right-side panel beside the thread (desktop web).
+  The detail screen collapses legacy full-spec assistant bubbles that match
+  the current plan into a caption.
+- **"Something's off" is a redo, not a dead end.** `reportStagingIssue` now
+  resets the review-cycle state (prUrl, verdict, fixRounds, routineRunId) and
+  applies the ONE deliberate cycle in the otherwise-monotonic status machine:
+  `MERGED -> READY_FOR_IMPL`. That re-dispatches the implement Routine with
+  `redo: true` + the conversation thread; it opens a NEW PR against latest
+  main and the item re-enters the normal review → merge → staging loop. The
+  transition is human-triggered only — callbacks still can't move a row
+  backward.
+- **In-app merge.** `mergeNow` lets any dev maintainer merge a
+  review-approved `READY_TO_MERGE` item from the conversation (via the same
+  GitHub REST path as policy auto-merge, `GH_MIRROR_TOKEN`), skipping the
+  auto-merge switch/severity cap because it's an explicit human decision.
+- **In-app production promote (silent only).** `promoteToProduction` — gated
+  on MERGED + staging sign-off (when required) — fires the existing
+  `deploy-to-production.yml` workflow with `update_mode: silent`, pinned:
+  forced updates stay a hand-run workflow decision. Requires the PAT to have
+  Actions: read/write (new `devBugs.productionRequestedAt` tracks the
+  trigger; cleared on dispatch failure).
+- **Team visibility.** List queries attach `originatorName`; the "Everyone"
+  view shows who's driving each conversation and the detail header shows
+  "Started by …".
+- **Clickable images.** Thread attachments, report screenshots, and markdown
+  images (plans included) open the app's full-screen image viewer.
+
 ## Deliberately out of scope (v1)
 
 - GitHub OAuth / verified account linking (`githubUsername` is honor-system).
