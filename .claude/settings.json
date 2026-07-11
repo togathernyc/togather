@@ -4,7 +4,12 @@
   },
   "permissions": {
     "allow": [
-      "mcp__Claude_Code_Remote__send_later"
+      "mcp__Claude_Code_Remote__send_later",
+      "mcp__playwright",
+      "mcp__ios-simulator",
+      "WebFetch",
+      "WebSearch",
+      "PushNotification"
     ]
   }
 }

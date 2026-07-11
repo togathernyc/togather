@@ -302,6 +302,17 @@ set the per-mode env vars.
 
 ## Operational notes
 
+- **Permission prompts hang Routines.** Routine sessions run unattended, so
+  any tool call that triggers an interactive permission dialog (e.g.
+  Playwright `browser_navigate` while rendering a mock) blocks forever — the
+  "never wait on a permission prompt" instruction in the preamble can't
+  prevent it because the dialog comes from the harness, not the model. Tools
+  the Routines rely on must be pre-allowed in this repo's checked-in
+  `.claude/settings.json` (`permissions.allow`), which every session loads
+  after cloning: currently the `playwright` and `ios-simulator` MCP servers,
+  `WebFetch`/`WebSearch`, and `PushNotification` (the blocker-escalation
+  path). If a Routine gets stuck on a new prompt, add that tool to the
+  allowlist rather than working around it in the prompt.
 - **Reviewer identity**: routine sessions currently CANNOT submit formal
   approve/request-changes reviews — the session type blocks APPROVE, and the
   bot reviewer PAT is blocked by the org proxy (it needs the GitHub App
