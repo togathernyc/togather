@@ -528,13 +528,21 @@ export const getMessages = query({
       const lastMsg = pageMessages[pageMessages.length - 1];
       const boundaryTime = lastMsg.createdAt;
       // Collect all accepted message IDs at the boundary timestamp
-      const boundaryIds: string[] = [];
+      const boundaryIds = new Set<string>();
       for (const m of pageMessages) {
         if (m.createdAt === boundaryTime) {
-          boundaryIds.push(m._id);
+          boundaryIds.add(m._id);
         }
       }
-      cursor = `${boundaryTime}:${boundaryIds.join(",")}`;
+      // Carry forward IDs already returned at this timestamp on EARLIER pages.
+      // When a run of messages shares one createdAt and spans more than two
+      // pages, the incoming cursor's seenIds (at the same boundaryTime) must be
+      // preserved — otherwise messages returned two-or-more pages ago would be
+      // re-served (the boundary-id list only covers the current page).
+      if (cursorTime === boundaryTime && cursorSeenIds) {
+        for (const id of cursorSeenIds) boundaryIds.add(id);
+      }
+      cursor = `${boundaryTime}:${[...boundaryIds].join(",")}`;
     }
 
     // Reverse to chronological order (oldest first, newest at bottom)

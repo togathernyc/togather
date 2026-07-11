@@ -13,12 +13,15 @@
  * - Tapping the ghost body scrolls the chat up to the real original message and
  *   briefly highlights it.
  *
- * Styling is intentionally neutral (dashed, greyed, centered — not left/right
- * aligned) so it reads as a pointer, not a real message bubble.
+ * The bubble is content-free: it shows NO caption or original text, only a
+ * small "jump up" icon (a non-text affordance for the body tap) and the
+ * existing "N replies" pill. Styling is intentionally neutral (dashed, greyed,
+ * centered — not left/right aligned) so it reads as a pointer, not a real
+ * message bubble.
  */
 
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import type { Id } from '@services/api/convex';
@@ -57,12 +60,10 @@ export function GhostThreadPointer({
         },
       ]}
     >
-      <View style={styles.labelRow}>
-        <Ionicons name="arrow-undo-outline" size={13} color={colors.textTertiary} />
-        <Text style={[styles.label, { color: colors.textTertiary }]} numberOfLines={1}>
-          replies to a message
-        </Text>
-      </View>
+      {/* Icon-only affordance for the body tap (scroll up to the original).
+          No caption/text — the ghost stays content-free, showing only the
+          "N replies" pill below. */}
+      <Ionicons name="arrow-up-circle-outline" size={16} color={colors.textTertiary} />
 
       <ThreadReplies
         parentMessageId={parentMessageId}
@@ -88,16 +89,5 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     gap: 12,
-  },
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    flexShrink: 1,
-  },
-  label: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    flexShrink: 1,
   },
 });

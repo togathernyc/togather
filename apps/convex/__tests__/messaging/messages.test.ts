@@ -1213,6 +1213,65 @@ describe("Get Messages", () => {
 
     expect(result2.hasMore).toBe(false);
   });
+
+  test("paginates correctly when many messages share the same createdAt (tie-break at a page boundary)", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, channelId, accessToken } = await seedTestData(t);
+
+    // Insert 6 top-level messages that ALL share an identical createdAt, so the
+    // page boundary lands inside a run of tied timestamps. The cursor encodes
+    // `createdAt:seenIds` precisely to skip already-returned ids at that shared
+    // timestamp — this exercises that seenIds skip path directly.
+    const SHARED_TS = 1_700_000_000_000;
+    const TOTAL = 6;
+    const insertedIds = await t.run(async (ctx) => {
+      const ids: Id<"chatMessages">[] = [];
+      for (let i = 0; i < TOTAL; i++) {
+        ids.push(
+          await ctx.db.insert("chatMessages", {
+            channelId,
+            senderId: userId,
+            content: `Tied message ${i}`,
+            contentType: "text",
+            createdAt: SHARED_TS,
+            isDeleted: false,
+            lastActivityAt: SHARED_TS,
+          })
+        );
+      }
+      return ids;
+    });
+
+    // Page through with a limit smaller than the tie run so a boundary falls
+    // between tied messages, collecting every returned id.
+    const seen: string[] = [];
+    let cursor: string | undefined = undefined;
+    let guard = 0;
+    while (guard++ < 20) {
+      const page: {
+        messages: Array<{ _id: Id<"chatMessages"> }>;
+        hasMore: boolean;
+        cursor?: string;
+      } = await t.query(api.functions.messaging.messages.getMessages, {
+        token: accessToken,
+        channelId,
+        limit: 2,
+        cursor,
+      });
+      for (const m of page.messages) seen.push(m._id);
+      if (!page.hasMore || !page.cursor) break;
+      cursor = page.cursor;
+    }
+
+    // Complete: every inserted message is returned exactly once.
+    expect(seen).toHaveLength(TOTAL);
+    // Disjoint: no message appears on two pages.
+    expect(new Set(seen).size).toBe(TOTAL);
+    // Every inserted id is present.
+    for (const id of insertedIds) {
+      expect(seen).toContain(id);
+    }
+  });
 });
 
 // ============================================================================

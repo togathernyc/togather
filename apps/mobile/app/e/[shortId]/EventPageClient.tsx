@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -144,6 +144,9 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const router = useRouter();
   const segments = useSegments();
   const insets = useSafeAreaInsets();
+  // Outer scroll container ref — passed to EventActivity so tapping a thread
+  // "ghost" pointer can scroll the page up to the real original comment.
+  const scrollRef = useRef<ScrollView>(null);
   const { isAuthenticated, refreshUser, setCommunity, community, user } = useAuth();
 
   // Get user's timezone (default to America/New_York if not set)
@@ -774,6 +777,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
@@ -1022,6 +1026,7 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
                 isChatEnabled={isChatEnabled}
                 channelId={resolvedChannelId}
                 authToken={authToken}
+                outerScrollRef={scrollRef}
               />
             )}
 
