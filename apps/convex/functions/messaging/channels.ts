@@ -1491,23 +1491,31 @@ export const getInboxChannels = query({
     token: v.string(),
     communityId: v.optional(v.id("communities")),
     /**
-     * When set, the inbox is restricted to the serving context of this event
-     * plan (the plan's team + linked meeting channels, via
+     * When set, the inbox is restricted to the serving context of these event
+     * plans (each plan's team + linked meeting channels, via
      * `resolveServingChannelIds`) and returned FLAT — every allowed channel is
      * its own primary inbox item, with no nested sub-channel grouping. Used by
-     * the mobile inbox while in serving mode.
+     * the mobile inbox while in serving mode, which spans EVERY plan the user is
+     * serving today; the client groups the flat rows into a section per owning
+     * group. A channel shared by two plans appears once (the set is a union).
      */
-    servingPlanId: v.optional(v.id("eventPlans")),
+    servingPlanIds: v.optional(v.array(v.id("eventPlans"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const inboxQueryNow = Date.now();
 
-    // In serving mode, resolve the allowed channel-id set up front. `null`
-    // means "no filtering" (normal inbox); a Set means "restrict + flatten".
-    const servingChannelIds = args.servingPlanId
-      ? await resolveServingChannelIds(ctx, args.servingPlanId)
-      : null;
+    // In serving mode, resolve the allowed channel-id set up front, unioned
+    // across every plan the user is serving today. `null` means "no filtering"
+    // (normal inbox); a Set means "restrict + flatten".
+    let servingChannelIds: Set<string> | null = null;
+    if (args.servingPlanIds && args.servingPlanIds.length > 0) {
+      servingChannelIds = new Set<string>();
+      for (const planId of args.servingPlanIds) {
+        const ids = await resolveServingChannelIds(ctx, planId);
+        for (const id of ids) servingChannelIds.add(id);
+      }
+    }
 
     // Get all active group memberships for this user
     const groupMemberships = await ctx.db
