@@ -326,6 +326,13 @@ export function EventActivity({
                     parentMessageId={msg._id}
                     channelId={msg.channelId}
                     replyCount={msg.threadReplyCount ?? 0}
+                    originalContent={msg.content ?? ""}
+                    originalSenderId={msg.senderId}
+                    currentUserId={currentUserId}
+                    senderName={msg.senderName}
+                    senderProfilePhoto={msg.senderProfilePhoto}
+                    isDeleted={msg.isDeleted}
+                    attachments={msg.attachments}
                     onOpenThread={() => handleGhostOpenThread(msg._id)}
                     onScrollToOriginal={() =>
                       handleGhostScrollToOriginal(msg._id)

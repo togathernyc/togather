@@ -152,7 +152,19 @@ function formatDateSeparator(timestamp: number): string {
 type ListItem =
   | { type: 'message'; data: Message; showSenderInfo: boolean; isOptimistic?: boolean; optimisticStatus?: string }
   | { type: 'dateSeparator'; date: string }
-  | { type: 'ghost'; parentId: Id<"chatMessages">; channelId: Id<"chatChannels">; replyCount: number };
+  | {
+      type: 'ghost';
+      parentId: Id<"chatMessages">;
+      channelId: Id<"chatChannels">;
+      replyCount: number;
+      // Original message details, so the ghost can echo it and align by author.
+      content: string;
+      senderId: Id<"users">;
+      senderName?: string;
+      senderProfilePhoto?: string;
+      isDeleted: boolean;
+      attachments?: Message['attachments'];
+    };
 
 /**
  * MessageList renders a virtualized list of messages with pagination.
@@ -265,6 +277,12 @@ export function MessageList({
           parentId: msg._id,
           channelId: msg.channelId,
           replyCount: msg.threadReplyCount ?? 0,
+          content: msg.content ?? '',
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          senderProfilePhoto: msg.senderProfilePhoto,
+          isDeleted: msg.isDeleted,
+          attachments: msg.attachments,
         });
         // A ghost visually breaks the sender-grouping run.
         previousMsg = undefined;
@@ -439,6 +457,13 @@ export function MessageList({
             parentMessageId={item.parentId}
             channelId={item.channelId}
             replyCount={item.replyCount}
+            originalContent={item.content}
+            originalSenderId={item.senderId}
+            currentUserId={currentUserId}
+            senderName={item.senderName}
+            senderProfilePhoto={item.senderProfilePhoto}
+            isDeleted={item.isDeleted}
+            attachments={item.attachments}
             onOpenThread={() => handleGhostOpenThread(item.parentId, item.channelId)}
             onScrollToOriginal={() => handleGhostScrollToOriginal(item.parentId)}
           />
