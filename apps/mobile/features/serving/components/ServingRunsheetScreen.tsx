@@ -1,73 +1,68 @@
 /**
  * ServingRunsheetScreen
  *
- * The "Runsheet" tab of serving mode. Reuses the existing read-only native run
- * sheet view (`NativeRunSheetView`) for the plan's owning group, so servers see
- * the exact order-of-service their leaders authored in Rostering. It's strictly
- * read-only here (`canEdit={false}`) — editing lives in Rostering.
+ * The "Runsheet" tab of serving mode. Serving mode spans every plan the user is
+ * serving today, so this stacks one read-only run-sheet SECTION per eligible
+ * plan (soonest-first), each headed by the plan's title. It reuses the existing
+ * `PlanRunSheet` view (`canEdit={false}`) in its embedded (parent-scrolled)
+ * mode, so servers see the exact order-of-service their leaders authored in
+ * Rostering. Editing still lives in Rostering.
  *
- * The active plan is tracked in `useEventModeStore.activePlanId`; the owning
- * group id is resolved directly from that plan via `getEvent`, independent of
- * the serving-eligibility window (so previewing an event outside the ~12h
- * window still shows its run sheet).
+ * The eligible plans come from `getServingEligibility` (cached for offline via
+ * `useCachedServingPlans`); each `PlanRunSheet` caches its own event + items per
+ * planId (see servingRunSheetCache / ADR-028), so the whole tab works offline.
  */
-import React, { useEffect } from "react";
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
+import React from "react";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
-import { useConnectionStatus } from "@providers/ConnectionProvider";
-import { useServingRunSheetCache } from "@/stores/servingRunSheetCache";
-import { NativeRunSheetView } from "@features/leader-tools/components/NativeRunSheetView";
+import { PlanRunSheet } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
-import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
+import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
+
+type EligibilityResult = {
+  plans: Array<{
+    planId: string;
+    groupId: string;
+    title: string;
+    startsAt: number;
+    endsAt: number;
+  }>;
+};
+
+function formatPlanDate(startsAt: number): string {
+  return new Date(startsAt).toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 export function ServingRunsheetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isNetworkAvailable } = useConnectionStatus();
-  // Subscribe so AsyncStorage rehydration re-renders us on a cold offline launch.
-  const runSheetCache = useServingRunSheetCache();
+  const router = useRouter();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
-  const activePlanId = useEventModeStore((s) => s.activePlanId);
 
-  // Resolve the owning group directly from the active plan — NOT from the
-  // serving-eligibility window, which only surfaces plans within ~12h of the
-  // event. The volunteer is a confirmed group member, so `getEvent` passes
-  // `requireGroupMember` and returns the plan's `groupId` regardless of window.
-  const event = useAuthenticatedQuery(
-    api.functions.scheduling.events.getEvent,
-    isServingMode && activePlanId
-      ? { planId: activePlanId as Id<"eventPlans"> }
-      : "skip",
-  ) as
-    | { groupId: string; items: unknown[] }
-    | null
-    | undefined;
+  const eligibility = useAuthenticatedQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    isServingMode ? {} : "skip",
+  ) as EligibilityResult | null | undefined;
 
-  // Cache-on-load so serving mode can resolve the owning group + item count
-  // offline. This `getEvent` shares the serving run sheet cache with
-  // PlanRunSheet (same shape, keyed by planId; stale-while-revalidate, ADR-028).
-  useEffect(() => {
-    if (activePlanId && event !== undefined) {
-      useServingRunSheetCache.getState().setEvent(activePlanId, event);
-    }
-  }, [activePlanId, event]);
+  const plans = useCachedServingPlans(eligibility?.plans);
 
-  // Offline fallback: with no radio the live query can't resolve, so read the
-  // last-cached event. Web always reports online and waits for live data, so
-  // `effEvent === event` there (and whenever online).
-  const effEvent =
-    event ??
-    (activePlanId && !isNetworkAvailable
-      ? ((runSheetCache.getEventStale(activePlanId) as
-          | { groupId: string; items: unknown[] }
-          | null) ?? undefined)
-      : undefined);
-
-  const groupId = effEvent?.groupId as Id<"groups"> | undefined;
+  // This tool renders inside the `(user)` modal route group; pushing a
+  // `/rostering/...` card from inside the modal lands it behind the modal on
+  // iOS, so dismiss the modal stack first, then navigate (mirrors
+  // NativeRunSheetView's own navigation).
+  const navigateToRostering = (path: string) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    router.push(path as never);
+  };
 
   if (!isServingMode) {
     return (
@@ -79,45 +74,69 @@ export function ServingRunsheetScreen() {
     );
   }
 
-  // Still loading the plan (only while we actually have a plan to load).
-  if (activePlanId && effEvent === undefined) {
-    return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="small" color={colors.text} />
-      </View>
-    );
-  }
-
-  // Genuinely nothing to show: no active plan, the plan was deleted, or it has
-  // no run sheet items — as opposed to merely being outside the serving window.
-  const hasItems = !!effEvent && effEvent.items.length > 0;
-  if (!groupId || !hasItems) {
+  // Still loading the eligible plans (only when we have no cached fallback yet).
+  if (eligibility === undefined && plans.length === 0) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
         <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-          No run sheet available for this event.
+          Loading run sheets…
+        </Text>
+      </View>
+    );
+  }
+
+  if (plans.length === 0) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          No run sheet available.
         </Text>
       </View>
     );
   }
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: colors.background, paddingTop: insets.top },
-      ]}
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={{
+        paddingTop: insets.top,
+        paddingBottom: insets.bottom + 24,
+      }}
     >
-      <ServingPlanSwitcher />
-      <NativeRunSheetView
-        groupId={groupId}
-        canEdit={false}
-        initialPlanId={
-          (activePlanId as Id<"eventPlans"> | null) ?? undefined
-        }
-      />
-    </View>
+      {plans.map((plan) => (
+        <View key={plan.planId} style={styles.planSection}>
+          <View style={styles.planHeader}>
+            <Text
+              style={[styles.planTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {plan.title}
+            </Text>
+            <Text style={[styles.planDate, { color: colors.textTertiary }]}>
+              {formatPlanDate(plan.startsAt)}
+            </Text>
+          </View>
+          <PlanRunSheet
+            embedded
+            planId={plan.planId as Id<"eventPlans">}
+            groupId={plan.groupId as Id<"groups">}
+            canEdit={false}
+            onEdit={() =>
+              navigateToRostering(
+                `/rostering/${plan.groupId}/run-sheet/${plan.planId}`,
+              )
+            }
+            onRehearse={() =>
+              navigateToRostering(
+                `/rostering/${plan.groupId}/run-sheet/rehearse/${plan.planId}`,
+              )
+            }
+          />
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
@@ -131,4 +150,14 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyText: { fontSize: 15, textAlign: "center" },
+  planSection: { paddingTop: 20 },
+  planHeader: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  planTitle: { fontSize: 16, fontWeight: "700", flexShrink: 1 },
+  planDate: { fontSize: 13, fontWeight: "500" },
 });

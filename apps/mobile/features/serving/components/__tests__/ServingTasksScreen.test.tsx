@@ -61,9 +61,12 @@ jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
+// Serving state is now driven by `isServingMode` (the store no longer pins a
+// single `activePlanId`). A mutable flag lets individual tests flip it.
+let mockIsServingMode = true;
 jest.mock("@/stores/eventModeStore", () => ({
-  useEventModeStore: (sel: (s: { activePlanId: string }) => unknown) =>
-    sel({ activePlanId: "plan-1" }),
+  useEventModeStore: (sel: (s: { isServingMode: boolean }) => unknown) =>
+    sel({ isServingMode: mockIsServingMode }),
 }));
 
 jest.mock("@providers/ConnectionProvider", () => ({
@@ -98,7 +101,6 @@ jest.mock("@/stores/servingTaskQueue", () => {
   };
 });
 
-jest.mock("../ServingPlanSwitcher", () => ({ ServingPlanSwitcher: () => null }));
 jest.mock("../HowToViewer", () => ({ HowToViewer: () => null }));
 jest.mock("@components/ui/ProgressBar", () => ({ ProgressBar: () => null }));
 
@@ -130,15 +132,19 @@ function personalTask(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function mockQueries(mine: unknown) {
+type EligiblePlan = { planId: string; title: string; startsAt: number };
+
+const DEFAULT_PLANS: EligiblePlan[] = [
+  { planId: "plan-1", title: "Sunday Gathering", startsAt: 0 },
+];
+
+function mockQueries(mine: unknown, plans: EligiblePlan[] = DEFAULT_PLANS) {
   mockQuery.mockImplementation((ref: string) => {
     switch (ref) {
       case REF.mine:
         return mine;
       case REF.eligibility:
-        return {
-          plans: [{ planId: "plan-1", title: "Sunday Gathering", startsAt: 0 }],
-        };
+        return { plans };
       case REF.shared:
       case REF.crew:
       case REF.allTeams:
@@ -153,6 +159,9 @@ const NO_PRELOAD_MESSAGE =
   "No preloaded task. Please contact your team lead to add tasks.";
 
 describe("ServingTasksScreen — no preloaded tasks", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+  });
   afterEach(() => jest.clearAllMocks());
 
   it("shows the no-preloaded-task notice when the role has no template tasks", () => {
@@ -184,5 +193,49 @@ describe("ServingTasksScreen — no preloaded tasks", () => {
     expect(getByText("Set up chairs")).toBeTruthy();
     // The other (empty) segments fall back to the generic empty text.
     expect(getAllByText("Nothing here yet.")).toHaveLength(2);
+  });
+});
+
+describe("ServingTasksScreen — plan sections", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+  });
+  afterEach(() => jest.clearAllMocks());
+
+  it("renders one section per eligible plan, each with the plan's header", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] }, [
+      { planId: "plan-1", title: "Sunday Morning", startsAt: 0 },
+      { planId: "plan-2", title: "Sunday Evening", startsAt: 0 },
+    ]);
+    const { getByText, getAllByText } = render(<ServingTasksScreen />);
+
+    // Each plan gets its own header (ServingHeader shows plan.title).
+    expect(getByText("Sunday Morning")).toBeTruthy();
+    expect(getByText("Sunday Evening")).toBeTruthy();
+    // Both plan sections render their (mocked, identical) tasks — two copies.
+    expect(getAllByText("Set up chairs")).toHaveLength(2);
+  });
+
+  it("renders a single section for a single plan", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText, getAllByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Sunday Gathering")).toBeTruthy();
+    expect(getAllByText("Set up chairs")).toHaveLength(1);
+  });
+
+  it("shows the not-serving empty state when not in serving mode", () => {
+    mockIsServingMode = false;
+    mockQueries(EMPTY_MINE);
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Not currently serving on an event.")).toBeTruthy();
+  });
+
+  it("shows an empty state when serving with zero eligible plans", () => {
+    mockQueries(EMPTY_MINE, []);
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Not currently serving on an event.")).toBeTruthy();
   });
 });
