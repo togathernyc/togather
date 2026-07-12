@@ -326,7 +326,7 @@ set the per-mode env vars.
   `permissions.allow` rules are gated behind the workspace-trust dialog,
   which non-interactive sessions never show, so the rules are read but
   ignored (`deny` rules apply regardless). The Routine environment's setup
-  script must therefore run `scripts/setup-claude-runner-permissions.sh`
+  script must therefore run `scripts/cloud-setup.sh`
   after cloning — it copies the allowlist into user-level settings (never
   trust-gated) and pre-seeds workspace trust for the clone. If a Routine
   gets stuck on a new prompt, add that tool to the checked-in allowlist
