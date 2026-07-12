@@ -62,7 +62,7 @@ interface Message {
   mentionedUserIds?: Id<"users">[];
   threadReplyCount?: number;
   // Thread bump timestamp — later than createdAt once the message has been
-  // replied to. Drives the floating "ghost" thread pointer (see below).
+  // replied to. Positions the floating "ghost" thread pointer (see below).
   lastActivityAt?: number;
   // Denormalized sender info
   senderName?: string;
@@ -157,7 +157,8 @@ type ListItem =
       parentId: Id<"chatMessages">;
       channelId: Id<"chatChannels">;
       replyCount: number;
-      // Original message details, so the ghost can echo it and align by author.
+      // Original message details, so the ghost can echo it and align by author
+      // (right when senderId is the current user, left otherwise).
       content: string;
       senderId: Id<"users">;
       senderName?: string;
@@ -251,9 +252,9 @@ export function MessageList({
     const items: ListItem[] = [];
 
     // Build a thread-aware timeline: every real message stays at its createdAt
-    // slot, and each replied-to message additionally floats a content-free
-    // "ghost" pointer at its lastActivityAt slot. Date separators and sender
-    // grouping are derived while walking the ordered timeline.
+    // slot, and each replied-to message additionally floats a "ghost" pointer
+    // (an echo of the original message) at its lastActivityAt slot. Date
+    // separators and sender grouping are derived while walking the timeline.
     const timeline = buildThreadAwareTimeline(messages);
     let previousMsg: Message | undefined;
     let previousDateKey: string | undefined;

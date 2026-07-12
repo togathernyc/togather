@@ -7,18 +7,23 @@
  * the thread's latest-activity slot (its `lastActivityAt`) at the bottom of the
  * chat.
  *
- * It echoes the ORIGINAL message so you can tell what the thread is about and
- * who started it:
+ * It echoes the ORIGINAL message so you can tell what the thread is about, and
+ * tapping it jumps to the real message:
  *
  * - It shows the original message's text (truncated to a couple of lines; an
  *   image-/attachment-only or deleted original falls back to a sensible
  *   placeholder rather than a blank bubble).
- * - It is aligned like a normal message bubble — right (no avatar) when the
- *   current user authored the original, left (with the author's avatar + name)
- *   when someone else did. Alignment keys off the ORIGINAL message's author,
- *   not the last replier.
+ * - It is aligned like a real message row, keyed off the ORIGINAL message's
+ *   author: right (your side, no avatar) when you wrote the original message,
+ *   left (with the original author's avatar + name) when someone else did. The
+ *   side follows who started the thread, not who replied last — so the echo
+ *   sits on the same side the real message does.
  * - The bubble uses the same own/other bubble colors as real messages, so it
- *   reads as a lightweight echo of the original, not a brand-new message.
+ *   reads as a lightweight echo, not a brand-new message.
+ *
+ * (This component was originally built content-free and centered — "reads as a
+ * pointer, not a real message." That was deliberately reversed: it now echoes
+ * the original message and aligns by its author, as the approved spec asks.)
  *
  * Two tap targets, unchanged from before:
  * - Tapping the "N replies" pill opens the thread screen (same as the inline
@@ -40,11 +45,14 @@ interface GhostThreadPointerProps {
   replyCount: number;
   /** The original message's text — shown truncated as the preview. */
   originalContent: string;
-  /** Author of the ORIGINAL message; drives left/right alignment. */
+  /**
+   * Author of the ORIGINAL message. Drives the alignment (right when it's the
+   * current user, left otherwise) and the avatar/name shown on the left side.
+   */
   originalSenderId: Id<"users">;
   /** Current viewer — the preview aligns right when they authored the original. */
   currentUserId: Id<"users">;
-  /** Denormalized author info, shown on the left-aligned (other-authored) preview. */
+  /** Denormalized author info, shown on the left-aligned (other-side) preview. */
   senderName?: string;
   senderProfilePhoto?: string;
   /** Deleted original → show the deleted-message treatment instead of blank text. */
@@ -108,12 +116,18 @@ export function GhostThreadPointer({
   onScrollToOriginal,
 }: GhostThreadPointerProps) {
   const { colors } = useTheme();
-  const isOwnMessage = originalSenderId === currentUserId;
+
+  // Aligned like a real message row: right when the current user wrote the
+  // original message, left (with the author's avatar + name) otherwise. Keyed
+  // off the ORIGINAL message's author, mirroring MessageItem's own-vs-other
+  // rule — so the echo sits on the same side the real message does.
+  const alignRight = originalSenderId === currentUserId;
+
   const { text: previewText, isPlaceholder } = getPreview(originalContent, isDeleted, attachments);
 
   const bubbleTextColor = isPlaceholder
     ? colors.textTertiary
-    : isOwnMessage
+    : alignRight
       ? colors.chatBubbleOwnText
       : colors.chatBubbleOtherText;
 
@@ -121,11 +135,12 @@ export function GhostThreadPointer({
     <View
       style={[
         styles.row,
-        { justifyContent: isOwnMessage ? 'flex-end' : 'flex-start' },
+        { justifyContent: alignRight ? 'flex-end' : 'flex-start' },
       ]}
     >
-      {/* Author avatar — only for someone else's message, mirroring a real row. */}
-      {!isOwnMessage && (
+      {/* Author avatar — only on the left (other-side) preview, mirroring a
+          real row. Shows the ORIGINAL author (this is an echo of their message). */}
+      {!alignRight && (
         <View style={styles.avatarContainer}>
           <AppImage
             source={senderProfilePhoto}
@@ -140,9 +155,9 @@ export function GhostThreadPointer({
         </View>
       )}
 
-      <View style={[styles.content, isOwnMessage ? styles.contentOwn : styles.contentOther]}>
-        {/* Sender name — only for others' messages, like a real row. */}
-        {!isOwnMessage && (
+      <View style={[styles.content, alignRight ? styles.contentOwn : styles.contentOther]}>
+        {/* Original author's name — only on the left (other-side) preview. */}
+        {!alignRight && (
           <Text style={[styles.senderName, { color: colors.textSecondary }]} numberOfLines={1}>
             {senderName || 'Unknown'}
           </Text>
@@ -156,9 +171,9 @@ export function GhostThreadPointer({
           testID={`ghost-thread-${parentMessageId}`}
           style={({ pressed }) => [
             styles.bubble,
-            isOwnMessage ? styles.bubbleOwn : styles.bubbleOther,
+            alignRight ? styles.bubbleOwn : styles.bubbleOther,
             {
-              backgroundColor: isOwnMessage ? colors.chatBubbleOwn : colors.chatBubbleOther,
+              backgroundColor: alignRight ? colors.chatBubbleOwn : colors.chatBubbleOther,
               opacity: pressed ? 0.7 : 1,
             },
           ]}

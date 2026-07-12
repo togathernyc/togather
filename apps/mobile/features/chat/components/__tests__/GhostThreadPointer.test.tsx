@@ -70,13 +70,15 @@ describe('GhostThreadPointer', () => {
       />,
     );
 
-    // The echoed original message text is now shown…
+    // The echoed original message text is shown…
     expect(getByText("Who's bringing snacks?")).toBeTruthy();
     // …alongside the count pill.
     expect(getByText('2 replies')).toBeTruthy();
   });
 
   it('left-aligns with the sender avatar + name when someone else authored the original', () => {
+    // Alignment keys off the ORIGINAL message's author (the approved spec):
+    // someone else wrote it → left, showing their avatar + name.
     const { getByTestId, getByText } = render(
       <GhostThreadPointer
         {...baseProps}
@@ -94,6 +96,8 @@ describe('GhostThreadPointer', () => {
   });
 
   it('right-aligns with no avatar/name when the current user authored the original', () => {
+    // I wrote the original → right side, no avatar/name (like my own message
+    // rows). This is the inverse of the other-authored case above.
     const { queryByTestId, queryByText, getByText } = render(
       <GhostThreadPointer
         {...baseProps}
