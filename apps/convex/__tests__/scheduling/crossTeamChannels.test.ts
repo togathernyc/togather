@@ -779,3 +779,150 @@ describe("cross-team channel — serving-mode inbox resolution", () => {
     expect(ids).not.toContain(world.crossChannelId);
   });
 });
+
+/** Does the serving-mode inbox contain the given channel for this user? */
+async function servingInboxHasChannel(
+  t: ReturnType<typeof convexTest>,
+  userId: Id<"users">,
+  planId: Id<"eventPlans">,
+  channelId: Id<"chatChannels">,
+): Promise<boolean> {
+  const token = (await generateTokens(userId)).accessToken;
+  const inbox = await t.query(
+    api.functions.messaging.channels.getInboxChannels,
+    { token, servingPlanId: planId },
+  );
+  return inbox.some((s) => s.channels.some((c) => c._id === channelId));
+}
+
+/**
+ * End-to-end serving-inbox coverage: `getInboxChannels` in serving mode must
+ * surface a cross-team group the volunteer belongs to, for BOTH topologies —
+ * a same-group channel whose owning group the volunteer isn't a member of, and
+ * a cross-GROUP channel that lives in another group entirely. These exercise
+ * the two independent backend gaps together: the `cross_team` supplement branch
+ * in `getInboxChannels` and the community-wide resolution in
+ * `resolveServingChannelIds`.
+ */
+describe("cross-team channel — serving-mode inbox (getInboxChannels)", () => {
+  it("surfaces a same-group cross-team channel to a serving volunteer who is not in the owning group", async () => {
+    const { t, world } = await setupCrossTeamWorld();
+    const planId = await insertPlan(t, world, 3);
+    // techUserId is rostered on the tech team (tying it to the plan) but is not
+    // a groupMembers member of the channel's owning group — membership on the
+    // cross-team channel arrives purely via the auto-sync below.
+    await insertAssignment(t, world, {
+      planId,
+      teamId: world.techTeamId,
+      roleId: world.techRoleId,
+      userId: world.techUserId,
+      eventDate: Date.now() + 3 * DAY,
+      status: "confirmed",
+    });
+    await reconcileCross(t, world);
+
+    // Precondition: the volunteer really isn't a member of the owning group, so
+    // the channel can only reach the inbox via the cross-team supplement path.
+    const groupMembership = await t.run((ctx) =>
+      ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.techUserId),
+        )
+        .first(),
+    );
+    expect(groupMembership).toBeNull();
+    expect(
+      (await crossMemberIds(t, world)).has(world.techUserId),
+    ).toBe(true);
+
+    expect(
+      await servingInboxHasChannel(
+        t,
+        world.techUserId,
+        planId,
+        world.crossChannelId,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not surface the cross-team channel to a volunteer who is not a synced member", async () => {
+    const { t, world } = await setupCrossTeamWorld();
+    const planId = await insertPlan(t, world, 3);
+    // techUserId is rostered (so the channel resolves into the plan's serving
+    // set), but the outsider has no synced membership row for it.
+    await insertAssignment(t, world, {
+      planId,
+      teamId: world.techTeamId,
+      roleId: world.techRoleId,
+      userId: world.techUserId,
+      eventDate: Date.now() + 3 * DAY,
+      status: "confirmed",
+    });
+    await reconcileCross(t, world);
+
+    expect(
+      await servingInboxHasChannel(
+        t,
+        world.outsiderId,
+        planId,
+        world.crossChannelId,
+      ),
+    ).toBe(false);
+  });
+
+  it("surfaces a cross-GROUP cross-team channel (channel lives in another group) in serving mode", async () => {
+    const { t, base, groupBId, teamBId, roleBId, groupBRosteredId } =
+      await setupCrossGroupWorld();
+    const { accessToken } = await generateTokens(base.groupLeaderId);
+
+    // A cross-team channel created in the BASE group but sourcing team B, which
+    // lives in group B. It's shared into group B; the plan below is in group B.
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.crossTeamChannels.createCrossTeamChannel,
+      {
+        token: accessToken,
+        groupId: base.groupId,
+        name: "Broadcast",
+        selectors: [{ sourceTeamId: teamBId, roleId: roleBId }],
+      },
+    );
+
+    const eventDate = Date.now() + 3 * DAY;
+    const planBId = await t.run(async (ctx) => {
+      const planId = await ctx.db.insert("eventPlans", {
+        groupId: groupBId,
+        communityId: base.communityId,
+        title: "Sunday Service",
+        eventDate,
+        times: [{ label: "9 AM", startsAt: eventDate }],
+        status: "draft",
+        createdById: base.groupLeaderId,
+        createdAt: ts(),
+        updatedAt: ts(),
+      });
+      await ctx.db.insert("roleAssignments", {
+        planId,
+        teamId: teamBId,
+        roleId: roleBId,
+        userId: groupBRosteredId,
+        eventDate,
+        status: "confirmed",
+        assignedById: base.groupLeaderId,
+        assignedAt: Date.now(),
+      });
+      return planId;
+    });
+    await t.mutation(
+      internal.functions.scheduling.teamChannelSync.reconcileCrossTeamChannel,
+      { channelId },
+    );
+
+    // The plan is in group B but the channel is owned by the base group — only
+    // the community-wide resolution in resolveServingChannelIds lets it into the
+    // plan's serving set, so the serving flatten can keep it.
+    expect(
+      await servingInboxHasChannel(t, groupBRosteredId, planBId, channelId),
+    ).toBe(true);
+  });
+});
