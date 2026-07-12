@@ -262,27 +262,6 @@ export const getServingEligibility = query({
   },
 });
 
-/**
- * Lightweight serving-inbox metadata for one plan: just its `eventDate`. The
- * mobile inbox (serving mode) uses this to derive the event's local-day window
- * and filter direct messages down to those created on the day of the event.
- *
- * Unlike `getServingEligibility`, this resolves straight from the plan id, so
- * it works even outside the ~12h serving window (e.g. a volunteer previewing
- * their focused inbox early) — mirroring how the runsheet loads the plan via
- * `getEvent`. Membership-gated like the rest of the plan surface.
- */
-export const getServingInboxMeta = query({
-  args: { token: v.string(), planId: v.id("eventPlans") },
-  handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
-    const plan = await ctx.db.get(args.planId);
-    if (!plan) return null;
-    await requireGroupMember(ctx, plan.groupId, userId);
-    return { eventDate: plan.eventDate };
-  },
-});
-
 /** A channel the user will belong to for a plan but isn't an active member of yet. */
 type UpcomingChannel = {
   channelId: Id<"chatChannels">;
@@ -313,84 +292,98 @@ type UpcomingChannel = {
  * `availableAt = plan.eventDate − ADD_DAYS_BEFORE * MS_PER_DAY`. Returns `[]`
  * when there's nothing upcoming. Membership-gated like the rest of the plan
  * surface.
+ *
+ * Takes a LIST of plan ids — serving mode spans every plan the user is serving
+ * today — and unions the upcoming channels across them, deduped by channel id
+ * (a channel shared by two plans shows once, using the earliest `availableAt`).
  */
 export const getServingUpcomingChannels = query({
-  args: { token: v.string(), planId: v.id("eventPlans") },
+  args: { token: v.string(), planIds: v.array(v.id("eventPlans")) },
   handler: async (ctx, args): Promise<UpcomingChannel[]> => {
     const userId = await requireAuth(ctx, args.token);
-    const plan = await ctx.db.get(args.planId);
-    if (!plan) return [];
-    await requireGroupMember(ctx, plan.groupId, userId);
 
-    // The user's confirmed assignments on this plan → the teams they'll be in.
-    const planAssignments = await ctx.db
-      .query("roleAssignments")
-      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .collect();
-    const confirmed = planAssignments.filter((a) => a.status === "confirmed");
-    if (confirmed.length === 0) return [];
-
-    const availableAt = plan.eventDate - ADD_DAYS_BEFORE * MS_PER_DAY;
-
-    // Candidate channels (may include channels the user is already in — those
-    // are filtered out below).
-    const candidates: Array<Omit<UpcomingChannel, "availableAt">> = [];
-
-    // (a) Team channels — one per team the user is confirmed on.
-    const teamIds = new Set<string>(confirmed.map((a) => a.teamId as string));
-    for (const teamId of teamIds) {
-      const team = await ctx.db.get(teamId as Id<"teams">);
-      if (team?.channelId && team.isArchived !== true) {
-        candidates.push({
-          channelId: team.channelId,
-          name: team.name,
-          kind: "team",
-        });
-      }
-    }
-
-    // (b) Cross-team channels whose selectors match one of the user's confirmed
-    // assignments. Cross-team channels are rare, so a filtered scan is fine
-    // (mirrors `reconcileCrossTeamChannelsForSource`).
-    const crossChannels = await ctx.db
-      .query("chatChannels")
-      .filter((q) => q.eq(q.field("channelType"), "cross_team"))
-      .collect();
-    for (const ch of crossChannels) {
-      if (ch.isArchived === true) continue;
-      const selectors = ch.crossTeamSync?.selectors ?? [];
-      const willBeMember = confirmed.some((a) =>
-        selectors.some(
-          (s) =>
-            (s.sourceTeamId as string) === (a.teamId as string) &&
-            (s.roleId === undefined ||
-              (s.roleId as string) === (a.roleId as string)),
-        ),
-      );
-      if (willBeMember) {
-        candidates.push({ channelId: ch._id, name: ch.name, kind: "cross_team" });
-      }
-    }
-
-    // Exclude channels the user is already an active member of, and dedupe.
     const result: UpcomingChannel[] = [];
     const seen = new Set<string>();
-    for (const candidate of candidates) {
-      const key = candidate.channelId as string;
-      if (seen.has(key)) continue;
-      seen.add(key);
 
-      const memberRows = await ctx.db
-        .query("chatChannelMembers")
-        .withIndex("by_channel_user", (q) =>
-          q.eq("channelId", candidate.channelId).eq("userId", userId),
-        )
+    for (const planId of args.planIds) {
+      const plan = await ctx.db.get(planId);
+      if (!plan) continue;
+      await requireGroupMember(ctx, plan.groupId, userId);
+
+      // The user's confirmed assignments on this plan → the teams they'll be in.
+      const planAssignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", planId))
+        .filter((q) => q.eq(q.field("userId"), userId))
         .collect();
-      const isActiveMember = memberRows.some((r) => r.leftAt === undefined);
-      if (isActiveMember) continue;
+      const confirmed = planAssignments.filter((a) => a.status === "confirmed");
+      if (confirmed.length === 0) continue;
 
-      result.push({ ...candidate, availableAt });
+      const availableAt = plan.eventDate - ADD_DAYS_BEFORE * MS_PER_DAY;
+
+      // Candidate channels (may include channels the user is already in — those
+      // are filtered out below).
+      const candidates: Array<Omit<UpcomingChannel, "availableAt">> = [];
+
+      // (a) Team channels — one per team the user is confirmed on.
+      const teamIds = new Set<string>(confirmed.map((a) => a.teamId as string));
+      for (const teamId of teamIds) {
+        const team = await ctx.db.get(teamId as Id<"teams">);
+        if (team?.channelId && team.isArchived !== true) {
+          candidates.push({
+            channelId: team.channelId,
+            name: team.name,
+            kind: "team",
+          });
+        }
+      }
+
+      // (b) Cross-team channels whose selectors match one of the user's confirmed
+      // assignments. Cross-team channels are rare, so a filtered scan is fine
+      // (mirrors `reconcileCrossTeamChannelsForSource`).
+      const crossChannels = await ctx.db
+        .query("chatChannels")
+        .filter((q) => q.eq(q.field("channelType"), "cross_team"))
+        .collect();
+      for (const ch of crossChannels) {
+        if (ch.isArchived === true) continue;
+        const selectors = ch.crossTeamSync?.selectors ?? [];
+        const willBeMember = confirmed.some((a) =>
+          selectors.some(
+            (s) =>
+              (s.sourceTeamId as string) === (a.teamId as string) &&
+              (s.roleId === undefined ||
+                (s.roleId as string) === (a.roleId as string)),
+          ),
+        );
+        if (willBeMember) {
+          candidates.push({
+            channelId: ch._id,
+            name: ch.name,
+            kind: "cross_team",
+          });
+        }
+      }
+
+      // Exclude channels the user is already an active member of, and dedupe
+      // across all plans (a channel already emitted for an earlier plan is kept
+      // as-is — earliest `availableAt` wins).
+      for (const candidate of candidates) {
+        const key = candidate.channelId as string;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const memberRows = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", candidate.channelId).eq("userId", userId),
+          )
+          .collect();
+        const isActiveMember = memberRows.some((r) => r.leftAt === undefined);
+        if (isActiveMember) continue;
+
+        result.push({ ...candidate, availableAt });
+      }
     }
 
     return result;

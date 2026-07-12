@@ -790,7 +790,7 @@ async function servingInboxHasChannel(
   const token = (await generateTokens(userId)).accessToken;
   const inbox = await t.query(
     api.functions.messaging.channels.getInboxChannels,
-    { token, servingPlanId: planId },
+    { token, servingPlanIds: [planId] },
   );
   return inbox.some((s) => s.channels.some((c) => c._id === channelId));
 }

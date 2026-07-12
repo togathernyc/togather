@@ -2,9 +2,10 @@
  * ServingTasksScreen
  *
  * The "Tasks" tab of serving mode. Shows the current user's serving tasks for
- * the active plan (`useEventModeStore().activePlanId`), grouped into three
- * segments — Before / During / After. Each segment has its own ProgressBar
- * reflecting the user's completion of that segment's tasks.
+ * EVERY plan they're serving today (a volunteer can be on two campuses the same
+ * morning) — one stacked section per plan, sourced from `getServingEligibility`.
+ * Within each plan the tasks are grouped into three segments — Before / During /
+ * After — each with its own ProgressBar reflecting completion of that segment.
  *
  * Two kinds of tasks are merged per segment (the `getMyServingTasks` query
  * returns an `isPersonal` flag):
@@ -41,6 +42,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { ProgressBar } from "@components/ui/ProgressBar";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
 import { useConnectionStatus } from "@providers/ConnectionProvider";
 import { useServingTasksCache } from "@/stores/servingTasksCache";
 import {
@@ -48,7 +50,6 @@ import {
   completionId,
   type ServingTaskKind,
 } from "@/stores/servingTaskQueue";
-import { ServingPlanSwitcher } from "./ServingPlanSwitcher";
 import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
 
 type Segment = "before" | "during" | "after";
@@ -178,39 +179,192 @@ function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
 
+/**
+ * A `getServingEligibility` plan. Matches `CachedServingPlan` so the whole list
+ * can be persisted for offline via `useCachedServingPlans` — the child section
+ * only reads `planId`/`title`/`startsAt`.
+ */
+type EligiblePlan = {
+  planId: string;
+  groupId: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+};
+
+/**
+ * Parent for the Tasks tab. Owns nothing plan-specific: it resolves the list of
+ * plans the user is serving (`getServingEligibility`) and renders one
+ * `ServingTasksPlanSection` per plan, plus the SINGLE global offline flush loop
+ * (see below). All per-plan data/handlers live in the child section.
+ */
 export function ServingTasksScreen() {
   const { colors } = useTheme();
-  const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
-  const activePlanId = useEventModeStore((s) => s.activePlanId);
-  const planId = activePlanId as Id<"eventPlans"> | null;
+  const isServingMode = useEventModeStore((s) => s.isServingMode);
+
+  // Every plan the user is serving today (soonest-first). One section each.
+  // Cached for offline via `useCachedServingPlans` so the tab still renders its
+  // sections at a venue with no signal.
+  const eligibility = useAuthenticatedQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    isServingMode ? {} : "skip",
+  ) as { plans: EligiblePlan[] } | null | undefined;
+  const plans = useCachedServingPlans(eligibility?.plans);
+
+  // --- Global offline flush loop ---------------------------------------------
+  // Replays queued (offline) completions when back online. The queue is GLOBAL
+  // across every plan, so this must run exactly once — it lives here in the
+  // parent rather than in each per-plan section, which would race to drain the
+  // same queue. The per-plan RECONCILE (dropping entries the plan's live server
+  // data already reflects) stays in the child, scoped to that plan's data.
+  const { isEffectivelyOffline } = useConnectionStatus();
+  const queuePending = useServingTaskQueue((s) => s.pending);
+  const dequeueCompletion = useServingTaskQueue((s) => s.dequeue);
+  const toggleSharedTeamTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.toggleSharedTeamTask,
+  );
+  const toggleTaskCompletion = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.toggleTaskCompletion,
+  );
+  const togglePersonalTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.togglePersonalTask,
+  );
+
+  // Replay queued completions when back online. All three toggle mutations take
+  // an explicit `completed` and are idempotent, so replay is always safe.
+  const flushingRef = useRef(false);
+  const flushQueue = useCallback(async () => {
+    if (flushingRef.current) return;
+    flushingRef.current = true;
+    try {
+      for (const op of useServingTaskQueue.getState().all()) {
+        try {
+          if (op.kind === "personal") {
+            await togglePersonalTask({
+              taskId: op.taskId as Id<"personalServingTasks">,
+              completed: op.completed,
+            });
+          } else if (op.kind === "template") {
+            await toggleTaskCompletion({
+              taskId: op.taskId as Id<"eventTasks">,
+              timeLabel: op.timeLabel,
+              completed: op.completed,
+            });
+          } else {
+            await toggleSharedTeamTask({
+              planId: op.planId as Id<"eventPlans">,
+              taskId: op.taskId as Id<"eventTasks">,
+              completed: op.completed,
+            });
+          }
+          // Only drop it if the desired state hasn't changed since we
+          // snapshotted `all()` — the user may have gone offline mid-flush and
+          // re-toggled this task, in which case `enqueue` replaced the entry and
+          // we must keep the newer intent for the next flush.
+          const current = useServingTaskQueue.getState().pending[op.id];
+          if (current && current.completed === op.completed) {
+            dequeueCompletion(op.id);
+          }
+        } catch {
+          // Leave it queued; the next reconnect (or screen mount) retries.
+        }
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [
+    togglePersonalTask,
+    toggleTaskCompletion,
+    toggleSharedTeamTask,
+    dequeueCompletion,
+  ]);
+
+  useEffect(() => {
+    if (isEffectivelyOffline) return;
+    if (Object.keys(queuePending).length === 0) return;
+    void flushQueue();
+  }, [isEffectivelyOffline, queuePending, flushQueue]);
+
+  if (!isServingMode) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          Not currently serving on an event.
+        </Text>
+      </View>
+    );
+  }
+
+  // The query is skipped outside serving mode; inside it, `undefined` means the
+  // first load hasn't resolved yet. Offline, `plans` falls back to the cache, so
+  // only show the spinner when we have nothing cached to render.
+  if (eligibility === undefined && plans.length === 0) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="small" color={colors.text} />
+      </View>
+    );
+  }
+
+  if (plans.length === 0) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+        <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          Not currently serving on an event.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      contentContainerStyle={{
+        paddingTop: insets.top + 12,
+        paddingBottom: insets.bottom + 40,
+      }}
+    >
+      {plans.map((plan) => (
+        <ServingTasksPlanSection key={plan.planId} plan={plan} />
+      ))}
+    </ScrollView>
+  );
+}
+
+/**
+ * One plan's Tasks UI: header (plan title + when + readiness), the Mine / Shared
+ * / Crew / All-teams section switcher, and all the per-plan data, offline cache,
+ * mutations and handlers. Every hook here is scoped to `plan.planId`, so
+ * completing a task offline enqueues under the CORRECT plan. Rendered once per
+ * eligible plan by `ServingTasksScreen`; the global offline flush loop lives in
+ * the parent — only the per-plan reconcile lives here.
+ */
+function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
+  const { colors } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const planId = plan.planId as Id<"eventPlans">;
 
   const tasks = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getMyServingTasks,
-    planId ? { planId } : "skip",
+    { planId },
   ) as MyServingTasks | undefined;
-
-  // Header context (event title + when). Reuses the already-cheap serving
-  // eligibility query — no extra fetch specific to this screen.
-  const eligibility = useAuthenticatedQuery(
-    api.functions.scheduling.serving.getServingEligibility,
-    planId ? {} : "skip",
-  ) as { plans: Array<{ planId: string; title: string; startsAt: number }> } | null | undefined;
-  const activePlan = eligibility?.plans.find((p) => p.planId === planId) ?? null;
 
   // The other three sections. Fetched alongside Mine so the pill badges can
   // show live counts; only the active section's content is rendered.
   const sharedTasks = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getSharedTeamTasks,
-    planId ? { planId } : "skip",
+    { planId },
   ) as SharedTask[] | undefined;
   const crewMembers = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getCrewTasks,
-    planId ? { planId } : "skip",
+    { planId },
   ) as CrewMember[] | undefined;
   const allTeams = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getAllTeamsTasks,
-    planId ? { planId } : "skip",
+    { planId },
   ) as AllTeamsTeam[] | undefined;
 
   const toggleSharedTeamTask = useAuthenticatedMutation(
@@ -361,60 +515,9 @@ export function ServingTasksScreen() {
     return merged;
   }, [sharedOptimistic, queuePending]);
 
-  // Replay queued completions when back online. All three toggle mutations take
-  // an explicit `completed` and are idempotent, so replay is always safe.
-  const flushingRef = useRef(false);
-  const flushQueue = useCallback(async () => {
-    if (flushingRef.current) return;
-    flushingRef.current = true;
-    try {
-      for (const op of useServingTaskQueue.getState().all()) {
-        try {
-          if (op.kind === "personal") {
-            await togglePersonalTask({
-              taskId: op.taskId as Id<"personalServingTasks">,
-              completed: op.completed,
-            });
-          } else if (op.kind === "template") {
-            await toggleTaskCompletion({
-              taskId: op.taskId as Id<"eventTasks">,
-              timeLabel: op.timeLabel,
-              completed: op.completed,
-            });
-          } else {
-            await toggleSharedTeamTask({
-              planId: op.planId as Id<"eventPlans">,
-              taskId: op.taskId as Id<"eventTasks">,
-              completed: op.completed,
-            });
-          }
-          // Only drop it if the desired state hasn't changed since we
-          // snapshotted `all()` — the user may have gone offline mid-flush and
-          // re-toggled this task, in which case `enqueue` replaced the entry and
-          // we must keep the newer intent for the next flush.
-          const current = useServingTaskQueue.getState().pending[op.id];
-          if (current && current.completed === op.completed) {
-            dequeueCompletion(op.id);
-          }
-        } catch {
-          // Leave it queued; the next reconnect (or screen mount) retries.
-        }
-      }
-    } finally {
-      flushingRef.current = false;
-    }
-  }, [
-    togglePersonalTask,
-    toggleTaskCompletion,
-    toggleSharedTeamTask,
-    dequeueCompletion,
-  ]);
-
-  useEffect(() => {
-    if (isEffectivelyOffline) return;
-    if (Object.keys(queuePending).length === 0) return;
-    void flushQueue();
-  }, [isEffectivelyOffline, queuePending, flushQueue]);
+  // NOTE: The global offline flush loop (replaying queued completions across
+  // ALL plans) lives in the parent `ServingTasksScreen` — it must run exactly
+  // once. This child only RECONCILES against its own plan's live data below.
 
   // Drop queued entries the server already reflects (our flush landing, or
   // another volunteer completing a shared task) so the overlay clears.
@@ -553,17 +656,6 @@ export function ServingTasksScreen() {
     [deletePersonalTask],
   );
 
-  if (!planId) {
-    return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-          Not currently serving on an event.
-        </Text>
-      </View>
-    );
-  }
-
   // Overall readiness across every segment (overlay-aware so queued offline
   // completions count toward the progress bars).
   const allTasks = mineWithOverlay
@@ -587,21 +679,12 @@ export function ServingTasksScreen() {
   };
 
   return (
-    <>
-      <ScrollView
-        style={[styles.container, { backgroundColor: colors.background }]}
-        contentContainerStyle={{
-          paddingTop: insets.top + 12,
-          paddingBottom: insets.bottom + 40,
-        }}
-      >
-        <ServingPlanSwitcher />
-
-        {isStale ? <OfflineBanner colors={colors} /> : null}
+    <View style={styles.planSection}>
+      {isStale ? <OfflineBanner colors={colors} /> : null}
 
         <ServingHeader
-          title={activePlan?.title ?? "My tasks"}
-          startsAt={activePlan?.startsAt}
+          title={plan.title}
+          startsAt={plan.startsAt}
           done={overallDone}
           total={overallTotal}
           loading={effTasks === undefined}
@@ -801,14 +884,12 @@ export function ServingTasksScreen() {
             primaryColor={primaryColor}
           />
         )}
-      </ScrollView>
-
       <HowToViewer
         visible={viewerContent !== null}
         content={viewerContent}
         onClose={() => setViewerContent(null)}
       />
-    </>
+    </View>
   );
 }
 
@@ -1936,6 +2017,9 @@ function SectionEmpty({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // One stacked plan section. The big ServingHeader title acts as the visual
+  // separator between plans; a little bottom room keeps adjacent plans distinct.
+  planSection: { marginBottom: 12 },
   centered: {
     flex: 1,
     alignItems: "center",

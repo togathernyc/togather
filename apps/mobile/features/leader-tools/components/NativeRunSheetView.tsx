@@ -222,12 +222,13 @@ export function NativeRunSheetView({
   );
 }
 
-function PlanRunSheet({
+export function PlanRunSheet({
   planId,
   groupId,
   canEdit,
   onEdit,
   onRehearse,
+  embedded = false,
 }: {
   planId: Id<"eventPlans">;
   groupId: Id<"groups">;
@@ -235,6 +236,13 @@ function PlanRunSheet({
   onEdit: () => void;
   /** Open the read-only musician rehearsal view for this plan (all members). */
   onRehearse: () => void;
+  /**
+   * When true, render the sheet body as a plain `View` instead of its own
+   * `ScrollView`, so the component can be stacked inside a parent scroll
+   * container (the serving Runsheet tab shows one sheet per plan). Defaults to
+   * false — the standalone leader-tools usage keeps its own scroll.
+   */
+  embedded?: boolean;
 }) {
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -474,8 +482,12 @@ function PlanRunSheet({
     );
   }
 
+  const Root = embedded ? View : ScrollView;
+  const rootProps = embedded
+    ? { style: styles.sheet }
+    : { contentContainerStyle: styles.sheet };
   return (
-    <ScrollView contentContainerStyle={styles.sheet}>
+    <Root {...(rootProps as object)}>
       <View style={styles.sheetHeader}>
         <View style={styles.sheetHeaderText}>
           <Text style={[styles.planTitle, { color: colors.text }]}>
@@ -563,7 +575,7 @@ function PlanRunSheet({
           );
         })
       )}
-    </ScrollView>
+    </Root>
   );
 }
 

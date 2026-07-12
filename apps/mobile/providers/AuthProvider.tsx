@@ -23,6 +23,7 @@ import { useRunSheetCache } from "../stores/runSheetCache";
 import { useServingRunSheetCache } from "../stores/servingRunSheetCache";
 import { useServingTasksCache } from "../stores/servingTasksCache";
 import { useServingTaskQueue } from "../stores/servingTaskQueue";
+import { useServingPlansCache } from "../stores/servingPlansCache";
 import { useGridColumnWidths } from "../stores/gridColumnWidths";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
@@ -654,6 +655,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "serving-runsheet-cache",
       "serving-tasks-cache",
       "serving-task-queue",
+      "serving-plans-cache",
       "grid-column-widths",
     ];
 
@@ -674,6 +676,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingRunSheetCache.getState().clearAll();
     useServingTasksCache.getState().clearAll();
     useServingTaskQueue.getState().clear();
+    useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
 
     // On web, clear localStorage
@@ -843,6 +846,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         "serving-runsheet-cache",
         "serving-tasks-cache",
         "serving-task-queue",
+        "serving-plans-cache",
         "grid-column-widths",
       ].map((key) =>
         AsyncStorage.removeItem(key).catch((err) =>
@@ -858,6 +862,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingRunSheetCache.getState().clearAll();
     useServingTasksCache.getState().clearAll();
     useServingTaskQueue.getState().clear();
+    useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
 
     setCommunityState(null);

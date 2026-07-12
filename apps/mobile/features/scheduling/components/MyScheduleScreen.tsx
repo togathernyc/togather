@@ -85,18 +85,15 @@ export function MyScheduleScreen() {
         plans: { planId: string; title: string; startsAt: number }[];
       }
     | undefined;
-  // One entry button per eligible plan so the volunteer can see which event
-  // they're entering (each has its own runsheet + tasks). Hidden while already
-  // serving.
+  // Serving mode now spans every eligible plan at once (each tab shows all of
+  // them as sections), so a single entry point covers them all. Hidden while
+  // already serving.
   const servingPlans = isServingMode ? [] : servingEligibility?.plans ?? [];
 
-  const handleEnterServing = useCallback(
-    (planId: string) => {
-      enterServingMode(planId);
-      router.replace("/(tabs)/serving-tasks" as never);
-    },
-    [enterServingMode, router],
-  );
+  const handleEnterServing = useCallback(() => {
+    enterServingMode();
+    router.replace("/(tabs)/serving-tasks" as never);
+  }, [enterServingMode, router]);
 
   // Pending requests pinned at top; the rest grouped by calendar day.
   const { pending, dateGroups } = useMemo(() => {
@@ -163,30 +160,27 @@ export function MyScheduleScreen() {
 
       {servingPlans.length > 0 ? (
         <View style={styles.servingBannerGroup}>
-          {servingPlans.map((plan) => (
-            <Pressable
-              key={plan.planId}
-              onPress={() => handleEnterServing(plan.planId)}
-              style={({ pressed }) => [
-                styles.servingBanner,
-                { backgroundColor: primaryColor },
-                pressed && { opacity: 0.85 },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={`Enter serving mode for ${plan.title}`}
-            >
-              <Ionicons name="rocket-outline" size={20} color="#fff" />
-              <View style={styles.servingBannerTextWrap}>
-                <Text style={styles.servingBannerTitle} numberOfLines={1}>
-                  {plan.title}
-                </Text>
-                <Text style={styles.servingBannerSub}>
-                  {formatDateHeading(plan.startsAt)} · Enter serving mode
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color="#fff" />
-            </Pressable>
-          ))}
+          <Pressable
+            onPress={handleEnterServing}
+            style={({ pressed }) => [
+              styles.servingBanner,
+              { backgroundColor: primaryColor },
+              pressed && { opacity: 0.85 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel="Enter serving mode"
+          >
+            <Ionicons name="rocket-outline" size={20} color="#fff" />
+            <View style={styles.servingBannerTextWrap}>
+              <Text style={styles.servingBannerTitle} numberOfLines={1}>
+                {servingPlans.length === 1
+                  ? servingPlans[0].title
+                  : `${servingPlans.length} events today`}
+              </Text>
+              <Text style={styles.servingBannerSub}>Enter serving mode</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#fff" />
+          </Pressable>
         </View>
       ) : null}
 
@@ -284,9 +278,7 @@ export function MyScheduleScreen() {
                   assignment={a}
                   onPress={() => openDetail(a._id)}
                   onOpenEvent={
-                    eventTasksEnabled
-                      ? () => handleEnterServing(a.planId as string)
-                      : undefined
+                    eventTasksEnabled ? () => handleEnterServing() : undefined
                   }
                 />
               ))}

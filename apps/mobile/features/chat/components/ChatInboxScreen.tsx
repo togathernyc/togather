@@ -47,6 +47,7 @@ import { Avatar } from "@components/ui/Avatar";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { useCachedServingPlans } from "@features/serving/hooks/useCachedServingPlans";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -172,36 +173,73 @@ export function ChatInboxScreen({
     });
   }
 
-  // Serving mode: when active, the inbox is filtered to the active plan's
-  // serving channels (flat) by passing `servingPlanId` to getInboxChannels.
+  // Serving mode: when active, the inbox spans EVERY plan the user is serving
+  // today — the union of all eligible plans' serving channels (returned FLAT),
+  // which the client groups into a section per owning group.
   const isServingMode = useEventModeStore((s) => s.isServingMode);
-  const activePlanId = useEventModeStore((s) => s.activePlanId);
-  // The serving-mode flags above are persisted and rehydrate from AsyncStorage
-  // asynchronously. Until this is true they hold their defaults, so we hold the
+  // The serving-mode flag is persisted and rehydrates from AsyncStorage
+  // asynchronously. Until this is true it holds its default, so we hold the
   // inbox on its loading state rather than rendering the full regular inbox and
   // then stripping it down to the serving-mode view a beat later.
   const eventModeHydrated = useEventModeStore((s) => s.hasHydrated);
+  const enterServingMode = useEventModeStore((s) => s.enter);
+  const autoEnterBlocked = useEventModeStore((s) => s.autoEnterBlocked);
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
-  // Only filter when the feature is actually enabled — a stale persisted
-  // serving flag (feature since disabled for this community) must not leave the
-  // normal inbox filtered to an old plan, since the serving tabs/Exit are hidden.
+  // Only enter serving mode when the feature is actually enabled — a stale
+  // persisted serving flag (feature since disabled for this community) must not
+  // leave the normal inbox filtered, since the serving tabs/Exit are hidden.
   const inServingMode = isServingMode && eventTasksEnabled;
 
-  // Fetch inbox channels using the new grouped query
+  // The plans the user is serving today drive the serving inbox's sections and
+  // the re-entry chip. The query runs whenever the feature is on (even when not
+  // serving) so the chip can appear; its plans[] are cached for offline access.
+  const servingEligibility = useQuery(
+    api.functions.scheduling.serving.getServingEligibility,
+    token && eventTasksEnabled ? { token } : "skip",
+  ) as
+    | {
+        eligible: boolean;
+        autoEnter: boolean;
+        plans: Array<{
+          planId: string;
+          groupId: string;
+          title: string;
+          startsAt: number;
+          endsAt: number;
+        }>;
+      }
+    | undefined;
+  const eligiblePlans = useCachedServingPlans(servingEligibility?.plans);
+  const eligiblePlanIds = useMemo(
+    () => eligiblePlans.map((p) => p.planId as Id<"eventPlans">),
+    [eligiblePlans],
+  );
+
+  // Fetch inbox channels. In serving mode, restrict to the union of every
+  // eligible plan's serving channels. Hold the query until the plan ids are
+  // known (online) so we don't flash the full — or an empty — inbox first;
+  // offline, `eligiblePlanIds` comes from cache so the stale inbox still shows.
   const inboxQueryArgs = useMemo(() => {
     if (!userId || !communityId || !token) {
       return "skip" as const;
     }
-    const servingPlanId =
-      inServingMode && activePlanId
-        ? (activePlanId as Id<"eventPlans">)
-        : undefined;
-    return servingPlanId
-      ? { token, communityId, servingPlanId }
-      : { token, communityId };
-  }, [userId, communityId, token, inServingMode, activePlanId]);
+    if (inServingMode) {
+      if (servingEligibility === undefined && eligiblePlanIds.length === 0) {
+        return "skip" as const;
+      }
+      return { token, communityId, servingPlanIds: eligiblePlanIds };
+    }
+    return { token, communityId };
+  }, [
+    userId,
+    communityId,
+    token,
+    inServingMode,
+    servingEligibility,
+    eligiblePlanIds,
+  ]);
 
   const inboxChannels = useQuery(
     api.functions.messaging.channels.getInboxChannels,
@@ -228,44 +266,42 @@ export function ChatInboxScreen({
     token ? { token } : "skip",
   );
 
-  // Serving mode focuses the inbox on the active plan: its channels stay
-  // pinned on top (filtered server-side via `servingPlanId`, above), DMs are
-  // narrowed to those created on the event day, and the Notifications row is
-  // hidden. `getServingInboxMeta` returns the plan's `eventDate` (resolved
-  // straight from the plan id, so it works even before the day-of window) from
-  // which we derive the local-day boundaries for the DM filter.
-  const servingInboxMeta = useQuery(
-    api.functions.scheduling.serving.getServingInboxMeta,
-    inServingMode && activePlanId && token
-      ? { token, planId: activePlanId as Id<"eventPlans"> }
-      : "skip",
-  ) as { eventDate: number } | null | undefined;
+  // Serving mode focuses the inbox on the plans being served: their channels
+  // stay pinned on top (filtered server-side via `servingPlanIds`, above), DMs
+  // are narrowed to those created on a serving day, and the Notifications row is
+  // hidden. The DM-day windows are derived from the eligible plans' start times.
 
-  // Serving mode "coming soon" channels: the plan's team + cross-team channels
-  // the user WILL be added to (via the rotation engine) but isn't yet a member
-  // of, so they don't appear as real rows. Rendered as non-tappable ghost cards
-  // at the bottom of the serving inbox showing when each channel opens.
+  // Serving mode "coming soon" channels: across ALL eligible plans, the team +
+  // cross-team channels the user WILL be added to (via the rotation engine) but
+  // isn't yet a member of, so they don't appear as real rows. Rendered as
+  // non-tappable ghost cards at the bottom of the serving inbox.
   const upcomingChannels = useQuery(
     api.functions.scheduling.serving.getServingUpcomingChannels,
-    inServingMode && activePlanId && token
-      ? { token, planId: activePlanId as Id<"eventPlans"> }
+    inServingMode && eligiblePlanIds.length > 0 && token
+      ? { token, planIds: eligiblePlanIds }
       : "skip",
   ) as UpcomingChannel[] | undefined;
 
-  // Event-day window (device-local day of `eventDate`, matching how event rows
-  // format "Today"). Null outside serving mode or before the plan loads.
-  const servingDmWindow = useMemo<{ start: number; end: number } | null>(() => {
-    if (!inServingMode) return null;
-    const eventDate = servingInboxMeta?.eventDate;
-    if (typeof eventDate !== "number") return null;
-    const d = new Date(eventDate);
-    const start = new Date(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate(),
-    ).getTime();
-    return { start, end: start + 24 * 60 * 60 * 1000 };
-  }, [inServingMode, servingInboxMeta]);
+  // Event-day windows (device-local day of each eligible plan's start), used to
+  // narrow DMs to those created on a serving day. One window per distinct day
+  // across all plans the user is serving.
+  const servingDmWindows = useMemo<{ start: number; end: number }[]>(() => {
+    if (!inServingMode) return [];
+    const seen = new Set<number>();
+    const windows: { start: number; end: number }[] = [];
+    for (const plan of eligiblePlans) {
+      const d = new Date(plan.startsAt);
+      const start = new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+      ).getTime();
+      if (seen.has(start)) continue;
+      seen.add(start);
+      windows.push({ start, end: start + 24 * 60 * 60 * 1000 });
+    }
+    return windows;
+  }, [inServingMode, eligiblePlans]);
 
   // Resources flagged to show under their group in the inbox. One batched
   // subscription returns them grouped by groupId; we index into it per row.
@@ -282,27 +318,12 @@ export function ChatInboxScreen({
   }, [inboxResources]);
 
   // Serving mode re-entry. When the community has the Event Tasks feature and
-  // the user is eligible to serve an active plan, offer a chip to (re)enter
-  // serving mode. `autoEnter` lets the backend jump the user straight in — but
-  // only once per session and never if they manually exited this session, so a
-  // volunteer who intentionally left isn't yanked back in.
-  const enterServingMode = useEventModeStore((s) => s.enter);
-  const autoEnterBlocked = useEventModeStore((s) => s.autoEnterBlocked);
-  const servingEligibility = useQuery(
-    api.functions.scheduling.serving.getServingEligibility,
-    token && eventTasksEnabled ? { token } : "skip",
-  ) as
-    | {
-        eligible: boolean;
-        autoEnter: boolean;
-        activePlan: { planId: string } | null;
-      }
-    | undefined;
-
+  // the user is eligible to serve today, offer a chip to (re)enter serving mode.
+  // `autoEnter` lets the backend jump the user straight in — but only once per
+  // session and never if they manually exited this session, so a volunteer who
+  // intentionally left isn't yanked back in.
   useEffect(() => {
     if (!servingEligibility?.eligible) return;
-    const planId = servingEligibility.activePlan?.planId;
-    if (!planId) return;
     // Already in serving mode → nothing to do.
     if (isServingMode) return;
     // Auto-enter only when the backend asks for it and the user hasn't manually
@@ -311,15 +332,12 @@ export function ChatInboxScreen({
     // triggers — a ref would reset on that remount and immediately re-enter,
     // making the Exit button appear broken.
     if (servingEligibility.autoEnter && !autoEnterBlocked) {
-      enterServingMode(planId);
+      enterServingMode();
     }
   }, [servingEligibility, isServingMode, enterServingMode, autoEnterBlocked]);
 
   // Show the manual re-entry chip when eligible but not currently serving.
-  const showServingChip =
-    !!servingEligibility?.eligible &&
-    !isServingMode &&
-    !!servingEligibility.activePlan?.planId;
+  const showServingChip = !!servingEligibility?.eligible && !isServingMode;
 
   // Inbox message search. SearchBar debounces input, so `searchTerm` only
   // updates after the user pauses typing — keeping the reactive query from
@@ -341,10 +359,8 @@ export function ChatInboxScreen({
   // inbox while the serving query loads, flashing it before it strips down.
   const inboxCacheKey = useMemo(() => {
     if (!communityId) return null;
-    return inServingMode && activePlanId
-      ? `${communityId}:serving:${activePlanId}`
-      : communityId;
-  }, [communityId, inServingMode, activePlanId]);
+    return inServingMode ? `${communityId}:serving` : communityId;
+  }, [communityId, inServingMode]);
 
   // Cache inbox data for offline use
   useEffect(() => {
@@ -375,6 +391,9 @@ export function ChatInboxScreen({
     | { kind: "ghost"; item: UpcomingChannel }
     // Serving-mode only: a pinned link to the "who's serving" Team grid.
     | { kind: "team-link" }
+    // Serving-mode only: a section header labeling the owning group of the
+    // channel rows that follow it (one per group the user is serving).
+    | { kind: "section-header"; id: string; title: string }
     | { kind: "requests-link"; count: number };
 
   // Render a single inbox row (group, event, dm, section header, or
@@ -384,6 +403,18 @@ export function ChatInboxScreen({
   // Request flow, so we deliberately do NOT interleave them.
   const renderItem = useCallback(
     ({ item }: { item: InboxListItem }) => {
+      if (item.kind === "section-header") {
+        return (
+          <View style={styles.servingSectionHeader}>
+            <Text
+              style={[styles.servingSectionHeaderText, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {item.title}
+            </Text>
+          </View>
+        );
+      }
       if (item.kind === "team-link") {
         return (
           <Pressable
@@ -506,6 +537,7 @@ export function ChatInboxScreen({
 
   // Key extractor for FlatList
   const keyExtractor = useCallback((item: InboxListItem) => {
+    if (item.kind === "section-header") return `section:${item.id}`;
     if (item.kind === "team-link") return "team-link";
     if (item.kind === "requests-link") return "requests-link";
     if (item.kind === "notifications") return "notifications";
@@ -726,11 +758,11 @@ export function ChatInboxScreen({
     (!!token && notificationSummary === undefined) || // Notifications row
     (hasChatContext &&
       (directInbox === undefined || chatRequests === undefined)) || // DMs + requests
-    // Serving mode pulls two more subscriptions the focused inbox is built from.
+    // Serving mode appends the "coming soon" channels the focused inbox shows.
     (inServingMode &&
-      !!activePlanId &&
+      eligiblePlanIds.length > 0 &&
       !!token &&
-      (servingInboxMeta === undefined || upcomingChannels === undefined));
+      upcomingChannels === undefined);
 
   // Interleave group and event rows by recency. Server already hides event
   // channels without a first message and those quiet for >2 days (see
@@ -826,20 +858,50 @@ export function ChatInboxScreen({
 
   const listItemsWithDm = useMemo<InboxListItem[]>(() => {
     // Serving mode: a focused inbox. `listItems` is already restricted to the
-    // active plan's serving channels (server-filtered via `servingPlanId`), so
-    // pin those on top and append only the DMs created on the event day. No
-    // Notifications row and no requests-link — everything unrelated is hidden.
+    // eligible plans' serving channels (server-filtered via `servingPlanIds`),
+    // so section them by owning group and append only the DMs created on a
+    // serving day. No Notifications row and no requests-link — everything
+    // unrelated is hidden.
     if (inServingMode) {
+      // Group the flat serving channel rows into a section per owning group.
+      // The backend unions channels across every plan the user is serving and
+      // dedupes a shared channel to a single row, so grouping by owning group
+      // here yields one labeled section per group (and never a duplicate chat).
+      const sectionOrder: string[] = [];
+      const sections = new Map<
+        string,
+        { title: string; items: InboxListItem[] }
+      >();
+      for (const li of listItems) {
+        if (li.kind !== "group" && li.kind !== "event") continue;
+        const g = li.item.group;
+        const gid = g._id as string;
+        let section = sections.get(gid);
+        if (!section) {
+          section = { title: g.name, items: [] };
+          sections.set(gid, section);
+          sectionOrder.push(gid);
+        }
+        section.items.push(li);
+      }
+      const sectioned: InboxListItem[] = [];
+      for (const gid of sectionOrder) {
+        const section = sections.get(gid)!;
+        sectioned.push({
+          kind: "section-header" as const,
+          id: gid,
+          title: section.title,
+        });
+        sectioned.push(...section.items);
+      }
+      // DMs created on any serving day (across all eligible plans). An empty
+      // window list (still loading / no plans) shows no DMs rather than falling
+      // open to every DM.
       const dayDmItems: InboxListItem[] = dmRows
-        .filter(
-          (row) =>
-            // Only surface DMs once the event-day window is KNOWN. While
-            // getServingInboxMeta is loading, or when it returns null (plan
-            // gone / non-member), servingDmWindow is null — show no DMs rather
-            // than falling open to every DM.
-            servingDmWindow != null &&
-            row.createdAt >= servingDmWindow.start &&
-            row.createdAt < servingDmWindow.end,
+        .filter((row) =>
+          servingDmWindows.some(
+            (w) => row.createdAt >= w.start && row.createdAt < w.end,
+          ),
         )
         .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
         .map((row) => ({ kind: "dm" as const, item: row }));
@@ -854,7 +916,7 @@ export function ChatInboxScreen({
       // A pinned "Team" card leads the serving inbox — the who's-serving grid.
       return [
         { kind: "team-link" as const },
-        ...listItems,
+        ...sectioned,
         ...dayDmItems,
         ...ghostItems,
       ];
@@ -927,7 +989,7 @@ export function ChatInboxScreen({
     listItems,
     notificationsItem,
     inServingMode,
-    servingDmWindow,
+    servingDmWindows,
     upcomingChannels,
   ]);
   const hasInboxItems = listItemsWithDm.length > 0;
@@ -1024,10 +1086,7 @@ export function ChatInboxScreen({
           <>
             {showServingChip ? (
               <Pressable
-                onPress={() => {
-                  const planId = servingEligibility?.activePlan?.planId;
-                  if (planId) enterServingMode(planId);
-                }}
+                onPress={() => enterServingMode()}
                 style={[
                   styles.servingChip,
                   { backgroundColor: primaryColor + "14", borderColor: primaryColor },
@@ -1808,6 +1867,16 @@ const styles = StyleSheet.create({
   servingChipText: {
     fontSize: 15,
     fontWeight: "600",
+  },
+  // Serving-inbox section header labeling each group's channel rows.
+  servingSectionHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 6,
+  },
+  servingSectionHeaderText: {
+    fontSize: 15,
+    fontWeight: "700",
   },
   // Bell-icon avatar for the synthetic Notifications row — sized to match the
   // 56pt avatars used by DM / event rows so it lines up in the mixed list.
