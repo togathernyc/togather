@@ -8,11 +8,28 @@ jest.mock('@hooks/useTheme', () => ({
     colors: {
       border: '#ccc',
       surfaceSecondary: '#eee',
+      textSecondary: '#666',
       textTertiary: '#999',
       link: '#06c',
+      chatBubbleOwn: '#e0efff',
+      chatBubbleOther: '#E5E5EA',
+      chatBubbleOwnText: '#1a1a1a',
+      chatBubbleOtherText: '#1a1a1a',
     },
   }),
 }));
+
+// Stub AppImage (the author avatar) — it pulls in native image plumbing we
+// don't need here. Expose the resolved initials name so we can assert the
+// avatar renders for other-authored previews.
+jest.mock('@components/ui', () => {
+  const { Text: RNText } = require('react-native');
+  return {
+    AppImage: ({ placeholder }: { placeholder?: { name?: string } }) => (
+      <RNText testID="ghost-avatar">{`avatar:${placeholder?.name ?? ''}`}</RNText>
+    ),
+  };
+});
 
 // Stub the "N replies" pill so the test isolates the ghost's wiring (the pill
 // itself is exercised by ThreadReplies' own coverage). The stub exposes the
@@ -28,30 +45,97 @@ jest.mock('../ThreadReplies', () => {
   };
 });
 
-jest.mock('@expo/vector-icons', () => ({
-  Ionicons: () => null,
-}));
-
 const PARENT_ID = 'msg_parent' as any;
 const CHANNEL_ID = 'chan_1' as any;
+const ME = 'user_me' as any;
+const SOMEONE_ELSE = 'user_other' as any;
+
+const baseProps = {
+  parentMessageId: PARENT_ID,
+  channelId: CHANNEL_ID,
+  replyCount: 2,
+  currentUserId: ME,
+  onOpenThread: jest.fn(),
+  onScrollToOriginal: jest.fn(),
+};
 
 describe('GhostThreadPointer', () => {
-  it('is content-free: shows only the reply count, never the original message text', () => {
-    const { queryByText, getByText } = render(
+  it('shows the original message text (not just the reply count)', () => {
+    const { getByText } = render(
       <GhostThreadPointer
-        parentMessageId={PARENT_ID}
-        channelId={CHANNEL_ID}
-        replyCount={2}
-        onOpenThread={jest.fn()}
-        onScrollToOriginal={jest.fn()}
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
       />,
     );
 
-    // The count pill is present…
+    // The echoed original message text is now shown…
+    expect(getByText("Who's bringing snacks?")).toBeTruthy();
+    // …alongside the count pill.
     expect(getByText('2 replies')).toBeTruthy();
-    // …but the original message content must NOT leak into the ghost.
-    expect(queryByText("Who's bringing snacks?")).toBeNull();
-    expect(queryByText('replies to a message')).toBeNull();
+  });
+
+  it('left-aligns with the sender avatar + name when someone else authored the original', () => {
+    const { getByTestId, getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        senderProfilePhoto="https://example.com/samuel.jpg"
+      />,
+    );
+
+    // Avatar + sender name are shown for other-authored previews (the mock's
+    // left-aligned treatment). The own-authored test asserts the inverse.
+    expect(getByText('Samuel Baker')).toBeTruthy();
+    expect(getByTestId('ghost-avatar')).toBeTruthy();
+  });
+
+  it('right-aligns with no avatar/name when the current user authored the original', () => {
+    const { queryByTestId, queryByText, getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Can we move it to 7:30 instead?"
+        originalSenderId={ME}
+        senderName="Me"
+      />,
+    );
+
+    // The text still shows…
+    expect(getByText('Can we move it to 7:30 instead?')).toBeTruthy();
+    // …but there's no avatar and no sender-name label for your own message.
+    expect(queryByTestId('ghost-avatar')).toBeNull();
+    expect(queryByText('Me')).toBeNull();
+  });
+
+  it('shows a placeholder for an image-only original', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent=""
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        attachments={[{ type: 'image' }]}
+      />,
+    );
+
+    expect(getByText('📷 Photo')).toBeTruthy();
+  });
+
+  it('shows the deleted-message treatment for a deleted original', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent=""
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        isDeleted
+      />,
+    );
+
+    expect(getByText('This message was deleted')).toBeTruthy();
   });
 
   it('tapping the "N replies" pill opens the thread (not scroll-to-original)', () => {
@@ -59,9 +143,11 @@ describe('GhostThreadPointer', () => {
     const onScrollToOriginal = jest.fn();
     const { getByTestId } = render(
       <GhostThreadPointer
-        parentMessageId={PARENT_ID}
-        channelId={CHANNEL_ID}
+        {...baseProps}
         replyCount={3}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
         onOpenThread={onOpenThread}
         onScrollToOriginal={onScrollToOriginal}
       />,
@@ -72,14 +158,16 @@ describe('GhostThreadPointer', () => {
     expect(onScrollToOriginal).not.toHaveBeenCalled();
   });
 
-  it('tapping the ghost body scrolls up to the original message', () => {
+  it('tapping the bubble body scrolls up to the original message', () => {
     const onOpenThread = jest.fn();
     const onScrollToOriginal = jest.fn();
     const { getByTestId } = render(
       <GhostThreadPointer
-        parentMessageId={PARENT_ID}
-        channelId={CHANNEL_ID}
+        {...baseProps}
         replyCount={1}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
         onOpenThread={onOpenThread}
         onScrollToOriginal={onScrollToOriginal}
       />,
