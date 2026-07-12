@@ -1622,9 +1622,11 @@ export const getInboxChannels = query({
     // Find shared channels from user's memberships that aren't already in allChannels.
     // These are channels owned by other groups but shared with one of the user's groups.
     const allChannelIds = new Set(allChannels.map((ch) => ch._id));
-    // Track event channels picked up from chatChannelMembers so we can ensure
-    // their owning group appears in validGroups / groupRoleMap below.
-    const eventChannelsToInclude: Doc<"chatChannels">[] = [];
+    // Channels picked up from chatChannelMembers whose owning group the user is
+    // NOT in (event channels always; cross-team channels only in serving mode),
+    // so we can ensure that owning group appears in validGroups / groupRoleMap
+    // below and the grouping step picks the channel up.
+    const nonGroupChannelsToInclude: Doc<"chatChannels">[] = [];
     for (const membership of userChannelMemberships) {
       if (allChannelIds.has(membership.channelId)) continue;
       const candidateChannel = await ctx.db.get(membership.channelId);
@@ -1644,7 +1646,26 @@ export const getInboxChannels = query({
         const lastMessageAt = candidateChannel.lastMessageAt ?? 0;
         if (lastMessageAt <= 0) continue;
         if (lastMessageAt < inboxQueryNow - INBOX_EVENT_HIDE_AFTER_MS) continue;
-        eventChannelsToInclude.push(candidateChannel);
+        nonGroupChannelsToInclude.push(candidateChannel);
+        continue;
+      }
+
+      // Cross-team channels in SERVING MODE: membership is auto-synced from
+      // serving-role assignments (a rostered volunteer gets a chatChannelMembers
+      // row without being a member of the channel's home group), so a same-group
+      // channel the volunteer isn't a group member of never arrives via the
+      // group-owned fetch above. When it's one of this plan's resolved serving
+      // channels, pull it into the candidate list so the serving flatten can
+      // surface it. This branch is gated on serving mode (`servingChannelIds`)
+      // so the normal inbox is left byte-for-byte unchanged — outside serving
+      // mode a cross-team channel still falls through to the isShared branch
+      // below exactly as before. The flatten still filters by servingChannelIds
+      // and this loop only ever sees channels the user has an active membership
+      // row for, so nothing leaks to a non-member.
+      if (candidateChannel.channelType === "cross_team" && servingChannelIds) {
+        if (servingChannelIds.has(candidateChannel._id)) {
+          nonGroupChannelsToInclude.push(candidateChannel);
+        }
         continue;
       }
 
@@ -1680,11 +1701,11 @@ export const getInboxChannels = query({
       }
     }
 
-    // Event channels: surface every enabled event channel the user is a member
-    // of, even when they're not a member of the owning group. We fetch the
-    // owning group (and its group type) on demand and add it to validGroups
-    // so the normal grouping step picks the channel up.
-    for (const eventChannel of eventChannelsToInclude) {
+    // Surface each collected channel (enabled event channels always; serving
+    // cross-team channels) even when the user isn't a member of the owning
+    // group. We fetch the owning group (and its group type) on demand and add
+    // it to validGroups so the normal grouping step picks the channel up.
+    for (const eventChannel of nonGroupChannelsToInclude) {
       if (!eventChannel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const ecGroupId = eventChannel.groupId;
       const owningGroup = allGroups.find((g) => g && g._id === ecGroupId)

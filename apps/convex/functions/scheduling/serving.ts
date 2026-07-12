@@ -94,18 +94,19 @@ export async function resolveServingChannelIds(
   // (c) Cross-team channels that draw from any team on this plan. Their
   // membership is auto-synced (syncSource "event_plan") from the same
   // roleAssignments, so a rostered member belongs in the serving inbox too.
-  // Scoped to the plan's group via `by_group_type` (cross-team channels live
-  // in the same group as the plan's teams) to avoid a full-table scan. This is
-  // membership-agnostic like the team-channel branch above: the serving
-  // flatten in messaging/channels.ts only iterates channels already in the
-  // per-user, active-membership-gated result, so widening this Set leaks
-  // nothing — only users with an active chatChannelMembers row actually see
-  // the channel.
+  // Resolved community-wide by the channel's `crossTeamSync.selectors[]`
+  // `sourceTeamId` matching a team on the plan — NOT scoped to `plan.groupId`,
+  // because a cross-team channel can be created in one group while sourcing a
+  // team that lives in another group, so a plan-group scope would drop those
+  // cross-group channels. This mirrors the sibling `getServingUpcomingChannels`
+  // (cross-team channels are rare, so a filtered scan is fine). It's
+  // membership-agnostic like the team-channel branch above: the serving flatten
+  // in messaging/channels.ts only iterates channels already in the per-user,
+  // active-membership-gated result, so widening this Set leaks nothing — only
+  // users with an active chatChannelMembers row actually see the channel.
   const crossTeamChannels = await ctx.db
     .query("chatChannels")
-    .withIndex("by_group_type", (q) =>
-      q.eq("groupId", plan.groupId).eq("channelType", "cross_team"),
-    )
+    .filter((q) => q.eq(q.field("channelType"), "cross_team"))
     .collect();
   for (const ch of crossTeamChannels) {
     if (ch.isArchived === true) continue;
