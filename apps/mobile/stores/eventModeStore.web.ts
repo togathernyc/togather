@@ -7,7 +7,7 @@
  *
  * It's backed by React's `useSyncExternalStore` (a module-level state + a Set of
  * listeners) rather than zustand, so it stays dependency-free and re-renders any
- * subscriber when `isServingMode`/`activePlanId` change — which is what makes
+ * subscriber when `isServingMode` changes — which is what makes
  * serving mode actually work on desktop web. Consumers call it with selectors
  * (e.g. `useEventModeStore((s) => s.isServingMode)`); `getState()` is kept for
  * non-hook callers.
@@ -20,8 +20,6 @@ import { useSyncExternalStore } from 'react';
 interface EventModeState {
   /** Whether the user is currently in serving mode. */
   isServingMode: boolean;
-  /** The plan the user is serving on, or null when not in serving mode. */
-  activePlanId: string | null;
   /**
    * Session-only guard: set when the user manually exits, to suppress backend
    * auto-enter for the rest of the session. NOT persisted, so a refresh is
@@ -36,9 +34,9 @@ interface EventModeState {
   hasHydrated: boolean;
   /** No-op on web (state is already hydrated); present for API parity. */
   setHasHydrated: (value: boolean) => void;
-  /** Enter serving mode for a plan. */
-  enter: (planId: string) => void;
-  /** Exit serving mode and clear the active plan. */
+  /** Enter serving mode. */
+  enter: () => void;
+  /** Exit serving mode. */
   exit: () => void;
 }
 
@@ -48,21 +46,19 @@ function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;
 }
 
-function loadPersisted(): { isServingMode: boolean; activePlanId: string | null } {
-  if (!hasStorage()) return { isServingMode: false, activePlanId: null };
+function loadPersisted(): { isServingMode: boolean } {
+  if (!hasStorage()) return { isServingMode: false };
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { isServingMode: false, activePlanId: null };
+    if (!raw) return { isServingMode: false };
     const parsed = JSON.parse(raw) as {
       isServingMode?: boolean;
-      activePlanId?: string | null;
     };
     return {
       isServingMode: !!parsed.isServingMode,
-      activePlanId: parsed.activePlanId ?? null,
     };
   } catch {
-    return { isServingMode: false, activePlanId: null };
+    return { isServingMode: false };
   }
 }
 
@@ -73,7 +69,6 @@ function persist(): void {
       STORAGE_KEY,
       JSON.stringify({
         isServingMode: state.isServingMode,
-        activePlanId: state.activePlanId,
       })
     );
   } catch {
@@ -97,22 +92,19 @@ const persisted = loadPersisted();
  */
 const state: EventModeState = {
   isServingMode: persisted.isServingMode,
-  activePlanId: persisted.activePlanId,
   autoEnterBlocked: false,
   hasHydrated: true,
   setHasHydrated: () => {
     // No-op: web hydrates synchronously in loadPersisted().
   },
-  enter: (planId: string) => {
+  enter: () => {
     state.isServingMode = true;
-    state.activePlanId = planId;
     snapshot = makeSnapshot();
     persist();
     emit();
   },
   exit: () => {
     state.isServingMode = false;
-    state.activePlanId = null;
     state.autoEnterBlocked = true;
     snapshot = makeSnapshot();
     persist();
@@ -123,7 +115,6 @@ const state: EventModeState = {
 function makeSnapshot(): EventModeState {
   return {
     isServingMode: state.isServingMode,
-    activePlanId: state.activePlanId,
     autoEnterBlocked: state.autoEnterBlocked,
     hasHydrated: state.hasHydrated,
     setHasHydrated: state.setHasHydrated,

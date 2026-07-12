@@ -2,13 +2,14 @@
  * Event Mode Store (Serving Mode)
  *
  * Zustand store — persisted to AsyncStorage — tracking whether the user is
- * currently in "serving mode" and, if so, which event plan they're serving on.
+ * currently in "serving mode".
  *
  * Serving mode is a focused experience: the tab bar collapses to Inbox,
- * Runsheet, Tasks, Profile, and Exit (see `app/(tabs)/_layout.tsx`), and the
- * inbox is filtered to the plan's serving channels. The active plan id drives
- * every serving-scoped query, so it must survive app restarts — hence
- * persistence.
+ * Runsheet, Tasks, Profile, and Exit (see `app/(tabs)/_layout.tsx`), and every
+ * serving tab shows ALL the plans the user is serving today (one section per
+ * plan/group), so the store no longer pins a single "active plan" — the eligible
+ * plans come from `getServingEligibility`. Only the on/off state is persisted so
+ * it survives app restarts.
  */
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
@@ -17,8 +18,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 interface EventModeState {
   /** Whether the user is currently in serving mode. */
   isServingMode: boolean;
-  /** The plan the user is serving on, or null when not in serving mode. */
-  activePlanId: string | null;
   /**
    * Session-only guard: set when the user manually exits, to suppress backend
    * auto-enter for the rest of the app session. Deliberately NOT persisted (see
@@ -39,9 +38,9 @@ interface EventModeState {
   hasHydrated: boolean;
   /** Mark rehydration complete (called once from `onRehydrateStorage`). */
   setHasHydrated: (value: boolean) => void;
-  /** Enter serving mode for a plan. */
-  enter: (planId: string) => void;
-  /** Exit serving mode and clear the active plan. */
+  /** Enter serving mode. */
+  enter: () => void;
+  /** Exit serving mode. */
   exit: () => void;
 }
 
@@ -49,7 +48,6 @@ export const useEventModeStore = create<EventModeState>()(
   persist(
     (set) => ({
       isServingMode: false,
-      activePlanId: null,
       autoEnterBlocked: false,
       hasHydrated: false,
 
@@ -57,12 +55,12 @@ export const useEventModeStore = create<EventModeState>()(
         set({ hasHydrated: value });
       },
 
-      enter: (planId: string) => {
-        set({ isServingMode: true, activePlanId: planId });
+      enter: () => {
+        set({ isServingMode: true });
       },
 
       exit: () => {
-        set({ isServingMode: false, activePlanId: null, autoEnterBlocked: true });
+        set({ isServingMode: false, autoEnterBlocked: true });
       },
     }),
     {
@@ -70,7 +68,6 @@ export const useEventModeStore = create<EventModeState>()(
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({
         isServingMode: state.isServingMode,
-        activePlanId: state.activePlanId,
       }),
       // Runs after every rehydration attempt — the normal path, the empty
       // first-launch case, AND the error path, where Zustand invokes this with
