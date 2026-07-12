@@ -157,8 +157,8 @@ type ListItem =
       parentId: Id<"chatMessages">;
       channelId: Id<"chatChannels">;
       replyCount: number;
-      // Original message details, so the ghost can echo it. Alignment is derived
-      // in GhostThreadPointer from the thread's last reply, not from these.
+      // Original message details, so the ghost can echo it and align by author
+      // (right when senderId is the current user, left otherwise).
       content: string;
       senderId: Id<"users">;
       senderName?: string;

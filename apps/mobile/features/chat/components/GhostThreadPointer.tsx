@@ -13,19 +13,17 @@
  * - It shows the original message's text (truncated to a couple of lines; an
  *   image-/attachment-only or deleted original falls back to a sensible
  *   placeholder rather than a blank bubble).
- * - It is aligned by the thread's LAST reply — the side that most recent thread
- *   activity came from: right (your side, no avatar) when you sent the last
- *   reply, left (with the original author's avatar + name) when someone else
- *   did. This is a deliberate change from the earlier "align by the original
- *   author" behavior: contributors asked for the preview to follow whoever
- *   replied last (see the staging feedback on this component), so a thread you
- *   were last active in sits on your side even if someone else started it.
- *   Before the replies have loaded we fall back to the original author's side
- *   to avoid a wrong-side flash.
- * - A short connector line links the echoed bubble down to the "N replies" pill
- *   on the aligned side, so the two read as one threaded unit.
+ * - It is aligned like a real message row, keyed off the ORIGINAL message's
+ *   author: right (your side, no avatar) when you wrote the original message,
+ *   left (with the original author's avatar + name) when someone else did. The
+ *   side follows who started the thread, not who replied last — so the echo
+ *   sits on the same side the real message does.
  * - The bubble uses the same own/other bubble colors as real messages, so it
  *   reads as a lightweight echo, not a brand-new message.
+ *
+ * (This component was originally built content-free and centered — "reads as a
+ * pointer, not a real message." That was deliberately reversed: it now echoes
+ * the original message and aligns by its author, as the approved spec asks.)
  *
  * Two tap targets, unchanged from before:
  * - Tapping the "N replies" pill opens the thread screen (same as the inline
@@ -40,7 +38,6 @@ import { useTheme } from '@hooks/useTheme';
 import { AppImage } from '@components/ui';
 import type { Id } from '@services/api/convex';
 import { ThreadReplies } from './ThreadReplies';
-import { useThreadReplies } from '../hooks/useThreadReplies';
 
 interface GhostThreadPointerProps {
   parentMessageId: Id<"chatMessages">;
@@ -49,11 +46,11 @@ interface GhostThreadPointerProps {
   /** The original message's text — shown truncated as the preview. */
   originalContent: string;
   /**
-   * Author of the ORIGINAL message. Drives the fallback alignment (and the
-   * avatar/name shown) before the thread's replies have loaded.
+   * Author of the ORIGINAL message. Drives the alignment (right when it's the
+   * current user, left otherwise) and the avatar/name shown on the left side.
    */
   originalSenderId: Id<"users">;
-  /** Current viewer — the preview aligns right when they sent the last reply. */
+  /** Current viewer — the preview aligns right when they authored the original. */
   currentUserId: Id<"users">;
   /** Denormalized author info, shown on the left-aligned (other-side) preview. */
   senderName?: string;
@@ -120,19 +117,11 @@ export function GhostThreadPointer({
 }: GhostThreadPointerProps) {
   const { colors } = useTheme();
 
-  // Alignment follows the thread's LAST reply (right = you sent it). Reuse the
-  // same replies query the nested pill already subscribes to (Convex dedupes
-  // it, and prefetch usually makes it instant). Pick the newest reply by
-  // createdAt rather than trusting list order. Until it loads (or if the last
-  // reply came from a bot with no senderId), fall back to the original author.
-  const { replies } = useThreadReplies(parentMessageId, 10, channelId ?? null);
-  const lastReply = replies.length > 0
-    ? replies.reduce((latest, r) => (r.createdAt > latest.createdAt ? r : latest))
-    : undefined;
-  const lastReplySenderId = lastReply?.senderId;
-  const alignRight = lastReplySenderId
-    ? lastReplySenderId === currentUserId
-    : originalSenderId === currentUserId;
+  // Aligned like a real message row: right when the current user wrote the
+  // original message, left (with the author's avatar + name) otherwise. Keyed
+  // off the ORIGINAL message's author, mirroring MessageItem's own-vs-other
+  // rule — so the echo sits on the same side the real message does.
+  const alignRight = originalSenderId === currentUserId;
 
   const { text: previewText, isPlaceholder } = getPreview(originalContent, isDeleted, attachments);
 
@@ -197,13 +186,6 @@ export function GhostThreadPointer({
             {previewText}
           </Text>
         </Pressable>
-
-        {/* Connector line: links the echoed bubble to its replies pill on the
-            aligned side, so they read as one threaded unit. */}
-        <View
-          testID={`ghost-thread-connector-${parentMessageId}`}
-          style={[styles.connector, { backgroundColor: colors.border }]}
-        />
 
         {/* The "N replies · Just now" pill — still opens the thread on tap.
             Wrapped so the column's alignItems positions it under the bubble on
@@ -273,13 +255,6 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontStyle: 'italic',
-  },
-  connector: {
-    width: 2,
-    height: 10,
-    borderRadius: 1,
-    marginHorizontal: 18, // indent so the line sits under the bubble, not at the edge
-    marginVertical: 1,
   },
   pillWrapper: {
     // A plain wrapper so the column's alignItems (own → flex-end, other →
