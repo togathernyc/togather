@@ -7,18 +7,25 @@
  * the thread's latest-activity slot (its `lastActivityAt`) at the bottom of the
  * chat.
  *
- * It echoes the ORIGINAL message so you can tell what the thread is about and
- * who started it:
+ * It echoes the ORIGINAL message so you can tell what the thread is about, and
+ * tapping it jumps to the real message:
  *
  * - It shows the original message's text (truncated to a couple of lines; an
  *   image-/attachment-only or deleted original falls back to a sensible
  *   placeholder rather than a blank bubble).
- * - It is aligned like a normal message bubble — right (no avatar) when the
- *   current user authored the original, left (with the author's avatar + name)
- *   when someone else did. Alignment keys off the ORIGINAL message's author,
- *   not the last replier.
+ * - It is aligned by the thread's LAST reply — the side that most recent thread
+ *   activity came from: right (your side, no avatar) when you sent the last
+ *   reply, left (with the original author's avatar + name) when someone else
+ *   did. This is a deliberate change from the earlier "align by the original
+ *   author" behavior: contributors asked for the preview to follow whoever
+ *   replied last (see the staging feedback on this component), so a thread you
+ *   were last active in sits on your side even if someone else started it.
+ *   Before the replies have loaded we fall back to the original author's side
+ *   to avoid a wrong-side flash.
+ * - A short connector line links the echoed bubble down to the "N replies" pill
+ *   on the aligned side, so the two read as one threaded unit.
  * - The bubble uses the same own/other bubble colors as real messages, so it
- *   reads as a lightweight echo of the original, not a brand-new message.
+ *   reads as a lightweight echo, not a brand-new message.
  *
  * Two tap targets, unchanged from before:
  * - Tapping the "N replies" pill opens the thread screen (same as the inline
@@ -33,6 +40,7 @@ import { useTheme } from '@hooks/useTheme';
 import { AppImage } from '@components/ui';
 import type { Id } from '@services/api/convex';
 import { ThreadReplies } from './ThreadReplies';
+import { useThreadReplies } from '../hooks/useThreadReplies';
 
 interface GhostThreadPointerProps {
   parentMessageId: Id<"chatMessages">;
@@ -40,11 +48,14 @@ interface GhostThreadPointerProps {
   replyCount: number;
   /** The original message's text — shown truncated as the preview. */
   originalContent: string;
-  /** Author of the ORIGINAL message; drives left/right alignment. */
+  /**
+   * Author of the ORIGINAL message. Drives the fallback alignment (and the
+   * avatar/name shown) before the thread's replies have loaded.
+   */
   originalSenderId: Id<"users">;
-  /** Current viewer — the preview aligns right when they authored the original. */
+  /** Current viewer — the preview aligns right when they sent the last reply. */
   currentUserId: Id<"users">;
-  /** Denormalized author info, shown on the left-aligned (other-authored) preview. */
+  /** Denormalized author info, shown on the left-aligned (other-side) preview. */
   senderName?: string;
   senderProfilePhoto?: string;
   /** Deleted original → show the deleted-message treatment instead of blank text. */
@@ -108,12 +119,26 @@ export function GhostThreadPointer({
   onScrollToOriginal,
 }: GhostThreadPointerProps) {
   const { colors } = useTheme();
-  const isOwnMessage = originalSenderId === currentUserId;
+
+  // Alignment follows the thread's LAST reply (right = you sent it). Reuse the
+  // same replies query the nested pill already subscribes to (Convex dedupes
+  // it, and prefetch usually makes it instant). Pick the newest reply by
+  // createdAt rather than trusting list order. Until it loads (or if the last
+  // reply came from a bot with no senderId), fall back to the original author.
+  const { replies } = useThreadReplies(parentMessageId, 10, channelId ?? null);
+  const lastReply = replies.length > 0
+    ? replies.reduce((latest, r) => (r.createdAt > latest.createdAt ? r : latest))
+    : undefined;
+  const lastReplySenderId = lastReply?.senderId;
+  const alignRight = lastReplySenderId
+    ? lastReplySenderId === currentUserId
+    : originalSenderId === currentUserId;
+
   const { text: previewText, isPlaceholder } = getPreview(originalContent, isDeleted, attachments);
 
   const bubbleTextColor = isPlaceholder
     ? colors.textTertiary
-    : isOwnMessage
+    : alignRight
       ? colors.chatBubbleOwnText
       : colors.chatBubbleOtherText;
 
@@ -121,11 +146,12 @@ export function GhostThreadPointer({
     <View
       style={[
         styles.row,
-        { justifyContent: isOwnMessage ? 'flex-end' : 'flex-start' },
+        { justifyContent: alignRight ? 'flex-end' : 'flex-start' },
       ]}
     >
-      {/* Author avatar — only for someone else's message, mirroring a real row. */}
-      {!isOwnMessage && (
+      {/* Author avatar — only on the left (other-side) preview, mirroring a
+          real row. Shows the ORIGINAL author (this is an echo of their message). */}
+      {!alignRight && (
         <View style={styles.avatarContainer}>
           <AppImage
             source={senderProfilePhoto}
@@ -140,9 +166,9 @@ export function GhostThreadPointer({
         </View>
       )}
 
-      <View style={[styles.content, isOwnMessage ? styles.contentOwn : styles.contentOther]}>
-        {/* Sender name — only for others' messages, like a real row. */}
-        {!isOwnMessage && (
+      <View style={[styles.content, alignRight ? styles.contentOwn : styles.contentOther]}>
+        {/* Original author's name — only on the left (other-side) preview. */}
+        {!alignRight && (
           <Text style={[styles.senderName, { color: colors.textSecondary }]} numberOfLines={1}>
             {senderName || 'Unknown'}
           </Text>
@@ -156,9 +182,9 @@ export function GhostThreadPointer({
           testID={`ghost-thread-${parentMessageId}`}
           style={({ pressed }) => [
             styles.bubble,
-            isOwnMessage ? styles.bubbleOwn : styles.bubbleOther,
+            alignRight ? styles.bubbleOwn : styles.bubbleOther,
             {
-              backgroundColor: isOwnMessage ? colors.chatBubbleOwn : colors.chatBubbleOther,
+              backgroundColor: alignRight ? colors.chatBubbleOwn : colors.chatBubbleOther,
               opacity: pressed ? 0.7 : 1,
             },
           ]}
@@ -171,6 +197,13 @@ export function GhostThreadPointer({
             {previewText}
           </Text>
         </Pressable>
+
+        {/* Connector line: links the echoed bubble to its replies pill on the
+            aligned side, so they read as one threaded unit. */}
+        <View
+          testID={`ghost-thread-connector-${parentMessageId}`}
+          style={[styles.connector, { backgroundColor: colors.border }]}
+        />
 
         {/* The "N replies · Just now" pill — still opens the thread on tap.
             Wrapped so the column's alignItems positions it under the bubble on
@@ -240,6 +273,13 @@ const styles = StyleSheet.create({
   },
   placeholderText: {
     fontStyle: 'italic',
+  },
+  connector: {
+    width: 2,
+    height: 10,
+    borderRadius: 1,
+    marginHorizontal: 18, // indent so the line sits under the bubble, not at the edge
+    marginVertical: 1,
   },
   pillWrapper: {
     // A plain wrapper so the column's alignItems (own → flex-end, other →

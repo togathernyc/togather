@@ -21,7 +21,7 @@ jest.mock('@hooks/useTheme', () => ({
 
 // Stub AppImage (the author avatar) — it pulls in native image plumbing we
 // don't need here. Expose the resolved initials name so we can assert the
-// avatar renders for other-authored previews.
+// avatar renders for other-side previews.
 jest.mock('@components/ui', () => {
   const { Text: RNText } = require('react-native');
   return {
@@ -45,6 +45,14 @@ jest.mock('../ThreadReplies', () => {
   };
 });
 
+// Mock the replies hook — alignment now keys off the thread's LAST reply, so
+// each test seeds the reply set that decides the side. `mockReplies` is the
+// (asc-ordered) reply list the component reduces over to find the newest.
+let mockReplies: Array<{ senderId?: string; createdAt: number }> = [];
+jest.mock('../../hooks/useThreadReplies', () => ({
+  useThreadReplies: () => ({ replies: mockReplies, isLoading: false, hasMore: false }),
+}));
+
 const PARENT_ID = 'msg_parent' as any;
 const CHANNEL_ID = 'chan_1' as any;
 const ME = 'user_me' as any;
@@ -59,8 +67,13 @@ const baseProps = {
   onScrollToOriginal: jest.fn(),
 };
 
+beforeEach(() => {
+  mockReplies = [];
+});
+
 describe('GhostThreadPointer', () => {
   it('shows the original message text (not just the reply count)', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
     const { getByText } = render(
       <GhostThreadPointer
         {...baseProps}
@@ -70,31 +83,62 @@ describe('GhostThreadPointer', () => {
       />,
     );
 
-    // The echoed original message text is now shown…
+    // The echoed original message text is shown…
     expect(getByText("Who's bringing snacks?")).toBeTruthy();
     // …alongside the count pill.
     expect(getByText('2 replies')).toBeTruthy();
   });
 
-  it('left-aligns with the sender avatar + name when someone else authored the original', () => {
+  it('left-aligns with the original author avatar + name when SOMEONE ELSE sent the last reply', () => {
+    // Original authored by me, but the newest reply is from someone else →
+    // the preview follows the last replier onto the LEFT, showing the original
+    // author's identity. Proves alignment keys off the replier, not the author.
+    mockReplies = [
+      { senderId: ME, createdAt: 1 },
+      { senderId: SOMEONE_ELSE, createdAt: 2 },
+    ];
     const { getByTestId, getByText } = render(
       <GhostThreadPointer
         {...baseProps}
         originalContent="Who's bringing snacks?"
-        originalSenderId={SOMEONE_ELSE}
+        originalSenderId={ME}
         senderName="Samuel Baker"
         senderProfilePhoto="https://example.com/samuel.jpg"
       />,
     );
 
-    // Avatar + sender name are shown for other-authored previews (the mock's
-    // left-aligned treatment). The own-authored test asserts the inverse.
     expect(getByText('Samuel Baker')).toBeTruthy();
     expect(getByTestId('ghost-avatar')).toBeTruthy();
   });
 
-  it('right-aligns with no avatar/name when the current user authored the original', () => {
+  it('right-aligns with no avatar/name when the CURRENT USER sent the last reply', () => {
+    // Original authored by someone else, but I sent the newest reply → the
+    // preview follows me onto the RIGHT (no avatar/name). The inverse proof.
+    mockReplies = [
+      { senderId: SOMEONE_ELSE, createdAt: 1 },
+      { senderId: ME, createdAt: 2 },
+    ];
     const { queryByTestId, queryByText, getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+      />,
+    );
+
+    // The text still shows…
+    expect(getByText("Who's bringing snacks?")).toBeTruthy();
+    // …but there's no avatar and no sender-name label on your own side.
+    expect(queryByTestId('ghost-avatar')).toBeNull();
+    expect(queryByText('Samuel Baker')).toBeNull();
+  });
+
+  it('falls back to the original author side before any replies have loaded', () => {
+    // No replies loaded yet → align by the original author. Here that is me,
+    // so the preview is right-aligned (no avatar/name).
+    mockReplies = [];
+    const { queryByTestId } = render(
       <GhostThreadPointer
         {...baseProps}
         originalContent="Can we move it to 7:30 instead?"
@@ -103,14 +147,25 @@ describe('GhostThreadPointer', () => {
       />,
     );
 
-    // The text still shows…
-    expect(getByText('Can we move it to 7:30 instead?')).toBeTruthy();
-    // …but there's no avatar and no sender-name label for your own message.
     expect(queryByTestId('ghost-avatar')).toBeNull();
-    expect(queryByText('Me')).toBeNull();
+  });
+
+  it('renders a connector line linking the bubble to the replies pill', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
+    const { getByTestId } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+      />,
+    );
+
+    expect(getByTestId(`ghost-thread-connector-${PARENT_ID}`)).toBeTruthy();
   });
 
   it('shows a placeholder for an image-only original', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
     const { getByText } = render(
       <GhostThreadPointer
         {...baseProps}
@@ -125,6 +180,7 @@ describe('GhostThreadPointer', () => {
   });
 
   it('shows the deleted-message treatment for a deleted original', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
     const { getByText } = render(
       <GhostThreadPointer
         {...baseProps}
@@ -139,6 +195,7 @@ describe('GhostThreadPointer', () => {
   });
 
   it('tapping the "N replies" pill opens the thread (not scroll-to-original)', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
     const onOpenThread = jest.fn();
     const onScrollToOriginal = jest.fn();
     const { getByTestId } = render(
@@ -159,6 +216,7 @@ describe('GhostThreadPointer', () => {
   });
 
   it('tapping the bubble body scrolls up to the original message', () => {
+    mockReplies = [{ senderId: SOMEONE_ELSE, createdAt: 1 }];
     const onOpenThread = jest.fn();
     const onScrollToOriginal = jest.fn();
     const { getByTestId } = render(

@@ -4,8 +4,8 @@
  * The chat now orders top-level messages by `createdAt` (see the `getMessages`
  * backend query), so replying to a message no longer floats the real message to
  * the bottom. To keep recent thread activity visible without moving the real
- * message, we float a content-free "ghost" pointer at the thread's latest
- * activity slot (`lastActivityAt`).
+ * message, we float a "ghost" pointer — an echo of the original message — at
+ * the thread's latest activity slot (`lastActivityAt`).
  *
  * This module holds the *pure* derivation so it can be unit-tested independently
  * of React / FlatList: given the server messages (already ordered by

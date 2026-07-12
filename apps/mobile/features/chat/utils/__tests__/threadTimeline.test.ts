@@ -6,8 +6,8 @@ import {
 
 /**
  * The chat orders top-level messages by `createdAt` so replying no longer moves
- * the real message. Instead, each replied-to message floats a content-free
- * "ghost" pointer at its `lastActivityAt` slot. These tests pin down that
+ * the real message. Instead, each replied-to message floats a "ghost" pointer
+ * (an echo of the original) at its `lastActivityAt` slot. These tests pin down that
  * derivation: the real message stays put, and exactly one ghost is emitted per
  * bumped thread at the right position.
  */
