@@ -144,6 +144,10 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
+  # Stripe billing: canonical "Togather Community Hosting" product id. 1Password
+  # is the source of truth; getOrCreateProductId pins to this so every
+  # checkout/migration reuses one product instead of minting duplicates.
+  "STRIPE_PRODUCT_ID"
   # Repo automation token used by GitHub Actions (mirror push). CI-only — it is
   # NOT forwarded to Convex/Expo (absent from sync-secrets-to-convex.sh). Named
   # GH_MIRROR_TOKEN, not GITHUB_MIRROR_TOKEN, because GitHub reserves the
