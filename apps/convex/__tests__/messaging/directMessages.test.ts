@@ -127,6 +127,66 @@ async function getMember(
   });
 }
 
+async function createGroup(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+): Promise<Id<"groups">> {
+  return await t.run(async (ctx) => {
+    const groupTypeId = await ctx.db.insert("groupTypes", {
+      communityId,
+      name: "Small Group",
+      slug: `sg-${Math.floor(Math.random() * 1_000_000)}`,
+      isActive: true,
+      displayOrder: 0,
+      createdAt: Date.now(),
+    });
+    return await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Test Group",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isArchived: false,
+    });
+  });
+}
+
+async function addGroupMember(
+  t: ReturnType<typeof convexTest>,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+  role: "leader" | "member",
+): Promise<void> {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("groupMembers", {
+      groupId,
+      userId,
+      role,
+      joinedAt: Date.now(),
+      notificationsEnabled: true,
+    });
+  });
+}
+
+/** Promote a user's community membership to admin (roles >= 3, active). */
+async function makeCommunityAdmin(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const row = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_user_community", (q) =>
+        q.eq("userId", userId).eq("communityId", communityId),
+      )
+      .first();
+    if (row) {
+      await ctx.db.patch(row._id, { roles: 3, status: 1 });
+    }
+  });
+}
+
 // ============================================================================
 // createOrGetDirectChannel
 // ============================================================================
@@ -1613,5 +1673,182 @@ describe("removeAdHocMember", () => {
     // B is still active — sanity: their membership is intact.
     const bMember = await getMember(t, channelId, bId);
     expect(bMember?.leftAt).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Leader / co-lead DMs skip the "message request" step
+// ============================================================================
+
+describe("createOrGetDirectChannel — leader/co-lead DMs skip the request", () => {
+  const DM = api.functions.messaging.directMessages.createOrGetDirectChannel;
+
+  test("group leader → member: recipient row is accepted, not pending", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Leader DM Community");
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createUserInCommunity(t, communityId, { firstName: "Leah" });
+    const { userId: memberId } = await createUserInCommunity(t, communityId, {
+      firstName: "Mel",
+    });
+    const groupId = await createGroup(t, communityId);
+    await addGroupMember(t, groupId, leaderId, "leader");
+    await addGroupMember(t, groupId, memberId, "member");
+
+    const { channelId } = await t.mutation(DM, {
+      token: leaderToken,
+      communityId,
+      recipientUserId: memberId,
+    });
+
+    const recipient = await getMember(t, channelId, memberId);
+    expect(recipient?.requestState).toBe("accepted");
+    // Sender is always accepted.
+    const sender = await getMember(t, channelId, leaderId);
+    expect(sender?.requestState).toBe("accepted");
+  });
+
+  test("co-leader → co-leader: recipient row is accepted", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Co-lead Community");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Ava" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Ben",
+    });
+    const groupId = await createGroup(t, communityId);
+    await addGroupMember(t, groupId, aId, "leader");
+    await addGroupMember(t, groupId, bId, "leader");
+
+    const { channelId } = await t.mutation(DM, {
+      token: aToken,
+      communityId,
+      recipientUserId: bId,
+    });
+
+    expect((await getMember(t, channelId, bId))?.requestState).toBe("accepted");
+  });
+
+  test("community admin → member: recipient row is accepted", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Admin DM Community");
+    const { userId: adminId, accessToken: adminToken } =
+      await createUserInCommunity(t, communityId, { firstName: "Ada" });
+    const { userId: memberId } = await createUserInCommunity(t, communityId, {
+      firstName: "Moe",
+    });
+    await makeCommunityAdmin(t, communityId, adminId);
+
+    const { channelId } = await t.mutation(DM, {
+      token: adminToken,
+      communityId,
+      recipientUserId: memberId,
+    });
+
+    expect((await getMember(t, channelId, memberId))?.requestState).toBe(
+      "accepted",
+    );
+  });
+
+  test("member → their leader stays a request (one-way)", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "One-way Community");
+    const { userId: leaderId } = await createUserInCommunity(t, communityId, {
+      firstName: "Leah",
+    });
+    const { userId: memberId, accessToken: memberToken } =
+      await createUserInCommunity(t, communityId, { firstName: "Mel" });
+    const groupId = await createGroup(t, communityId);
+    await addGroupMember(t, groupId, leaderId, "leader");
+    await addGroupMember(t, groupId, memberId, "member");
+
+    // The plain member initiates the DM to their leader.
+    const { channelId } = await t.mutation(DM, {
+      token: memberToken,
+      communityId,
+      recipientUserId: leaderId,
+    });
+
+    expect((await getMember(t, channelId, leaderId))?.requestState).toBe(
+      "pending",
+    );
+  });
+
+  test("no relationship: recipient row stays pending", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Stranger Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+    });
+
+    const { channelId } = await t.mutation(DM, {
+      token: aToken,
+      communityId,
+      recipientUserId: bId,
+    });
+
+    expect((await getMember(t, channelId, bId))?.requestState).toBe("pending");
+  });
+
+  test("a blocked leader still cannot start a DM", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Blocked Leader Community");
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createUserInCommunity(t, communityId, { firstName: "Leah" });
+    const { userId: memberId } = await createUserInCommunity(t, communityId, {
+      firstName: "Mel",
+    });
+    const groupId = await createGroup(t, communityId);
+    await addGroupMember(t, groupId, leaderId, "leader");
+    await addGroupMember(t, groupId, memberId, "member");
+
+    // Member blocks the leader.
+    await t.run(async (ctx) => {
+      await ctx.db.insert("chatUserBlocks", {
+        blockerId: memberId,
+        blockedId: leaderId,
+        createdAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.mutation(DM, {
+        token: leaderToken,
+        communityId,
+        recipientUserId: memberId,
+      }),
+    ).rejects.toThrow(/Cannot start chat/i);
+  });
+
+  test("leader DMs do not consume the 5-per-24h request allowance", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Leader Fanout Community");
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createUserInCommunity(t, communityId, { firstName: "Leah" });
+    const groupId = await createGroup(t, communityId);
+    await addGroupMember(t, groupId, leaderId, "leader");
+
+    // Leader DMs 6 distinct members — one more than the 5-request cap. If leader
+    // DMs counted against the allowance, the 6th would throw.
+    for (let i = 0; i < 6; i++) {
+      const { userId: memberId } = await createUserInCommunity(t, communityId, {
+        firstName: `Member${i}`,
+      });
+      await addGroupMember(t, groupId, memberId, "member");
+      const { channelId } = await t.mutation(DM, {
+        token: leaderToken,
+        communityId,
+        recipientUserId: memberId,
+      });
+      expect((await getMember(t, channelId, memberId))?.requestState).toBe(
+        "accepted",
+      );
+    }
   });
 });

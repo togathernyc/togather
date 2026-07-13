@@ -20,6 +20,7 @@ import { requireAuth } from "../../lib/auth";
 import { checkRateLimit } from "../../lib/rateLimit";
 import { getDisplayName, getMediaUrl, normalizePhone } from "../../lib/utils";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import { getLeaderDmRelationship } from "../../lib/leaderDm";
 
 // ============================================================================
 // Constants
@@ -270,13 +271,28 @@ export const createOrGetDirectChannel = mutation({
       throw new Error("Recipient not found");
     }
 
-    // Rate-limit new pending DM requests.
-    await checkRateLimit(
+    // A leadership tie (sender → recipient) turns this DM into a normal,
+    // already-accepted conversation instead of a request. Evaluated after the
+    // block/membership gates and community-scoped to this DM's community.
+    const leaderRelationship = await getLeaderDmRelationship(
       ctx,
-      `dm-init:${senderId}`,
-      NEW_REQUEST_LIMIT,
-      NEW_REQUEST_WINDOW_MS,
+      args.communityId,
+      senderId,
+      args.recipientUserId,
     );
+    const isLeaderDm = leaderRelationship !== "none";
+
+    // Rate-limit new pending DM *requests*. Leader/co-lead DMs are delivered
+    // accepted (not requests), and a leader reaching their own members/co-leads
+    // is expected, so they don't count against the sender's 5-per-24h allowance.
+    if (!isLeaderDm) {
+      await checkRateLimit(
+        ctx,
+        `dm-init:${senderId}`,
+        NEW_REQUEST_LIMIT,
+        NEW_REQUEST_WINDOW_MS,
+      );
+    }
 
     const recipient = recipientUser;
     const sender = await ctx.db.get(senderId);
@@ -315,7 +331,10 @@ export const createOrGetDirectChannel = mutation({
       role: "member",
       joinedAt: now,
       isMuted: false,
-      requestState: "pending",
+      // Leader/co-lead DMs skip the request step: the recipient's row starts
+      // accepted so the thread lands in Messages, not Requests. Everyone else
+      // starts pending as before.
+      requestState: isLeaderDm ? "accepted" : "pending",
       invitedById: senderId,
       displayName: getDisplayName(recipient.firstName, recipient.lastName),
       profilePhoto: recipient.profilePhoto,
