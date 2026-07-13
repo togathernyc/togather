@@ -1370,3 +1370,454 @@ describe("DM request email notifications", () => {
     expect(emailCall).toBeUndefined();
   });
 });
+
+// ============================================================================
+// Leader / co-lead DM notifications (first-message copy)
+// ============================================================================
+//
+// A leader/co-lead DM is created already-accepted, so its FIRST message lands
+// in the accepted branch of `sendAdHocMessageNotifications`. That first message
+// gets relationship-specific push copy (sender name title + relationship line)
+// plus a one-off heads-up email. Later messages fall back to the plain
+// accepted-DM push (sender name, no email).
+
+/** Seed an already-accepted 1:1 DM (recipient row `accepted`, not pending). */
+async function seedAcceptedDm(
+  t: ReturnType<typeof convexTest>,
+  opts: {
+    communityId: Id<"communities">;
+    senderId: Id<"users">;
+    recipientId: Id<"users">;
+  },
+): Promise<Id<"chatChannels">> {
+  const now = Date.now();
+  return await t.run(async (ctx) => {
+    const channelId = await ctx.db.insert("chatChannels", {
+      communityId: opts.communityId,
+      channelType: "dm",
+      name: "",
+      isAdHoc: true,
+      createdById: opts.senderId,
+      createdAt: now,
+      updatedAt: now,
+      isArchived: false,
+      memberCount: 2,
+    });
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.senderId,
+      role: "admin",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "accepted",
+    });
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId: opts.recipientId,
+      role: "member",
+      joinedAt: now,
+      isMuted: false,
+      requestState: "accepted",
+      invitedById: opts.senderId,
+    });
+    await ctx.db.insert("chatReadState", {
+      channelId,
+      userId: opts.recipientId,
+      lastReadAt: 0,
+      unreadCount: 0,
+    });
+    return channelId;
+  });
+}
+
+/** Give a recipient an email + push token so both channels are exercisable. */
+async function enableRecipientNotifications(
+  t: ReturnType<typeof convexTest>,
+  recipientId: Id<"users">,
+  email: string,
+  tokenTag: string,
+): Promise<void> {
+  const now = Date.now();
+  await t.run(async (ctx) => {
+    await ctx.db.patch(recipientId, {
+      email,
+      emailNotificationsEnabled: true,
+    });
+    await ctx.db.insert("pushTokens", {
+      userId: recipientId,
+      token: `ExponentPushToken[${tokenTag}]`,
+      platform: "ios",
+      environment: "staging",
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: now,
+    });
+  });
+}
+
+async function makeGroupWithMembers(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+  members: Array<{ userId: Id<"users">; role: "leader" | "member" }>,
+): Promise<Id<"groups">> {
+  return await t.run(async (ctx) => {
+    const groupTypeId = await ctx.db.insert("groupTypes", {
+      communityId,
+      name: "Small Group",
+      slug: `sg-${Math.floor(Math.random() * 1_000_000)}`,
+      isActive: true,
+      displayOrder: 0,
+      createdAt: Date.now(),
+    });
+    const groupId = await ctx.db.insert("groups", {
+      communityId,
+      groupTypeId,
+      name: "Test Group",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isArchived: false,
+    });
+    for (const m of members) {
+      await ctx.db.insert("groupMembers", {
+        groupId,
+        userId: m.userId,
+        role: m.role,
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+    }
+    return groupId;
+  });
+}
+
+async function makeAdmin(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+  userId: Id<"users">,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userCommunities", {
+      userId,
+      communityId,
+      roles: 3,
+      status: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}
+
+/** Insert a message and fire the onMessageSent fanout, draining schedules. */
+async function fireDmMessage(
+  t: ReturnType<typeof convexTest>,
+  opts: {
+    channelId: Id<"chatChannels">;
+    senderId: Id<"users">;
+    content: string;
+    senderName: string;
+  },
+): Promise<void> {
+  const messageId = await t.run(async (ctx) => {
+    return await ctx.db.insert("chatMessages", {
+      channelId: opts.channelId,
+      senderId: opts.senderId,
+      content: opts.content,
+      contentType: "text",
+      createdAt: Date.now(),
+      isDeleted: false,
+      senderName: opts.senderName,
+    });
+  });
+  await t.mutation(internal.functions.messaging.events.onMessageSent, {
+    messageId,
+    channelId: opts.channelId,
+    senderId: opts.senderId,
+  });
+  vi.runAllTimers();
+  await t.finishInProgressScheduledFunctions();
+}
+
+function pushFrom(fetchMock: ReturnType<typeof vi.fn>) {
+  const call = fetchMock.mock.calls.find((c) => c?.[0] === EXPO_PUSH_URL);
+  return call ? JSON.parse(String(call?.[1]?.body))[0] : undefined;
+}
+function emailFrom(fetchMock: ReturnType<typeof vi.fn>) {
+  const call = fetchMock.mock.calls.find((c) => c?.[0] === RESEND_EMAIL_URL);
+  return call ? JSON.parse(String(call?.[1]?.body)) : undefined;
+}
+
+describe("leader/co-lead DM notifications", () => {
+  test("group leader first DM: group-leader push + email", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // seedTestData makes `userId` a leader and `user2Id` a member of the group.
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "member@example.com", "gl");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Hey — welcome to the group!",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Test User");
+    expect(push?.body).toContain("Your group leader messaged you");
+    expect(push?.body).toContain("Hey — welcome to the group!");
+
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your group leader Test User messaged you");
+  });
+
+  test("co-leader first DM: co-leader push + email (beats group-leader)", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Sender co-leads one group with the recipient AND leads another group the
+    // recipient is a plain member of → co-leader must win.
+    await makeGroupWithMembers(t, communityId, [
+      { userId, role: "leader" },
+      { userId: user2Id, role: "leader" },
+    ]);
+    // (seedTestData already added a group where userId=leader, user2Id=member.)
+
+    await enableRecipientNotifications(t, user2Id, "colead@example.com", "cl");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Great co-leading with you!",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your co-leader just messaged you");
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your co-leader Test User messaged you");
+  });
+
+  test("community admin first DM (no group tie): community-leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const communityId = await t.run(async (ctx) =>
+      ctx.db.insert("communities", {
+        name: "Admin Community",
+        subdomain: "admin-c",
+        slug: "admin-c",
+        timezone: "America/New_York",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const adminId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Ada",
+        lastName: "Okafor",
+        phone: "+15555551111",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const memberId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Moe",
+        lastName: "Member",
+        phone: "+15555552222",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    await makeAdmin(t, communityId, adminId);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, memberId, "moe@example.com", "ca");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: adminId,
+      recipientId: memberId,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: adminId,
+      content: "Welcome to the community!",
+      senderName: "Ada Okafor",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your community leader messaged you");
+    const email = emailFrom(fetchMock);
+    expect(email?.subject).toBe("Your community leader Ada Okafor messaged you");
+  });
+
+  test("precedence: group-leader + community-admin → group-leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // userId leads a group user2Id is a member of (seedTestData).
+    const { userId, user2Id, communityId } = await seedTestData(t);
+    // ...AND userId is also a community admin. Group leadership must win.
+    await makeAdmin(t, communityId, userId);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "prec@example.com", "pr");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Checking in",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.body).toContain("Your group leader messaged you");
+    expect(push?.body).not.toContain("community leader");
+  });
+
+  test("later messages use the plain accepted push (no leader line, no email)", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const { userId, user2Id, communityId } = await seedTestData(t);
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, user2Id, "later@example.com", "lt");
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: userId,
+      recipientId: user2Id,
+    });
+
+    // First message (leader copy) — then reset the mock and send a follow-up.
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "First",
+      senderName: "Test User",
+    });
+    fetchMock.mockClear();
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Second message",
+      senderName: "Test User",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Test User");
+    expect(push?.body).toBe("Second message");
+    expect(push?.body).not.toContain("group leader");
+    // No email on follow-ups.
+    expect(emailFrom(fetchMock)).toBeUndefined();
+  });
+
+  test("non-leader accepted DM first message: plain push, no leader copy", async () => {
+    process.env.RESEND_API_KEY = "test-resend-key";
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    // Two users with NO group/admin tie between them.
+    const communityId = await t.run(async (ctx) =>
+      ctx.db.insert("communities", {
+        name: "Plain Community",
+        subdomain: "plain-c",
+        slug: "plain-c",
+        timezone: "America/New_York",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const aId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Alice",
+        lastName: "A",
+        phone: "+15555553333",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+    const bId = await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Bob",
+        lastName: "B",
+        phone: "+15555554444",
+        phoneVerified: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await enableRecipientNotifications(t, bId, "bob@example.com", "np");
+    // Accepted DM but no relationship → the "recipient accepted an empty
+    // request first" case: falls through to the normal accepted push.
+    const channelId = await seedAcceptedDm(t, {
+      communityId,
+      senderId: aId,
+      recipientId: bId,
+    });
+
+    await fireDmMessage(t, {
+      channelId,
+      senderId: aId,
+      content: "Hello there",
+      senderName: "Alice A",
+    });
+
+    const push = pushFrom(fetchMock);
+    expect(push?.title).toBe("Alice A");
+    expect(push?.body).toBe("Hello there");
+    expect(emailFrom(fetchMock)).toBeUndefined();
+  });
+});

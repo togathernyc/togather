@@ -16,13 +16,55 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { getChannelSlug } from "../../lib/slugs";
 import { notifyBatch } from "../../lib/notifications/send";
-import { chatRequestEmail } from "../../lib/notifications/emailTemplates";
+import {
+  chatRequestEmail,
+  leaderDmEmail,
+} from "../../lib/notifications/emailTemplates";
+import {
+  getLeaderDmRelationship,
+  type LeaderDmRelationship,
+} from "../../lib/leaderDm";
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const MAX_PREVIEW_LENGTH = 100;
+
+/**
+ * First-message notification copy per leadership relationship. The push keeps
+ * the sender's name as its title and uses this relationship line (plus the
+ * message preview) as the body; the email uses the matching subject and body.
+ * Only a leader/co-lead's FIRST DM uses this copy — later messages fall back to
+ * the standard accepted-DM push. Wording is adjustable at approval.
+ */
+const LEADER_DM_COPY: Record<
+  Exclude<LeaderDmRelationship, "none">,
+  {
+    pushLine: string;
+    emailLabel: string;
+    emailBodyLine: (senderName: string) => string;
+  }
+> = {
+  co_leader: {
+    pushLine: "Your co-leader just messaged you",
+    emailLabel: "co-leader",
+    emailBodyLine: (s) =>
+      `${s}, who co-leads a group with you, just sent you a message on Togather.`,
+  },
+  group_leader: {
+    pushLine: "Your group leader messaged you",
+    emailLabel: "group leader",
+    emailBodyLine: (s) =>
+      `${s} leads a group you're in and just sent you a message on Togather.`,
+  },
+  community_admin: {
+    pushLine: "Your community leader messaged you",
+    emailLabel: "community leader",
+    emailBodyLine: (s) =>
+      `${s}, an admin of your community, just sent you a message on Togather.`,
+  },
+};
 
 // ============================================================================
 // Notification routing
@@ -348,6 +390,37 @@ export const onMessageSent = internalMutation({
           .first();
         const isInitialRequestMessage = firstMessage?._id === args.messageId;
 
+        // On the opening message of a 1:1 DM, work out whether each accepted
+        // recipient has a leadership tie to the sender. Leader/co-lead DMs are
+        // created already-accepted, so their first message is exactly
+        // `accepted && isInitialRequestMessage` — the re-check here
+        // distinguishes them from the rare "recipient accepted an empty
+        // request first" case (which returns "none" and falls through to the
+        // normal accepted push). Group DMs are out of scope, and follow-up
+        // messages never carry the special copy.
+        const leaderRelationships: Array<{
+          userId: Id<"users">;
+          relationship: "co_leader" | "group_leader" | "community_admin";
+        }> = [];
+        if (
+          isInitialRequestMessage &&
+          channel.channelType === "dm" &&
+          args.senderId &&
+          channel.communityId
+        ) {
+          for (const recipientId of acceptedRecipients) {
+            const relationship = await getLeaderDmRelationship(
+              ctx,
+              channel.communityId,
+              args.senderId,
+              recipientId,
+            );
+            if (relationship !== "none") {
+              leaderRelationships.push({ userId: recipientId, relationship });
+            }
+          }
+        }
+
         await ctx.scheduler.runAfter(
           0,
           internal.functions.messaging.events.sendAdHocMessageNotifications,
@@ -361,6 +434,7 @@ export const onMessageSent = internalMutation({
             pendingRecipients,
             acceptedRecipients,
             isInitialRequestMessage,
+            leaderRelationships,
           },
         );
       } else {
@@ -553,6 +627,23 @@ export const sendAdHocMessageNotifications = internalAction({
      * conversation doesn't email on every message.
      */
     isInitialRequestMessage: v.optional(v.boolean()),
+    /**
+     * Accepted recipients (on the opening message of a 1:1 DM) who have a
+     * leadership tie to the sender. Their first message gets relationship-
+     * specific push + email copy instead of the generic accepted-DM push.
+     */
+    leaderRelationships: v.optional(
+      v.array(
+        v.object({
+          userId: v.id("users"),
+          relationship: v.union(
+            v.literal("co_leader"),
+            v.literal("group_leader"),
+            v.literal("community_admin"),
+          ),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     console.log(
@@ -657,16 +748,60 @@ export const sendAdHocMessageNotifications = internalAction({
       }
     }
 
-    // Accepted recipients: standard accepted-chat copy.
+    // Accepted recipients: standard accepted-chat copy, except a leader/co-lead's
+    // FIRST DM, which gets relationship-specific copy plus a one-off heads-up
+    // email (normal accepted DMs stay push-only). `leaderRelationships` is only
+    // populated on the opening message, so every later message lands here with
+    // an empty map and uses the standard push.
     if (args.acceptedRecipients.length > 0) {
+      const relationshipByUser = new Map(
+        (args.leaderRelationships ?? []).map((r) => [r.userId, r.relationship]),
+      );
       for (const userId of args.acceptedRecipients) {
-        await sendAdHocPushToUser(ctx, {
-          userId,
-          title: acceptedTitle,
-          body: previewBody,
-          data: { ...baseData, requestState: "accepted" },
-          communityId: args.communityId,
-        });
+        const relationship = args.isInitialRequestMessage
+          ? relationshipByUser.get(userId)
+          : undefined;
+
+        if (relationship) {
+          const copy = LEADER_DM_COPY[relationship];
+          // Push: sender name as the title, relationship line + preview as the
+          // body so the recipient sees why the sender is in their inbox.
+          const leaderBody =
+            previewBody.length > 0
+              ? `${copy.pushLine} · ${previewBody}`
+              : copy.pushLine;
+          const userInfo = await ctx.runQuery(
+            internal.functions.notifications.internal.getUserEmailInfo,
+            { userId },
+          );
+          const emailHtml = leaderDmEmail({
+            senderName: args.senderName,
+            relationshipLabel: copy.emailLabel,
+            bodyLine: copy.emailBodyLine(args.senderName),
+            messagePreview: args.messagePreview,
+            firstName: userInfo?.firstName,
+          });
+          await sendAdHocPushToUser(ctx, {
+            userId,
+            title: args.senderName,
+            body: leaderBody,
+            data: { ...baseData, requestState: "accepted" },
+            communityId: args.communityId,
+            requestEmail: {
+              subject: `Your ${copy.emailLabel} ${args.senderName} messaged you`,
+              htmlBody: emailHtml,
+              notificationType: "chat_request",
+            },
+          });
+        } else {
+          await sendAdHocPushToUser(ctx, {
+            userId,
+            title: acceptedTitle,
+            body: previewBody,
+            data: { ...baseData, requestState: "accepted" },
+            communityId: args.communityId,
+          });
+        }
       }
     }
   },
