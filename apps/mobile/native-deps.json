@@ -23,7 +23,6 @@
     "expo",
     "expo-application",
     "expo-auth-session",
-    "expo-blur",
     "expo-calendar",
     "expo-clipboard",
     "expo-constants",
@@ -51,6 +50,7 @@
     "expo-web-browser"
   ],
   "gated": [
+    "expo-blur",
     "expo-linear-gradient",
     "expo-av",
     "expo-document-picker",

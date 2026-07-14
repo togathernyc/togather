@@ -1,7 +1,23 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  Linking,
+  Platform,
+} from 'react-native';
 import { router } from 'expo-router';
+import Constants from 'expo-constants';
+import * as Application from 'expo-application';
+import * as MailComposer from 'expo-mail-composer';
 import { SentryUtils } from '@providers/SentryProvider';
+
+const sadGif = require('../assets/sad.gif');
+
+/** Where "Send to developer" reports are delivered. */
+const SUPPORT_EMAIL = 'togather@supa.media';
 
 interface Props {
   children: React.ReactNode;
@@ -12,20 +28,24 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  /** React component stack — our best "which screen" breadcrumb. */
+  componentStack: string | null;
 }
 
 export class ErrorBoundary extends React.Component<Props, State> {
   constructor(props: Props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, componentStack: null };
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
+
+    this.setState({ componentStack: errorInfo.componentStack ?? null });
 
     // Report error to Sentry with component stack trace
     SentryUtils.captureException(error, {
@@ -35,14 +55,14 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   resetError = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, componentStack: null });
     if (this.props.onReset) {
       this.props.onReset();
     }
   };
 
   goHome = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, componentStack: null });
     // Navigate to root and reset the navigation stack
     // Use dismissAll to close any modals, then replace to reset to root
     try {
@@ -63,20 +83,146 @@ export class ErrorBoundary extends React.Component<Props, State> {
       }
 
       return (
-        <View style={styles.container}>
-          <View style={styles.content}>
-            <Text style={styles.title}>Something went wrong</Text>
-            <Text style={styles.message}>{this.state.error.message}</Text>
-            <TouchableOpacity style={styles.button} onPress={this.goHome}>
-              <Text style={styles.buttonText}>Go Home</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        <DefaultErrorFallback
+          error={this.state.error}
+          componentStack={this.state.componentStack}
+          onTryAgain={this.resetError}
+          onGoHome={this.goHome}
+        />
       );
     }
 
     return this.props.children;
   }
+}
+
+interface FallbackProps {
+  error: Error;
+  componentStack: string | null;
+  onTryAgain: () => void;
+  onGoHome: () => void;
+}
+
+/**
+ * Friendly, restart-focused fallback shown for any uncaught render error.
+ *
+ * Deliberately never surfaces the raw error string to the user (it's internal
+ * and often unintelligible — e.g. a redacted Convex "Server Error"). Instead it
+ * offers a "Send to developer" action that emails the full technical details to
+ * the Togather team.
+ */
+function DefaultErrorFallback({
+  error,
+  componentStack,
+  onTryAgain,
+  onGoHome,
+}: FallbackProps) {
+  const [sendState, setSendState] = React.useState<'idle' | 'sending' | 'sent'>(
+    'idle',
+  );
+
+  const buildReport = React.useCallback(() => {
+    const appVersion = Constants.expoConfig?.version ?? 'unknown';
+    const nativeVersion = Application.nativeApplicationVersion ?? 'unknown';
+    const nativeBuild = Application.nativeBuildVersion ?? 'unknown';
+    // Trim the component stack to the top frames — enough to identify the
+    // screen without pasting the entire tree.
+    const screenTrace = (componentStack ?? 'unavailable')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 12)
+      .join('\n');
+
+    const subject = `Togather error report — ${error.name || 'Error'}`;
+    const body = [
+      'Please describe what you were doing when this happened:',
+      '',
+      '',
+      '— — — — — — — — — — — — — — — — — — — —',
+      'Technical details (for the Togather team)',
+      '— — — — — — — — — — — — — — — — — — — —',
+      `Time: ${new Date().toISOString()}`,
+      `App version: ${appVersion} (native ${nativeVersion} / build ${nativeBuild})`,
+      `Platform: ${Platform.OS} ${String(Platform.Version)}`,
+      '',
+      'Screen (component trace):',
+      screenTrace,
+      '',
+      'Error:',
+      `${error.name}: ${error.message}`,
+      '',
+      'Stack:',
+      error.stack ?? 'unavailable',
+    ].join('\n');
+
+    return { subject, body };
+  }, [error, componentStack]);
+
+  const handleSendToDeveloper = React.useCallback(async () => {
+    setSendState('sending');
+    const { subject, body } = buildReport();
+    try {
+      const isAvailable = await MailComposer.isAvailableAsync();
+      if (isAvailable) {
+        await MailComposer.composeAsync({
+          recipients: [SUPPORT_EMAIL],
+          subject,
+          body,
+        });
+      } else {
+        // Fall back to the device's default mail handler.
+        const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+          subject,
+        )}&body=${encodeURIComponent(body)}`;
+        await Linking.openURL(mailto);
+      }
+      setSendState('sent');
+    } catch {
+      // Never let the report flow crash the fallback itself.
+      setSendState('idle');
+    }
+  }, [buildReport]);
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.content}>
+        <Image source={sadGif} style={styles.graphic} resizeMode="contain" />
+        <Text style={styles.title}>Something went wrong</Text>
+        <Text style={styles.message}>
+          The app hit an unexpected snag. Tap Try Again — and if it keeps
+          happening, fully close the app (swipe it away) and reopen it.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={onTryAgain}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.primaryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          onPress={handleSendToDeveloper}
+          activeOpacity={0.8}
+          disabled={sendState !== 'idle'}
+        >
+          <Text style={styles.secondaryButtonText}>
+            {sendState === 'sending'
+              ? 'Opening email…'
+              : sendState === 'sent'
+                ? 'Thanks — report ready to send'
+                : 'Send to developer'}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={onGoHome} activeOpacity={0.6}>
+          <Text style={styles.goHomeText}>Go Home</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -89,8 +235,9 @@ const styles = StyleSheet.create({
   },
   content: {
     backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 24,
+    borderRadius: 16,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
     alignItems: 'center',
     maxWidth: 400,
     width: '100%',
@@ -100,28 +247,57 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  graphic: {
+    width: 120,
+    height: 120,
+    marginBottom: 8,
+  },
   title: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#333',
     marginBottom: 12,
+    textAlign: 'center',
   },
   message: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#666',
     textAlign: 'center',
+    lineHeight: 22,
     marginBottom: 24,
   },
-  button: {
+  primaryButton: {
     backgroundColor: '#007AFF',
     paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: 14,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  buttonText: {
+  primaryButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
+  secondaryButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 10,
+    width: '100%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d0d0d0',
+    marginBottom: 16,
+  },
+  secondaryButtonText: {
+    color: '#333',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  goHomeText: {
+    color: '#888',
+    fontSize: 14,
+    fontWeight: '500',
+  },
 });
-
