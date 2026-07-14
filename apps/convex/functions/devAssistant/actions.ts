@@ -1333,14 +1333,6 @@ export const retryMergeAfterUpdate = internalAction({
       return;
     }
 
-    const status = await fetchPrMerged(prNumber, mirrorToken);
-    if (status?.merged) {
-      await applyGithubConfirmedMerge(ctx, bug, status.mergeCommitSha);
-      return;
-    }
-
-    const state = status?.mergeableState;
-
     // Schedule another bounded poll, or give up once the cap is reached
     // (checks never went green). Used both when checks haven't settled yet and
     // when a merge PUT fails transiently on an otherwise-mergeable PR.
@@ -1356,35 +1348,67 @@ export const retryMergeAfterUpdate = internalAction({
       );
     };
 
-    // Mergeable now (clean or unstable) → retry the merge.
-    if (isMergeableState(state)) {
-      const res = await mergePullRequestOnGithub(prNumber, mirrorToken);
-      if (res.ok) {
-        await applyGithubConfirmedMerge(ctx, bug, await readMergeCommitSha(res));
+    // The GitHub round-trips below (fetch/PUT, and applyGithubConfirmedMerge's
+    // downstream writes) can throw on a transient network error. Convex
+    // `scheduler.runAfter` actions are NOT auto-retried, so an unguarded throw
+    // would kill this scheduled action with the latch (mergeRequestedAt) still
+    // SET — hiding the merge card for every viewer and blocking a re-tap, the
+    // exact stuck-item failure this PR set out to remove. Guard it: treat a
+    // throw like any other transient recovery hiccup and poll again (bounded by
+    // MERGE_RECOVERY_MAX_POLLS), so a blip self-heals on the next poll and a
+    // persistent fault still releases the latch at the cap rather than
+    // stranding the item.
+    try {
+      const status = await fetchPrMerged(prNumber, mirrorToken);
+      if (status?.merged) {
+        await applyGithubConfirmedMerge(ctx, bug, status.mergeCommitSha);
         return;
       }
-      const raced = await fetchPrMerged(prNumber, mirrorToken);
-      if (raced?.merged) {
-        await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
+
+      const state = status?.mergeableState;
+
+      // Mergeable now (clean or unstable) → retry the merge.
+      if (isMergeableState(state)) {
+        const res = await mergePullRequestOnGithub(prNumber, mirrorToken);
+        if (res.ok) {
+          await applyGithubConfirmedMerge(
+            ctx,
+            bug,
+            await readMergeCommitSha(res),
+          );
+          return;
+        }
+        const raced = await fetchPrMerged(prNumber, mirrorToken);
+        if (raced?.merged) {
+          await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
+          return;
+        }
+        // The PUT failed but the PR isn't merged and GitHub still reports it as
+        // mergeable — a transient failure (a 5xx, or a "base branch was
+        // modified" race). Poll again rather than a terminal give-up; the cap
+        // still bounds it. Only if we exhaust the cap do we surface the
+        // failing-check message.
+        await pollAgainOrGiveUp();
         return;
       }
-      // The PUT failed but the PR isn't merged and GitHub still reports it as
-      // mergeable — a transient failure (a 5xx, or a "base branch was modified"
-      // race). Poll again rather than a terminal give-up; the cap still bounds
-      // it. Only if we exhaust the cap do we surface the failing-check message.
+
+      // A conflict appeared after the update → stop, needs code changes.
+      if (state === "dirty") {
+        await failed(describeMergeBlock("conflict"));
+        return;
+      }
+
+      // Still behind / blocked / unknown → checks haven't settled. Poll again
+      // until the cap, then give up (checks never went green).
       await pollAgainOrGiveUp();
-      return;
+    } catch (error) {
+      console.error(
+        "[DevAssistant] In-app merge recovery threw:",
+        error,
+        args.bugId,
+      );
+      await pollAgainOrGiveUp();
     }
-
-    // A conflict appeared after the update → stop, needs code changes.
-    if (state === "dirty") {
-      await failed(describeMergeBlock("conflict"));
-      return;
-    }
-
-    // Still behind / blocked / unknown → checks haven't settled. Poll again
-    // until the cap, then give up (checks never went green).
-    await pollAgainOrGiveUp();
   },
 });
 

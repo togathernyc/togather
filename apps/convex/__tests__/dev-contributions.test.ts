@@ -2153,6 +2153,133 @@ describe("in-app merge (mergeNow)", () => {
     expect(bodies.some((b) => /required check/i.test(b))).toBe(false);
   });
 
+  test("a thrown fetch during recovery does not strand the latch — it polls again and self-heals", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    // Behind → update → clean. The first recovery merge PUT *throws* (a raw
+    // network error, not an HTTP status) — the failure mode that previously
+    // killed the unguarded scheduled action with the latch still set, hiding
+    // the merge card forever. The guard must catch it and poll again; the next
+    // merge PUT then succeeds and the item merges.
+    let phase: "behind" | "clean" = "behind";
+    let mergeAttempts = 0;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/merge")) {
+        if (phase === "behind") {
+          return new Response(JSON.stringify({ message: "expected" }), {
+            status: 405,
+          });
+        }
+        mergeAttempts += 1;
+        if (mergeAttempts === 1) {
+          throw new TypeError("network error");
+        }
+        return new Response("{}", { status: 200 });
+      }
+      if (u.endsWith("/update-branch")) {
+        phase = "clean";
+        return new Response(JSON.stringify({ message: "updating" }), {
+          status: 202,
+        });
+      }
+      const state = phase === "clean" ? "clean" : "behind";
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: state }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    // The thrown fetch was caught and recovery continued to a successful merge
+    // — the item is not stranded READY_TO_MERGE with a stale latch.
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.mergeRequestedAt).toBeUndefined();
+    expect(mergeAttempts).toBe(2);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const bodies = thread.map((m) => m.body);
+    expect(bodies.some((b) => /Merged — deploying to staging/.test(b))).toBe(
+      true,
+    );
+    expect(bodies.some((b) => /required check/i.test(b))).toBe(false);
+  });
+
+  test("a persistent thrown fetch during recovery gives up at the cap and releases the latch", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    // Behind → update → clean, but every recovery merge PUT throws. The guard
+    // must keep the recovery bounded (poll again up to the cap) and then give
+    // up cleanly, releasing the latch — never spin forever, never strand the
+    // card. The PR GET keeps reporting "clean" so we stay on the merge path.
+    let phase: "behind" | "clean" = "behind";
+    let mergeThrows = 0;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/merge")) {
+        if (phase === "behind") {
+          return new Response(JSON.stringify({ message: "expected" }), {
+            status: 405,
+          });
+        }
+        mergeThrows += 1;
+        throw new TypeError("network error");
+      }
+      if (u.endsWith("/update-branch")) {
+        phase = "clean";
+        return new Response(JSON.stringify({ message: "updating" }), {
+          status: 202,
+        });
+      }
+      const state = phase === "clean" ? "clean" : "behind";
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: state }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    // Latch released on the capped give-up so the merge card returns — the item
+    // is recoverable, not stranded.
+    expect(bug?.mergeRequestedAt).toBeUndefined();
+    // Bounded: the throwing PUT is attempted a handful of times (capped by
+    // MERGE_RECOVERY_MAX_POLLS = 6), never forever.
+    expect(mergeThrows).toBeGreaterThan(1);
+    expect(mergeThrows).toBeLessThanOrEqual(6);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread[thread.length - 1]?.body).toMatch(/required check/i);
+  });
+
   test("losing the race to auto-merge is a success, not a spurious failure", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
