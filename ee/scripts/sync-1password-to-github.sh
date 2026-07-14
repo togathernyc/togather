@@ -159,10 +159,21 @@ OPTIONAL_SECRETS=(
   # GH_WEBHOOK_SECRET is the inbound-webhook HMAC secret — named GH_*, not
   # GITHUB_*, because GitHub reserves the GITHUB_ secret-name prefix
   # (`gh secret set GITHUB_*` → 422). Optional; falls back to
-  # DEV_ASSISTANT_CALLBACK_SECRET. AUTO_MERGE_* are non-secret switches.
+  # DEV_ASSISTANT_CALLBACK_SECRET.
   "GH_WEBHOOK_SECRET"
-  "AUTO_MERGE_ENABLED"
-  "AUTO_MERGE_METHOD"
+  # NOTE: the AUTO_MERGE_* switches are handled separately (see below), NOT in
+  # this optional loop — a missing item must push the safe default, not be
+  # skipped, or a stale "true" GitHub secret keeps auto-merge armed.
+)
+
+# Auto-merge on/off switches. Unlike secrets, "unset = off" is how an operator
+# disables the feature, so they must be set to a concrete value EVERY sync:
+# skipping a missing item would leave a stale "true" GitHub secret that keeps
+# auto-merge armed even after the 1Password item is removed. Value comes from
+# 1Password when present, else the safe default (disabled / squash).
+AUTO_MERGE_DEFAULTS=(
+  "AUTO_MERGE_ENABLED=false"
+  "AUTO_MERGE_METHOD=squash"
 )
 
 # ---------------------------------------------------------------------------
@@ -233,6 +244,30 @@ sync_environment() {
       echo "  Skipping $KEY (not found in 1Password)"
       skipped=$((skipped + 1))
     fi
+  done
+
+  echo ""
+
+  # Auto-merge switches: always set (never skip), 1Password value or safe default.
+  echo "Auto-merge switches:"
+  for ENTRY in "${AUTO_MERGE_DEFAULTS[@]}"; do
+    KEY="${ENTRY%%=*}"
+    DEFAULT="${ENTRY#*=}"
+    VALUE=$(op read "op://Togather/$KEY/$env" 2>/dev/null || true)
+    VALUE="${VALUE:-$DEFAULT}"
+    if [ "$DRY_RUN" = true ]; then
+      echo "  [dry-run] Would set $KEY=$VALUE"
+    else
+      echo -n "  Setting $KEY=$VALUE..."
+      if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
+        echo " done"
+      else
+        echo " FAILED"
+        failed=$((failed + 1))
+        continue
+      fi
+    fi
+    synced=$((synced + 1))
   done
 
   echo ""
