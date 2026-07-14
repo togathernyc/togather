@@ -91,7 +91,10 @@ export interface Contribution {
   reviewSummary?: string;
   prUrl?: string;
   githubIssueUrl?: string;
+  /** User's own report screenshots (set at submit). */
   screenshotUrls?: string[];
+  /** AI-generated before/after plan mock (routine callback). */
+  planPreviewUrls?: string[];
   /**
    * Display name of whoever started the conversation — attached by both
    * getContribution (detail header) and the list queries ("Everyone" view).

@@ -70,7 +70,7 @@ export function PlanContent({ contribution }: { contribution: Contribution }) {
             : "This one covers more than a single build can safely take on. Here's how the AI suggests breaking it up:"}
         </Text>
       ) : null}
-      <PlanPreviewImages urls={contribution.screenshotUrls} />
+      <PlanPreviewImages urls={contribution.planPreviewUrls} />
       <Markdown source={contribution.spec} />
     </View>
   );

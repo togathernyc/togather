@@ -1087,7 +1087,10 @@ export const applyCallback = internalMutation({
       updatedAt: now,
     };
     if (args.prUrl !== undefined) patch.prUrl = args.prUrl;
-    if (args.screenshots !== undefined) patch.screenshotUrls = args.screenshots;
+    // The routine callback's `screenshots` is always the AI-generated plan
+    // before/after mock — never a user image — so it lands in planPreviewUrls,
+    // leaving screenshotUrls as purely the user's report images.
+    if (args.screenshots !== undefined) patch.planPreviewUrls = args.screenshots;
     if (args.spec !== undefined) patch.spec = args.spec;
     if (args.riskLevel !== undefined) patch.riskLevel = args.riskLevel;
     if (args.aiTitle !== undefined) patch.aiTitle = args.aiTitle;

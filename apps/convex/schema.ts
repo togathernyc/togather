@@ -2235,6 +2235,11 @@ export default defineSchema({
     body: v.string(), // clean implementation brief (synthesized)
     repro: v.optional(v.string()),
     screenshotUrls: v.optional(v.array(v.string())), // pulled from thread image attachments
+    // AI-generated before/after mock for the plan, delivered by the routine
+    // callback. Distinct from `screenshotUrls`, which is the user's own report
+    // images — keeping them separate stops us mislabeling report screenshots as
+    // an AI plan preview (and vice versa).
+    planPreviewUrls: v.optional(v.array(v.string())),
 
     // Contributor dev dashboard (ADR-029). All optional for backward compat;
     // pre-existing rows are chat-originated bugs.

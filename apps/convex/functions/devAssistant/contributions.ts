@@ -874,8 +874,10 @@ export const getContribution = query({
     return {
       ...bug,
       // Resolve any stored "r2:" paths to fetchable URLs so the client can
-      // render plan preview images directly (already-https URLs pass through).
+      // render images directly (already-https URLs pass through). screenshotUrls
+      // is the user's report images; planPreviewUrls is the AI plan mock.
       screenshotUrls: resolveImageUrls(bug.screenshotUrls),
+      planPreviewUrls: resolveImageUrls(bug.planPreviewUrls),
       originatorName: await originatorDisplayName(ctx, bug.originatorUserId),
     };
   },
