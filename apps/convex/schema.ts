@@ -2305,6 +2305,60 @@ export default defineSchema({
     githubIssueNumber: v.optional(v.number()),
     githubIssueUrl: v.optional(v.string()),
     shippedAt: v.optional(v.number()), // set when status reaches MERGED
+
+    // Deploy observation (ADR-029 follow-up). A merge only *triggers* the
+    // staging deploy workflows (a few minutes); production is a separate manual
+    // dispatch. These fields let the dashboard show "deploying → live" and, on
+    // failure, tell the contributor the deploy failed instead of inviting them
+    // to test something that isn't up. Driven by the GitHub `workflow_run`
+    // webhook (see http.ts + bugs.ts handleWorkflowRunEvent).
+
+    // The squash-merge commit SHA — correlates the staging `workflow_run` events
+    // (head_sha) back to this bug. Stored the moment the merge is observed.
+    mergeCommitSha: v.optional(v.string()),
+    // Staging deploy state for this merge. `workflows` tracks each triggered
+    // staging workflow ("Deploy Convex" / "Deploy Mobile Update") we've seen and
+    // its conclusion; the deploy is "live" only once every tracked workflow
+    // succeeded, "failed" the moment any one fails.
+    stagingDeploy: v.optional(
+      v.object({
+        state: v.union(
+          v.literal("pending"),
+          v.literal("live"),
+          v.literal("failed"),
+        ),
+        workflows: v.optional(
+          v.array(
+            v.object({
+              name: v.string(),
+              conclusion: v.optional(v.string()),
+            }),
+          ),
+        ),
+        failedWorkflow: v.optional(v.string()),
+        updatedAt: v.number(),
+      }),
+    ),
+    // Production deploy state, set when a maintainer ships from the app. Prod
+    // deploys are global (they ship everything on `main`), so the "Deploy to
+    // Production" workflow_run can't be correlated to one bug by SHA — all
+    // pending-prod bugs move together (see handleWorkflowRunEvent).
+    productionDeploy: v.optional(
+      v.object({
+        state: v.union(
+          v.literal("pending"),
+          v.literal("live"),
+          v.literal("failed"),
+        ),
+        failedWorkflow: v.optional(v.string()),
+        // When the in-app deploy was dispatched. A "Deploy to Production" run
+        // only settles bugs requested BEFORE it started (requestedAt <=
+        // run_started_at), so a later dispatch isn't wrongly marked done by an
+        // earlier, still-running deploy.
+        requestedAt: v.optional(v.number()),
+        updatedAt: v.number(),
+      }),
+    ),
     // Contributor set the conversation aside (abandoned it, or the scope was
     // judged not doable) — ADR-029. Orthogonal to `status`: an item can be
     // archived from any pipeline state and unarchived to restore it. Archived
@@ -2338,7 +2392,8 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_channel", ["channelId"])
     .index("by_originator", ["originatorUserId"])
-    .index("by_routineRunId", ["routineRunId"]),
+    .index("by_routineRunId", ["routineRunId"])
+    .index("by_mergeCommitSha", ["mergeCommitSha"]),
 
   /**
    * Conversation thread on a devBugs item (contributor dev dashboard,

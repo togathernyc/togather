@@ -1392,13 +1392,24 @@ async function verifyGithubSignature(
  * shippedAt, thread message, push) even when the merge happened directly on
  * GitHub; a PR closed without merging flags the item for a maintainer.
  *
- * Only `pull_request` events with action "closed" do anything — everything
- * else (ping, other events, other actions) returns 200 "ignored" fast.
- * Correlation to a devBug happens in the scheduled internalMutation
+ * Two events do work: a closed `pull_request` (a merge flips the correlated
+ * devBug to MERGED and starts staging deploy observation) and a `workflow_run`
+ * (the staging/production deploy actually finishing → the dashboard shows
+ * deploying → live, or a failure telling the contributor to contact the lead
+ * maintainer). Everything else (ping, other events/actions) returns 200
+ * "ignored" fast.
+ *
+ * NOTE: the repo webhook must subscribe to BOTH "Pull requests" and "Workflow
+ * runs" events — a webhook sending only pull_request never delivers the deploy
+ * observation, so the dashboard would sit at "deploying…" until the reconcile
+ * cron backstop or a manual check.
+ *
+ * PR correlation happens in the scheduled internalMutation
  * (handleGithubPrClosed): primarily by the Routine's `claude/devbug-<bugId>`
  * head-branch convention, falling back to matching html_url against stored
- * prUrl. Responds 200 immediately after scheduling (async-schedule-then-200,
- * like the Slack handler).
+ * prUrl. workflow_run correlation (handleWorkflowRunEvent) is by the merge
+ * commit SHA for staging, and global-by-state for production. Responds 200
+ * immediately after scheduling (async-schedule-then-200, like Slack).
  */
 http.route({
   path: "/github/webhook",
@@ -1431,9 +1442,11 @@ http.route({
       return new Response("Invalid signature", { status: 401 });
     }
 
-    // Only closed pull requests matter; ack everything else immediately.
+    // Two event types do work: a closed `pull_request` (merge → MERGED) and a
+    // `workflow_run` (deploy observation, ADR-029 follow-up). Everything else
+    // (ping, other events/actions) acks immediately.
     const event = request.headers.get("x-github-event");
-    if (event !== "pull_request") {
+    if (event !== "pull_request" && event !== "workflow_run") {
       return new Response("ignored", { status: 200 });
     }
 
@@ -1441,8 +1454,17 @@ http.route({
       action?: string;
       pull_request?: {
         merged?: boolean;
+        merge_commit_sha?: string;
         html_url?: string;
         head?: { ref?: string };
+      };
+      workflow_run?: {
+        name?: string;
+        status?: string;
+        conclusion?: string | null;
+        head_sha?: string;
+        head_branch?: string;
+        run_started_at?: string;
       };
     };
     try {
@@ -1451,6 +1473,48 @@ http.route({
       return new Response("Invalid JSON", { status: 400 });
     }
 
+    // ---- workflow_run: staging/production deploy observation ----
+    if (event === "workflow_run") {
+      const run = payload.workflow_run;
+      if (
+        !payload.action ||
+        !run ||
+        typeof run.name !== "string" ||
+        typeof run.head_sha !== "string"
+      ) {
+        // Malformed (or a workflow_run without the fields we need) — ack and
+        // ignore rather than error.
+        return new Response("ignored", { status: 200 });
+      }
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.devAssistant.bugs.handleWorkflowRunEvent,
+        {
+          action: payload.action,
+          name: run.name,
+          status: typeof run.status === "string" ? run.status : undefined,
+          // GitHub sends `conclusion: null` until the run completes.
+          conclusion:
+            typeof run.conclusion === "string" ? run.conclusion : undefined,
+          headSha: run.head_sha,
+          headBranch:
+            typeof run.head_branch === "string" ? run.head_branch : undefined,
+          // ISO timestamp → ms; bounds which pending-prod bugs a production run
+          // settles (a run only covers work requested before it started).
+          runStartedAt:
+            typeof run.run_started_at === "string" &&
+            !Number.isNaN(Date.parse(run.run_started_at))
+              ? Date.parse(run.run_started_at)
+              : undefined,
+        }
+      );
+      return new Response(JSON.stringify({ received: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // ---- pull_request: only closed PRs matter ----
     if (payload.action !== "closed") {
       return new Response("ignored", { status: 200 });
     }
@@ -1468,6 +1532,11 @@ http.route({
         branchRef,
         prUrl: typeof pr.html_url === "string" ? pr.html_url : undefined,
         merged: pr.merged,
+        // The squash-merge commit correlates the staging deploy observation.
+        mergeCommitSha:
+          typeof pr.merge_commit_sha === "string"
+            ? pr.merge_commit_sha
+            : undefined,
       }
     );
 

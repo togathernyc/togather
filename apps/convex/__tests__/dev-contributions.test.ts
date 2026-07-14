@@ -474,9 +474,10 @@ describe("shipped", () => {
     expect(notifications).toHaveLength(0);
 
     // The webhook source (GitHub reported the merge) stamps shippedAt and
-    // records the merged/live-on-staging notification. This item isn't
-    // interactive (verifyOnStaging unset), so the push is the honest "live on
-    // staging" note, not a "shipped to production" claim.
+    // starts deploy observation (stagingDeploy pending) — but a merge only
+    // *triggers* the staging deploy, so NO "live on staging" push fires yet.
+    // That push waits for the workflow_run webhook (see deploy-observation
+    // tests).
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
       { bugId: id, routineRunId: "run-ship", status: "MERGED", source: "webhook" },
@@ -485,7 +486,9 @@ describe("shipped", () => {
     bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
     expect(bug?.shippedAt).toBeTruthy();
+    expect(bug?.stagingDeploy?.state).toBe("pending");
 
+    // No staging push at merge time — the deploy isn't live yet.
     notifications = await t.run(async (ctx) =>
       ctx.db.query("notifications").collect(),
     );
@@ -493,7 +496,7 @@ describe("shipped", () => {
       notifications.some(
         (n) => n.userId === maintainerId && /staging/i.test(n.title),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
@@ -850,11 +853,11 @@ describe("conversation thread (Phase 1.5)", () => {
     expect(thread.map((m) => m.body)).toEqual([
       "Pull request opened",
       "Ready to merge",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
   });
 
-  test("the 'test on staging' push fires on MERGED (not CODE_REVIEW) when verifyOnStaging is set", async () => {
+  test("the 'test on staging' push waits for the staging deploy to go live, not the merge", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
@@ -898,7 +901,8 @@ describe("conversation thread (Phase 1.5)", () => {
       notifications.some((n) => n.title === "Your contribution is in code review"),
     ).toBe(true);
 
-    // MERGED (auto-deployed to staging): now the "try it on staging" push fires.
+    // MERGED only *triggers* the staging deploy — still NO staging push, and
+    // stagingDeploy is pending (correlated by the merge commit SHA).
     await t.action(
       internal.functions.devAssistant.actions.handleRoutineCallback,
       {
@@ -914,8 +918,33 @@ describe("conversation thread (Phase 1.5)", () => {
         routineRunId: "run-staging-push",
         status: "MERGED",
         source: "webhook",
+        mergeCommitSha: "sha-staging-push",
       },
     );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    expect(
+      notifications.filter(
+        (n) => n.userId === maintainerId && /staging/i.test(n.title),
+      ),
+    ).toHaveLength(0);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("pending");
+
+    // The staging deploy workflow finishing (workflow_run success) is the
+    // honest moment: the change is up, so NOW the "try it on staging" push
+    // fires.
+    await t.mutation(internal.functions.devAssistant.bugs.handleWorkflowRunEvent, {
+      action: "completed",
+      name: "Deploy Convex",
+      conclusion: "success",
+      headSha: "sha-staging-push",
+      headBranch: "main",
+    });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     notifications = await t.run(async (ctx) =>
@@ -926,6 +955,9 @@ describe("conversation thread (Phase 1.5)", () => {
     );
     expect(stagingPush).toHaveLength(1);
     expect(stagingPush[0]?.title).toBe("Ready to test on staging");
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("live");
   });
 });
 
@@ -1263,6 +1295,10 @@ describe("staging verification", () => {
       status: "DRAFT" | "IN_REVIEW" | "IN_PROGRESS" | "CODE_REVIEW" | "READY_TO_MERGE" | "MERGED";
       verifyOnStaging: boolean;
       stagingVerifiedAt: number;
+      stagingDeploy: {
+        state: "pending" | "live" | "failed";
+        updatedAt: number;
+      };
     }> = {},
   ): Promise<Id<"devBugs">> {
     const now = Date.now();
@@ -1278,6 +1314,8 @@ describe("staging verification", () => {
         routineRunId: "run-staging",
         verifyOnStaging: overrides.verifyOnStaging ?? true,
         stagingVerifiedAt: overrides.stagingVerifiedAt,
+        // Omitted → legacy-undefined, treated as live (backward-compat).
+        stagingDeploy: overrides.stagingDeploy,
         createdAt: now,
         updatedAt: now,
       }),
@@ -1370,6 +1408,57 @@ describe("staging verification", () => {
         id: preMergeId,
       }),
     ).rejects.toThrow(/current status/);
+  });
+
+  test("confirmStaging is gated server-side on the staging deploy actually being live", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // Merged, but the staging deploy is still running — the UI hides the card,
+    // but a stale/hand-rolled client must be rejected server-side too.
+    const pendingId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "pending", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+        token: maintainerId,
+        id: pendingId,
+      }),
+    ).rejects.toThrow(/still running/);
+
+    // Deploy failed — there's nothing on staging to confirm.
+    const failedId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "failed", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+        token: maintainerId,
+        id: failedId,
+      }),
+    ).rejects.toThrow(/staging deploy failed/i);
+
+    // Live → allowed.
+    const liveId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "live", updatedAt: Date.now() },
+    });
+    await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+      token: maintainerId,
+      id: liveId,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(liveId)))?.stagingVerifiedAt,
+    ).toBeTruthy();
+
+    // Legacy row (no stagingDeploy) → treated as live, still confirmable.
+    const legacyId = await seedStagingBug(t, maintainerId);
+    await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+      token: maintainerId,
+      id: legacyId,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(legacyId)))?.stagingVerifiedAt,
+    ).toBeTruthy();
   });
 
   test("reportStagingIssue sends the item back through the pipeline (staging-redo dispatch)", async () => {
@@ -1657,7 +1746,7 @@ describe("in-app merge (mergeNow)", () => {
     );
     expect(thread.map((m) => m.body)).toEqual([
       "Connie Tributor asked to merge this from the app — merging…",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
   });
 
@@ -1786,6 +1875,10 @@ describe("in-app production promote (silent OTA)", () => {
       verifyOnStaging: boolean;
       stagingVerifiedAt: number;
       productionRequestedAt: number;
+      stagingDeploy: {
+        state: "pending" | "live" | "failed";
+        updatedAt: number;
+      };
     }> = {},
   ): Promise<Id<"devBugs">> {
     const now = Date.now();
@@ -1801,6 +1894,8 @@ describe("in-app production promote (silent OTA)", () => {
         stagingVerifiedAt:
           "stagingVerifiedAt" in overrides ? overrides.stagingVerifiedAt : now,
         productionRequestedAt: overrides.productionRequestedAt,
+        // Omitted → legacy-undefined, treated as live (backward-compat).
+        stagingDeploy: overrides.stagingDeploy,
         shippedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -1837,6 +1932,8 @@ describe("in-app production promote (silent OTA)", () => {
 
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.productionRequestedAt).toBeTruthy();
+    // A successful dispatch starts production deploy observation.
+    expect(bug?.productionDeploy?.state).toBe("pending");
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
@@ -1844,7 +1941,7 @@ describe("in-app production promote (silent OTA)", () => {
     );
     expect(thread.map((m) => m.body)).toEqual([
       "Connie Tributor triggered the production deploy (silent update)",
-      "Production deploy started — the silent update reaches users next time they open the app",
+      "Deploying to production…",
     ]);
   });
 
@@ -2002,6 +2099,61 @@ describe("in-app production promote (silent OTA)", () => {
       { token: maintainerId, id },
     );
     await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("promoteToProduction is gated server-side on the staging deploy being live", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Non-interactive item (skips the sign-off gate) but its staging deploy is
+    // still running — must NOT be shippable to production.
+    const pending = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "pending", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.promoteToProduction, {
+        token: maintainerId,
+        id: pending,
+      }),
+    ).rejects.toThrow(/still running/);
+
+    // Staging deploy failed — nothing is up, so production is blocked.
+    const failed = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "failed", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.promoteToProduction, {
+        token: maintainerId,
+        id: failed,
+      }),
+    ).rejects.toThrow(/staging deploy failed/i);
+
+    // Nothing was dispatched to GitHub for the blocked promotions.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Live staging deploy → the promotion goes through.
+    const live = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "live", updatedAt: Date.now() },
+    });
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id: live },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(live)))?.productionDeploy?.state,
+    ).toBe("pending");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -2500,18 +2652,18 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       { token: maintainerId, id },
     );
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
-      ["system", "Merged — live on staging"],
+      ["system", "Merged — deploying to staging…"],
     ]);
 
-    // The originator got the merged/live-on-staging push (dashboard item, no
-    // chat thread). Non-interactive item, so it's the "live on staging" note,
-    // not a "shipped to production" claim.
-    const shippedPushes = async () =>
+    // A merge only *triggers* the staging deploy: stagingDeploy is pending and
+    // NO staging push fires yet (the "try it" ask waits for the workflow_run).
+    expect(bug?.stagingDeploy?.state).toBe("pending");
+    const stagingPushes = async () =>
       (await t.run(async (ctx) => ctx.db.query("notifications").collect()))
         .filter((n) => n.userId === maintainerId && /staging/i.test(n.title));
-    expect(await shippedPushes()).toHaveLength(1);
+    expect(await stagingPushes()).toHaveLength(0);
 
-    // Replayed delivery: no double system message, no double push.
+    // Replayed delivery: no double system message, still no push.
     const replay = await postWebhook(
       t,
       mergedPrPayload(`claude/devbug-${id}`, true),
@@ -2524,7 +2676,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       { token: maintainerId, id },
     );
     expect(replayedThread).toHaveLength(1);
-    expect(await shippedPushes()).toHaveLength(1);
+    expect(await stagingPushes()).toHaveLength(0);
   });
 
   test("merge done on GitHub while still in CODE_REVIEW correlates via prUrl fallback", async () => {
@@ -2570,7 +2722,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       { token: maintainerId, id },
     );
     expect(thread.map((m) => [m.authorType, m.body])).toEqual([
-      ["system", "Merged — live on staging"],
+      ["system", "Merged — deploying to staging…"],
     ]);
   });
 
@@ -2638,6 +2790,373 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
       ctx.db.query("devBugMessages").collect(),
     );
     expect(messages).toHaveLength(0);
+  });
+
+  // ---- workflow_run: staging/production deploy observation ----
+
+  function workflowRunPayload(
+    name: string,
+    action: string,
+    conclusion: string | null,
+    headSha: string,
+    headBranch = "main",
+    runStartedAt?: string,
+  ): Record<string, unknown> {
+    return {
+      action,
+      workflow_run: {
+        name,
+        status: action === "completed" ? "completed" : "in_progress",
+        conclusion,
+        head_sha: headSha,
+        head_branch: headBranch,
+        ...(runStartedAt ? { run_started_at: runStartedAt } : {}),
+      },
+    };
+  }
+
+  async function seedDeployingBug(
+    t: ReturnType<typeof convexTest>,
+    originatorId: Id<"users">,
+    sha: string,
+    overrides: {
+      verifyOnStaging?: boolean;
+      workflows?: { name: string; conclusion?: string }[];
+    } = {},
+  ): Promise<Id<"devBugs">> {
+    const now = Date.now();
+    return await t.run(async (ctx) =>
+      ctx.db.insert("devBugs", {
+        originatorUserId: originatorId,
+        status: "MERGED",
+        kind: "bug",
+        source: "dashboard",
+        title: "Fix typo",
+        body: "B",
+        verifyOnStaging: overrides.verifyOnStaging,
+        mergeCommitSha: sha,
+        shippedAt: now,
+        stagingDeploy: {
+          state: "pending",
+          workflows: overrides.workflows ?? [],
+          updatedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+  }
+
+  async function stagingPushCount(
+    t: ReturnType<typeof convexTest>,
+    userId: Id<"users">,
+  ): Promise<number> {
+    const notifications = await t.run(async (ctx) =>
+      ctx.db.query("notifications").collect(),
+    );
+    return notifications.filter(
+      (n) => n.userId === userId && /staging/i.test(n.title),
+    ).length;
+  }
+
+  test("a successful staging workflow_run flips the deploy live and fires the try-it push", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedDeployingBug(t, maintainerId, "sha-live", {
+      verifyOnStaging: true,
+    });
+
+    // requested → tracked, still pending, no push.
+    let res = await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "requested", null, "sha-live"),
+      "workflow_run",
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("pending");
+    expect(await stagingPushCount(t, maintainerId)).toBe(0);
+
+    // completed success → the only tracked workflow succeeded, so live.
+    res = await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "completed", "success", "sha-live"),
+      "workflow_run",
+    );
+    expect(res.status).toBe(200);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.stagingDeploy?.state).toBe("live");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toContain(
+      "Live on staging — ready to try it",
+    );
+    expect(await stagingPushCount(t, maintainerId)).toBe(1);
+  });
+
+  test("staging deploy stays pending until EVERY triggered workflow succeeds", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    // Both Convex and mobile were triggered (both paths changed).
+    const id = await seedDeployingBug(t, maintainerId, "sha-both", {
+      verifyOnStaging: true,
+      workflows: [
+        { name: "Deploy Convex" },
+        { name: "Deploy Mobile Update" },
+      ],
+    });
+
+    // First workflow succeeds — the other is still running, so NOT live.
+    await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "completed", "success", "sha-both"),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("pending");
+    expect(await stagingPushCount(t, maintainerId)).toBe(0);
+
+    // Second workflow succeeds — now all tracked workflows are green → live.
+    await postWebhook(
+      t,
+      workflowRunPayload(
+        "Deploy Mobile Update",
+        "completed",
+        "success",
+        "sha-both",
+      ),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("live");
+    expect(await stagingPushCount(t, maintainerId)).toBe(1);
+  });
+
+  test("a failed staging workflow flips to failed with a contact-the-lead-maintainer line and no push", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedDeployingBug(t, maintainerId, "sha-fail", {
+      verifyOnStaging: true,
+      workflows: [
+        { name: "Deploy Convex" },
+        { name: "Deploy Mobile Update" },
+      ],
+    });
+
+    // Even though the OTHER workflow hasn't reported, one failure fails the
+    // whole deploy immediately.
+    await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "completed", "failure", "sha-fail"),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.stagingDeploy?.state).toBe("failed");
+    expect(bug?.stagingDeploy?.failedWorkflow).toBe("Deploy Convex");
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    expect(thread.map((m) => m.body)).toContain(
+      "Staging deploy failed (Deploy Convex) — contact the lead maintainer.",
+    );
+    // Never invite the contributor to test something that isn't up.
+    expect(await stagingPushCount(t, maintainerId)).toBe(0);
+  });
+
+  test("staging workflow_run for an unrelated SHA / non-main branch / already-settled deploy is a no-op", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedDeployingBug(t, maintainerId, "sha-real", {
+      verifyOnStaging: true,
+    });
+
+    // Different SHA — correlates to nothing.
+    await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "completed", "success", "sha-other"),
+      "workflow_run",
+    );
+    // Right SHA but a feature branch, not main.
+    await postWebhook(
+      t,
+      workflowRunPayload(
+        "Deploy Convex",
+        "completed",
+        "success",
+        "sha-real",
+        "feature/x",
+      ),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("pending");
+    expect(await stagingPushCount(t, maintainerId)).toBe(0);
+  });
+
+  test("a production workflow_run moves every pending-prod bug (success → live, failure → failed)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+
+    const now = Date.now();
+    const seedProd = async (): Promise<Id<"devBugs">> =>
+      await t.run(async (ctx) =>
+        ctx.db.insert("devBugs", {
+          originatorUserId: maintainerId,
+          status: "MERGED",
+          kind: "bug",
+          source: "dashboard",
+          title: "Fix typo",
+          body: "B",
+          shippedAt: now,
+          stagingVerifiedAt: now,
+          productionDeploy: { state: "pending", updatedAt: now },
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+
+    // Success path.
+    const liveId = await seedProd();
+    await postWebhook(
+      t,
+      // Prod runs deploy everything on main — the SHA/branch are irrelevant to
+      // correlation (global-by-state).
+      workflowRunPayload("Deploy to Production", "completed", "success", "any"),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const live = await t.run(async (ctx) => ctx.db.get(liveId));
+    expect(live?.productionDeploy?.state).toBe("live");
+    const liveThread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id: liveId },
+    );
+    expect(liveThread.map((m) => m.body)).toContain("Live in production 🎉");
+
+    // Failure path — a fresh pending-prod bug.
+    const failId = await seedProd();
+    await postWebhook(
+      t,
+      workflowRunPayload("Deploy to Production", "completed", "failure", "any"),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const failed = await t.run(async (ctx) => ctx.db.get(failId));
+    expect(failed?.productionDeploy?.state).toBe("failed");
+    const failThread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id: failId },
+    );
+    expect(failThread.map((m) => m.body)).toContain(
+      "Production deploy failed — contact the lead maintainer.",
+    );
+    // The already-live bug from the success path isn't touched by the failure.
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(liveId)))?.productionDeploy?.state,
+    ).toBe("live");
+  });
+
+  test("a production run only settles bugs requested before it started (A/B race)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+
+    const now = Date.now();
+    const runStarted = now; // item A's run begins here.
+    const seedProdAt = async (requestedAt: number): Promise<Id<"devBugs">> =>
+      await t.run(async (ctx) =>
+        ctx.db.insert("devBugs", {
+          originatorUserId: maintainerId,
+          status: "MERGED",
+          kind: "bug",
+          source: "dashboard",
+          title: "Fix typo",
+          body: "B",
+          shippedAt: now,
+          stagingVerifiedAt: now,
+          productionDeploy: { state: "pending", requestedAt, updatedAt: requestedAt },
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+
+    // A requested before the run started; B requested a minute AFTER it started
+    // (a second promotion while A's deploy was still in flight).
+    const aId = await seedProdAt(runStarted - 60_000);
+    const bId = await seedProdAt(runStarted + 60_000);
+
+    // A's run completes — it covers A but NOT B.
+    await postWebhook(
+      t,
+      workflowRunPayload(
+        "Deploy to Production",
+        "completed",
+        "success",
+        "any",
+        "main",
+        new Date(runStarted).toISOString(),
+      ),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(aId)))?.productionDeploy?.state,
+    ).toBe("live");
+    // B was requested after A's run began — it must still be pending, waiting
+    // for its OWN run.
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(bId)))?.productionDeploy?.state,
+    ).toBe("pending");
+  });
+
+  test("the webhook accepts and schedules a workflow_run event (endpoint wiring)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const id = await seedDeployingBug(t, maintainerId, "sha-wire");
+
+    const res = await postWebhook(
+      t,
+      workflowRunPayload("Deploy Convex", "completed", "success", "sha-wire"),
+      "workflow_run",
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("received");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    // Non-interactive item: goes live, honest "live on staging" note.
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(id)))?.stagingDeploy?.state,
+    ).toBe("live");
   });
 });
 
@@ -3126,7 +3645,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
 
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
     // GitHub confirmed the merge, so the action applies MERGED itself via
     // the trusted "automerge" source — the row must not strand at
@@ -3145,7 +3664,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
   });
 
@@ -3167,7 +3686,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
@@ -3203,7 +3722,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
   });
 
@@ -3288,7 +3807,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       "Code review passed ✓",
       "Ready to merge",
       "Auto-merged ✓ — all gates passed (low risk, review approved)",
-      "Merged — live on staging",
+      "Merged — deploying to staging…",
     ]);
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("MERGED");
