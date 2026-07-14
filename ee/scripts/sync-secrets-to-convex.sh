@@ -105,6 +105,20 @@ SECRET_KEYS=(
   "CLAUDE_ROUTINES_TRIGGER_URL"
   "CLAUDE_ROUTINES_TOKEN"
   "DEV_ASSISTANT_CALLBACK_SECRET"
+  # Dev-assistant merge/deploy pipeline. These are read by Convex functions
+  # (apps/convex/functions/devAssistant/actions.ts, apps/convex/http.ts), so
+  # they MUST reach the Convex env — not just GitHub. Each is optional: missing
+  # items are skipped, leaving the documented safe default (auto-merge off,
+  # webhook secret falls back to DEV_ASSISTANT_CALLBACK_SECRET).
+  #   GH_MIRROR_TOKEN       - PAT for in-app merge, auto-merge, and prod-deploy
+  #                           dispatch (needs Issues + Contents + Actions r/w).
+  #   GITHUB_WEBHOOK_SECRET - HMAC secret for the inbound PR-closed webhook.
+  #   AUTO_MERGE_ENABLED    - master switch; must be exactly "true" to arm.
+  #   AUTO_MERGE_METHOD     - squash (default) | merge | rebase.
+  "GH_MIRROR_TOKEN"
+  "GITHUB_WEBHOOK_SECRET"
+  "AUTO_MERGE_ENABLED"
+  "AUTO_MERGE_METHOD"
 )
 
 # ---------------------------------------------------------------------------

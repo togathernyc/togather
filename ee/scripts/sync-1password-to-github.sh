@@ -144,16 +144,21 @@ OPTIONAL_SECRETS=(
   "EXPO_PUBLIC_POSTHOG_API_KEY"
   "GOOGLE_MAPS_API_KEY"
   "EXPO_PUBLIC_KLIPY_API_KEY"
-  # Repo automation token used by GitHub Actions (mirror push). CI-only — it is
-  # NOT forwarded to Convex/Expo (absent from sync-secrets-to-convex.sh). Named
-  # GH_MIRROR_TOKEN, not GITHUB_MIRROR_TOKEN, because GitHub reserves the
-  # GITHUB_ prefix for secret names (`gh secret set GITHUB_*` → HTTP 422).
+  # Repo automation token. Used by the GitHub Actions mirror-push workflow AND
+  # forwarded to Convex (it's in sync-secrets-to-convex.sh SECRET_KEYS) because
+  # the dev-assistant in-app merge, auto-merge, and prod-deploy dispatch read it
+  # at runtime. Named GH_MIRROR_TOKEN, not GITHUB_MIRROR_TOKEN, because GitHub
+  # reserves the GITHUB_ prefix for secret names (`gh secret set GITHUB_*` → 422).
   "GH_MIRROR_TOKEN"
-  # Dev-assistant bot (@Togather pipeline). Optional — only present once the
-  # feature is being enabled; missing items are skipped without failing.
+  # Dev-assistant bot (@Togather pipeline) + merge/deploy config. Optional —
+  # only present once the feature is being enabled; missing items are skipped
+  # without failing. The merge/deploy keys below are also forwarded to Convex.
   "CLAUDE_ROUTINES_TRIGGER_URL"
   "CLAUDE_ROUTINES_TOKEN"
   "DEV_ASSISTANT_CALLBACK_SECRET"
+  "GITHUB_WEBHOOK_SECRET"
+  "AUTO_MERGE_ENABLED"
+  "AUTO_MERGE_METHOD"
 )
 
 # ---------------------------------------------------------------------------
