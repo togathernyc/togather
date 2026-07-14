@@ -26,6 +26,7 @@ export function StatusChip({
     | "stagingVerifiedAt"
     | "fixRounds"
     | "redoRounds"
+    | "activeRunMode"
   >;
 }) {
   const { label, color, icon } = statusPresentation(contribution);

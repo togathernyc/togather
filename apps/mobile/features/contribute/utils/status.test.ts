@@ -21,6 +21,7 @@ type StatusInput = Pick<
   | "stagingVerifiedAt"
   | "fixRounds"
   | "redoRounds"
+  | "activeRunMode"
 >;
 
 function make(overrides: Partial<StatusInput> & Pick<StatusInput, "status">): StatusInput {
@@ -120,67 +121,115 @@ describe("isArchived", () => {
 });
 
 describe("isRerun", () => {
-  it("is true for a staging-driven rebuild (redoRounds > 0) across the build states", () => {
-    for (const status of ["READY_FOR_IMPL", "IN_PROGRESS", "CODE_REVIEW"] as const) {
-      expect(isRerun(make({ status, redoRounds: 1 }))).toBe(true);
-    }
+  it("is true for a staging redo whose rebuild run is in flight (implement mode)", () => {
+    expect(
+      isRerun(make({ status: "IN_PROGRESS", redoRounds: 1, activeRunMode: "implement" })),
+    ).toBe(true);
   });
 
-  it("is true while fixing review feedback (fixRounds > 0) in the build/review states", () => {
-    for (const status of ["IN_PROGRESS", "CODE_REVIEW"] as const) {
-      expect(isRerun(make({ status, fixRounds: 2 }))).toBe(true);
-    }
+  it("is true while a fix run is actively addressing review feedback (fix mode)", () => {
+    expect(
+      isRerun(make({ status: "CODE_REVIEW", fixRounds: 2, activeRunMode: "fix" })),
+    ).toBe(true);
   });
 
-  it("is false on a first build (no fix/redo rounds)", () => {
-    for (const status of ["READY_FOR_IMPL", "IN_PROGRESS", "CODE_REVIEW"] as const) {
-      expect(isRerun(make({ status }))).toBe(false);
-      expect(isRerun(make({ status, fixRounds: 0, redoRounds: 0 }))).toBe(false);
-    }
+  it("is false when the counter is set but no matching run is active (stale counter)", () => {
+    // redoRounds recorded but the build hasn't been stamped yet (re-queued).
+    expect(isRerun(make({ status: "IN_PROGRESS", redoRounds: 1 }))).toBe(false);
+    // fixRounds recorded but no fix run in flight.
+    expect(isRerun(make({ status: "CODE_REVIEW", fixRounds: 1 }))).toBe(false);
   });
 
-  it("is false outside the active build states even with rounds recorded", () => {
-    // A merged item carries the round counters from its build, but it's no
-    // longer actively reworking.
-    expect(isRerun(make({ status: "MERGED", redoRounds: 1, fixRounds: 1 }))).toBe(false);
-    expect(isRerun(make({ status: "IN_REVIEW", fixRounds: 1 }))).toBe(false);
+  it("is false for an EXHAUSTED fix loop — needs a human, not actively fixing", () => {
+    // Budget spent: the last dispatch was the review run (mode "review"), no
+    // fix run was dispatched, yet fixRounds is still 3.
+    expect(
+      isRerun(make({ status: "CODE_REVIEW", fixRounds: 3, activeRunMode: "review" })),
+    ).toBe(false);
+  });
+
+  it("is false once a redo's rebuild has reported back (mode moved to review)", () => {
+    expect(
+      isRerun(make({ status: "CODE_REVIEW", redoRounds: 1, activeRunMode: "review" })),
+    ).toBe(false);
+    expect(
+      isRerun(make({ status: "READY_TO_MERGE", redoRounds: 1, activeRunMode: "review" })),
+    ).toBe(false);
+  });
+
+  it("is false on a first build (no rounds) even with a run active", () => {
+    expect(
+      isRerun(make({ status: "IN_PROGRESS", activeRunMode: "implement" })),
+    ).toBe(false);
+    expect(isRerun(make({ status: "CODE_REVIEW", activeRunMode: "fix" }))).toBe(false);
+  });
+
+  it("is false outside the active build states even with rounds and a mode recorded", () => {
+    // A merged item carries the counters + last mode, but is no longer reworking.
+    expect(
+      isRerun(make({ status: "MERGED", redoRounds: 1, fixRounds: 1, activeRunMode: "review" })),
+    ).toBe(false);
   });
 });
 
 describe("statusPresentation — rerun framing", () => {
-  it("frames a staging redo as reworking from the staging note (redoRounds > 0)", () => {
-    for (const status of ["READY_FOR_IMPL", "IN_PROGRESS", "CODE_REVIEW"] as const) {
-      expect(statusPresentation(make({ status, redoRounds: 1 })).label).toBe(
-        "Reworking from your staging note",
-      );
-    }
-  });
-
-  it("frames an active fix round as fixing review feedback (fixRounds > 0)", () => {
-    for (const status of ["IN_PROGRESS", "CODE_REVIEW"] as const) {
-      expect(statusPresentation(make({ status, fixRounds: 1 })).label).toBe(
-        "Fixing review feedback",
-      );
-    }
-  });
-
-  it("prefers the staging-redo framing when both counters are set", () => {
+  it("frames a staging redo's active rebuild as reworking from the staging note", () => {
     expect(
-      statusPresentation(make({ status: "IN_PROGRESS", redoRounds: 1, fixRounds: 2 })).label,
+      statusPresentation(
+        make({ status: "IN_PROGRESS", redoRounds: 1, activeRunMode: "implement" }),
+      ).label,
     ).toBe("Reworking from your staging note");
+  });
+
+  it("frames an active fix run as fixing review feedback", () => {
+    expect(
+      statusPresentation(
+        make({ status: "CODE_REVIEW", fixRounds: 1, activeRunMode: "fix" }),
+      ).label,
+    ).toBe("Fixing review feedback");
+  });
+
+  it("does NOT show 'Fixing review feedback' for an exhausted fix loop", () => {
+    // fixRounds spent, awaiting a human — mode is "review", not "fix".
+    expect(
+      statusPresentation(
+        make({ status: "CODE_REVIEW", fixRounds: 3, activeRunMode: "review" }),
+      ).label,
+    ).toBe("In code review");
+  });
+
+  it("does NOT show a rerun label for a stale counter with no matching run", () => {
+    expect(
+      statusPresentation(make({ status: "IN_PROGRESS", redoRounds: 1 })).label,
+    ).toBe("Building");
+    expect(
+      statusPresentation(make({ status: "CODE_REVIEW", fixRounds: 1 })).label,
+    ).toBe("In code review");
+  });
+
+  it("falls back to the normal label once a redo's rebuild reported back", () => {
+    expect(
+      statusPresentation(
+        make({ status: "CODE_REVIEW", redoRounds: 1, activeRunMode: "review" }),
+      ).label,
+    ).toBe("In code review");
   });
 
   it("keeps the generic labels for a first build (no rounds)", () => {
     expect(statusPresentation(make({ status: "READY_FOR_IMPL" })).label).toBe("Queued to build");
-    expect(statusPresentation(make({ status: "IN_PROGRESS" })).label).toBe("Building");
-    expect(statusPresentation(make({ status: "CODE_REVIEW" })).label).toBe("In code review");
+    expect(
+      statusPresentation(make({ status: "IN_PROGRESS", activeRunMode: "implement" })).label,
+    ).toBe("Building");
+    expect(
+      statusPresentation(make({ status: "CODE_REVIEW", activeRunMode: "fix" })).label,
+    ).toBe("In code review");
   });
 
-  it("does not apply rerun framing to READY_FOR_IMPL for a fix round (fix rounds live in build/review)", () => {
-    // fixRounds only reframes IN_PROGRESS/CODE_REVIEW; a queued item without a
-    // redo is still a plain "Queued to build".
-    expect(statusPresentation(make({ status: "READY_FOR_IMPL", fixRounds: 1 })).label).toBe(
-      "Queued to build",
-    );
+  it("keeps 'Queued to build' for a redo re-queued at READY_FOR_IMPL (no run yet)", () => {
+    // The redo re-queues with activeRunMode cleared; the rework label waits for
+    // the rebuild to start.
+    expect(
+      statusPresentation(make({ status: "READY_FOR_IMPL", redoRounds: 1 })).label,
+    ).toBe("Queued to build");
   });
 });
