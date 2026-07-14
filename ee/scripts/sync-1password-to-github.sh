@@ -177,6 +177,32 @@ AUTO_MERGE_DEFAULTS=(
 )
 
 # ---------------------------------------------------------------------------
+# Set a GitHub environment secret, retrying transient failures.
+# ---------------------------------------------------------------------------
+# `gh secret set` occasionally fails on a transient GitHub API 502 while
+# fetching the environment public key (seen in the auto-triggered sync). The
+# call is idempotent — setting the same value again is harmless — so retry a
+# few times with backoff before giving up. Reads the value from stdin so secret
+# values never appear in the process table. Returns non-zero only after all
+# attempts fail.
+gh_secret_set_retry() {
+  local key="$1" env="$2" value
+  value="$(cat)"
+  local attempt=1 max=3
+  while true; do
+    if printf '%s' "$value" | gh secret set "$key" --env "$env" --repo "$REPO"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$max" ]; then
+      return 1
+    fi
+    echo "  (transient failure — retry $attempt/$((max - 1)) in $((attempt * 3))s)"
+    sleep $((attempt * 3))
+    attempt=$((attempt + 1))
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Sync function
 # ---------------------------------------------------------------------------
 sync_environment() {
@@ -205,7 +231,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
+        if printf '%s' "$VALUE" | gh_secret_set_retry "$KEY" "$env"; then
           echo " done"
         else
           echo " FAILED"
@@ -231,7 +257,7 @@ sync_environment() {
         echo "  [dry-run] Would set $KEY"
       else
         echo -n "  Setting $KEY..."
-        if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
+        if printf '%s' "$VALUE" | gh_secret_set_retry "$KEY" "$env"; then
           echo " done"
         else
           echo " FAILED"
@@ -259,7 +285,7 @@ sync_environment() {
       echo "  [dry-run] Would set $KEY=$VALUE"
     else
       echo -n "  Setting $KEY=$VALUE..."
-      if printf '%s' "$VALUE" | gh secret set "$KEY" --env "$env" --repo "$REPO"; then
+      if printf '%s' "$VALUE" | gh_secret_set_retry "$KEY" "$env"; then
         echo " done"
       else
         echo " FAILED"
@@ -279,7 +305,7 @@ sync_environment() {
       echo "  [dry-run] Would set IMAGE_CDN_URL (alias for R2_PUBLIC_URL)"
     else
       echo -n "  Setting IMAGE_CDN_URL (alias for R2_PUBLIC_URL)..."
-      if printf '%s' "$R2_URL" | gh secret set "IMAGE_CDN_URL" --env "$env" --repo "$REPO"; then
+      if printf '%s' "$R2_URL" | gh_secret_set_retry "IMAGE_CDN_URL" "$env"; then
         echo " done"
       else
         echo " FAILED"

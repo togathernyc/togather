@@ -1,6 +1,10 @@
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 import { GhostThreadPointer } from '../GhostThreadPointer';
+
+/** Flatten an RN style prop (array | object | falsy) into a single object. */
+const flatten = (style: unknown) => StyleSheet.flatten(style as any) ?? {};
 
 // Theme stub — GhostThreadPointer only reads a handful of color tokens.
 jest.mock('@hooks/useTheme', () => ({
@@ -114,6 +118,49 @@ describe('GhostThreadPointer', () => {
     expect(queryByText('Me')).toBeNull();
   });
 
+  it('renders a muted "Original message" label so the echo reads as a reference, not a duplicate', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+      />,
+    );
+
+    // The label is uppercased at render time via textTransform, so match the
+    // source casing (not the on-screen glyphs).
+    expect(getByText('↪ Original message')).toBeTruthy();
+  });
+
+  it('shows the "Original message" label even for own-authored (right-aligned) echoes', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Can we move it to 7:30 instead?"
+        originalSenderId={ME}
+        senderName="Me"
+      />,
+    );
+
+    expect(getByText('↪ Original message')).toBeTruthy();
+  });
+
+  it('keeps the label on a deleted original (label sits alongside the deleted treatment)', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent=""
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        isDeleted
+      />,
+    );
+
+    expect(getByText('↪ Original message')).toBeTruthy();
+    expect(getByText('This message was deleted')).toBeTruthy();
+  });
+
   it('shows a placeholder for an image-only original', () => {
     const { getByText } = render(
       <GhostThreadPointer
@@ -140,6 +187,41 @@ describe('GhostThreadPointer', () => {
     );
 
     expect(getByText('This message was deleted')).toBeTruthy();
+  });
+
+  it('keeps the deleted/attachment placeholder at full opacity (not double-dimmed)', () => {
+    // Regression: the bubble was dimmed via `opacity` on the Pressable, which
+    // RN composites onto children — dropping the already-muted placeholder text
+    // (textTertiary) to ~1.9:1 contrast on the dark themes. The dim now lives on
+    // the bubble background + normal text only, so the placeholder must NOT carry
+    // a reduced opacity.
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent=""
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        attachments={[{ type: 'image' }]}
+      />,
+    );
+
+    const placeholderStyle = flatten(getByText('📷 Photo').props.style);
+    // No dimming opacity on placeholder text (undefined or a full 1).
+    expect(placeholderStyle.opacity ?? 1).toBe(1);
+  });
+
+  it('dims normal (non-placeholder) message text so the echo still reads as faded', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+      />,
+    );
+
+    const textStyle = flatten(getByText("Who's bringing snacks?").props.style);
+    expect(textStyle.opacity).toBeLessThan(1);
   });
 
   it('tapping the "N replies" pill opens the thread (not scroll-to-original)', () => {
