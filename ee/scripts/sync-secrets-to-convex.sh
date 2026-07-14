@@ -73,6 +73,21 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# 1b. Auto-merge switches (always set, with safe defaults)
+# ---------------------------------------------------------------------------
+# Unlike secrets, these are on/off config where "unset = off" is how an
+# operator disables the feature. set_convex_env skips empty values, so routing
+# them through the optional loop below would mean removing AUTO_MERGE_ENABLED
+# from 1Password/GitHub does NOT clear a previously-synced "true" — auto-merge
+# would keep running. Set them explicitly every sync so 1Password fully controls
+# them: blank/remove the item to disable, set it to "true" to arm.
+echo "Setting auto-merge switches..."
+set_convex_env "AUTO_MERGE_ENABLED" "${AUTO_MERGE_ENABLED:-false}"
+set_convex_env "AUTO_MERGE_METHOD" "${AUTO_MERGE_METHOD:-squash}"
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # 2. Whitelist of secret keys to sync
 # ---------------------------------------------------------------------------
 SECRET_KEYS=(
@@ -105,6 +120,21 @@ SECRET_KEYS=(
   "CLAUDE_ROUTINES_TRIGGER_URL"
   "CLAUDE_ROUTINES_TOKEN"
   "DEV_ASSISTANT_CALLBACK_SECRET"
+  # Dev-assistant merge/deploy secrets. Read by Convex functions
+  # (apps/convex/functions/devAssistant/actions.ts, apps/convex/http.ts), so
+  # they MUST reach the Convex env — not just GitHub. Optional: missing items
+  # are skipped (a token that transiently fails to load must not wipe the live
+  # Convex value).
+  #   GH_MIRROR_TOKEN   - PAT for in-app merge, auto-merge, and prod-deploy
+  #                       dispatch (needs Issues + Contents + Actions r/w).
+  #   GH_WEBHOOK_SECRET - HMAC secret for the inbound PR-closed webhook. Named
+  #                       GH_*, not GITHUB_*, because GitHub reserves the
+  #                       GITHUB_ secret-name prefix (`gh secret set GITHUB_*`
+  #                       -> 422). Falls back to DEV_ASSISTANT_CALLBACK_SECRET.
+  # The AUTO_MERGE_* switches are handled in section 1b (set explicitly, not
+  # skipped) so removing the source item actually disables auto-merge.
+  "GH_MIRROR_TOKEN"
+  "GH_WEBHOOK_SECRET"
 )
 
 # ---------------------------------------------------------------------------

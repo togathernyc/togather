@@ -1407,13 +1407,15 @@ http.route({
     const body = await request.text();
 
     // Falls back to the dev-assistant callback secret so a single shared
-    // secret can serve both inbound channels; set GITHUB_WEBHOOK_SECRET to
-    // split them without a code change.
+    // secret can serve both inbound channels; set GH_WEBHOOK_SECRET to
+    // split them without a code change. (Named GH_*, not GITHUB_*, because
+    // GitHub reserves the GITHUB_ secret-name prefix, so a GITHUB_-prefixed
+    // secret can't sync through 1Password -> GitHub -> Convex.)
     const secret =
-      process.env.GITHUB_WEBHOOK_SECRET ??
+      process.env.GH_WEBHOOK_SECRET ??
       process.env.DEV_ASSISTANT_CALLBACK_SECRET;
     if (!secret) {
-      console.error("[GithubWebhook] GITHUB_WEBHOOK_SECRET not configured");
+      console.error("[GithubWebhook] GH_WEBHOOK_SECRET not configured");
       return new Response("GitHub webhook not configured", { status: 503 });
     }
 

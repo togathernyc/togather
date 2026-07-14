@@ -62,7 +62,7 @@ afterEach(async () => {
   delete process.env.DEV_ASSISTANT_CALLBACK_SECRET;
   delete process.env.GH_MIRROR_TOKEN;
   delete process.env.GITHUB_MIRROR_TOKEN;
-  delete process.env.GITHUB_WEBHOOK_SECRET;
+  delete process.env.GH_WEBHOOK_SECRET;
   delete process.env.AUTO_MERGE_ENABLED;
   delete process.env.AUTO_MERGE_METHOD;
 });
@@ -2346,7 +2346,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     );
   }
 
-  test("503 when GITHUB_WEBHOOK_SECRET is unset; 401 on missing or bad signature", async () => {
+  test("503 when GH_WEBHOOK_SECRET is unset; 401 on missing or bad signature", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
 
@@ -2358,7 +2358,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     });
     expect(res.status).toBe(503);
 
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
 
     // Missing header -> 401.
     res = await t.fetch("/github/webhook", { method: "POST", body: "{}" });
@@ -2381,18 +2381,18 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     expect(res.status).toBe(401);
   });
 
-  test("falls back to DEV_ASSISTANT_CALLBACK_SECRET when GITHUB_WEBHOOK_SECRET is unset", async () => {
+  test("falls back to DEV_ASSISTANT_CALLBACK_SECRET when GH_WEBHOOK_SECRET is unset", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     process.env.DEV_ASSISTANT_CALLBACK_SECRET = WEBHOOK_SECRET;
 
-    // No GITHUB_WEBHOOK_SECRET: not a 503 — the shared secret verifies.
+    // No GH_WEBHOOK_SECRET: not a 503 — the shared secret verifies.
     const ping = await postWebhook(t, { zen: "One secret, two doors." }, "ping");
     expect(ping.status).toBe(200);
     expect(await ping.text()).toBe("ignored");
 
-    // An explicit GITHUB_WEBHOOK_SECRET wins over the fallback.
-    process.env.GITHUB_WEBHOOK_SECRET = "a-different-secret";
+    // An explicit GH_WEBHOOK_SECRET wins over the fallback.
+    process.env.GH_WEBHOOK_SECRET = "a-different-secret";
     const res = await t.fetch("/github/webhook", {
       method: "POST",
       body: "{}",
@@ -2407,7 +2407,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
   test("non-pull_request events and non-closed actions are acked and ignored", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
 
     const ping = await postWebhook(t, { zen: "Design for failure." }, "ping");
     expect(ping.status).toBe(200);
@@ -2425,7 +2425,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
     const id = await seedPrBug(t, maintainerId, "READY_TO_MERGE");
 
     const res = await postWebhook(
@@ -2475,7 +2475,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
     // Branch doesn't follow the claude/devbug-<id> convention; correlation
     // falls back to matching html_url against the stored prUrl.
     const id = await seedPrBug(t, maintainerId, "CODE_REVIEW");
@@ -2493,7 +2493,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
     // The implementation callback never landed: the row is still IN_PROGRESS
     // when a maintainer merges the PR directly on GitHub.
     const id = await seedPrBug(t, maintainerId, "IN_PROGRESS");
@@ -2522,7 +2522,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
     const id = await seedPrBug(t, maintainerId, "CODE_REVIEW");
 
     const res = await postWebhook(
@@ -2561,7 +2561,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
-    process.env.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
     const id = await seedPrBug(t, maintainerId, "READY_TO_MERGE");
 
     // Neither the branch nor the html_url matches anything we track.
