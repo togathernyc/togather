@@ -177,8 +177,11 @@ export default function GuestListScreen() {
 
       {/* Content Area */}
       <View style={styles.contentWrapper}>
-        {/* Guest List */}
-        {renderGuestList()}
+        {/* Guest list is only rendered for RSVP'd users. The restricted-access
+            overlay is a scrim, not a guaranteed blur (blur is disabled on the
+            native New Architecture and is inspectable in the web DOM), so we
+            must not render guest data at all until the user has access. */}
+        {hasRsvpd && renderGuestList()}
 
         {/* Restricted Access Overlay - covers full content area */}
         {!hasRsvpd && (
