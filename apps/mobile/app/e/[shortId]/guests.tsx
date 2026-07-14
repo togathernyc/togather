@@ -14,7 +14,7 @@ import { useQuery, api } from "@services/api/convex";
 import { useAuth } from "@/providers/AuthProvider";
 import { Avatar } from "@components/ui/Avatar";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
-import { BlurView } from "expo-blur";
+import { SafeBlurView } from "@components/ui/SafeBlurView";
 import {
   getEmojiForOption,
   getCleanLabel,
@@ -182,7 +182,7 @@ export default function GuestListScreen() {
 
         {/* Restricted Access Overlay - covers full content area */}
         {!hasRsvpd && (
-          <BlurView
+          <SafeBlurView
             intensity={50}
             tint="dark"
             style={styles.blurOverlay}
@@ -210,7 +210,7 @@ export default function GuestListScreen() {
                 </Text>
               </View>
             </View>
-          </BlurView>
+          </SafeBlurView>
         )}
       </View>
     </SafeAreaView>
