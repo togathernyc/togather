@@ -39,6 +39,16 @@ import { AppImage } from '@components/ui';
 import type { Id } from '@services/api/convex';
 import { ThreadReplies } from './ThreadReplies';
 
+/**
+ * How dim the echo reads versus a real message. The reporter's words: "smaller
+ * and more transparent to signify it's an old message." Kept within the
+ * spec's ≈55–65% band so it's clearly secondary chrome without dimming the
+ * (already muted) deleted/attachment placeholder text into illegibility. Theme
+ * colors underneath stay intact — this is opacity only, so it degrades
+ * correctly across all four themes rather than hard-coding a light-theme tint.
+ */
+const DIM_OPACITY = 0.6;
+
 interface GhostThreadPointerProps {
   parentMessageId: Id<"chatMessages">;
   channelId?: Id<"chatChannels">;
@@ -139,13 +149,14 @@ export function GhostThreadPointer({
       ]}
     >
       {/* Author avatar — only on the left (other-side) preview, mirroring a
-          real row. Shows the ORIGINAL author (this is an echo of their message). */}
+          real row. Shows the ORIGINAL author (this is an echo of their message).
+          Dimmed + shrunk so it reads as secondary chrome, not a new post. */}
       {!alignRight && (
-        <View style={styles.avatarContainer}>
+        <View style={[styles.avatarContainer, { opacity: DIM_OPACITY }]}>
           <AppImage
             source={senderProfilePhoto}
             style={styles.avatar}
-            optimizedWidth={50}
+            optimizedWidth={40}
             placeholder={{
               type: 'initials',
               name: senderName || 'User',
@@ -156,14 +167,24 @@ export function GhostThreadPointer({
       )}
 
       <View style={[styles.content, alignRight ? styles.contentOwn : styles.contentOther]}>
-        {/* Original author's name — only on the left (other-side) preview. */}
+        {/* Muted "Original message" label — makes the echo's purpose explicit
+            (it's a reference back to the earlier message, not a new post)
+            rather than leaving it implied by styling alone. */}
+        <Text style={[styles.originalLabel, { color: colors.textTertiary }]} numberOfLines={1}>
+          ↪ Original message
+        </Text>
+
+        {/* Original author's name — only on the left (other-side) preview.
+            Smaller/muted to match the echo's reduced weight. */}
         {!alignRight && (
           <Text style={[styles.senderName, { color: colors.textSecondary }]} numberOfLines={1}>
             {senderName || 'Unknown'}
           </Text>
         )}
 
-        {/* The echoed original message. Tapping it scrolls up to the real one. */}
+        {/* The echoed original message. Tapping it scrolls up to the real one.
+            Dimmed and physically smaller than a real bubble so it never reads
+            as a duplicate post. */}
         <Pressable
           onPress={onScrollToOriginal}
           accessibilityRole="button"
@@ -174,7 +195,7 @@ export function GhostThreadPointer({
             alignRight ? styles.bubbleOwn : styles.bubbleOther,
             {
               backgroundColor: alignRight ? colors.chatBubbleOwn : colors.chatBubbleOther,
-              opacity: pressed ? 0.7 : 1,
+              opacity: pressed ? DIM_OPACITY * 0.8 : DIM_OPACITY,
             },
           ]}
         >
@@ -211,16 +232,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   avatarContainer: {
-    width: 24,
-    height: 24,
+    width: 20,
+    height: 20,
     marginRight: 6,
-    marginTop: 18, // drop below the sender-name line so it aligns with the bubble
+    marginTop: 2, // sit level with the "Original message" label line
     flexShrink: 0,
   },
   avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
   },
   content: {
     maxWidth: '75%',
@@ -232,16 +253,24 @@ const styles = StyleSheet.create({
   contentOther: {
     alignItems: 'flex-start',
   },
+  originalLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+    marginHorizontal: 4,
+  },
   senderName: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     marginBottom: 2,
     marginLeft: 12,
   },
   bubble: {
-    borderRadius: 14,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
   },
   bubbleOwn: {
     borderBottomRightRadius: 3,
@@ -250,8 +279,8 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 3,
   },
   bubbleText: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 12.5,
+    lineHeight: 16,
   },
   placeholderText: {
     fontStyle: 'italic',

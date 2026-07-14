@@ -114,6 +114,49 @@ describe('GhostThreadPointer', () => {
     expect(queryByText('Me')).toBeNull();
   });
 
+  it('renders a muted "Original message" label so the echo reads as a reference, not a duplicate', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Who's bringing snacks?"
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+      />,
+    );
+
+    // The label is uppercased at render time via textTransform, so match the
+    // source casing (not the on-screen glyphs).
+    expect(getByText('↪ Original message')).toBeTruthy();
+  });
+
+  it('shows the "Original message" label even for own-authored (right-aligned) echoes', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent="Can we move it to 7:30 instead?"
+        originalSenderId={ME}
+        senderName="Me"
+      />,
+    );
+
+    expect(getByText('↪ Original message')).toBeTruthy();
+  });
+
+  it('keeps the label on a deleted original (label sits alongside the deleted treatment)', () => {
+    const { getByText } = render(
+      <GhostThreadPointer
+        {...baseProps}
+        originalContent=""
+        originalSenderId={SOMEONE_ELSE}
+        senderName="Samuel Baker"
+        isDeleted
+      />,
+    );
+
+    expect(getByText('↪ Original message')).toBeTruthy();
+    expect(getByText('This message was deleted')).toBeTruthy();
+  });
+
   it('shows a placeholder for an image-only original', () => {
     const { getByText } = render(
       <GhostThreadPointer

@@ -514,11 +514,25 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const [selectedMessageSenderPhoto, setSelectedMessageSenderPhoto] = useState<string | undefined>();
   const [selectedMessageAttachments, setSelectedMessageAttachments] = useState<Array<{ type: string; url: string }> | undefined>();
   const [replyToMessageId, setReplyToMessageId] = useState<Id<"chatMessages"> | null>(null);
+  // The tapped message's already-in-hand name/preview, captured when the reply
+  // is initiated. Used as the immediate (and, for optimistic messages, only)
+  // source for the "Replying to …" banner — see the fetch guard below.
+  const [replyToLocal, setReplyToLocal] = useState<{ content: string; senderName?: string } | null>(null);
 
   // Load the parent message when a reply is in progress so the composer can
   // show a real "Replying to <name>: <preview>" banner instead of the empty
   // placeholder it used to render.
-  const { message: replyParentMessage } = useParentMessage(replyToMessageId);
+  //
+  // A just-sent message is still optimistic: its id is a synthetic
+  // `optimistic-…` string the server query can't resolve, so we skip the fetch
+  // for those ids (it would only ever come back empty) and rely on the local
+  // preview captured at reply time. Real messages still fetch as before so
+  // edits/latest content override the local snapshot.
+  const isOptimisticReplyTarget =
+    typeof replyToMessageId === "string" && replyToMessageId.startsWith("optimistic-");
+  const { message: replyParentMessage } = useParentMessage(
+    isOptimisticReplyTarget ? null : replyToMessageId
+  );
 
   // Sync modal state
   const [syncModalVisible, setSyncModalVisible] = useState(false);
@@ -635,6 +649,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     (slug: string) => {
       // Clear reply when switching tabs
       setReplyToMessageId(null);
+      setReplyToLocal(null);
       // Navigate via URL for URL-based tab routing, preserving params
       if (resolvedGroupId) {
         router.replace({
@@ -846,10 +861,20 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   }, [groupDetails, groupData, displayName]);
 
   // Message action handlers
-  const handleMessageReply = useCallback((messageId: Id<"chatMessages">) => {
-    setReplyToMessageId(messageId);
-    setOverlayVisible(false);
-  }, []);
+  const handleMessageReply = useCallback(
+    (
+      messageId: Id<"chatMessages">,
+      localPreview?: { content: string; senderName?: string },
+    ) => {
+      setReplyToMessageId(messageId);
+      // Capture the tapped message's name/preview so the reply banner is never
+      // blank — critical for a just-sent (optimistic) message whose id the
+      // server can't resolve yet.
+      setReplyToLocal(localPreview ?? null);
+      setOverlayVisible(false);
+    },
+    [],
+  );
 
   const handleMessageReact = useCallback((messageId: Id<"chatMessages">) => {
     // This is called when "React" is tapped from the action sheet
@@ -1014,6 +1039,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   const handleCancelReply = useCallback(() => {
     setReplyToMessageId(null);
+    setReplyToLocal(null);
   }, []);
 
   // Dismiss keyboard when tapping outside input
@@ -1343,8 +1369,13 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   replyToMessageId
                     ? {
                         _id: replyToMessageId,
-                        content: replyParentMessage?.content ?? "",
-                        senderName: replyParentMessage?.senderName ?? "",
+                        // Prefer the fetched parent (authoritative, reflects
+                        // edits) but fall back to the locally-captured values so
+                        // the banner is never blank — e.g. when replying to a
+                        // just-sent optimistic message the server can't resolve.
+                        content: replyParentMessage?.content ?? replyToLocal?.content ?? "",
+                        senderName:
+                          replyParentMessage?.senderName ?? replyToLocal?.senderName ?? "",
                       }
                     : null
                 }
@@ -1410,7 +1441,11 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 }
               },
               deleteMessage: () => handleMessageDelete(selectedMessageId),
-              quotedReply: () => handleMessageReply(selectedMessageId),
+              quotedReply: () =>
+                handleMessageReply(selectedMessageId, {
+                  content: selectedMessageContent,
+                  senderName: selectedMessageSenderName,
+                }),
               flagMessage: handleFlagMessage,
               blockUser: handleBlockUser,
             }}
