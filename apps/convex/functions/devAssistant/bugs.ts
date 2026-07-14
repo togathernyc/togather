@@ -909,7 +909,10 @@ export const recordProductionDeployOutcome = internalMutation({
       );
       const now = Date.now();
       await ctx.db.patch(args.bugId, {
-        productionDeploy: { state: "pending", updatedAt: now },
+        // requestedAt time-bounds settlement: a "Deploy to Production" run only
+        // settles bugs requested before it started, so a later dispatch isn't
+        // marked done by an earlier run (see handleWorkflowRunEvent).
+        productionDeploy: { state: "pending", requestedAt: now, updatedAt: now },
         updatedAt: now,
       });
     } else {
@@ -1403,9 +1406,11 @@ function stagingLivePush(bug: {
  *    "live on staging" line and fires the moved "try it" push.
  *
  * PRODUCTION (name === "Deploy to Production", completed): prod deploys ship
- * everything on `main`, so the run can't be correlated to one bug by SHA — all
- * bugs whose `productionDeploy.state === "pending"` move together (accepted for
- * v1; correlation is inherently ambiguous for a global deploy).
+ * everything on `main`, so the run can't be correlated to one bug by SHA. It
+ * settles every bug whose `productionDeploy.state === "pending"` — but only
+ * those requested BEFORE this run started (`requestedAt <= runStartedAt`), so a
+ * deploy dispatched WHILE this run was in flight (covering later work) is not
+ * wrongly marked done by it and waits for its own run.
  */
 export const handleWorkflowRunEvent = internalMutation({
   args: {
@@ -1415,6 +1420,9 @@ export const handleWorkflowRunEvent = internalMutation({
     conclusion: v.optional(v.string()),
     headSha: v.string(),
     headBranch: v.optional(v.string()),
+    // workflow_run.run_started_at (ms) — bounds which pending-prod bugs a
+    // production run settles (see the doc comment).
+    runStartedAt: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<void> => {
     const now = Date.now();
@@ -1434,6 +1442,19 @@ export const handleWorkflowRunEvent = internalMutation({
         .collect();
       for (const bug of merged) {
         if (bug.productionDeploy?.state !== "pending") continue;
+        // Only settle bugs this run actually covers: those requested before it
+        // started. A bug requested after the run began (or with no requestedAt
+        // we can compare against, when run_started_at is missing) waits for its
+        // own run. Missing requestedAt on the bug is a legacy pending row —
+        // settle it (best effort, backward-compat).
+        const requestedAt = bug.productionDeploy.requestedAt;
+        if (
+          args.runStartedAt !== undefined &&
+          requestedAt !== undefined &&
+          requestedAt > args.runStartedAt
+        ) {
+          continue;
+        }
         if (succeeded) {
           await ctx.db.patch(bug._id, {
             productionDeploy: { state: "live", updatedAt: now },

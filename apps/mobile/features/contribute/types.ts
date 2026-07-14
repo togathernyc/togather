@@ -53,6 +53,8 @@ export interface StagingDeploy {
 export interface ProductionDeploy {
   state: DeployState;
   failedWorkflow?: string;
+  /** When the in-app deploy was dispatched (bounds which run settles it). */
+  requestedAt?: number;
   updatedAt: number;
 }
 

@@ -2351,6 +2351,11 @@ export default defineSchema({
           v.literal("failed"),
         ),
         failedWorkflow: v.optional(v.string()),
+        // When the in-app deploy was dispatched. A "Deploy to Production" run
+        // only settles bugs requested BEFORE it started (requestedAt <=
+        // run_started_at), so a later dispatch isn't wrongly marked done by an
+        // earlier, still-running deploy.
+        requestedAt: v.optional(v.number()),
         updatedAt: v.number(),
       }),
     ),

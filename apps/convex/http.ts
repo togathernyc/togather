@@ -1464,6 +1464,7 @@ http.route({
         conclusion?: string | null;
         head_sha?: string;
         head_branch?: string;
+        run_started_at?: string;
       };
     };
     try {
@@ -1498,6 +1499,13 @@ http.route({
           headSha: run.head_sha,
           headBranch:
             typeof run.head_branch === "string" ? run.head_branch : undefined,
+          // ISO timestamp → ms; bounds which pending-prod bugs a production run
+          // settles (a run only covers work requested before it started).
+          runStartedAt:
+            typeof run.run_started_at === "string" &&
+            !Number.isNaN(Date.parse(run.run_started_at))
+              ? Date.parse(run.run_started_at)
+              : undefined,
         }
       );
       return new Response(JSON.stringify({ received: true }), {

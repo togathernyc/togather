@@ -1295,6 +1295,10 @@ describe("staging verification", () => {
       status: "DRAFT" | "IN_REVIEW" | "IN_PROGRESS" | "CODE_REVIEW" | "READY_TO_MERGE" | "MERGED";
       verifyOnStaging: boolean;
       stagingVerifiedAt: number;
+      stagingDeploy: {
+        state: "pending" | "live" | "failed";
+        updatedAt: number;
+      };
     }> = {},
   ): Promise<Id<"devBugs">> {
     const now = Date.now();
@@ -1310,6 +1314,8 @@ describe("staging verification", () => {
         routineRunId: "run-staging",
         verifyOnStaging: overrides.verifyOnStaging ?? true,
         stagingVerifiedAt: overrides.stagingVerifiedAt,
+        // Omitted → legacy-undefined, treated as live (backward-compat).
+        stagingDeploy: overrides.stagingDeploy,
         createdAt: now,
         updatedAt: now,
       }),
@@ -1402,6 +1408,57 @@ describe("staging verification", () => {
         id: preMergeId,
       }),
     ).rejects.toThrow(/current status/);
+  });
+
+  test("confirmStaging is gated server-side on the staging deploy actually being live", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+
+    // Merged, but the staging deploy is still running — the UI hides the card,
+    // but a stale/hand-rolled client must be rejected server-side too.
+    const pendingId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "pending", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+        token: maintainerId,
+        id: pendingId,
+      }),
+    ).rejects.toThrow(/still running/);
+
+    // Deploy failed — there's nothing on staging to confirm.
+    const failedId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "failed", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+        token: maintainerId,
+        id: failedId,
+      }),
+    ).rejects.toThrow(/staging deploy failed/i);
+
+    // Live → allowed.
+    const liveId = await seedStagingBug(t, maintainerId, {
+      stagingDeploy: { state: "live", updatedAt: Date.now() },
+    });
+    await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+      token: maintainerId,
+      id: liveId,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(liveId)))?.stagingVerifiedAt,
+    ).toBeTruthy();
+
+    // Legacy row (no stagingDeploy) → treated as live, still confirmable.
+    const legacyId = await seedStagingBug(t, maintainerId);
+    await t.mutation(api.functions.devAssistant.contributions.confirmStaging, {
+      token: maintainerId,
+      id: legacyId,
+    });
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(legacyId)))?.stagingVerifiedAt,
+    ).toBeTruthy();
   });
 
   test("reportStagingIssue sends the item back through the pipeline (staging-redo dispatch)", async () => {
@@ -1818,6 +1875,10 @@ describe("in-app production promote (silent OTA)", () => {
       verifyOnStaging: boolean;
       stagingVerifiedAt: number;
       productionRequestedAt: number;
+      stagingDeploy: {
+        state: "pending" | "live" | "failed";
+        updatedAt: number;
+      };
     }> = {},
   ): Promise<Id<"devBugs">> {
     const now = Date.now();
@@ -1833,6 +1894,8 @@ describe("in-app production promote (silent OTA)", () => {
         stagingVerifiedAt:
           "stagingVerifiedAt" in overrides ? overrides.stagingVerifiedAt : now,
         productionRequestedAt: overrides.productionRequestedAt,
+        // Omitted → legacy-undefined, treated as live (backward-compat).
+        stagingDeploy: overrides.stagingDeploy,
         shippedAt: now,
         createdAt: now,
         updatedAt: now,
@@ -2036,6 +2099,61 @@ describe("in-app production promote (silent OTA)", () => {
       { token: maintainerId, id },
     );
     await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("promoteToProduction is gated server-side on the staging deploy being live", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Non-interactive item (skips the sign-off gate) but its staging deploy is
+    // still running — must NOT be shippable to production.
+    const pending = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "pending", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.promoteToProduction, {
+        token: maintainerId,
+        id: pending,
+      }),
+    ).rejects.toThrow(/still running/);
+
+    // Staging deploy failed — nothing is up, so production is blocked.
+    const failed = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "failed", updatedAt: Date.now() },
+    });
+    await expect(
+      t.mutation(api.functions.devAssistant.contributions.promoteToProduction, {
+        token: maintainerId,
+        id: failed,
+      }),
+    ).rejects.toThrow(/staging deploy failed/i);
+
+    // Nothing was dispatched to GitHub for the blocked promotions.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Live staging deploy → the promotion goes through.
+    const live = await seedMergedBug(t, maintainerId, {
+      verifyOnStaging: false,
+      stagingVerifiedAt: undefined,
+      stagingDeploy: { state: "live", updatedAt: Date.now() },
+    });
+    await t.mutation(
+      api.functions.devAssistant.contributions.promoteToProduction,
+      { token: maintainerId, id: live },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(live)))?.productionDeploy?.state,
+    ).toBe("pending");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -2682,6 +2800,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     conclusion: string | null,
     headSha: string,
     headBranch = "main",
+    runStartedAt?: string,
   ): Record<string, unknown> {
     return {
       action,
@@ -2691,6 +2810,7 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
         conclusion,
         head_sha: headSha,
         head_branch: headBranch,
+        ...(runStartedAt ? { run_started_at: runStartedAt } : {}),
       },
     };
   }
@@ -2961,6 +3081,61 @@ describe("POST /github/webhook (ADR-029 Phase 2)", () => {
     expect(
       (await t.run(async (ctx) => ctx.db.get(liveId)))?.productionDeploy?.state,
     ).toBe("live");
+  });
+
+  test("a production run only settles bugs requested before it started (A/B race)", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.GH_WEBHOOK_SECRET = WEBHOOK_SECRET;
+
+    const now = Date.now();
+    const runStarted = now; // item A's run begins here.
+    const seedProdAt = async (requestedAt: number): Promise<Id<"devBugs">> =>
+      await t.run(async (ctx) =>
+        ctx.db.insert("devBugs", {
+          originatorUserId: maintainerId,
+          status: "MERGED",
+          kind: "bug",
+          source: "dashboard",
+          title: "Fix typo",
+          body: "B",
+          shippedAt: now,
+          stagingVerifiedAt: now,
+          productionDeploy: { state: "pending", requestedAt, updatedAt: requestedAt },
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+
+    // A requested before the run started; B requested a minute AFTER it started
+    // (a second promotion while A's deploy was still in flight).
+    const aId = await seedProdAt(runStarted - 60_000);
+    const bId = await seedProdAt(runStarted + 60_000);
+
+    // A's run completes — it covers A but NOT B.
+    await postWebhook(
+      t,
+      workflowRunPayload(
+        "Deploy to Production",
+        "completed",
+        "success",
+        "any",
+        "main",
+        new Date(runStarted).toISOString(),
+      ),
+      "workflow_run",
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(aId)))?.productionDeploy?.state,
+    ).toBe("live");
+    // B was requested after A's run began — it must still be pending, waiting
+    // for its OWN run.
+    expect(
+      (await t.run(async (ctx) => ctx.db.get(bId)))?.productionDeploy?.state,
+    ).toBe("pending");
   });
 
   test("the webhook accepts and schedules a workflow_run event (endpoint wiring)", async () => {
