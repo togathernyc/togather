@@ -931,21 +931,19 @@ export const recordProductionDeployOutcome = internalMutation({
 });
 
 /**
- * Record that an in-app merge attempt (actions.mergeFromApp) failed: post the
- * reason and clear mergeRequestedAt so the merge card comes back — the
- * message tells the maintainer to "try again", which must be possible.
+ * Record that an in-app merge attempt (actions.mergeFromApp) gave up: post the
+ * plain-language reason and clear mergeRequestedAt so the merge card comes
+ * back. `reason` is already a full, non-coder-readable sentence with the right
+ * next step (built by describeMergeBlock) — posted verbatim, no raw GitHub
+ * error text. Only the *terminal* give-up clears the latch; the auto-recover
+ * flow keeps it set while recovery is in flight.
  */
 export const recordMergeFromAppFailure = internalMutation({
   args: { bugId: v.id("devBugs"), reason: v.string() },
   handler: async (ctx, args): Promise<void> => {
     const bug = await ctx.db.get(args.bugId);
     if (!bug) return;
-    await insertThreadMessage(
-      ctx,
-      args.bugId,
-      "system",
-      `Merge failed: ${args.reason} — try again, or merge the PR on GitHub`,
-    );
+    await insertThreadMessage(ctx, args.bugId, "system", args.reason);
     await ctx.db.patch(args.bugId, {
       mergeRequestedAt: undefined,
       updatedAt: Date.now(),
@@ -1159,6 +1157,14 @@ export const applyCallback = internalMutation({
         patch.mergeCommitSha = args.mergeCommitSha;
       }
       patch.stagingDeploy = { state: "pending", workflows: [], updatedAt: now };
+      // Release the in-app merge latch on the final success. The smarter merge
+      // button keeps mergeRequestedAt SET across auto-recovery so the card
+      // never flips back to "Merge" mid-recovery; the MERGED transition is
+      // where recovery ends, so it's where the latch must clear. Without this
+      // a subsequent staging-redo round returns to READY_TO_MERGE with a stale
+      // latch still set, permanently hiding the merge card (mergeRequestedAt
+      // gates showMergeCard).
+      patch.mergeRequestedAt = undefined;
     }
 
     // Stale approval guard: a REVISED spec invalidates an existing sign-off —
