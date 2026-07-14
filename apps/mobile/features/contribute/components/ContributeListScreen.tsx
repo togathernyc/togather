@@ -33,7 +33,9 @@ import {
   displayTitle,
   isArchived,
   isInProgress,
+  isRerun,
   isYourTurn,
+  statusPresentation,
 } from "../utils/status";
 import type { Id } from "@services/api/convex";
 import type { ContributionListItem } from "../types";
@@ -95,6 +97,12 @@ function ConversationRow({
   showOriginator?: boolean;
 }) {
   const { colors } = useTheme();
+  // Reruns (a staging redo or the AI fixing review feedback) look identical to
+  // a first build in the list — same amber dot, same "In progress" tab — so
+  // surface the rework label inline to signal "your feedback is being acted
+  // on". Reuses statusPresentation, the single source of status copy.
+  const rerun = isRerun(item);
+  const rework = rerun ? statusPresentation(item) : null;
   return (
     <TouchableOpacity
       style={[
@@ -123,6 +131,17 @@ function ConversationRow({
               numberOfLines={1}
             >
               {item.originatorName}
+            </Text>
+          </View>
+        ) : null}
+        {rework ? (
+          <View style={styles.rowRework}>
+            <Ionicons name={rework.icon} size={11} color={rework.color} />
+            <Text
+              style={[styles.rowReworkText, { color: rework.color }]}
+              numberOfLines={1}
+            >
+              {rework.label}
             </Text>
           </View>
         ) : null}
@@ -393,6 +412,8 @@ const styles = StyleSheet.create({
   rowTime: { fontSize: 12 },
   rowOriginator: { flexDirection: "row", alignItems: "center", gap: 3 },
   rowOriginatorText: { fontSize: 12, fontWeight: "500" },
+  rowRework: { flexDirection: "row", alignItems: "center", gap: 4 },
+  rowReworkText: { fontSize: 12, fontWeight: "600" },
   rowSnippet: { fontSize: 13, lineHeight: 18 },
   emptyState: {
     alignItems: "center",
