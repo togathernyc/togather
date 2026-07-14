@@ -213,10 +213,21 @@ const STATUS_SYSTEM_MESSAGES: Partial<Record<BugStatus, string>> = {
   IN_PROGRESS: "Build started",
   CODE_REVIEW: "Pull request opened",
   READY_TO_MERGE: "Ready to merge",
-  // Merge auto-deploys to staging; production is a separate manual step, so the
-  // honest line is "live on staging", not "shipped" (ADR-029).
-  MERGED: "Merged — live on staging",
+  // A merge only *triggers* the staging deploy workflows (a few minutes) — it
+  // isn't live yet. The honest line is "deploying to staging…"; the
+  // workflow_run webhook posts "Live on staging" once the deploy actually
+  // finishes (handleWorkflowRunEvent). See MERGED_DEPLOYING_MESSAGE.
+  MERGED: "Merged — deploying to staging…",
 };
+
+/**
+ * System thread line posted the moment a merge is observed (also used by the
+ * no-routine merge path). Kept in sync with STATUS_SYSTEM_MESSAGES.MERGED.
+ */
+export const MERGED_DEPLOYING_MESSAGE = "Merged — deploying to staging…";
+
+/** System thread line posted once the staging deploy actually goes live. */
+export const STAGING_LIVE_MESSAGE = "Live on staging — ready to try it";
 
 export type ThreadHistoryEntry = {
   authorType: "user" | "assistant" | "system";
@@ -594,10 +605,13 @@ export const PR_CLOSED_UNMERGED_MESSAGE =
  * merged === true replays the bug's own routineRunId through the existing
  * handleRoutineCallback machinery with source "webhook" (the trusted channel
  * allowed to apply MERGED), which validates the transition, stamps shippedAt,
- * logs the "Merged — live on staging" system turn, pushes the originator, and
- * (for chat items) posts the sourceKey-idempotent bot message. The early-return on an
- * already-MERGED bug makes replayed webhooks — and the race with the
- * auto-merge action's own MERGED apply — no-ops.
+ * stores mergeCommitSha, starts staging deploy observation (stagingDeploy
+ * pending), logs the "Merged — deploying to staging…" system turn, and (for
+ * chat items) posts the sourceKey-idempotent bot message. The "try it on
+ * staging" push no longer fires here — it waits for the workflow_run webhook
+ * to report the staging deploy actually live (handleWorkflowRunEvent). The
+ * early-return on an already-MERGED bug makes replayed webhooks — and the race
+ * with the auto-merge action's own MERGED apply — no-ops.
  *
  * merged === false leaves the status untouched and posts a system thread
  * message flagging the item for a maintainer (deduped against an immediate
@@ -608,6 +622,9 @@ export const handleGithubPrClosed = internalMutation({
     branchRef: v.string(),
     prUrl: v.optional(v.string()),
     merged: v.boolean(),
+    // The squash-merge commit SHA (pull_request.merge_commit_sha) — stored on
+    // the bug so the staging `workflow_run` events correlate back to it.
+    mergeCommitSha: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<void> => {
     // Primary correlation: the implementation Routine names its branch
@@ -685,6 +702,7 @@ export const handleGithubPrClosed = internalMutation({
             // it may do so from any PR-live state — including IN_PROGRESS,
             // where an early merge would otherwise strand the row.
             source: "webhook",
+            mergeCommitSha: args.mergeCommitSha,
           },
         );
       } else {
@@ -692,16 +710,24 @@ export const handleGithubPrClosed = internalMutation({
         // merge: apply the transition (stamps shippedAt) + progress line.
         // Same ground-truth rule as above: any PR-live state may merge.
         if (GITHUB_MERGEABLE_STATUSES.includes(target.status)) {
+          const now = Date.now();
           await ctx.db.patch(target._id, {
             status: "MERGED",
-            ...(target.shippedAt ? {} : { shippedAt: Date.now() }),
-            updatedAt: Date.now(),
+            ...(target.shippedAt ? {} : { shippedAt: now }),
+            // Start deploy observation: the merge only *triggers* the staging
+            // deploy (see handleWorkflowRunEvent). Store the SHA so the
+            // workflow_run events correlate back here.
+            ...(args.mergeCommitSha
+              ? { mergeCommitSha: args.mergeCommitSha }
+              : {}),
+            stagingDeploy: { state: "pending", workflows: [], updatedAt: now },
+            updatedAt: now,
           });
           await insertThreadMessage(
             ctx,
             target._id,
             "system",
-            "Merged — live on staging",
+            MERGED_DEPLOYING_MESSAGE,
           );
         } else {
           console.error(
@@ -857,10 +883,13 @@ export const addSystemThreadMessage = internalMutation({
 
 /**
  * Record the outcome of an in-app production deploy trigger
- * (actions.dispatchProductionDeploy). Success just logs the progress line; a
- * failure ALSO clears productionRequestedAt so the dashboard's "Ship to
- * production" button comes back instead of stranding the item in a
- * "triggered" state that never happened.
+ * (actions.dispatchProductionDeploy). Success starts deploy observation
+ * (productionDeploy = pending) and logs "Deploying to production…" — the
+ * workflow_run webhook flips it to live/failed once the deploy actually
+ * finishes (handleWorkflowRunEvent). A failure to even DISPATCH the workflow
+ * ALSO clears productionRequestedAt so the dashboard's "Ship to production"
+ * button comes back instead of stranding the item in a "triggered" state that
+ * never happened.
  */
 export const recordProductionDeployOutcome = internalMutation({
   args: {
@@ -876,9 +905,16 @@ export const recordProductionDeployOutcome = internalMutation({
         ctx,
         args.bugId,
         "system",
-        "Production deploy started — the silent update reaches users next time they open the app",
+        "Deploying to production…",
       );
-      await ctx.db.patch(args.bugId, { updatedAt: Date.now() });
+      const now = Date.now();
+      await ctx.db.patch(args.bugId, {
+        // requestedAt time-bounds settlement: a "Deploy to Production" run only
+        // settles bugs requested before it started, so a later dispatch isn't
+        // marked done by an earlier run (see handleWorkflowRunEvent).
+        productionDeploy: { state: "pending", requestedAt: now, updatedAt: now },
+        updatedAt: now,
+      });
     } else {
       await insertThreadMessage(
         ctx,
@@ -985,6 +1021,9 @@ export const applyCallback = internalMutation({
     // least-trusted source, and the only one reachable from the public HTTP
     // callback — which never forwards this field).
     source: v.optional(callbackSourceValidator),
+    // The squash-merge commit SHA — only meaningful on a MERGED apply; stored so
+    // the staging workflow_run events correlate to this bug.
+    mergeCommitSha: v.optional(v.string()),
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
     spec: v.optional(v.string()),
@@ -1087,7 +1126,10 @@ export const applyCallback = internalMutation({
       updatedAt: now,
     };
     if (args.prUrl !== undefined) patch.prUrl = args.prUrl;
-    if (args.screenshots !== undefined) patch.screenshotUrls = args.screenshots;
+    // The routine callback's `screenshots` is always the AI-generated plan
+    // before/after mock — never a user image — so it lands in planPreviewUrls,
+    // leaving screenshotUrls as purely the user's report images.
+    if (args.screenshots !== undefined) patch.planPreviewUrls = args.screenshots;
     if (args.spec !== undefined) patch.spec = args.spec;
     if (args.riskLevel !== undefined) patch.riskLevel = args.riskLevel;
     if (args.aiTitle !== undefined) patch.aiTitle = args.aiTitle;
@@ -1106,6 +1148,17 @@ export const applyCallback = internalMutation({
     }
     if (targetStatus === "MERGED" && !bug.shippedAt) {
       patch.shippedAt = now;
+    }
+    // A GENUINE merge starts deploy observation: the merge only *triggers* the
+    // staging deploy workflows (handleWorkflowRunEvent flips this to live/failed
+    // as the workflow_run webhook arrives). Reset on every genuine merge so a
+    // staging-redo round's re-merge observes its own fresh deploy. Idempotent
+    // re-applies (already MERGED) leave the in-flight deploy state untouched.
+    if (targetStatus === "MERGED" && genuineTransition) {
+      if (args.mergeCommitSha !== undefined) {
+        patch.mergeCommitSha = args.mergeCommitSha;
+      }
+      patch.stagingDeploy = { state: "pending", workflows: [], updatedAt: now };
     }
 
     // Stale approval guard: a REVISED spec invalidates an existing sign-off —
@@ -1279,6 +1332,266 @@ export const applyCallback = internalMutation({
     }
 
     return await ctx.db.get(args.bugId);
+  },
+});
+
+// ============================================================================
+// Deploy observation (ADR-029 follow-up) — GitHub workflow_run webhook
+// ============================================================================
+
+/**
+ * The `name:` of the two workflows that deploy to STAGING on a push to `main`.
+ * deploy-convex only runs when apps/convex or packages/shared changed, and
+ * deploy-mobile-update only when apps/mobile or packages changed — so a given
+ * merge triggers one, the other, or both. A merge's staging deploy is "live"
+ * only once every workflow it actually triggered has succeeded.
+ */
+const STAGING_DEPLOY_WORKFLOW_NAMES = ["Deploy Convex", "Deploy Mobile Update"];
+
+/** The `name:` of the manual production deploy workflow. */
+const PRODUCTION_DEPLOY_WORKFLOW_NAME = "Deploy to Production";
+
+/**
+ * workflow_run conclusions that mean the deploy did NOT succeed. GitHub reports
+ * "success" | "failure" | "cancelled" | "timed_out" | "skipped" | ...; anything
+ * in this set fails the deploy (a "skipped" conclusion — e.g. a path filter that
+ * matched at trigger time but a job that self-skipped — is treated as neither
+ * success nor failure and simply doesn't advance the deploy).
+ */
+const FAILED_WORKFLOW_CONCLUSIONS = [
+  "failure",
+  "cancelled",
+  "timed_out",
+  "startup_failure",
+];
+
+type StagingWorkflow = { name: string; conclusion?: string };
+
+/**
+ * Push copy fired when the staging deploy actually goes live — the "try it on
+ * staging" ask that used to (incorrectly) fire on merge. Interactive items get
+ * a "confirm it works" ask that gates the production deploy; non-interactive
+ * items (copy/color) get an honest "it's live on staging" note.
+ */
+function stagingLivePush(bug: {
+  title: string;
+  verifyOnStaging?: boolean;
+}): { title: string; body: string } {
+  if (bug.verifyOnStaging) {
+    return {
+      title: "Ready to test on staging",
+      body: `"${bug.title}" is live on staging — try it and confirm it works.`,
+    };
+  }
+  return {
+    title: "Your contribution is live on staging",
+    body: `"${bug.title}" is now live on the staging app.`,
+  };
+}
+
+/**
+ * Apply a GitHub `workflow_run` webhook event (POST /github/webhook). Replaces
+ * the dashboard's old lie that a merge is instantly "live on staging": it flips
+ * a merged bug's `stagingDeploy` (and, for production runs, `productionDeploy`)
+ * through pending → live/failed as the real deploy workflows report in.
+ *
+ * STAGING (head_branch "main", name is a staging deploy workflow): correlates
+ * to bug(s) by `mergeCommitSha === head_sha` that are still deploying
+ * (`stagingDeploy.state === "pending"`).
+ *  - requested/in_progress → track the workflow (conclusion still unknown).
+ *  - completed → record its conclusion, then: any failure ⇒ state "failed"
+ *    (+ "contact the lead maintainer", no test-it push); success ⇒ state
+ *    "live" ONLY once every tracked workflow has succeeded (a merge may trigger
+ *    both Convex + mobile, so one success isn't enough), which posts the
+ *    "live on staging" line and fires the moved "try it" push.
+ *
+ * PRODUCTION (name === "Deploy to Production", completed): prod deploys ship
+ * everything on `main`, so the run can't be correlated to one bug by SHA. It
+ * settles every bug whose `productionDeploy.state === "pending"` — but only
+ * those requested BEFORE this run started (`requestedAt <= runStartedAt`), so a
+ * deploy dispatched WHILE this run was in flight (covering later work) is not
+ * wrongly marked done by it and waits for its own run.
+ */
+export const handleWorkflowRunEvent = internalMutation({
+  args: {
+    action: v.string(),
+    name: v.string(),
+    status: v.optional(v.string()),
+    conclusion: v.optional(v.string()),
+    headSha: v.string(),
+    headBranch: v.optional(v.string()),
+    // workflow_run.run_started_at (ms) — bounds which pending-prod bugs a
+    // production run settles (see the doc comment).
+    runStartedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const now = Date.now();
+
+    // ---- Production runs: global, correlated by state (not SHA) ----
+    if (args.name === PRODUCTION_DEPLOY_WORKFLOW_NAME) {
+      if (args.action !== "completed") return;
+      const succeeded = args.conclusion === "success";
+      const failed =
+        !!args.conclusion &&
+        FAILED_WORKFLOW_CONCLUSIONS.includes(args.conclusion);
+      if (!succeeded && !failed) return;
+
+      const merged = await ctx.db
+        .query("devBugs")
+        .withIndex("by_status", (q) => q.eq("status", "MERGED"))
+        .collect();
+      for (const bug of merged) {
+        if (bug.productionDeploy?.state !== "pending") continue;
+        // Only settle bugs this run actually covers: those requested before it
+        // started. A bug requested after the run began (or with no requestedAt
+        // we can compare against, when run_started_at is missing) waits for its
+        // own run. Missing requestedAt on the bug is a legacy pending row —
+        // settle it (best effort, backward-compat).
+        const requestedAt = bug.productionDeploy.requestedAt;
+        if (
+          args.runStartedAt !== undefined &&
+          requestedAt !== undefined &&
+          requestedAt > args.runStartedAt
+        ) {
+          continue;
+        }
+        if (succeeded) {
+          await ctx.db.patch(bug._id, {
+            productionDeploy: { state: "live", updatedAt: now },
+            updatedAt: now,
+          });
+          await insertThreadMessage(
+            ctx,
+            bug._id,
+            "system",
+            "Live in production 🎉",
+          );
+        } else {
+          await ctx.db.patch(bug._id, {
+            productionDeploy: {
+              state: "failed",
+              failedWorkflow: args.name,
+              updatedAt: now,
+            },
+            updatedAt: now,
+          });
+          await insertThreadMessage(
+            ctx,
+            bug._id,
+            "system",
+            "Production deploy failed — contact the lead maintainer.",
+          );
+        }
+      }
+      return;
+    }
+
+    // ---- Staging runs: correlated by merge commit SHA ----
+    if (
+      args.headBranch !== "main" ||
+      !STAGING_DEPLOY_WORKFLOW_NAMES.includes(args.name)
+    ) {
+      return;
+    }
+
+    const candidates = await ctx.db
+      .query("devBugs")
+      .withIndex("by_mergeCommitSha", (q) =>
+        q.eq("mergeCommitSha", args.headSha),
+      )
+      .collect();
+
+    for (const bug of candidates) {
+      if (bug.stagingDeploy?.state !== "pending") continue;
+      const workflows: StagingWorkflow[] = [
+        ...(bug.stagingDeploy.workflows ?? []),
+      ];
+
+      // Ensure this workflow is tracked (idempotent by name).
+      let entry = workflows.find((w) => w.name === args.name);
+      if (!entry) {
+        entry = { name: args.name };
+        workflows.push(entry);
+      }
+
+      if (args.action !== "completed") {
+        // requested / in_progress — just make sure it's in the tracked set so
+        // the completeness check below waits for it.
+        await ctx.db.patch(bug._id, {
+          stagingDeploy: { ...bug.stagingDeploy, workflows, updatedAt: now },
+          updatedAt: now,
+        });
+        continue;
+      }
+
+      // Completed: record this workflow's conclusion.
+      entry.conclusion = args.conclusion;
+
+      const failed =
+        !!args.conclusion &&
+        FAILED_WORKFLOW_CONCLUSIONS.includes(args.conclusion);
+      if (failed) {
+        await ctx.db.patch(bug._id, {
+          stagingDeploy: {
+            state: "failed",
+            workflows,
+            failedWorkflow: args.name,
+            updatedAt: now,
+          },
+          updatedAt: now,
+        });
+        await insertThreadMessage(
+          ctx,
+          bug._id,
+          "system",
+          `Staging deploy failed (${args.name}) — contact the lead maintainer.`,
+        );
+        continue;
+      }
+
+      // Success: the deploy is live only once EVERY tracked workflow has a
+      // conclusion and all are "success" (a merge may trigger both Convex and
+      // mobile — one success isn't enough). Otherwise stay pending.
+      const allSucceeded =
+        workflows.length > 0 &&
+        workflows.every((w) => w.conclusion === "success");
+      if (!allSucceeded) {
+        await ctx.db.patch(bug._id, {
+          stagingDeploy: { ...bug.stagingDeploy, workflows, updatedAt: now },
+          updatedAt: now,
+        });
+        continue;
+      }
+
+      await ctx.db.patch(bug._id, {
+        stagingDeploy: { state: "live", workflows, updatedAt: now },
+        updatedAt: now,
+      });
+      await insertThreadMessage(
+        ctx,
+        bug._id,
+        "system",
+        STAGING_LIVE_MESSAGE,
+      );
+
+      // Fire the moved "try it on staging" push — dashboard items only (chat
+      // items notify their channel via the bot message posted at merge). This
+      // is the honest moment: the change is actually up now.
+      if (!bug.channelId) {
+        const push = stagingLivePush(bug);
+        await ctx.scheduler.runAfter(
+          0,
+          internal.functions.notifications.actions.sendPushNotification,
+          {
+            userId: bug.originatorUserId,
+            title: push.title,
+            body: push.body,
+            notificationType: "dev_contribution_update",
+            data: { bugId: bug._id, status: bug.status },
+          },
+        );
+      }
+    }
   },
 });
 

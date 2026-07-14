@@ -501,11 +501,38 @@ export const postMessage = mutation({
 });
 
 /**
+ * The staging deploy for a merged item has actually finished (deploy
+ * observation, ADR-029 follow-up). A merge only *triggers* the staging deploy
+ * workflows, so "merged" ≠ "live". Legacy rows merged before deploy observation
+ * carry no `stagingDeploy` — treat them as live (they're long since deployed).
+ * Mirrors the mobile `isStagingDeployLive`; the two must agree.
+ */
+function isStagingDeployLive(bug: Doc<"devBugs">): boolean {
+  return bug.stagingDeploy === undefined || bug.stagingDeploy.state === "live";
+}
+
+/**
+ * Throw unless the staging deploy is actually live. The mobile UI already
+ * hides the try-it / ship actions until the deploy finishes, but the UI gate
+ * is NOT authoritative — a stale or hand-rolled client could act while the
+ * deploy is still pending or has failed, so the server enforces it too.
+ */
+function assertStagingDeployLive(bug: Doc<"devBugs">): void {
+  if (isStagingDeployLive(bug)) return;
+  throw new ConvexError(
+    bug.stagingDeploy?.state === "failed"
+      ? "The staging deploy failed — contact the lead maintainer instead."
+      : "The staging deploy is still running — wait for it to finish.",
+  );
+}
+
+/**
  * Guard shared by confirmStaging/reportStagingIssue: the staging-check window.
  * Nothing reaches staging until the PR is merged to `main` (deploys auto-run on
- * merge), so the window opens at MERGED — not while the PR is still open. The
- * change is then live on staging and awaiting the contributor's try-it, which
- * in turn gates the manual production deploy (ADR-029).
+ * merge), so the window opens at MERGED — not while the PR is still open — AND
+ * only once that deploy actually finishes (isStagingDeployLive). The change is
+ * then live on staging and awaiting the contributor's try-it, which in turn
+ * gates the manual production deploy (ADR-029).
  */
 function assertStagingWindow(bug: Doc<"devBugs">): void {
   if (!bug.verifyOnStaging) {
@@ -519,6 +546,7 @@ function assertStagingWindow(bug: Doc<"devBugs">): void {
       `Staging can only be checked once the change is merged and live on staging (current status: ${bug.status})`,
     );
   }
+  assertStagingDeployLive(bug);
 }
 
 /**
@@ -723,6 +751,11 @@ export const promoteToProduction = mutation({
         "Confirm the change works on staging before shipping it to production",
       );
     }
+    // Deploy observation (ADR-029 follow-up): even a non-interactive item
+    // (verifyOnStaging === false, which skips the sign-off gate above) must
+    // wait for its staging deploy to actually finish before it can ship to
+    // production — never promote from a still-pending or failed staging deploy.
+    assertStagingDeployLive(bug);
     const now = Date.now();
     if (
       bug.productionRequestedAt &&
@@ -873,6 +906,11 @@ export const getContribution = query({
     if (!bug) return null;
     return {
       ...bug,
+      // Resolve any stored "r2:" paths to fetchable URLs so the client can
+      // render images directly (already-https URLs pass through). screenshotUrls
+      // is the user's report images; planPreviewUrls is the AI plan mock.
+      screenshotUrls: resolveImageUrls(bug.screenshotUrls),
+      planPreviewUrls: resolveImageUrls(bug.planPreviewUrls),
       originatorName: await originatorDisplayName(ctx, bug.originatorUserId),
     };
   },

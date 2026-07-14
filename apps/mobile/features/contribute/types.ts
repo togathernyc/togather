@@ -34,6 +34,30 @@ export type ContributionScope = "buildable" | "split" | "design_needed";
 /** Who wrote a thread message. */
 export type MessageAuthorType = "user" | "assistant" | "system";
 
+/** Deploy-observation state (ADR-029 follow-up): deploying → live, or failed. */
+export type DeployState = "pending" | "live" | "failed";
+
+/**
+ * Staging deploy state for a merged contribution. `workflows` tracks each
+ * triggered staging workflow ("Deploy Convex" / "Deploy Mobile Update") and its
+ * conclusion; the deploy is "live" only once all tracked workflows succeeded.
+ */
+export interface StagingDeploy {
+  state: DeployState;
+  workflows?: { name: string; conclusion?: string }[];
+  failedWorkflow?: string;
+  updatedAt: number;
+}
+
+/** Production deploy state for a shipped contribution. */
+export interface ProductionDeploy {
+  state: DeployState;
+  failedWorkflow?: string;
+  /** When the in-app deploy was dispatched (bounds which run settles it). */
+  requestedAt?: number;
+  updatedAt: number;
+}
+
 /**
  * One buildable slice of a "split" contribution — a short title plus a
  * self-contained prompt a maintainer can paste into a fresh dev session.
@@ -86,12 +110,41 @@ export interface Contribution {
    * failed so the merge card can offer a retry.
    */
   mergeRequestedAt?: number;
+  /**
+   * Count of auto-fix dispatches while the AI addresses code-review feedback
+   * (capped at MAX_FIX_ROUNDS=3). >0 means the current build is a rerun
+   * reworking the review's requested changes, not a first build.
+   */
+  fixRounds?: number;
+  /**
+   * Count of staging-redo dispatches — incremented each time a contributor hit
+   * "Something's off in staging" and the merged item was sent back to rebuild.
+   * >0 means the current build is a rerun driven by the contributor's staging
+   * note.
+   */
+  redoRounds?: number;
+  /** Mode the in-flight Routine run was dispatched in. */
+  activeRunMode?: "spec" | "implement" | "review" | "fix";
   /** AI review verdict on the open PR — "approved" unlocks the in-app merge. */
   reviewVerdict?: "approved" | "changes_requested";
   reviewSummary?: string;
+  /** Squash-merge commit SHA (correlates staging deploy observation). */
+  mergeCommitSha?: string;
+  /**
+   * Staging deploy state after a merge — drives "deploying → live" on the
+   * dashboard, and a "deploy failed — contact the lead maintainer" state so we
+   * never invite a contributor to test something that isn't up. Undefined on
+   * legacy merged rows that predate deploy observation (treat as live).
+   */
+  stagingDeploy?: StagingDeploy;
+  /** Production deploy state after an in-app "Ship to production". */
+  productionDeploy?: ProductionDeploy;
   prUrl?: string;
   githubIssueUrl?: string;
+  /** User's own report screenshots (set at submit). */
   screenshotUrls?: string[];
+  /** AI-generated before/after plan mock (routine callback). */
+  planPreviewUrls?: string[];
   /**
    * Display name of whoever started the conversation — attached by both
    * getContribution (detail header) and the list queries ("Everyone" view).

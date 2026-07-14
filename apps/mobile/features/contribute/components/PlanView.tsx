@@ -16,6 +16,7 @@ import React from "react";
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   ActivityIndicator,
@@ -26,6 +27,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { Markdown } from "@components/ui/Markdown";
+import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import type { Id } from "@services/api/convex";
 import { useDevAccess } from "../hooks/useDevAccess";
 import { useContribution } from "../hooks/useContribution";
@@ -68,7 +70,43 @@ export function PlanContent({ contribution }: { contribution: Contribution }) {
             : "This one covers more than a single build can safely take on. Here's how the AI suggests breaking it up:"}
         </Text>
       ) : null}
+      <PlanPreviewImages urls={contribution.planPreviewUrls} />
       <Markdown source={contribution.spec} />
+    </View>
+  );
+}
+
+/**
+ * The AI routine renders a before/after mock image for each plan and stores its
+ * URL(s) on the item. Show them as a labelled, tappable "Preview" block so the
+ * plan reads visually, not as text alone. Tapping opens the full-screen viewer,
+ * matching the screenshot row on ContributionDetailScreen.
+ */
+function PlanPreviewImages({ urls }: { urls?: string[] }) {
+  const { colors } = useTheme();
+  if (!urls || urls.length === 0) return null;
+  return (
+    <View style={styles.previewBlock}>
+      <Text style={[styles.previewCaption, { color: colors.textSecondary }]}>
+        Preview — before / after
+      </Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.previewRow}
+      >
+        {urls.map((url, index) => (
+          <TouchableOpacity
+            key={url}
+            onPress={() => ImageViewerManager.show(urls, index)}
+            activeOpacity={0.85}
+            accessibilityRole="imagebutton"
+            accessibilityLabel="Plan preview — tap to view full screen"
+          >
+            <Image source={{ uri: url }} style={styles.previewImage} />
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -193,6 +231,20 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   scopeNote: { fontSize: 13, lineHeight: 19 },
+  previewBlock: { gap: 6 },
+  previewCaption: {
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  previewRow: { gap: 8, paddingVertical: 2 },
+  previewImage: {
+    width: 160,
+    height: 280,
+    borderRadius: 10,
+    backgroundColor: "#00000010",
+  },
   emptyText: { fontSize: 14, padding: 16, textAlign: "center" },
   panel: {
     width: 400,

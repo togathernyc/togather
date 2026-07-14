@@ -57,6 +57,7 @@ import {
   displayTitle,
   isBuildableScope,
   isFromChat,
+  isStagingDeployLive,
   needsSpecApproval,
   needsStagingVerify,
   PALETTE,
@@ -596,6 +597,15 @@ export function ContributionDetailScreen({
     contribution.status === "IN_REVIEW" &&
     isBuildableScope(contribution.scope);
   const showStagingCard = !archived && needsStagingVerify(contribution);
+  // Deploy observation (ADR-029 follow-up): a merge only *triggers* the staging
+  // deploy. While it's running or if it failed, show an honest status card
+  // instead of the try-it/production actions — never invite a contributor to
+  // test something that isn't up.
+  const stagingDeployState = contribution.stagingDeploy?.state;
+  const showStagingDeploying =
+    !archived && contribution.status === "MERGED" && stagingDeployState === "pending";
+  const showStagingFailed =
+    !archived && contribution.status === "MERGED" && stagingDeployState === "failed";
   // In-app merge: review approved but not yet merged (auto-merge didn't take
   // it — higher risk than the originator's cap, or the feature is off).
   // mergeRequestedAt is the server-side in-flight latch: it hides the card
@@ -612,8 +622,15 @@ export function ContributionDetailScreen({
   // this feature and must not grow a live production button retroactively.
   const stagingCleared =
     contribution.verifyOnStaging === false || !!contribution.stagingVerifiedAt;
+  // Production actions require the staging deploy to have actually finished —
+  // a non-interactive item (verifyOnStaging === false) clears the try-it gate
+  // immediately, but must still wait for its staging deploy to go live.
   const showProductionCard =
-    !archived && contribution.status === "MERGED" && stagingCleared;
+    !archived &&
+    contribution.status === "MERGED" &&
+    stagingCleared &&
+    isStagingDeployLive(contribution);
+  const productionDeployState = contribution.productionDeploy?.state;
   // Fresh trigger → "deploy triggered" card; past the cooldown the button
   // returns (the dispatch only queues the workflow — the run can still fail).
   const productionRecentlyRequested =
@@ -815,6 +832,37 @@ export function ContributionDetailScreen({
           </ActionCard>
         ) : null}
 
+        {showStagingDeploying ? (
+          <ActionCard
+            icon="cloud-upload-outline"
+            tint={PALETTE.aiWorking}
+            borderTint={colors.border}
+            title="Deploying to staging"
+          >
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>
+              Merged — the staging deploy is running now (usually a few minutes).
+              We'll let you know the moment it's live so you can try it.
+            </Text>
+          </ActionCard>
+        ) : null}
+
+        {showStagingFailed ? (
+          <ActionCard
+            icon="alert-circle-outline"
+            tint="#FF3B30"
+            title="Staging deploy failed"
+          >
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>
+              The change merged, but the staging deploy didn't finish
+              {contribution.stagingDeploy?.failedWorkflow
+                ? ` (${contribution.stagingDeploy.failedWorkflow})`
+                : ""}
+              . It isn't live on staging yet — please contact the lead
+              maintainer.
+            </Text>
+          </ActionCard>
+        ) : null}
+
         {showStagingCard ? (
           <ActionCard icon="flask-outline" tint={PALETTE.yourTurn} title="Ready for you to try">
             <Text style={[styles.hint, { color: colors.textSecondary }]}>
@@ -886,16 +934,41 @@ export function ContributionDetailScreen({
         ) : null}
 
         {showProductionCard ? (
-          productionRecentlyRequested ? (
+          productionDeployState === "live" ? (
             <ActionCard
               icon="checkmark-circle-outline"
               tint={PALETTE.shipped}
-              borderTint={colors.border}
-              title="Production deploy triggered"
+              title="Live in production 🎉"
             >
               <Text style={[styles.hint, { color: colors.textSecondary }]}>
-                The silent update rolls out as users open the app — no forced
-                reload.
+                The silent update is out — users pick it up next time they open
+                the app.
+              </Text>
+            </ActionCard>
+          ) : productionDeployState === "failed" ? (
+            <ActionCard
+              icon="alert-circle-outline"
+              tint="#FF3B30"
+              title="Production deploy failed"
+            >
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>
+                The production deploy didn't finish
+                {contribution.productionDeploy?.failedWorkflow
+                  ? ` (${contribution.productionDeploy.failedWorkflow})`
+                  : ""}
+                . Nothing shipped to users — please contact the lead maintainer.
+              </Text>
+            </ActionCard>
+          ) : productionDeployState === "pending" || productionRecentlyRequested ? (
+            <ActionCard
+              icon="cloud-upload-outline"
+              tint={PALETTE.aiWorking}
+              borderTint={colors.border}
+              title="Deploying to production"
+            >
+              <Text style={[styles.hint, { color: colors.textSecondary }]}>
+                The silent update is rolling out — users get it next time they
+                open the app, no forced reload.
               </Text>
             </ActionCard>
           ) : (
