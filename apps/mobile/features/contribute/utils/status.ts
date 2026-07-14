@@ -150,6 +150,67 @@ export function conversationDotColor(
   return PALETTE.aiWorking;
 }
 
+/** User-facing labels for a build that's a rerun with the contributor's feedback. */
+export const REWORK_LABEL = {
+  /** A merged item sent back after the contributor's staging note (redoRounds). */
+  stagingRedo: "Reworking from your staging note",
+  /** The AI is addressing the code review's requested changes (fixRounds). */
+  fixFeedback: "Fixing review feedback",
+} as const;
+
+/** Fields needed to tell an *active* rerun apart from a stale counter. */
+type RerunInput = Pick<
+  Contribution,
+  "status" | "fixRounds" | "redoRounds" | "activeRunMode"
+>;
+
+/**
+ * The `fixRounds`/`redoRounds` counters PERSIST after the run they counted
+ * finishes (nothing clears them mid-lifecycle), so a counter alone can't say
+ * whether the item is *actively* being reworked. `activeRunMode` — the mode of
+ * the most recently dispatched Routine run — is the reliable "what's in flight"
+ * signal: a fix run stamps "fix", a redo's rebuild stamps "implement", and the
+ * fix→review handoff immediately restamps "review". Gating on it avoids two
+ * mislabels: an exhausted fix loop (budget spent, awaiting a human — mode is
+ * "review", not "fix") and an item sitting idle after a run reported back.
+ */
+
+/** A staging redo whose rebuild run is actually in flight (not just re-queued). */
+function isStagingRedoActive(c: RerunInput): boolean {
+  // The redo re-queues at READY_FOR_IMPL with activeRunMode cleared; the
+  // implement run stamps "implement" once it's building. Once it reports back
+  // (CODE_REVIEW onward) the mode moves to "review", so this reads false there
+  // and the normal status label takes over.
+  return (
+    c.status === "IN_PROGRESS" &&
+    (c.redoRounds ?? 0) > 0 &&
+    c.activeRunMode === "implement"
+  );
+}
+
+/** A fix run actively addressing the code review's requested changes. */
+function isFixingFeedbackActive(c: RerunInput): boolean {
+  // Fix runs only dispatch from CODE_REVIEW and stamp "fix". When the budget is
+  // exhausted no fix dispatches, so the mode stays "review" and this reads
+  // false (no "actively fixing" claim on an item that now needs a human).
+  return (
+    c.status === "CODE_REVIEW" &&
+    (c.fixRounds ?? 0) > 0 &&
+    c.activeRunMode === "fix"
+  );
+}
+
+/**
+ * True when the item is *actively* being reworked with the contributor's
+ * feedback rather than on a first build — a redo's rebuild is in flight, or a
+ * fix run is addressing review feedback. Gated on `activeRunMode` (not just the
+ * persisted counters) so a finished/exhausted/idle rerun falls back to the
+ * plain status label.
+ */
+export function isRerun(contribution: RerunInput): boolean {
+  return isStagingRedoActive(contribution) || isFixingFeedbackActive(contribution);
+}
+
 /** The contributor set this conversation aside (abandoned / not doable). */
 export function isArchived(
   contribution: Pick<Contribution, "archivedAt">,
@@ -168,13 +229,36 @@ export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle
  * (unless the AI judged it too big to build in one go), then "approved,
  * ready to build" once signed off (medium/high risk items wait here for an
  * explicit build start).
+ *
+ * The build/review states are also rerun-aware: when the item is *actively*
+ * being reworked with the contributor's feedback (a redo's rebuild in flight,
+ * or a fix run addressing review comments) the generic "Building"/"In code
+ * review" copy is replaced with framing that says the feedback is being acted
+ * on. Gated on `activeRunMode` (see isRerun), so a first build — or a
+ * finished/exhausted/idle rerun — keeps the plain labels.
  */
 export function statusPresentation(
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    | "status"
+    | "spec"
+    | "specApprovedAt"
+    | "scope"
+    | "verifyOnStaging"
+    | "stagingVerifiedAt"
+    | "fixRounds"
+    | "redoRounds"
+    | "activeRunMode"
   >,
 ): StatusPresentation {
+  // Shared amber "AI working" chip for both rerun flavors, with a refresh icon
+  // to read as a rerun rather than a first pass.
+  const reworkChip = (label: string): StatusPresentation => ({
+    label,
+    color: PALETTE.aiWorking,
+    icon: "refresh-outline",
+  });
+
   switch (contribution.status) {
     case "IN_REVIEW":
       if (!contribution.spec) {
@@ -192,11 +276,17 @@ export function statusPresentation(
       }
       return { label: "Approved — ready to build", color: "#5856D6", icon: "checkmark-outline" };
     case "READY_FOR_IMPL":
+      // A redo re-queues here with no run yet in flight (activeRunMode cleared),
+      // so it reads as a plain queue until the rebuild actually starts.
       return { label: "Queued to build", color: "#5856D6", icon: "rocket-outline" };
     case "IN_PROGRESS":
+      // Only a redo's rebuild is reworkable here; a first build reads "Building".
+      if (isStagingRedoActive(contribution)) return reworkChip(REWORK_LABEL.stagingRedo);
       return { label: "Building", color: "#FF9500", icon: "construct-outline" };
     case "CODE_REVIEW":
-      // The PR is still open — nothing is on staging yet.
+      // The PR is still open — nothing is on staging yet. An active fix run
+      // reworks the review feedback; an exhausted/idle round reads normally.
+      if (isFixingFeedbackActive(contribution)) return reworkChip(REWORK_LABEL.fixFeedback);
       return { label: "In code review", color: "#007AFF", icon: "git-pull-request-outline" };
     case "READY_TO_MERGE":
       // Reviewed and approved, but not merged — still nothing on staging.

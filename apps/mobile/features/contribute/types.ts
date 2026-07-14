@@ -86,6 +86,21 @@ export interface Contribution {
    * failed so the merge card can offer a retry.
    */
   mergeRequestedAt?: number;
+  /**
+   * Count of auto-fix dispatches while the AI addresses code-review feedback
+   * (capped at MAX_FIX_ROUNDS=3). >0 means the current build is a rerun
+   * reworking the review's requested changes, not a first build.
+   */
+  fixRounds?: number;
+  /**
+   * Count of staging-redo dispatches — incremented each time a contributor hit
+   * "Something's off in staging" and the merged item was sent back to rebuild.
+   * >0 means the current build is a rerun driven by the contributor's staging
+   * note.
+   */
+  redoRounds?: number;
+  /** Mode the in-flight Routine run was dispatched in. */
+  activeRunMode?: "spec" | "implement" | "review" | "fix";
   /** AI review verdict on the open PR — "approved" unlocks the in-app merge. */
   reviewVerdict?: "approved" | "changes_requested";
   reviewSummary?: string;
