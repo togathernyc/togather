@@ -306,6 +306,14 @@ export const dispatchBug = internalAction({
           .filter((u): u is string => !!u)
       : null;
 
+    // The report's own screenshots, resolved to fetchable URLs. bug.screenshotUrls
+    // holds raw r2: storage paths the (vision-capable) routine can't fetch, so
+    // resolve before dispatch — same as the spec/redo paths above. (getMediaUrl
+    // passes existing http(s) URLs through unchanged.)
+    const reportShots = (bug.screenshotUrls ?? [])
+      .map((u) => getMediaUrl(u))
+      .filter((u): u is string => !!u);
+
     const callbackUrl = `${process.env.CONVEX_SITE_URL}/dev-assistant/callback`;
     const payload = {
       bugId: args.bugId,
@@ -314,7 +322,11 @@ export const dispatchBug = internalAction({
       body: bug.body,
       repro: bug.repro,
       screenshotUrls:
-        redoShots && redoShots.length > 0 ? redoShots : bug.screenshotUrls,
+        redoShots && redoShots.length > 0
+          ? redoShots
+          : reportShots.length > 0
+            ? reportShots
+            : undefined,
       // Approved spec + risk level so the Routine builds against the plan the
       // contributor signed off on (undefined for chat-originated bugs).
       spec: bug.spec,
