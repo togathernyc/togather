@@ -156,7 +156,11 @@ OPTIONAL_SECRETS=(
   "CLAUDE_ROUTINES_TRIGGER_URL"
   "CLAUDE_ROUTINES_TOKEN"
   "DEV_ASSISTANT_CALLBACK_SECRET"
-  "GITHUB_WEBHOOK_SECRET"
+  # Auto-merge config (non-secret switches; safe to store as GitHub secrets).
+  # GITHUB_WEBHOOK_SECRET is intentionally omitted: GitHub reserves the GITHUB_
+  # secret-name prefix (`gh secret set GITHUB_*` → 422), so it can't sync through
+  # this hop. Its inbound webhook falls back to DEV_ASSISTANT_CALLBACK_SECRET; to
+  # split them, set GITHUB_WEBHOOK_SECRET directly on the Convex deployment.
   "AUTO_MERGE_ENABLED"
   "AUTO_MERGE_METHOD"
 )

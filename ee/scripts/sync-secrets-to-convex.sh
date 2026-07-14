@@ -106,17 +106,19 @@ SECRET_KEYS=(
   "CLAUDE_ROUTINES_TOKEN"
   "DEV_ASSISTANT_CALLBACK_SECRET"
   # Dev-assistant merge/deploy pipeline. These are read by Convex functions
-  # (apps/convex/functions/devAssistant/actions.ts, apps/convex/http.ts), so
-  # they MUST reach the Convex env — not just GitHub. Each is optional: missing
-  # items are skipped, leaving the documented safe default (auto-merge off,
-  # webhook secret falls back to DEV_ASSISTANT_CALLBACK_SECRET).
-  #   GH_MIRROR_TOKEN       - PAT for in-app merge, auto-merge, and prod-deploy
-  #                           dispatch (needs Issues + Contents + Actions r/w).
-  #   GITHUB_WEBHOOK_SECRET - HMAC secret for the inbound PR-closed webhook.
-  #   AUTO_MERGE_ENABLED    - master switch; must be exactly "true" to arm.
-  #   AUTO_MERGE_METHOD     - squash (default) | merge | rebase.
+  # (apps/convex/functions/devAssistant/actions.ts), so they MUST reach the
+  # Convex env — not just GitHub. Each is optional: missing items are skipped,
+  # leaving the documented safe default (auto-merge off).
+  #   GH_MIRROR_TOKEN    - PAT for in-app merge, auto-merge, and prod-deploy
+  #                        dispatch (needs Issues + Contents + Actions r/w).
+  #   AUTO_MERGE_ENABLED - master switch; must be exactly "true" to arm.
+  #   AUTO_MERGE_METHOD  - squash (default) | merge | rebase.
+  # NOTE: GITHUB_WEBHOOK_SECRET is deliberately NOT here. GitHub reserves the
+  # GITHUB_ secret-name prefix (`gh secret set GITHUB_*` -> 422), so it can't
+  # flow through the GitHub hop. The inbound webhook falls back to
+  # DEV_ASSISTANT_CALLBACK_SECRET (which IS synced); to split them, set
+  # GITHUB_WEBHOOK_SECRET directly on the Convex deployment.
   "GH_MIRROR_TOKEN"
-  "GITHUB_WEBHOOK_SECRET"
   "AUTO_MERGE_ENABLED"
   "AUTO_MERGE_METHOD"
 )
