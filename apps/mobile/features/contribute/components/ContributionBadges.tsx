@@ -18,7 +18,15 @@ export function StatusChip({
 }: {
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    | "status"
+    | "spec"
+    | "specApprovedAt"
+    | "scope"
+    | "verifyOnStaging"
+    | "stagingVerifiedAt"
+    | "fixRounds"
+    | "redoRounds"
+    | "activeRunMode"
   >;
 }) {
   const { label, color, icon } = statusPresentation(contribution);
