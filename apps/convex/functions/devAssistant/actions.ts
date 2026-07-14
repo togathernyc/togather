@@ -931,6 +931,19 @@ function describeMergeBlock(
   }
 }
 
+/**
+ * Whether a PR's `mergeable_state` means GitHub will accept a merge PUT.
+ * Both `clean` (all checks green) AND `unstable` merge — `unstable` means the
+ * required checks are satisfied and only optional (non-required) checks are
+ * failing or pending, which GitHub still allows merging. Treating `unstable`
+ * as a required-check failure would strand a genuinely-mergeable PR in the
+ * recovery poll until the cap and then mislabel it as "a required check is
+ * failing".
+ */
+function isMergeableState(state: string | undefined): boolean {
+  return state === "clean" || state === "unstable";
+}
+
 /** Progress line posted when the button auto-updates a behind branch. */
 const MERGE_BEHIND_RECOVERING_MESSAGE =
   "Your branch was behind main — I've updated it and CI is re-running. I'll merge automatically once checks pass.";
@@ -1220,7 +1233,7 @@ export const mergeFromApp = internalAction({
       // recover automatically. Update the branch so CI re-runs, then poll until
       // it's green and merge. Keep the latch SET the whole time so the card
       // never flips back to "Merge" mid-recovery.
-      if (state === "behind" || state === "clean") {
+      if (state === "behind" || isMergeableState(state)) {
         if (state === "behind") {
           const upd = await updatePullRequestBranch(prNumber, mirrorToken);
           if (upd.status === 401 || upd.status === 403) {
@@ -1255,8 +1268,10 @@ export const mergeFromApp = internalAction({
         return;
       }
 
-      // blocked / unstable / draft → a required check is genuinely failing;
+      // blocked / draft → a required check is genuinely failing;
       // null → GitHub state couldn't be read. Either way, give up cleanly.
+      // (`clean`/`unstable` are handled above as mergeable; `behind`/`dirty`
+      // each have their own branch.)
       await failed(describeMergeBlock(state ? "failing" : "unknown"));
     } catch (error) {
       console.error("[DevAssistant] In-app merge threw:", error, args.bugId);
@@ -1326,8 +1341,23 @@ export const retryMergeAfterUpdate = internalAction({
 
     const state = status?.mergeableState;
 
-    // Green now → retry the merge.
-    if (state === "clean") {
+    // Schedule another bounded poll, or give up once the cap is reached
+    // (checks never went green). Used both when checks haven't settled yet and
+    // when a merge PUT fails transiently on an otherwise-mergeable PR.
+    const pollAgainOrGiveUp = async (): Promise<void> => {
+      if (args.attempt + 1 >= MERGE_RECOVERY_MAX_POLLS) {
+        await failed(describeMergeBlock("failing"));
+        return;
+      }
+      await ctx.scheduler.runAfter(
+        mergeRecoveryPollDelayMs(args.attempt + 1),
+        internal.functions.devAssistant.actions.retryMergeAfterUpdate,
+        { bugId: args.bugId, attempt: args.attempt + 1 },
+      );
+    };
+
+    // Mergeable now (clean or unstable) → retry the merge.
+    if (isMergeableState(state)) {
       const res = await mergePullRequestOnGithub(prNumber, mirrorToken);
       if (res.ok) {
         await applyGithubConfirmedMerge(ctx, bug, await readMergeCommitSha(res));
@@ -1338,7 +1368,11 @@ export const retryMergeAfterUpdate = internalAction({
         await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
         return;
       }
-      await failed(describeMergeBlock("failing"));
+      // The PUT failed but the PR isn't merged and GitHub still reports it as
+      // mergeable — a transient failure (a 5xx, or a "base branch was modified"
+      // race). Poll again rather than a terminal give-up; the cap still bounds
+      // it. Only if we exhaust the cap do we surface the failing-check message.
+      await pollAgainOrGiveUp();
       return;
     }
 
@@ -1350,15 +1384,7 @@ export const retryMergeAfterUpdate = internalAction({
 
     // Still behind / blocked / unknown → checks haven't settled. Poll again
     // until the cap, then give up (checks never went green).
-    if (args.attempt + 1 >= MERGE_RECOVERY_MAX_POLLS) {
-      await failed(describeMergeBlock("failing"));
-      return;
-    }
-    await ctx.scheduler.runAfter(
-      mergeRecoveryPollDelayMs(args.attempt + 1),
-      internal.functions.devAssistant.actions.retryMergeAfterUpdate,
-      { bugId: args.bugId, attempt: args.attempt + 1 },
-    );
+    await pollAgainOrGiveUp();
   },
 });
 

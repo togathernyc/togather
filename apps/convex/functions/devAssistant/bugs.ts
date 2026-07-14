@@ -1157,6 +1157,14 @@ export const applyCallback = internalMutation({
         patch.mergeCommitSha = args.mergeCommitSha;
       }
       patch.stagingDeploy = { state: "pending", workflows: [], updatedAt: now };
+      // Release the in-app merge latch on the final success. The smarter merge
+      // button keeps mergeRequestedAt SET across auto-recovery so the card
+      // never flips back to "Merge" mid-recovery; the MERGED transition is
+      // where recovery ends, so it's where the latch must clear. Without this
+      // a subsequent staging-redo round returns to READY_TO_MERGE with a stale
+      // latch still set, permanently hiding the merge card (mergeRequestedAt
+      // gates showMergeCard).
+      patch.mergeRequestedAt = undefined;
     }
 
     // Stale approval guard: a REVISED spec invalidates an existing sign-off —
