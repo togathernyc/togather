@@ -56,19 +56,41 @@ export function needsSpecApproval(
 }
 
 /**
+ * The staging deploy for a merged item is actually up. A merge only *triggers*
+ * the staging deploy workflows (a few minutes), so "merged" ≠ "live". Legacy
+ * merged rows predate deploy observation and carry no `stagingDeploy` — treat
+ * them as live (they're long since deployed). A pending or failed deploy is
+ * explicitly NOT live, so we never invite a contributor to test something that
+ * isn't up.
+ */
+export function isStagingDeployLive(
+  contribution: Pick<Contribution, "stagingDeploy">,
+): boolean {
+  return (
+    contribution.stagingDeploy === undefined ||
+    contribution.stagingDeploy.state === "live"
+  );
+}
+
+/**
  * The contributor should try the change on the staging app: it's flagged for
- * staging verification, not yet verified, and merged. Nothing reaches staging
- * until the PR merges to `main` (deploys auto-run on merge), so the try-it
- * window opens at MERGED — never while the PR is still open. The sign-off then
- * gates the manual production deploy (ADR-029).
+ * staging verification, not yet verified, merged, AND the staging deploy has
+ * actually finished. Nothing reaches staging until the PR merges to `main` and
+ * the deploy workflows run, so the try-it window opens once the deploy goes
+ * live — never on merge alone. The sign-off then gates the manual production
+ * deploy (ADR-029).
  */
 export function needsStagingVerify(
-  contribution: Pick<Contribution, "status" | "verifyOnStaging" | "stagingVerifiedAt">,
+  contribution: Pick<
+    Contribution,
+    "status" | "verifyOnStaging" | "stagingVerifiedAt" | "stagingDeploy"
+  >,
 ): boolean {
   return (
     !!contribution.verifyOnStaging &&
     !contribution.stagingVerifiedAt &&
-    contribution.status === "MERGED"
+    contribution.status === "MERGED" &&
+    isStagingDeployLive(contribution)
   );
 }
 
@@ -107,7 +129,7 @@ export function needsBuildStart(
 export function isYourTurn(
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt" | "stagingDeploy"
   >,
 ): boolean {
   return (
@@ -127,7 +149,7 @@ export function isYourTurn(
 export function isInProgress(
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt" | "stagingDeploy"
   >,
 ): boolean {
   return (
@@ -141,7 +163,7 @@ export function isInProgress(
 export function conversationDotColor(
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt" | "stagingDeploy"
   >,
 ): string {
   if (isYourTurn(contribution)) return PALETTE.yourTurn;
@@ -246,6 +268,8 @@ export function statusPresentation(
     | "scope"
     | "verifyOnStaging"
     | "stagingVerifiedAt"
+    | "stagingDeploy"
+    | "productionDeploy"
     | "fixRounds"
     | "redoRounds"
     | "activeRunMode"
@@ -291,10 +315,31 @@ export function statusPresentation(
     case "READY_TO_MERGE":
       // Reviewed and approved, but not merged — still nothing on staging.
       return { label: "Awaiting merge", color: "#FF9500", icon: "git-merge-outline" };
-    case "MERGED":
-      // A merge auto-deploys to staging; production is a separate manual step.
-      // For interactive items the contributor tries it on staging first (their
-      // turn), then a maintainer ships to production (ADR-029).
+    case "MERGED": {
+      // Production deploy state wins once a ship has been triggered — it's the
+      // latest truth about where the change is.
+      const prod = contribution.productionDeploy;
+      if (prod?.state === "live") {
+        return { label: "Live in production", color: "#34C759", icon: "checkmark-circle-outline" };
+      }
+      if (prod?.state === "failed") {
+        return { label: "Production deploy failed", color: "#FF3B30", icon: "alert-circle-outline" };
+      }
+      if (prod?.state === "pending") {
+        return { label: "Deploying to production…", color: "#FF9500", icon: "cloud-upload-outline" };
+      }
+      // A merge only *triggers* the staging deploy — be honest about its real
+      // state instead of claiming "live on staging" the instant it merges.
+      const staging = contribution.stagingDeploy;
+      if (staging?.state === "pending") {
+        return { label: "Deploying to staging…", color: "#FF9500", icon: "cloud-upload-outline" };
+      }
+      if (staging?.state === "failed") {
+        return { label: "Staging deploy failed", color: "#FF3B30", icon: "alert-circle-outline" };
+      }
+      // Deploy is live (or a legacy row with no deploy record). For interactive
+      // items the contributor tries it on staging first (their turn), then a
+      // maintainer ships to production (ADR-029).
       if (contribution.verifyOnStaging && !contribution.stagingVerifiedAt) {
         return {
           label: "On staging — ready for you to try",
@@ -309,7 +354,8 @@ export function statusPresentation(
           icon: "checkmark-circle-outline",
         };
       }
-      return { label: "Merged — live on staging", color: "#34C759", icon: "checkmark-circle-outline" };
+      return { label: "Live on staging", color: "#34C759", icon: "checkmark-circle-outline" };
+    }
     case "REJECTED":
       return { label: "Not planned", color: "#999999", icon: "close-circle-outline" };
     case "DRAFT":

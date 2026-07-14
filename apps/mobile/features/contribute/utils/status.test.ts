@@ -5,8 +5,10 @@
 import {
   isArchived,
   isInProgress,
-  isRerun,
+  isStagingDeployLive,
   isYourTurn,
+  needsStagingVerify,
+  isRerun,
   statusPresentation,
 } from "./status";
 import type { Contribution } from "../types";
@@ -19,6 +21,8 @@ type StatusInput = Pick<
   | "scope"
   | "verifyOnStaging"
   | "stagingVerifiedAt"
+  | "stagingDeploy"
+  | "productionDeploy"
   | "fixRounds"
   | "redoRounds"
   | "activeRunMode"
@@ -109,6 +113,123 @@ describe("isInProgress", () => {
     });
     expect(isYourTurn(approved)).toBe(true);
     expect(isInProgress(approved)).toBe(false);
+  });
+});
+
+describe("deploy observation — MERGED sub-states", () => {
+  it("isStagingDeployLive: undefined (legacy) or 'live' is live; pending/failed is not", () => {
+    expect(isStagingDeployLive({})).toBe(true);
+    expect(
+      isStagingDeployLive({ stagingDeploy: { state: "live", updatedAt: 1 } }),
+    ).toBe(true);
+    expect(
+      isStagingDeployLive({ stagingDeploy: { state: "pending", updatedAt: 1 } }),
+    ).toBe(false);
+    expect(
+      isStagingDeployLive({ stagingDeploy: { state: "failed", updatedAt: 1 } }),
+    ).toBe(false);
+  });
+
+  it("needsStagingVerify only once the staging deploy is live", () => {
+    const base = make({ status: "MERGED", verifyOnStaging: true });
+    // Deploy still running / failed → don't invite a try-it yet.
+    expect(
+      needsStagingVerify({
+        ...base,
+        stagingDeploy: { state: "pending", updatedAt: 1 },
+      }),
+    ).toBe(false);
+    expect(
+      needsStagingVerify({
+        ...base,
+        stagingDeploy: { state: "failed", updatedAt: 1 },
+      }),
+    ).toBe(false);
+    // Live (or legacy undefined) → the try-it window is open.
+    expect(
+      needsStagingVerify({
+        ...base,
+        stagingDeploy: { state: "live", updatedAt: 1 },
+      }),
+    ).toBe(true);
+    expect(needsStagingVerify(base)).toBe(true);
+  });
+
+  it("statusPresentation reflects the staging deploy state on a merged item", () => {
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          verifyOnStaging: true,
+          stagingDeploy: { state: "pending", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("Deploying to staging…");
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          verifyOnStaging: true,
+          stagingDeploy: { state: "failed", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("Staging deploy failed");
+    // Live interactive item → the existing "ready to try" label.
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          verifyOnStaging: true,
+          stagingDeploy: { state: "live", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("On staging — ready for you to try");
+    // Legacy merged row with no deploy record still reads as live-on-staging.
+    expect(statusPresentation(make({ status: "MERGED" })).label).toBe(
+      "Live on staging",
+    );
+  });
+
+  it("statusPresentation surfaces the production deploy state", () => {
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          stagingVerifiedAt: 1,
+          productionDeploy: { state: "pending", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("Deploying to production…");
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          stagingVerifiedAt: 1,
+          productionDeploy: { state: "live", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("Live in production");
+    expect(
+      statusPresentation(
+        make({
+          status: "MERGED",
+          stagingVerifiedAt: 1,
+          productionDeploy: { state: "failed", updatedAt: 1 },
+        }),
+      ).label,
+    ).toBe("Production deploy failed");
+  });
+
+  it("a pending staging deploy keeps an interactive merged item OFF 'your turn'", () => {
+    const item = make({
+      status: "MERGED",
+      verifyOnStaging: true,
+      stagingDeploy: { state: "pending", updatedAt: 1 },
+    });
+    // Not the contributor's turn (nothing to try yet) and not "in progress"
+    // either — it's a merged item waiting on its deploy.
+    expect(isYourTurn(item)).toBe(false);
+    expect(isInProgress(item)).toBe(false);
   });
 });
 

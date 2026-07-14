@@ -842,25 +842,50 @@ async function mergePullRequestOnGithub(
 }
 
 /**
- * Whether the PR is already merged on GitHub — the tie-breaker when a merge
- * PUT fails: the in-app merge and policy auto-merge can race (both pass their
- * gates while the row is still READY_TO_MERGE), and the loser's 405 must not
- * post a "Merge failed" message for a change that actually merged. Returns
- * null when the state can't be determined (report the original failure).
+ * Whether the PR is already merged on GitHub (plus its merge commit SHA) — the
+ * tie-breaker when a merge PUT fails: the in-app merge and policy auto-merge
+ * can race (both pass their gates while the row is still READY_TO_MERGE), and
+ * the loser's 405 must not post a "Merge failed" message for a change that
+ * actually merged. The `merge_commit_sha` correlates the staging deploy
+ * observation (ADR-029 follow-up). Returns null when the state can't be
+ * determined (report the original failure).
  */
 async function fetchPrMerged(
   prNumber: string,
   token: string,
-): Promise<boolean | null> {
+): Promise<{ merged: boolean; mergeCommitSha?: string } | null> {
   try {
     const res = await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}`, {
       headers: githubJsonHeaders(token),
     });
     if (!res.ok) return null;
-    const pr = (await res.json()) as { merged?: boolean };
-    return pr.merged === true;
+    const pr = (await res.json()) as {
+      merged?: boolean;
+      merge_commit_sha?: string;
+    };
+    return {
+      merged: pr.merged === true,
+      mergeCommitSha:
+        typeof pr.merge_commit_sha === "string"
+          ? pr.merge_commit_sha
+          : undefined,
+    };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Parse the `sha` (the squash-merge commit) from a successful GitHub merge PUT
+ * response body. Best-effort — a missing/garbled body just yields undefined
+ * (the reconcile cron + workflow_run correlation degrade gracefully without it).
+ */
+async function readMergeCommitSha(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as { sha?: string };
+    return typeof body.sha === "string" ? body.sha : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -963,6 +988,7 @@ export const attemptAutoMerge = internalAction({
       const res = await mergePullRequestOnGithub(prMatch[1], mirrorToken);
 
       if (res.ok) {
+        const mergeCommitSha = await readMergeCommitSha(res);
         await ctx.runMutation(
           internal.functions.devAssistant.bugs.addSystemThreadMessage,
           {
@@ -970,15 +996,16 @@ export const attemptAutoMerge = internalAction({
             body: "Auto-merged ✓ — all gates passed (low risk, review approved)",
           },
         );
-        await applyGithubConfirmedMerge(ctx, bug);
+        await applyGithubConfirmedMerge(ctx, bug, mergeCommitSha);
         return;
       }
 
       // Lost a race? The in-app merge (or a human on GitHub) may have merged
       // the PR between this action's gates and its PUT — the resulting 405
       // must not read as a failure for a change that actually merged.
-      if (await fetchPrMerged(prMatch[1], mirrorToken)) {
-        await applyGithubConfirmedMerge(ctx, bug);
+      const raced = await fetchPrMerged(prMatch[1], mirrorToken);
+      if (raced?.merged) {
+        await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
         return;
       }
 
@@ -999,6 +1026,7 @@ export const attemptAutoMerge = internalAction({
 async function applyGithubConfirmedMerge(
   ctx: ActionCtx,
   bug: Pick<Doc<"devBugs">, "_id" | "routineRunId">,
+  mergeCommitSha?: string,
 ): Promise<void> {
   if (bug.routineRunId) {
     await ctx.runAction(
@@ -1008,6 +1036,7 @@ async function applyGithubConfirmedMerge(
         routineRunId: bug.routineRunId,
         status: "MERGED",
         source: "automerge",
+        mergeCommitSha,
       },
     );
   } else {
@@ -1015,6 +1044,7 @@ async function applyGithubConfirmedMerge(
       bugId: bug._id,
       status: "MERGED",
       source: "automerge",
+      mergeCommitSha,
     });
   }
 }
@@ -1077,12 +1107,17 @@ export const mergeFromApp = internalAction({
       // A failed PUT can still mean "merged": policy auto-merge (scheduled on
       // the same READY_TO_MERGE entry) or a human may have merged first, and
       // the loser's 405 must not tell the thread a successful merge failed.
-      if (res.ok || (await fetchPrMerged(prMatch[1], mirrorToken))) {
+      if (res.ok) {
         // GitHub confirmed the merge — apply MERGED through the trusted
         // "automerge" source (same as attemptAutoMerge) so the shipped push,
         // system message, and chat bot message all fire; the webhook
         // redelivery no-ops on a MERGED row.
-        await applyGithubConfirmedMerge(ctx, bug);
+        await applyGithubConfirmedMerge(ctx, bug, await readMergeCommitSha(res));
+        return;
+      }
+      const raced = await fetchPrMerged(prMatch[1], mirrorToken);
+      if (raced?.merged) {
+        await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
         return;
       }
 
@@ -1192,13 +1227,19 @@ export const reconcileMergedPrs = internalAction({
       if (!prMatch) continue;
       try {
         const merged = await fetchPrMerged(prMatch[1], token);
-        if (merged === true) {
+        if (merged?.merged) {
           // Reuse the webhook path: an empty branchRef falls through to the
           // prUrl-match fallback, which scans exactly these open-PR states and
-          // applies MERGED idempotently.
+          // applies MERGED idempotently. Carry the merge SHA so deploy
+          // observation can correlate the staging workflow_run events.
           await ctx.runMutation(
             internal.functions.devAssistant.bugs.handleGithubPrClosed,
-            { branchRef: "", prUrl: bug.prUrl, merged: true },
+            {
+              branchRef: "",
+              prUrl: bug.prUrl,
+              merged: true,
+              mergeCommitSha: merged.mergeCommitSha,
+            },
           );
         }
       } catch (error) {
@@ -1265,27 +1306,17 @@ function contributorPushForStatus(
       // later, maintainer-facing step) — pushing here and not on READY_TO_MERGE
       // means one "PR opened" push, not two. Nothing is on staging yet (the PR
       // is still open), so this stays an honest "in code review" note — the
-      // "try it on staging" ask waits for MERGED (ADR-029).
+      // "try it on staging" ask waits until the staging deploy actually goes
+      // live (bugs.ts stagingLivePush, fired by handleWorkflowRunEvent).
       return {
         title: "Your contribution is in code review",
         body: `A pull request is open for "${bug.title}".`,
       };
-    case "MERGED":
-      // The change is merged to `main` and auto-deployed to staging. For
-      // interactive items, this is the moment to ask the originator to try it
-      // on staging — their sign-off then gates the manual production deploy
-      // (ADR-029). Non-interactive items (copy/colour) just get an honest
-      // "it's live on staging" note, not a "shipped to production" claim.
-      if (bug.verifyOnStaging) {
-        return {
-          title: "Ready to test on staging",
-          body: `"${bug.title}" is merged and live on staging — try it and confirm it works.`,
-        };
-      }
-      return {
-        title: "Your contribution is live on staging",
-        body: `"${bug.title}" was merged and is now live on the staging app.`,
-      };
+    // NOTE: MERGED intentionally returns null. A merge only *triggers* the
+    // staging deploy — the "live on staging"/"try it" push now fires from
+    // handleWorkflowRunEvent (bugs.ts) once the deploy workflows actually
+    // succeed, so we never invite a contributor to test something that isn't
+    // up yet.
     default:
       return null;
   }
@@ -1301,6 +1332,9 @@ export const handleRoutineCallback = internalAction({
     // forwards this field, so external callers always land as "routine" —
     // the only source applyCallback's MERGED gate rejects.
     source: v.optional(callbackSourceValidator),
+    // Only meaningful on a MERGED apply — the squash-merge commit SHA, stored
+    // so the staging workflow_run events correlate to this bug.
+    mergeCommitSha: v.optional(v.string()),
     prUrl: v.optional(v.string()),
     screenshots: v.optional(v.array(v.string())),
     message: v.optional(v.string()),
@@ -1335,6 +1369,7 @@ export const handleRoutineCallback = internalAction({
         bugId: args.bugId,
         status: args.status,
         source: args.source,
+        mergeCommitSha: args.mergeCommitSha,
         prUrl: args.prUrl,
         screenshots: args.screenshots,
         spec: args.spec,
