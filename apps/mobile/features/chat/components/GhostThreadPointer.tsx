@@ -42,12 +42,34 @@ import { ThreadReplies } from './ThreadReplies';
 /**
  * How dim the echo reads versus a real message. The reporter's words: "smaller
  * and more transparent to signify it's an old message." Kept within the
- * spec's ≈55–65% band so it's clearly secondary chrome without dimming the
- * (already muted) deleted/attachment placeholder text into illegibility. Theme
- * colors underneath stay intact — this is opacity only, so it degrades
- * correctly across all four themes rather than hard-coding a light-theme tint.
+ * spec's ≈55–65% band so it's clearly secondary chrome.
+ *
+ * IMPORTANT: this fades the bubble *background* (via `withAlpha`) and the
+ * *normal* message text — never the whole `Pressable`. RN `opacity` on a
+ * parent multiplies onto every child, which would drop the already-muted
+ * deleted/attachment placeholder text (`textTertiary`) into illegibility on the
+ * dark themes (measured ~1.9:1). Fading the background's alpha and leaving the
+ * placeholder text at full strength keeps it legible across all four themes.
  */
 const DIM_OPACITY = 0.6;
+
+/**
+ * Apply an alpha channel to a solid theme hex color without touching its RGB,
+ * so the dimming lives on the bubble background instead of a parent `opacity`
+ * that would composite the text down with it. Theme colors are 6-digit hex;
+ * 3-digit shorthand is handled defensively.
+ */
+function withAlpha(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  const full =
+    normalized.length === 3
+      ? normalized.split('').map((c) => c + c).join('')
+      : normalized;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 interface GhostThreadPointerProps {
   parentMessageId: Id<"chatMessages">;
@@ -194,13 +216,25 @@ export function GhostThreadPointer({
             styles.bubble,
             alignRight ? styles.bubbleOwn : styles.bubbleOther,
             {
-              backgroundColor: alignRight ? colors.chatBubbleOwn : colors.chatBubbleOther,
-              opacity: pressed ? DIM_OPACITY * 0.8 : DIM_OPACITY,
+              // Dim the background's alpha only (not the Pressable's opacity) so
+              // the placeholder text below isn't composited into illegibility.
+              backgroundColor: withAlpha(
+                alignRight ? colors.chatBubbleOwn : colors.chatBubbleOther,
+                pressed ? DIM_OPACITY * 0.8 : DIM_OPACITY,
+              ),
             },
           ]}
         >
           <Text
-            style={[styles.bubbleText, { color: bubbleTextColor }, isPlaceholder && styles.placeholderText]}
+            style={[
+              styles.bubbleText,
+              { color: bubbleTextColor },
+              // Fade normal text to match the dimmed bubble, but keep the
+              // deleted/attachment placeholder at full strength — it's already
+              // muted (textTertiary) and a second dim tips it below a readable
+              // contrast floor on the dark themes.
+              isPlaceholder ? styles.placeholderText : { opacity: DIM_OPACITY },
+            ]}
             numberOfLines={2}
             ellipsizeMode="tail"
           >

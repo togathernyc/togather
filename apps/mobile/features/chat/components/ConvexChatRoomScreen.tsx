@@ -58,6 +58,7 @@ import { useReadState } from "../hooks/useReadState";
 import { useTypingIndicators } from "../hooks/useTypingIndicators";
 import { useSendMessage } from "../hooks/useConvexSendMessage";
 import { useParentMessage } from "../hooks/useParentMessage";
+import { isOptimisticMessageId, resolveReplyPreview } from "../utils/replyPreview";
 import { BlockedUsersProvider, useBlockedUsersContext } from "../context/BlockedUsersContext";
 import { useMutation, useAction } from "@services/api/convex";
 import { useGroupCache } from "@/stores/groupCache";
@@ -528,8 +529,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   // for those ids (it would only ever come back empty) and rely on the local
   // preview captured at reply time. Real messages still fetch as before so
   // edits/latest content override the local snapshot.
-  const isOptimisticReplyTarget =
-    typeof replyToMessageId === "string" && replyToMessageId.startsWith("optimistic-");
+  const isOptimisticReplyTarget = isOptimisticMessageId(replyToMessageId);
   const { message: replyParentMessage } = useParentMessage(
     isOptimisticReplyTarget ? null : replyToMessageId
   );
@@ -1373,9 +1373,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                         // edits) but fall back to the locally-captured values so
                         // the banner is never blank — e.g. when replying to a
                         // just-sent optimistic message the server can't resolve.
-                        content: replyParentMessage?.content ?? replyToLocal?.content ?? "",
-                        senderName:
-                          replyParentMessage?.senderName ?? replyToLocal?.senderName ?? "",
+                        ...resolveReplyPreview(replyParentMessage, replyToLocal),
                       }
                     : null
                 }
