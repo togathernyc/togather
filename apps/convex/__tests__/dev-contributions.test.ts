@@ -1750,19 +1750,26 @@ describe("in-app merge (mergeNow)", () => {
     ]);
   });
 
-  test("a failed GitHub merge posts the reason instead of advancing", async () => {
+  test("a real conflict posts a plain-language message and does not retry", async () => {
     const t = convexTest(schema, modules);
     activeHandle = t;
     const { maintainerId } = await seedUsers(t);
     const id = await seedReadyToMerge(t, maintainerId);
 
     process.env.GH_MIRROR_TOKEN = "gh-token";
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(JSON.stringify({ message: "Base branch was modified" }), {
-          status: 409,
-        }),
-    );
+    // Merge PUT fails; the PR GET reports a genuine conflict (dirty).
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/merge")) {
+        return new Response(
+          JSON.stringify({ message: "Pull Request is not mergeable" }),
+          { status: 405 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: "dirty" }),
+        { status: 200 },
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
@@ -1773,17 +1780,199 @@ describe("in-app merge (mergeNow)", () => {
 
     const bug = await t.run(async (ctx) => ctx.db.get(id));
     expect(bug?.status).toBe("READY_TO_MERGE");
-    // Failure clears the in-flight latch so the merge card returns and the
-    // "try again" in the message is actually possible.
+    // Terminal give-up clears the in-flight latch so the merge card returns.
+    expect(bug?.mergeRequestedAt).toBeUndefined();
+
+    // A conflict must NOT trigger the update-branch recovery loop.
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith("/update-branch"),
+      ),
+    ).toBe(false);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const last = thread[thread.length - 1]?.body ?? "";
+    // Plain language, never GitHub's raw "returned 405 (…)" text.
+    expect(last).toMatch(/conflicts with `main`/);
+    expect(last).not.toMatch(/returned 405/);
+  });
+
+  test("a branch behind main is auto-updated, then merges once checks pass", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    // The branch is behind main: the first merge PUT 405s, the PR GET reports
+    // "behind", we update the branch, CI re-runs (GET flips to "clean"), and
+    // the retried merge PUT succeeds.
+    let phase: "behind" | "updating" | "clean" = "behind";
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/merge")) {
+        if (phase === "clean") return new Response("{}", { status: 200 });
+        return new Response(
+          JSON.stringify({ message: "Required status check is expected." }),
+          { status: 405 },
+        );
+      }
+      if (u.endsWith("/update-branch")) {
+        phase = "updating";
+        return new Response(
+          JSON.stringify({ message: "Updating pull request branch." }),
+          { status: 202 },
+        );
+      }
+      // GET /pulls/{n}: behind until we update, clean afterwards.
+      if (phase === "updating") {
+        phase = "clean";
+        return new Response(
+          JSON.stringify({ merged: false, mergeable_state: "clean" }),
+          { status: 200 },
+        );
+      }
+      const state = phase === "clean" ? "clean" : "behind";
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: state }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The branch was updated from main.
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).endsWith("/update-branch"),
+      ),
+    ).toBe(true);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("MERGED");
+    expect(bug?.shippedAt).toBeTruthy();
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
+    );
+    const bodies = thread.map((m) => m.body);
+    // Plain-language progress, then the merge.
+    expect(bodies.some((b) => /behind main/i.test(b))).toBe(true);
+    expect(bodies.some((b) => /Merged — deploying to staging/.test(b))).toBe(
+      true,
+    );
+    expect(bodies.some((b) => /returned 405/.test(b))).toBe(false);
+  });
+
+  test("a permission error updating the branch posts a plain message and stops", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/merge")) {
+        return new Response(JSON.stringify({ message: "blocked" }), {
+          status: 405,
+        });
+      }
+      if (u.endsWith("/update-branch")) {
+        return new Response(JSON.stringify({ message: "Forbidden" }), {
+          status: 403,
+        });
+      }
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: "behind" }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
     expect(bug?.mergeRequestedAt).toBeUndefined();
 
     const thread = await t.query(
       api.functions.devAssistant.contributions.getThread,
       { token: maintainerId, id },
     );
-    expect(thread[thread.length - 1]?.body).toMatch(
-      /Merge failed: GitHub merge returned 409 \(Base branch was modified\)/,
+    expect(thread[thread.length - 1]?.body).toMatch(/missing repo access/);
+  });
+
+  test("checks that never go green stop at the poll cap without spinning forever", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    const id = await seedReadyToMerge(t, maintainerId);
+
+    process.env.GH_MIRROR_TOKEN = "gh-token";
+    // Behind → update-branch succeeds, but the PR stays "blocked" forever
+    // (a required check never goes green). The recovery must stop at the cap.
+    // The first PR GET reports "behind" to enter recovery; every GET after
+    // stays "blocked".
+    let prGets = 0;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith("/merge")) {
+        return new Response(JSON.stringify({ message: "blocked" }), {
+          status: 405,
+        });
+      }
+      if (u.endsWith("/update-branch")) {
+        return new Response(JSON.stringify({ message: "updating" }), {
+          status: 202,
+        });
+      }
+      prGets += 1;
+      const state = prGets === 1 ? "behind" : "blocked";
+      return new Response(
+        JSON.stringify({ merged: false, mergeable_state: state }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.mutation(api.functions.devAssistant.contributions.mergeNow, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    expect(bug?.status).toBe("READY_TO_MERGE");
+    // Latch released on the capped give-up so the card returns.
+    expect(bug?.mergeRequestedAt).toBeUndefined();
+
+    // Bounded: update-branch is called exactly once (not per poll), and the
+    // number of PR GETs is capped by the poll budget — never unbounded.
+    const updateCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/update-branch"),
+    ).length;
+    expect(updateCalls).toBe(1);
+    expect(prGets).toBeLessThanOrEqual(8);
+
+    const thread = await t.query(
+      api.functions.devAssistant.contributions.getThread,
+      { token: maintainerId, id },
     );
+    expect(thread[thread.length - 1]?.body).toMatch(/required check/i);
   });
 
   test("losing the race to auto-merge is a success, not a spurious failure", async () => {

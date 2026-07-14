@@ -842,18 +842,30 @@ async function mergePullRequestOnGithub(
 }
 
 /**
- * Whether the PR is already merged on GitHub (plus its merge commit SHA) — the
- * tie-breaker when a merge PUT fails: the in-app merge and policy auto-merge
- * can race (both pass their gates while the row is still READY_TO_MERGE), and
- * the loser's 405 must not post a "Merge failed" message for a change that
- * actually merged. The `merge_commit_sha` correlates the staging deploy
- * observation (ADR-029 follow-up). Returns null when the state can't be
- * determined (report the original failure).
+ * Read a PR's merge state from GitHub: whether it's already merged (plus its
+ * merge commit SHA) AND why a merge PUT might be blocked (`mergeable_state`).
+ *
+ * Two callers, two needs:
+ *  - the tie-breaker when a merge PUT fails — the in-app merge and policy
+ *    auto-merge can race (both pass their gates while the row is still
+ *    READY_TO_MERGE), and the loser's 405 must not post a failure message for
+ *    a change that actually merged; the `merge_commit_sha` correlates the
+ *    staging deploy observation (ADR-029 follow-up).
+ *  - the diagnosis behind the smarter in-app merge button: `mergeableState`
+ *    ("behind" / "dirty" / "clean" / "blocked" / …) says whether the button
+ *    can auto-recover (update a behind branch) or must give up with a plain
+ *    explanation.
+ *
+ * Returns null when the state can't be determined (report the original failure).
  */
 async function fetchPrMerged(
   prNumber: string,
   token: string,
-): Promise<{ merged: boolean; mergeCommitSha?: string } | null> {
+): Promise<{
+  merged: boolean;
+  mergeCommitSha?: string;
+  mergeableState?: string;
+} | null> {
   try {
     const res = await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}`, {
       headers: githubJsonHeaders(token),
@@ -862,6 +874,7 @@ async function fetchPrMerged(
     const pr = (await res.json()) as {
       merged?: boolean;
       merge_commit_sha?: string;
+      mergeable_state?: string;
     };
     return {
       merged: pr.merged === true,
@@ -869,10 +882,70 @@ async function fetchPrMerged(
         typeof pr.merge_commit_sha === "string"
           ? pr.merge_commit_sha
           : undefined,
+      mergeableState:
+        typeof pr.mergeable_state === "string"
+          ? pr.mergeable_state
+          : undefined,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Update a PR's branch by merging the base branch (`main`) into it — the GitHub
+ * equivalent of the "Update branch" button. This re-triggers CI on the freshly
+ * updated head and clears a `mergeable_state: "behind"` block. The token needs
+ * Contents: write (GH_MIRROR_TOKEN already has it, since it merges PRs).
+ * Returns the raw Response so the caller can distinguish a real conflict (409)
+ * or a permission error (401/403) from success.
+ */
+async function updatePullRequestBranch(
+  prNumber: string,
+  token: string,
+): Promise<Response> {
+  return await fetch(`${GITHUB_PULLS_ENDPOINT}/${prNumber}/update-branch`, {
+    method: "PUT",
+    headers: githubJsonHeaders(token),
+  });
+}
+
+/**
+ * Turn a merge-block diagnosis into a plain-language thread message a
+ * non-coder can act on — replacing GitHub's raw "merge returned 405 (…)" text.
+ * Every user-facing in-app-merge failure routes through here so the wording
+ * (and the "what to do next") stays consistent.
+ */
+function describeMergeBlock(
+  kind: "conflict" | "failing" | "permission" | "unknown",
+): string {
+  switch (kind) {
+    case "conflict":
+      return "This PR conflicts with `main` and needs code changes before it can merge.";
+    case "failing":
+      return "A required check on this PR is failing — it needs a code fix before it can merge.";
+    case "permission":
+      return "I couldn't update the branch — the merge bot may be missing repo access. A maintainer needs to check its permissions.";
+    case "unknown":
+      return "GitHub couldn't merge this PR — a maintainer may need to check it on GitHub.";
+  }
+}
+
+/** Progress line posted when the button auto-updates a behind branch. */
+const MERGE_BEHIND_RECOVERING_MESSAGE =
+  "Your branch was behind main — I've updated it and CI is re-running. I'll merge automatically once checks pass.";
+
+/**
+ * Bounded recovery poll budget: after updating a behind branch we re-read its
+ * mergeability up to this many times, then give up (checks never went green)
+ * rather than spinning forever. A handful of polls with backoff ≈ a few
+ * minutes total.
+ */
+const MERGE_RECOVERY_MAX_POLLS = 6;
+
+/** Backoff between recovery polls: 15s, 30s, 45s, 60s… capped at 60s. */
+function mergeRecoveryPollDelayMs(attempt: number): number {
+  return Math.min(15_000 * (attempt + 1), 60_000);
 }
 
 /**
@@ -1055,8 +1128,15 @@ async function applyGithubConfirmedMerge(
  * AUTO_MERGE_ENABLED switch and the per-user severity cap — but it re-checks
  * the hard gates itself (READY_TO_MERGE + review approved + prUrl), so a stale
  * tap after the state moved on is a polite thread message, not a rogue merge.
- * Success lands MERGED through the same trusted "automerge" callback source as
- * policy auto-merge; failure posts the reason for a maintainer.
+ *
+ * Smarter than a raw merge PUT: when the merge is blocked ONLY because the
+ * branch is behind `main` (the common friction — GitHub returns 405 "Required
+ * status check … is expected"), it auto-recovers — updates the branch, lets CI
+ * re-run, and merges once it's green (see retryMergeAfterUpdate). For blocks it
+ * genuinely can't fix (real conflict, failing check, permission), it posts a
+ * plain-language explanation instead of GitHub's raw error. Success lands
+ * MERGED through the same trusted "automerge" callback source as policy
+ * auto-merge.
  */
 export const mergeFromApp = internalAction({
   args: { bugId: v.id("devBugs") },
@@ -1066,8 +1146,9 @@ export const mergeFromApp = internalAction({
     });
     if (!bug) return;
 
-    // Failure path posts the reason AND clears mergeRequestedAt so the merge
-    // card returns — the message says "try again", which must be possible.
+    // Terminal failure path: posts the (already plain-language) reason AND
+    // clears mergeRequestedAt so the merge card returns. Used only for blocks
+    // we can't auto-recover — the auto-recover flow keeps the latch SET.
     const failed = async (reason: string): Promise<void> => {
       console.error("[DevAssistant] In-app merge failed:", reason, args.bugId);
       await ctx.runMutation(
@@ -1085,24 +1166,25 @@ export const mergeFromApp = internalAction({
       bug.reviewVerdict !== "approved" ||
       !bug.prUrl
     ) {
-      await failed("the item is no longer ready to merge");
+      await failed("This item is no longer ready to merge.");
       return;
     }
 
     const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
     if (!prMatch) {
-      await failed(`could not parse a PR number from ${bug.prUrl}`);
+      await failed(describeMergeBlock("unknown"));
       return;
     }
+    const prNumber = prMatch[1];
 
     const mirrorToken = githubMirrorToken();
     if (!mirrorToken) {
-      await failed("GH_MIRROR_TOKEN not configured");
+      await failed(describeMergeBlock("permission"));
       return;
     }
 
     try {
-      const res = await mergePullRequestOnGithub(prMatch[1], mirrorToken);
+      const res = await mergePullRequestOnGithub(prNumber, mirrorToken);
 
       // A failed PUT can still mean "merged": policy auto-merge (scheduled on
       // the same READY_TO_MERGE entry) or a human may have merged first, and
@@ -1115,16 +1197,168 @@ export const mergeFromApp = internalAction({
         await applyGithubConfirmedMerge(ctx, bug, await readMergeCommitSha(res));
         return;
       }
-      const raced = await fetchPrMerged(prMatch[1], mirrorToken);
+
+      // Log the raw GitHub reason for the breadcrumb, then diagnose *why* the
+      // merge was blocked from the PR's mergeability rather than surfacing the
+      // raw 405 to the maintainer.
+      console.error(
+        "[DevAssistant] In-app merge PUT failed:",
+        await githubErrorDetail(res, "GitHub merge"),
+        args.bugId,
+      );
+
+      const status = await fetchPrMerged(prNumber, mirrorToken);
+      if (status?.merged) {
+        await applyGithubConfirmedMerge(ctx, bug, status.mergeCommitSha);
+        return;
+      }
+
+      const state = status?.mergeableState;
+
+      // Behind `main` (the case that dead-ended on the raw 405) — or an
+      // otherwise-clean PR whose merge lost a "base branch was modified" race:
+      // recover automatically. Update the branch so CI re-runs, then poll until
+      // it's green and merge. Keep the latch SET the whole time so the card
+      // never flips back to "Merge" mid-recovery.
+      if (state === "behind" || state === "clean") {
+        if (state === "behind") {
+          const upd = await updatePullRequestBranch(prNumber, mirrorToken);
+          if (upd.status === 401 || upd.status === 403) {
+            await failed(describeMergeBlock("permission"));
+            return;
+          }
+          if (upd.status === 409) {
+            await failed(describeMergeBlock("conflict"));
+            return;
+          }
+          if (!upd.ok) {
+            await failed(describeMergeBlock("failing"));
+            return;
+          }
+          // The branch is actually updated now — post the progress line.
+          await ctx.runMutation(
+            internal.functions.devAssistant.bugs.addSystemThreadMessage,
+            { bugId: args.bugId, body: MERGE_BEHIND_RECOVERING_MESSAGE },
+          );
+        }
+        await ctx.scheduler.runAfter(
+          mergeRecoveryPollDelayMs(0),
+          internal.functions.devAssistant.actions.retryMergeAfterUpdate,
+          { bugId: args.bugId, attempt: 0 },
+        );
+        return; // latch stays set — recovery is in flight
+      }
+
+      // Real conflict → no retry loop; needs code changes.
+      if (state === "dirty") {
+        await failed(describeMergeBlock("conflict"));
+        return;
+      }
+
+      // blocked / unstable / draft → a required check is genuinely failing;
+      // null → GitHub state couldn't be read. Either way, give up cleanly.
+      await failed(describeMergeBlock(state ? "failing" : "unknown"));
+    } catch (error) {
+      console.error("[DevAssistant] In-app merge threw:", error, args.bugId);
+      await failed(describeMergeBlock("unknown"));
+    }
+  },
+});
+
+/**
+ * Bounded recovery poll for the smarter in-app merge button (scheduled by
+ * mergeFromApp after it updates a behind branch). Re-reads the PR's
+ * mergeability and, when it becomes `clean`, retries the merge → success. A
+ * real conflict stops immediately; checks that never go green stop at the poll
+ * cap (never an infinite loop). The in-flight latch (mergeRequestedAt) stays
+ * SET across the whole recovery and is released only on the final success
+ * (MERGED transition) or the final give-up (recordMergeFromAppFailure).
+ */
+export const retryMergeAfterUpdate = internalAction({
+  args: { bugId: v.id("devBugs"), attempt: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const bug = await ctx.runQuery(internal.functions.devAssistant.bugs.getBug, {
+      bugId: args.bugId,
+    });
+    if (!bug) return;
+    if (bug.status === "MERGED") return;
+
+    const failed = async (reason: string): Promise<void> => {
+      console.error(
+        "[DevAssistant] In-app merge recovery failed:",
+        reason,
+        args.bugId,
+      );
+      await ctx.runMutation(
+        internal.functions.devAssistant.bugs.recordMergeFromAppFailure,
+        { bugId: args.bugId, reason },
+      );
+    };
+
+    // The item must still be the approved, ready-to-merge PR we started on.
+    if (
+      bug.status !== "READY_TO_MERGE" ||
+      bug.reviewVerdict !== "approved" ||
+      !bug.prUrl
+    ) {
+      await failed("This item is no longer ready to merge.");
+      return;
+    }
+
+    const prMatch = /\/pull\/(\d+)/.exec(bug.prUrl);
+    if (!prMatch) {
+      await failed(describeMergeBlock("unknown"));
+      return;
+    }
+    const prNumber = prMatch[1];
+
+    const mirrorToken = githubMirrorToken();
+    if (!mirrorToken) {
+      await failed(describeMergeBlock("permission"));
+      return;
+    }
+
+    const status = await fetchPrMerged(prNumber, mirrorToken);
+    if (status?.merged) {
+      await applyGithubConfirmedMerge(ctx, bug, status.mergeCommitSha);
+      return;
+    }
+
+    const state = status?.mergeableState;
+
+    // Green now → retry the merge.
+    if (state === "clean") {
+      const res = await mergePullRequestOnGithub(prNumber, mirrorToken);
+      if (res.ok) {
+        await applyGithubConfirmedMerge(ctx, bug, await readMergeCommitSha(res));
+        return;
+      }
+      const raced = await fetchPrMerged(prNumber, mirrorToken);
       if (raced?.merged) {
         await applyGithubConfirmedMerge(ctx, bug, raced.mergeCommitSha);
         return;
       }
-
-      await failed(await githubErrorDetail(res, "GitHub merge"));
-    } catch (error) {
-      await failed(String(error));
+      await failed(describeMergeBlock("failing"));
+      return;
     }
+
+    // A conflict appeared after the update → stop, needs code changes.
+    if (state === "dirty") {
+      await failed(describeMergeBlock("conflict"));
+      return;
+    }
+
+    // Still behind / blocked / unknown → checks haven't settled. Poll again
+    // until the cap, then give up (checks never went green).
+    if (args.attempt + 1 >= MERGE_RECOVERY_MAX_POLLS) {
+      await failed(describeMergeBlock("failing"));
+      return;
+    }
+    await ctx.scheduler.runAfter(
+      mergeRecoveryPollDelayMs(args.attempt + 1),
+      internal.functions.devAssistant.actions.retryMergeAfterUpdate,
+      { bugId: args.bugId, attempt: args.attempt + 1 },
+    );
   },
 });
 
