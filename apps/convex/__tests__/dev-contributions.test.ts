@@ -65,6 +65,7 @@ afterEach(async () => {
   delete process.env.GH_WEBHOOK_SECRET;
   delete process.env.AUTO_MERGE_ENABLED;
   delete process.env.AUTO_MERGE_METHOD;
+  delete process.env.R2_PUBLIC_URL;
 });
 
 async function seedUsers(t: ReturnType<typeof convexTest>): Promise<{
@@ -294,6 +295,61 @@ describe("spec callback", () => {
     const dispatched = await t.run(async (ctx) => ctx.db.get(id));
     expect(dispatched?.status).toBe("IN_PROGRESS");
     expect(dispatched?.activeRunMode).toBe("implement");
+  });
+
+  test("build dispatch resolves r2: report screenshots to fetchable URLs", async () => {
+    const t = convexTest(schema, modules);
+    activeHandle = t;
+    const { maintainerId } = await seedUsers(t);
+    process.env.R2_PUBLIC_URL = "https://media.example.com";
+
+    // Submit carrying a stored r2: report screenshot, then deliver a low-risk
+    // spec so approval auto-dispatches the build.
+    stubRoutineEnv();
+    const id = await t.mutation(
+      api.functions.devAssistant.contributions.submit,
+      {
+        token: maintainerId,
+        kind: "bug",
+        title: "Fix typo",
+        body: "There is a typo on the profile screen.",
+        screenshotUrls: ["r2:report/a.png"],
+      },
+    );
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const bug = await t.run(async (ctx) => ctx.db.get(id));
+    await t.action(
+      internal.functions.devAssistant.actions.handleRoutineCallback,
+      {
+        bugId: id,
+        routineRunId: bug!.routineRunId!,
+        status: "IN_REVIEW",
+        spec: "## Plan\nChange the string.",
+        riskLevel: "low",
+      },
+    );
+
+    // Consume the spec-callback side effects, then re-stub fetch so the only
+    // call we inspect is the build (implement) dispatch.
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const fetchMock = stubRoutineEnv();
+    vi.setSystemTime(Date.now() + 1000);
+
+    await t.mutation(api.functions.devAssistant.contributions.approveSpec, {
+      token: maintainerId,
+      id,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const brief = JSON.parse(JSON.parse(init.body as string).text);
+    // The (vision-capable) routine can't fetch raw r2: paths — the report shots
+    // must arrive resolved to public https URLs (regression: the build path
+    // used to send bug.screenshotUrls unresolved).
+    expect(brief.screenshotUrls).toEqual([
+      "https://media.example.com/report/a.png",
+    ]);
   });
 
   test("approveSpec on high risk stays IN_REVIEW with specApprovedAt", async () => {
