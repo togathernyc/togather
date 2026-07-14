@@ -873,6 +873,9 @@ export const getContribution = query({
     if (!bug) return null;
     return {
       ...bug,
+      // Resolve any stored "r2:" paths to fetchable URLs so the client can
+      // render plan preview images directly (already-https URLs pass through).
+      screenshotUrls: resolveImageUrls(bug.screenshotUrls),
       originatorName: await originatorDisplayName(ctx, bug.originatorUserId),
     };
   },
