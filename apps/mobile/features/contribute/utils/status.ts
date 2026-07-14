@@ -150,6 +150,35 @@ export function conversationDotColor(
   return PALETTE.aiWorking;
 }
 
+/** User-facing labels for a build that's a rerun with the contributor's feedback. */
+export const REWORK_LABEL = {
+  /** A merged item sent back after the contributor's staging note (redoRounds). */
+  stagingRedo: "Reworking from your staging note",
+  /** The AI is addressing the code review's requested changes (fixRounds). */
+  fixFeedback: "Fixing review feedback",
+} as const;
+
+/**
+ * True when the current build is a rerun acting on the contributor's
+ * feedback rather than a first build — either the AI is addressing code-review
+ * feedback (`fixRounds`) or a merged item was sent back to rebuild after a
+ * failed staging check (`redoRounds`). Only meaningful while the item is
+ * actively moving through the build/review states; the counters persist on the
+ * doc afterwards (e.g. on a MERGED item) but no longer describe live work.
+ */
+export function isRerun(
+  contribution: Pick<Contribution, "status" | "fixRounds" | "redoRounds">,
+): boolean {
+  const { status } = contribution;
+  // redoRounds can apply from the moment it's re-queued; fixRounds only occurs
+  // once the build/review is under way.
+  if (status === "READY_FOR_IMPL") return (contribution.redoRounds ?? 0) > 0;
+  if (status === "IN_PROGRESS" || status === "CODE_REVIEW") {
+    return (contribution.redoRounds ?? 0) > 0 || (contribution.fixRounds ?? 0) > 0;
+  }
+  return false;
+}
+
 /** The contributor set this conversation aside (abandoned / not doable). */
 export function isArchived(
   contribution: Pick<Contribution, "archivedAt">,
@@ -168,13 +197,38 @@ export function displayTitle(contribution: Pick<Contribution, "title" | "aiTitle
  * (unless the AI judged it too big to build in one go), then "approved,
  * ready to build" once signed off (medium/high risk items wait here for an
  * explicit build start).
+ *
+ * The build/review states are also rerun-aware: when the item is being
+ * reworked with the contributor's feedback (a staging redo, or the AI fixing
+ * review comments) the generic "Building"/"In code review" copy is replaced
+ * with framing that says the feedback is being acted on. A first build keeps
+ * the plain labels.
  */
 export function statusPresentation(
   contribution: Pick<
     Contribution,
-    "status" | "spec" | "specApprovedAt" | "scope" | "verifyOnStaging" | "stagingVerifiedAt"
+    | "status"
+    | "spec"
+    | "specApprovedAt"
+    | "scope"
+    | "verifyOnStaging"
+    | "stagingVerifiedAt"
+    | "fixRounds"
+    | "redoRounds"
   >,
 ): StatusPresentation {
+  // Staging redo takes precedence over a fix round: it's the more specific
+  // "your staging note sent this back" story (a redo also resets fixRounds).
+  const isStagingRedo = (contribution.redoRounds ?? 0) > 0;
+  const isFixingFeedback = (contribution.fixRounds ?? 0) > 0;
+  // Shared amber "AI working" chip for both rerun flavors, with a refresh icon
+  // to read as a rerun rather than a first pass.
+  const reworkChip = (label: string): StatusPresentation => ({
+    label,
+    color: PALETTE.aiWorking,
+    icon: "refresh-outline",
+  });
+
   switch (contribution.status) {
     case "IN_REVIEW":
       if (!contribution.spec) {
@@ -192,11 +246,18 @@ export function statusPresentation(
       }
       return { label: "Approved — ready to build", color: "#5856D6", icon: "checkmark-outline" };
     case "READY_FOR_IMPL":
+      // A redo can re-queue the item before the build restarts; a plain
+      // first-time queue keeps the generic copy.
+      if (isStagingRedo) return reworkChip(REWORK_LABEL.stagingRedo);
       return { label: "Queued to build", color: "#5856D6", icon: "rocket-outline" };
     case "IN_PROGRESS":
+      if (isStagingRedo) return reworkChip(REWORK_LABEL.stagingRedo);
+      if (isFixingFeedback) return reworkChip(REWORK_LABEL.fixFeedback);
       return { label: "Building", color: "#FF9500", icon: "construct-outline" };
     case "CODE_REVIEW":
       // The PR is still open — nothing is on staging yet.
+      if (isStagingRedo) return reworkChip(REWORK_LABEL.stagingRedo);
+      if (isFixingFeedback) return reworkChip(REWORK_LABEL.fixFeedback);
       return { label: "In code review", color: "#007AFF", icon: "git-pull-request-outline" };
     case "READY_TO_MERGE":
       // Reviewed and approved, but not merged — still nothing on staging.
