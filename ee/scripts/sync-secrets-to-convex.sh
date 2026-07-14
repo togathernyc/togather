@@ -111,14 +111,14 @@ SECRET_KEYS=(
   # leaving the documented safe default (auto-merge off).
   #   GH_MIRROR_TOKEN    - PAT for in-app merge, auto-merge, and prod-deploy
   #                        dispatch (needs Issues + Contents + Actions r/w).
+  #   GH_WEBHOOK_SECRET  - HMAC secret for the inbound PR-closed webhook. Named
+  #                        GH_*, not GITHUB_*, because GitHub reserves the
+  #                        GITHUB_ secret-name prefix (`gh secret set GITHUB_*`
+  #                        -> 422). Falls back to DEV_ASSISTANT_CALLBACK_SECRET.
   #   AUTO_MERGE_ENABLED - master switch; must be exactly "true" to arm.
   #   AUTO_MERGE_METHOD  - squash (default) | merge | rebase.
-  # NOTE: GITHUB_WEBHOOK_SECRET is deliberately NOT here. GitHub reserves the
-  # GITHUB_ secret-name prefix (`gh secret set GITHUB_*` -> 422), so it can't
-  # flow through the GitHub hop. The inbound webhook falls back to
-  # DEV_ASSISTANT_CALLBACK_SECRET (which IS synced); to split them, set
-  # GITHUB_WEBHOOK_SECRET directly on the Convex deployment.
   "GH_MIRROR_TOKEN"
+  "GH_WEBHOOK_SECRET"
   "AUTO_MERGE_ENABLED"
   "AUTO_MERGE_METHOD"
 )
