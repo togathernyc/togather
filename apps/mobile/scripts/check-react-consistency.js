@@ -53,6 +53,24 @@ const path = require("path");
 
 const LOCKFILE_PATH = path.join(__dirname, "..", "..", "..", "pnpm-lock.yaml");
 const MOBILE_PKG_PATH = path.join(__dirname, "..", "package.json");
+const NATIVE_DEPS_PATH = path.join(__dirname, "..", "native-deps.json");
+
+/**
+ * Authoritative set of native package NAMES from native-deps.json (core +
+ * gated). This covers scoped native packages the NATIVE_PREFIX regex can't
+ * express — e.g. @react-native-community/datetimepicker, @react-native-picker/
+ * picker, @gorhom/bottom-sheet, @shopify/flash-list, @sentry/react-native — so
+ * a second React re-keying any of them is also caught.
+ */
+function loadNativeDepNames() {
+  try {
+    const nd = JSON.parse(fs.readFileSync(NATIVE_DEPS_PATH, "utf-8"));
+    return new Set([...(nd.core || []), ...(nd.gated || [])]);
+  } catch {
+    return new Set();
+  }
+}
+const NATIVE_DEP_NAMES = loadNativeDepNames();
 
 /**
  * Package NAME prefixes that identify Expo/React-Native native packages —
@@ -203,10 +221,13 @@ function checkReactConsistency(mobilePkg) {
     if (!keyMatch) continue;
     const key = keyMatch[1];
 
-    if (!NATIVE_PREFIX.test(key)) continue;
-
     const name = packageNameFromKey(key);
     if (EXCLUDED_NAMES.has(name)) continue;
+
+    // A package counts as native if its key matches the Expo/RN prefix OR its
+    // name is classified native in native-deps.json (catches scoped packages
+    // like @react-native-community/*, @gorhom/bottom-sheet, @shopify/flash-list).
+    if (!NATIVE_PREFIX.test(key) && !NATIVE_DEP_NAMES.has(name)) continue;
 
     // Real react peer only: "(" immediately before "react@" (not "@types/react@").
     const peerMatch = key.match(/\(react@([0-9][^)]*)\)/);
