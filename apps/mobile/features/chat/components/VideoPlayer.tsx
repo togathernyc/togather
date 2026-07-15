@@ -3,9 +3,11 @@
  *
  * Priority chain:
  * 1. Web → HTML5 <video> element (WebVideoPlayer)
- * 2. expo-video available → ExpoVideoPlayer (preferred native player)
- * 3. expo-av available → VideoPlayerInner (legacy fallback)
- * 4. VideoDownloadFallback (download button)
+ * 2. react-native-webview available → WebViewVideoPlayer (Fabric-safe,
+ *    HTML5 <video> inside a WebView — preferred on native)
+ * 3. expo-video available → ExpoVideoPlayer
+ * 4. expo-av available → VideoPlayerInner (legacy fallback)
+ * 5. VideoDownloadFallback (download button)
  *
  * Falls back to a download button if no native video module is available
  * (OTA update scenario) or if the native view crashes (Fabric issue).
@@ -25,7 +27,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isAudioVideoSupported, isVideoSupported, getMediaDiagnostics } from '../utils/fileTypes';
+import { isAudioVideoSupported, isVideoSupported, isWebViewSupported, getMediaDiagnostics } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
 import { SentryUtils } from '@providers/SentryProvider';
 import { MediaDiagnosticsCard } from '@/components/dev/MediaDiagnosticsCard';
@@ -167,7 +169,67 @@ function WebVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoP
 }
 
 // ============================================================================
-// Expo Video Player (preferred native player using expo-video)
+// WebView Video Player (native — uses react-native-webview with HTML5 <video>)
+// ============================================================================
+
+function WebViewVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  const resolvedUrl = getMediaUrl(url);
+  const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
+  const displayName = fileName.length > 20
+    ? fileName.slice(0, 10) + '...' + fileName.slice(-8)
+    : fileName;
+
+  // Dynamic require — react-native-webview is a gated native dependency
+  const { WebView } = require('react-native-webview');
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; display: flex; align-items: center; justify-content: center; }
+        video { width: 100%; display: block; background: #000; }
+      </style>
+    </head>
+    <body>
+      <video
+        src="${resolvedUrl || ''}"
+        controls
+        playsinline
+        preload="metadata"
+        poster=""
+      ></video>
+    </body>
+    </html>
+  `;
+
+  return (
+    <View style={styles.container}>
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <View style={[styles.webviewWrapper, { aspectRatio: VIDEO_ASPECT_RATIO }]}>
+          <WebView
+            source={{ html }}
+            style={styles.webview}
+            allowsInlineMediaPlayback={true}
+            mediaPlaybackRequiresUserAction={false}
+            scrollEnabled={false}
+            bounces={false}
+            javaScriptEnabled={true}
+            allowsFullscreenVideo={true}
+          />
+        </View>
+      </Pressable>
+      <Text style={[styles.fileName, isOwnMessage && styles.ownMessageText]} numberOfLines={1}>
+        {displayName}
+      </Text>
+    </View>
+  );
+}
+
+// ============================================================================
+// Expo Video Player (native player using expo-video)
 // ============================================================================
 
 function ExpoVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
@@ -217,14 +279,16 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
   // Determine which tier will render (observe-only — does NOT affect the
   // branch selection below). Used for one-time Sentry diagnostics to debug
   // why chat video falls back to the download card on the staging build.
-  const tier: 'web' | 'expo-video' | 'expo-av' | 'download-fallback' =
+  const tier: 'web' | 'webview' | 'expo-video' | 'expo-av' | 'download-fallback' =
     Platform.OS === 'web'
       ? 'web'
-      : isVideoSupported()
-        ? 'expo-video'
-        : isAudioVideoSupported()
-          ? 'expo-av'
-          : 'download-fallback';
+      : isWebViewSupported()
+        ? 'webview'
+        : isVideoSupported()
+          ? 'expo-video'
+          : isAudioVideoSupported()
+            ? 'expo-av'
+            : 'download-fallback';
 
   const diagReportedRef = useRef(false);
   useEffect(() => {
@@ -247,7 +311,17 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
 
   const fallback = <VideoDownloadFallback url={url} name={name} isOwnMessage={isOwnMessage} />;
 
-  // Native: prefer expo-video (modern API with built-in fullscreen)
+  // Native priority 1: WebView with HTML5 video (reliable on Fabric, unlike
+  // expo-video's/expo-av's native views which crash on the installed binary)
+  if (isWebViewSupported()) {
+    return (
+      <VideoErrorBoundary fallback={fallback}>
+        <WebViewVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />
+      </VideoErrorBoundary>
+    );
+  }
+
+  // Native priority 2: expo-video (modern API with built-in fullscreen)
   if (isVideoSupported()) {
     return (
       <VideoErrorBoundary fallback={fallback}>
@@ -256,7 +330,7 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     );
   }
 
-  // Legacy fallback: expo-av
+  // Native priority 3: expo-av (legacy)
   if (isAudioVideoSupported()) {
     return (
       <VideoErrorBoundary fallback={fallback}>
@@ -414,6 +488,15 @@ const styles = StyleSheet.create({
     width: '100%',
     backgroundColor: '#000',
     position: 'relative',
+  },
+  webviewWrapper: {
+    width: '100%',
+    backgroundColor: '#000',
+    overflow: 'hidden',
+  },
+  webview: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   controlsOverlay: {
     ...StyleSheet.absoluteFillObject,
