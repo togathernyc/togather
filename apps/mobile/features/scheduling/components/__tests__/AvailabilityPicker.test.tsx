@@ -71,6 +71,22 @@ describe("AvailabilityPicker", () => {
     expect(getByLabelText("Share link for 2 events")).toBeTruthy();
   });
 
+  it("shares every checked event, in ascending order", () => {
+    const onShare = jest.fn();
+    const { getByLabelText } = render(
+      <AvailabilityPicker
+        events={EVENTS}
+        sharingLink={false}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    // Nothing unchecked → both ids flow through in the picker's order.
+    fireEvent.press(getByLabelText("Share link for 2 events"));
+    expect(onShare).toHaveBeenCalledWith(["plan-1", "plan-2"]);
+  });
+
   it("shares exactly the events left checked, in order", () => {
     const onShare = jest.fn();
     const { getByLabelText } = render(
@@ -88,7 +104,7 @@ describe("AvailabilityPicker", () => {
     expect(onShare).toHaveBeenCalledWith(["plan-1"]);
   });
 
-  it("disables Share and does not fire onShare when nothing is checked", () => {
+  it("disables Share and swallows the press when nothing is checked", () => {
     const onShare = jest.fn();
     const { getByLabelText } = render(
       <AvailabilityPicker
@@ -101,10 +117,87 @@ describe("AvailabilityPicker", () => {
     );
     fireEvent.press(getByLabelText("Sunday Service, Sun Jul 19"));
     fireEvent.press(getByLabelText("Sunday Service, Sun Jul 26"));
-    // With nothing checked the Share button reports 0 and is disabled, so a tap
-    // can't create a link (the backend also rejects an empty set).
+    // With nothing checked the Share button reports 0 and is disabled. Actually
+    // press it: RNTL's fireEvent.press ignores `disabled` on Pressable, so this
+    // exercises the internal `if (disabled) return;` guard, not just the render.
     const shareBtn = getByLabelText("Share link for 0 events");
     expect(shareBtn.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(shareBtn);
+    expect(onShare).not.toHaveBeenCalled();
+  });
+
+  it("shows a spinner and blocks a second submit while a link is being created", () => {
+    const onShare = jest.fn();
+    const { getByLabelText } = render(
+      <AvailabilityPicker
+        events={EVENTS}
+        sharingLink={true}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    // While `sharingLink` is true the button is disabled (spinner shown), so a
+    // second tap can't fire another createAvailabilityLink.
+    const shareBtn = getByLabelText("Share link for 2 events");
+    expect(shareBtn.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(shareBtn);
+    expect(onShare).not.toHaveBeenCalled();
+  });
+
+  it("recomputes the shared set from the live events when one drops out", () => {
+    const onShare = jest.fn();
+    const { getByLabelText, rerender } = render(
+      <AvailabilityPicker
+        events={EVENTS}
+        sharingLink={false}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    // The sheet stays mounted; the reactive events prop loses the second event
+    // (a co-leader deletes it, or it ages past today). The seed set still holds
+    // plan-2, but count/disabled and the shared ids must track the live list.
+    rerender(
+      <AvailabilityPicker
+        events={[EVENTS[0]] as any}
+        sharingLink={false}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    fireEvent.press(getByLabelText("Share link for 1 event"));
+    expect(onShare).toHaveBeenCalledWith(["plan-1"]);
+  });
+
+  it("disables Share when every selected event leaves the live list", () => {
+    const onShare = jest.fn();
+    const { getByLabelText, rerender } = render(
+      <AvailabilityPicker
+        events={EVENTS}
+        sharingLink={false}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    // Every seeded-selected event drops out. Without deriving count from the
+    // live list the button would stay enabled and share [], which the backend
+    // treats as "all upcoming" — the opposite of nothing selected.
+    rerender(
+      <AvailabilityPicker
+        events={[] as any}
+        sharingLink={false}
+        colors={COLORS}
+        onShare={onShare}
+        onClose={jest.fn()}
+      />,
+    );
+    const shareBtn = getByLabelText("Share link for 0 events");
+    expect(shareBtn.props.accessibilityState.disabled).toBe(true);
+    fireEvent.press(shareBtn);
     expect(onShare).not.toHaveBeenCalled();
   });
 });

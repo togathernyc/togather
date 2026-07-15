@@ -74,8 +74,23 @@ import { TeamChannelToggle } from "./TeamChannelToggle";
  */
 const MAX_PAST_DATES = 10;
 
+/**
+ * How many upcoming events a "Collect availability" link can cover. Mirrors
+ * `MAX_EVENTS` in `scheduling/publicAvailability.ts` — the backend slices a
+ * request to the earliest 12 — so the picker never lists (or counts) more
+ * events than a link can actually snapshot.
+ */
+const MAX_AVAILABILITY_EVENTS = 12;
+
 type Availability = "available" | "unavailable" | "no_response";
 type AssignmentStatus = "confirmed" | "unconfirmed" | "declined";
+
+/** Minimal upcoming-event shape the availability picker lists and shares. */
+type UpcomingEvent = {
+  _id: Id<"eventPlans">;
+  title: string;
+  eventDate: number;
+};
 
 type RosterEvent = {
   _id: Id<"eventPlans">;
@@ -197,13 +212,6 @@ function monthDay(ms: number): string {
     month: "short",
     day: "numeric",
   });
-}
-
-/** Local midnight today — the cutoff for "upcoming" events (mirrors the backend). */
-function startOfTodayMs(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
 }
 
 /**
@@ -918,13 +926,20 @@ export function RosterGridScreen() {
   // -------------------------------------------------------------------------
 
   // The group's upcoming events (today onward), soonest first — the picker's
-  // list and the snapshot order the backend uses for a link's events.
+  // list and the snapshot order the backend uses for a link's events. Sourced
+  // from `listEvents` (its own upcoming-only, ascending query) rather than the
+  // grid's `events`: `events` comes from `rosterMatrix`, which caps its columns
+  // at MAX_PAST_DATES and can lead the grid with past plans when "Previous
+  // dates" is set — either of which would silently drop upcoming events from
+  // the link. Capped to the backend's MAX_AVAILABILITY_EVENTS so the picker
+  // never lists (or counts) more events than a link can actually cover.
+  const upcomingData = useAuthenticatedQuery(
+    api.functions.scheduling.events.listEvents,
+    groupId ? { groupId } : "skip",
+  ) as UpcomingEvent[] | undefined;
   const upcomingEvents = useMemo(
-    () =>
-      events
-        .filter((e) => e.eventDate >= startOfTodayMs())
-        .sort((a, b) => a.eventDate - b.eventDate),
-    [events],
+    () => (upcomingData ?? []).slice(0, MAX_AVAILABILITY_EVENTS),
+    [upcomingData],
   );
 
   // Open the event picker for "Collect availability". If the group has no
@@ -2334,7 +2349,6 @@ export function RosterGridScreen() {
         <OverflowMenu
           colors={colors}
           pastLimit={pastLimit}
-          sharingLink={sharingLink}
           onTeams={() => {
             setOverflowOpen(false);
             router.push(`/rostering/${groupId}/teams` as never);
@@ -2665,7 +2679,11 @@ function ModalShell({
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
           style={[styles.popover, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          onPress={(e) => e.stopPropagation()}
+          // Swallow the tap so it doesn't reach the backdrop's onClose. The
+          // event is always present in RN; guard it anyway so a bubbled press
+          // (e.g. RNTL routing a disabled child's press to this parent) can't
+          // throw on a missing event.
+          onPress={(e) => e?.stopPropagation?.()}
         >
           {head}
           {children}
@@ -3248,7 +3266,7 @@ export function AvailabilityPicker({
   onShare,
   onClose,
 }: {
-  events: RosterEvent[];
+  events: UpcomingEvent[];
   sharingLink: boolean;
   colors: Colors;
   onShare: (planIds: Id<"eventPlans">[]) => void;
@@ -3267,7 +3285,17 @@ export function AvailabilityPicker({
       return next;
     });
   }, []);
-  const count = selected.size;
+  // Derive the shared set from the live `events` prop, not the once-seeded
+  // `selected` set. `events` is a reactive-query derivative and can change while
+  // the sheet stays mounted (a co-leader deletes/reschedules an event, or one
+  // ages past today). Reading count/disabled off the stale seed would let the
+  // button overstate the count, or — if every selected event dropped out — stay
+  // enabled and share `[]`, which the backend treats as "all upcoming."
+  const selectedIds = useMemo(
+    () => events.filter((e) => selected.has(e._id as string)).map((e) => e._id),
+    [events, selected],
+  );
+  const count = selectedIds.length;
   const disabled = count === 0 || sharingLink;
 
   return (
@@ -3309,9 +3337,7 @@ export function AvailabilityPicker({
       <Pressable
         onPress={() => {
           if (disabled) return;
-          onShare(
-            events.filter((e) => selected.has(e._id as string)).map((e) => e._id),
-          );
+          onShare(selectedIds);
         }}
         disabled={disabled}
         style={[
@@ -3354,7 +3380,6 @@ export function AvailabilityPicker({
 function OverflowMenu({
   colors,
   pastLimit,
-  sharingLink,
   onTeams,
   onCrossTeam,
   onTemplates,
@@ -3364,7 +3389,6 @@ function OverflowMenu({
 }: {
   colors: Colors;
   pastLimit: number;
-  sharingLink: boolean;
   onTeams: () => void;
   onCrossTeam: () => void;
   onTemplates: () => void;
@@ -3411,15 +3435,10 @@ function OverflowMenu({
         </Pressable>
         <Pressable
           onPress={onCollectAvailability}
-          disabled={sharingLink}
           style={[styles.menuRow, { borderBottomColor: colors.border }]}
           accessibilityRole="button"
         >
-          {sharingLink ? (
-            <ActivityIndicator size="small" color={colors.textSecondary} />
-          ) : (
-            <Ionicons name="share-outline" size={20} color={colors.text} />
-          )}
+          <Ionicons name="share-outline" size={20} color={colors.text} />
           <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
             Collect availability
           </Text>
