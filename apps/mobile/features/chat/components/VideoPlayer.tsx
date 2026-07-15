@@ -10,7 +10,7 @@
  * Falls back to a download button if no native video module is available
  * (OTA update scenario) or if the native view crashes (Fabric issue).
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -174,9 +174,27 @@ function ExpoVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Video
 
   const resolvedUrl = getMediaUrl(url);
 
+  const [aspectRatio, setAspectRatio] = useState(VIDEO_ASPECT_RATIO);
+
   const player = useVideoPlayer(resolvedUrl || '', (p: any) => {
     p.loop = false;
   });
+
+  // Update the aspect ratio from the video's real dimensions so portrait videos
+  // aren't cropped/letterboxed. expo-video (3.0.16) delivers the natural size via
+  // the `sourceLoad` event's `availableVideoTracks[].size` (VideoSize).
+  useEffect(() => {
+    if (!player) return;
+    const subscription = player.addListener('sourceLoad', (payload: any) => {
+      const size = payload?.availableVideoTracks?.[0]?.size;
+      const width = size?.width;
+      const height = size?.height;
+      if (width && height) {
+        setAspectRatio(width / height);
+      }
+    });
+    return () => subscription?.remove?.();
+  }, [player]);
 
   const fileName = name || url.split('/').pop()?.split('?')[0] || 'Video';
   const displayName = fileName.length > 20
@@ -188,7 +206,7 @@ function ExpoVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Video
       <Pressable
         onLongPress={onLongPress}
         delayLongPress={300}
-        style={[styles.thumbnailWrapper, { aspectRatio: VIDEO_ASPECT_RATIO }]}
+        style={[styles.thumbnailWrapper, { aspectRatio }]}
       >
         <VideoView
           player={player}

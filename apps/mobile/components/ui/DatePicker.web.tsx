@@ -1,26 +1,20 @@
-/**
- * DatePicker (Web / Desktop)
- *
- * The native HTML `<input type="datetime-local">` we used previously was
- * unreliable on desktop: it bound a UTC ISO string into a control that reads
- * and writes *local* time, so typing or picking a value could jump to a
- * seemingly random date. This variant replaces it with the MUI Desktop Date
- * Picker, which parses and formats consistently in local time.
- *
- * This file is web-only (Metro resolves `.web.tsx` for the web bundle), so the
- * MUI/emotion dependency never reaches the native bundles. The native
- * implementation lives in `DatePicker.tsx`.
- */
-import React, { useMemo } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { DesktopDatePicker } from '@mui/x-date-pickers/DesktopDatePicker';
-import { DesktopTimePicker } from '@mui/x-date-pickers/DesktopTimePicker';
-import { DesktopDateTimePicker } from '@mui/x-date-pickers/DesktopDateTimePicker';
-import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import ReactDatePicker from 'react-datepicker';
+import 'react-datepicker/dist/react-datepicker.css';
 import { useTheme } from '@hooks/useTheme';
+
+// react-datepicker's wrapper defaults to `display: inline-block`, which would
+// collapse our full-width input to its content width. Inject a one-time rule so
+// the wrapper (and thus the input) fills the field like the native path does.
+if (typeof document !== 'undefined' && !document.getElementById('togather-datepicker-style')) {
+  const styleEl = document.createElement('style');
+  styleEl.id = 'togather-datepicker-style';
+  styleEl.textContent =
+    '.togather-datepicker-wrapper{display:block;width:100%}' +
+    '.togather-datepicker-wrapper .react-datepicker__input-container{display:block;width:100%}';
+  document.head.appendChild(styleEl);
+}
 
 interface DatePickerProps {
   label?: string;
@@ -36,11 +30,18 @@ interface DatePickerProps {
   mode?: 'date' | 'time' | 'datetime';
 }
 
+/**
+ * Web implementation of DatePicker backed by `react-datepicker`.
+ *
+ * Metro resolves this file for web (`.web.tsx`) and `DatePicker.tsx` for native.
+ * react-datepicker works with local-time `Date` objects natively, so there is
+ * NO UTC round-trip here — a selected 9am stays 9am local.
+ */
 export function DatePicker({
   label,
   value,
   onChange,
-  placeholder,
+  placeholder = 'Select a date',
   error,
   required = false,
   minimumDate,
@@ -49,92 +50,46 @@ export function DatePicker({
   disabled = false,
   mode = 'date',
 }: DatePickerProps) {
-  const { primaryColor } = useCommunityTheme();
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
-  // Match the picker's palette to the community theme so the calendar/clock
-  // and selected-day highlight stay on-brand and legible in light/dark mode.
-  const muiTheme = useMemo(
-    () =>
-      createTheme({
-        palette: {
-          mode: isDark ? 'dark' : 'light',
-          primary: { main: primaryColor },
-          background: { paper: colors.surface },
-          text: { primary: colors.text, secondary: colors.textSecondary },
-        },
-      }),
-    [primaryColor, isDark, colors.surface, colors.text, colors.textSecondary]
-  );
+  // Map `mode` to react-datepicker display + time options.
+  const isTime = mode === 'time';
+  const isDateTime = mode === 'datetime';
+  const dateFormat = isTime
+    ? 'h:mm aa'
+    : isDateTime
+      ? 'MMM d, yyyy h:mm aa'
+      : 'MMM d, yyyy';
 
-  // MUI fires onChange on every keystroke, including intermediate states that
-  // parse to a real Date but are still invalid — an incomplete year like
-  // `0002`, or a value outside minDate/maxDate. Those arrive with a non-null
-  // `validationError` in the change context. Reject them (along with the
-  // Invalid Date emitted mid-typing) so the parent never receives a bogus
-  // value and the controlled field can't snap to it — which is exactly the
-  // web typing-jump this component exists to prevent. Only a cleared value
-  // (null) or a fully valid, in-range date is propagated.
-  const handleChange = (
-    next: Date | null,
-    context?: { validationError?: unknown }
-  ) => {
-    if (context?.validationError) {
-      return;
-    }
-    if (next === null) {
-      onChange(null);
-      return;
-    }
-    if (next instanceof Date && !isNaN(next.getTime())) {
-      onChange(next);
-    }
-  };
-
-  const textFieldSx = {
-    width: '100%',
-    '& .MuiOutlinedInput-root': {
-      borderRadius: '8px',
-      backgroundColor: disabled ? colors.surfaceSecondary : colors.inputBackground,
-      color: colors.text,
-      fontSize: '16px',
-      '& fieldset': {
-        borderWidth: 2,
-        borderColor: error ? colors.error : colors.border,
-      },
-      '&:hover fieldset': {
-        borderColor: error ? colors.error : colors.border,
-      },
-      '&.Mui-focused fieldset': {
-        borderColor: error ? colors.error : primaryColor,
-      },
-    },
-    '& .MuiInputBase-input': {
-      padding: '12px 16px',
-      color: colors.text,
-    },
-    '& .MuiInputBase-input::placeholder': {
-      color: colors.inputPlaceholder,
-      opacity: 1,
-    },
-  };
-
-  const slotProps = {
-    textField: {
-      fullWidth: true,
-      error: !!error,
-      placeholder,
-      disabled,
-      sx: textFieldSx,
-    },
-  } as const;
-
-  const commonProps = {
-    value: value ?? null,
-    onChange: handleChange,
-    disabled,
-    slotProps,
-  };
+  // Custom input keeps the field visually identical to the native path
+  // (bordered, rounded, themed) while react-datepicker drives the calendar.
+  const CustomInput = React.forwardRef<
+    HTMLInputElement,
+    React.InputHTMLAttributes<HTMLInputElement>
+  >(({ value: inputValue, onClick, onChange: onInputChange }, ref) => (
+    <input
+      ref={ref}
+      value={(inputValue as string) ?? ''}
+      onClick={onClick}
+      onChange={onInputChange}
+      placeholder={placeholder}
+      disabled={disabled}
+      readOnly
+      style={{
+        width: '100%',
+        padding: '12px 16px',
+        fontSize: '16px',
+        border: error ? `2px solid ${colors.error}` : `2px solid ${colors.border}`,
+        borderRadius: '8px',
+        backgroundColor: disabled ? colors.surfaceSecondary : colors.inputBackground,
+        outline: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        color: value ? colors.text : colors.inputPlaceholder,
+        boxSizing: 'border-box',
+      }}
+    />
+  ));
+  CustomInput.displayName = 'DatePickerCustomInput';
 
   return (
     <View style={[styles.container, style]}>
@@ -144,25 +99,20 @@ export function DatePicker({
           {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
         </Text>
       )}
-      <ThemeProvider theme={muiTheme}>
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-          {mode === 'time' ? (
-            <DesktopTimePicker {...commonProps} />
-          ) : mode === 'datetime' ? (
-            <DesktopDateTimePicker
-              {...commonProps}
-              minDate={minimumDate}
-              maxDate={maximumDate}
-            />
-          ) : (
-            <DesktopDatePicker
-              {...commonProps}
-              minDate={minimumDate}
-              maxDate={maximumDate}
-            />
-          )}
-        </LocalizationProvider>
-      </ThemeProvider>
+      <ReactDatePicker
+        selected={value ?? null}
+        onChange={(date: Date | null) => onChange(date)}
+        disabled={disabled}
+        minDate={minimumDate}
+        maxDate={maximumDate}
+        placeholderText={placeholder}
+        dateFormat={dateFormat}
+        showTimeSelect={isTime || isDateTime}
+        showTimeSelectOnly={isTime}
+        timeIntervals={15}
+        customInput={<CustomInput />}
+        wrapperClassName="togather-datepicker-wrapper"
+      />
       {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
     </View>
   );

@@ -76,9 +76,10 @@ export function DatePicker({
     });
   };
 
-  // The web/desktop implementation lives in DatePicker.web.tsx (MUI Desktop
-  // Date Picker); Metro resolves it for the web bundle. This file handles the
-  // native iOS/Android pickers only.
+  const handleDateSelect = (selectedDate: Date) => {
+    onChange(selectedDate);
+    setModalVisible(false);
+  };
 
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {

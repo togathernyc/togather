@@ -300,6 +300,47 @@ A new native package was added to `package.json` but not to `native-deps.json`. 
 
 ---
 
+## Guarding against JS changes that break native rendering
+
+A distinct failure class from the OTA/gating rules above: a **pure-JS
+dependency change** that silently breaks **native** rendering on the installed
+binary, while every automated check stays green.
+
+**Motivating incident (#548).** PR #548 added `@mui/*` + `@emotion/*` to
+`apps/mobile` for a *web-only* datepicker. Those emotion/CSS-in-JS packages
+dragged a second React into the shared pnpm lockfile (`autoInstallPeers`), which
+re-keyed the Expo native-module graph. On the installed binary this broke Fabric
+view/module registration and **chat video + animated GIFs rendered blank** —
+yet typecheck, jest, and the web build all passed (jest mocks native modules;
+web never touches Fabric).
+
+We defend this with **three layers**:
+
+1. **React-consistency check** (`scripts/check-react-consistency.js`, gate #1) —
+   fails CI if any Expo/React-Native native package in `pnpm-lock.yaml` is keyed
+   to a React version other than the one `apps/mobile` pins. Catches the #548
+   *mechanism* (a second React in the native graph). Runs per-PR.
+
+2. **Native-unsafe dependency denylist** (same script, gate #2) — fails CI if
+   `apps/mobile` `dependencies`/`devDependencies` contain an emotion/CSS-in-JS/
+   MUI-family package (`@mui/`, `@emotion/`, `@material-ui/`,
+   `styled-components`). Catches the #548 *libraries* directly, before they can
+   pull a second React. Web-only date/UI needs should use a dependency-free
+   approach or an emotion-free library (e.g. `react-datepicker`); adding a
+   denylisted package requires deliberately updating the list with
+   justification. Runs per-PR.
+
+3. **Native media smoke test** (ADR-030) — the real backstop. Static checks 1–2
+   only catch *known* mechanisms/libraries; a novel way to break native
+   rendering would slip past both. Only driving the real app on a real native
+   build (simulator + EAS dev build) and asserting media renders non-blank
+   catches that. It cannot run per-PR (needs a simulator + build), so it runs on
+   a schedule / pre-release. An interim jest test
+   (`features/chat/components/__tests__/VideoPlayer.tier.test.tsx`) asserts
+   `VideoPlayer` never degrades to blank tier selection — but, because jest
+   mocks native views, it explicitly *cannot* catch native view-registration
+   failures. See ADR-030 for the full spec.
+
 ## References
 
 - [Expo Updates Documentation](https://docs.expo.dev/versions/latest/sdk/updates/)
