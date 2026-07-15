@@ -76,6 +76,8 @@
   },
   "pnpm": {
     "overrides": {
+      "react": "19.1.0",
+      "react-dom": "19.1.0",
       "@jest/test-sequencer": "^29.7.0",
       "@smithy/types": "4.11.0",
       "@smithy/smithy-client": "4.10.2",
