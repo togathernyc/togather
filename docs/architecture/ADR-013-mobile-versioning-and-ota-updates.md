@@ -341,6 +341,92 @@ We defend this with **three layers**:
    mocks native views, it explicitly *cannot* catch native view-registration
    failures. See ADR-030 for the full spec.
 
+### Postmortem: #548 / #619 native-media regression (2026-07)
+
+The incident that motivated the three guards above, documented precisely so the
+exact failure modes and the debugging path are reproducible.
+
+**Symptom.** On the *installed* iOS binary (app `1.0.23` / build `32`,
+`runtimeVersion` frozen at `1.0.21`, New Architecture / Fabric), native chat
+**video** fell back to a download card and animated **GIFs** rendered blank —
+while static images still worked. The device console showed:
+
+```
+Invariant Violation: View config getter callback for component
+ViewManagerAdapter_ExpoVideo_VideoView… must be a function (received undefined)
+```
+
+It reproduced only on a real native build; every CI check was green.
+
+**Root cause #1 — a web dependency broke the native graph (PR #548).** #548
+added `@mui/*` + `@emotion/*` to `apps/mobile/package.json` for a *web-only* MUI
+datepicker (`DatePicker.web.tsx`). That code never runs on native, but the
+packages' mere *presence* made pnpm's `autoInstallPeers` pull a **second React
+(19.2.7)** into the shared `pnpm-lock.yaml`. That re-keyed the mobile Expo
+native-module graph — e.g. `/expo-modules-core@3.0.29(react-native@0.81.5)(react@19.2.7)`
+instead of the `(react@19.1.0)` key the binary was built against — which breaks
+Fabric view/module registration at runtime.
+
+- Not emotion-specific: the same mechanism was later reproduced with
+  `react-datepicker` (emotion-free, yet still broke native), and could bleed
+  from `@react-email` (used for transactional email) once the graph was
+  destabilized. **Any web-only React component library in `apps/mobile` is
+  dangerous**, regardless of whether it uses CSS-in-JS.
+- A `pnpm.overrides` React pin was **not** sufficient: it collapsed the lockfile
+  to a single React key, but the library's presence still broke native at
+  runtime. The library has to be *absent* from `apps/mobile`, not merely
+  deduped.
+
+**Root cause #2 — a self-inflicted native-view crash (PR #619).** While fixing
+the regression, an aspect-ratio change added
+`player.addListener('sourceLoad', …)` (an effect touching the expo-video player)
+to `ExpoVideoPlayer`. That effect **deterministically crashed** the native
+`VideoView` and produced the `ViewManagerAdapter` error above — a second,
+independent native-rendering break layered on top of #548.
+
+**The cascade (why "video + GIF break together").** The native `VideoView`
+crash corrupts the Fabric view registry, which then **also breaks unrelated
+native rendering**. The animated GIF renders through a plain React Native
+`<Image>` whose code was **entirely unchanged**, yet it went blank purely as a
+downstream effect of the corrupted registry. Video and GIF are coupled *through
+the Fabric registry* — they were never two separate bugs, which is why fixing
+one appeared to fix the other and made the whole thing look "flaky."
+
+**Why CI never caught it.** Typecheck passes (the TS is valid), unit tests pass
+(native modules are mocked), the JS bundle builds fine, and web E2E never
+exercises Fabric. It manifests **only on a real device**. This is the exact
+structural gap ADR-030 (native media smoke test) exists to close.
+
+**Guards now in place (map to the three layers above).**
+
+- `apps/mobile/scripts/check-react-consistency.js` runs in CI (the `test-mobile`
+  job) and fails if (a) any native package — matched via prefix + `native-deps.json`
+  — is keyed to a React version other than the pinned one, or (b) a denylisted
+  library (`@mui/`, `@emotion/`, `@material-ui/`, `styled-components`,
+  `react-datepicker`) appears in `apps/mobile` deps.
+- Web-only UI in `apps/mobile` must be **dependency-free** (e.g. a native
+  `<input>` in a `.web.tsx` file), **not** a React component library.
+- ADR-030 (native media smoke test, on a real device) is the only layer that
+  catches a *novel* mechanism — the static checks above only know about the
+  mechanisms and libraries listed here.
+
+**Debugging playbook that worked (reuse this).** The bug only shows on a real
+device, so debug on one by bisecting OTA bundles:
+
+1. Publish a specific commit's bundle to the **staging** channel — either
+   `eas update:republish --group <id>` to re-point an existing bundle, or
+   dispatch `deploy-mobile-update.yml` on a branch to build+publish that
+   commit's bundle.
+2. On the device, **force-quit and reopen the app twice** to fetch and then
+   apply the staged OTA (expo-updates applies on the *next* cold start).
+3. Confirm which bundle is live and read the error from the in-app log
+   collector: **DEVICE INFO** shows the live OTA version; the **console** shows
+   the `ViewManagerAdapter` error if the native view failed to register.
+4. **Change exactly one variable per bundle and device-verify before merging to
+   prod.** Stacking multiple candidate fixes into a single test bundle is
+   precisely what made a *deterministic* bug (#619) look intermittent — you
+   can't attribute a pass/fail when two things changed at once.
+
 ## References
 
 - [Expo Updates Documentation](https://docs.expo.dev/versions/latest/sdk/updates/)

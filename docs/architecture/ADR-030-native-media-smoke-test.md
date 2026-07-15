@@ -3,6 +3,8 @@
 ## Status
 Proposed
 
+> Full incident writeup: ADR-013 §"Postmortem: #548 / #619 native-media regression (2026-07)".
+
 ## Context
 
 PR #548 added `@mui/*` + `@emotion/*` to `apps/mobile` for a **web-only**
