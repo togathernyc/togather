@@ -81,6 +81,77 @@ export function DatePicker({
     setModalVisible(false);
   };
 
+  // HTML date/time inputs use LOCAL wall-clock strings (no timezone). Build and
+  // parse them from local parts — `new Date('12:30')` is invalid and
+  // `new Date('YYYY-MM-DD')`/toISOString() round-trip through UTC and shift the
+  // value by the local offset.
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const toLocalInputValue = (d: Date, m: typeof mode): string => {
+    const datePart = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (m === 'time') return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (m === 'datetime') return `${datePart}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return datePart;
+  };
+  const fromLocalInputValue = (val: string, m: typeof mode): Date => {
+    if (m === 'time') {
+      const [h, mi] = val.split(':').map(Number);
+      const d = value ? new Date(value) : new Date();
+      d.setHours(h || 0, mi || 0, 0, 0);
+      return d;
+    }
+    const [datePart, timePart] = val.split('T');
+    const [y, mo, da] = datePart.split('-').map(Number);
+    const [h, mi] = (timePart || '00:00').split(':').map(Number);
+    return new Date(y, (mo || 1) - 1, da || 1, h || 0, mi || 0, 0, 0);
+  };
+
+  // For web, use native HTML date input
+  if (Platform.OS === 'web') {
+    return (
+      <View style={[styles.container, style]}>
+        {label && (
+          <Text style={[styles.label, { color: colors.text }]}>
+            {label}
+            {required && <Text style={[styles.required, { color: colors.error }]}> *</Text>}
+          </Text>
+        )}
+        <input
+          type={mode === 'time' ? 'time' : mode === 'datetime' ? 'datetime-local' : 'date'}
+          value={value ? toLocalInputValue(value, mode) : ''}
+          onChange={(e) => {
+            if (e.target.value) {
+              const date = fromLocalInputValue(e.target.value, mode);
+              // Validate the date before calling onChange
+              if (!isNaN(date.getTime())) {
+                onChange(date);
+              } else {
+                console.warn('Invalid date value from input:', e.target.value);
+                onChange(null);
+              }
+            } else {
+              onChange(null);
+            }
+          }}
+          min={minimumDate ? toLocalInputValue(minimumDate, 'date') : undefined}
+          max={maximumDate ? toLocalInputValue(maximumDate, 'date') : undefined}
+          disabled={disabled}
+          style={{
+            width: '100%',
+            padding: '12px 16px',
+            fontSize: '16px',
+            border: error ? `2px solid ${colors.error}` : `2px solid ${colors.border}`,
+            borderRadius: '8px',
+            backgroundColor: disabled ? colors.surfaceSecondary : colors.inputBackground,
+            outline: 'none',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            color: colors.text,
+          }}
+        />
+        {error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}
+      </View>
+    );
+  }
+
   const handleDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
