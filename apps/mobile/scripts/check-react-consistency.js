@@ -114,6 +114,13 @@ const NATIVE_UNSAFE_DENYLIST = [
   "@emotion/",
   "@material-ui/",
   "styled-components",
+  // react-datepicker (+ its @floating-ui/react dep) is a web-only React
+  // component library. Even WITHOUT emotion and even with react pinned via
+  // pnpm.overrides, adding it to apps/mobile reshaped the module graph and
+  // reintroduced the #548 native-media regression (blank video/GIF on device)
+  // — proving this class is not emotion-specific. Web-only UI in apps/mobile
+  // must be dependency-free (e.g. a native <input>), not a React component lib.
+  "react-datepicker",
 ];
 
 /**
