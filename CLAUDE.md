@@ -176,6 +176,44 @@ When testing the app (Playwright, iOS Simulator, etc.), use the seeded test cred
 - CI enforces this via `scripts/check-native-imports.js` — static imports of gated deps fail
 - See `docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md` for full details
 
+### JS Changes Can Break Native Rendering (read before touching deps or native media)
+
+Learned the hard way from PRs #548 and #619 (see the postmortem in
+`docs/architecture/ADR-013`). These bugs are **invisible to typecheck, tests,
+and the JS bundle** (native modules are mocked; the bundle builds fine) and only
+appear on a real device — so CI cannot catch them. Rules:
+
+- **NEVER add a web-only React UI/CSS-in-JS library to `apps/mobile`** — MUI,
+  `@emotion/*`, `@material-ui/*`, `styled-components`, `react-datepicker`, etc.
+  Even when imported only from a `.web.tsx` file, its mere presence in the mobile
+  package pulls a **second React** into the shared pnpm lockfile (via
+  `autoInstallPeers`) and re-keys the Expo native-module graph
+  (`expo-modules-core`, `react-native`) to that React. On the installed native
+  binary this **breaks native Fabric rendering — video and animated GIFs render
+  blank**. A `pnpm.overrides` React pin does NOT save you (MUI/react-datepicker
+  broke it even pinned). Web-only UI must be **dependency-free** (a native
+  `<input>`) — do not reach for a component library.
+- **CI guard:** `apps/mobile/scripts/check-react-consistency.js` fails a PR if a
+  second React is keyed onto any native package, or if a denylisted lib enters
+  `apps/mobile`. Do not weaken or remove it. If a `<second React>` shows up,
+  find and remove the offending dependency — do not paper over it with an override.
+- **Native Fabric view crashes cascade.** When an Expo native *view* crashes
+  (e.g. `ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
+  undefined)`), it corrupts the Fabric view registry and **breaks other native
+  rendering too** — a crashing chat video will blank out the RSVP GIF. **"Video
+  and GIF break together" is this signature**, not two separate bugs.
+- **Do not attach effects/listeners to a native view's player/lifecycle
+  casually.** A `player.addListener('sourceLoad', …)` effect added to
+  `ExpoVideoPlayer` (to read dimensions for aspect ratio) *deterministically
+  crashed* the native `VideoView`. Prefer prop-only changes (e.g. `contentFit`)
+  for native video views.
+- **Any change touching native media/views (video, GIF, blur, `expo-*` native
+  views) or the mobile dependency graph MUST be verified on a real device /
+  staging OTA before merging** — CI is blind to it. See ADR-030 (native media
+  smoke test). When debugging a suspected regression, **bisect OTA bundles on a
+  device** (`eas update:republish` / dispatch `deploy-mobile-update.yml` on a
+  branch) and **change one variable at a time** — do not stack multiple fixes.
+
 ### Prefer Framework Features Over Custom Solutions
 
 - **Always prefer built-in framework features** over custom implementations
