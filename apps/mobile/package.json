@@ -21,6 +21,7 @@
     "deploy:web:prod": "./scripts/deploy-web-all.sh --prod",
     "lint": "eslint . --ext .ts,.tsx",
     "test": "node run-tests.js",
+    "check:react-consistency": "node scripts/check-react-consistency.js",
     "fingerprint:check": "node scripts/check-fingerprint.js",
     "fingerprint:update": "node scripts/check-fingerprint.js --update",
     "version:bump": "node scripts/bump-version.js",
