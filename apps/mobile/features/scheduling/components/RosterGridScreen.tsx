@@ -74,8 +74,23 @@ import { TeamChannelToggle } from "./TeamChannelToggle";
  */
 const MAX_PAST_DATES = 10;
 
+/**
+ * How many upcoming events a "Collect availability" link can cover. Mirrors
+ * `MAX_EVENTS` in `scheduling/publicAvailability.ts` — the backend slices a
+ * request to the earliest 12 — so the picker never lists (or counts) more
+ * events than a link can actually snapshot.
+ */
+const MAX_AVAILABILITY_EVENTS = 12;
+
 type Availability = "available" | "unavailable" | "no_response";
 type AssignmentStatus = "confirmed" | "unconfirmed" | "declined";
+
+/** Minimal upcoming-event shape the availability picker lists and shares. */
+type UpcomingEvent = {
+  _id: Id<"eventPlans">;
+  title: string;
+  eventDate: number;
+};
 
 type RosterEvent = {
   _id: Id<"eventPlans">;
@@ -515,6 +530,10 @@ export function RosterGridScreen() {
   // the in-flight states for its async actions + the "＋ Add date" column.
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [sharingLink, setSharingLink] = useState(false);
+  // Event picker for "Collect availability": lists the group's upcoming events
+  // with checkboxes so the leader chooses exactly which ones the link asks
+  // about, before the OS share sheet opens.
+  const [availPickerOpen, setAvailPickerOpen] = useState(false);
   const [creatingEvent, setCreatingEvent] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
 
@@ -906,30 +925,68 @@ export function RosterGridScreen() {
   // rostering home now, so these actions live here).
   // -------------------------------------------------------------------------
 
-  // Generate a public, app-optional availability link and hand it to the OS
-  // share sheet. People open it in a browser (no app needed) and their
-  // response is matched to their account when they later sign up.
-  const handleShareLink = useCallback(async () => {
-    if (sharingLink) return;
-    setSharingLink(true);
-    try {
-      const { publicToken } = await createAvailabilityLink({ groupId });
-      const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
-      await Share.share({
-        message: `Let us know when you can serve: ${url}`,
-      });
-    } catch (e) {
-      const err = e as { data?: { message?: string }; message?: string };
+  // The group's upcoming events (today onward), soonest first — the picker's
+  // list and the snapshot order the backend uses for a link's events. Sourced
+  // from `listEvents` (its own upcoming-only, ascending query) rather than the
+  // grid's `events`: `events` comes from `rosterMatrix`, which caps its columns
+  // at MAX_PAST_DATES and can lead the grid with past plans when "Previous
+  // dates" is set — either of which would silently drop upcoming events from
+  // the link. Capped to the backend's MAX_AVAILABILITY_EVENTS so the picker
+  // never lists (or counts) more events than a link can actually cover.
+  const upcomingData = useAuthenticatedQuery(
+    api.functions.scheduling.events.listEvents,
+    groupId ? { groupId } : "skip",
+  ) as UpcomingEvent[] | undefined;
+  const upcomingEvents = useMemo(
+    () => (upcomingData ?? []).slice(0, MAX_AVAILABILITY_EVENTS),
+    [upcomingData],
+  );
+
+  // Open the event picker for "Collect availability". If the group has no
+  // upcoming events, keep today's behavior: surface the "add an event first"
+  // error instead of an empty picker.
+  const handleCollectAvailability = useCallback(() => {
+    if (upcomingEvents.length === 0) {
       Alert.alert(
         "Couldn't create link",
-        err?.data?.message ??
-          err?.message ??
-          "Add an upcoming event plan first, then try again.",
+        "Add an upcoming event plan first, then try again.",
       );
-    } finally {
-      setSharingLink(false);
+      return;
     }
-  }, [sharingLink, createAvailabilityLink, groupId]);
+    setAvailPickerOpen(true);
+  }, [upcomingEvents]);
+
+  // Generate a public, app-optional availability link for the picked events and
+  // hand it to the OS share sheet. People open it in a browser (no app needed)
+  // and their response is matched to their account when they later sign up.
+  const handleShareLink = useCallback(
+    async (planIds: Id<"eventPlans">[]) => {
+      if (sharingLink) return;
+      setSharingLink(true);
+      try {
+        const { publicToken } = await createAvailabilityLink({
+          groupId,
+          planIds,
+        });
+        const url = DOMAIN_CONFIG.availabilityLinkUrl(publicToken);
+        setAvailPickerOpen(false);
+        await Share.share({
+          message: `Let us know when you can serve: ${url}`,
+        });
+      } catch (e) {
+        const err = e as { data?: { message?: string }; message?: string };
+        Alert.alert(
+          "Couldn't create link",
+          err?.data?.message ??
+            err?.message ??
+            "Add an upcoming event plan first, then try again.",
+        );
+      } finally {
+        setSharingLink(false);
+      }
+    },
+    [sharingLink, createAvailabilityLink, groupId],
+  );
 
   // Create a new draft plan at the neutral default date (next Sunday 9 AM, same
   // as the editor's default). The reactive rosterMatrix self-refreshes → a new
@@ -2292,7 +2349,6 @@ export function RosterGridScreen() {
         <OverflowMenu
           colors={colors}
           pastLimit={pastLimit}
-          sharingLink={sharingLink}
           onTeams={() => {
             setOverflowOpen(false);
             router.push(`/rostering/${groupId}/teams` as never);
@@ -2307,7 +2363,7 @@ export function RosterGridScreen() {
           }}
           onCollectAvailability={() => {
             setOverflowOpen(false);
-            void handleShareLink();
+            handleCollectAvailability();
           }}
           onChangePastLimit={(delta) =>
             setPastLimit((n) => Math.max(0, Math.min(n + delta, MAX_PAST_DATES)))
@@ -2331,6 +2387,16 @@ export function RosterGridScreen() {
             void publishAllDrafts();
           }}
           onClose={() => setPublishMenuOpen(false)}
+        />
+      )}
+
+      {availPickerOpen && (
+        <AvailabilityPicker
+          events={upcomingEvents}
+          sharingLink={sharingLink}
+          colors={colors}
+          onShare={(planIds) => void handleShareLink(planIds)}
+          onClose={() => setAvailPickerOpen(false)}
         />
       )}
     </View>
@@ -2613,7 +2679,11 @@ function ModalShell({
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable
           style={[styles.popover, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          onPress={(e) => e.stopPropagation()}
+          // Swallow the tap so it doesn't reach the backdrop's onClose. The
+          // event is always present in RN; guard it anyway so a bubbled press
+          // (e.g. RNTL routing a disabled child's press to this parent) can't
+          // throw on a missing event.
+          onPress={(e) => e?.stopPropagation?.()}
         >
           {head}
           {children}
@@ -3182,6 +3252,127 @@ function PublishMenu({
 }
 
 /**
+ * "Collect availability" event picker — lists the group's upcoming events with
+ * checkboxes so the leader chooses exactly which ones the shared link asks
+ * about. All events start checked (matching the old all-upcoming default). The
+ * "Share link" action is disabled until at least one is checked and shows the
+ * selected count; sharing creates the link for exactly those events, then the
+ * caller opens the OS share sheet.
+ */
+export function AvailabilityPicker({
+  events,
+  sharingLink,
+  colors,
+  onShare,
+  onClose,
+}: {
+  events: UpcomingEvent[];
+  sharingLink: boolean;
+  colors: Colors;
+  onShare: (planIds: Id<"eventPlans">[]) => void;
+  onClose: () => void;
+}) {
+  // Seed every upcoming event as checked so the default matches today's
+  // behavior (a link that covers all upcoming events).
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(events.map((e) => e._id as string)),
+  );
+  const toggle = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  // Derive the shared set from the live `events` prop, not the once-seeded
+  // `selected` set. `events` is a reactive-query derivative and can change while
+  // the sheet stays mounted (a co-leader deletes/reschedules an event, or one
+  // ages past today). Reading count/disabled off the stale seed would let the
+  // button overstate the count, or — if every selected event dropped out — stay
+  // enabled and share `[]`, which the backend treats as "all upcoming."
+  const selectedIds = useMemo(
+    () => events.filter((e) => selected.has(e._id as string)).map((e) => e._id),
+    [events, selected],
+  );
+  const count = selectedIds.length;
+  const disabled = count === 0 || sharingLink;
+
+  return (
+    <ModalShell
+      title="Collect availability"
+      subtitle="Pick the events to ask about"
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        {events.map((ev) => {
+          const checked = selected.has(ev._id as string);
+          return (
+            <Pressable
+              key={ev._id}
+              onPress={() => toggle(ev._id as string)}
+              style={[styles.menuRow, { borderBottomColor: colors.border }]}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked }}
+              accessibilityLabel={`${ev.title}, ${weekday(ev.eventDate)} ${monthDay(ev.eventDate)}`}
+            >
+              <Ionicons
+                name={checked ? "checkbox" : "square-outline"}
+                size={20}
+                color={checked ? colors.link : colors.textTertiary}
+              />
+              <View style={styles.menuRowText}>
+                <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+                  {weekday(ev.eventDate)} {monthDay(ev.eventDate)}
+                </Text>
+                <Text style={[styles.menuRowSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                  {ev.title}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      <Pressable
+        onPress={() => {
+          if (disabled) return;
+          onShare(selectedIds);
+        }}
+        disabled={disabled}
+        style={[
+          styles.addBtn,
+          { borderColor: disabled ? colors.border : colors.link, opacity: disabled ? 0.5 : 1 },
+        ]}
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        accessibilityLabel={`Share link for ${count} event${count === 1 ? "" : "s"}`}
+      >
+        {sharingLink ? (
+          <ActivityIndicator size="small" color={colors.link} />
+        ) : (
+          <>
+            <Ionicons
+              name="share-outline"
+              size={16}
+              color={count === 0 ? colors.textTertiary : colors.link}
+            />
+            <Text
+              style={[
+                styles.addBtnText,
+                { color: count === 0 ? colors.textTertiary : colors.link },
+              ]}
+            >
+              Share link · {count} event{count === 1 ? "" : "s"}
+            </Text>
+          </>
+        )}
+      </Pressable>
+    </ModalShell>
+  );
+}
+
+/**
  * ⋯ overflow menu — secondary rostering surfaces that no longer have a tab:
  * Teams, Cross-team, Collect availability, plus the "Previous dates" stepper
  * that sets the grid's rosterMatrix({ pastLimit }) arg.
@@ -3189,7 +3380,6 @@ function PublishMenu({
 function OverflowMenu({
   colors,
   pastLimit,
-  sharingLink,
   onTeams,
   onCrossTeam,
   onTemplates,
@@ -3199,7 +3389,6 @@ function OverflowMenu({
 }: {
   colors: Colors;
   pastLimit: number;
-  sharingLink: boolean;
   onTeams: () => void;
   onCrossTeam: () => void;
   onTemplates: () => void;
@@ -3246,15 +3435,10 @@ function OverflowMenu({
         </Pressable>
         <Pressable
           onPress={onCollectAvailability}
-          disabled={sharingLink}
           style={[styles.menuRow, { borderBottomColor: colors.border }]}
           accessibilityRole="button"
         >
-          {sharingLink ? (
-            <ActivityIndicator size="small" color={colors.textSecondary} />
-          ) : (
-            <Ionicons name="share-outline" size={20} color={colors.text} />
-          )}
+          <Ionicons name="share-outline" size={20} color={colors.text} />
           <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
             Collect availability
           </Text>
