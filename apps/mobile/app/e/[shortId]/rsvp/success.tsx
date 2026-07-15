@@ -7,6 +7,9 @@ import {
   MAYBE_RSVP_OPTION_ID,
   CANT_GO_RSVP_OPTION_ID,
 } from "@/features/events/components/EventRsvpSection";
+import { SentryUtils } from "@providers/SentryProvider";
+import { getMediaDiagnostics } from "@/features/chat/utils/fileTypes";
+import { MediaDiagnosticsCard } from "@/components/dev/MediaDiagnosticsCard";
 
 // Import GIF animations
 const starStrikeGif = require("../../../../assets/star-strike.gif");
@@ -69,7 +72,28 @@ export default function RsvpSuccessScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={styles.content}>
-        <Image source={config.gif} style={styles.gif} />
+        <Image
+          source={config.gif}
+          style={styles.gif}
+          onError={(e) => {
+            try {
+              SentryUtils.captureMessage('MEDIA_DIAG_GIF_ERROR', 'warning', {
+                ...getMediaDiagnostics(),
+                error: String(e?.nativeEvent?.error ?? 'unknown'),
+              });
+            } catch {
+              // Never let diagnostics throw from a render callback
+            }
+          }}
+          onLoad={() => {
+            try {
+              SentryUtils.addBreadcrumb('gif loaded', 'media', { screen: 'rsvp-success' });
+            } catch {
+              // Never let diagnostics throw from a render callback
+            }
+          }}
+        />
+        <MediaDiagnosticsCard label="rsvp-gif" />
         <Text style={styles.message}>{config.message}</Text>
       </View>
     </View>

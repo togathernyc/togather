@@ -10,7 +10,7 @@
  * Falls back to a download button if no native video module is available
  * (OTA update scenario) or if the native view crashes (Fabric issue).
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -25,8 +25,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { isAudioVideoSupported, isVideoSupported } from '../utils/fileTypes';
+import { isAudioVideoSupported, isVideoSupported, getMediaDiagnostics } from '../utils/fileTypes';
 import { getMediaUrl } from '@/utils/media';
+import { SentryUtils } from '@providers/SentryProvider';
+import { MediaDiagnosticsCard } from '@/components/dev/MediaDiagnosticsCard';
 
 // ============================================================================
 // Types
@@ -212,6 +214,32 @@ function ExpoVideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Video
 // ============================================================================
 
 export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: VideoPlayerProps) {
+  // Determine which tier will render (observe-only — does NOT affect the
+  // branch selection below). Used for one-time Sentry diagnostics to debug
+  // why chat video falls back to the download card on the staging build.
+  const tier: 'web' | 'expo-video' | 'expo-av' | 'download-fallback' =
+    Platform.OS === 'web'
+      ? 'web'
+      : isVideoSupported()
+        ? 'expo-video'
+        : isAudioVideoSupported()
+          ? 'expo-av'
+          : 'download-fallback';
+
+  const diagReportedRef = useRef(false);
+  useEffect(() => {
+    if (diagReportedRef.current) return;
+    diagReportedRef.current = true;
+    try {
+      SentryUtils.captureMessage('MEDIA_DIAG_VIDEO', 'warning', {
+        ...getMediaDiagnostics(),
+        tier,
+      });
+    } catch {
+      // Never let diagnostics break the video player
+    }
+  }, []);
+
   // Web: use native HTML5 video element
   if (Platform.OS === 'web') {
     return <WebVideoPlayer url={url} name={name} isOwnMessage={isOwnMessage} onLongPress={onLongPress} />;
@@ -237,8 +265,14 @@ export function VideoPlayer({ url, name, isOwnMessage = false, onLongPress }: Vi
     );
   }
 
-  // No native video support — download fallback
-  return fallback;
+  // No native video support — download fallback. Render on-screen diagnostics
+  // below the fallback card so a staging tester can copy why we landed here.
+  return (
+    <View>
+      {fallback}
+      <MediaDiagnosticsCard label="chat-video" extra={{ tier }} />
+    </View>
+  );
 }
 
 // ============================================================================

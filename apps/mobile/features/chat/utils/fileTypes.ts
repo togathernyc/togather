@@ -465,6 +465,89 @@ export function isVoiceRecordingSupported(): boolean {
 }
 
 /**
+ * Gather media/native-module diagnostics for Sentry reporting.
+ *
+ * Every field is wrapped in its own try/catch so this NEVER throws — it is
+ * called from render/effect paths on a staging build where we're debugging
+ * why GIFs render blank and chat video falls back to the download card.
+ */
+export function getMediaDiagnostics(): Record<string, unknown> {
+  const diag: Record<string, unknown> = {};
+
+  try {
+    diag.reactVersion = require('react').version;
+  } catch (e) {
+    diag.reactVersion = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.platform = `${Platform.OS} ${String(Platform.Version)}`;
+  } catch (e) {
+    diag.platform = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.nativeModuleCount = Object.keys(NativeModules).length;
+  } catch (e) {
+    diag.nativeModuleCount = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.bridge_ExpoVideo = !!NativeModules['ExpoVideo'];
+  } catch (e) {
+    diag.bridge_ExpoVideo = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.bridge_ExpoAV = !!(NativeModules['ExpoAV'] || NativeModules['ExponentAV']);
+  } catch (e) {
+    diag.bridge_ExpoAV = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.bridge_ExpoBlur = !!NativeModules['ExpoBlurView'];
+  } catch (e) {
+    diag.bridge_ExpoBlur = `err:${String(e).slice(0, 100)}`;
+  }
+
+  // expo-modules-core probe (New Architecture module registry)
+  try {
+    const emc = require('expo-modules-core');
+    diag.hasRequireNativeModule = !!emc?.requireNativeModule;
+    for (const name of ['ExpoVideo', 'ExpoAV', 'ExponentAV', 'ExpoBlurView', 'ExpoImage']) {
+      try {
+        emc.requireNativeModule(name);
+        diag[`rnm_${name}`] = 'ok';
+      } catch (e) {
+        diag[`rnm_${name}`] = String(e).slice(0, 100);
+      }
+    }
+  } catch (e) {
+    diag.hasRequireNativeModule = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.isVideoSupported = isVideoSupported();
+  } catch (e) {
+    diag.isVideoSupported = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.isAudioVideoSupported = isAudioVideoSupported();
+  } catch (e) {
+    diag.isAudioVideoSupported = `err:${String(e).slice(0, 100)}`;
+  }
+
+  try {
+    diag.isBlurSupported = isBlurSupported();
+  } catch (e) {
+    diag.isBlurSupported = `err:${String(e).slice(0, 100)}`;
+  }
+
+  return diag;
+}
+
+/**
  * Reset cached module detection (for testing)
  */
 export function resetModuleDetectionCache(): void {

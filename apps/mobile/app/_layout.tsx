@@ -26,7 +26,9 @@ import { EnvironmentProvider, useEnvironment } from "@providers/EnvironmentProvi
 import { ImageViewerProvider } from "@providers/ImageViewerProvider";
 import { NotificationProvider } from "@providers/NotificationProvider";
 import { PostHogProvider } from "@providers/PostHogProvider";
-import { SentryProvider } from "@providers/SentryProvider";
+import { SentryProvider, SentryUtils } from "@providers/SentryProvider";
+import * as Updates from "expo-updates";
+import { getMediaDiagnostics } from "@features/chat/utils/fileTypes";
 import { ThemeProvider } from "@providers/ThemeProvider";
 import { useTheme } from "@hooks/useTheme";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -304,6 +306,22 @@ export default function RootLayout() {
       }
     }
     loadFonts();
+  }, []);
+
+  // One-time media/native-module diagnostics reporter (staging debug).
+  // Reports why animated GIFs render blank / chat video falls back to the
+  // download card. Wrapped in try/catch so it can never break app startup.
+  useEffect(() => {
+    try {
+      SentryUtils.captureMessage('MEDIA_DIAG_STARTUP', 'warning', {
+        ...getMediaDiagnostics(),
+        updateId: Updates.updateId,
+        runtimeVersion: Updates.runtimeVersion,
+        isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+      });
+    } catch {
+      // Never let diagnostics break startup
+    }
   }, []);
 
   // Show loading indicator while fonts are loading (web only needs this)
