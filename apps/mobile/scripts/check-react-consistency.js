@@ -1,5 +1,18 @@
 #!/usr/bin/env node
 /**
+ * CI enforcement: keep the mobile native React graph healthy. Two gates:
+ *
+ *   1. Single-React check — no second/mismatched React in the native module
+ *      graph (see the long note below).
+ *   2. Native-unsafe dependency denylist — apps/mobile must not depend on
+ *      emotion / CSS-in-JS / MUI libraries, which reshape the mobile
+ *      React/module graph and break native Fabric rendering even when they are
+ *      only imported on web (this is the mechanism behind gate #1's failure —
+ *      see the #548 native-media regression).
+ *
+ * Both gates run every time; the script exits 1 if EITHER fails, and prints a
+ * combined OK line only when BOTH pass.
+ *
  * CI enforcement: keep a SINGLE React version in the mobile native graph.
  *
  * Why this exists
@@ -63,9 +76,105 @@ function packageNameFromKey(key) {
   return m ? m[1] : body;
 }
 
-function main() {
+/**
+ * Native-unsafe dependency denylist (Gate #2).
+ *
+ * Each entry is a package-NAME prefix. Any package in apps/mobile
+ * `dependencies` or `devDependencies` whose name starts with one of these is a
+ * hard failure. These are emotion / CSS-in-JS / MUI-family libraries: they pull
+ * their own React (via pnpm's autoInstallPeers) and reshape the shared
+ * React/module graph, which breaks native Fabric view/module registration —
+ * native video and animated GIFs render blank on the installed binary — even
+ * when the library is only ever imported on web. This is exactly what PR #548
+ * shipped (adding @mui/* + @emotion/* for a web datepicker).
+ *
+ * `react-native-web` is intentionally NOT here: it is the legitimate web render
+ * shim and is used throughout the app.
+ */
+const NATIVE_UNSAFE_DENYLIST = [
+  "@mui/",
+  "@emotion/",
+  "@material-ui/",
+  "styled-components",
+];
+
+/**
+ * Gate #2: fail if apps/mobile depends on any native-unsafe (emotion/MUI/
+ * CSS-in-JS) package. Returns true when clean, false when an offender is found.
+ */
+function checkNativeUnsafeDenylist(mobilePkg) {
+  const allDeps = {
+    ...(mobilePkg.dependencies || {}),
+    ...(mobilePkg.devDependencies || {}),
+  };
+
+  const offenders = Object.keys(allDeps)
+    .filter((name) =>
+      NATIVE_UNSAFE_DENYLIST.some((prefix) =>
+        prefix.endsWith("/") ? name.startsWith(prefix) : name === prefix || name.startsWith(prefix)
+      )
+    )
+    .sort();
+
+  if (offenders.length === 0) {
+    console.log(
+      `✅ Native-unsafe denylist check passed — no emotion/MUI/CSS-in-JS packages in apps/mobile.`
+    );
+    return true;
+  }
+
+  console.error(
+    "❌ Native-unsafe dependency in apps/mobile/package.json.\n"
+  );
+  console.error("   These packages are on the native-unsafe denylist:\n");
+  for (const name of offenders) {
+    console.error(`   • ${name}  (${allDeps[name]})`);
+  }
+  console.error("");
+  console.error(
+    "   Why this is blocked: emotion / CSS-in-JS / MUI-family libraries pull"
+  );
+  console.error(
+    "   their own React in via pnpm's autoInstallPeers and reshape the mobile"
+  );
+  console.error(
+    "   React/module graph. That breaks native Fabric view/module registration"
+  );
+  console.error(
+    "   on the installed binary — native video and animated GIFs render blank —"
+  );
+  console.error(
+    "   even when the library is imported ONLY on web. This is the exact"
+  );
+  console.error(
+    "   #548 native-media regression (@mui/* + @emotion/* added for a web"
+  );
+  console.error("   datepicker).\n");
+  console.error("   How to fix:");
+  console.error(
+    "     • Web-only date/UI needs should use a dependency-free approach or a"
+  );
+  console.error(
+    "       library WITHOUT emotion (e.g. react-datepicker for a web datepicker)."
+  );
+  console.error(
+    "     • If one of these packages is genuinely, unavoidably required, it must"
+  );
+  console.error(
+    "       be justified in review and this denylist (NATIVE_UNSAFE_DENYLIST in"
+  );
+  console.error(
+    "       scripts/check-react-consistency.js) updated deliberately — do not"
+  );
+  console.error(
+    "       silently remove the guard.\n"
+  );
+  return false;
+}
+
+/** Gate #1: single React in the native graph. Returns true when clean. */
+function checkReactConsistency(mobilePkg) {
   // 1. Determine the pinned React version from the mobile package.json.
-  const mobilePkg = JSON.parse(fs.readFileSync(MOBILE_PKG_PATH, "utf-8"));
   const pinned =
     mobilePkg.dependencies && mobilePkg.dependencies.react;
   if (!pinned) {
@@ -165,7 +274,7 @@ function main() {
     console.error(
       "        then re-run `pnpm install` and commit the updated pnpm-lock.yaml.\n"
     );
-    process.exit(1);
+    return false;
   }
 
   // Success.
@@ -173,6 +282,23 @@ function main() {
     nativeReactVersions.size > 0 ? [...nativeReactVersions].join(", ") : pinned;
   console.log(
     `✅ React consistency check passed — native graph uses a single React (react@${versionsSeen}), matching the pinned react@${pinned}.`
+  );
+  return true;
+}
+
+function main() {
+  const mobilePkg = JSON.parse(fs.readFileSync(MOBILE_PKG_PATH, "utf-8"));
+
+  // Run BOTH gates (don't short-circuit — report every failure in one pass).
+  const reactOk = checkReactConsistency(mobilePkg);
+  const denylistOk = checkNativeUnsafeDenylist(mobilePkg);
+
+  if (!reactOk || !denylistOk) {
+    process.exit(1);
+  }
+
+  console.log(
+    "\n✅ Native React graph OK — single React + no native-unsafe dependencies."
   );
   process.exit(0);
 }
