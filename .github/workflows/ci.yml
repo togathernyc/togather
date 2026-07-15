@@ -119,6 +119,10 @@ jobs:
         working-directory: apps/mobile
         run: node scripts/check-native-imports.js
 
+      - name: Check React consistency (single React in native graph)
+        working-directory: apps/mobile
+        run: node scripts/check-react-consistency.js
+
       - name: Check navigator screen registrations
         working-directory: apps/mobile
         run: |
