@@ -81,6 +81,30 @@ export function DatePicker({
     setModalVisible(false);
   };
 
+  // HTML <input type="date|datetime-local|time"> use LOCAL wall-clock strings
+  // (no timezone). Formatting/parsing via toISOString()/new Date(dateString)
+  // round-trips through UTC and shifts values by the local offset, so build the
+  // strings from local date parts instead.
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const toLocalInputValue = (d: Date, inputMode: typeof mode): string => {
+    const datePart = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (inputMode === 'time') return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (inputMode === 'datetime') return `${datePart}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return datePart;
+  };
+  const fromLocalInputValue = (val: string, inputMode: typeof mode): Date => {
+    if (inputMode === 'time') {
+      const [h, m] = val.split(':').map(Number);
+      const d = value ? new Date(value) : new Date();
+      d.setHours(h || 0, m || 0, 0, 0);
+      return d;
+    }
+    const [datePart, timePart] = val.split('T');
+    const [y, mo, da] = datePart.split('-').map(Number);
+    const [h, mi] = (timePart || '00:00').split(':').map(Number);
+    return new Date(y, (mo || 1) - 1, da || 1, h || 0, mi || 0, 0, 0);
+  };
+
   // For web, use native HTML date input
   if (Platform.OS === 'web') {
     return (
@@ -93,10 +117,10 @@ export function DatePicker({
         )}
         <input
           type={mode === 'time' ? 'time' : mode === 'datetime' ? 'datetime-local' : 'date'}
-          value={value ? (mode === 'time' ? value.toTimeString().slice(0, 5) : value.toISOString().slice(0, mode === 'datetime' ? 16 : 10)) : ''}
+          value={value ? toLocalInputValue(value, mode) : ''}
           onChange={(e) => {
             if (e.target.value) {
-              const date = new Date(e.target.value);
+              const date = fromLocalInputValue(e.target.value, mode);
               // Validate the date before calling onChange
               if (!isNaN(date.getTime())) {
                 onChange(date);
@@ -108,8 +132,8 @@ export function DatePicker({
               onChange(null);
             }
           }}
-          min={minimumDate ? minimumDate.toISOString().slice(0, 10) : undefined}
-          max={maximumDate ? maximumDate.toISOString().slice(0, 10) : undefined}
+          min={minimumDate ? toLocalInputValue(minimumDate, 'date') : undefined}
+          max={maximumDate ? toLocalInputValue(maximumDate, 'date') : undefined}
           disabled={disabled}
           style={{
             width: '100%',
