@@ -892,12 +892,34 @@ function PublishBarMock() {
 /** Native availability card rendered inside a chat thread. */
 function AvailabilityCardMock() {
   const events = [
-    { title: "Sunday Service", date: "Sun, Jun 15 · 9:00 AM", state: "available" as const },
-    { title: "Sunday Service", date: "Sun, Jun 22 · 9:00 AM", state: "none" as const },
-    { title: "Midweek", date: "Wed, Jun 25 · 7:00 PM", state: "cant" as const },
+    {
+      title: "MH Service 7/5",
+      date: "Sat, Jul 5 · 10:00 AM, 12:00 PM",
+      state: "available" as const,
+    },
+    {
+      title: "MH Service 7/12",
+      date: "Sat, Jul 12 · 10:00 AM, 12:00 PM",
+      state: "available" as const,
+    },
+    {
+      title: "MH Service 7/19",
+      date: "Sat, Jul 19 · 10:00 AM, 12:00 PM",
+      state: "none" as const,
+    },
+    {
+      title: "MH Service 7/26 with extended rehearsal and sound check",
+      date: "Sat, Jul 26 · 10:00 AM, 12:00 PM, 2:00 PM",
+      state: "none" as const,
+    },
+    {
+      title: "MH Service 8/2",
+      date: "Sat, Aug 2 · 10:00 AM, 12:00 PM",
+      state: "cant" as const,
+    },
   ];
   return (
-    <PhoneFrame title="Worship Team">
+    <PhoneFrame title="Fount Production">
       <div className="space-y-3 bg-neutral-50 p-3">
         {/* A normal message above the card */}
         <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-white px-3 py-2 text-[12px] text-neutral-700 shadow-sm">
@@ -916,45 +938,49 @@ function AvailabilityCardMock() {
             Let us know when you can serve this month 🙏
           </div>
           <div className="mt-0.5 text-[11px] text-neutral-500">
-            Tap a date to share your availability
+            You're available for 3 of 5
           </div>
 
           <div className="mt-3 space-y-2.5">
             {events.map((e, i) => (
-              <div key={i}>
+              <div key={i} className="space-y-1.5">
                 <div className="text-[12px] font-semibold text-neutral-900">
                   {e.title}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-neutral-500">{e.date}</span>
-                  <div className="flex gap-1.5">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                        e.state === "available"
-                          ? "bg-green-600 text-white"
-                          : "border border-neutral-200 text-neutral-500"
-                      }`}
-                    >
-                      Available
-                    </span>
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                        e.state === "cant"
-                          ? "bg-red-600 text-white"
-                          : "border border-neutral-200 text-neutral-500"
-                      }`}
-                    >
-                      Can't
-                    </span>
-                  </div>
+                <div className="text-[11px] text-neutral-500">{e.date}</div>
+                <div className="flex gap-2">
+                  <span
+                    className={`flex-1 rounded-full px-2.5 py-1.5 text-center text-[10px] font-semibold ${
+                      e.state === "available"
+                        ? "bg-green-600 text-white"
+                        : "border border-neutral-200 text-neutral-500"
+                    }`}
+                  >
+                    Available
+                  </span>
+                  <span
+                    className={`flex-1 rounded-full px-2.5 py-1.5 text-center text-[10px] font-semibold ${
+                      e.state === "cant"
+                        ? "bg-red-600 text-white"
+                        : "border border-neutral-200 text-neutral-500"
+                    }`}
+                  >
+                    Can't
+                  </span>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="mt-3 flex items-center gap-1.5 border-t border-neutral-100 pt-2 text-[11px] font-medium text-primary-700">
-            <Ion name="link-outline" size={13} className="text-primary-700" />
-            Copy link
+          <div className="mt-3 space-y-2 border-t border-neutral-100 pt-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary-700">
+              <Ion name="link-outline" size={13} className="text-primary-700" />
+              Copy link
+            </div>
+            <div className="flex items-center gap-1 text-[11px] font-medium text-primary-700">
+              Manage all upcoming
+              <Ion name="chevron-forward" size={13} className="text-primary-700" />
+            </div>
           </div>
         </div>
       </div>
