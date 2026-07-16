@@ -208,7 +208,10 @@ Secrets always flow **1Password → GitHub → Convex/Expo**. Never shortcut eit
 
 ```
 1Password (source of truth)
-   │  sync-secrets.yml  (manual: op read → gh secret set, per environment)
+   │  sync-secrets.yml  (manual or on allowlist change: op read → gh secret set, per environment)
+   │  — thin caller of Supa-Media/supa-framework's reusable sync-secrets.yml@v1,
+   │    which runs the shared `supa-sync-1password-to-github` bin against
+   │    ee/secrets-allowlist.json
    ▼
 GitHub environment secrets  (staging / production)
    │  deploy-convex.yml / mobile deploys  (on every deploy)
@@ -231,19 +234,30 @@ GitHub happens once per change; GitHub → Convex/Expo happens on every deploy.
 
 1. Add/update the item in **1Password** vault `Togather` — one item per `KEY`,
    with `staging` and `production` fields (`op://Togather/<KEY>/<env>`).
-2. Add `<KEY>` to the allowlist array in
-   `ee/scripts/sync-1password-to-github.sh` — `COMMON_SECRETS` (required; logs a
-   loud skip if missing) or `OPTIONAL_SECRETS` (silently skipped if absent). **A
-   key that isn't listed here is never synced.** Note: GitHub reserves the
-   `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't sync under its
-   own name — name the item without that prefix (e.g. `GH_MIRROR_TOKEN`, not
-   `GITHUB_MIRROR_TOKEN`), or add an alias block (see `IMAGE_CDN_URL`) to rename
-   it on the way in.
+2. Add `<KEY>` to `ee/secrets-allowlist.json` — `required` (a missing value
+   fails the sync) or `optional` (synced when present, **pruned from GitHub
+   when absent from 1Password** — so an `optional` key must tolerate being
+   deleted). **A key that isn't listed here is never synced.** Two other
+   allowlist buckets exist for special cases already in use: `alwaysSet` (an
+   on/off switch that's written every sync — the 1Password value if present,
+   else a safe default — see `AUTO_MERGE_ENABLED`/`AUTO_MERGE_METHOD`) and
+   `aliases` (copies another key's resolved value under a second GitHub secret
+   name — see `IMAGE_CDN_URL`, aliased from `R2_PUBLIC_URL`). Note: GitHub
+   reserves the `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't
+   sync under its own name — name the item without that prefix (e.g.
+   `GH_MIRROR_TOKEN`, not `GITHUB_MIRROR_TOKEN`), or use an `aliases` entry to
+   rename it on the way in.
 3. **Only if a Convex function needs it at runtime**, also add `<KEY>` to
    `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh`. CI-only tokens (repo
    automation, mirror pushes, etc.) stop at GitHub — leave them out.
 4. Push the value into GitHub by running the **Sync Secrets from 1Password**
    workflow (needs `op` in CI): `gh workflow run sync-secrets.yml -f environment=both`.
+   This is a thin caller of Supa-Media/supa-framework's reusable
+   `sync-secrets.yml@v1` workflow, which runs the shared
+   `supa-sync-1password-to-github` bin (`@supa-media/scripts`) against
+   `ee/secrets-allowlist.json`. Pass `-f dry-run=true` first to preview the
+   plan (especially after editing the allowlist) — it prints exactly what
+   would be set/pruned with zero writes.
 5. On the next deploy, `deploy-convex.yml` forwards GitHub → Convex/Expo
    automatically (`.github/actions/load-secrets` exports every GitHub secret).
 6. Add a row to the tables in this doc.

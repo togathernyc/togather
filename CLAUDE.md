@@ -80,12 +80,16 @@ the step-by-step. In short:
 - **Don't push 1Password → Convex/Expo directly** — every deploy re-syncs all
   secrets and would hit 1Password rate limits. GitHub is the buffer.
 - To add a new secret: (1) add the item to 1Password vault `Togather` with
-  `staging`/`production` fields; (2) add `<KEY>` to the allowlist array in
-  `ee/scripts/sync-1password-to-github.sh` (a key not listed is never synced);
-  (3) **only if a Convex function needs it**, also add it to `SECRET_KEYS` in
-  `ee/scripts/sync-secrets-to-convex.sh` — CI-only tokens stop at GitHub;
-  (4) run `gh workflow run sync-secrets.yml -f environment=both` to push it to
-  GitHub; deploys forward it onward.
+  `staging`/`production` fields; (2) add `<KEY>` to the `required` or
+  `optional` list in `ee/secrets-allowlist.json` (a key not listed is never
+  synced — see the Supa Framework section below for what `required` vs
+  `optional` means, including that `optional` gets **pruned** from GitHub when
+  absent from 1Password); (3) **only if a Convex function needs it**, also add
+  it to `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh` — CI-only
+  tokens stop at GitHub; (4) run
+  `gh workflow run sync-secrets.yml -f environment=both` to push it to GitHub
+  (the shared `supa-sync-1password-to-github` bin, via the reusable
+  `sync-secrets.yml@v1` workflow); deploys forward it onward.
 
 ### Agent Backend Selection (Maintainer CI Agents Only)
 
@@ -193,10 +197,23 @@ appear on a real device — so CI cannot catch them. Rules:
   blank**. A `pnpm.overrides` React pin does NOT save you (MUI/react-datepicker
   broke it even pinned). Web-only UI must be **dependency-free** (a native
   `<input>`) — do not reach for a component library.
-- **CI guard:** `apps/mobile/scripts/check-react-consistency.js` fails a PR if a
-  second React is keyed onto any native package, or if a denylisted lib enters
-  `apps/mobile`. Do not weaken or remove it. If a `<second React>` shows up,
-  find and remove the offending dependency — do not paper over it with an override.
+- **CI guard:** `check-react-consistency` (from `@supa-media/native-safety`, run
+  via `npx check-react-consistency --pkg package.json --lockfile
+  ../../pnpm-lock.yaml --config native-deps.json` in `apps/mobile`'s CI job)
+  fails a PR if a second React is keyed onto any native package, or if a
+  denylisted lib enters `apps/mobile`. Do not weaken or remove it. If a
+  `<second React>` shows up, find and remove the offending dependency — do not
+  paper over it with an override.
+- **`pnpm install` can itself trigger a false second-React** even when adding a
+  totally unrelated devDependency with no relation to React/Expo — pnpm's peer
+  dedup for the expo/react-native chain is order-sensitive, and a full
+  workspace-root `pnpm install` re-resolution can non-deterministically re-key
+  `expo`/`expo-modules-core`/`react-native` etc. onto a second React version
+  that already exists elsewhere in the graph (e.g. the one `react-native-web`
+  legitimately uses). **Use a scoped `pnpm add -D <pkg> --filter mobile`** (or
+  `--filter <workspace>`) instead of a bare `pnpm install` when adding a new
+  dependency — it resolves surgically and doesn't disturb this dedup group.
+  Always run `check-react-consistency` after any dependency change to confirm.
 - **Native Fabric view crashes cascade.** When an Expo native *view* crashes
   (e.g. `ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
   undefined)`), it corrupts the Fabric view registry and **breaks other native
@@ -386,6 +403,24 @@ Example workflow:
 
 - **Types**: Convex generates types from schema (`apps/convex/_generated/`)
 - **API Client**: `@services/api/convex` - Convex React client
+
+## Supa Framework
+
+This repo consumes packages and reusable workflows from **Supa-Media/supa-framework**
+(local checkout: `~/Code/supa-framework`).
+
+- Consumed today: `@supa-media/native-safety` (check-react-consistency CI guard),
+  the shared 1Password sync (`supa-sync-1password-to-github` via the reusable
+  `sync-secrets.yml@v1` workflow). More adoption is planned (see the framework repo).
+- Private registry: installing `@supa-media/*` needs a `GITHUB_TOKEN` with
+  `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`).
+- **Upstream-first rule:** if a change touches behavior that comes from the
+  framework (a package, bin, or reusable workflow), do NOT patch or fork it
+  here first. Ask: is the change generic? If yes → change it in
+  supa-framework (PR there → release → `pnpm update "@supa-media/*"` here).
+  Only implement locally when the need is genuinely Togather-specific — and
+  leave a comment explaining why it diverges.
+- Updating: `pnpm update "@supa-media/*"`; reusable workflows are pinned `@v1`.
 
 ## Key Patterns
 
