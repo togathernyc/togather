@@ -1,37 +1,52 @@
 /**
- * Dev-Assistant Maintainers — superuser-managed delegate access.
+ * Dev-Assistant Maintainers — superuser-managed delegate access (Togather role
+ * system). This is the app-owned half of the seam: `@supa-media/dev-assistant`
+ * has no concept of Togather's `dev_maintainer` platform role — it only reads
+ * `users.autoMergeMaxSeverity` (via the re-exported `getAutoMergeCapForUser`
+ * below, which its auto-merge action calls). Everything else here — granting/
+ * revoking the role, the maintainers list, the auto-merge-cap setter — stays
+ * local because it's Togather's role/permission model.
  *
  * A "dev maintainer" is a user granted the `dev_maintainer` platform role so
- * they can summon the @Togather dev-assistant (mention it in a thread to turn a
- * discussion into a bug brief) WITHOUT being a Togather superuser/staff.
- *
- * Maintainers get the trigger capability ONLY — they cannot review, reject,
- * retry, or merge bugs (those stay superuser-only, see bugs.ts `requireSuperuser`).
- * That's the "can call the assistant, but without full super admin privileges"
- * split the feature asks for.
- *
- * This mirrors the `poster_admin` platform-role model in functions/posters.ts:
- * the role lives in `users.platformRoles`, isSuperuser/isStaff implicitly bypass
- * the role check, and only super admins can grant/revoke it (via the
- * `/(user)/admin/maintainers` screen).
+ * they can summon the @Togather dev-assistant and use the contributor dashboard
+ * WITHOUT being a Togather superuser/staff. Reviewing/merging stays superuser-
+ * only. Mirrors the `poster_admin` model in functions/posters.ts.
  */
 
 import { v, ConvexError } from "convex/values";
-import { query, mutation, internalQuery } from "../../_generated/server";
+import { query, mutation } from "../../_generated/server";
 import type { QueryCtx, MutationCtx } from "../../_generated/server";
 import type { Doc } from "../../_generated/dataModel";
 import { requireAuth, requireAuthUser } from "../../lib/auth";
+import {
+  DEV_MAINTAINER_ROLE,
+  canUseDevAssistant,
+  isDevAssistantSuperAdmin,
+} from "./access";
+import { devAssistant } from "./_instance";
+import type { InternalQuery } from "./_reexportTypes";
 
-export const DEV_MAINTAINER_ROLE = "dev_maintainer" as const;
+// Re-export the role helpers (kept here for back-compat with the previous
+// public surface of this module) and the role constant.
+export { DEV_MAINTAINER_ROLE, canUseDevAssistant, isDevAssistantSuperAdmin };
+
+// The one package function the maintainers surface exposes: the auto-merge
+// action reads a user's cap through `${functionsPath}/maintainers:
+// getAutoMergeCapForUser` (reads `users.autoMergeMaxSeverity`, default "low").
+// Direct-const re-export with an explicit registered-function type (a
+// destructured re-export is dropped from the generated internal api — see
+// _reexportTypes.ts).
+export const getAutoMergeCapForUser: InternalQuery =
+  devAssistant.maintainers.getAutoMergeCapForUser as any;
 
 // ============================================================================
 // Auto-merge severity cap (ADR-029 Phase 3)
 // ============================================================================
 
 /**
- * Per-user cap on the contribution risk level that may auto-merge. Keyed off a
- * bug's originator: an item auto-merges only when its `riskLevel` is at or below
- * this cap. Managed on the maintainers screen.
+ * Per-user cap on the contribution risk level that may auto-merge. Managed on
+ * the maintainers screen; the package's auto-merge gate reads it via
+ * getAutoMergeCapForUser.
  */
 export const autoMergeSeverityValidator = v.union(
   v.literal("none"),
@@ -43,48 +58,15 @@ export const autoMergeSeverityValidator = v.union(
 export type AutoMergeSeverity = "none" | "low" | "medium" | "high";
 
 /**
- * Ordinal rank for the severity gate. A contribution auto-merges only when its
- * riskLevel rank is <= the originator's cap rank. "none" (-1) sits below every
- * real risk level, so those contributions never auto-merge.
- */
-export const AUTO_MERGE_SEVERITY_ORDER: Record<AutoMergeSeverity, number> = {
-  none: -1,
-  low: 0,
-  medium: 1,
-  high: 2,
-};
-
-/**
  * Default cap for a user without an explicit setting. "low" preserves the
  * original global policy (only low-risk contributions auto-merge); an operator
- * raises it per person on the maintainers screen.
+ * raises it per person on the maintainers screen. Matches the package default.
  */
 export const DEFAULT_AUTO_MERGE_MAX_SEVERITY: AutoMergeSeverity = "low";
 
 // ============================================================================
-// Access helpers
+// Access helpers (superuser gate)
 // ============================================================================
-
-/**
- * True if the user may summon the dev-assistant — Togather superuser/staff
- * (implicit) or a delegated dev maintainer. This is the single source of truth
- * for the trigger gate; bugs.getUserAccess derives `isMaintainer` from the same
- * role constant.
- */
-export function canUseDevAssistant(
-  user: Doc<"users"> | null | undefined,
-): boolean {
-  if (!user) return false;
-  if (user.isSuperuser === true || user.isStaff === true) return true;
-  return user.platformRoles?.includes(DEV_MAINTAINER_ROLE) ?? false;
-}
-
-/** True if the user can manage (grant/revoke) the maintainer list. Superuser/staff only. */
-export function isDevAssistantSuperAdmin(
-  user: Doc<"users"> | null | undefined,
-): boolean {
-  return user?.isSuperuser === true || user?.isStaff === true;
-}
 
 async function requireSuperAdmin(
   ctx: QueryCtx | MutationCtx,
@@ -232,22 +214,5 @@ export const setAutoMergeMaxSeverity = mutation({
     if (!target) throw new ConvexError("User not found");
     await ctx.db.patch(args.userId, { autoMergeMaxSeverity: args.maxSeverity });
     return { ok: true };
-  },
-});
-
-// ============================================================================
-// Internal — auto-merge gate lookup
-// ============================================================================
-
-/**
- * The effective auto-merge severity cap for a user (default when unset). Called
- * by the auto-merge action, which runs outside a DB context.
- */
-export const getAutoMergeCapForUser = internalQuery({
-  args: { userId: v.id("users") },
-  handler: async (ctx, args): Promise<AutoMergeSeverity> => {
-    const user = await ctx.db.get(args.userId);
-    return (user?.autoMergeMaxSeverity ??
-      DEFAULT_AUTO_MERGE_MAX_SEVERITY) as AutoMergeSeverity;
   },
 });
