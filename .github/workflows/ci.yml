@@ -80,6 +80,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         run: pnpm --filter @togather/shared test
@@ -106,6 +108,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run tests
         working-directory: apps/mobile
@@ -121,7 +125,7 @@ jobs:
 
       - name: Check React consistency (single React in native graph)
         working-directory: apps/mobile
-        run: node scripts/check-react-consistency.js
+        run: npx check-react-consistency --pkg package.json --lockfile ../../pnpm-lock.yaml --config native-deps.json
 
       - name: Check navigator screen registrations
         working-directory: apps/mobile
@@ -164,6 +168,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build shared package
         run: pnpm --filter @togather/shared build
@@ -200,6 +206,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

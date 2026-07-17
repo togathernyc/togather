@@ -408,6 +408,9 @@ importers:
       '@jest/test-sequencer':
         specifier: ^29.7.0
         version: 29.7.0
+      '@supa-media/native-safety':
+        specifier: ^1.1.0
+        version: 1.1.0(@expo/fingerprint@0.15.4)
       '@testing-library/jest-dom':
         specifier: ^6.1.5
         version: 6.9.1
@@ -6857,6 +6860,15 @@ packages:
     engines: {node: '>=18.0.0'}
     dependencies:
       tslib: 2.8.1
+    dev: true
+
+  /@supa-media/native-safety@1.1.0(@expo/fingerprint@0.15.4):
+    resolution: {integrity: sha512-q9Y2NBjmeLKmtxgNC/xg0xEUfbMHlUViRovBIyb7Qqu5rrz14Di1LgOmv9/0xJrOlwBzf04gy9ZzfacZNf4N8g==, tarball: https://npm.pkg.github.com/download/@supa-media/native-safety/1.1.0/f83c277a6d0b282dbdc65e88c7ba1d088e977c38}
+    hasBin: true
+    peerDependencies:
+      '@expo/fingerprint': '>=0.6.0'
+    dependencies:
+      '@expo/fingerprint': 0.15.4
     dev: true
 
   /@tailwindcss/node@4.1.18:

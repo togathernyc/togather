@@ -189,6 +189,34 @@ When building or updating the mobile app via EAS (Expo Application Services), `a
 | OTA Update (`eas update`) | EAS cloud | EAS environment vars (must sync!) |
 | Local Dev (`expo start`) | Your machine | `.env` file |
 
+### GitHub Packages auth for native builds (`GH_PACKAGES_TOKEN`)
+
+`eas build` (no `--local`) does its own `pnpm install` on Expo's own remote
+infrastructure — a separate machine from the GitHub Actions runner. Since
+`.npmrc` points `@supa-media/*` at `npm.pkg.github.com` (see the "Supa
+Framework" section of `CLAUDE.md`), that remote install needs a
+`GITHUB_TOKEN` env var to authenticate — GitHub Packages requires auth for
+every install, public or private packages alike. The Actions runner's own
+`secrets.GITHUB_TOKEN` never reaches that remote machine, and is the wrong
+choice even if it did (it's ephemeral and can expire before an async EAS
+build finishes) — so `build-mobile-native.yml`, `build-mobile.yml`, and
+`deploy-to-production.yml`'s "Sync secrets to EAS" steps forward a durable
+PAT instead, as `eas env:create --name GITHUB_TOKEN --value
+"$GH_PACKAGES_TOKEN" ...`.
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `GH_PACKAGES_TOKEN` | GitHub PAT with `read:packages` scope, used only to authenticate EAS's remote `pnpm install` to `npm.pkg.github.com` for `@supa-media/*`. Listed as `required` in `ee/secrets-allowlist.json`, so it must exist in 1Password **before** the next `sync-secrets.yml` dispatch, or the sync aborts for every other secret in that environment too. | Every native build (`eas build`) fails during remote dependency install; OTA-only deploys are unaffected. |
+
+**Provisioning required before the next native build** (as of PR #628): this
+secret does not exist yet. A maintainer must create a classic GitHub PAT
+scoped to `read:packages` (org: Supa-Media's packages are public, so no org
+grant is needed beyond the scope itself), add it to 1Password vault
+`Togather` as `GH_PACKAGES_TOKEN` (`staging`/`production` fields — the same
+value can be used for both), then run
+`gh workflow run sync-secrets.yml -f environment=both -f dry-run=true` to
+confirm the plan, followed by a real (`dry-run=false`) run.
+
 ### Adding a New EXPO_PUBLIC_* Variable
 
 When adding a new `EXPO_PUBLIC_*` environment variable:
@@ -208,7 +236,10 @@ Secrets always flow **1Password → GitHub → Convex/Expo**. Never shortcut eit
 
 ```
 1Password (source of truth)
-   │  sync-secrets.yml  (manual: op read → gh secret set, per environment)
+   │  sync-secrets.yml  (manual or on allowlist change: op read → gh secret set, per environment)
+   │  — thin caller of Supa-Media/supa-framework's reusable sync-secrets.yml@v1,
+   │    which runs the shared `supa-sync-1password-to-github` bin against
+   │    ee/secrets-allowlist.json
    ▼
 GitHub environment secrets  (staging / production)
    │  deploy-convex.yml / mobile deploys  (on every deploy)
@@ -231,19 +262,30 @@ GitHub happens once per change; GitHub → Convex/Expo happens on every deploy.
 
 1. Add/update the item in **1Password** vault `Togather` — one item per `KEY`,
    with `staging` and `production` fields (`op://Togather/<KEY>/<env>`).
-2. Add `<KEY>` to the allowlist array in
-   `ee/scripts/sync-1password-to-github.sh` — `COMMON_SECRETS` (required; logs a
-   loud skip if missing) or `OPTIONAL_SECRETS` (silently skipped if absent). **A
-   key that isn't listed here is never synced.** Note: GitHub reserves the
-   `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't sync under its
-   own name — name the item without that prefix (e.g. `GH_MIRROR_TOKEN`, not
-   `GITHUB_MIRROR_TOKEN`), or add an alias block (see `IMAGE_CDN_URL`) to rename
-   it on the way in.
+2. Add `<KEY>` to `ee/secrets-allowlist.json` — `required` (a missing value
+   fails the sync) or `optional` (synced when present, **pruned from GitHub
+   when absent from 1Password** — so an `optional` key must tolerate being
+   deleted). **A key that isn't listed here is never synced.** Two other
+   allowlist buckets exist for special cases already in use: `alwaysSet` (an
+   on/off switch that's written every sync — the 1Password value if present,
+   else a safe default — see `AUTO_MERGE_ENABLED`/`AUTO_MERGE_METHOD`) and
+   `aliases` (copies another key's resolved value under a second GitHub secret
+   name — see `IMAGE_CDN_URL`, aliased from `R2_PUBLIC_URL`). Note: GitHub
+   reserves the `GITHUB_` prefix for secret names, so a `GITHUB_*` item can't
+   sync under its own name — name the item without that prefix (e.g.
+   `GH_MIRROR_TOKEN`, not `GITHUB_MIRROR_TOKEN`), or use an `aliases` entry to
+   rename it on the way in.
 3. **Only if a Convex function needs it at runtime**, also add `<KEY>` to
    `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh`. CI-only tokens (repo
    automation, mirror pushes, etc.) stop at GitHub — leave them out.
 4. Push the value into GitHub by running the **Sync Secrets from 1Password**
    workflow (needs `op` in CI): `gh workflow run sync-secrets.yml -f environment=both`.
+   This is a thin caller of Supa-Media/supa-framework's reusable
+   `sync-secrets.yml@v1` workflow, which runs the shared
+   `supa-sync-1password-to-github` bin (`@supa-media/scripts`) against
+   `ee/secrets-allowlist.json`. Pass `-f dry-run=true` first to preview the
+   plan (especially after editing the allowlist) — it prints exactly what
+   would be set/pruned with zero writes.
 5. On the next deploy, `deploy-convex.yml` forwards GitHub → Convex/Expo
    automatically (`.github/actions/load-secrets` exports every GitHub secret).
 6. Add a row to the tables in this doc.
