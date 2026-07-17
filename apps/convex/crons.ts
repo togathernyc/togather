@@ -12,6 +12,8 @@
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
+import { registerDevAssistantCrons } from "@supa-media/dev-assistant";
+import { devAssistant } from "./functions/devAssistant/_instance";
 
 const crons = cronJobs();
 
@@ -300,12 +302,11 @@ crons.monthly(
 // bug to MERGED when its PR has merged on GitHub, so manual merges reflect on
 // the Contribute dashboard even when the webhook isn't delivering. Idempotent;
 // no-ops when the GitHub integration is unconfigured. See ADR-029 Phase 3.
-
-crons.cron(
-  "dev-assistant-pr-merge-reconcile",
-  "*/15 * * * *",
-  internal.functions.devAssistant.actions.reconcileMergedPrs,
-  {}
-);
+//
+// Registered by @supa-media/dev-assistant — same cron name
+// ("dev-assistant-pr-merge-reconcile"), same */15 cadence, same target action
+// (functions/devAssistant/actions:reconcileMergedPrs) as the previous
+// hand-written registration.
+registerDevAssistantCrons(crons, devAssistant.config);
 
 export default crons;
