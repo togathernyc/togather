@@ -1,6 +1,7 @@
-import { defineSchema, defineTable } from "convex/server";
+import { defineSchema, defineTable, type TableDefinition } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
+import { supaDevAssistantTables } from "@supa-media/dev-assistant/schema";
 
 /**
  * Convex Schema for Togather
@@ -18,6 +19,35 @@ import { authTables } from "@convex-dev/auth/server";
  * - Uses Convex Auth (authTables) for session management
  * - Links to our existing 'users' table via authAccounts.userId
  */
+
+// @supa-media/dev-assistant (ADR-029): the devBugs pipeline row + its
+// devBugMessages conversation thread, with Togather's chat-origination FKs
+// (community/channel/thread) injected via extraBugFields + the by_channel index.
+// Field-for-field and index-for-index identical to the previous inline
+// definition (verified — no data migration). The pipeline also reads two
+// OPTIONAL users fields: githubUsername + autoMergeMaxSeverity (on the users
+// table below).
+//
+// NOTE: the factory is declared to return `Record<string, TableDefinition>`, so
+// spreading its result raw would collapse `devBugs`/`devBugMessages` into a
+// string index signature and drop them from the generated DataModel (breaking
+// `Id<"devBugs">` / `Doc<"devBugs">` everywhere they're referenced). The cast
+// below re-establishes them as two concrete table keys so the rest of the
+// schema stays precisely typed. The runtime VALUE is the factory's (behavior-
+// neutral); only devBugs' compile-time document type is loosened to the
+// package's own `any`-ctx view. (Upstream: the factory should return a
+// precisely-typed object literal so a plain spread preserves the table types.)
+const devAssistantTables = supaDevAssistantTables({
+  extraBugFields: {
+    communityId: v.optional(v.id("communities")),
+    channelId: v.optional(v.id("chatChannels")),
+    threadRootMessageId: v.optional(v.id("chatMessages")),
+  },
+  extraBugIndexes: [{ name: "by_channel", fields: ["channelId"] }],
+}) as unknown as {
+  devBugs: TableDefinition<any, any, any, any>;
+  devBugMessages: TableDefinition<any, any, any, any>;
+};
 
 export default defineSchema({
   // =============================================================================
@@ -2210,212 +2240,9 @@ export default defineSchema({
   // thread is the system of record for intent; this row tracks lifecycle state;
   // the PR tracks code. Each transition posts a bot message into the thread.
   // Gated behind the "dev-assistant-bot" feature flag; staff/superuser only.
-  devBugs: defineTable({
-    // Chat-originated items carry the originating community/channel/thread.
-    // Dashboard-originated items (contributor dev dashboard, ADR-029) are
-    // platform-level and have none of the three.
-    communityId: v.optional(v.id("communities")),
-    channelId: v.optional(v.id("chatChannels")),
-    // All bot replies/callbacks post into this thread (the root message).
-    threadRootMessageId: v.optional(v.id("chatMessages")),
-    originatorUserId: v.id("users"),
-
-    status: v.union(
-      v.literal("DRAFT"),
-      v.literal("IN_REVIEW"),
-      v.literal("READY_FOR_IMPL"),
-      v.literal("IN_PROGRESS"),
-      v.literal("CODE_REVIEW"),
-      v.literal("READY_TO_MERGE"),
-      v.literal("MERGED"),
-      v.literal("REJECTED"),
-    ),
-
-    title: v.string(),
-    body: v.string(), // clean implementation brief (synthesized)
-    repro: v.optional(v.string()),
-    screenshotUrls: v.optional(v.array(v.string())), // pulled from thread image attachments
-    // AI-generated before/after mock for the plan, delivered by the routine
-    // callback. Distinct from `screenshotUrls`, which is the user's own report
-    // images — keeping them separate stops us mislabeling report screenshots as
-    // an AI plan preview (and vice versa).
-    planPreviewUrls: v.optional(v.array(v.string())),
-
-    // Contributor dev dashboard (ADR-029). All optional for backward compat;
-    // pre-existing rows are chat-originated bugs.
-    kind: v.optional(v.union(v.literal("bug"), v.literal("feature"))), // default "bug"
-    source: v.optional(v.union(v.literal("chat"), v.literal("dashboard"))),
-    riskLevel: v.optional(
-      v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
-    ),
-    spec: v.optional(v.string()), // AI-drafted spec, markdown
-    specApprovedAt: v.optional(v.number()), // contributor sign-off
-
-    // AI triage fields (ADR-029 Phase 1.5), delivered by the spec-mode routine
-    // via the signed callback alongside spec/riskLevel.
-    aiTitle: v.optional(v.string()), // short imperative headline
-    area: v.optional(v.string()), // "events" | "chat" | "groups" | "prayer" | "settings" | "other"
-    // "buildable" = one pipeline run; "split" = too big, spec proposes slices;
-    // "design_needed" = a maintainer must make architectural decisions first.
-    // Non-buildable items cannot be spec-approved (see approveSpec).
-    scope: v.optional(
-      v.union(
-        v.literal("buildable"),
-        v.literal("split"),
-        v.literal("design_needed"),
-      ),
-    ),
-    // True for anything interactive — the originator is asked to verify the
-    // change on staging before merge; false for pure copy/color tweaks.
-    verifyOnStaging: v.optional(v.boolean()),
-    stagingVerifiedAt: v.optional(v.number()), // set by confirmStaging
-    // Stamped when a maintainer triggers the production deploy from the app
-    // (promoteToProduction — always a silent OTA). Cleared again if the
-    // GitHub workflow dispatch fails; treated as a cooldown (not a one-shot)
-    // so a workflow run that fails AFTER dispatch doesn't strand the item.
-    productionRequestedAt: v.optional(v.number()),
-    // Stamped when a maintainer asks to merge from the app (mergeNow) so the
-    // merge card hides for EVERY viewer while the merge is in flight; cleared
-    // by mergeFromApp's failure path so "try again" is actually possible.
-    mergeRequestedAt: v.optional(v.number()),
-    // How many staging-redo rounds (reportStagingIssue) this item has been
-    // through. Drives redo-mode dispatch and round-scoped chat idempotency
-    // keys (bug:<id>:<status>:r<N>).
-    redoRounds: v.optional(v.number()),
-    // AI review cycle: verdict reported by the review-mode routine via the
-    // signed callback after it reviews the PR ("approved" promotes the bug to
-    // READY_TO_MERGE; "changes_requested" leaves it in CODE_REVIEW). Cleared
-    // whenever the bug genuinely (re-)enters CODE_REVIEW so a stale verdict
-    // never lingers on a new PR revision.
-    reviewVerdict: v.optional(
-      v.union(v.literal("approved"), v.literal("changes_requested")),
-    ),
-    reviewSummary: v.optional(v.string()),
-    // For "split"-scope items (ADR-029): the spec routine proposes the
-    // buildable slices, each with a self-contained prompt a maintainer can
-    // copy straight into a fresh dev session to build that slice on its own.
-    // Cleared when a revision re-triages the item back to "buildable".
-    splitSlices: v.optional(
-      v.array(v.object({ title: v.string(), prompt: v.string() })),
-    ),
-    // Count of auto-fix dispatches (ADR-029 Phase 3 review→fix→re-review
-    // loop). Capped at 3 — after that a changes_requested verdict escalates
-    // to a human instead of dispatching another fix run.
-    fixRounds: v.optional(v.number()),
-    githubIssueNumber: v.optional(v.number()),
-    githubIssueUrl: v.optional(v.string()),
-    shippedAt: v.optional(v.number()), // set when status reaches MERGED
-
-    // Deploy observation (ADR-029 follow-up). A merge only *triggers* the
-    // staging deploy workflows (a few minutes); production is a separate manual
-    // dispatch. These fields let the dashboard show "deploying → live" and, on
-    // failure, tell the contributor the deploy failed instead of inviting them
-    // to test something that isn't up. Driven by the GitHub `workflow_run`
-    // webhook (see http.ts + bugs.ts handleWorkflowRunEvent).
-
-    // The squash-merge commit SHA — correlates the staging `workflow_run` events
-    // (head_sha) back to this bug. Stored the moment the merge is observed.
-    mergeCommitSha: v.optional(v.string()),
-    // Staging deploy state for this merge. `workflows` tracks each triggered
-    // staging workflow ("Deploy Convex" / "Deploy Mobile Update") we've seen and
-    // its conclusion; the deploy is "live" only once every tracked workflow
-    // succeeded, "failed" the moment any one fails.
-    stagingDeploy: v.optional(
-      v.object({
-        state: v.union(
-          v.literal("pending"),
-          v.literal("live"),
-          v.literal("failed"),
-        ),
-        workflows: v.optional(
-          v.array(
-            v.object({
-              name: v.string(),
-              conclusion: v.optional(v.string()),
-            }),
-          ),
-        ),
-        failedWorkflow: v.optional(v.string()),
-        updatedAt: v.number(),
-      }),
-    ),
-    // Production deploy state, set when a maintainer ships from the app. Prod
-    // deploys are global (they ship everything on `main`), so the "Deploy to
-    // Production" workflow_run can't be correlated to one bug by SHA — all
-    // pending-prod bugs move together (see handleWorkflowRunEvent).
-    productionDeploy: v.optional(
-      v.object({
-        state: v.union(
-          v.literal("pending"),
-          v.literal("live"),
-          v.literal("failed"),
-        ),
-        failedWorkflow: v.optional(v.string()),
-        // When the in-app deploy was dispatched. A "Deploy to Production" run
-        // only settles bugs requested BEFORE it started (requestedAt <=
-        // run_started_at), so a later dispatch isn't wrongly marked done by an
-        // earlier, still-running deploy.
-        requestedAt: v.optional(v.number()),
-        updatedAt: v.number(),
-      }),
-    ),
-    // Contributor set the conversation aside (abandoned it, or the scope was
-    // judged not doable) — ADR-029. Orthogonal to `status`: an item can be
-    // archived from any pipeline state and unarchived to restore it. Archived
-    // items drop out of the active dashboard tabs into an "Archived" view.
-    archivedAt: v.optional(v.number()),
-
-    prUrl: v.optional(v.string()),
-    reviewLink: v.optional(v.string()),
-    routineRunId: v.optional(v.string()), // we generate; routine echoes on callbacks
-    // Mode the in-flight Routine run (the one holding routineRunId) was
-    // dispatched in. Stamped by the mark*Dispatched mutations; applyCallback
-    // restricts what each mode's callback may deliver (e.g. only review runs
-    // carry a review verdict). Unset on legacy rows dispatched before the
-    // stamping existed — those get the permissive legacy callback policy
-    // (minus MERGED, which is webhook/auto-merge-only).
-    activeRunMode: v.optional(
-      v.union(
-        v.literal("spec"),
-        v.literal("implement"),
-        v.literal("review"),
-        v.literal("fix"),
-      ),
-    ),
-    dispatchedAt: v.optional(v.number()),
-    lastCallbackAt: v.optional(v.number()),
-    lastError: v.optional(v.string()),
-
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_status", ["status"])
-    .index("by_channel", ["channelId"])
-    .index("by_originator", ["originatorUserId"])
-    .index("by_routineRunId", ["routineRunId"])
-    .index("by_mergeCommitSha", ["mergeCommitSha"]),
-
-  /**
-   * Conversation thread on a devBugs item (contributor dev dashboard,
-   * ADR-029 Phase 1.5). Every contribution is a conversation with the AI:
-   * the submitted report is the first "user" message, spec drafts arrive as
-   * "assistant" messages, and lifecycle transitions post "system" messages.
-   */
-  devBugMessages: defineTable({
-    bugId: v.id("devBugs"),
-    authorType: v.union(
-      v.literal("user"),
-      v.literal("assistant"),
-      v.literal("system"),
-    ),
-    userId: v.optional(v.id("users")), // set when authorType === "user"
-    body: v.string(),
-    // Screenshots/pictures attached to a "user" message (contributors can file
-    // and chat with images — ADR-029). Stored as R2 storage paths ("r2:…");
-    // read paths (getThread) resolve them to public URLs via getMediaUrl.
-    imageUrls: v.optional(v.array(v.string())),
-    createdAt: v.number(),
-  }).index("by_bug", ["bugId", "createdAt"]),
+  // From @supa-media/dev-assistant (see the const above defineSchema).
+  devBugs: devAssistantTables.devBugs,
+  devBugMessages: devAssistantTables.devBugMessages,
 
   // =============================================================================
 
