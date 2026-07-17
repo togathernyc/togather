@@ -214,6 +214,14 @@ appear on a real device — so CI cannot catch them. Rules:
   `--filter <workspace>`) instead of a bare `pnpm install` when adding a new
   dependency — it resolves surgically and doesn't disturb this dedup group.
   Always run `check-react-consistency` after any dependency change to confirm.
+- **The `react: "19.1.0"` devDependency pin in `apps/convex/package.json` is
+  load-bearing — do not remove it.** `apps/convex` ships no React code, but
+  without the pin, `@react-email/components`' react range pulls `react@19.2.4`
+  and pnpm keys a SECOND peer-keyed `convex` instance onto it; the
+  `@supa-media/dev-assistant` re-exports then resolve against the wrong
+  `convex` copy and Convex's type machinery silently drops every re-exported
+  function from the generated `api`/`internal` types (the mount smoke test
+  `__tests__/devAssistant-mount.test.ts` is the CI backstop for this).
 - **Native Fabric view crashes cascade.** When an Expo native *view* crashes
   (e.g. `ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
   undefined)`), it corrupts the Fabric view registry and **breaks other native
@@ -411,7 +419,10 @@ This repo consumes packages and reusable workflows from **Supa-Media/supa-framew
 
 - Consumed today: `@supa-media/native-safety` (check-react-consistency CI guard),
   the shared 1Password sync (`supa-sync-1password-to-github` via the reusable
-  `sync-secrets.yml@v1` workflow). More adoption is planned (see the framework repo).
+  `sync-secrets.yml@v1` workflow), and `@supa-media/dev-assistant` (the ADR-029
+  contribution pipeline — schema, pipeline core, and Convex functions; Togather
+  supplies only the app-specific seams in `apps/convex/functions/devAssistant/`).
+  More adoption is planned (see the framework repo).
 - Private registry: installing `@supa-media/*` needs a `GITHUB_TOKEN` with
   `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`). EAS remote
   native builds (`eas build`, no `--local`) run their own `pnpm install` on
