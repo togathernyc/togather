@@ -199,7 +199,12 @@ export function BugDetailScreen() {
               Screenshots
             </Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {bug.screenshotUrls.map((url) => (
+              {/* `getBugForReview`'s return type is loosely `any` inside
+               * @supa-media/dev-assistant (its handler param is `ctx: any`,
+               * so a `{ ...bug, originatorName }` spread collapses to `any`)
+               * — annotate explicitly here rather than loosen this file's
+               * strictness. Flagged upstream; not a mounting-contract bug. */}
+              {(bug.screenshotUrls as string[]).map((url: string) => (
                 <Image key={url} source={{ uri: url }} style={styles.screenshot} />
               ))}
             </ScrollView>
