@@ -13,7 +13,7 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { registerDevAssistantCrons } from "@supa-media/dev-assistant";
-import { devAssistant } from "./functions/devAssistant/_instance";
+import "./functions/devAssistant/config"; // side-effect: sets config first
 
 const crons = cronJobs();
 
@@ -307,6 +307,6 @@ crons.monthly(
 // ("dev-assistant-pr-merge-reconcile"), same */15 cadence, same target action
 // (functions/devAssistant/actions:reconcileMergedPrs) as the previous
 // hand-written registration.
-registerDevAssistantCrons(crons, devAssistant.config);
+registerDevAssistantCrons(crons); // reads functionsPath from the config holder
 
 export default crons;

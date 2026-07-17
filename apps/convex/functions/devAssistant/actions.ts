@@ -20,25 +20,25 @@ import { api, internal } from "../../_generated/api";
 import { buildDevAssistantPrompt } from "./prompts";
 import { runAgentLoop, buildThreadMessages } from "./agent";
 import type { ToolExecutionContext } from "./tools";
-import { devAssistant } from "./_instance";
-import type { InternalAction } from "./_reexportTypes";
+import "./config"; // side-effect: sets config before any handler here runs
 
 // ============================================================================
 // Package pipeline actions (functionsPath contract — do not rename/drop)
 // ============================================================================
-// Direct-const re-exports with explicit registered-function types (a
-// destructured re-export is dropped from the generated api/internal — see
-// _reexportTypes.ts). Runtime is the package's real actions.
-export const dispatchBug: InternalAction = devAssistant.actions.dispatchBug as any;
-export const dispatchSpec: InternalAction = devAssistant.actions.dispatchSpec as any;
-export const dispatchReview: InternalAction = devAssistant.actions.dispatchReview as any;
-export const dispatchFix: InternalAction = devAssistant.actions.dispatchFix as any;
-export const attemptAutoMerge: InternalAction = devAssistant.actions.attemptAutoMerge as any;
-export const mergeFromApp: InternalAction = devAssistant.actions.mergeFromApp as any;
-export const retryMergeAfterUpdate: InternalAction = devAssistant.actions.retryMergeAfterUpdate as any;
-export const dispatchProductionDeploy: InternalAction = devAssistant.actions.dispatchProductionDeploy as any;
-export const reconcileMergedPrs: InternalAction = devAssistant.actions.reconcileMergedPrs as any;
-export const handleRoutineCallback: InternalAction = devAssistant.actions.handleRoutineCallback as any;
+// Genuine builder-output consts re-exported directly from the package. Runtime
+// is the package's real actions; no cast needed (see bugs.ts for why).
+export {
+  dispatchBug,
+  dispatchSpec,
+  dispatchReview,
+  dispatchFix,
+  attemptAutoMerge,
+  mergeFromApp,
+  retryMergeAfterUpdate,
+  dispatchProductionDeploy,
+  reconcileMergedPrs,
+  handleRoutineCallback,
+} from "@supa-media/dev-assistant/functions/actions";
 
 // ============================================================================
 // Local chat-plumbing — @Togather thread mention → agent loop

@@ -1,5 +1,5 @@
 /**
- * Dev-Assistant instance — Togather's mount of `@supa-media/dev-assistant`.
+ * Dev-Assistant config — Togather's mount of `@supa-media/dev-assistant`.
  *
  * The pipeline control plane (status machine, signed Routine callback, per-run-
  * mode callback policy, severity-capped auto-merge, staging-verification loop,
@@ -13,12 +13,15 @@
  * (same `x-togather-signature` header, same status machine, same callback
  * contract), so external Claude Routines need no change.
  *
- * The returned functions are re-exported from bugs/actions/contributions/
- * maintainers.ts at exactly `functions/devAssistant/*` (the `functionsPath`
- * contract — see `_instance.test.ts` for the mount smoke test).
+ * `setDevAssistantConfig` runs ONCE at module load (a side effect). Every
+ * re-export file (bugs/actions/contributions/maintainers.ts) plus http.ts and
+ * crons.ts imports this module first (`import "./config"`) so the config is
+ * always set before any handler runs. Re-exports MUST live at exactly
+ * `functions/devAssistant/*` (the `functionsPath` contract — see
+ * `mount.test.ts` for the mount smoke test).
  */
 
-import { createDevAssistant } from "@supa-media/dev-assistant";
+import { setDevAssistantConfig } from "@supa-media/dev-assistant";
 import { requireAuth } from "../../lib/auth";
 import { getMediaUrl } from "../../lib/utils";
 import { putR2Object } from "../../lib/r2";
@@ -28,7 +31,7 @@ import {
 } from "./access";
 import { togatherNotifier } from "./notifier";
 
-export const devAssistant = createDevAssistant({
+setDevAssistantConfig({
   // MUST match where the returned functions are re-exported (bugs/actions/
   // contributions/maintainers). The package builds internal function references
   // from this string — a mismatch fails silently at runtime (see the smoke test).

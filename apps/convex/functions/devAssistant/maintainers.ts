@@ -23,8 +23,12 @@ import {
   canUseDevAssistant,
   isDevAssistantSuperAdmin,
 } from "./access";
-import { devAssistant } from "./_instance";
-import type { InternalQuery } from "./_reexportTypes";
+import {
+  AUTO_MERGE_SEVERITY_ORDER,
+  DEFAULT_AUTO_MERGE_MAX_SEVERITY,
+  type AutoMergeSeverity,
+} from "@supa-media/dev-assistant/pipeline";
+import "./config"; // side-effect: sets config before any handler here runs
 
 // Re-export the role helpers (kept here for back-compat with the previous
 // public surface of this module) and the role constant.
@@ -33,11 +37,9 @@ export { DEV_MAINTAINER_ROLE, canUseDevAssistant, isDevAssistantSuperAdmin };
 // The one package function the maintainers surface exposes: the auto-merge
 // action reads a user's cap through `${functionsPath}/maintainers:
 // getAutoMergeCapForUser` (reads `users.autoMergeMaxSeverity`, default "low").
-// Direct-const re-export with an explicit registered-function type (a
-// destructured re-export is dropped from the generated internal api — see
-// _reexportTypes.ts).
-export const getAutoMergeCapForUser: InternalQuery =
-  devAssistant.maintainers.getAutoMergeCapForUser as any;
+// Genuine builder-output const re-exported directly from the package — no cast
+// needed (see bugs.ts for why).
+export { getAutoMergeCapForUser } from "@supa-media/dev-assistant/functions/maintainers";
 
 // ============================================================================
 // Auto-merge severity cap (ADR-029 Phase 3)
@@ -46,7 +48,11 @@ export const getAutoMergeCapForUser: InternalQuery =
 /**
  * Per-user cap on the contribution risk level that may auto-merge. Managed on
  * the maintainers screen; the package's auto-merge gate reads it via
- * getAutoMergeCapForUser.
+ * getAutoMergeCapForUser. `AutoMergeSeverity`, `AUTO_MERGE_SEVERITY_ORDER`, and
+ * `DEFAULT_AUTO_MERGE_MAX_SEVERITY` are re-exported straight from the package's
+ * pure pipeline core (ported verbatim from Togather originally, so this is not
+ * a behavior change) — only `autoMergeSeverityValidator` (a Convex `v.union`,
+ * which the package doesn't ship) stays local.
  */
 export const autoMergeSeverityValidator = v.union(
   v.literal("none"),
@@ -55,14 +61,8 @@ export const autoMergeSeverityValidator = v.union(
   v.literal("high"),
 );
 
-export type AutoMergeSeverity = "none" | "low" | "medium" | "high";
-
-/**
- * Default cap for a user without an explicit setting. "low" preserves the
- * original global policy (only low-risk contributions auto-merge); an operator
- * raises it per person on the maintainers screen. Matches the package default.
- */
-export const DEFAULT_AUTO_MERGE_MAX_SEVERITY: AutoMergeSeverity = "low";
+export type { AutoMergeSeverity };
+export { AUTO_MERGE_SEVERITY_ORDER, DEFAULT_AUTO_MERGE_MAX_SEVERITY };
 
 // ============================================================================
 // Access helpers (superuser gate)

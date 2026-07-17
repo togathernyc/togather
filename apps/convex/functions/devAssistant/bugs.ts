@@ -9,7 +9,7 @@
  *    exactly `functions/devAssistant/bugs` — the `functionsPath` contract the
  *    package builds its internal function references against. Renaming/dropping
  *    any of these silently breaks scheduled pipeline calls at runtime (guarded
- *    by `_instance.test.ts`).
+ *    by `__tests__/devAssistant-mount.test.ts`).
  *
  * 2. **Local chat-plumbing.** `createBug` / `updateBug` / `setBugStatus` /
  *    `getUserAccess` / `getThreadContext` are the @Togather in-chat bot's DB ops
@@ -29,43 +29,37 @@ import { Doc, Id } from "../../_generated/dataModel";
 import { getMediaUrl } from "../../lib/utils";
 import { DEV_MAINTAINER_ROLE } from "./access";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
-import { devAssistant } from "./_instance";
-import type {
-  InternalQuery,
-  InternalMutation,
-  PublicQuery,
-  PublicMutation,
-} from "./_reexportTypes";
+import "./config"; // side-effect: sets config before any handler here runs
 
 // ============================================================================
 // Package pipeline functions (functionsPath contract — do not rename/drop)
 // ============================================================================
-// Direct-const re-exports with explicit registered-function types. This exact
-// shape is REQUIRED: a destructured re-export (`export const { getBug } =
-// devAssistant.bugs`) is dropped from Convex's generated `api`/`internal` at the
-// type level (the package erases the function types through its factory return —
-// see _reexportTypes.ts). Runtime is the package's real functions.
-export const getThreadHistory: InternalQuery = devAssistant.bugs.getThreadHistory as any;
-export const getBug: InternalQuery = devAssistant.bugs.getBug as any;
-export const getBugByRoutineRunId: InternalQuery = devAssistant.bugs.getBugByRoutineRunId as any;
-export const getOriginatorAttribution: InternalQuery = devAssistant.bugs.getOriginatorAttribution as any;
-export const listOpenPrBugs: InternalQuery = devAssistant.bugs.listOpenPrBugs as any;
-export const markDispatched: InternalMutation = devAssistant.bugs.markDispatched as any;
-export const markSpecDispatched: InternalMutation = devAssistant.bugs.markSpecDispatched as any;
-export const markReviewDispatched: InternalMutation = devAssistant.bugs.markReviewDispatched as any;
-export const markFixDispatched: InternalMutation = devAssistant.bugs.markFixDispatched as any;
-export const setGithubIssue: InternalMutation = devAssistant.bugs.setGithubIssue as any;
-export const recordDispatchError: InternalMutation = devAssistant.bugs.recordDispatchError as any;
-export const addSystemThreadMessage: InternalMutation = devAssistant.bugs.addSystemThreadMessage as any;
-export const recordProductionDeployOutcome: InternalMutation = devAssistant.bugs.recordProductionDeployOutcome as any;
-export const recordMergeFromAppFailure: InternalMutation = devAssistant.bugs.recordMergeFromAppFailure as any;
-export const applyCallback: InternalMutation = devAssistant.bugs.applyCallback as any;
-export const handleGithubPrClosed: InternalMutation = devAssistant.bugs.handleGithubPrClosed as any;
-export const handleWorkflowRunEvent: InternalMutation = devAssistant.bugs.handleWorkflowRunEvent as any;
-export const getBugForReview: PublicQuery = devAssistant.bugs.getBugForReview as any;
-export const rejectBug: PublicMutation = devAssistant.bugs.rejectBug as any;
-export const markBugMerged: PublicMutation = devAssistant.bugs.markBugMerged as any;
-export const retryDispatch: PublicMutation = devAssistant.bugs.retryDispatch as any;
+// Genuine builder-output consts re-exported directly from the package (module-
+// level, not a factory return) — these survive Convex's generated `api`/
+// `internal` type inference with concrete visibility + args, no cast needed.
+export {
+  getThreadHistory,
+  getBug,
+  getBugByRoutineRunId,
+  getOriginatorAttribution,
+  listOpenPrBugs,
+  markDispatched,
+  markSpecDispatched,
+  markReviewDispatched,
+  markFixDispatched,
+  setGithubIssue,
+  recordDispatchError,
+  addSystemThreadMessage,
+  recordProductionDeployOutcome,
+  recordMergeFromAppFailure,
+  applyCallback,
+  handleGithubPrClosed,
+  handleWorkflowRunEvent,
+  getBugForReview,
+  rejectBug,
+  markBugMerged,
+  retryDispatch,
+} from "@supa-media/dev-assistant/functions/bugs";
 
 // ============================================================================
 // Local chat-plumbing (the @Togather bot's create/update/status DB ops)

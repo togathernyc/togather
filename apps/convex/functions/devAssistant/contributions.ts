@@ -10,26 +10,27 @@
  * client, and so the package's internal references resolve (`functionsPath`).
  */
 
-import { devAssistant } from "./_instance";
-import type { PublicQuery, PublicMutation } from "./_reexportTypes";
+import "./config"; // side-effect: sets config before any handler here runs
 
-// Direct-const re-exports with explicit registered-function types so the mobile
-// client's `api.functions.devAssistant.contributions.*` references keep
-// compiling (a destructured re-export is dropped from the generated api — see
-// _reexportTypes.ts). Runtime is the package's real functions.
-export const getGithubUsername: PublicQuery = devAssistant.contributions.getGithubUsername as any;
-export const setGithubUsername: PublicMutation = devAssistant.contributions.setGithubUsername as any;
-export const submit: PublicMutation = devAssistant.contributions.submit as any;
-export const approveSpec: PublicMutation = devAssistant.contributions.approveSpec as any;
-export const startBuild: PublicMutation = devAssistant.contributions.startBuild as any;
-export const archive: PublicMutation = devAssistant.contributions.archive as any;
-export const unarchive: PublicMutation = devAssistant.contributions.unarchive as any;
-export const postMessage: PublicMutation = devAssistant.contributions.postMessage as any;
-export const confirmStaging: PublicMutation = devAssistant.contributions.confirmStaging as any;
-export const reportStagingIssue: PublicMutation = devAssistant.contributions.reportStagingIssue as any;
-export const mergeNow: PublicMutation = devAssistant.contributions.mergeNow as any;
-export const promoteToProduction: PublicMutation = devAssistant.contributions.promoteToProduction as any;
-export const getThread: PublicQuery = devAssistant.contributions.getThread as any;
-export const myContributions: PublicQuery = devAssistant.contributions.myContributions as any;
-export const listAll: PublicQuery = devAssistant.contributions.listAll as any;
-export const getContribution: PublicQuery = devAssistant.contributions.getContribution as any;
+// Genuine builder-output consts re-exported directly from the package, so the
+// mobile client's `api.functions.devAssistant.contributions.*` references keep
+// compiling with no cast (see bugs.ts for why). Runtime is the package's real
+// functions.
+export {
+  getGithubUsername,
+  setGithubUsername,
+  submit,
+  approveSpec,
+  startBuild,
+  archive,
+  unarchive,
+  postMessage,
+  confirmStaging,
+  reportStagingIssue,
+  mergeNow,
+  promoteToProduction,
+  getThread,
+  myContributions,
+  listAll,
+  getContribution,
+} from "@supa-media/dev-assistant/functions/contributions";

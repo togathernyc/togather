@@ -2,10 +2,10 @@
  * Dev-Assistant access helpers — Togather's role system for the dev assistant.
  *
  * Extracted into a standalone module (from the old maintainers.ts) so both
- * `_instance.ts` (which wires these into the package's role-gate seams) and
+ * `config.ts` (which wires these into the package's role-gate seams) and
  * `maintainers.ts` (which owns role grant/revoke) can import them WITHOUT a
- * circular dependency: maintainers.ts also imports the package instance from
- * `_instance.ts`, and `_instance.ts` must not import maintainers.ts back.
+ * circular dependency: maintainers.ts only imports `config.ts` for its
+ * side effect, and `config.ts` must not import maintainers.ts back.
  *
  * Mirrors the `poster_admin` platform-role model (functions/posters.ts): the
  * role lives in `users.platformRoles`, staff/superusers bypass the check, and

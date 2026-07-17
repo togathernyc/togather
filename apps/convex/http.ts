@@ -16,7 +16,8 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
 import { hashApiKey } from "./lib/apiKeys";
-import { devAssistant } from "./functions/devAssistant/_instance";
+import { registerRoutes } from "@supa-media/dev-assistant";
+import "./functions/devAssistant/config"; // side-effect: sets config first
 
 const http = httpRouter();
 
@@ -994,6 +995,6 @@ http.route({
 // POST /github/webhook (pull_request + workflow_run) — is registered by the
 // package. Same routes, same HMAC scheme (x-togather-signature /
 // x-hub-signature-256), same wire format and env vars as before.
-devAssistant.registerRoutes(http);
+registerRoutes(http);
 
 export default http;

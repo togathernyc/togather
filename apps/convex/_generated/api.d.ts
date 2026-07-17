@@ -45,12 +45,11 @@ import type * as functions_communityPeople from "../functions/communityPeople.js
 import type * as functions_communityScoreComputation from "../functions/communityScoreComputation.js";
 import type * as functions_communityWideEvents from "../functions/communityWideEvents.js";
 import type * as functions_demo from "../functions/demo.js";
-import type * as functions_devAssistant__instance from "../functions/devAssistant/_instance.js";
-import type * as functions_devAssistant__reexportTypes from "../functions/devAssistant/_reexportTypes.js";
 import type * as functions_devAssistant_access from "../functions/devAssistant/access.js";
 import type * as functions_devAssistant_actions from "../functions/devAssistant/actions.js";
 import type * as functions_devAssistant_agent from "../functions/devAssistant/agent.js";
 import type * as functions_devAssistant_bugs from "../functions/devAssistant/bugs.js";
+import type * as functions_devAssistant_config from "../functions/devAssistant/config.js";
 import type * as functions_devAssistant_contributions from "../functions/devAssistant/contributions.js";
 import type * as functions_devAssistant_index from "../functions/devAssistant/index.js";
 import type * as functions_devAssistant_maintainers from "../functions/devAssistant/maintainers.js";
@@ -286,12 +285,11 @@ declare const fullApi: ApiFromModules<{
   "functions/communityScoreComputation": typeof functions_communityScoreComputation;
   "functions/communityWideEvents": typeof functions_communityWideEvents;
   "functions/demo": typeof functions_demo;
-  "functions/devAssistant/_instance": typeof functions_devAssistant__instance;
-  "functions/devAssistant/_reexportTypes": typeof functions_devAssistant__reexportTypes;
   "functions/devAssistant/access": typeof functions_devAssistant_access;
   "functions/devAssistant/actions": typeof functions_devAssistant_actions;
   "functions/devAssistant/agent": typeof functions_devAssistant_agent;
   "functions/devAssistant/bugs": typeof functions_devAssistant_bugs;
+  "functions/devAssistant/config": typeof functions_devAssistant_config;
   "functions/devAssistant/contributions": typeof functions_devAssistant_contributions;
   "functions/devAssistant/index": typeof functions_devAssistant_index;
   "functions/devAssistant/maintainers": typeof functions_devAssistant_maintainers;
