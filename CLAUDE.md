@@ -411,7 +411,10 @@ This repo consumes packages and reusable workflows from **Supa-Media/supa-framew
 
 - Consumed today: `@supa-media/native-safety` (check-react-consistency CI guard),
   the shared 1Password sync (`supa-sync-1password-to-github` via the reusable
-  `sync-secrets.yml@v1` workflow). More adoption is planned (see the framework repo).
+  `sync-secrets.yml@v1` workflow), and `@supa-media/dev-assistant` (the ADR-029
+  contribution pipeline — schema, pipeline core, and Convex functions; Togather
+  supplies only the app-specific seams in `apps/convex/functions/devAssistant/`).
+  More adoption is planned (see the framework repo).
 - Private registry: installing `@supa-media/*` needs a `GITHUB_TOKEN` with
   `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`). EAS remote
   native builds (`eas build`, no `--local`) run their own `pnpm install` on

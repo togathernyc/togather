@@ -6,6 +6,21 @@ Accepted — Phase 1 implementation in progress (2026-07-06); Phase 1.5
 (conversation-first dashboard) accepted 2026-07-07; Phase 3 (policy
 auto-merge + fix loop) accepted 2026-07-07
 
+**2026-07-17: extracted to `@supa-media/dev-assistant`.** The pipeline
+implementation described below (status machine, signed Routine callback,
+per-run-mode callback policy, severity-capped auto-merge, staging-verification
+loop, GitHub webhooks) now lives in the package (ported into supa-framework and
+consumed here as `@supa-media/dev-assistant@^2.0.0`). `apps/convex/functions/
+devAssistant/` is now a thin mount: a `config.ts` module (`setDevAssistantConfig`)
+supplying only Togather's app-specific seams (auth, role gate, notifier, R2
+media/upload resolvers, repo config), plus four re-export files (`bugs.ts`/
+`actions.ts`/`contributions.ts`/`maintainers.ts`) that re-export the package's
+module-level Convex functions and keep Togather's local chat-plumbing (the
+`@Togather` in-chat bot, local DB ops) alongside. Env vars, wire format (HMAC
+header, callback contract), and external Claude Routine configuration are
+unchanged — `docs/dev-assistant/ROUTINE-PROMPT.md` in this repo remains
+authoritative for the Routine setup.
+
 ## Date
 
 2026-07-06
