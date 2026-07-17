@@ -413,7 +413,12 @@ This repo consumes packages and reusable workflows from **Supa-Media/supa-framew
   the shared 1Password sync (`supa-sync-1password-to-github` via the reusable
   `sync-secrets.yml@v1` workflow). More adoption is planned (see the framework repo).
 - Private registry: installing `@supa-media/*` needs a `GITHUB_TOKEN` with
-  `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`).
+  `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`). EAS remote
+  native builds (`eas build`, no `--local`) run their own `pnpm install` on
+  Expo's infra, which never sees `secrets.GITHUB_TOKEN` — those workflows
+  instead forward the durable `GH_PACKAGES_TOKEN` secret via `eas env:create
+  --name GITHUB_TOKEN`. See `docs/secrets.md`'s "GitHub Packages auth for
+  native builds" section.
 - **Upstream-first rule:** if a change touches behavior that comes from the
   framework (a package, bin, or reusable workflow), do NOT patch or fork it
   here first. Ask: is the change generic? If yes → change it in

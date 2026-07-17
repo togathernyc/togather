@@ -189,6 +189,34 @@ When building or updating the mobile app via EAS (Expo Application Services), `a
 | OTA Update (`eas update`) | EAS cloud | EAS environment vars (must sync!) |
 | Local Dev (`expo start`) | Your machine | `.env` file |
 
+### GitHub Packages auth for native builds (`GH_PACKAGES_TOKEN`)
+
+`eas build` (no `--local`) does its own `pnpm install` on Expo's own remote
+infrastructure — a separate machine from the GitHub Actions runner. Since
+`.npmrc` points `@supa-media/*` at `npm.pkg.github.com` (see the "Supa
+Framework" section of `CLAUDE.md`), that remote install needs a
+`GITHUB_TOKEN` env var to authenticate — GitHub Packages requires auth for
+every install, public or private packages alike. The Actions runner's own
+`secrets.GITHUB_TOKEN` never reaches that remote machine, and is the wrong
+choice even if it did (it's ephemeral and can expire before an async EAS
+build finishes) — so `build-mobile-native.yml`, `build-mobile.yml`, and
+`deploy-to-production.yml`'s "Sync secrets to EAS" steps forward a durable
+PAT instead, as `eas env:create --name GITHUB_TOKEN --value
+"$GH_PACKAGES_TOKEN" ...`.
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `GH_PACKAGES_TOKEN` | GitHub PAT with `read:packages` scope, used only to authenticate EAS's remote `pnpm install` to `npm.pkg.github.com` for `@supa-media/*`. Listed as `required` in `ee/secrets-allowlist.json`, so it must exist in 1Password **before** the next `sync-secrets.yml` dispatch, or the sync aborts for every other secret in that environment too. | Every native build (`eas build`) fails during remote dependency install; OTA-only deploys are unaffected. |
+
+**Provisioning required before the next native build** (as of PR #628): this
+secret does not exist yet. A maintainer must create a classic GitHub PAT
+scoped to `read:packages` (org: Supa-Media's packages are public, so no org
+grant is needed beyond the scope itself), add it to 1Password vault
+`Togather` as `GH_PACKAGES_TOKEN` (`staging`/`production` fields — the same
+value can be used for both), then run
+`gh workflow run sync-secrets.yml -f environment=both -f dry-run=true` to
+confirm the plan, followed by a real (`dry-run=false`) run.
+
 ### Adding a New EXPO_PUBLIC_* Variable
 
 When adding a new `EXPO_PUBLIC_*` environment variable:
