@@ -18,7 +18,7 @@ import type { QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName } from "../../lib/utils";
-import { requireGroupMember } from "./permissions";
+import { isActiveGroupMember, requireGroupMember } from "./permissions";
 import { ADD_DAYS_BEFORE } from "./teamChannelSync";
 
 /** Milliseconds in one day. */
@@ -216,6 +216,15 @@ export const getServingEligibility = query({
       // Must be within the broader same-day window to be eligible at all.
       if (now < sameDayStart || now > endsAt) continue;
 
+      // A stale assignment can outlive group membership: `groupMembers.remove`
+      // soft-deletes (sets `leftAt`) but leaves the `roleAssignments` row
+      // intact. Since we now admit *unconfirmed* assignments, skip any plan
+      // whose group the user has since left — otherwise a former member with a
+      // never-answered assignment would regain serving access (and the roster's
+      // teammate phone numbers). Confirmed-only never surfaced this because an
+      // unanswered assignment is unconfirmed.
+      if (!(await isActiveGroupMember(ctx, plan.groupId, userId))) continue;
+
       // The user's assignments on this plan (any status), from the set above.
       const planAssignments = nonDeclined.filter(
         (a) => (a.planId as string) === planIdStr,
@@ -257,7 +266,14 @@ export const getServingEligibility = query({
       ({ autoEnter: _autoEnter, ...plan }) => plan,
     );
     const activePlan: ServingPlan | null = plans[0] ?? null;
-    const autoEnter = entries.length === 1 && entries[0].autoEnter;
+    // Auto-enter only when exactly ONE plan is auto-eligible (confirmed + inside
+    // the auto-enter window). Gating on the count of auto-eligible entries — not
+    // the total non-declined plan count — keeps a confirmed volunteer's
+    // auto-entry unchanged even when they also hold an unrelated *unconfirmed*
+    // assignment on a different same-day plan (which is eligible but never
+    // auto-entered).
+    const autoEntries = entries.filter((e) => e.autoEnter);
+    const autoEnter = autoEntries.length === 1;
 
     return {
       eligible: plans.length > 0,
@@ -286,11 +302,12 @@ type UpcomingChannel = {
  * (membership-filtered) serving inbox. The serving inbox renders these as
  * non-tappable "ghost" cards showing when the channel opens.
  *
- * Scope is the user's OWN teams on the plan — their `confirmed` role
- * assignments — not every team on the plan:
- *   - team channels: `teams.channelId` for each team the user is confirmed on;
+ * Scope is the user's OWN teams on the plan — their non-declined role
+ * assignments (unconfirmed included, mirroring team-chat membership) — not
+ * every team on the plan:
+ *   - team channels: `teams.channelId` for each team the user is assigned to;
  *   - cross-team channels (`channelType === "cross_team"`): any whose
- *     `crossTeamSync.selectors` match one of the user's confirmed assignments
+ *     `crossTeamSync.selectors` match one of the user's non-declined assignments
  *     (same `sourceTeamId`, and matching `roleId` when the selector pins one).
  * Channels the user is already an active member of (`chatChannelMembers` with
  * `leftAt === undefined`) are excluded — those render as real rows.
@@ -325,8 +342,8 @@ export const getServingUpcomingChannels = query({
         .withIndex("by_plan", (q) => q.eq("planId", planId))
         .filter((q) => q.eq(q.field("userId"), userId))
         .collect();
-      const confirmed = planAssignments.filter((a) => a.status !== "declined");
-      if (confirmed.length === 0) continue;
+      const serving = planAssignments.filter((a) => a.status !== "declined");
+      if (serving.length === 0) continue;
 
       const availableAt = plan.eventDate - ADD_DAYS_BEFORE * MS_PER_DAY;
 
@@ -334,8 +351,8 @@ export const getServingUpcomingChannels = query({
       // are filtered out below).
       const candidates: Array<Omit<UpcomingChannel, "availableAt">> = [];
 
-      // (a) Team channels — one per team the user is confirmed on.
-      const teamIds = new Set<string>(confirmed.map((a) => a.teamId as string));
+      // (a) Team channels — one per team the user is assigned to (non-declined).
+      const teamIds = new Set<string>(serving.map((a) => a.teamId as string));
       for (const teamId of teamIds) {
         const team = await ctx.db.get(teamId as Id<"teams">);
         if (team?.channelId && team.isArchived !== true) {
@@ -347,9 +364,9 @@ export const getServingUpcomingChannels = query({
         }
       }
 
-      // (b) Cross-team channels whose selectors match one of the user's confirmed
-      // assignments. Cross-team channels are rare, so a filtered scan is fine
-      // (mirrors `reconcileCrossTeamChannelsForSource`).
+      // (b) Cross-team channels whose selectors match one of the user's
+      // non-declined assignments. Cross-team channels are rare, so a filtered
+      // scan is fine (mirrors `reconcileCrossTeamChannelsForSource`).
       const crossChannels = await ctx.db
         .query("chatChannels")
         .filter((q) => q.eq(q.field("channelType"), "cross_team"))
@@ -357,7 +374,7 @@ export const getServingUpcomingChannels = query({
       for (const ch of crossChannels) {
         if (ch.isArchived === true) continue;
         const selectors = ch.crossTeamSync?.selectors ?? [];
-        const willBeMember = confirmed.some((a) =>
+        const willBeMember = serving.some((a) =>
           selectors.some(
             (s) =>
               (s.sourceTeamId as string) === (a.teamId as string) &&
@@ -453,10 +470,10 @@ type ServingTeamPlan = {
  * read confirmed while the other reads unconfirmed). `isSelf` flags the current
  * user's own cards so the client can suppress the message/text actions on them.
  *
- * Membership is already implied by the confirmed assignment, so there is no
- * extra group-member gate here. Phone numbers are surfaced only among people
- * confirmed to serve the same event — the day-of coordination context the grid
- * exists for.
+ * Plans whose group the caller has since left are skipped (a soft-deleted
+ * membership can outlive an unconfirmed assignment), so a former member can't
+ * reach the roster. Phone numbers are surfaced only among people serving the
+ * same event — the day-of coordination context the grid exists for.
  *
  * Auth: any authenticated user.
  */
@@ -482,6 +499,10 @@ export const getServingTeamRoster = query({
       const startsAt = planStartsAt(plan);
       const endsAt = planEndsAt(plan);
       if (now < startsAt - SAME_DAY_LEAD_MS || now > endsAt) continue;
+      // Skip plans whose group the user has left (stale unconfirmed assignment)
+      // — mirrors getServingEligibility so a former member can't reach the
+      // roster and its teammate phone numbers. See the note there.
+      if (!(await isActiveGroupMember(ctx, plan.groupId, userId))) continue;
       eligiblePlans.push(plan);
     }
     // Soonest-first so the grid's plan sections read in event order.

@@ -494,7 +494,12 @@ export const updateTask = mutation({
           assignments
             .filter(
               (a) =>
-                a.status === "confirmed" && nextSet.has(a.roleId as string),
+                // Non-declined (not confirmed-only): unconfirmed volunteers can
+                // now hold completions on their assigned role's tasks, so a
+                // still-assigned unconfirmed user must count as covered — else
+                // removing an unrelated role would wrongly orphan their
+                // completion. Matches the rest of this PR's predicate.
+                a.status !== "declined" && nextSet.has(a.roleId as string),
             )
             .map((a) => a.userId as string),
         );

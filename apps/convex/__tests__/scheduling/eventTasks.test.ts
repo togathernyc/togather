@@ -1300,4 +1300,69 @@ describe("unconfirmed volunteers reach serving-mode tasks/crew", () => {
     // The declined admin is excluded entirely.
     expect(crew.some((c) => c.userId === world.channelAdminId)).toBe(false);
   });
+
+  it("lets an unconfirmed teammate toggle a shared team task, but not a declined one", async () => {
+    // The shared-task auth gate moved from confirmed-only to non-declined, so an
+    // unconfirmed volunteer (who now serves) may flip a team-wide shared task,
+    // while a declined member still cannot. The existing reject test uses an
+    // UNassigned user, which rejects regardless — this pins the assigned-declined
+    // boundary specifically.
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Moderator is only unconfirmed; admin is assigned then declines.
+    await assignOnly(t, world, leaderToken, planId, world.channelModeratorId);
+    const declinedId = await assignOnly(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelAdminId,
+    );
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: (await generateTokens(world.channelAdminId)).accessToken,
+      assignmentId: declinedId,
+      status: "declined",
+    });
+
+    // A team-level (roleIds: []) shared task on the world's team.
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId],
+        roleIds: [],
+        segment: "before",
+        title: "Set the stage",
+        howToType: "none",
+      },
+    );
+
+    // Unconfirmed teammate can flip it.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: (await generateTokens(world.channelModeratorId)).accessToken,
+      planId,
+      taskId,
+      completed: true,
+    });
+    const shared = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(shared).toHaveLength(1);
+
+    // Declined teammate is rejected.
+    await expect(
+      t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+        token: (await generateTokens(world.channelAdminId)).accessToken,
+        planId,
+        taskId,
+        completed: false,
+      }),
+    ).rejects.toThrow();
+  });
 });

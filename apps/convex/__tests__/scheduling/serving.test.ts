@@ -114,6 +114,68 @@ async function insertAssignment(
   );
 }
 
+/**
+ * Insert a fresh user who was once in the group but has since left
+ * (`groupMembers.leftAt` set) — the only membership row they hold.
+ */
+async function insertFormerGroupMember(
+  t: ReturnType<typeof convexTest>,
+  world: Awaited<ReturnType<typeof setup>>["world"],
+) {
+  return (await t.run(async (ctx: any) => {
+    const userId = await ctx.db.insert("users", {
+      firstName: "Former",
+      lastName: "Member",
+      phone: "+12025559999",
+    });
+    await ctx.db.insert("groupMembers", {
+      groupId: world.groupId,
+      userId,
+      role: "member",
+      joinedAt: Date.now(),
+      leftAt: Date.now(),
+      notificationsEnabled: true,
+    });
+    return userId;
+  })) as Id<"users">;
+}
+
+describe("serving access after leaving the group", () => {
+  it("excludes a former group member with a stale unconfirmed assignment", async () => {
+    // `groupMembers.remove` soft-deletes (sets leftAt) but leaves the
+    // roleAssignments row intact. A never-answered assignment stays
+    // "unconfirmed", so widening serving to non-declined must NOT re-grant
+    // serving access (and teammate phone numbers) to someone who left.
+    const { t, world } = await setup();
+    const formerId = await insertFormerGroupMember(t, world);
+    const formerTok = (await generateTokens(formerId)).accessToken;
+    const today = Date.now();
+    const plan = await insertPlan(t, world, "Sunday Service", today);
+
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: formerId,
+      eventDate: today,
+      status: "unconfirmed",
+    });
+
+    const eligibility = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: formerTok },
+    );
+    expect(eligibility.eligible).toBe(false);
+    expect(eligibility.plans).toEqual([]);
+
+    const roster = await t.query(
+      api.functions.scheduling.serving.getServingTeamRoster,
+      { token: formerTok },
+    );
+    expect(roster.plans).toEqual([]);
+  });
+});
+
 describe("getServingTeamRoster", () => {
   it("groups volunteers by plan then team, with name/role/phone/isSelf/status", async () => {
     const { t, world } = await setup();
@@ -307,6 +369,54 @@ describe("getServingTeamRoster", () => {
   });
 });
 
+describe("getServingUpcomingChannels", () => {
+  it("resolves a coming-soon team channel for an unconfirmed volunteer", async () => {
+    // Team-chat membership already mirrors non-declined volunteers into channels,
+    // so an unconfirmed volunteer's "coming soon" channels resolve the same way.
+    // The group leader is a group member but not yet a channel member, so the
+    // team channel surfaces as upcoming.
+    const { t, world } = await setup();
+    const leaderTok = (await generateTokens(world.groupLeaderId)).accessToken;
+    const today = Date.now();
+    const plan = await insertPlan(t, world, "Sunday Service", today);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.groupLeaderId,
+      eventDate: today,
+      status: "unconfirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingUpcomingChannels,
+      { token: leaderTok, planIds: [plan] },
+    );
+    expect(res.map((c) => c.channelId)).toContain(world.channelId);
+  });
+
+  it("excludes a declined volunteer's channels", async () => {
+    const { t, world } = await setup();
+    const leaderTok = (await generateTokens(world.groupLeaderId)).accessToken;
+    const today = Date.now();
+    const plan = await insertPlan(t, world, "Sunday Service", today);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.groupLeaderId,
+      eventDate: today,
+      status: "declined",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingUpcomingChannels,
+      { token: leaderTok, planIds: [plan] },
+    );
+    expect(res).toEqual([]);
+  });
+});
+
 describe("getServingEligibility", () => {
   it("makes a confirmed volunteer eligible AND auto-entered on the day", async () => {
     const { t, world } = await setup();
@@ -354,6 +464,73 @@ describe("getServingEligibility", () => {
     expect(res.eligible).toBe(true);
     expect(res.autoEnter).toBe(false);
     expect(res.plans).toHaveLength(1);
+  });
+
+  it("auto-enters a confirmed volunteer even with an unconfirmed assignment on another same-day plan", async () => {
+    // Regression: the global autoEnter must count only *auto-eligible*
+    // (confirmed, in-window) plans, not every non-declined plan. A volunteer
+    // confirmed on plan A who also holds an unrelated unconfirmed assignment on
+    // same-day plan B must still be auto-entered into A (spec: confirmed
+    // auto-entry is unchanged).
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const planA = await insertPlan(t, world, "Confirmed Service", today);
+    const planB = await insertPlan(t, world, "Unconfirmed Service", today);
+    await insertAssignment(t, world, {
+      planId: planA,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "confirmed",
+    });
+    await insertAssignment(t, world, {
+      planId: planB,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "unconfirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    // Both plans are eligible, but only the confirmed one is auto-eligible, so
+    // auto-entry still fires (unambiguous single auto-eligible plan).
+    expect(res.eligible).toBe(true);
+    expect(res.plans).toHaveLength(2);
+    expect(res.autoEnter).toBe(true);
+  });
+
+  it("does not auto-enter when two same-day plans are both confirmed (ambiguous)", async () => {
+    // Two auto-eligible plans → the choice is ambiguous → no auto-entry (the
+    // client offers a manual chip). Pins that the fix didn't loosen this.
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const planA = await insertPlan(t, world, "Service A", today);
+    const planB = await insertPlan(t, world, "Service B", today);
+    for (const plan of [planA, planB]) {
+      await insertAssignment(t, world, {
+        planId: plan,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+        eventDate: today,
+        status: "confirmed",
+      });
+    }
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.eligible).toBe(true);
+    expect(res.plans).toHaveLength(2);
+    expect(res.autoEnter).toBe(false);
   });
 
   it("does not make a declined volunteer eligible", async () => {
