@@ -120,6 +120,21 @@ describe("parseLinkPreviewTarget", () => {
   test("malformed url returns unknown instead of throwing", () => {
     expect(parseLinkPreviewTarget("not-a-url")).toEqual({ type: "unknown" });
   });
+
+  test("a percent-encoded reserved char in the query string survives a single decode", () => {
+    // The worker single-encodes the target URL when building `?url=...` for
+    // http.ts, and `url.searchParams.get("url")` in http.ts decodes it back
+    // exactly once. A `%26` in the *target's* query string (a literal "&" in
+    // `type=r&b`) must come through as-is here, not be decoded a second time
+    // (which would split the query string into `type=r` and a bogus `b` param).
+    expect(
+      parseLinkPreviewTarget("https://fount.togather.nyc/nearme?type=r%26b")
+    ).toEqual({
+      type: "nearme",
+      subdomain: "fount",
+      groupTypeSlug: "r&b",
+    });
+  });
 });
 
 describe("formatDate", () => {

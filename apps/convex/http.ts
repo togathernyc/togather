@@ -165,21 +165,24 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
+    // `searchParams.get` already URL-decodes once; the worker single-encodes
+    // the target URL, so decoding again here would mangle reserved chars
+    // (e.g. `%26` -> `&`) that are legitimately part of the target's query string.
     const targetUrl = url.searchParams.get("url");
 
     if (!targetUrl) {
       return jsonResponse({ error: "Missing url parameter" }, 400);
     }
 
-    let decodedUrl: string;
+    // Validate it's a well-formed URL before handing it to the resolver.
     try {
-      decodedUrl = decodeURIComponent(targetUrl);
+      new URL(targetUrl);
     } catch {
       return jsonResponse({ error: "Invalid url encoding" }, 400);
     }
 
     try {
-      const result = await resolveLinkPreviewMeta(ctx, decodedUrl);
+      const result = await resolveLinkPreviewMeta(ctx, targetUrl);
       return jsonResponse(result.body, result.status);
     } catch (error) {
       console.error("Error resolving link preview meta:", error);

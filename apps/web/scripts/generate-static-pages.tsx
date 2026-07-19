@@ -17,19 +17,12 @@ import fs from "node:fs";
 import esbuild from "esbuild";
 import satori from "satori";
 import { Resvg } from "@resvg/resvg-js";
+import type { PageMeta } from "../src/routes.tsx";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
 const distDir = path.join(webRoot, "dist");
 const SITE_ORIGIN = (process.env.SITE_ORIGIN || "https://togather.nyc").replace(/\/$/, "");
-
-type PageMeta = {
-  path: string;
-  title: string;
-  description: string;
-  image?: string;
-  emoji?: string;
-};
 
 /**
  * Load the route registry (src/routes.tsx).
@@ -161,7 +154,16 @@ const TEXT_MUTED = "#78716c"; // --color-neutral-500
 const CARD_BG_FROM = "#faf7f4"; // --color-primary-50
 
 function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+  if (text.length <= max) return text;
+  // Mirrors safeSliceForJson in apps/convex/lib/utils.ts: slice() can split a
+  // UTF-16 surrogate pair, leaving a lone high surrogate that renders as a
+  // broken glyph on the OG card. Drop it if the cut landed mid-pair.
+  let sliced = text.slice(0, max - 1);
+  const lastCode = sliced.charCodeAt(sliced.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    sliced = sliced.slice(0, -1);
+  }
+  return `${sliced.trimEnd()}…`;
 }
 
 async function loadFonts() {

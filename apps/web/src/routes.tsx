@@ -23,7 +23,11 @@ import { guides } from "./guides/registry.ts";
  * Site-wide route registry: the single source of truth for the router,
  * per-page <head> metadata, and the build-time OG preview generation
  * (scripts/ in this package). Adding a page here is the ONLY way to add a
- * route, which guarantees every page ships with link-preview metadata.
+ * route, which guarantees every page ships with link-preview metadata. For a
+ * NEW TOP-LEVEL path (not nested under an existing prefix like /guides/),
+ * you must also add it to LANDING_PAGE_PATHS or LANDING_PAGE_PREFIXES in
+ * apps/link-preview/cloudflare-worker.js, or the worker will misroute it
+ * (single-segment paths otherwise fall into the community-slug redirect).
  */
 export type PageMeta = {
   /** Route path, e.g. "/guides/branding". Static paths only — no params. */
@@ -61,13 +65,19 @@ const guideComponents: Record<string, ReactElement> = {
   prayer: <Prayer />,
 };
 
-const guideRoutes: RouteEntry[] = guides.map((guide) => ({
-  path: `/guides/${guide.slug}`,
-  title: `${guide.title} | Togather Guides`,
-  description: guide.summary,
-  emoji: guide.emoji,
-  element: guideComponents[guide.slug],
-}));
+const guideRoutes: RouteEntry[] = guides.map((guide) => {
+  const element = guideComponents[guide.slug];
+  if (!element) {
+    throw new Error(`No guide component registered for slug "${guide.slug}"`);
+  }
+  return {
+    path: `/guides/${guide.slug}`,
+    title: `${guide.title} | Togather Guides`,
+    description: guide.summary,
+    emoji: guide.emoji,
+    element,
+  };
+});
 
 export const routes: RouteEntry[] = [
   {
