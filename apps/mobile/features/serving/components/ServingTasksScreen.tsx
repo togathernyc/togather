@@ -144,6 +144,8 @@ type CrewMember = {
   teamId: string;
   teamName: string;
   isCurrentUser: boolean;
+  /** "unconfirmed" teammates are shown with a badge; declined aren't returned. */
+  status: "confirmed" | "unconfirmed";
   done: number;
   total: number;
   tasks: CrewTask[];
@@ -1692,6 +1694,17 @@ function CrewMemberRow({
                 <Text style={styles.youChipText}>You</Text>
               </View>
             ) : null}
+            {member.status === "unconfirmed" ? (
+              <View
+                style={[
+                  styles.unconfirmedChip,
+                  { backgroundColor: colors.warning },
+                ]}
+              >
+                <Ionicons name="time-outline" size={11} color="#fff" />
+                <Text style={styles.youChipText}>Unconfirmed</Text>
+              </View>
+            ) : null}
           </View>
           <Text style={[styles.expandSub, { color: colors.textTertiary }]} numberOfLines={1}>
             {member.roleName}
@@ -2206,6 +2219,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   youChipText: { fontSize: 10, fontWeight: "700", color: "#fff", letterSpacing: 0.3 },
+  unconfirmedChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
 
   // Read-only task lists (inside expanded crew/team rows)
   readonlyList: { marginTop: 12, gap: 10 },

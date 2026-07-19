@@ -161,6 +161,41 @@ export async function requireGroupScheduler(
 }
 
 /**
+ * Boolean form of {@link requireGroupMember}: is `userId` an active member of
+ * `groupId` (or a community admin)? Returns `false` instead of throwing, so
+ * callers iterating over many groups (e.g. the serving-eligibility/roster
+ * queries) can filter out groups the user has left rather than aborting the
+ * whole query. A missing group returns `false`.
+ */
+export async function isActiveGroupMember(
+  ctx: QueryCtx | MutationCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const group = await ctx.db.get(groupId);
+  if (!group) {
+    return false;
+  }
+
+  const membership = await ctx.db
+    .query("groupMembers")
+    .withIndex("by_group_user", (q) =>
+      q.eq("groupId", groupId).eq("userId", userId),
+    )
+    .filter((q) => q.eq(q.field("leftAt"), undefined))
+    .first();
+  const isActiveMember = !!(
+    membership &&
+    (!membership.requestStatus || membership.requestStatus === "accepted")
+  );
+  if (isActiveMember) {
+    return true;
+  }
+
+  return await isCommunityAdmin(ctx, group.communityId, userId);
+}
+
+/**
  * Require that `userId` may *view* a campus group's serving-team data — an
  * active member of the group OR a community admin. This is a read-level gate
  * (weaker than `requireGroupScheduler`, which demands leadership) used by
@@ -179,22 +214,7 @@ export async function requireGroupMember(
     throw new ConvexError("Group not found");
   }
 
-  const membership = await ctx.db
-    .query("groupMembers")
-    .withIndex("by_group_user", (q) =>
-      q.eq("groupId", groupId).eq("userId", userId),
-    )
-    .filter((q) => q.eq(q.field("leftAt"), undefined))
-    .first();
-  const isActiveMember = !!(
-    membership &&
-    (!membership.requestStatus || membership.requestStatus === "accepted")
-  );
-  if (isActiveMember) {
-    return group;
-  }
-
-  if (await isCommunityAdmin(ctx, group.communityId, userId)) {
+  if (await isActiveGroupMember(ctx, groupId, userId)) {
     return group;
   }
 
