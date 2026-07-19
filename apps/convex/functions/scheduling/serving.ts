@@ -170,15 +170,20 @@ type ServingPlan = {
 
 /**
  * Every plan the current user can currently enter Serving Mode for. A plan is a
- * candidate when the user has a `confirmed` role assignment on it and "now"
- * falls inside the plan's serving window; multiple plans can be active at once
- * (e.g. two campuses on the same morning), so the client can render one entry
- * per event and the volunteer picks which one they're serving. `plans` is sorted
- * soonest-first; `activePlan` is the soonest (kept for the inbox chip / runsheet
- * consumers). `autoEnter` is true only when exactly one plan is active (auto and
- * eligibility now share the same same-day window) — with multiple active plans
- * the choice is ambiguous, so we never auto-enter and the client offers a
- * manual chip instead.
+ * candidate when the user has a non-declined (`unconfirmed` or `confirmed`) role
+ * assignment on it and "now" falls inside the plan's serving window; multiple
+ * plans can be active at once (e.g. two campuses on the same morning), so the
+ * client can render one entry per event and the volunteer picks which one
+ * they're serving. `plans` is sorted soonest-first; `activePlan` is the soonest
+ * (kept for the inbox chip / runsheet consumers).
+ *
+ * `autoEnter` is true only when exactly one plan is active AND the user holds a
+ * `confirmed` assignment on it (auto and eligibility share the same same-day
+ * window). An assigned-but-*unconfirmed* volunteer is therefore *eligible* to
+ * enter (they get the serving chip and can tap in) but is never auto-forced into
+ * "you're serving now" before they've accepted — the nudge to accept stays
+ * meaningful without locking them out. With multiple active plans the choice is
+ * ambiguous, so we never auto-enter and the client offers a manual chip instead.
  *
  * Auth: any authenticated user.
  */
@@ -188,14 +193,15 @@ export const getServingEligibility = query({
     const userId = await requireAuth(ctx, args.token);
     const now = Date.now();
 
-    // All plans the user is confirmed for (may hold multiple roles per plan).
-    const confirmed = await ctx.db
+    // All plans the user hasn't declined (may hold multiple roles per plan).
+    // Unconfirmed people "count but haven't accepted" — the same predicate the
+    // rest of the app uses (team chat membership, leader fill counts).
+    const myAssignments = await ctx.db
       .query("roleAssignments")
-      .withIndex("by_user_status", (q) =>
-        q.eq("userId", userId).eq("status", "confirmed"),
-      )
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    const planIds = [...new Set(confirmed.map((a) => a.planId as string))];
+    const nonDeclined = myAssignments.filter((a) => a.status !== "declined");
+    const planIds = [...new Set(nonDeclined.map((a) => a.planId as string))];
 
     const entries: (ServingPlan & { autoEnter: boolean })[] = [];
 
@@ -210,20 +216,20 @@ export const getServingEligibility = query({
       // Must be within the broader same-day window to be eligible at all.
       if (now < sameDayStart || now > endsAt) continue;
 
-      const autoEnter = now >= startsAt - AUTO_ENTER_LEAD_MS && now <= endsAt;
+      // The user's assignments on this plan (any status), from the set above.
+      const planAssignments = nonDeclined.filter(
+        (a) => (a.planId as string) === planIdStr,
+      );
+      // Auto-entry stays confirmed-only: only drop a *confirmed* volunteer
+      // straight into serving mode. Unconfirmed people are eligible but must
+      // tap in themselves.
+      const hasConfirmed = planAssignments.some((a) => a.status === "confirmed");
+      const autoEnter =
+        hasConfirmed && now >= startsAt - AUTO_ENTER_LEAD_MS && now <= endsAt;
 
-      // Team ids the user is confirmed for on this plan.
-      const planAssignments = await ctx.db
-        .query("roleAssignments")
-        .withIndex("by_plan", (q) => q.eq("planId", plan._id))
-        .filter((q) => q.eq(q.field("userId"), userId))
-        .collect();
+      // Team ids the user is on (non-declined) for this plan.
       const teamIds = [
-        ...new Set(
-          planAssignments
-            .filter((a) => a.status === "confirmed")
-            .map((a) => a.teamId as string),
-        ),
+        ...new Set(planAssignments.map((a) => a.teamId as string)),
       ];
 
       const { teamChannelIds, meetingChannelIds } = await servingChannelArrays(
@@ -310,13 +316,16 @@ export const getServingUpcomingChannels = query({
       if (!plan) continue;
       await requireGroupMember(ctx, plan.groupId, userId);
 
-      // The user's confirmed assignments on this plan → the teams they'll be in.
+      // The user's non-declined assignments on this plan → the teams they'll be
+      // in. Unconfirmed volunteers are mirrored into team channels too (team
+      // chat membership already includes everyone who hasn't declined), so their
+      // "coming soon" channels should resolve the same way.
       const planAssignments = await ctx.db
         .query("roleAssignments")
         .withIndex("by_plan", (q) => q.eq("planId", planId))
         .filter((q) => q.eq(q.field("userId"), userId))
         .collect();
-      const confirmed = planAssignments.filter((a) => a.status === "confirmed");
+      const confirmed = planAssignments.filter((a) => a.status !== "declined");
       if (confirmed.length === 0) continue;
 
       const availableAt = plan.eventDate - ADD_DAYS_BEFORE * MS_PER_DAY;
@@ -403,6 +412,12 @@ type ServingTeamPerson = {
   phone: string | null;
   /** True for the current user's own card (no message/text actions on self). */
   isSelf: boolean;
+  /**
+   * Whether this person has accepted their assignment. Declined people are
+   * never included, so this is always `"confirmed"` or `"unconfirmed"`; the
+   * client badges the unconfirmed ones.
+   */
+  status: "confirmed" | "unconfirmed";
 };
 
 /** One team column in a plan's Team roster grid. */
@@ -423,14 +438,20 @@ type ServingTeamPlan = {
 /**
  * Serving-mode "Team" grid: who is serving alongside the current user, grouped
  * by plan then by team. For EVERY plan the user can currently serve (same
- * eligibility window as `getServingEligibility` — a `confirmed` assignment plus
+ * eligibility window as `getServingEligibility` — a non-declined assignment plus
  * "now" inside the plan's same-day window), returns each team that has at least
- * one confirmed volunteer as a column, and each volunteer as a card (name, the
- * role they fill, avatar, and phone for the day-of "Text" action).
+ * one non-declined volunteer as a column, and each volunteer as a card (name,
+ * the role they fill, avatar, phone for the day-of "Text" action, and their
+ * accept `status` so the client can badge the unconfirmed ones).
  *
- * One card per (user, role) confirmed assignment — a person filling two roles on
- * the same team shows two cards. `isSelf` flags the current user's own cards so
- * the client can suppress the message/text actions on them.
+ * Includes people who are still *unconfirmed* (assigned but not yet accepted) —
+ * they're "more than likely to still come," so they belong on the day-of
+ * roster, tagged as unconfirmed. Only *declined* people are hidden.
+ *
+ * One card per (user, role) non-declined assignment — a person filling two roles
+ * on the same team shows two cards (each with its own status, so one role can
+ * read confirmed while the other reads unconfirmed). `isSelf` flags the current
+ * user's own cards so the client can suppress the message/text actions on them.
  *
  * Membership is already implied by the confirmed assignment, so there is no
  * extra group-member gate here. Phone numbers are surfaced only among people
@@ -445,14 +466,14 @@ export const getServingTeamRoster = query({
     const userId = await requireAuth(ctx, args.token);
     const now = Date.now();
 
-    // Plans the user is confirmed for (mirrors getServingEligibility's window).
-    const confirmed = await ctx.db
+    // Plans the user is on, non-declined (mirrors getServingEligibility's
+    // window and predicate — unconfirmed people count, declined don't).
+    const myAssignments = await ctx.db
       .query("roleAssignments")
-      .withIndex("by_user_status", (q) =>
-        q.eq("userId", userId).eq("status", "confirmed"),
-      )
+      .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    const planIds = [...new Set(confirmed.map((a) => a.planId as string))];
+    const nonDeclined = myAssignments.filter((a) => a.status !== "declined");
+    const planIds = [...new Set(nonDeclined.map((a) => a.planId as string))];
 
     const eligiblePlans: Doc<"eventPlans">[] = [];
     for (const planIdStr of planIds) {
@@ -493,9 +514,9 @@ export const getServingTeamRoster = query({
           .query("roleAssignments")
           .withIndex("by_plan", (q) => q.eq("planId", plan._id))
           .collect()
-      ).filter((a) => a.status === "confirmed");
+      ).filter((a) => a.status !== "declined");
 
-      // Group confirmed assignments by team, de-duping identical (user, role)
+      // Group non-declined assignments by team, de-duping identical (user, role)
       // rows so a double-written assignment can't produce a duplicate card.
       const byTeam = new Map<string, typeof assignments>();
       const seen = new Set<string>();
@@ -527,6 +548,7 @@ export const getServingTeamRoster = query({
             profilePhoto: user?.profilePhoto ?? null,
             phone: user?.phone ?? null,
             isSelf: (a.userId as string) === (userId as string),
+            status: a.status === "confirmed" ? "confirmed" : "unconfirmed",
           });
         }
         people.sort((x, y) => x.displayName.localeCompare(y.displayName));

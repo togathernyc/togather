@@ -601,8 +601,8 @@ export const reorderTasks = mutation({
  * only for "during" tasks (one completion per service time).
  *
  * Team-level tasks (roleId == null) are REJECTED here — they are team-wide and
- * must go through `toggleSharedTeamTask` (which gates on confirmed team
- * membership); this per-user path only checks group membership.
+ * must go through `toggleSharedTeamTask` (which gates on serving/non-declined
+ * team membership); this per-user path only checks group membership.
  *
  * Auth: any authenticated user (completion is personal). We still verify the
  * caller can see the plan.
@@ -621,8 +621,8 @@ export const toggleTaskCompletion = mutation({
       throw new ConvexError("Task not found");
     }
     // Team-level tasks (no roles) are TEAM-WIDE and must be completed through
-    // `toggleSharedTeamTask`, which gates on confirmed TEAM membership. This
-    // per-user path only checks GROUP membership, so accepting a team-level
+    // `toggleSharedTeamTask`, which gates on serving (non-declined) TEAM
+    // membership. This per-user path only checks GROUP membership, so accepting a team-level
     // completion here would let a non-teammate (or a stale/direct caller) mark it
     // done and bypass the team gate. The mobile client already routes team-level
     // tasks to the Shared tab and excludes them from "Mine".
@@ -883,14 +883,17 @@ export const getMyServingTasks = query({
       ServingTaskItem[]
     > = { before: [], during: [], after: [] };
 
-    // The roles / teams the user is confirmed for on this plan.
+    // The roles / teams the user is on (non-declined) for this plan. An
+    // unconfirmed volunteer can now enter serving mode, so they see the tasks
+    // for the role they're assigned to regardless of their own accept state —
+    // only a *declined* assignment drops its role's tasks.
     const myAssignments = await ctx.db
       .query("roleAssignments")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .filter((q) => q.eq(q.field("userId"), userId))
       .collect();
-    const myConfirmed = myAssignments.filter((a) => a.status === "confirmed");
-    const confirmedRoleIds = new Set(myConfirmed.map((a) => a.roleId as string));
+    const myServing = myAssignments.filter((a) => a.status !== "declined");
+    const myRoleIds = new Set(myServing.map((a) => a.roleId as string));
 
     // (a) Assigned template tasks.
     const tasks = await ctx.db
@@ -915,11 +918,11 @@ export const getMyServingTasks = query({
       // Team-level tasks (no roles) are team-wide, single-source on
       // `sharedTaskCompletions`, and belong to the Shared surface only — they
       // are no longer listed in this personal "Mine" view. A role task appears
-      // here when the user is confirmed for ANY of its roles (plus their
-      // personal tasks).
+      // here when the user is assigned (non-declined) to ANY of its roles (plus
+      // their personal tasks).
       const roleIds = taskRoleIds(task);
       if (roleIds.length === 0) continue;
-      if (!roleIds.some((r) => confirmedRoleIds.has(r as string))) continue;
+      if (!roleIds.some((r) => myRoleIds.has(r as string))) continue;
 
       const base = {
         title: task.title,
@@ -1003,8 +1006,14 @@ async function resolveUserName(
   return `${u?.firstName ?? ""} ${u?.lastName ?? ""}`.trim() || "Someone";
 }
 
-/** The current user's confirmed role assignments on a plan. */
-async function myConfirmedAssignments(
+/**
+ * The current user's *serving* role assignments on a plan: everything they
+ * haven't declined (unconfirmed or confirmed). An assigned-but-unconfirmed
+ * volunteer can now enter serving mode and reach the same day-of resources, so
+ * the serving surfaces gate on "non-declined" — the same predicate team chat and
+ * leader fill counts already use — not on "confirmed".
+ */
+async function myServingAssignments(
   ctx: QueryCtx | MutationCtx,
   planId: Id<"eventPlans">,
   userId: Id<"users">,
@@ -1014,7 +1023,7 @@ async function myConfirmedAssignments(
     .withIndex("by_plan", (q) => q.eq("planId", planId))
     .filter((q) => q.eq(q.field("userId"), userId))
     .collect();
-  return rows.filter((a) => a.status === "confirmed");
+  return rows.filter((a) => a.status !== "declined");
 }
 
 /**
@@ -1042,17 +1051,18 @@ type SharedTeamTaskItem = {
 
 /**
  * The "Shared" surface: team-level tasks (roleId == null) for the CURRENT
- * user's confirmed team(s) on a plan. These are "the whole team is responsible,
- * no single assignee" — so completion is TEAM-WIDE (`sharedTaskCompletions`),
- * not per-user: any confirmed teammate marking it done marks it done for
- * everyone. Completion is single-source on `sharedTaskCompletions` — a task
+ * user's serving team(s) (non-declined) on a plan. These are "the whole team is
+ * responsible, no single assignee" — so completion is TEAM-WIDE
+ * (`sharedTaskCompletions`), not per-user: any serving teammate marking it done
+ * marks it done for everyone. Completion is single-source on
+ * `sharedTaskCompletions` — a task
  * shows done iff a shared row exists (pre-migration per-user completions were
  * snapshotted into `sharedTaskCompletions` by a one-time backfill).
  * Returned as a flat array (each item carries its `segment`), ordered
  * before → during → after, then by the task's sortOrder.
  *
  * Auth: an active member of the plan's group (community read gate). Only the
- * user's own confirmed teams are included.
+ * user's own serving teams (non-declined) are included.
  */
 export const getSharedTeamTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
@@ -1065,8 +1075,8 @@ export const getSharedTeamTasks = query({
     if (!plan) return [];
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
-    const myTeamIds = new Set(confirmed.map((a) => a.teamId as string));
+    const serving = await myServingAssignments(ctx, args.planId, userId);
+    const myTeamIds = new Set(serving.map((a) => a.teamId as string));
     if (myTeamIds.size === 0) return [];
 
     const [tasks, sharedRows] = await Promise.all([
@@ -1154,7 +1164,8 @@ export const getSharedTeamTasks = query({
  * marking done writes only the shared row, but un-checking also deletes any
  * legacy `eventTaskCompletions` rows for the task.
  *
- * Auth: the caller must be a confirmed member of the task's team on the plan.
+ * Auth: the caller must be serving (non-declined — unconfirmed or confirmed) on
+ * the task's team on the plan.
  */
 export const toggleSharedTeamTask = mutation({
   args: {
@@ -1177,10 +1188,12 @@ export const toggleSharedTeamTask = mutation({
     const plan = await requirePlan(ctx, args.planId);
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    // Gate: the caller must be a confirmed member of ANY of THIS task's teams.
+    // Gate: the caller must be serving (non-declined) on ANY of THIS task's
+    // teams. Unconfirmed volunteers serve alongside confirmed ones, so they can
+    // flip a shared team task too.
     const taskTeams = new Set(taskTeamIds(task) as string[]);
-    const confirmed = await myConfirmedAssignments(ctx, args.planId, userId);
-    const onTeam = confirmed.some((a) => taskTeams.has(a.teamId as string));
+    const serving = await myServingAssignments(ctx, args.planId, userId);
+    const onTeam = serving.some((a) => taskTeams.has(a.teamId as string));
     if (!onTeam) {
       throw new ConvexError("You must be serving on this team to update it");
     }
@@ -1387,6 +1400,11 @@ type CrewMemberEntry = {
   teamName: string;
   /** True for the current viewer's own row. */
   isCurrentUser: boolean;
+  /**
+   * Whether this teammate has accepted. Declined people aren't crew, so this is
+   * always `"confirmed"` or `"unconfirmed"`; the client badges the unconfirmed.
+   */
+  status: "confirmed" | "unconfirmed";
   /** Completed / total completion "slots" (per-user, matching the personal view). */
   done: number;
   total: number;
@@ -1401,11 +1419,13 @@ type CrewMemberEntry = {
 };
 
 /**
- * The "Crew" surface: the current user's confirmed teammates (and the user
+ * The "Crew" surface: the current user's serving teammates (and the user
  * themselves) on a plan, with each person's ROLE-assigned tasks, READ-ONLY.
+ * Includes non-declined teammates — unconfirmed people are shown (carrying
+ * `status: "unconfirmed"` so the client badges them), only declined are hidden.
  * One entry per (member, role). "Assigned tasks" are the plan's role tasks
- * (`eventTasks.roleId` set) whose role the member is confirmed for — team-level
- * tasks live on the Shared surface, not here.
+ * (`eventTasks.roleId` set) whose role the member holds — team-level tasks live
+ * on the Shared surface, not here.
  *
  * `done`/`total` count completion the same way the personal `getMyServingTasks`
  * view does: per-user `eventTaskCompletions`, with "during" tasks counted once
@@ -1414,7 +1434,7 @@ type CrewMemberEntry = {
  * are done.
  *
  * Auth: an active member of the plan's group. Only teams the current user is
- * confirmed for are included.
+ * serving on (non-declined) are included.
  */
 export const getCrewTasks = query({
   args: { token: v.string(), planId: v.id("eventPlans") },
@@ -1427,8 +1447,8 @@ export const getCrewTasks = query({
     if (!plan) return [];
     await requireGroupMember(ctx, plan.groupId, userId);
 
-    const myConfirmed = await myConfirmedAssignments(ctx, args.planId, userId);
-    const myTeamIds = new Set(myConfirmed.map((a) => a.teamId as string));
+    const myServing = await myServingAssignments(ctx, args.planId, userId);
+    const myTeamIds = new Set(myServing.map((a) => a.teamId as string));
     if (myTeamIds.size === 0) return [];
 
     const [allAssignments, tasks] = await Promise.all([
@@ -1457,9 +1477,10 @@ export const getCrewTasks = query({
 
     const timesCount = Math.max(1, plan.times.length);
 
-    // Crew = confirmed assignments on a team the current user is confirmed for.
+    // Crew = non-declined assignments on a team the current user is serving on.
+    // Unconfirmed teammates are included (and badged); only declined are hidden.
     const crew = allAssignments.filter(
-      (a) => a.status === "confirmed" && myTeamIds.has(a.teamId as string),
+      (a) => a.status !== "declined" && myTeamIds.has(a.teamId as string),
     );
 
     const teamNames = new Map<string, string>();
@@ -1554,6 +1575,7 @@ export const getCrewTasks = query({
         teamId: teamKey,
         teamName: teamNames.get(teamKey)!,
         isCurrentUser: a.userId === userId,
+        status: a.status === "confirmed" ? "confirmed" : "unconfirmed",
         done: doneCount,
         total: totalCount,
         tasks: taskList,

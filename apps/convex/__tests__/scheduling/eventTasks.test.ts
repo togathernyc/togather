@@ -1219,3 +1219,85 @@ describe("serving eligibility", () => {
     expect(result.activePlan).toBeNull();
   });
 });
+
+/** Assign a user to the world's Drums role WITHOUT confirming (stays unconfirmed). */
+async function assignOnly(
+  t: ReturnType<typeof convexTest>,
+  world: Awaited<ReturnType<typeof buildSchedulingWorld>>,
+  leaderToken: string,
+  planId: Id<"eventPlans">,
+  userId: Id<"users">,
+) {
+  const { assignmentId } = await t.mutation(
+    api.functions.scheduling.assignments.assignRole,
+    { token: leaderToken, planId, teamId: world.teamId, roleId: world.roleId, userId },
+  );
+  return assignmentId;
+}
+
+describe("unconfirmed volunteers reach serving-mode tasks/crew", () => {
+  it("shows an unconfirmed volunteer their assigned role's tasks in Mine", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Member is assigned to Drums but has NOT accepted yet.
+    await assignOnly(t, world, leaderToken, planId, world.channelMemberId);
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
+      segment: "before",
+      title: "Set up drums",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    // They can now enter serving mode, so they see the role's tasks even while
+    // still unconfirmed.
+    expect(mine.before.map((x) => x.title)).toContain("Set up drums");
+  });
+
+  it("includes unconfirmed teammates in the crew, tagged as unconfirmed", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Caller (member) is confirmed; a teammate (moderator) is only unconfirmed;
+    // a third (admin) declined and must not appear.
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+    await assignOnly(t, world, leaderToken, planId, world.channelModeratorId);
+    const declinedId = await assignOnly(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelAdminId,
+    );
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: (await generateTokens(world.channelAdminId)).accessToken,
+      assignmentId: declinedId,
+      status: "declined",
+    });
+
+    const crew = await t.query(
+      api.functions.scheduling.eventTasks.getCrewTasks,
+      { token: memberToken, planId },
+    );
+
+    const me = crew.find((c) => c.isCurrentUser)!;
+    expect(me.status).toBe("confirmed");
+    const mod = crew.find((c) => c.userId === world.channelModeratorId)!;
+    expect(mod).toBeDefined();
+    expect(mod.status).toBe("unconfirmed");
+    // The declined admin is excluded entirely.
+    expect(crew.some((c) => c.userId === world.channelAdminId)).toBe(false);
+  });
+});
