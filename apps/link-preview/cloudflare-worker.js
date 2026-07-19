@@ -439,14 +439,20 @@ function generateHomepageOgHtml(config) {
  * @param {string} meta.url - Absolute canonical destination for the meta-refresh redirect
  * @param {string} meta.siteName
  * @param {string} [meta.imageAlt]
+ * @param {number} [meta.imageWidth] - Defaults to 1200 (og:image:width) when omitted
+ * @param {number} [meta.imageHeight] - Defaults to 630 (og:image:height) when omitted
  */
 function renderOgHtml(meta) {
   const title = escapeHtml(meta.title || "");
   const description = escapeHtml(meta.description || "");
   const siteName = escapeHtml(meta.siteName || BRAND_NAME);
-  const imageAlt = escapeHtml(meta.imageAlt || title);
+  // Escape the raw fallback, not `title` (already escaped) — escaping it again
+  // would turn e.g. "&amp;" into "&amp;amp;".
+  const imageAlt = escapeHtml(meta.imageAlt || meta.title || "");
   const imageUrl = meta.image || "";
   const pageUrl = meta.url;
+  const imageWidth = meta.imageWidth || 1200;
+  const imageHeight = meta.imageHeight || 630;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -468,8 +474,8 @@ function renderOgHtml(meta) {
   ${imageUrl ? `<meta property="og:image" content="${imageUrl}">` : ""}
   ${imageUrl ? `<meta property="og:image:secure_url" content="${imageUrl}">` : ""}
   ${imageUrl ? `<meta property="og:image:type" content="image/jpeg">` : ""}
-  ${imageUrl ? `<meta property="og:image:width" content="1200">` : ""}
-  ${imageUrl ? `<meta property="og:image:height" content="630">` : ""}
+  ${imageUrl ? `<meta property="og:image:width" content="${imageWidth}">` : ""}
+  ${imageUrl ? `<meta property="og:image:height" content="${imageHeight}">` : ""}
 
   <!-- Twitter -->
   <meta name="twitter:card" content="${imageUrl ? "summary_large_image" : "summary"}">
@@ -508,11 +514,12 @@ function renderOgHtml(meta) {
 /**
  * Render the shared fallback HTML for bot-preview routes when the Convex
  * meta endpoint returns a 404 (unknown entity) or the fetch itself fails.
- * @param {string} pathname - Original request path (e.g. "/e/abc123")
- * @param {Object} config - Environment-specific configuration
+ * @param {string} targetUrl - Absolute URL to redirect to. Callers compute
+ *   this per-route (see `errorTarget` on each PREVIEW_ROUTES entry) so the
+ *   original query string survives and the community route can target its
+ *   canonical /c/:slug path instead of the bare slug it was matched on.
  */
-function renderPreviewErrorHtml(pathname, config) {
-  const pageUrl = `${config.baseUrl}${pathname}`;
+function renderPreviewErrorHtml(targetUrl) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -523,11 +530,11 @@ function renderPreviewErrorHtml(pathname, config) {
   <meta property="og:description" content="View this on ${BRAND_NAME}">
   <meta property="og:type" content="website">
   ${DEFAULT_OG_IMAGE ? `<meta property="og:image" content="${DEFAULT_OG_IMAGE}">` : ""}
-  <meta http-equiv="refresh" content="0;url=${pageUrl}">
+  <meta http-equiv="refresh" content="0;url=${targetUrl}">
 </head>
 <body>
   <p>Redirecting...</p>
-  <p><a href="${pageUrl}">Click here if not redirected</a></p>
+  <p><a href="${targetUrl}">Click here if not redirected</a></p>
 </body>
 </html>`;
 }
@@ -550,11 +557,14 @@ const PREVIEW_ROUTES = [
   {
     match: (pathname) => SHORT_ID_ROUTE_PATTERN.test(pathname),
     human: (request, config) => passToApp(request, config),
+    // No canonical rewrite for short-link routes — the original request URL is the target.
+    errorTarget: (url) => url.href,
   },
   // /nearme
   {
     match: (pathname) => pathname === "/nearme" || pathname === "/nearme/",
     human: (request, config) => passToApp(request, config),
+    errorTarget: (url) => url.href,
   },
   // /:slug community landing page. Single-segment paths that aren't known
   // app routes are assumed to be community slugs.
@@ -571,6 +581,13 @@ const PREVIEW_ROUTES = [
       const slug = url.pathname.split("/").filter(Boolean)[0];
       const redirectUrl = new URL(`/c/${slug}${url.search}`, url.origin);
       return Response.redirect(redirectUrl.toString(), 302);
+    },
+    // Error fallback targets the canonical /c/:slug route (config.baseUrl,
+    // not the request's own origin) — same destination as the human redirect,
+    // just anchored to the environment's canonical domain.
+    errorTarget: (url, config) => {
+      const slug = url.pathname.split("/").filter(Boolean)[0];
+      return `${config.baseUrl}/c/${slug}${url.search}`;
     },
   },
 ];

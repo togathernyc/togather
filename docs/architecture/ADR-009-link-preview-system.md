@@ -87,7 +87,7 @@ Two-tier link preview system:
 | Web App | `apps/web/` | Vite SPA deployed to Cloudflare Pages; routes come from registry |
 | Link Preview Resolver | `apps/convex/functions/linkPreviewMeta.ts` | Typed resolver: all preview assembly logic (title formats, descriptions, fallback chains) |
 | Cloudflare Worker | `apps/link-preview/cloudflare-worker.js` | Thin layer: bot detection, routing, PREVIEW_ROUTES table, fetches meta endpoint, renders shared template |
-| HTML Template | `apps/link-preview/templates/preview.html` | Shared template for dynamic preview OG HTML |
+| OG HTML Renderer | `apps/link-preview/cloudflare-worker.js` (inline `renderOgHtml()` function) | Shared template for dynamic preview OG HTML; no external template file |
 | Wrangler Config | `apps/link-preview/wrangler.toml` | Worker routes and environment config |
 | Unit Tests | `apps/link-preview/cloudflare-worker.test.js` | Worker behavior tests |
 | Deploy Workflow | `.github/workflows/deploy-link-preview.yml` | CI/CD for worker deployment |
@@ -132,7 +132,7 @@ All static marketing pages (guides, homepage, etc.) are registered in a central 
 export const routes: RouteEntry[] = [
   {
     path: '/guides/events',
-    component: EventsGuide,
+    element: <Events />,
     title: 'Event Management Guide | Togather',
     description: 'Learn how to create, schedule, and manage events...',
     image: 'https://cdn.example.com/events-guide.png', // optional; auto-generated if omitted
@@ -381,9 +381,9 @@ curl -I "https://togather.nyc/guides/events"
 ### Worker not routing to correct Cloudflare Pages
 **Symptom:** Static routes return app 404 instead of static page
 
-**Cause:** isStaticPath() doesn't match the route pattern
+**Cause:** `isLandingPagePath()` doesn't match the route pattern
 
-**Fix:** Check `isStaticPath()` in `cloudflare-worker.js` includes your route
+**Fix:** Check `isLandingPagePath()` in `cloudflare-worker.js` includes your route (either in `LANDING_PAGE_PATHS` array or `LANDING_PAGE_PREFIXES` array)
 
 ### Build script not generating OG images
 **Symptom:** Pages have og:title/og:description but no og:image

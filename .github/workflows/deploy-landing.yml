@@ -70,6 +70,8 @@ jobs:
           secrets-json: ${{ toJSON(secrets) }}
 
       - name: Build landing page
+        env:
+          SITE_ORIGIN: ${{ steps.env.outputs.target == 'production' && 'https://togather.nyc' || 'https://staging.togather.nyc' }}
         run: pnpm --filter @togather/web build
 
       - name: Install Wrangler
