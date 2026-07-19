@@ -577,6 +577,41 @@ test("human /:slug (community landing page) redirects to /c/:slug", async () => 
   }
 });
 
+test("bot /:slug error fallback targets the canonical /c/:slug path, not the bare slug", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify({ error: "Community not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/fount-church?ref=share", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(
+      html,
+      /http-equiv="refresh" content="0;url=https:\/\/togather\.nyc\/c\/fount-church\?ref=share"/
+    );
+    assert.match(
+      html,
+      /<a href="https:\/\/togather\.nyc\/c\/fount-church\?ref=share">/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("known app route (e.g. /admin) is not treated as a community slug", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
