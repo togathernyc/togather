@@ -31,6 +31,10 @@ export interface LinkPreviewMeta {
   url: string;
   siteName: string;
   imageAlt?: string;
+  // Square (400x400) community-logo previews (nearme, community) override
+  // these; the worker's renderOgHtml falls back to 1200x630 when omitted.
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 export interface LinkPreviewError {
@@ -383,6 +387,8 @@ export function buildNearmeMeta(
     image: data.community?.logo || null,
     url: opts.canonicalUrl,
     siteName: communityName,
+    imageWidth: 400,
+    imageHeight: 400,
   };
 }
 
@@ -404,6 +410,8 @@ export function buildCommunityMeta(
     image: data.community?.logo || null,
     url: `${opts.origin}/c/${opts.slug}`,
     siteName: communityName,
+    imageWidth: 400,
+    imageHeight: 400,
   };
 }
 

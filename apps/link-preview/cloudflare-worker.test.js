@@ -115,6 +115,69 @@ test("bot preview route without an image uses twitter:card summary (no image tag
   }
 });
 
+test("twitter:image:alt escapes the raw title fallback exactly once (not the already-escaped title)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ title: "Sam & Dean's Meetup", imageAlt: undefined })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    const html = await res.text();
+    const [, altAttr] = html.match(/name="twitter:image:alt" content="([^"]*)"/);
+    assert.equal(altAttr, "Sam &amp; Dean&#039;s Meetup");
+    // Guard against double-escaping ("&amp;amp;") which would occur if the
+    // fallback re-escaped the already-escaped title.
+    assert.doesNotMatch(html, /&amp;amp;/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("og:image:width/height use meta.imageWidth/imageHeight when provided (400x400 community-logo preview)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ imageWidth: 400, imageHeight: 400 })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    const html = await res.text();
+    assert.match(html, /property="og:image:width" content="400"/);
+    assert.match(html, /property="og:image:height" content="400"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("bot preview route renders the shared error template on a 404 from Convex", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
@@ -394,6 +457,41 @@ test("bot /nearme fetches meta from Convex and returns OG tags", async () => {
     assert.ok(
       calls.some((u) => u.includes(encodeURIComponent("https://fount.togather.nyc/nearme"))),
       "expected a Convex meta fetch carrying the full nearme request URL"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /nearme error fallback preserves the original query string in refresh/link", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify({ error: "Community not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://fount.togather.nyc/nearme?type=book-club", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(
+      html,
+      /http-equiv="refresh" content="0;url=https:\/\/fount\.togather\.nyc\/nearme\?type=book-club"/
+    );
+    assert.match(
+      html,
+      /<a href="https:\/\/fount\.togather\.nyc\/nearme\?type=book-club">/
     );
   } finally {
     globalThis.fetch = originalFetch;

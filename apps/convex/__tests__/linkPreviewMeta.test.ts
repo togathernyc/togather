@@ -388,6 +388,15 @@ describe("buildNearmeMeta", () => {
     expect(meta.url).toBe("https://fount.togather.nyc/nearme?type=dinner-parties");
   });
 
+  test("advertises a square 400x400 image (community-logo preview, not a 1200x630 card)", () => {
+    const meta = buildNearmeMeta(
+      { community: { name: "Demo Community", logo: "https://img/logo.jpg" }, groupType: null },
+      { canonicalUrl: "https://fount.togather.nyc/nearme" }
+    );
+    expect(meta.imageWidth).toBe(400);
+    expect(meta.imageHeight).toBe(400);
+  });
+
   test("falls back to generic group copy when no group type given", () => {
     const meta = buildNearmeMeta(
       { community: { name: "Demo Community" }, groupType: null },
@@ -432,5 +441,14 @@ describe("buildCommunityMeta", () => {
       { slug: "fount", origin: "https://togather.nyc" }
     );
     expect(meta.title).toBe("Community | Togather");
+  });
+
+  test("advertises a square 400x400 image (community-logo preview, not a 1200x630 card)", () => {
+    const meta = buildCommunityMeta(
+      { community: { name: "The Fount", logo: "https://img/logo.jpg" } },
+      { slug: "fount", origin: "https://togather.nyc" }
+    );
+    expect(meta.imageWidth).toBe(400);
+    expect(meta.imageHeight).toBe(400);
   });
 });

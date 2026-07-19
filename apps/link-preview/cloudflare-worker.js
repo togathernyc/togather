@@ -92,7 +92,7 @@ function generateAppleAppSiteAssociation(hostname) {
   // route needs BOTH its exact path and a `/*` variant, otherwise sub-pages
   // (e.g. /contribute/ai, /guides/branding) fall through to the `*` catch-all
   // below and get captured by the app. Keep this in sync with the web routes in
-  // apps/web/src/main.tsx and WEB_ONLY_ROOTS in apps/mobile/app/+native-intent.ts.
+  // apps/web/src/routes.tsx and WEB_ONLY_ROOTS in apps/mobile/app/+native-intent.ts.
   const excludedPaths = [
     "/",
     "/android",
@@ -730,11 +730,13 @@ export default {
         return route.human(request, config, url);
       }
 
+      const errorTarget = route.errorTarget(url, config);
+
       try {
         const meta = await fetchPreviewMeta(request.url, convexSiteUrl);
 
         if (!meta) {
-          return new Response(renderPreviewErrorHtml(pathname, config), {
+          return new Response(renderPreviewErrorHtml(errorTarget), {
             status: 200,
             headers: { "Content-Type": "text/html; charset=utf-8" },
           });
@@ -746,7 +748,7 @@ export default {
         });
       } catch (error) {
         console.error(`Error fetching link preview for ${pathname}:`, error);
-        return new Response(renderPreviewErrorHtml(pathname, config), {
+        return new Response(renderPreviewErrorHtml(errorTarget), {
           status: 200,
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
