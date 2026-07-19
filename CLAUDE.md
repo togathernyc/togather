@@ -313,6 +313,14 @@ What to update when a guide is affected:
 If you're unsure whether a change is "user-facing enough" to need a guide
 update, it probably is — err on the side of updating.
 
+### Link Previews / OG Metadata
+
+**Adding a static marketing page:** Add an entry to `apps/web/src/routes.tsx` with `path`, `component`, `title`, `description`, and optional `image` and `emoji`. The build script automatically generates OG metadata and images at compile time (satori + resvg for branded cards). Routes are **the only way to add a page** — the router is generated from the registry.
+
+**Adding a dynamic shareable app route:** Implement a resolver case in `apps/convex/functions/linkPreviewMeta.ts` (typed, unit-tested) to assemble preview metadata (title, description, image fallback chains, timezone formatting, etc.), then add a row to `PREVIEW_ROUTES` in `apps/link-preview/cloudflare-worker.js` to route the pattern. The worker fetches the metadata endpoint and renders the shared HTML template — **no per-type logic in the worker itself.**
+
+See ADR-009 for full architecture.
+
 ## File and Project Hygiene
 
 ### Keep the Codebase Clean

@@ -2,22 +2,31 @@
 
 **Status:** Active
 **Created:** 2024-12-25
-**Updated:** 2025-01-21 (Added environment-specific routing, complete route table)
+**Updated:** 2026-07-19 (Refactored: static pages now pre-built with OG metadata; dynamic routes unified under single `/link-preview/meta` endpoint)
 
 ## Context
 
 Event links (`togather.nyc/e/[shortId]`) shared in iMessage, Twitter, Slack, etc. did not show rich previews. Users saw generic "Click to Load Preview" instead of event images, titles, and descriptions like Partiful does.
 
-The challenge: Expo Router with static export cannot server-render pages with dynamic meta tags. Crawlers (iMessage, Twitter, etc.) need HTML with Open Graph tags at request time.
+The challenge: Expo Router with static export cannot server-render pages with dynamic meta tags. Crawlers (iMessage, Twitter, etc.) need HTML with Open Graph tags at request time. Meanwhile, static marketing pages (guides, homepage variants) need per-page OG metadata without server infrastructure.
+
+## Amendment (2026-07-19)
+
+**Refactored to separate static and dynamic routes:**
+- **Static pages**: Now pre-built at deploy time with OG metadata baked into HTML (satori + resvg for auto-generated cards)
+- **Dynamic routes**: Consolidated from five per-type endpoints to a single `/link-preview/meta` endpoint with typed, unit-tested resolver
+- **Worker**: Simplified to thin routing layer using a PREVIEW_ROUTES table (table-driven, minimal changes needed for new preview types)
+- **Result**: No runtime OG tag generation; better performance, reduced worker complexity, clearer separation of concerns
+
+See "Static Page Registration & OG Metadata" and "Convex HTTP Routes" sections for implementation details.
 
 ## Decision
 
-Implement a link preview system using a single **Cloudflare Worker** that:
-1. Intercepts all traffic to `togather.nyc` and `*.togather.nyc`
-2. Routes static landing page traffic (/, /android, /download, static assets) to Cloudflare Pages
-3. Routes app traffic to EAS Hosting
-4. For bots on OG routes (/e/*, /g/*, /nearme, /): Returns HTML with OG meta tags
-5. For users: Passes through to appropriate origin (landing page or app)
+Two-tier link preview system:
+
+1. **Static marketing pages** (apps/web, Vite SPA on Cloudflare Pages): Every page is registered in a site-wide route registry (`apps/web/src/routes.tsx`) with preview metadata (title, description, image, emoji). A post-build script (`apps/web/scripts/generate-static-pages.tsx`) writes dist/<path>/index.html with OG meta tags baked in. For pages without a bespoke image, it generates branded 1200x630 PNG cards (satori + resvg). Cloudflare Pages serves these static files before the SPA fallback, so bots and humans get correct per-page meta with no runtime infrastructure.
+
+2. **Dynamic app routes** (/e/, /g/, /t/, /ch/, /nearme, /:slug): One Convex HTTP endpoint (`GET /link-preview/meta?url=<full request URL>`) returns typed preview metadata. A single resolver in Convex (apps/convex/functions/linkPreviewMeta) handles ALL preview assembly (title formats, rich descriptions, timezone formatting, image fallback chains). The Cloudflare Worker is now a thin, table-driven layer: it keeps existing jobs (site-vs-app routing, Universal/App Links, bot detection) but for bot requests on dynamic routes it fetches this metadata endpoint and pours the result into a shared HTML template.
 
 ## Architecture
 
@@ -39,59 +48,113 @@ Implement a link preview system using a single **Cloudflare Worker** that:
                    │  *.togather.nyc/*   │
                    └──────────┬──────────┘
                               │
-      ┌───────────────────────┼───────────────────────┐
-      │                       │                       │
-Landing Page Paths       OG Routes            Everything Else
-/, /android, /download   /e/*, /g/*, /nearme      (app paths)
-/styles.css, /script.js        │                      │
-      │                        │                      │
-      ↓                   ┌────┴────┐                 ↓
-┌─────────────┐        Bot?     User?         ┌─────────────┐
-│  Cloudflare │           │         │         │ EAS Hosting │
-│    Pages    │           ↓         ↓         │ (Expo App)  │
-│  (Landing)  │    OG HTML    Pass to App     │             │
-└─────────────┘    with tags                  └─────────────┘
+      ┌───────────┬───────────┼───────────┬───────────┐
+      │           │           │           │           │
+  Static Routes  Dynamic     App Paths   Dynamic      Everything
+  (prebuilt OG)  Routes      (/signin)   Routes       Else
+  /, /guides/*   (/e/*, etc) (users)     (/e/*, etc)
+  /download                              (bots)
+      │           │           │           │           │
+      ↓           ↓           ↓           ↓           ↓
+ ┌──────────┐    │        ┌─────────┐    │      ┌─────────┐
+ │Cloudflare│    │        │   EAS   │    └─────→│Cloudflare
+ │  Pages   │    │        │ Hosting │            │ Worker
+ │(prebuilt)│    │        │(Expo)   │            │(fetch meta)
+ └──────────┘    │        └─────────┘            │        │
+                 │                               ↓        │
+                 │                          ┌──────────┐  │
+                 └──────────────────────→  │ Convex   │  │
+                                           │/link-    │  │
+                                           │preview/  │  │
+                                           │meta      │  │
+                                           └─────────┬┘  │
+                                                     │    │
+                                                     └────┘
+                                                      │
+                                                      ↓
+                                                  ┌────────┐
+                                                  │Shared  │
+                                                  │Template│
+                                                  └────────┘
 ```
 
 ## Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| Cloudflare Worker | `apps/link-preview/cloudflare-worker.js` | Bot detection, routing, OG HTML generation |
-| Wrangler Config | `apps/link-preview/wrangler.toml` | Cloudflare Worker routes |
+| Route Registry | `apps/web/src/routes.tsx` | Site-wide routes with preview metadata (title, description, image, emoji) |
+| Build Script | `apps/web/scripts/generate-static-pages.tsx` | Generates prebuilt HTML + OG image cards at build time (satori + resvg) |
+| Web App | `apps/web/` | Vite SPA deployed to Cloudflare Pages; routes come from registry |
+| Link Preview Resolver | `apps/convex/functions/linkPreviewMeta.ts` | Typed resolver: all preview assembly logic (title formats, descriptions, fallback chains) |
+| Cloudflare Worker | `apps/link-preview/cloudflare-worker.js` | Thin layer: bot detection, routing, PREVIEW_ROUTES table, fetches meta endpoint, renders shared template |
+| HTML Template | `apps/link-preview/templates/preview.html` | Shared template for dynamic preview OG HTML |
+| Wrangler Config | `apps/link-preview/wrangler.toml` | Worker routes and environment config |
 | Unit Tests | `apps/link-preview/cloudflare-worker.test.js` | Worker behavior tests |
 | Deploy Workflow | `.github/workflows/deploy-link-preview.yml` | CI/CD for worker deployment |
-| Landing Page | `apps/web/` | Static landing page (deployed to Cloudflare Pages) |
 
 ## Environment Configuration
 
 The Cloudflare Worker detects environment based on hostname and routes to the appropriate origins:
 
-| Environment | Domain | App Origin (EAS) | Landing Page |
-|-------------|--------|------------------|--------------|
-| Production | `togather.nyc`, `app.togather.nyc`, `*.togather.nyc` | `https://togather.expo.app` | `https://togather-landing.pages.dev` |
-| Staging | `staging.togather.nyc` | `https://togather--staging.expo.app` | `https://togather-landing.pages.dev` |
+| Environment | Domain | App Origin (EAS) | Marketing Pages (Cloudflare Pages) |
+|-------------|--------|------------------|------------------------------------|
+| Production | `togather.nyc`, `app.togather.nyc`, `*.togather.nyc` | `https://togather.expo.app` | `https://togather-web.pages.dev` (built & deployed via `pnpm build` + `wrangler pages deploy`) |
+| Staging | `staging.togather.nyc` | `https://togather--staging.expo.app` | `https://togather-web-staging.pages.dev` |
 
 **EAS Hosting Aliases:**
 - Production: `togather.expo.app` (default alias)
 - Staging: `togather--staging.expo.app` (alias: `staging`)
 
-Deploy workflow (`.github/workflows/deploy-web.yml`) updates the appropriate alias on push.
+**Deploy workflows:**
+- App: `.github/workflows/deploy-web.yml` updates EAS alias on push to `main` or `staging`
+- Marketing pages: `.github/workflows/deploy-web.yml` also runs `pnpm build` in `apps/web/` and deploys to Cloudflare Pages (with per-build static HTML and OG images)
 
 ## Routing Logic
 
 | Path | Bot Request | User Request |
 |------|-------------|--------------|
-| `/` | OG tags HTML | Landing Page |
-| `/android`, `/download` | Landing Page | Landing Page |
-| `/styles.css`, `/script.js`, etc. | Landing Page | Landing Page |
-| `/e/:shortId` | OG tags HTML | App (EAS) |
-| `/g/:shortId` | OG tags HTML | App (EAS) |
-| `/nearme` | OG tags HTML | App (EAS) |
-| `/_expo/*` | App (EAS) | App (EAS) |
+| `/`, `/guides/*`, `/download`, etc. (static routes in registry) | Prebuilt HTML from Cloudflare Pages (OG meta baked in) | Cloudflare Pages (SPA) |
+| `/e/:shortId`, `/g/:shortId`, `/t/:toolId`, etc. (dynamic app routes) | Worker → fetch `/link-preview/meta` → render shared template | EAS Hosting (Expo App) |
+| `/nearme`, `/:slug` (community, channel routes) | Worker → fetch `/link-preview/meta` → render shared template | EAS Hosting (Expo App) |
+| `/_expo/*` | EAS Hosting | EAS Hosting |
 | `/.well-known/apple-app-site-association` | Worker (JSON) | Worker (JSON) |
 | `/.well-known/assetlinks.json` | Worker (JSON) | Worker (JSON) |
-| Everything else | App (EAS) | App (EAS) |
+| Everything else | EAS Hosting | EAS Hosting |
+
+## Static Page Registration & OG Metadata
+
+All static marketing pages (guides, homepage, etc.) are registered in a central route registry:
+
+**File:** `apps/web/src/routes.tsx`
+
+**Example entry:**
+```typescript
+export const routes: RouteEntry[] = [
+  {
+    path: '/guides/events',
+    component: EventsGuide,
+    title: 'Event Management Guide | Togather',
+    description: 'Learn how to create, schedule, and manage events...',
+    image: 'https://cdn.example.com/events-guide.png', // optional; auto-generated if omitted
+    emoji: '📅',
+  },
+  // ...
+];
+```
+
+**Build process** (`apps/web/scripts/generate-static-pages.tsx`):
+1. Runs after `vite build` during `pnpm build`
+2. For each route in registry:
+   - Writes `dist/<path>/index.html` with page's `<title>` and meta tags (og:title, og:description, twitter:card, etc.)
+   - If route has no `image` entry, generates branded 1200x630 PNG using satori + resvg (brand color #D4A574, Plus Jakarta Sans font)
+   - Saves generated images to `dist/og/<slug>.png`
+3. Cloudflare Pages deployment includes all prebuilt HTML files and images
+
+**Why this approach:**
+- Bots get correct meta tags instantly from static HTML (no runtime rendering needed)
+- Users still get the full Vite SPA experience (React routing, client-side navigation)
+- Scales to unlimited pages without additional server resources
+- Automatic OG image generation keeps visual consistency across guides
 
 ## Complete Route Table (Expo Router)
 
@@ -147,35 +210,35 @@ The Worker identifies crawlers by User-Agent:
 
 ## Convex HTTP Routes
 
-HTTP routes are defined in `convex/http.ts` and exposed at the Convex site URL:
+The link preview system uses a single unified HTTP endpoint defined in `convex/http.ts`:
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/link-preview/event` | GET | Event data for OG tags |
-| `/link-preview/group` | GET | Group data for OG tags |
-| `/link-preview/community` | GET | Community data for nearme OG tags |
-
-### Event Link Preview Endpoint
+### Link Preview Metadata Endpoint
 
 ```
-GET /link-preview/event?shortId=<shortId>
+GET /link-preview/meta?url=<full request URL>
 ```
 
 **Response:**
 ```json
 {
-  "id": "meeting_123",
-  "shortId": "abc123",
-  "title": "Weekly Meetup",
-  "scheduledAt": "2025-01-15T19:00:00.000Z",
-  "status": "scheduled",
-  "coverImage": "https://...",
-  "groupName": "Tech Enthusiasts",
-  "communityName": "Demo Community",
-  "communityLogo": "https://...",
-  "locationOverride": "123 Main St"
+  "title": "RSVP to Weekly Meetup | Demo Community",
+  "description": "Saturday, Jan 15, 2025 at 7:00 PM · Tech Enthusiasts · 123 Main St",
+  "image": "https://...",
+  "url": "https://togather.nyc/e/abc123",
+  "siteName": "Togather",
+  "imageAlt": "Weekly Meetup event cover"
 }
 ```
+
+**Resolver Logic** (`apps/convex/functions/linkPreviewMeta.ts`):
+- Parses request URL to determine resource type (event, group, tool, channel, community, etc.)
+- Loads resource from database with all related data
+- Formats title with type-specific pattern (e.g. "RSVP to [title] | [community]" for events)
+- Assembles rich description (date, time, location for events; member count for groups; etc.)
+- Applies image fallback chain (resource cover → related resource image → community logo)
+- Returns fully typed metadata object
+
+**Old endpoints removed:** `/link-preview/event`, `/link-preview/group`, `/link-preview/community`, `/link-preview/channel`, `/link-preview/tool`. All preview logic now routes through the single `/link-preview/meta` endpoint.
 
 ## Deployment
 
@@ -232,91 +295,107 @@ echo "https://your-deployment.convex.site" | npx wrangler secret put CONVEX_SITE
 
 ## Request Flow Examples
 
-### 1. Bot requests event link preview (iMessage, Twitter, etc.)
+### 1. Bot requests static guide page (Googlebot, Facebook crawler, etc.)
+```
+Googlebot → togather.nyc/guides/events
+  → Cloudflare Worker (bot detected)
+  → Worker passes to Cloudflare Pages
+  → Cloudflare Pages serves prebuilt dist/guides/events/index.html
+  → HTML includes og:title, og:description, og:image baked in by build script
+  → Google indexes rich preview (no runtime work needed)
+```
+
+### 2. Bot requests dynamic app link (iMessage, Twitter, etc.)
 ```
 iMessage crawler → togather.nyc/e/ABC123
   → Cloudflare Worker (bot detected: Applebot)
-  → Worker fetches event from Convex HTTP endpoint
+  → Worker matches /e/ABC123 against PREVIEW_ROUTES table
+  → Worker fetches GET /link-preview/meta?url=https://togather.nyc/e/ABC123
+  → Convex resolver assembles metadata (title, description, image, etc.)
+  → Worker renders shared template with metadata
   → Worker returns HTML with OG tags
   → iMessage shows rich preview
 ```
 
-### 2. User opens event link in browser
+### 3. User visits static guide page
+```
+Browser → togather.nyc/guides/events
+  → Cloudflare Worker (not a bot)
+  → Worker passes to Cloudflare Pages
+  → Cloudflare Pages loads Vite SPA (index.html fallback)
+  → React router mounts guides/events component
+```
+
+### 4. User opens event link in browser
 ```
 Browser → togather.nyc/e/ABC123
   → Cloudflare Worker (not a bot)
   → Worker passes to EAS Hosting
   → EAS serves Expo app
-  → App loads event page
-```
-
-### 3. User visits homepage
-```
-Browser → togather.nyc/
-  → Cloudflare Worker (not a bot)
-  → Worker passes to Landing Page (Cloudflare Pages)
-  → Landing page loads
-```
-
-### 4. Bot requests homepage
-```
-Googlebot → togather.nyc/
-  → Cloudflare Worker (bot detected)
-  → Worker returns OG HTML with homepage meta tags
-  → Google indexes rich preview
+  → App loads event detail page
 ```
 
 ## Troubleshooting
 
 ### Quick Diagnostics
 
-Test routes directly to bypass Cloudflare Worker:
+Test the link preview metadata endpoint:
 ```bash
-# Test EAS Hosting staging directly
-curl -s -o /dev/null -w "%{http_code}" "https://togather--staging.expo.app/signin"
+# Test metadata endpoint directly
+curl "https://your.convex.site/link-preview/meta?url=https://togather.nyc/e/ABC123"
 
-# Test through Cloudflare Worker
-curl -s -o /dev/null -w "%{http_code}" "https://staging.togather.nyc/signin"
+# Test bot response through worker
+curl -H "User-Agent: Twitterbot" "https://togather.nyc/e/ABC123"
 
-# Test bot response
-curl -H "User-Agent: Twitterbot" "https://staging.togather.nyc/e/ABC123"
+# Verify Cloudflare Pages is serving static route
+curl -I "https://togather.nyc/guides/events"
 ```
 
-### 500 Error on staging links
-**Symptom:** `ExpoError: API route GET handler resolved to a non-Response result`
+### Prebuilt static page not showing OG tags
+**Symptom:** og:title/og:description/og:image missing on a static route
 
-**Cause:** Worker is pointing to wrong EAS origin (production instead of staging)
-
-**Fix:** Check `ENVIRONMENTS.staging.appOrigin` in `cloudflare-worker.js` points to `https://togather--staging.expo.app`
-
-### 404 on valid routes
-**Symptom:** Route returns 404 even though it exists in app
-
-**Cause:**
-1. Route might not exist (e.g., `/login` vs `/signin`)
-2. EAS deployment not updated
+**Cause:** 
+1. Page not registered in `apps/web/src/routes.tsx`
+2. Build script not run (or failed silently)
+3. Cloudflare Pages serving old cache
 
 **Fix:**
-1. Check route exists: `ls apps/mobile/app/`
-2. Verify EAS deployment: Check GitHub Actions deploy-web.yml
+1. Verify page entry exists in `routes.tsx` with title, description, image fields
+2. Run `pnpm build` in `apps/web/` and check `dist/<path>/index.html` for meta tags
+3. Purge Cloudflare Pages cache or wait for next deployment
 
-### Worker routes not triggering
-- Ensure DNS records are "Proxied" (orange cloud) not "DNS Only"
-- Verify worker is deployed: `npx wrangler whoami` then check dashboard
+### Dynamic app link preview not showing
+**Symptom:** og:title/og:description/og:image missing on /e/, /g/, etc.
 
-### OG tags not showing
-- Check User-Agent is in the bot list
-- Verify Convex HTTP endpoint is responding: `curl https://your.convex.site/link-preview/event?shortId=xxx`
-- Use Facebook Debugger or Twitter Card Validator to test
+**Cause:**
+1. Route not in PREVIEW_ROUTES table in worker
+2. Resolver not handling this route type
+3. Metadata endpoint returning error
 
-### Landing page not styled
-- Verify static assets are routed to landing page (check `isLandingPagePath()`)
-- Check Cloudflare Pages deployment status
+**Fix:**
+1. Check `PREVIEW_ROUTES` in `apps/link-preview/cloudflare-worker.js` includes the route pattern
+2. Verify `apps/convex/functions/linkPreviewMeta.ts` handles the resource type
+3. Test endpoint: `curl "https://your.convex.site/link-preview/meta?url=https://togather.nyc/e/ABC123"`
+4. Use Facebook Debugger or Twitter Card Validator to test final output
 
-### Images not showing in preview
-- Check S3 object Content-Type is `image/jpeg` not `application/octet-stream`
-- Ensure image URLs are publicly accessible
-- Verify image dimensions meet platform requirements (1200x630 recommended)
+### Worker not routing to correct Cloudflare Pages
+**Symptom:** Static routes return app 404 instead of static page
+
+**Cause:** isStaticPath() doesn't match the route pattern
+
+**Fix:** Check `isStaticPath()` in `cloudflare-worker.js` includes your route
+
+### Build script not generating OG images
+**Symptom:** Pages have og:title/og:description but no og:image
+
+**Cause:** 
+1. Route entry missing `image` field
+2. satori/resvg build failed silently
+
+**Fix:**
+1. Run build with verbose logging: check `dist/og/` directory for generated images
+2. Verify route entry in `routes.tsx` omits `image` field (auto-generated) or specifies a URL
+3. Check build script stderr for satori errors
 
 ### Universal Links not opening app
 See ADR-014 for Universal Links configuration. Check:
