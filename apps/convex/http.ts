@@ -12,10 +12,11 @@
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
 import { hashApiKey } from "./lib/apiKeys";
+import { resolveLinkPreviewMeta } from "./functions/linkPreviewMeta";
 import { registerRoutes } from "@supa-media/dev-assistant";
 import "./functions/devAssistant/config"; // side-effect: sets config first
 
@@ -141,303 +142,58 @@ async function verifyStripeSignature(
 }
 
 // ============================================================================
-// Link Preview Endpoints (for Cloudflare Worker)
+// Link Preview Meta Endpoint (for Cloudflare Worker)
 // ============================================================================
 
 /**
- * GET /link-preview/event?shortId=<shortId>
+ * GET /link-preview/meta?url=<urlencoded full original request URL>
  *
- * Returns event data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /e/[shortId] URLs.
+ * Single typed endpoint that returns standardized preview metadata (title,
+ * description, image, canonical url, siteName) for any shareable app path
+ * (/e/:shortId, /g/:shortId, /t/:shortId, /ch/:shortId, /nearme, /:slug).
+ * Replaces the old per-type /link-preview/{event,group,tool,community,channel}
+ * endpoints — all title/description/image-fallback/date-formatting assembly
+ * now lives in functions/linkPreviewMeta.ts instead of the Cloudflare Worker.
  *
- * Response shape matches what the Cloudflare Worker expects:
- * - id, shortId, title, scheduledAt, status
- * - coverImage, coverImageFallback
- * - groupName, groupImage, groupImageFallback
- * - communityName, communityLogo
- * - locationOverride, note
+ * Response shape: { title, description, image, url, siteName, imageAlt? }
+ * on 200; { error } on 404 (unknown entity or unrecognized path).
+ *
+ * @see ADR-009 for the full link-preview architecture.
  */
 http.route({
-  path: "/link-preview/event",
+  path: "/link-preview/meta",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
+    // `searchParams.get` already URL-decodes once; the worker single-encodes
+    // the target URL, so decoding again here would mangle reserved chars
+    // (e.g. `%26` -> `&`) that are legitimately part of the target's query string.
+    const targetUrl = url.searchParams.get("url");
 
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
+    if (!targetUrl) {
+      return jsonResponse({ error: "Missing url parameter" }, 400);
+    }
+
+    // Validate it's a well-formed URL before handing it to the resolver.
+    try {
+      new URL(targetUrl);
+    } catch {
+      return jsonResponse({ error: "Invalid url encoding" }, 400);
     }
 
     try {
-      const result = await ctx.runQuery(
-        api.functions.meetings.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Event not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        title: result.title,
-        scheduledAt: result.scheduledAt,
-        status: result.status,
-        coverImage: result.coverImage,
-        coverImageFallback: result.coverImage, // Same as coverImage
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        groupImageFallback: result.groupImage, // Same as groupImage
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        timezone: result.timezone,
-        locationOverride: result.locationOverride,
-        note: result.note,
-      });
+      const result = await resolveLinkPreviewMeta(ctx, targetUrl);
+      return jsonResponse(result.body, result.status);
     } catch (error) {
-      console.error("Error fetching event for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch event" }, 500);
+      console.error("Error resolving link preview meta:", error);
+      return jsonResponse({ error: "Failed to fetch preview" }, 500);
     }
   }),
 });
 
-// Handle CORS preflight for /link-preview/event
+// Handle CORS preflight for /link-preview/meta
 http.route({
-  path: "/link-preview/event",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/group?shortId=<shortId>
- *
- * Returns group data needed for social sharing previews.
- * Used by the Cloudflare Worker when bots request /g/<shortId> URLs.
- *
- * Response shape:
- * - id, shortId, name, description
- * - preview (group image)
- * - memberCount
- * - communityName, communityLogo
- * - city, state (location)
- * - groupTypeName
- */
-http.route({
-  path: "/link-preview/group",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groups.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Group not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        name: result.name,
-        description: result.description,
-        preview: result.preview,
-        previewFallback: result.preview, // Same as preview
-        memberCount: result.memberCount,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        communityLogoFallback: result.communityLogo, // Same as communityLogo
-        city: result.city,
-        state: result.state,
-        groupTypeName: result.groupTypeName,
-        isPublic: result.isPublic,
-      });
-    } catch (error) {
-      console.error("Error fetching group for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch group" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/group
-http.route({
-  path: "/link-preview/group",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/tool?shortId=<shortId>
- *
- * Returns tool data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /t/[shortId] URLs.
- *
- * Response shape:
- * - shortId, toolType, groupId, groupName
- * - groupImage, communityName, communityLogo
- * - resourceTitle?, resourceIcon?, resourceImage? (for resource tools)
- */
-http.route({
-  path: "/link-preview/tool",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.toolShortLinks.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Tool not found" }, 404);
-      }
-
-      return jsonResponse(result);
-    } catch (error) {
-      console.error("Error fetching tool for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch tool" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/tool
-http.route({
-  path: "/link-preview/tool",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/community?communitySubdomain=<subdomain>&groupTypeSlug=<slug>
- *
- * Returns community and optional group type data for "near me" link previews.
- * Used by the Cloudflare Worker when bots request /nearme URLs.
- *
- * Response shape:
- * {
- *   community: { id, name, subdomain, logo, logoFallback },
- *   groupType: { id, name, slug, description } | null
- * }
- */
-http.route({
-  path: "/link-preview/community",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const communitySubdomain = url.searchParams.get("communitySubdomain");
-    const groupTypeSlug = url.searchParams.get("groupTypeSlug") || undefined;
-
-    if (!communitySubdomain) {
-      return jsonResponse(
-        { error: "Missing communitySubdomain parameter" },
-        400
-      );
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groupSearch.publicLinkPreview,
-        { communitySubdomain, groupTypeSlug }
-      );
-
-      // Add logoFallback field (null for Convex, but worker expects it)
-      return jsonResponse({
-        community: {
-          ...result.community,
-          logoFallback: null,
-        },
-        groupType: result.groupType,
-      });
-    } catch (error) {
-      console.error("Error fetching community for link preview:", error);
-
-      // Check if it's a "not found" error
-      if (error instanceof Error && error.message.includes("not found")) {
-        return jsonResponse({ error: "Community not found" }, 404);
-      }
-
-      return jsonResponse({ error: "Failed to fetch community" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/community
-http.route({
-  path: "/link-preview/community",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/channel?shortId=<shortId>
- *
- * Returns channel data for invite link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /ch/[shortId] URLs.
- *
- * Response shape:
- * - channelName, groupName, groupImage, memberCount
- * - communityName, communityLogo
- * - joinMode
- */
-http.route({
-  path: "/link-preview/channel",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.messaging.channelInvites.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Channel not found" }, 404);
-      }
-
-      return jsonResponse({
-        channelName: result.channelName,
-        channelDescription: result.channelDescription,
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        memberCount: result.memberCount,
-        joinMode: result.joinMode,
-      });
-    } catch (error) {
-      console.error("Error fetching channel for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch channel" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/channel
-http.route({
-  path: "/link-preview/channel",
+  path: "/link-preview/meta",
   method: "OPTIONS",
   handler: httpAction(async () => handleCorsOptions()),
 });
