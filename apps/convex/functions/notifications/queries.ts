@@ -6,7 +6,7 @@
 
 import { v } from "convex/values";
 import { query } from "../../_generated/server";
-import { requireAuth } from "../../lib/auth";
+import { requireAuthWithArchivedStatus } from "../../lib/auth";
 
 /**
  * Notification types that represent chat messages. These are deliberately
@@ -31,7 +31,18 @@ export const list = query({
     unreadOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // This query is mounted unconditionally at app boot (via the Inbox and
+    // notifications feed), so a token scoped to an archived community must
+    // get benign empty data rather than the strict requireAuth rejection —
+    // see requireAuthWithArchivedStatus.
+    if (isArchivedCommunity) {
+      return { notifications: [], unreadCount: 0, totalCount: 0 };
+    }
+
     const limit = Math.min(args.limit ?? 50, 100);
     const offset = args.offset ?? 0;
 
@@ -88,7 +99,15 @@ export const inboxSummary = query({
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // Mounted unconditionally at app boot (Inbox row) — see unreadCount below
+    // for why an archived-community token gets benign empty data.
+    if (isArchivedCommunity) {
+      return { latest: null, unreadCount: 0 };
+    }
 
     // Newest-first; exclude chat-message notifications (see
     // CHAT_NOTIFICATION_TYPES) so the row mirrors the feed exactly.
@@ -127,7 +146,18 @@ export const unreadCount = query({
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // This query mounts unconditionally as soon as any token exists
+    // (NotificationProvider) — before the user can navigate away from an
+    // archived community. requireAuth's strict throw would crash render
+    // (see requireAuthWithArchivedStatus doc), so return a benign 0 instead.
+    if (isArchivedCommunity) {
+      return { unreadCount: 0 };
+    }
+
     const notifications = await ctx.db
       .query("notifications")
       .withIndex("by_user_read_created", (q) =>

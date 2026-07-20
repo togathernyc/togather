@@ -5,19 +5,15 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  Linking,
   Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
-import * as MailComposer from 'expo-mail-composer';
 import { SentryUtils } from '@providers/SentryProvider';
+import { convexVanilla, api } from '@services/api/convex';
 
 const sadGif = require('../assets/sad.gif');
-
-/** Where "Send to developer" reports are delivered. */
-const SUPPORT_EMAIL = 'togather@supa.media';
 
 interface Props {
   children: React.ReactNode;
@@ -117,9 +113,9 @@ function DefaultErrorFallback({
   onTryAgain,
   onGoHome,
 }: FallbackProps) {
-  const [sendState, setSendState] = React.useState<'idle' | 'sending' | 'sent'>(
-    'idle',
-  );
+  const [sendState, setSendState] = React.useState<
+    'idle' | 'sending' | 'sent' | 'failed'
+  >('idle');
 
   const buildReport = React.useCallback(() => {
     const appVersion = Constants.expoConfig?.version ?? 'unknown';
@@ -163,24 +159,14 @@ function DefaultErrorFallback({
     setSendState('sending');
     const { subject, body } = buildReport();
     try {
-      const isAvailable = await MailComposer.isAvailableAsync();
-      if (isAvailable) {
-        await MailComposer.composeAsync({
-          recipients: [SUPPORT_EMAIL],
-          subject,
-          body,
-        });
-      } else {
-        // Fall back to the device's default mail handler.
-        const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
-          subject,
-        )}&body=${encodeURIComponent(body)}`;
-        await Linking.openURL(mailto);
-      }
-      setSendState('sent');
+      const result = await convexVanilla.action(
+        api.functions.support.sendErrorReport.sendErrorReport,
+        { subject, body },
+      );
+      setSendState(result.success ? 'sent' : 'failed');
     } catch {
       // Never let the report flow crash the fallback itself.
-      setSendState('idle');
+      setSendState('failed');
     }
   }, [buildReport]);
 
@@ -206,16 +192,24 @@ function DefaultErrorFallback({
           style={styles.secondaryButton}
           onPress={handleSendToDeveloper}
           activeOpacity={0.8}
-          disabled={sendState !== 'idle'}
+          disabled={sendState === 'sending' || sendState === 'sent'}
         >
           <Text style={styles.secondaryButtonText}>
             {sendState === 'sending'
-              ? 'Opening email…'
+              ? 'Sending…'
               : sendState === 'sent'
-                ? 'Thanks — report ready to send'
-                : 'Send to developer'}
+                ? 'Thanks — report sent'
+                : sendState === 'failed'
+                  ? 'Failed to send — tap to retry'
+                  : 'Send to developer'}
           </Text>
         </TouchableOpacity>
+        {sendState === 'failed' && (
+          <Text style={styles.errorText}>
+            We couldn't reach our server. Check your connection and try
+            again.
+          </Text>
+        )}
 
         <TouchableOpacity onPress={onGoHome} activeOpacity={0.6}>
           <Text style={styles.goHomeText}>Go Home</Text>
@@ -294,6 +288,13 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 15,
     fontWeight: '600',
+  },
+  errorText: {
+    color: '#c0392b',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: -8,
+    marginBottom: 16,
   },
   goHomeText: {
     color: '#888',
