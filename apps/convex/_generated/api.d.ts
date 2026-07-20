@@ -189,6 +189,7 @@ import type * as functions_slackServiceBot_prompts from "../functions/slackServi
 import type * as functions_slackServiceBot_seedConfig from "../functions/slackServiceBot/seedConfig.js";
 import type * as functions_slackServiceBot_slack from "../functions/slackServiceBot/slack.js";
 import type * as functions_slackServiceBot_tools from "../functions/slackServiceBot/tools.js";
+import type * as functions_support_sendErrorReport from "../functions/support/sendErrorReport.js";
 import type * as functions_sync_memberships from "../functions/sync/memberships.js";
 import type * as functions_syncHelpers from "../functions/syncHelpers.js";
 import type * as functions_systemScoring from "../functions/systemScoring.js";
@@ -429,6 +430,7 @@ declare const fullApi: ApiFromModules<{
   "functions/slackServiceBot/seedConfig": typeof functions_slackServiceBot_seedConfig;
   "functions/slackServiceBot/slack": typeof functions_slackServiceBot_slack;
   "functions/slackServiceBot/tools": typeof functions_slackServiceBot_tools;
+  "functions/support/sendErrorReport": typeof functions_support_sendErrorReport;
   "functions/sync/memberships": typeof functions_sync_memberships;
   "functions/syncHelpers": typeof functions_syncHelpers;
   "functions/systemScoring": typeof functions_systemScoring;
