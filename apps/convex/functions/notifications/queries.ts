@@ -36,9 +36,11 @@ export const list = query({
       args.token,
     );
     // This query is mounted unconditionally at app boot (via the Inbox and
-    // notifications feed), so a token scoped to an archived community must
-    // get benign empty data rather than the strict requireAuth rejection —
-    // see requireAuthWithArchivedStatus.
+    // notifications feed). The mobile AuthErrorBoundary now provides
+    // recovery UI for a COMMUNITY_ARCHIVED throw, but short-circuiting here
+    // is still intentional defense-in-depth to skip that crash-recovery
+    // churn on boot — see requireAuthWithArchivedStatus. New boot queries
+    // don't need to copy this pattern.
     if (isArchivedCommunity) {
       return { notifications: [], unreadCount: 0, totalCount: 0 };
     }
@@ -103,8 +105,10 @@ export const inboxSummary = query({
       ctx,
       args.token,
     );
-    // Mounted unconditionally at app boot (Inbox row) — see unreadCount below
-    // for why an archived-community token gets benign empty data.
+    // Mounted unconditionally at app boot (Inbox row). AuthErrorBoundary
+    // could recover from a COMMUNITY_ARCHIVED throw here too, but returning
+    // benign data avoids that crash-recovery churn on boot — see
+    // requireAuthWithArchivedStatus and unreadCount below.
     if (isArchivedCommunity) {
       return { latest: null, unreadCount: 0 };
     }
@@ -151,9 +155,12 @@ export const unreadCount = query({
       args.token,
     );
     // This query mounts unconditionally as soon as any token exists
-    // (NotificationProvider) — before the user can navigate away from an
-    // archived community. requireAuth's strict throw would crash render
-    // (see requireAuthWithArchivedStatus doc), so return a benign 0 instead.
+    // (NotificationProvider), before the user can navigate away from an
+    // archived community. The mobile AuthErrorBoundary is recovery UI for
+    // exactly this throw now, but returning a benign 0 here is still
+    // intentional defense-in-depth against crash-recovery churn on every
+    // boot — see requireAuthWithArchivedStatus. New boot queries don't need
+    // to copy this pattern.
     if (isArchivedCommunity) {
       return { unreadCount: 0 };
     }
