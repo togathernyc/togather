@@ -6,7 +6,7 @@
 
 import { v } from "convex/values";
 import { query } from "../../_generated/server";
-import { requireAuth } from "../../lib/auth";
+import { requireAuthWithArchivedStatus } from "../../lib/auth";
 
 /**
  * Notification types that represent chat messages. These are deliberately
@@ -31,7 +31,20 @@ export const list = query({
     unreadOnly: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // This query is mounted unconditionally at app boot (via the Inbox and
+    // notifications feed). The mobile AuthErrorBoundary now provides
+    // recovery UI for a COMMUNITY_ARCHIVED throw, but short-circuiting here
+    // is still intentional defense-in-depth to skip that crash-recovery
+    // churn on boot — see requireAuthWithArchivedStatus. New boot queries
+    // don't need to copy this pattern.
+    if (isArchivedCommunity) {
+      return { notifications: [], unreadCount: 0, totalCount: 0 };
+    }
+
     const limit = Math.min(args.limit ?? 50, 100);
     const offset = args.offset ?? 0;
 
@@ -88,7 +101,17 @@ export const inboxSummary = query({
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // Mounted unconditionally at app boot (Inbox row). AuthErrorBoundary
+    // could recover from a COMMUNITY_ARCHIVED throw here too, but returning
+    // benign data avoids that crash-recovery churn on boot — see
+    // requireAuthWithArchivedStatus and unreadCount below.
+    if (isArchivedCommunity) {
+      return { latest: null, unreadCount: 0 };
+    }
 
     // Newest-first; exclude chat-message notifications (see
     // CHAT_NOTIFICATION_TYPES) so the row mirrors the feed exactly.
@@ -127,7 +150,21 @@ export const unreadCount = query({
     token: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await requireAuth(ctx, args.token);
+    const { userId, isArchivedCommunity } = await requireAuthWithArchivedStatus(
+      ctx,
+      args.token,
+    );
+    // This query mounts unconditionally as soon as any token exists
+    // (NotificationProvider), before the user can navigate away from an
+    // archived community. The mobile AuthErrorBoundary is recovery UI for
+    // exactly this throw now, but returning a benign 0 here is still
+    // intentional defense-in-depth against crash-recovery churn on every
+    // boot — see requireAuthWithArchivedStatus. New boot queries don't need
+    // to copy this pattern.
+    if (isArchivedCommunity) {
+      return { unreadCount: 0 };
+    }
+
     const notifications = await ctx.db
       .query("notifications")
       .withIndex("by_user_read_created", (q) =>

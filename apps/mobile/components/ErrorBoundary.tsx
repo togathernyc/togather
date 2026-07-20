@@ -12,12 +12,46 @@ import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import * as MailComposer from 'expo-mail-composer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SentryUtils } from '@providers/SentryProvider';
+import { convexVanilla, api } from '@services/api/convex';
 
 const sadGif = require('../assets/sad.gif');
 
-/** Where "Send to developer" reports are delivered. */
+/** Where "Send to developer" reports are delivered (native mailto/MailComposer path only — the web/Convex path sources the recipient server-side). */
 const SUPPORT_EMAIL = 'togather@supa.media';
+
+/**
+ * AsyncStorage key for the random per-install id sent as `reportKey` to the
+ * sendErrorReport action (web path only). This is a rate-limiting nicety,
+ * NOT authentication: it's entirely client-generated and spoofable, and
+ * exists only so honest clients get their own rate bucket on the server
+ * instead of sharing one global bucket that a single bad client could
+ * exhaust for everyone. See sendErrorReport.ts for the server-side half.
+ */
+const REPORT_KEY_STORAGE_KEY = 'errorReportKey';
+
+/**
+ * Returns a stable per-install id for rate-limiting `sendErrorReport`,
+ * generating and persisting one on first use. Falls back to "anonymous"
+ * if AsyncStorage is unavailable/throws — the server still accepts that,
+ * it just shares the "anonymous" bucket with other storage-less callers.
+ */
+async function getOrCreateReportKey(): Promise<string> {
+  try {
+    const existing = await AsyncStorage.getItem(REPORT_KEY_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+    const generated = `${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    await AsyncStorage.setItem(REPORT_KEY_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return 'anonymous';
+  }
+}
 
 interface Props {
   children: React.ReactNode;
@@ -117,8 +151,17 @@ function DefaultErrorFallback({
   onTryAgain,
   onGoHome,
 }: FallbackProps) {
-  const [sendState, setSendState] = React.useState<'idle' | 'sending' | 'sent'>(
-    'idle',
+  const [sendState, setSendState] = React.useState<
+    'idle' | 'sending' | 'sent' | 'failed'
+  >('idle');
+  /**
+   * Failure copy for the web/Convex path only — kept distinct from generic
+   * "check your connection" copy, which is reserved for an actual thrown
+   * network error (the client couldn't reach Convex at all), not a server
+   * response the client received successfully.
+   */
+  const [failureMessage, setFailureMessage] = React.useState<string | null>(
+    null
   );
 
   const buildReport = React.useCallback(() => {
@@ -159,9 +202,50 @@ function DefaultErrorFallback({
     return { subject, body };
   }, [error, componentStack]);
 
+  /**
+   * Web: MailComposer/mailto aren't reliable in a browser (no OS mail queue
+   * to hand off to), so web sends the report directly via the unauthenticated
+   * sendErrorReport Convex action.
+   *
+   * Native: restores the original MailComposer flow (falls back to a mailto
+   * link if MailComposer isn't available) — user-editable and handed off to
+   * the OS mail queue, which is what actually worked before this component
+   * grew the Convex action path. Only web's mailto was broken.
+   */
   const handleSendToDeveloper = React.useCallback(async () => {
     setSendState('sending');
+    setFailureMessage(null);
     const { subject, body } = buildReport();
+
+    if (Platform.OS === 'web') {
+      try {
+        const reportKey = await getOrCreateReportKey();
+        const result = await convexVanilla.action(
+          api.functions.support.sendErrorReport.sendErrorReport,
+          { subject, body, reportKey },
+        );
+        if (result.success) {
+          setSendState('sent');
+          return;
+        }
+        setFailureMessage(
+          result.reason === 'rate_limited'
+            ? 'Too many reports right now — please try again later.'
+            : "Our error reporting service hit a problem — please try again later."
+        );
+        setSendState('failed');
+      } catch {
+        // A thrown error here means we couldn't reach Convex at all (as
+        // opposed to a server response we successfully received) — this is
+        // the one case where "check your connection" is accurate.
+        setFailureMessage(
+          "We couldn't reach our server. Check your connection and try again."
+        );
+        setSendState('failed');
+      }
+      return;
+    }
+
     try {
       const isAvailable = await MailComposer.isAvailableAsync();
       if (isAvailable) {
@@ -206,16 +290,28 @@ function DefaultErrorFallback({
           style={styles.secondaryButton}
           onPress={handleSendToDeveloper}
           activeOpacity={0.8}
-          disabled={sendState !== 'idle'}
+          disabled={sendState === 'sending' || sendState === 'sent'}
         >
           <Text style={styles.secondaryButtonText}>
             {sendState === 'sending'
-              ? 'Opening email…'
+              ? Platform.OS === 'web'
+                ? 'Sending…'
+                : 'Opening email…'
               : sendState === 'sent'
-                ? 'Thanks — report ready to send'
-                : 'Send to developer'}
+                ? Platform.OS === 'web'
+                  ? 'Thanks — report sent'
+                  : 'Thanks — report ready to send'
+                : sendState === 'failed'
+                  ? 'Failed to send — tap to retry'
+                  : 'Send to developer'}
           </Text>
         </TouchableOpacity>
+        {sendState === 'failed' && (
+          <Text style={styles.errorText}>
+            {failureMessage ??
+              "We couldn't reach our server. Check your connection and try again."}
+          </Text>
+        )}
 
         <TouchableOpacity onPress={onGoHome} activeOpacity={0.6}>
           <Text style={styles.goHomeText}>Go Home</Text>
@@ -294,6 +390,13 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 15,
     fontWeight: '600',
+  },
+  errorText: {
+    color: '#c0392b',
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: -8,
+    marginBottom: 16,
   },
   goHomeText: {
     color: '#888',

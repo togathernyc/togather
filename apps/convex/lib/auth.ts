@@ -560,6 +560,28 @@ export async function requireAuthAllowArchivedCommunity(
 }
 
 /**
+ * Like {@link requireAuthAllowArchivedCommunity} but also reports whether the
+ * token's community is archived, for the handful of queries mounted
+ * unconditionally at app boot (e.g. notification badge counts). The mobile
+ * `AuthErrorBoundary` (providers/AuthErrorBoundary.tsx) *is* recovery UI and
+ * sits below these queries in the tree, so it would catch a COMMUNITY_ARCHIVED
+ * throw from them too — but short-circuiting here is still intentional
+ * defense-in-depth to avoid crash-recovery churn on every boot for queries
+ * that don't need to reject at all. New boot queries do not need to copy
+ * this pattern; only reach for it if a real crash-recovery loop shows up.
+ */
+export async function requireAuthWithArchivedStatus(
+  ctx: QueryCtx | MutationCtx,
+  token: string,
+): Promise<{ userId: Id<"users">; isArchivedCommunity: boolean }> {
+  const { userId, communityId } = await requireAuthResolved(ctx, token);
+  const isArchivedCommunity = communityId
+    ? await isCommunityArchived(ctx, communityId)
+    : false;
+  return { userId, isArchivedCommunity };
+}
+
+/**
  * Shared core for {@link requireAuth}: verifies the access token, resolves the
  * user, and enforces revocation. Returns the userId plus the community the
  * token is scoped to (if any), without applying the archived-community gate.
