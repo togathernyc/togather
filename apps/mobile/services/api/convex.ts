@@ -449,12 +449,24 @@ export function useAuthenticatedPaginatedQuery<
 const COMMUNITY_ARCHIVED_CODE = 'COMMUNITY_ARCHIVED';
 
 /**
+ * Word-boundary match for the fallback `.message` check below — anchored so
+ * e.g. "SOME_OTHER_COMMUNITY_ARCHIVED_THING" or a coincidental substring in
+ * an unrelated error message can't be misdetected as the archived-community
+ * error and get swallowed into the community-switch recovery flow.
+ */
+const COMMUNITY_ARCHIVED_MESSAGE_RE = /\bCOMMUNITY_ARCHIVED\b/;
+
+/**
  * Detects the archived-community error across any strict Convex query or
  * mutation, not just notifications. `convex/react` reconstructs a
  * `ConvexError` client-side with `.data` set to whatever value the server
- * passed to `new ConvexError(...)` — here a bare string — so `.data` is the
- * primary check. `.message` is included as a fallback since dev/prod builds
- * format the reconstructed error message slightly differently.
+ * passed to `new ConvexError(...)` — here a bare string — so an exact
+ * `.data === COMMUNITY_ARCHIVED_CODE` match is the primary, authoritative
+ * check. `.message` is a fallback only (dev/prod builds format the
+ * reconstructed error message slightly differently) and is matched with a
+ * word-boundary regex rather than `.includes(...)` — a loose substring check
+ * risks misclassifying an unrelated error as archived-community and routing
+ * it into the community-switch recovery flow instead of surfacing normally.
  *
  * We duck-type rather than `instanceof ConvexError` — matches the existing
  * error-handling idiom in this codebase (see SongLibraryScreen.tsx,
@@ -466,7 +478,7 @@ export function isCommunityArchivedError(error: unknown): boolean {
   const data = (error as { data?: unknown }).data;
   if (data === COMMUNITY_ARCHIVED_CODE) return true;
   const message = (error as { message?: unknown }).message;
-  return typeof message === 'string' && message.includes(COMMUNITY_ARCHIVED_CODE);
+  return typeof message === 'string' && COMMUNITY_ARCHIVED_MESSAGE_RE.test(message);
 }
 
 /**

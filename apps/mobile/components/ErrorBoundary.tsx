@@ -5,15 +5,53 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
+  Linking,
   Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
+import * as MailComposer from 'expo-mail-composer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SentryUtils } from '@providers/SentryProvider';
 import { convexVanilla, api } from '@services/api/convex';
 
 const sadGif = require('../assets/sad.gif');
+
+/** Where "Send to developer" reports are delivered (native mailto/MailComposer path only — the web/Convex path sources the recipient server-side). */
+const SUPPORT_EMAIL = 'togather@supa.media';
+
+/**
+ * AsyncStorage key for the random per-install id sent as `reportKey` to the
+ * sendErrorReport action (web path only). This is a rate-limiting nicety,
+ * NOT authentication: it's entirely client-generated and spoofable, and
+ * exists only so honest clients get their own rate bucket on the server
+ * instead of sharing one global bucket that a single bad client could
+ * exhaust for everyone. See sendErrorReport.ts for the server-side half.
+ */
+const REPORT_KEY_STORAGE_KEY = 'errorReportKey';
+
+/**
+ * Returns a stable per-install id for rate-limiting `sendErrorReport`,
+ * generating and persisting one on first use. Falls back to "anonymous"
+ * if AsyncStorage is unavailable/throws — the server still accepts that,
+ * it just shares the "anonymous" bucket with other storage-less callers.
+ */
+async function getOrCreateReportKey(): Promise<string> {
+  try {
+    const existing = await AsyncStorage.getItem(REPORT_KEY_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+    const generated = `${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+    await AsyncStorage.setItem(REPORT_KEY_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return 'anonymous';
+  }
+}
 
 interface Props {
   children: React.ReactNode;
@@ -116,6 +154,15 @@ function DefaultErrorFallback({
   const [sendState, setSendState] = React.useState<
     'idle' | 'sending' | 'sent' | 'failed'
   >('idle');
+  /**
+   * Failure copy for the web/Convex path only — kept distinct from generic
+   * "check your connection" copy, which is reserved for an actual thrown
+   * network error (the client couldn't reach Convex at all), not a server
+   * response the client received successfully.
+   */
+  const [failureMessage, setFailureMessage] = React.useState<string | null>(
+    null
+  );
 
   const buildReport = React.useCallback(() => {
     const appVersion = Constants.expoConfig?.version ?? 'unknown';
@@ -155,18 +202,69 @@ function DefaultErrorFallback({
     return { subject, body };
   }, [error, componentStack]);
 
+  /**
+   * Web: MailComposer/mailto aren't reliable in a browser (no OS mail queue
+   * to hand off to), so web sends the report directly via the unauthenticated
+   * sendErrorReport Convex action.
+   *
+   * Native: restores the original MailComposer flow (falls back to a mailto
+   * link if MailComposer isn't available) — user-editable and handed off to
+   * the OS mail queue, which is what actually worked before this component
+   * grew the Convex action path. Only web's mailto was broken.
+   */
   const handleSendToDeveloper = React.useCallback(async () => {
     setSendState('sending');
+    setFailureMessage(null);
     const { subject, body } = buildReport();
+
+    if (Platform.OS === 'web') {
+      try {
+        const reportKey = await getOrCreateReportKey();
+        const result = await convexVanilla.action(
+          api.functions.support.sendErrorReport.sendErrorReport,
+          { subject, body, reportKey },
+        );
+        if (result.success) {
+          setSendState('sent');
+          return;
+        }
+        setFailureMessage(
+          result.reason === 'rate_limited'
+            ? 'Too many reports right now — please try again later.'
+            : "Our error reporting service hit a problem — please try again later."
+        );
+        setSendState('failed');
+      } catch {
+        // A thrown error here means we couldn't reach Convex at all (as
+        // opposed to a server response we successfully received) — this is
+        // the one case where "check your connection" is accurate.
+        setFailureMessage(
+          "We couldn't reach our server. Check your connection and try again."
+        );
+        setSendState('failed');
+      }
+      return;
+    }
+
     try {
-      const result = await convexVanilla.action(
-        api.functions.support.sendErrorReport.sendErrorReport,
-        { subject, body },
-      );
-      setSendState(result.success ? 'sent' : 'failed');
+      const isAvailable = await MailComposer.isAvailableAsync();
+      if (isAvailable) {
+        await MailComposer.composeAsync({
+          recipients: [SUPPORT_EMAIL],
+          subject,
+          body,
+        });
+      } else {
+        // Fall back to the device's default mail handler.
+        const mailto = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+          subject,
+        )}&body=${encodeURIComponent(body)}`;
+        await Linking.openURL(mailto);
+      }
+      setSendState('sent');
     } catch {
       // Never let the report flow crash the fallback itself.
-      setSendState('failed');
+      setSendState('idle');
     }
   }, [buildReport]);
 
@@ -196,9 +294,13 @@ function DefaultErrorFallback({
         >
           <Text style={styles.secondaryButtonText}>
             {sendState === 'sending'
-              ? 'Sending…'
+              ? Platform.OS === 'web'
+                ? 'Sending…'
+                : 'Opening email…'
               : sendState === 'sent'
-                ? 'Thanks — report sent'
+                ? Platform.OS === 'web'
+                  ? 'Thanks — report sent'
+                  : 'Thanks — report ready to send'
                 : sendState === 'failed'
                   ? 'Failed to send — tap to retry'
                   : 'Send to developer'}
@@ -206,8 +308,8 @@ function DefaultErrorFallback({
         </TouchableOpacity>
         {sendState === 'failed' && (
           <Text style={styles.errorText}>
-            We couldn't reach our server. Check your connection and try
-            again.
+            {failureMessage ??
+              "We couldn't reach our server. Check your connection and try again."}
           </Text>
         )}
 
