@@ -17,7 +17,9 @@ import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { generateChannelSlug } from "../../lib/slugs";
 import {
-  assertChannelCapacity,
+  assertChannelCapacityFromList,
+  existingSlugsFrom,
+  loadGroupChannels,
   updateChannelMemberCount,
 } from "../messaging/helpers";
 import {
@@ -63,15 +65,11 @@ async function createTeamChannel(
     now: number;
   },
 ): Promise<Id<"chatChannels">> {
-  await assertChannelCapacity(ctx, args.groupId);
+  // One scan feeds both the capacity check and slug generation.
+  const groupChannels = await loadGroupChannels(ctx, args.groupId);
+  assertChannelCapacityFromList(groupChannels);
 
-  const existingChannels = await ctx.db
-    .query("chatChannels")
-    .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-    .collect();
-  const existingSlugs = existingChannels
-    .map((ch) => ch.slug)
-    .filter((slug): slug is string => slug !== undefined);
+  const existingSlugs = existingSlugsFrom(groupChannels);
   return ctx.db.insert("chatChannels", {
     groupId: args.groupId,
     slug: generateChannelSlug(args.name, existingSlugs),

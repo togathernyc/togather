@@ -78,7 +78,7 @@ export const CHANNEL_CAP_MESSAGE =
   `Archive or hide some channels to create new ones.`;
 
 /**
- * Count the channels that occupy a group's channel-list capacity.
+ * Whether a channel occupies a slot in its group's channel list.
  *
  * "Occupies capacity" means exactly what a leader sees in the active section of
  * the group's channel list (`ChannelsSection`), which folds three kinds of row
@@ -97,36 +97,69 @@ export const CHANNEL_CAP_MESSAGE =
  * point: a leader must always be able to act on the error by archiving or
  * hiding a channel they can actually see.
  */
-export async function countCapacityChannels(
-  ctx: QueryCtx,
-  groupId: Id<"groups">
-): Promise<number> {
-  const channels = await ctx.db
-    .query("chatChannels")
-    .withIndex("by_group", (q) => q.eq("groupId", groupId))
-    .collect();
-
-  return channels.filter(
-    (ch) =>
-      ch.isArchived === false &&
-      ch.isEnabled !== false &&
-      ch.channelType !== "event"
-  ).length;
+export function occupiesChannelCapacity(ch: Doc<"chatChannels">): boolean {
+  return (
+    ch.isArchived === false &&
+    ch.isEnabled !== false &&
+    ch.channelType !== "event"
+  );
 }
 
 /**
- * Throw the shared cap error if `groupId` has no room for another channel.
- * Used by every channel-creating path (custom, PCO services, serving team) so
- * they can't drift apart on what counts.
+ * Every channel row for a group. Creation paths need the full list twice over —
+ * once to measure capacity and once to collect slugs — so they load it here and
+ * pass it to both, rather than scanning `by_group` twice per mutation.
+ */
+export async function loadGroupChannels(
+  ctx: QueryCtx,
+  groupId: Id<"groups">
+): Promise<Doc<"chatChannels">[]> {
+  return ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+}
+
+/**
+ * Slugs already taken in a group. Archived and hidden rows are included on
+ * purpose: `by_group_slug` spans them, so colliding with an archived channel's
+ * slug is still a collision (see PR #400 thread).
+ */
+export function existingSlugsFrom(channels: Doc<"chatChannels">[]): string[] {
+  return channels
+    .map((ch) => ch.slug)
+    .filter((slug): slug is string => slug !== undefined);
+}
+
+/**
+ * Throw the shared cap error if an already-loaded channel list is full.
+ *
+ * Callers pass a list that does *not* yet include the channel they are about to
+ * add or re-show — a hidden channel being un-hidden fails
+ * {@link occupiesChannelCapacity} today, so it correctly doesn't count itself.
+ */
+export function assertChannelCapacityFromList(
+  channels: Doc<"chatChannels">[]
+): void {
+  if (channels.filter(occupiesChannelCapacity).length >= MAX_CHANNELS_PER_GROUP) {
+    throw new ConvexError(CHANNEL_CAP_MESSAGE);
+  }
+}
+
+/**
+ * Scan-and-assert convenience for callers that only need the check and not the
+ * channel list — notably the *enable* paths. Hiding a channel frees a slot, so
+ * re-showing one has to re-acquire it; without this a group could hide a
+ * channel, create a replacement, un-hide the original, and repeat past 20.
+ *
+ * Used by every channel-creating and channel-showing path so they can't drift
+ * apart on what counts.
  */
 export async function assertChannelCapacity(
   ctx: QueryCtx,
   groupId: Id<"groups">
 ): Promise<void> {
-  const count = await countCapacityChannels(ctx, groupId);
-  if (count >= MAX_CHANNELS_PER_GROUP) {
-    throw new ConvexError(CHANNEL_CAP_MESSAGE);
-  }
+  assertChannelCapacityFromList(await loadGroupChannels(ctx, groupId));
 }
 
 /** One entry of `chatChannels.sharedGroups`. */

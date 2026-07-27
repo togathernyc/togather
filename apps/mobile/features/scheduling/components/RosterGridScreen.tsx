@@ -53,6 +53,7 @@ import {
   useAuthenticatedAction,
   api,
 } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { formatRelativeTime } from "@features/notifications";
@@ -610,8 +611,7 @@ export function RosterGridScreen() {
   );
 
   const surfaceError = useCallback((title: string, e: unknown) => {
-    const err = e as { data?: { message?: string }; message?: string };
-    Alert.alert(title, err?.data?.message ?? err?.message ?? "Something went wrong");
+    Alert.alert(title, errorMessage(e, "Something went wrong"));
   }, []);
 
   const handleUnassign = useCallback(

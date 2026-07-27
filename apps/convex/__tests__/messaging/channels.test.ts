@@ -1127,6 +1127,83 @@ describe("createCustomChannel", () => {
     expect(result.slug).toBe("lic-boys");
   });
 
+  // Hiding a channel frees a capacity slot, so re-showing one must re-acquire
+  // it. Otherwise a full group could hide a channel, create a replacement,
+  // un-hide the original, and repeat past the cap indefinitely.
+  test("re-enabling a hidden channel is blocked when the group is at the cap", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const hiddenId = await t.run(async (ctx) => {
+      const now = Date.now();
+      // 20 visible channels — the group is full.
+      for (let i = 0; i < 20; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `visible-${i}`,
+          channelType: "custom",
+          name: `Visible ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          memberCount: 0,
+        });
+      }
+      // …plus one the leader has hidden, which does not count.
+      return ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "hidden-one",
+        channelType: "custom",
+        name: "Hidden One",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        isEnabled: false,
+        memberCount: 0,
+      });
+    });
+
+    await expect(
+      t.mutation(
+        api.functions.messaging.channels.setCustomChannelLeaderEnabled,
+        { token: leaderToken, channelId: hiddenId, enabled: true }
+      )
+    ).rejects.toThrow("maximum of 20 channels");
+  });
+
+  test("re-enabling a hidden channel succeeds when there is room", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    const hiddenId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "hidden-one",
+        channelType: "custom",
+        name: "Hidden One",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        isEnabled: false,
+        memberCount: 0,
+      });
+    });
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.setCustomChannelLeaderEnabled,
+      { token: leaderToken, channelId: hiddenId, enabled: true }
+    );
+    expect(result.status).toBe("enabled");
+  });
+
   test("enforces 20 channel limit", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);

@@ -27,12 +27,23 @@ export function showAlert(title: string, message: string): void {
  * Extract a readable message from a ConvexError (or plain Error).
  *
  * ConvexError carries its payload on `.data`; production `.message` is a
- * generic "Server Error" string, so prefer `.data.message` when present.
+ * generic "[CONVEX M(...)] [Request ID: ...] Server Error" string, which reads
+ * to a user as a backend crash.
+ *
+ * The payload comes in both shapes across this codebase — `ConvexError("text")`
+ * puts a bare string on `.data`, while `ConvexError({ code, message })` puts an
+ * object there. Handle both: checking only `.data.message` silently falls
+ * through to the opaque `.message` for every string-payload error, which is
+ * most of them.
  */
 export function errorMessage(error: unknown, fallback: string): string {
-  const data = (error as { data?: { message?: string } } | null)?.data;
-  if (typeof data?.message === 'string') return data.message;
-  if (error instanceof Error && error.message) return error.message;
+  const data = (error as { data?: unknown } | null)?.data;
+  if (typeof data === 'string' && data.trim()) return data;
+  const message = (data as { message?: unknown } | null | undefined)?.message;
+  if (typeof message === 'string' && message.trim()) return message;
+  if (error instanceof Error && error.message && !error.message.includes('[CONVEX')) {
+    return error.message;
+  }
   return fallback;
 }
 
