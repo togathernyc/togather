@@ -25,6 +25,10 @@ import {
   updateChannelMemberCount,
   isCommunityAdminForGroup,
   findAcceptedSharedAnnouncementsChannelsForGroup,
+  assertChannelCapacity,
+  assertChannelCapacityFromList,
+  existingSlugsFrom,
+  loadGroupChannels,
 } from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
@@ -2580,6 +2584,16 @@ export const setCustomChannelLeaderEnabled = mutation({
       return { channelId: args.channelId, status: "disabled" as const };
     }
 
+    if (channel.isEnabled !== false && !channel.isArchived) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    // Showing a channel re-acquires the slot that hiding it freed. Without this
+    // a full group could hide a channel, create a replacement, un-hide the
+    // original, and repeat past the cap indefinitely. The channel being shown
+    // is currently archived or hidden, so it doesn't count itself.
+    await assertChannelCapacity(ctx, groupId);
+
     if (channel.isArchived) {
       await ctx.db.patch(args.channelId, {
         isArchived: false,
@@ -2588,10 +2602,6 @@ export const setCustomChannelLeaderEnabled = mutation({
         updatedAt: now,
       });
       return { channelId: args.channelId, status: "enabled" as const };
-    }
-
-    if (channel.isEnabled !== false) {
-      return { channelId: args.channelId, status: "already_enabled" as const };
     }
 
     await ctx.db.patch(args.channelId, {
@@ -2791,6 +2801,14 @@ export const togglePcoChannel = mutation({
     }
 
     // Enable: recover from archived (legacy full archive) or leader-disabled (isEnabled: false).
+    if (!channel.isArchived && channel.isEnabled !== false) {
+      return { channelId: args.channelId, status: "already_enabled" as const };
+    }
+
+    // Showing a channel re-acquires the slot that hiding it freed — see the
+    // matching check in `setCustomChannelLeaderEnabled`.
+    await assertChannelCapacity(ctx, groupId);
+
     if (channel.isArchived) {
       await ctx.db.patch(args.channelId, {
         isArchived: false,
@@ -2798,8 +2816,6 @@ export const togglePcoChannel = mutation({
         isEnabled: true,
         updatedAt: now,
       });
-    } else if (channel.isEnabled !== false) {
-      return { channelId: args.channelId, status: "already_enabled" as const };
     } else {
       await ctx.db.patch(args.channelId, {
         isEnabled: true,
@@ -3044,27 +3060,11 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Only group leaders can create channels.");
     }
 
-    // 3. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    // Only channels a leader actually manages count toward the limit. Event
-    // channels are auto-created (one per meeting), hidden from the channel
-    // list, and accumulate without bound — counting them lets a group with
-    // lots of past events hit "maximum of 20 channels" while showing only a
-    // handful of real channels, blocking all manual channel creation.
-    const managedChannelCount = existingChannels.filter(
-      (ch) => ch.channelType !== "event"
-    ).length;
-
-    if (managedChannelCount >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 3. One scan feeds both the capacity check and slug generation below.
+    // Only channels a leader actually sees in the channel list count toward the
+    // limit — see `occupiesChannelCapacity` for what's excluded and why.
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    assertChannelCapacityFromList(groupChannels);
 
     // 4. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -3078,12 +3078,10 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Channel name must contain at least one letter or number.");
     }
 
-    // 5. Get existing slugs for this group
+    // 5. Get existing slugs for this group, reusing the scan from step 3.
     // Note: Convex mutations are fully atomic (single transaction), so there's no
     // TOCTOU race condition here - concurrent mutations serialize at DB level
-    const existingSlugs = existingChannels
-      .map((ch) => ch.slug)
-      .filter((slug): slug is string => slug !== undefined);
+    const existingSlugs = existingSlugsFrom(groupChannels);
 
     // 6. Generate slug
     const slug = generateChannelSlug(trimmedName, existingSlugs);
@@ -3225,18 +3223,10 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 4. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    if (existingChannels.length >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 4. Same channel-list capacity check as manual channel creation; the one
+    // scan also feeds slug generation below.
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    assertChannelCapacityFromList(groupChannels);
 
     // 5. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -3284,10 +3274,8 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 6. Get existing slugs for this group
-    const existingSlugs = existingChannels
-      .map((ch) => ch.slug)
-      .filter((slug): slug is string => slug !== undefined);
+    // 6. Get existing slugs for this group, reusing the scan from step 4.
+    const existingSlugs = existingSlugsFrom(groupChannels);
 
     // 7. Generate slug
     const slug = generateChannelSlug(trimmedName, existingSlugs);

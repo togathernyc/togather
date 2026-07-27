@@ -67,6 +67,7 @@ import {
   useAuthenticatedAction,
   api,
 } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 import type { Id } from "@services/api/convex";
 
 /** Row shape returned by `searchCommunityPeople`. */
@@ -392,10 +393,7 @@ export function AssignSheet({
   // ---------------------------------------------------------------------------
   const surfaceError = useCallback(
     (title: string, e: unknown) => {
-      const err = e as { data?: { message?: string }; message?: string };
-      const msg =
-        err?.data?.message ?? err?.message ?? "Something went wrong";
-      Alert.alert(title, msg);
+      Alert.alert(title, errorMessage(e, "Something went wrong"));
     },
     [],
   );
