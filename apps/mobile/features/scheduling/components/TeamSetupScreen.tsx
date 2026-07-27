@@ -36,6 +36,7 @@ import {
 } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { errorMessage } from "@/utils/error-handling";
 import { RolesEditor } from "./RolesEditor";
 import { ROLE_COLORS } from "../utils/format";
 
@@ -53,6 +54,13 @@ type Team = {
   isArchived: boolean;
   memberCount: number;
   createdAt: number;
+};
+
+/** A row from `scheduling.teams.listTeamManagers`. */
+type TeamManager = {
+  userId: Id<"users">;
+  name: string;
+  profilePhoto?: string;
 };
 
 type PermanentMember = {
@@ -335,6 +343,20 @@ export function TeamSetupScreen() {
           {team.hasChannel && (
             <View style={styles.section}>
               <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                MANAGERS
+              </Text>
+              <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
+                Managers send this team&apos;s serving requests and fill its
+                roster. They don&apos;t need to be group leaders — and their
+                requests only ever reach this team.
+              </Text>
+              <TeamManagersSection teamId={teamId} groupId={groupId} />
+            </View>
+          )}
+
+          {!team.isArchived && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
                 PERMANENT MEMBERS
               </Text>
               <Text style={[styles.sectionHint, { color: colors.textSecondary }]}>
@@ -347,6 +369,286 @@ export function TeamSetupScreen() {
         </ScrollView>
       )}
     </View>
+  );
+}
+
+/**
+ * Team managers (ADR-025) — who may send this team's serving requests and fill
+ * its roster without being a campus group leader.
+ *
+ * Editing the list is deliberately restricted to group leaders and community
+ * admins: managing a roster and deciding who else may manage it are different
+ * levels of trust. The backend enforces that; a manager viewing this screen
+ * sees the list read-only.
+ */
+function TeamManagersSection({
+  teamId,
+  groupId,
+}: {
+  teamId: Id<"teams">;
+  groupId?: Id<"groups">;
+}) {
+  const { colors } = useTheme();
+
+  const managers = useAuthenticatedQuery(
+    api.functions.scheduling.teams.listTeamManagers,
+    { teamId },
+  ) as TeamManager[] | undefined;
+
+  const removeManager = useAuthenticatedMutation(
+    api.functions.scheduling.teams.removeTeamManager,
+  );
+
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
+
+  const handleRemove = useCallback(
+    async (manager: TeamManager) => {
+      const ok = await confirmAsync({
+        title: "Remove manager?",
+        message: `${manager.name} will no longer be able to send this team's requests.`,
+        confirmText: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
+      setRemoving(manager.userId as string);
+      try {
+        await removeManager({ teamId, userId: manager.userId });
+      } catch (e) {
+        notify("Couldn't remove", errorMessage(e, "Please try again."));
+      } finally {
+        setRemoving(null);
+      }
+    },
+    [removeManager, teamId],
+  );
+
+  if (managers === undefined) {
+    return (
+      <View style={styles.permLoading}>
+        <ActivityIndicator size="small" color={colors.text} />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <View style={[styles.group, { backgroundColor: colors.surfaceSecondary }]}>
+        {managers.length === 0 ? (
+          <Text style={[styles.permEmpty, { color: colors.textSecondary }]}>
+            No managers yet — only group leaders and admins can send this
+            team&apos;s requests.
+          </Text>
+        ) : (
+          managers.map((manager, idx) => (
+            <View
+              key={manager.userId}
+              style={[
+                styles.permRow,
+                idx > 0 && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: colors.border,
+                },
+              ]}
+            >
+              <Avatar
+                name={manager.name}
+                imageUrl={manager.profilePhoto}
+                size={36}
+              />
+              <Text
+                style={[styles.permName, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {manager.name}
+              </Text>
+              {removing === (manager.userId as string) ? (
+                <ActivityIndicator size="small" color={colors.text} />
+              ) : (
+                <Pressable
+                  onPress={() => handleRemove(manager)}
+                  hitSlop={8}
+                  style={styles.iconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${manager.name} as a manager`}
+                >
+                  <Ionicons
+                    name="close-circle"
+                    size={20}
+                    color={colors.destructive}
+                  />
+                </Pressable>
+              )}
+            </View>
+          ))
+        )}
+      </View>
+
+      <Pressable
+        onPress={() => setPickerVisible(true)}
+        disabled={!groupId}
+        style={({ pressed }) => [
+          styles.addRow,
+          { backgroundColor: colors.surfaceSecondary },
+          (pressed || !groupId) && { opacity: 0.7 },
+        ]}
+        accessibilityRole="button"
+      >
+        <Ionicons name="shield-outline" size={20} color={colors.text} />
+        <Text style={[styles.addLabel, { color: colors.text }]}>
+          Add manager
+        </Text>
+      </Pressable>
+
+      {groupId && (
+        <AddManagerModal
+          visible={pickerVisible}
+          teamId={teamId}
+          groupId={groupId}
+          existingUserIds={
+            new Set((managers ?? []).map((m) => m.userId as string))
+          }
+          onClose={() => setPickerVisible(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+/** Picker modal: the campus group's members, minus current managers. */
+function AddManagerModal({
+  visible,
+  teamId,
+  groupId,
+  existingUserIds,
+  onClose,
+}: {
+  visible: boolean;
+  teamId: Id<"teams">;
+  groupId: Id<"groups">;
+  existingUserIds: Set<string>;
+  onClose: () => void;
+}) {
+  const { colors } = useTheme();
+
+  const memberData = useAuthenticatedQuery(
+    api.functions.groupMembers.list,
+    visible ? { groupId, limit: 200 } : "skip",
+  ) as { items: GroupMemberRow[] } | undefined;
+
+  const addManager = useAuthenticatedMutation(
+    api.functions.scheduling.teams.addTeamManager,
+  );
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const candidates = useMemo<TeamManager[]>(() => {
+    return (memberData?.items ?? [])
+      .filter(
+        (row): row is GroupMemberRow & { user: NonNullable<GroupMemberRow["user"]> } =>
+          row.user !== null,
+      )
+      .map((row) => ({
+        userId: row.user.id,
+        name: `${row.user.firstName} ${row.user.lastName}`.trim() || "Member",
+        profilePhoto: row.user.profileImage,
+      }))
+      .filter((m) => !existingUserIds.has(m.userId as string));
+  }, [memberData?.items, existingUserIds]);
+
+  const handleAdd = useCallback(
+    async (manager: TeamManager) => {
+      setAdding(manager.userId as string);
+      try {
+        await addManager({ teamId, userId: manager.userId });
+        onClose();
+      } catch (e) {
+        Alert.alert("Couldn't add", errorMessage(e, "Please try again."));
+      } finally {
+        setAdding(null);
+      }
+    },
+    [addManager, teamId, onClose],
+  );
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={[styles.modalContainer, { backgroundColor: colors.surface }]}>
+        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>
+            Add manager
+          </Text>
+          <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <Ionicons name="close" size={26} color={colors.text} />
+          </TouchableOpacity>
+        </View>
+
+        {memberData === undefined ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="small" color={colors.text} />
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.modalScroll}>
+            <View
+              style={[
+                styles.group,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              {candidates.length === 0 ? (
+                <Text style={[styles.permEmpty, { color: colors.textSecondary }]}>
+                  Everyone in this group already manages this team.
+                </Text>
+              ) : (
+                candidates.map((manager, idx) => {
+                  const busy = adding === (manager.userId as string);
+                  return (
+                    <Pressable
+                      key={manager.userId}
+                      onPress={() => handleAdd(manager)}
+                      disabled={!!adding}
+                      style={({ pressed }) => [
+                        styles.permRow,
+                        idx > 0 && {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: colors.border,
+                        },
+                        pressed && { backgroundColor: colors.selectedBackground },
+                      ]}
+                    >
+                      <Avatar
+                        name={manager.name}
+                        imageUrl={manager.profilePhoto}
+                        size={36}
+                      />
+                      <Text
+                        style={[styles.permName, { color: colors.text }]}
+                        numberOfLines={1}
+                      >
+                        {manager.name}
+                      </Text>
+                      {busy ? (
+                        <ActivityIndicator size="small" color={colors.text} />
+                      ) : (
+                        <Ionicons
+                          name="add"
+                          size={20}
+                          color={colors.textSecondary}
+                        />
+                      )}
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+          </ScrollView>
+        )}
+      </View>
+    </Modal>
   );
 }
 
