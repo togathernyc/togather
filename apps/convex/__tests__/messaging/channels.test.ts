@@ -1078,6 +1078,55 @@ describe("createCustomChannel", () => {
     expect(result.slug).toBe("lic-boys");
   });
 
+  // Regression (MH group, 2026-07-27): channels a leader has *hidden*
+  // (`isEnabled: false`) fold into the collapsed "Archived · hidden from
+  // members" section of the channel list, exactly like archived ones. Counting
+  // them against the cap told the leader they were at 20 while the list showed
+  // 8 — with no visible channel left to archive, creation was permanently
+  // blocked. The group carried 12 disabled `pco_services` channels.
+  test("hidden (isEnabled: false) channels do not count toward the 20-channel limit", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } =
+      await createLeaderUser(t, communityId, groupId);
+
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      // 18 hidden PCO channels — visible to nobody, but not archived.
+      for (let i = 0; i < 18; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId,
+          slug: `pco-${i}`,
+          channelType: "pco_services",
+          name: `PCO ${i}`,
+          createdById: leaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          isEnabled: false,
+          memberCount: 0,
+        });
+      }
+      await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: leaderId,
+        createdAt: now,
+        updatedAt: now,
+        isArchived: false,
+        memberCount: 0,
+      });
+    });
+
+    const result = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "LIC Boys" }
+    );
+    expect(result.slug).toBe("lic-boys");
+  });
+
   test("enforces 20 channel limit", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId } = await seedTestData(t);

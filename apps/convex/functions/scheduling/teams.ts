@@ -16,7 +16,10 @@ import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { getDisplayName, getMediaUrl } from "../../lib/utils";
 import { generateChannelSlug } from "../../lib/slugs";
-import { updateChannelMemberCount } from "../messaging/helpers";
+import {
+  assertChannelCapacity,
+  updateChannelMemberCount,
+} from "../messaging/helpers";
 import {
   requireGroupMember,
   requireGroupScheduler,
@@ -45,9 +48,10 @@ function validateName(raw: string): string {
 /**
  * Insert the chat channel that backs a serving team — shared by
  * `createServingTeam` (initial creation) and `linkChannel` (a team gaining a
- * channel after the fact). Enforces the same 20-channel-per-group cap as
- * `createCustomChannel` and computes a slug unique across archived channels
- * too (see PR #400 thread: the `by_group_slug` index spans archived rows).
+ * channel after the fact). Enforces the same channel-list capacity cap as
+ * `createCustomChannel` (via the shared `assertChannelCapacity`) and computes a
+ * slug unique across archived channels too (see PR #400 thread: the
+ * `by_group_slug` index spans archived rows).
  */
 async function createTeamChannel(
   ctx: MutationCtx,
@@ -59,18 +63,12 @@ async function createTeamChannel(
     now: number;
   },
 ): Promise<Id<"chatChannels">> {
+  await assertChannelCapacity(ctx, args.groupId);
+
   const existingChannels = await ctx.db
     .query("chatChannels")
     .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
     .collect();
-  const activeChannelCount = existingChannels.filter(
-    (ch) => ch.isArchived === false,
-  ).length;
-  if (activeChannelCount >= 20) {
-    throw new ConvexError(
-      "This group has reached the maximum of 20 channels. Archive some channels to create new ones.",
-    );
-  }
   const existingSlugs = existingChannels
     .map((ch) => ch.slug)
     .filter((slug): slug is string => slug !== undefined);

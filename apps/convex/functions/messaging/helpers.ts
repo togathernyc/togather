@@ -4,6 +4,7 @@
  * Shared utilities for messaging functions (channels, messages, etc.)
  */
 
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { isCommunityAdmin } from "../../lib/permissions";
@@ -66,6 +67,66 @@ export async function updateChannelMemberCount(
     .collect();
 
   await ctx.db.patch(channelId, { memberCount: activeMembers.length });
+}
+
+/** How many channels a single group may have visible in its channel list. */
+export const MAX_CHANNELS_PER_GROUP = 20;
+
+/** The message shown when {@link assertChannelCapacity} rejects a creation. */
+export const CHANNEL_CAP_MESSAGE =
+  `This group has reached the maximum of ${MAX_CHANNELS_PER_GROUP} channels. ` +
+  `Archive or hide some channels to create new ones.`;
+
+/**
+ * Count the channels that occupy a group's channel-list capacity.
+ *
+ * "Occupies capacity" means exactly what a leader sees in the active section of
+ * the group's channel list (`ChannelsSection`), which folds three kinds of row
+ * out of view:
+ *
+ *  - **Archived** (`isArchived === true`).
+ *  - **Hidden** (`isEnabled === false`) — a leader turned the channel off. The
+ *    channel list groups these under "Archived · hidden from members" alongside
+ *    truly archived rows, so counting them against the cap tells the leader
+ *    they are at 20 while the list shows 8. This is what blocked serving-team
+ *    creation for a group carrying 12 disabled `pco_services` channels.
+ *  - **Event channels** (`channelType === "event"`) — auto-created one per
+ *    meeting, never listed, and unbounded over time.
+ *
+ * Keeping the cap's definition of "active" identical to the UI's is the whole
+ * point: a leader must always be able to act on the error by archiving or
+ * hiding a channel they can actually see.
+ */
+export async function countCapacityChannels(
+  ctx: QueryCtx,
+  groupId: Id<"groups">
+): Promise<number> {
+  const channels = await ctx.db
+    .query("chatChannels")
+    .withIndex("by_group", (q) => q.eq("groupId", groupId))
+    .collect();
+
+  return channels.filter(
+    (ch) =>
+      ch.isArchived === false &&
+      ch.isEnabled !== false &&
+      ch.channelType !== "event"
+  ).length;
+}
+
+/**
+ * Throw the shared cap error if `groupId` has no room for another channel.
+ * Used by every channel-creating path (custom, PCO services, serving team) so
+ * they can't drift apart on what counts.
+ */
+export async function assertChannelCapacity(
+  ctx: QueryCtx,
+  groupId: Id<"groups">
+): Promise<void> {
+  const count = await countCapacityChannels(ctx, groupId);
+  if (count >= MAX_CHANNELS_PER_GROUP) {
+    throw new ConvexError(CHANNEL_CAP_MESSAGE);
+  }
 }
 
 /** One entry of `chatChannels.sharedGroups`. */

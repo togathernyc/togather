@@ -32,6 +32,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 
 export function TeamCreateScreen() {
   const { colors } = useTheme();
@@ -72,7 +73,13 @@ export function TeamCreateScreen() {
         `/rostering/${groupId}/team/${result.teamId}` as never,
       );
     } catch (e: any) {
-      Alert.alert("Couldn't create team", e?.message ?? "Please try again.");
+      // ConvexError carries its text on `.data`; `.message` in production is
+      // the opaque "[CONVEX M(...)] Server Error" string, which rendered a
+      // plain "you're out of channels" message as an apparent server crash.
+      Alert.alert(
+        "Couldn't create team",
+        errorMessage(e, "Please try again."),
+      );
       setCreating(false);
     }
   }, [

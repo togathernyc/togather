@@ -25,6 +25,7 @@ import {
   updateChannelMemberCount,
   isCommunityAdminForGroup,
   findAcceptedSharedAnnouncementsChannelsForGroup,
+  assertChannelCapacity,
 } from "./helpers";
 import { matchesSearchTerms, parseSearchTerms } from "../../lib/memberSearch";
 import { canAccessEventChannel } from "./eventChat";
@@ -3044,27 +3045,9 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Only group leaders can create channels.");
     }
 
-    // 3. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    // Only channels a leader actually manages count toward the limit. Event
-    // channels are auto-created (one per meeting), hidden from the channel
-    // list, and accumulate without bound — counting them lets a group with
-    // lots of past events hit "maximum of 20 channels" while showing only a
-    // handful of real channels, blocking all manual channel creation.
-    const managedChannelCount = existingChannels.filter(
-      (ch) => ch.channelType !== "event"
-    ).length;
-
-    if (managedChannelCount >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 3. Only channels a leader actually sees in the channel list count toward
+    // the limit — see `countCapacityChannels` for what's excluded and why.
+    await assertChannelCapacity(ctx, args.groupId);
 
     // 4. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -3078,10 +3061,17 @@ export const createCustomChannel = mutation({
       throw new ConvexError("Channel name must contain at least one letter or number.");
     }
 
-    // 5. Get existing slugs for this group
+    // 5. Get existing slugs for this group. Archived and hidden channels are
+    // included: the `by_group_slug` index spans them, so a slug that collides
+    // with an archived row is still a collision (see PR #400 thread).
     // Note: Convex mutations are fully atomic (single transaction), so there's no
     // TOCTOU race condition here - concurrent mutations serialize at DB level
-    const existingSlugs = existingChannels
+    const existingSlugs = (
+      await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    )
       .map((ch) => ch.slug)
       .filter((slug): slug is string => slug !== undefined);
 
@@ -3225,18 +3215,8 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 4. Count existing non-archived channels for this group
-    const existingChannels = await ctx.db
-      .query("chatChannels")
-      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
-      .filter((q) => q.eq(q.field("isArchived"), false))
-      .collect();
-
-    if (existingChannels.length >= 20) {
-      throw new ConvexError(
-        "This group has reached the maximum of 20 channels. Archive some channels to create new ones."
-      );
-    }
+    // 4. Same channel-list capacity check as manual channel creation.
+    await assertChannelCapacity(ctx, args.groupId);
 
     // 5. Validate name: trim, check 1-50 chars
     const trimmedName = args.name.trim();
@@ -3284,8 +3264,14 @@ export const createAutoChannel = mutation({
       });
     }
 
-    // 6. Get existing slugs for this group
-    const existingSlugs = existingChannels
+    // 6. Get existing slugs for this group (archived/hidden included — the
+    // `by_group_slug` index spans them).
+    const existingSlugs = (
+      await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+        .collect()
+    )
       .map((ch) => ch.slug)
       .filter((slug): slug is string => slug !== undefined);
 

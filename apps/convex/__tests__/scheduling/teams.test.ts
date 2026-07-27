@@ -84,6 +84,84 @@ describe("createServingTeam", () => {
     });
   });
 
+  // Regression (MH group, 2026-07-27): a group carrying a pile of *hidden*
+  // (`isEnabled: false`) PCO channels could not create a serving team — the
+  // cap counted rows the leader sees under "Archived · hidden from members",
+  // so there was nothing visible left to archive. The cap now counts exactly
+  // what the channel list shows as active.
+  it("does not count hidden channels toward the channel cap", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId: world.groupId,
+          slug: `pco-hidden-${i}`,
+          channelType: "pco_services",
+          name: `PCO ${i}`,
+          createdById: world.groupLeaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          isEnabled: false,
+          memberCount: 0,
+        });
+      }
+    });
+
+    const { channelId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      { token: leaderToken, groupId: world.groupId, name: "Crew" },
+    );
+    expect(channelId).not.toBeNull();
+  });
+
+  it("rejects the team's channel once the visible channel cap is reached", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 20; i++) {
+        await ctx.db.insert("chatChannels", {
+          groupId: world.groupId,
+          slug: `visible-${i}`,
+          channelType: "custom",
+          name: `Visible ${i}`,
+          createdById: world.groupLeaderId,
+          createdAt: now,
+          updatedAt: now,
+          isArchived: false,
+          memberCount: 0,
+        });
+      }
+    });
+
+    await expect(
+      t.mutation(api.functions.scheduling.teams.createServingTeam, {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Crew",
+      }),
+    ).rejects.toThrow("maximum of 20 channels");
+
+    // …but a channel-less team still works — the cap is a channel constraint,
+    // not a team constraint, and the error message tells the leader as much.
+    const { teamId, channelId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      {
+        token: leaderToken,
+        groupId: world.groupId,
+        name: "Crew",
+        withChannel: false,
+      },
+    );
+    expect(teamId).toBeDefined();
+    expect(channelId).toBeNull();
+  });
+
   it("rejects an authenticated outsider with a ConvexError", async () => {
     const { t, world } = await setupSchedulingWorld();
     const outsiderToken = (await generateTokens(world.outsiderId)).accessToken;
