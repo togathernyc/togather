@@ -369,7 +369,12 @@ const styles = StyleSheet.create({
   },
   // Bounds the horizontal scroll frame to the row's free space so the status
   // tabs scroll within it rather than pushing the Mine/Everyone toggle out.
-  segmentScroll: { flex: 1 },
+  // minWidth:0 lets the ScrollView shrink below its content width on
+  // react-native-web (a flex item's default min-width is `auto`, i.e. its
+  // content size, which keeps the four-tab track from shrinking and makes it
+  // overflow into the Mine/Everyone toggle). No-op on native, where the
+  // min-width default is already 0.
+  segmentScroll: { flex: 1, minWidth: 0 },
   // Keep the track left-aligned; alignItems:center matches the row's baseline.
   segmentScrollContent: { alignItems: "center" },
   listContent: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 48 },

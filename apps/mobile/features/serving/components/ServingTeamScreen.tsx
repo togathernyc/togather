@@ -50,6 +50,11 @@ type RosterPerson = {
   profilePhoto: string | null;
   phone: string | null;
   isSelf: boolean;
+  /**
+   * Accept status. Declined people are never returned, so this is always
+   * "confirmed" or "unconfirmed" — unconfirmed cards get an "Unconfirmed" pill.
+   */
+  status: "confirmed" | "unconfirmed";
 };
 
 /** Column width for each team — wide enough for a name + role, snug on mobile. */
@@ -179,7 +184,7 @@ export function ServingTeamScreen() {
             color={colors.textTertiary}
           />
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No one else is confirmed to serve yet.
+            No one else is on the team yet.
           </Text>
         </View>
       ) : (
@@ -206,7 +211,7 @@ export function ServingTeamScreen() {
                 <Text
                   style={[styles.planEmpty, { color: colors.textTertiary }]}
                 >
-                  No confirmed volunteers yet.
+                  No one on this team yet.
                 </Text>
               ) : (
                 <ScrollView
@@ -300,11 +305,12 @@ function PersonCard({
       ]}
       accessibilityRole={actionable ? "button" : "text"}
       accessibilityLabel={
-        person.isSelf
+        (person.isSelf
           ? `${person.displayName} (you), ${person.roleName}`
           : actionable
             ? `Message ${person.displayName}, ${person.roleName}`
-            : `${person.displayName}, ${person.roleName}`
+            : `${person.displayName}, ${person.roleName}`) +
+        (person.status === "unconfirmed" ? ", unconfirmed" : "")
       }
     >
       <View style={styles.personTop}>
@@ -330,7 +336,28 @@ function PersonCard({
           {person.roleName}
         </Text>
       </View>
+      {person.status === "unconfirmed" ? (
+        <UnconfirmedBadge colors={colors} />
+      ) : null}
     </TouchableOpacity>
+  );
+}
+
+/**
+ * A small "Unconfirmed" pill for a teammate who's assigned but hasn't accepted
+ * yet. Reuses the leader roster's "awaiting" vocabulary (`colors.warning` + a
+ * clock icon) so unconfirmed reads the same everywhere in the app.
+ */
+function UnconfirmedBadge({
+  colors,
+}: {
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <View style={[styles.unconfirmedBadge, { backgroundColor: colors.warning }]}>
+      <Ionicons name="time-outline" size={11} color="#fff" />
+      <Text style={styles.unconfirmedText}>Unconfirmed</Text>
+    </View>
   );
 }
 
@@ -385,4 +412,19 @@ const styles = StyleSheet.create({
   roleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   roleDot: { width: 8, height: 8, borderRadius: 4 },
   roleText: { fontSize: 12, fontWeight: "500", flexShrink: 1 },
+  unconfirmedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  unconfirmedText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#fff",
+    letterSpacing: 0.2,
+  },
 });

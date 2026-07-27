@@ -7,7 +7,31 @@ import worker from "./cloudflare-worker.js";
 const APP_ORIGIN_URL = "https://togather.expo.app";
 const LANDING_PAGE_URL = "https://togather-landing.pages.dev";
 
-test("bot /e/:shortId fetches from Convex and returns OG tags", async () => {
+/**
+ * Build a mock `/link-preview/meta` response. All fields are already
+ * final/rendered per the Convex contract — the worker does no per-type
+ * logic of its own, it just lays this out in the shared OG template.
+ */
+function mockMeta(overrides = {}) {
+  return {
+    title: "RSVP to My Event Name",
+    description: "Monday, January 19, 2026 - 123 Main St",
+    image: "https://cdn.example.com/event.jpg",
+    url: "https://togather.nyc/e/abc123",
+    siteName: "My Community",
+    imageAlt: "My Event Name",
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Bot preview routes: content is delegated to the Convex `/link-preview/meta`
+// endpoint. These tests mock global fetch for that endpoint and assert the
+// worker renders the shared OG template (success) or the shared error
+// template (404 / network failure).
+// ---------------------------------------------------------------------------
+
+test("bot /e/:shortId fetches meta from Convex and returns OG tags", async () => {
   const calls = [];
 
   const originalFetch = globalThis.fetch;
@@ -15,25 +39,11 @@ test("bot /e/:shortId fetches from Convex and returns OG tags", async () => {
     const url = typeof input === "string" ? input : input.url;
     calls.push({ url, init });
 
-    // Convex backend fetch for event data
-    if (url.startsWith("https://example.convex.site/link-preview/event")) {
-      return new Response(
-        JSON.stringify({
-          id: "meeting_123",
-          shortId: "abc123",
-          title: "My Event Name",
-          scheduledAt: "2026-01-14T19:00:00.000Z",
-          status: "scheduled",
-          coverImage: "https://cdn.example.com/event.jpg",
-          groupName: "My Group",
-          groupImage: "https://cdn.example.com/group.jpg",
-          communityName: "My Community",
-          communityLogo: "https://cdn.example.com/community.jpg",
-          locationOverride: "123 Main St",
-          note: null,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify(mockMeta()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     // Fallback - should not be reached in this test
@@ -57,13 +67,173 @@ test("bot /e/:shortId fetches from Convex and returns OG tags", async () => {
     assert.match(html, /RSVP to My Event Name/);
     assert.match(html, /property="og:image"/);
     assert.match(html, /https:\/\/cdn\.example\.com\/event\.jpg/);
+    assert.match(html, /property="og:image:width" content="1200"/);
+    assert.match(html, /property="og:image:height" content="630"/);
+    assert.match(html, /name="twitter:card" content="summary_large_image"/);
+    assert.match(html, /http-equiv="refresh" content="0;url=https:\/\/togather\.nyc\/e\/abc123"/);
 
+    const expectedMetaUrl =
+      "https://example.convex.site/link-preview/meta?url=" +
+      encodeURIComponent("https://togather.nyc/e/abc123");
     assert.ok(
-      calls.some((c) =>
-        c.url === "https://example.convex.site/link-preview/event?shortId=abc123"
-      ),
-      "expected a Convex link-preview fetch"
+      calls.some((c) => c.url === expectedMetaUrl),
+      "expected a Convex link-preview meta fetch with the full request URL"
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot preview route without an image uses twitter:card summary (no image tags)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ image: null, imageAlt: undefined })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.doesNotMatch(html, /property="og:image"/);
+    assert.match(html, /name="twitter:card" content="summary"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("twitter:image:alt escapes the raw title fallback exactly once (not the already-escaped title)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ title: "Sam & Dean's Meetup", imageAlt: undefined })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    const html = await res.text();
+    const [, altAttr] = html.match(/name="twitter:image:alt" content="([^"]*)"/);
+    assert.equal(altAttr, "Sam &amp; Dean&#039;s Meetup");
+    // Guard against double-escaping ("&amp;amp;") which would occur if the
+    // fallback re-escaped the already-escaped title.
+    assert.doesNotMatch(html, /&amp;amp;/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("og:image:width/height use meta.imageWidth/imageHeight when provided (400x400 community-logo preview)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ imageWidth: 400, imageHeight: 400 })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    const html = await res.text();
+    assert.match(html, /property="og:image:width" content="400"/);
+    assert.match(html, /property="og:image:height" content="400"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot preview route renders the shared error template on a 404 from Convex", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify({ error: "Event not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/e/notfound", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
+
+    const html = await res.text();
+    assert.match(html, /Togather/);
+    assert.match(html, /http-equiv="refresh" content="0;url=https:\/\/togather\.nyc\/e\/notfound"/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot preview route renders the shared error template when the Convex fetch throws", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      throw new Error("network error");
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/g/abc123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Togather/);
+    assert.match(html, /http-equiv="refresh" content="0;url=https:\/\/togather\.nyc\/g\/abc123"/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -101,6 +271,405 @@ test("non-bot /e/:shortId passes through to EAS Hosting (app)", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+// ---------------------------------------------------------------------------
+// PREVIEW_ROUTES pattern coverage: /g/, /t/, /ch/, /nearme, and community
+// slugs all share the same bot/human dispatch, exercised once each here.
+// ---------------------------------------------------------------------------
+
+test("bot /g/:shortId fetches meta from Convex and returns OG tags", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ title: "Join My Group", url: "https://togather.nyc/g/g123" })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/g/g123", {
+      headers: { "User-Agent": "facebookexternalhit/1.1" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Join My Group/);
+    assert.ok(
+      calls.some((u) => u.includes(encodeURIComponent("https://togather.nyc/g/g123"))),
+      "expected a Convex meta fetch for the group short link"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /t/:shortId fetches meta from Convex and returns OG tags", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ title: "My Group - Run Sheet", url: "https://togather.nyc/t/t123" })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/t/t123", {
+      headers: { "User-Agent": "Slackbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /My Group - Run Sheet/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /ch/:shortId fetches meta from Convex and returns OG tags", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(
+          mockMeta({
+            title: "Join #worship-team in Sunday Service",
+            description: "Coordinate worship sets and rehearsals",
+            image: "https://cdn.example.com/group.jpg",
+            url: "https://togather.nyc/ch/xyz789",
+          })
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/xyz789", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
+
+    const html = await res.text();
+    assert.match(html, /property="og:title"/);
+    assert.match(html, /Join #worship-team in Sunday Service/);
+    assert.match(html, /property="og:description"/);
+    assert.match(html, /Coordinate worship sets and rehearsals/);
+    assert.match(html, /property="og:image"/);
+    assert.match(html, /https:\/\/cdn\.example\.com\/group\.jpg/);
+
+    const expectedMetaUrl =
+      "https://example.convex.site/link-preview/meta?url=" +
+      encodeURIComponent("https://togather.nyc/ch/xyz789");
+    assert.ok(calls.includes(expectedMetaUrl), "expected a Convex link-preview meta fetch");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("non-bot /ch/:shortId passes through to EAS Hosting (app)", async () => {
+  const calls = [];
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push({ url, init });
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/ch/xyz789", {
+      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)" },
+    });
+
+    const res = await worker.fetch(req, {
+      CONVEX_SITE_URL: "https://example.convex.site",
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "app content");
+
+    // Should pass through to EAS Hosting origin
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].url.startsWith(APP_ORIGIN_URL),
+      `expected fetch to ${APP_ORIGIN_URL}, got ${calls[0].url}`
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /nearme fetches meta from Convex and returns OG tags", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(
+          mockMeta({
+            title: "Find a Group Near You",
+            description: "Discover groups near you in Fount Church",
+            url: "https://fount.togather.nyc/nearme",
+          })
+        ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://fount.togather.nyc/nearme", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Find a Group Near You/);
+    assert.ok(
+      calls.some((u) => u.includes(encodeURIComponent("https://fount.togather.nyc/nearme"))),
+      "expected a Convex meta fetch carrying the full nearme request URL"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /nearme error fallback preserves the original query string in refresh/link", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify({ error: "Community not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://fount.togather.nyc/nearme?type=book-club", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(
+      html,
+      /http-equiv="refresh" content="0;url=https:\/\/fount\.togather\.nyc\/nearme\?type=book-club"/
+    );
+    assert.match(
+      html,
+      /<a href="https:\/\/fount\.togather\.nyc\/nearme\?type=book-club">/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("non-bot /nearme passes through to EAS Hosting (app)", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://fount.togather.nyc/nearme", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].startsWith(APP_ORIGIN_URL));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /:slug (community landing page) fetches meta from Convex and returns OG tags", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(
+        JSON.stringify(mockMeta({ title: "Fount Church", url: "https://togather.nyc/c/fount-church" })),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/fount-church", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Fount Church/);
+    assert.ok(
+      calls.some((u) => u.includes(encodeURIComponent("https://togather.nyc/fount-church"))),
+      "expected a Convex meta fetch for the community slug"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("human /:slug (community landing page) redirects to /c/:slug", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    return new Response("should not be called", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/fount-church?ref=share", {
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+      redirect: "manual",
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get("Location"), "https://togather.nyc/c/fount-church?ref=share");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot /:slug error fallback targets the canonical /c/:slug path, not the bare slug", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://example.convex.site/link-preview/meta")) {
+      return new Response(JSON.stringify({ error: "Community not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected fetch", { status: 500 });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/fount-church?ref=share", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(
+      html,
+      /http-equiv="refresh" content="0;url=https:\/\/togather\.nyc\/c\/fount-church\?ref=share"/
+    );
+    assert.match(
+      html,
+      /<a href="https:\/\/togather\.nyc\/c\/fount-church\?ref=share">/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("known app route (e.g. /admin) is not treated as a community slug", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/admin", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    // No Convex meta fetch, no redirect - straight passthrough to the app.
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].startsWith(APP_ORIGIN_URL));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bot on an invalid short-id format passes through instead of matching a preview route", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    // "!" is not in [a-zA-Z0-9], so this shouldn't match SHORT_ID_ROUTE_PATTERN.
+    const req = new Request("https://togather.nyc/e/abc!123", {
+      headers: { "User-Agent": "Twitterbot" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(
+      calls[0].startsWith(APP_ORIGIN_URL),
+      "invalid shortId format should pass through to the app, not hit Convex"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Kept behavior: static routing, .well-known files, bot detection on the
+// homepage, and landing-page passthrough. None of this depends on the
+// Convex link-preview contract.
+// ---------------------------------------------------------------------------
 
 test("root path (/) for humans passes through to landing page", async () => {
   const calls = [];
@@ -622,223 +1191,6 @@ test("/contribute/:slug sub-pages pass through to landing page", async () => {
       calls[0].url.startsWith(LANDING_PAGE_URL),
       `expected fetch to ${LANDING_PAGE_URL}, got ${calls[0].url}`
     );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-// Channel invite link preview tests (/ch/:shortId)
-test("bot /ch/:shortId fetches from Convex and returns OG tags", async () => {
-  const calls = [];
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    calls.push({ url, init });
-
-    // Convex backend fetch for channel data
-    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
-      return new Response(
-        JSON.stringify({
-          channelName: "worship-team",
-          channelDescription: "Coordinate worship sets and rehearsals",
-          groupName: "Sunday Service",
-          groupImage: "https://cdn.example.com/group.jpg",
-          communityName: "My Community",
-          communityLogo: "https://cdn.example.com/community.jpg",
-          memberCount: 12,
-          joinMode: "open",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Fallback - should not be reached in this test
-    return new Response("unexpected fetch", { status: 500 });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/ch/xyz789", {
-      headers: { "User-Agent": "Twitterbot" },
-    });
-
-    const res = await worker.fetch(req, {
-      CONVEX_SITE_URL: "https://example.convex.site",
-    });
-
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
-
-    const html = await res.text();
-    assert.match(html, /property="og:title"/);
-    assert.match(html, /Join #worship-team in Sunday Service/);
-    assert.match(html, /property="og:description"/);
-    assert.match(html, /Coordinate worship sets and rehearsals/);
-    assert.match(html, /property="og:image"/);
-    assert.match(html, /https:\/\/cdn\.example\.com\/group\.jpg/);
-    assert.match(html, /12 members/);
-
-    assert.ok(
-      calls.some((c) =>
-        c.url === "https://example.convex.site/link-preview/channel?shortId=xyz789"
-      ),
-      "expected a Convex link-preview fetch"
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("bot /ch/:shortId returns error HTML when channel not found", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = typeof input === "string" ? input : input.url;
-
-    // Convex backend returns 404
-    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
-      return new Response(
-        JSON.stringify({ error: "Channel not found" }),
-        { status: 404, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    return new Response("unexpected fetch", { status: 500 });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/ch/notfound", {
-      headers: { "User-Agent": "Slackbot" },
-    });
-
-    const res = await worker.fetch(req, {
-      CONVEX_SITE_URL: "https://example.convex.site",
-    });
-
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get("Content-Type"), "text/html; charset=utf-8");
-
-    const html = await res.text();
-    assert.match(html, /Channel \| Togather/);
-    assert.match(html, /Join this channel on Togather/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("non-bot /ch/:shortId passes through to EAS Hosting (app)", async () => {
-  const calls = [];
-
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    calls.push({ url, init });
-    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/ch/xyz789", {
-      headers: { "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)" },
-    });
-
-    const res = await worker.fetch(req, {
-      CONVEX_SITE_URL: "https://example.convex.site",
-    });
-
-    assert.equal(res.status, 200);
-    assert.equal(await res.text(), "app content");
-
-    // Should pass through to EAS Hosting origin
-    assert.equal(calls.length, 1);
-    assert.ok(
-      calls[0].url.startsWith(APP_ORIGIN_URL),
-      `expected fetch to ${APP_ORIGIN_URL}, got ${calls[0].url}`
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("bot /ch/:shortId without description uses generated description", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = typeof input === "string" ? input : input.url;
-
-    if (url.startsWith("https://example.convex.site/link-preview/channel")) {
-      return new Response(
-        JSON.stringify({
-          channelName: "general",
-          channelDescription: null,
-          groupName: "Youth Group",
-          groupImage: null,
-          communityName: "My Church",
-          communityLogo: null,
-          memberCount: 5,
-          joinMode: "open",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    return new Response("unexpected fetch", { status: 500 });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/ch/abc456", {
-      headers: { "User-Agent": "Discordbot" },
-    });
-
-    const res = await worker.fetch(req, {
-      CONVEX_SITE_URL: "https://example.convex.site",
-    });
-
-    assert.equal(res.status, 200);
-
-    const html = await res.text();
-    assert.match(html, /Join #general in Youth Group/);
-    // Should use generated description when channelDescription is null
-    assert.match(html, /Join the #general channel in Youth Group on My Church/);
-    assert.match(html, /5 members/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("bot /e/:shortId falls back to New York when timezone is invalid", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = typeof input === "string" ? input : input.url;
-    if (url.startsWith("https://example.convex.site/link-preview/event")) {
-      return new Response(
-        JSON.stringify({
-          id: "meeting_123",
-          shortId: "abc123",
-          title: "My Event Name",
-          scheduledAt: "2026-06-03T19:00:00.000Z",
-          status: "scheduled",
-          groupName: "My Group",
-          // Legacy non-IANA value that makes toLocaleDateString throw.
-          timezone: "Eastern Time (US & Canada)",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
-    }
-    return new Response("unexpected fetch", { status: 500 });
-  };
-
-  try {
-    const req = new Request("https://togather.nyc/e/abc123", {
-      headers: { "User-Agent": "Twitterbot" },
-    });
-
-    const res = await worker.fetch(req, {
-      CONVEX_SITE_URL: "https://example.convex.site",
-    });
-
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    // The date must still render (in NY time) rather than vanishing entirely.
-    assert.match(html, /June 3, 2026/);
-    assert.match(html, /EDT/);
   } finally {
     globalThis.fetch = originalFetch;
   }

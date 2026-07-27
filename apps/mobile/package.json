@@ -153,6 +153,7 @@
     "@babel/preset-typescript": "^7.23.0",
     "@expo/server": "^0.7.5",
     "@jest/test-sequencer": "^29.7.0",
+    "@supa-media/native-safety": "^1.1.0",
     "@testing-library/jest-dom": "^6.1.5",
     "@testing-library/jest-native": "^5.4.3",
     "@testing-library/react-native": "^12.4.3",

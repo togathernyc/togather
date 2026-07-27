@@ -93,7 +93,8 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   setCommunity: (community: Community) => Promise<void>;
   clearCommunity: () => Promise<void>;
-  exitToCommunitySelection: () => Promise<void>;
+  /** Resolves `true` only if the community-less token re-mint actually succeeded. */
+  exitToCommunitySelection: () => Promise<boolean>;
   signIn: (userId: string, tokens?: { accessToken?: string; refreshToken?: string }) => Promise<void>;
 }
 
@@ -822,8 +823,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * to the archived community, which the server now hard-rejects) and wipes the
    * per-community caches so no stale, archived content stays browsable. The
    * caller is responsible for navigating to community selection afterward.
+   *
+   * Returns `true` only if the token re-mint actually succeeded — callers that
+   * need to detect a failed recovery (e.g. AuthErrorBoundary, which must not
+   * treat a transient network failure as success and remount into a repeat
+   * COMMUNITY_ARCHIVED throw) should check this instead of assuming success
+   * just because the call didn't throw.
    */
-  const exitToCommunitySelection = useCallback(async () => {
+  const exitToCommunitySelection = useCallback(async (): Promise<boolean> => {
     console.log("🔄 AuthProvider: Exiting to community selection (archived)");
 
     // Clear the server-side active community (tolerated for archived).
@@ -831,7 +838,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Re-mint a token with NO community so requireAuth stops rejecting requests
     // as COMMUNITY_ARCHIVED while the user is on the selection screen.
-    await refreshAuthTokens();
+    // refreshAuthTokens() catches internally and returns false on failure
+    // (e.g. transient network error) rather than throwing — propagate that
+    // result so the caller can tell a genuinely failed recovery apart from
+    // success instead of the token silently staying poisoned.
+    const refreshed = await refreshAuthTokens();
 
     // Wipe per-community caches (mirror logout's cache teardown, minus the auth
     // tokens/user) so archived-community data isn't left browsable offline.
@@ -866,6 +877,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useGridColumnWidths.getState().clearAll();
 
     setCommunityState(null);
+    return refreshed;
   }, [clearCommunity, refreshAuthTokens]);
 
   /**

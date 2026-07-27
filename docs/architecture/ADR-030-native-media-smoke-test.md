@@ -24,8 +24,8 @@ rendering**:
 - **Web E2E / Metro bundle** pass — web uses HTML5 `<video>` and DOM `<img>`,
   never Fabric. The web surface renders fine while native is broken.
 
-We already added two static guards (see ADR-013 and
-`scripts/check-react-consistency.js`). Those catch the *known mechanism* (a
+We already added two static guards (see ADR-013 and the `check-react-consistency`
+CLI from `@supa-media/native-safety`). Those catch the *known mechanism* (a
 second React / a denylisted library). They cannot catch a **novel** mechanism
 that breaks native rendering without tripping either heuristic. The only thing
 that reliably catches "a JS change broke native rendering" is **driving the real
@@ -97,8 +97,8 @@ denylist); this smoke test is the backstop for anything they miss.
 
 Until the Maestro smoke test is implemented, three things stand in for it:
 
-1. **`scripts/check-react-consistency.js`** — fails CI on a second/mismatched
-   React in the native graph (the #548 *mechanism*).
+1. **`check-react-consistency`** (from `@supa-media/native-safety`) — fails CI
+   on a second/mismatched React in the native graph (the #548 *mechanism*).
 2. **Native-unsafe denylist** in the same script — fails CI if `@mui/`,
    `@emotion/`, `@material-ui/`, or `styled-components` enter
    `apps/mobile/package.json` (the #548 *libraries*).
@@ -121,7 +121,7 @@ Until the Maestro smoke test is implemented, three things stand in for it:
 
 - ADR-013 — Mobile Versioning and OTA Updates (§"Guarding against JS changes
   that break native rendering").
-- `apps/mobile/scripts/check-react-consistency.js` — layers 1 & 2.
+- `check-react-consistency` (from `@supa-media/native-safety`) — layers 1 & 2.
 - `apps/mobile/features/chat/components/VideoPlayer.tsx` — tier chain.
 - `apps/mobile/app/e/[shortId]/rsvp/success.tsx` — bundled RSVP GIFs.
 - `apps/mobile/features/chat/components/GifPicker.tsx` — remote GIFs.

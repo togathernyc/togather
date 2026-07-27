@@ -316,7 +316,8 @@ web never touches Fabric).
 
 We defend this with **three layers**:
 
-1. **React-consistency check** (`scripts/check-react-consistency.js`, gate #1) —
+1. **React-consistency check** (`check-react-consistency` from
+   `@supa-media/native-safety`, gate #1) —
    fails CI if any Expo/React-Native native package in `pnpm-lock.yaml` is keyed
    to a React version other than the one `apps/mobile` pins. Catches the #548
    *mechanism* (a second React in the native graph). Runs per-PR.
@@ -399,11 +400,11 @@ structural gap ADR-030 (native media smoke test) exists to close.
 
 **Guards now in place (map to the three layers above).**
 
-- `apps/mobile/scripts/check-react-consistency.js` runs in CI (the `test-mobile`
-  job) and fails if (a) any native package — matched via prefix + `native-deps.json`
-  — is keyed to a React version other than the pinned one, or (b) a denylisted
-  library (`@mui/`, `@emotion/`, `@material-ui/`, `styled-components`,
-  `react-datepicker`) appears in `apps/mobile` deps.
+- `check-react-consistency` (from `@supa-media/native-safety`) runs in CI (the
+  `test-mobile` job) and fails if (a) any native package — matched via prefix +
+  `native-deps.json` — is keyed to a React version other than the pinned one,
+  or (b) a denylisted library (`@mui/`, `@emotion/`, `@material-ui/`,
+  `styled-components`, `react-datepicker`) appears in `apps/mobile` deps.
 - Web-only UI in `apps/mobile` must be **dependency-free** (e.g. a native
   `<input>` in a `.web.tsx` file), **not** a React component library.
 - ADR-030 (native media smoke test, on a real device) is the only layer that
