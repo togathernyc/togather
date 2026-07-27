@@ -77,7 +77,19 @@ export const rosterMatrix = query({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireGroupScheduler(ctx, args.groupId, userId);
+    // Team managers are schedulers for their own teams, so they must be able to
+    // load the grid — it's the only surface for assigning and publishing. They
+    // see the whole group's roster (the same data a leader sees); what's scoped
+    // is what they can *change*, which every mutation enforces on its own. The
+    // grid opens narrowed to their teams via `isManagedByMe` below.
+    const managedTeamIds = await managedTeamIdsInGroup(
+      ctx,
+      args.groupId,
+      userId,
+    );
+    if (managedTeamIds.length === 0) {
+      await requireGroupScheduler(ctx, args.groupId, userId);
+    }
 
     const cap = Math.max(
       1,
@@ -310,15 +322,10 @@ export const rosterMatrix = query({
     const channelDocs = await Promise.all(
       teamDocsList.map((t) => (t.channelId ? ctx.db.get(t.channelId) : Promise.resolve(null))),
     );
-    // Teams the caller explicitly manages. The grid opens scoped to these and
-    // the publish picker pre-selects them; an empty list means the caller
-    // manages no team here (a plain group leader), who keeps the unchanged
-    // all-teams view.
-    const managedTeamIds = await managedTeamIdsInGroup(
-      ctx,
-      args.groupId,
-      userId,
-    );
+    // Teams the caller explicitly manages (resolved at the top, where they also
+    // gate access). The grid opens scoped to these and the publish picker
+    // pre-selects them; an empty list means the caller manages no team here (a
+    // plain group leader), who keeps the unchanged all-teams view.
     const managedSet = new Set(managedTeamIds.map((id) => id.toString()));
 
     const teams = teamDocsList

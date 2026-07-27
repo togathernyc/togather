@@ -1834,7 +1834,15 @@ export const getAssignmentPlanForResend = internalQuery({
     if (!assignment) {
       throw new ConvexError("Assignment not found");
     }
-    await requirePlanScheduler(ctx, assignment.planId, args.callerId);
+    // Scoped to the assignment's own team, matching assign / unassign / publish
+    // — otherwise a manager could publish their team in bulk but hit an
+    // authorization error re-sending to one of their own volunteers.
+    await requirePlanTeamScheduler(
+      ctx,
+      assignment.planId,
+      assignment.teamId,
+      args.callerId,
+    );
     // Only re-send to volunteers who haven't answered yet. The fan-out
     // (`getAssignmentRequestTargets`) targets `unconfirmed` assignments only, so
     // returning a plan id for a confirmed *or* declined assignment would report

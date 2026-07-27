@@ -311,6 +311,159 @@ describe("team manager permissions", () => {
     expect(roleId).toBeDefined();
   });
 
+  // The grid is the only surface for assigning and publishing, so a manager
+  // who is not a group leader must be able to load it — otherwise the whole
+  // feature is unreachable for the people it exists for.
+  it("a manager who is not a group leader can load the roster grid", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const managerToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+
+    // A plain group member cannot.
+    await expect(
+      t.query(api.functions.scheduling.roster.rosterMatrix, {
+        token: managerToken,
+        groupId: world.groupId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.channelMemberId,
+    });
+
+    const matrix = await t.query(
+      api.functions.scheduling.roster.rosterMatrix,
+      { token: managerToken, groupId: world.groupId },
+    );
+    expect(
+      matrix.teams.find((tm) => tm.teamId === world.teamId)?.isManagedByMe,
+    ).toBe(true);
+  });
+
+  // `groupMembers.remove` only stamps `leftAt`; it doesn't delete manager rows.
+  // Authority must lapse anyway, or a removed member keeps publishing.
+  it("manager authority lapses when the person leaves the group", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const managerToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    const planId = await makeEvent(t, world, leaderToken);
+
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.channelMemberId,
+    });
+
+    // They leave the campus group — the `teamManagers` row survives.
+    await t.run(async (ctx) => {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", world.groupId).eq("userId", world.channelMemberId),
+        )
+        .first();
+      if (membership) {
+        await ctx.db.patch(membership._id, { leftAt: Date.now() });
+      }
+    });
+
+    const rowStillThere = await t.run((ctx) =>
+      ctx.db
+        .query("teamManagers")
+        .withIndex("by_team_user", (q) =>
+          q.eq("teamId", world.teamId).eq("userId", world.channelMemberId),
+        )
+        .first(),
+    );
+    expect(rowStillThere).not.toBeNull();
+
+    await expect(
+      t.mutation(api.functions.scheduling.assignments.assignRole, {
+        token: managerToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.staleGroupMemberId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    await expect(
+      t.action(api.functions.scheduling.assignments.publishEvent, {
+        token: managerToken,
+        planId,
+        teamIds: [world.teamId],
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  // A manager who can publish their team in bulk must also be able to nudge one
+  // of their own volunteers — same team scope for both.
+  it("a manager can re-send a request to their own volunteer", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const managerToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    const planId = await makeEvent(t, world, leaderToken);
+
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.channelMemberId,
+    });
+    const { assignmentId } = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.staleGroupMemberId,
+      },
+    );
+
+    const result = await t.action(
+      api.functions.scheduling.assignments.resendAssignmentRequest,
+      { token: managerToken, assignmentId },
+    );
+    expect(result.scheduled).toBe(true);
+  });
+
+  it("a manager cannot re-send for a team they do not manage", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const managerToken = (await generateTokens(world.channelMemberId))
+      .accessToken;
+    const planId = await makeEvent(t, world, leaderToken);
+    const other = await makeSecondTeam(t, world, leaderToken);
+
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId: world.teamId,
+      userId: world.channelMemberId,
+    });
+    const { assignmentId } = await t.mutation(
+      api.functions.scheduling.assignments.assignRole,
+      {
+        token: leaderToken,
+        planId,
+        teamId: other.teamId,
+        roleId: other.roleId,
+        userId: world.staleGroupMemberId,
+      },
+    );
+
+    await expect(
+      t.action(api.functions.scheduling.assignments.resendAssignmentRequest, {
+        token: managerToken,
+        assignmentId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
   it("rosterMatrix reports which teams the caller manages", async () => {
     const { t, world } = await setupSchedulingWorld();
     const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;

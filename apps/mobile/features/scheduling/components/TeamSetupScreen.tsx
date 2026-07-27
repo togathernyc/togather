@@ -340,7 +340,9 @@ export function TeamSetupScreen() {
             <RolesEditor teamId={teamId} />
           </View>
 
-          {team.hasChannel && (
+          {/* Managers are independent of chat — a channel-less team is a pure
+              roster, and still needs someone to run it. */}
+          {!team.isArchived && (
             <View style={styles.section}>
               <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
                 MANAGERS
@@ -354,7 +356,9 @@ export function TeamSetupScreen() {
             </View>
           )}
 
-          {!team.isArchived && (
+          {/* Permanent members ARE a channel concept — `listPermanentMembers`
+              throws for a channel-less team, so this guard is load-bearing. */}
+          {team.hasChannel && !team.isArchived && (
             <View style={styles.section}>
               <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
                 PERMANENT MEMBERS

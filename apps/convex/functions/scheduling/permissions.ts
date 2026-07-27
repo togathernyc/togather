@@ -60,8 +60,19 @@ export async function isTeamManager(
       q.eq("teamId", teamId).eq("userId", userId),
     )
     .first();
-  return row !== null;
+  if (!row) return false;
+
+  // Membership is re-verified on every check rather than cleaned up when
+  // someone leaves. `groupMembers.remove` only stamps `leftAt`, and there are
+  // several ways out of a group (removed, left, request revoked) — a stale
+  // `teamManagers` row must never be enough on its own to keep publishing to
+  // a team you're no longer part of. Verifying here means no exit path can be
+  // missed.
+  const team = await ctx.db.get(teamId);
+  if (!team) return false;
+  return isActiveGroupMember(ctx, team.groupId, userId);
 }
+
 
 /**
  * The teams within `groupId` that `userId` explicitly manages.
@@ -81,6 +92,11 @@ export async function managedTeamIdsInGroup(
     .query("teamManagers")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .collect();
+
+  // A manager who has left the group manages nothing — same rule as
+  // `isTeamManager`, checked once for the group rather than per team.
+  if (rows.length === 0) return [];
+  if (!(await isActiveGroupMember(ctx, groupId, userId))) return [];
 
   const managed = await Promise.all(
     rows.map(async (row) => {
