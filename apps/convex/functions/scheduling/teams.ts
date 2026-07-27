@@ -157,12 +157,18 @@ export const createServingTeam = mutation({
     description: v.optional(v.string()),
     /** Whether to also create the team's chat channel. Defaults to `true`. */
     withChannel: v.optional(v.boolean()),
+    /**
+     * Who manages this team's roster from the start. Each must already be an
+     * active member of the campus group; non-members are skipped rather than
+     * failing the whole creation.
+     */
+    managerUserIds: v.optional(v.array(v.id("users"))),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     const group = await requireGroupScheduler(ctx, args.groupId, userId);
 
-    return createServingTeamImpl(ctx, {
+    const result = await createServingTeamImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
       name: args.name,
@@ -170,6 +176,188 @@ export const createServingTeam = mutation({
       createdById: userId,
       withChannel: args.withChannel,
     });
+
+    // Managers are set explicitly, never implied. The creator is *not* added
+    // automatically: a group leader who creates all seven of a campus's teams
+    // would end up "managing" all seven, which would defeat the grid's
+    // default-to-my-teams scoping for the one person it most needs to help.
+    // The create screen pre-fills the creator into this list instead, so it
+    // stays a visible, removable choice.
+    for (const managerId of dedupeIds(args.managerUserIds ?? [])) {
+      const membership = await ctx.db
+        .query("groupMembers")
+        .withIndex("by_group_user", (q) =>
+          q.eq("groupId", args.groupId).eq("userId", managerId),
+        )
+        .filter((q) => q.eq(q.field("leftAt"), undefined))
+        .first();
+      // Skip rather than throw: a stale picker row shouldn't lose the team the
+      // leader just filled out. `addTeamManager` gates strictly.
+      if (!membership) continue;
+
+      await addTeamManagerImpl(ctx, {
+        teamId: result.teamId,
+        userId: managerId,
+        communityId: group.communityId,
+        addedById: userId,
+      });
+    }
+
+    return result;
+  },
+});
+
+// ============================================================================
+// Team managers (ADR-025)
+// ============================================================================
+
+/** Drop duplicate ids while preserving order. */
+function dedupeIds<T extends string>(ids: T[]): T[] {
+  return [...new Set(ids)];
+}
+
+/**
+ * Insert a `teamManagers` row, ignoring a repeat add. Callers are responsible
+ * for auth and for checking the user belongs to the team's campus group.
+ */
+async function addTeamManagerImpl(
+  ctx: MutationCtx,
+  args: {
+    teamId: Id<"teams">;
+    userId: Id<"users">;
+    communityId: Id<"communities">;
+    addedById: Id<"users">;
+  },
+): Promise<void> {
+  const existing = await ctx.db
+    .query("teamManagers")
+    .withIndex("by_team_user", (q) =>
+      q.eq("teamId", args.teamId).eq("userId", args.userId),
+    )
+    .first();
+  if (existing) return;
+
+  await ctx.db.insert("teamManagers", {
+    teamId: args.teamId,
+    userId: args.userId,
+    communityId: args.communityId,
+    addedById: args.addedById,
+    addedAt: Date.now(),
+  });
+}
+
+/**
+ * List a team's managers (ADR-025).
+ *
+ * Auth: an active member of the team's campus group, or a community admin —
+ * the same read gate as `getTeam`. Volunteers can see who runs their team.
+ */
+export const listTeamManagers = query({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    const team = await requireTeam(ctx, args.teamId);
+    await requireGroupMember(ctx, team.groupId, userId);
+
+    const rows = await ctx.db
+      .query("teamManagers")
+      .withIndex("by_team", (q) => q.eq("teamId", args.teamId))
+      .collect();
+
+    const managers = await Promise.all(
+      rows.map(async (row) => {
+        const user = await ctx.db.get(row.userId);
+        if (!user) return null;
+        return {
+          userId: row.userId,
+          name: getDisplayName(user.firstName, user.lastName),
+          profilePhoto: getMediaUrl(user.profilePhoto),
+          addedAt: row.addedAt,
+        };
+      }),
+    );
+
+    return managers
+      .filter((m): m is NonNullable<typeof m> => m !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  },
+});
+
+/**
+ * Add a manager to a team (ADR-025).
+ *
+ * Auth: campus group leader or community admin. Deliberately *not* open to
+ * existing team managers — managing a roster and deciding who else may manage
+ * it are different levels of trust, and the leader stays the one who delegates.
+ *
+ * The user must already be an active member of the team's campus group;
+ * managing a team you can't see would be meaningless.
+ */
+export const addTeamManager = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    const team = await requireTeam(ctx, args.teamId);
+    await requireGroupScheduler(ctx, team.groupId, callerId);
+
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", team.groupId).eq("userId", args.userId),
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (!membership) {
+      throw new ConvexError(
+        "Add this person to the group before making them a team manager.",
+      );
+    }
+
+    await addTeamManagerImpl(ctx, {
+      teamId: args.teamId,
+      userId: args.userId,
+      communityId: team.communityId,
+      addedById: callerId,
+    });
+
+    return { teamId: args.teamId, userId: args.userId };
+  },
+});
+
+/**
+ * Remove a manager from a team (ADR-025). No-op if they weren't one.
+ *
+ * Auth: campus group leader or community admin — same as `addTeamManager`.
+ */
+export const removeTeamManager = mutation({
+  args: {
+    token: v.string(),
+    teamId: v.id("teams"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+    const team = await requireTeam(ctx, args.teamId);
+    await requireGroupScheduler(ctx, team.groupId, callerId);
+
+    const existing = await ctx.db
+      .query("teamManagers")
+      .withIndex("by_team_user", (q) =>
+        q.eq("teamId", args.teamId).eq("userId", args.userId),
+      )
+      .first();
+    if (existing) {
+      await ctx.db.delete(existing._id);
+    }
+
+    return { teamId: args.teamId, userId: args.userId };
   },
 });
 

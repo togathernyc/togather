@@ -21,7 +21,27 @@ import { query } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
-import { requireGroupMember, requireGroupScheduler } from "./permissions";
+import {
+  managedTeamIdsInGroup,
+  requireGroupMember,
+  requireGroupScheduler,
+} from "./permissions";
+
+/**
+ * Tally unconfirmed assignments per serving team. Feeds the publish picker,
+ * which needs a per-team count to label each checkbox.
+ */
+function countPendingByTeam(
+  assignments: Doc<"roleAssignments">[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const a of assignments) {
+    if (a.status !== "unconfirmed") continue;
+    const key = a.teamId as string;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
 
 /** Column cap — a leader rosters a horizon of upcoming events. */
 const MAX_EVENTS = 10;
@@ -57,7 +77,19 @@ export const rosterMatrix = query({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireGroupScheduler(ctx, args.groupId, userId);
+    // Team managers are schedulers for their own teams, so they must be able to
+    // load the grid — it's the only surface for assigning and publishing. They
+    // see the whole group's roster (the same data a leader sees); what's scoped
+    // is what they can *change*, which every mutation enforces on its own. The
+    // grid opens narrowed to their teams via `isManagedByMe` below.
+    const managedTeamIds = await managedTeamIdsInGroup(
+      ctx,
+      args.groupId,
+      userId,
+    );
+    if (managedTeamIds.length === 0) {
+      await requireGroupScheduler(ctx, args.groupId, userId);
+    }
 
     const cap = Math.max(
       1,
@@ -121,6 +153,10 @@ export const rosterMatrix = query({
       // needed role (which have no `roleCells` entry), so the grid's publish
       // confirm dialog can't undercount the request fan-out.
       pendingCount: assignments.filter((a) => a.status === "unconfirmed").length,
+      // The same count broken out per serving team, so the publish picker can
+      // label each checkbox and total only the teams actually selected without
+      // a second round-trip.
+      pendingByTeam: countPendingByTeam(assignments),
     }));
 
     // --- Resolve display names for every role and user referenced. ---
@@ -286,12 +322,19 @@ export const rosterMatrix = query({
     const channelDocs = await Promise.all(
       teamDocsList.map((t) => (t.channelId ? ctx.db.get(t.channelId) : Promise.resolve(null))),
     );
+    // Teams the caller explicitly manages (resolved at the top, where they also
+    // gate access). The grid opens scoped to these and the publish picker
+    // pre-selects them; an empty list means the caller manages no team here (a
+    // plain group leader), who keeps the unchanged all-teams view.
+    const managedSet = new Set(managedTeamIds.map((id) => id.toString()));
+
     const teams = teamDocsList
       .map((t, idx) => ({
         teamId: t._id,
         teamName: t.name,
         hasChannel: t.channelId !== undefined,
         channelMemberCount: channelDocs[idx]?.memberCount ?? 0,
+        isManagedByMe: managedSet.has(t._id.toString()),
       }))
       .sort((a, b) => a.teamName.localeCompare(b.teamName));
 

@@ -43,15 +43,87 @@ export async function requireTeam(
 }
 
 /**
- * Whether `userId` may manage `team`'s schedule — the team channel's
- * admin/moderator (when the team has a channel), OR the campus group leader,
- * OR a community admin.
+ * Whether `userId` is an explicit manager of `teamId` (ADR-025).
+ *
+ * This is roster authority scoped to a single team: it lets someone send that
+ * team's serving requests and fill its roster without being a campus group
+ * leader. It never grants anything outside the team.
+ */
+export async function isTeamManager(
+  ctx: QueryCtx | MutationCtx,
+  teamId: Id<"teams">,
+  userId: Id<"users">,
+): Promise<boolean> {
+  const row = await ctx.db
+    .query("teamManagers")
+    .withIndex("by_team_user", (q) =>
+      q.eq("teamId", teamId).eq("userId", userId),
+    )
+    .first();
+  if (!row) return false;
+
+  // Membership is re-verified on every check rather than cleaned up when
+  // someone leaves. `groupMembers.remove` only stamps `leftAt`, and there are
+  // several ways out of a group (removed, left, request revoked) — a stale
+  // `teamManagers` row must never be enough on its own to keep publishing to
+  // a team you're no longer part of. Verifying here means no exit path can be
+  // missed.
+  const team = await ctx.db.get(teamId);
+  if (!team) return false;
+  return isActiveGroupMember(ctx, team.groupId, userId);
+}
+
+
+/**
+ * The teams within `groupId` that `userId` explicitly manages.
+ *
+ * Drives the roster grid's default scope and the publish picker's
+ * pre-selection. Group leaders are deliberately *not* special-cased here: a
+ * leader who manages no team gets an empty list and therefore the unchanged
+ * "all teams" view, while a leader who does manage teams gets the same helpful
+ * narrowing as anyone else (they can still widen the filter at any time).
+ */
+export async function managedTeamIdsInGroup(
+  ctx: QueryCtx | MutationCtx,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Id<"teams">[]> {
+  const rows = await ctx.db
+    .query("teamManagers")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+
+  // A manager who has left the group manages nothing — same rule as
+  // `isTeamManager`, checked once for the group rather than per team.
+  if (rows.length === 0) return [];
+  if (!(await isActiveGroupMember(ctx, groupId, userId))) return [];
+
+  const managed = await Promise.all(
+    rows.map(async (row) => {
+      const team = await ctx.db.get(row.teamId);
+      return team && team.groupId === groupId && team.isArchived !== true
+        ? row.teamId
+        : null;
+    }),
+  );
+  return managed.filter((id): id is Id<"teams"> => id !== null);
+}
+
+/**
+ * Whether `userId` may manage `team`'s schedule — an explicit team manager, OR
+ * the team channel's admin/moderator (when the team has a channel), OR the
+ * campus group leader, OR a community admin.
  */
 export async function isTeamScheduler(
   ctx: QueryCtx | MutationCtx,
   team: Doc<"teams">,
   userId: Id<"users">,
 ): Promise<boolean> {
+  // 0. Explicit team manager.
+  if (await isTeamManager(ctx, team._id, userId)) {
+    return true;
+  }
+
   // 1. Team channel admin / moderator (only if the team has a channel).
   if (team.channelId) {
     const channelId = team.channelId;
@@ -350,4 +422,45 @@ export async function requirePlanScheduler(
   }
   const group = await requireGroupScheduler(ctx, plan.groupId, userId);
   return { plan, group };
+}
+
+/**
+ * Require permission to act on *one team's* slice of an event plan — filling
+ * a roster cell, removing an assignment, sending that team's requests.
+ *
+ * Passes for a campus group leader / community admin (who own the whole plan),
+ * or for an explicit manager of `teamId`. Weaker than `requirePlanScheduler`
+ * by design: a team manager is trusted with their own team's roster and
+ * nothing else, so the team is verified to belong to the plan's group before
+ * the manager check is honoured.
+ *
+ * @throws ConvexError if the plan or team is missing, the team belongs to a
+ *   different group, or the caller manages neither the group nor the team.
+ */
+export async function requirePlanTeamScheduler(
+  ctx: QueryCtx | MutationCtx,
+  planId: Id<"eventPlans">,
+  teamId: Id<"teams">,
+  userId: Id<"users">,
+): Promise<{ plan: Doc<"eventPlans">; team: Doc<"teams"> }> {
+  const plan = await ctx.db.get(planId);
+  if (!plan) {
+    throw new ConvexError("Event not found");
+  }
+  const team = await requireTeam(ctx, teamId);
+  if (team.groupId !== plan.groupId) {
+    throw new ConvexError("That team does not belong to this event's group");
+  }
+
+  const group = await ctx.db.get(plan.groupId);
+  if (group && (await isGroupScheduler(ctx, group, userId))) {
+    return { plan, team };
+  }
+  if (await isTeamManager(ctx, teamId, userId)) {
+    return { plan, team };
+  }
+
+  throw new ConvexError(
+    `You must manage ${team.name} — or be a group leader or community admin — to do that`,
+  );
 }

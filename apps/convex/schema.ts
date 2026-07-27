@@ -2809,6 +2809,34 @@ export default defineSchema({
     .index("by_channel", ["channelId"]),
 
   /**
+   * Who manages a serving team's roster (ADR-025).
+   *
+   * A team manager sends serving requests for *their* team and fills its
+   * roster, without being a campus group leader. This exists because roster
+   * scope and leadership scope are different things: a campus group leader has
+   * access to every team at the location, so before this a crew lead teaching
+   * someone to roster would publish an event and fan requests out to *every*
+   * team's pending volunteers, not just their own.
+   *
+   * Group leaders and community admins keep full access to every team whether
+   * or not they appear here — this table grants access, it never restricts it.
+   * Only they may edit the list.
+   */
+  teamManagers: defineTable({
+    teamId: v.id("teams"),
+    userId: v.id("users"),
+    /** Denormalized from the team so community-wide reads skip a join. */
+    communityId: v.id("communities"),
+    addedById: v.id("users"),
+    addedAt: v.number(),
+  })
+    .index("by_team", ["teamId"])
+    // Powers "which teams do I manage?" — the roster grid's default scope and
+    // the publish picker's pre-selection.
+    .index("by_user", ["userId"])
+    .index("by_team_user", ["teamId", "userId"]),
+
+  /**
    * A role within a serving team, e.g. "Drums", "Greeter". Free-form labels
    * owned by the team; no global taxonomy, no qualification rules — anyone in
    * the campus group can be assigned any role.
