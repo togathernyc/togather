@@ -38,6 +38,7 @@ import { DOMAIN_CONFIG } from "@togather/shared/config";
 import {
   requireTeamGroupMember,
   requirePlanScheduler,
+  requirePlanTeamScheduler,
   isGroupScheduler,
 } from "./permissions";
 
@@ -292,7 +293,14 @@ export const assignRole = mutation({
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    const { plan } = await requirePlanScheduler(ctx, args.planId, callerId);
+    // Team-scoped: a manager fills their own team's cells without needing
+    // leadership over the whole campus group.
+    const { plan } = await requirePlanTeamScheduler(
+      ctx,
+      args.planId,
+      args.teamId,
+      callerId,
+    );
 
     return performAssignment(ctx, {
       plan,
@@ -762,7 +770,14 @@ export const unassign = mutation({
     if (!assignment) {
       throw new ConvexError("Assignment not found");
     }
-    await requirePlanScheduler(ctx, assignment.planId, callerId);
+    // Scoped to the assignment's own team, so a manager can clear their team's
+    // cells but not another team's.
+    await requirePlanTeamScheduler(
+      ctx,
+      assignment.planId,
+      assignment.teamId,
+      callerId,
+    );
 
     await ctx.db.delete(args.assignmentId);
 
@@ -929,18 +944,27 @@ export const previousFillers = query({
 
 /**
  * Publish an event: flip its status to `published`, then fan out a request
- * notification (push + SMS) to every volunteer with an `unconfirmed`
- * assignment so they can accept or decline.
+ * notification (push + SMS) to volunteers with an `unconfirmed` assignment so
+ * they can accept or decline.
+ *
+ * Pass `teamIds` to scope the fan-out to specific serving teams. An event plan
+ * is a date column shared by every team at the campus, so an unscoped publish
+ * notifies all of them — which is how a crew lead sending their own team's
+ * requests ended up texting the entire production roster too. Omitting
+ * `teamIds` keeps the historical all-teams behaviour.
  *
  * Sending is delegated to an internal action via `ctx.scheduler` so a large
  * roster does not block the request — same pattern as `eventBlasts`.
  *
- * Auth: group leader or community admin for the event's group.
+ * Auth: group leader or community admin for the event's group; or, when every
+ * requested team is one they manage, a team manager.
  */
 export const publishEvent = action({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
+    /** Restrict the request fan-out to these teams. Omit for all teams. */
+    teamIds: v.optional(v.array(v.id("teams"))),
   },
   handler: async (ctx, args): Promise<{ published: boolean; requestCount: number }> => {
     const callerId = await requireAuthFromTokenAction(ctx, args.token);
@@ -948,20 +972,30 @@ export const publishEvent = action({
     const result: { requestCount: number; teamIds: Id<"teams">[] } =
       await ctx.runMutation(
         internal.functions.scheduling.assignments.markPublished,
-        { planId: args.planId, callerId: callerId as Id<"users"> },
+        {
+          planId: args.planId,
+          callerId: callerId as Id<"users">,
+          teamIds: args.teamIds,
+        },
       );
 
     if (result.requestCount > 0) {
       await ctx.scheduler.runAfter(
         0,
         internal.functions.scheduling.assignments.sendAssignmentRequests,
-        { planId: args.planId, publisherId: callerId as Id<"users"> },
+        {
+          planId: args.planId,
+          publisherId: callerId as Id<"users">,
+          teamIds: args.teamIds,
+        },
       );
     }
 
-    // Auto-sync every team channel that has assignments on this event so
-    // publishing pulls confirmed/unconfirmed volunteers into their channels,
-    // plus any cross-team channel that draws from those serving teams.
+    // Auto-sync every team channel this publish actually touched so it pulls
+    // confirmed/unconfirmed volunteers into their channels, plus any
+    // cross-team channel that draws from those serving teams. A scoped publish
+    // reconciles only the teams it published — `markPublished` narrows the
+    // list — so it can't churn an untouched team's membership.
     for (const teamId of result.teamIds) {
       await ctx.scheduler.runAfter(
         0,
@@ -983,41 +1017,75 @@ export const publishEvent = action({
 /**
  * Internal: verify scheduler auth, set the plan to `published`, and report
  * how many unconfirmed assignments will receive a request notification.
+ *
+ * When `teamIds` is set, both the count and the returned reconcile list are
+ * narrowed to those teams, and auth is satisfied by managing every one of them
+ * (a group leader still passes for any team).
  */
 export const markPublished = internalMutation({
   args: {
     planId: v.id("eventPlans"),
     callerId: v.id("users"),
+    teamIds: v.optional(v.array(v.id("teams"))),
   },
   handler: async (ctx, args) => {
-    await requirePlanScheduler(ctx, args.planId, args.callerId);
+    const scope = args.teamIds;
+    if (scope && scope.length > 0) {
+      // Each requested team is authorized individually, so a manager of one
+      // team can't slip a team they don't manage into the same publish.
+      for (const teamId of scope) {
+        await requirePlanTeamScheduler(
+          ctx,
+          args.planId,
+          teamId,
+          args.callerId,
+        );
+      }
+    } else {
+      await requirePlanScheduler(ctx, args.planId, args.callerId);
+    }
 
     await ctx.db.patch(args.planId, {
       status: "published",
       updatedAt: Date.now(),
     });
 
-    const assignments = await ctx.db
+    const allAssignments = await ctx.db
       .query("roleAssignments")
       .withIndex("by_plan", (q) => q.eq("planId", args.planId))
       .collect();
+    const assignments = scopeAssignmentsToTeams(allAssignments, scope);
     const requestCount = assignments.filter(
       (a) => a.status === "unconfirmed",
     ).length;
 
     // Schedule the automatic 4-day / 1-day "still unconfirmed?" nudges.
-    // Only worth scheduling if someone hasn't responded yet.
+    // Only worth scheduling if someone hasn't responded yet. The reminders
+    // themselves re-derive their audience from the request log, so a scoped
+    // publish can't have its nudges leak into an unpublished team.
     if (requestCount > 0) {
       await scheduleUnconfirmedReminders(ctx, args.planId);
     }
 
-    // Distinct serving teams touched by this event's assignments — the action
-    // reconciles each one after publishing.
+    // Distinct serving teams this publish touched — the action reconciles each.
     const teamIds = [...new Set(assignments.map((a) => a.teamId))];
 
     return { requestCount, teamIds };
   },
 });
+
+/**
+ * Narrow assignments to a set of teams. An empty or absent scope means "every
+ * team", preserving the pre-scoping behaviour for callers that don't pass one.
+ */
+function scopeAssignmentsToTeams<T extends { teamId: Id<"teams"> }>(
+  assignments: T[],
+  teamIds: Id<"teams">[] | undefined,
+): T[] {
+  if (!teamIds || teamIds.length === 0) return assignments;
+  const allowed = new Set(teamIds.map((id) => id.toString()));
+  return assignments.filter((a) => allowed.has(a.teamId.toString()));
+}
 
 /** The two reminder lead times, in days before `eventDate`. */
 const REMINDER_KINDS = [
@@ -1151,6 +1219,10 @@ export const sendUnconfirmedReminders = internalAction({
         planId: args.planId,
         publisherId: plan.createdById,
         includeConfirmed: args.kind === "1d",
+        // Only nudge people who were actually asked. Publishing is now
+        // team-scoped, so "every unconfirmed assignment on the plan" would
+        // reintroduce the cross-team leak on a four-day delay.
+        onlyAlreadyRequested: true,
       },
     );
 
@@ -1326,24 +1398,57 @@ export const getAssignmentRequestTargets = internalQuery({
     // per-person "Re-send request" action). Any non-matching status filter
     // below still applies.
     assignmentIds: v.optional(v.array(v.id("roleAssignments"))),
+    // When set, restrict the fan-out to these serving teams (powers scoped
+    // publishing). Omit or pass an empty array for every team on the plan.
+    teamIds: v.optional(v.array(v.id("teams"))),
+    // When true, only assignments that have actually been sent a request are
+    // eligible. Reminders use this: a plan published for one team must not
+    // nudge a team that was never asked in the first place.
+    onlyAlreadyRequested: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const plan = await ctx.db.get(args.planId);
     if (!plan) return null;
 
-    const assignments = await ctx.db
-      .query("roleAssignments")
-      .withIndex("by_plan", (q) => q.eq("planId", args.planId))
-      .collect();
+    const assignments = scopeAssignmentsToTeams(
+      await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect(),
+      args.teamIds,
+    );
     const onlyIds = args.assignmentIds
       ? new Set(args.assignmentIds.map((id) => id.toString()))
       : null;
+
+    // The append-only request log is the record of who has actually been
+    // asked. Deriving the reminder audience from it (rather than from every
+    // unconfirmed assignment on the plan) is what keeps a scoped publish
+    // scoped four days later, with no extra state to maintain.
+    //
+    // An *empty* log is treated as "no record either way" rather than "nobody
+    // was asked": a plan published before request logging existed has no rows,
+    // and silently dropping its in-flight reminders would be a regression with
+    // no upside. Once a plan has any log row, the log is authoritative.
+    let requested: Set<string> | null = null;
+    if (args.onlyAlreadyRequested) {
+      const log = await ctx.db
+        .query("assignmentRequestLog")
+        .withIndex("by_plan", (q) => q.eq("planId", args.planId))
+        .collect();
+      requested =
+        log.length > 0
+          ? new Set(log.map((row) => row.assignmentId.toString()))
+          : null;
+    }
+
     // Always nudge the unconfirmed; for the 1-day pass also include those
     // who've already confirmed (a serving-tomorrow heads-up). Declined and
     // removed assignments are never notified. A targeted re-send additionally
     // narrows to the requested assignment ids.
     const targeted = assignments.filter((a) => {
       if (onlyIds && !onlyIds.has(a._id.toString())) return false;
+      if (requested && !requested.has(a._id.toString())) return false;
       return args.includeConfirmed
         ? a.status === "unconfirmed" || a.status === "confirmed"
         : a.status === "unconfirmed";
@@ -1444,6 +1549,8 @@ export const sendAssignmentRequests = internalAction({
     publisherId: v.id("users"),
     // When set, only (re-)send to these assignments — the per-person re-send.
     assignmentIds: v.optional(v.array(v.id("roleAssignments"))),
+    // When set, only send to assignments on these serving teams.
+    teamIds: v.optional(v.array(v.id("teams"))),
   },
   handler: async (ctx, args) => {
     const targets = await ctx.runQuery(
@@ -1452,6 +1559,7 @@ export const sendAssignmentRequests = internalAction({
         planId: args.planId,
         publisherId: args.publisherId,
         assignmentIds: args.assignmentIds,
+        teamIds: args.teamIds,
       },
     );
     if (!targets || targets.recipients.length === 0) {
