@@ -310,6 +310,22 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     setMutedOverride(null);
     setDiscoverableOverride(null);
   }, [channel?._id]);
+  // Once the live query catches up to the optimistic value, drop the
+  // override so later server-side changes (another device, another leader)
+  // aren't masked while this screen stays mounted.
+  useEffect(() => {
+    if (mutedOverride !== null && channel?.isMuted === mutedOverride) {
+      setMutedOverride(null);
+    }
+  }, [channel?.isMuted, mutedOverride]);
+  useEffect(() => {
+    if (
+      discoverableOverride !== null &&
+      (channel?.discoverable ?? true) === discoverableOverride
+    ) {
+      setDiscoverableOverride(null);
+    }
+  }, [channel?.discoverable, discoverableOverride]);
 
   const handleJoinMode = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/join-mode` as any);

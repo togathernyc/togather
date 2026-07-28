@@ -3864,6 +3864,50 @@ describe("listJoinableChannels", () => {
     expect(joinable).toEqual([]);
   });
 
+  test("excludes archived channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Old Channel" }
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { isArchived: true });
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
+  test("excludes leader-disabled channels", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Paused Channel" }
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(channelId, { isEnabled: false });
+    });
+
+    const joinable = await t.query(api.functions.messaging.channels.listJoinableChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(joinable).toEqual([]);
+  });
+
   test("excludes channels the caller already belongs to", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId, accessToken } = await seedTestData(t);
@@ -4150,6 +4194,29 @@ describe("joinDiscoverableChannel", () => {
     });
     expect(requests).toHaveLength(1);
     expect(requests[0].status).toBe("pending");
+  });
+
+  test("rejects non-custom channels (e.g. main)", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId, accessToken } = await seedTestData(t);
+
+    const mainChannelId = await t.run(async (ctx) => {
+      const main = await ctx.db
+        .query("chatChannels")
+        .withIndex("by_group_type", (q) =>
+          q.eq("groupId", groupId).eq("channelType", "main")
+        )
+        .first();
+      if (!main) throw new Error("seed data has no main channel");
+      return main._id;
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+        token: accessToken,
+        channelId: mainChannelId,
+      })
+    ).rejects.toThrow();
   });
 
   test("rejects channels hidden from the directory (discoverable: false)", async () => {

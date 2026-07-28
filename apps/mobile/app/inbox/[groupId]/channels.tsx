@@ -15,7 +15,7 @@
  * isn't flag-gated — only its entry points are (per the redesign's rollout
  * rule: new routes are safe to ship unlinked).
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -67,7 +67,7 @@ export default function ChannelDirectoryScreen() {
     api.functions.groups.index.getById,
     groupId && token ? { groupId: groupId as Id<"groups">, token } : "skip",
   );
-  const isLeader = (group as any)?.userRole === "leader";
+  const isLeader = group?.userRole === "leader";
 
   // "Channels you can join" — discoverable custom channels the user hasn't
   // joined yet. New backend contract (apps/convex/functions/messaging/
@@ -89,6 +89,28 @@ export default function ChannelDirectoryScreen() {
   const [localStatus, setLocalStatus] = useState<
     Record<string, "joining" | "joined" | "requesting" | "requested">
   >({});
+
+  // Drop optimistic entries once the live query confirms them, so the
+  // reactive data stays the steady-state source of truth (e.g. a leader
+  // declining a request re-enables the Request button without a remount).
+  useEffect(() => {
+    if (!joinable) return;
+    setLocalStatus((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [id, status] of Object.entries(prev)) {
+        const row = joinable.find((c) => (c.channelId as string) === id);
+        const confirmed =
+          (status === "requested" && row?.hasPendingRequest === true) ||
+          (status === "joined" && !row);
+        if (confirmed) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [joinable]);
 
   const handleJoinOrRequest = useCallback(
     async (channel: JoinableChannel) => {
