@@ -40,6 +40,7 @@ import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
@@ -99,6 +100,7 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
   // "admin"` checks scattered through the app are dead — drop them as we
   // touch each surface.
   const isLeader = userRole === "leader";
+  const whatsappShell = useWhatsappShell();
 
   const pendingInvites = useQuery(
     api.functions.messaging.sharedChannels.listPendingInvitesForGroup,
@@ -523,6 +525,25 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
         </View>
       )}
 
+      {/* See all channels — W17 channel directory (Your channels + Channels
+          you can join). Flag-gated: whatsapp-shell off means this row (and
+          the route it links to) simply doesn't render/exist for the user. */}
+      {whatsappShell && (
+        <TouchableOpacity
+          style={[styles.seeAllRow, { backgroundColor: colors.surfaceSecondary }]}
+          onPress={() => router.push(`/inbox/${groupId}/channels` as any)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.iconContainer, { backgroundColor: colors.textTertiary + "15" }]}>
+            <Ionicons name="grid-outline" size={20} color={colors.textSecondary} />
+          </View>
+          <Text style={[styles.rowName, { color: colors.text }]}>
+            See all channels
+          </Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+        </TouchableOpacity>
+      )}
+
       {/* Archived/disabled channels fold into one collapsible group so they
           don't clutter the active list. Leaders only — members never receive
           disabled channels, so archivedRows is empty for them. */}
@@ -717,6 +738,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#fff",
+  },
+  seeAllRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    minHeight: 48,
   },
   createCard: {
     flexDirection: "row",

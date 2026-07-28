@@ -15,10 +15,12 @@
  *   - "Channel info" centered title + back chevron
  *   - Centered hero (channel icon + #name + "N members" + share pill if shared)
  *   - "Open chat" CTA card
+ *   - "Mute channel" switch (whatsapp-shell flag only, W18)
  *   - MEMBERS card
  *   - "Add people" standalone card (leaders only — manage screen)
  *   - CHANNEL ACTIONS (Share invite link, Leave channel)
- *   - LEADER CONTROLS (Active state, Rename, Share with groups, Archive)
+ *   - LEADER CONTROLS (Active state, Rename, Discoverable [flag-gated,
+ *     custom only], Share with groups, Archive)
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -36,6 +38,7 @@ import {
   TextInput,
   Modal,
   Linking,
+  Switch,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -59,6 +62,7 @@ import {
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   useQuery,
   api,
@@ -229,6 +233,18 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     api.functions.groupMembers.addByPcoPersonId,
   );
 
+  // W18 mute + discoverable rows — gated behind the whatsapp-shell flag so
+  // the screen renders unchanged when it's off. Both writes target existing
+  // schema fields (chatChannelMembers.isMuted; chatChannels.discoverable),
+  // per the redesign's "additive fields only" guarantee.
+  const whatsappShell = useWhatsappShell();
+  const setChannelMutedMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.setChannelMuted,
+  );
+  const setChannelDiscoverableMutation = useAuthenticatedMutation(
+    api.functions.messaging.channels.setChannelDiscoverable,
+  );
+
   // Auto channel config — drives the "Not in channel" section for PCO synced
   // channels. Backend gates by leader role + community-admin, so a non-leader
   // viewer just gets `null` here and the section won't render.
@@ -280,6 +296,20 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const [unmatchedActionInFlight, setUnmatchedActionInFlight] = useState<
     string | null
   >(null);
+
+  // Optimistic overrides for the two W18 toggles — cleared whenever the
+  // channel identity changes so a stale override never leaks across
+  // channels (e.g. navigating Channel A -> Channel B).
+  const [mutedOverride, setMutedOverride] = useState<boolean | null>(null);
+  const [muteToggling, setMuteToggling] = useState(false);
+  const [discoverableOverride, setDiscoverableOverride] = useState<
+    boolean | null
+  >(null);
+  const [discoverableToggling, setDiscoverableToggling] = useState(false);
+  useEffect(() => {
+    setMutedOverride(null);
+    setDiscoverableOverride(null);
+  }, [channel?._id]);
 
   const handleJoinMode = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/join-mode` as any);
@@ -437,6 +467,57 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const handleManageMembers = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/members` as any);
   }, [router, groupId, channelSlug]);
+
+  // Mute: reads the current user's chatChannelMembers.isMuted (surfaced
+  // additively on getChannelBySlug's payload). Falls back to false (unmuted)
+  // when the field isn't present yet.
+  const isChannelMuted =
+    mutedOverride ??
+    ((channel as { isMuted?: boolean } | undefined)?.isMuted ?? false);
+  const handleToggleMuted = useCallback(
+    async (value: boolean) => {
+      if (!channel?._id) return;
+      setMutedOverride(value);
+      setMuteToggling(true);
+      try {
+        await setChannelMutedMutation({ channelId: channel._id, muted: value });
+      } catch (e: any) {
+        setMutedOverride(!value);
+        Alert.alert("Error", errorMessage(e, "Failed to update mute setting"));
+      } finally {
+        setMuteToggling(false);
+      }
+    },
+    [channel?._id, setChannelMutedMutation],
+  );
+
+  // Discoverable: undefined/true = listed in the group's channel directory
+  // ("Channels you can join"), false = hidden. Custom channels only.
+  const isChannelDiscoverable =
+    discoverableOverride ??
+    ((channel as { discoverable?: boolean } | undefined)?.discoverable ?? true);
+  const handleToggleDiscoverable = useCallback(
+    async (value: boolean) => {
+      if (!channel?._id) return;
+      setDiscoverableOverride(value);
+      setDiscoverableToggling(true);
+      try {
+        await setChannelDiscoverableMutation({
+          channelId: channel._id,
+          discoverable: value,
+        });
+      } catch (e: any) {
+        setDiscoverableOverride(!value);
+        Alert.alert(
+          "Error",
+          errorMessage(e, "Failed to update discoverable setting"),
+        );
+      } finally {
+        setDiscoverableToggling(false);
+      }
+    },
+    [channel?._id, setChannelDiscoverableMutation],
+  );
 
   const handleActiveState = useCallback(() => {
     router.push(`/inbox/${groupId}/${channelSlug}/info/active-state` as any);
@@ -973,6 +1054,37 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
         </Pressable>
 
+        {/* Mute channel — W18. Member-only (a leader viewing a channel they
+            haven't joined has no membership row to mute). Flag-gated so the
+            screen is unchanged when whatsapp-shell is off. */}
+        {whatsappShell && isMemberOfChannel && (
+          <View
+            style={[
+              styles.actionCard,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            <View style={[styles.actionIcon, { backgroundColor: colors.textTertiary + "15" }]}>
+              <Ionicons
+                name={isChannelMuted ? "notifications-off-outline" : "notifications-outline"}
+                size={18}
+                color={colors.icon}
+              />
+            </View>
+            <Text style={[styles.actionLabel, { color: colors.text }]}>
+              Mute channel
+            </Text>
+            <Switch
+              value={isChannelMuted}
+              onValueChange={handleToggleMuted}
+              disabled={muteToggling}
+              trackColor={{ false: colors.border, true: primaryColor }}
+              thumbColor={colors.textInverse}
+              style={{ marginLeft: "auto" }}
+            />
+          </View>
+        )}
+
         {/* Pending join requests — leader-only, custom channels with
             approval-required mode. Shown above Members so leaders see
             pending work first. */}
@@ -1468,6 +1580,46 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                     color={colors.textTertiary}
                   />
                 </Pressable>
+              )}
+
+              {/* Discoverable — W17/W18. Custom channels only; undefined/true
+                  means listed in the group's "Channels you can join" directory,
+                  false hides it (invite-link / leader-add still work either
+                  way). Flag-gated so today's Leader Controls are unchanged
+                  when whatsapp-shell is off. */}
+              {whatsappShell && isCustom && (
+                <View
+                  style={[
+                    styles.actionRowFlat,
+                    {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: colors.border,
+                    },
+                  ]}
+                >
+                  <Ionicons name="compass-outline" size={20} color={colors.icon} />
+                  <View style={styles.discoverableText}>
+                    <Text style={[styles.actionLabel, { color: colors.text }]}>
+                      Discoverable
+                    </Text>
+                    <Text
+                      style={[
+                        styles.discoverableSubtitle,
+                        { color: colors.textSecondary },
+                      ]}
+                    >
+                      Listed in &ldquo;Channels you can join&rdquo;
+                    </Text>
+                  </View>
+                  <Switch
+                    value={isChannelDiscoverable}
+                    onValueChange={handleToggleDiscoverable}
+                    disabled={discoverableToggling}
+                    trackColor={{ false: colors.border, true: primaryColor }}
+                    thumbColor={colors.textInverse}
+                    style={{ marginLeft: "auto" }}
+                  />
+                </View>
               )}
 
               {/* PCO Sync Settings — open the existing AutoChannelSettings
@@ -2487,6 +2639,13 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginLeft: "auto",
     marginRight: 4,
+  },
+  discoverableText: {
+    flexShrink: 1,
+  },
+  discoverableSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
   },
   requestRow: {
     flexDirection: "row",
