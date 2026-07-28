@@ -5690,6 +5690,19 @@ export const joinDiscoverableChannel = mutation({
     }
 
     if (existingRequest) {
+      // Mirror the invite-link flow's decline cooldown
+      // (channelInvites.joinViaInviteLink) so the directory can't be used to
+      // re-request — and re-notify leaders — right after a decline.
+      if (existingRequest.status === "declined") {
+        const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const declinedAt =
+          existingRequest.reviewedAt || existingRequest.requestedAt;
+        if (Date.now() - declinedAt < COOLDOWN_MS) {
+          throw new ConvexError(
+            "Your previous request was declined. Please wait 24 hours before requesting again.",
+          );
+        }
+      }
       await ctx.db.patch(existingRequest._id, {
         status: "pending",
         requestedAt: Date.now(),

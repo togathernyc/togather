@@ -153,23 +153,24 @@ export const onMessageSent = internalMutation({
     // with smart previews like "Sent a photo" or "Sent X files")
     const preview = message.content.slice(0, MAX_PREVIEW_LENGTH);
 
-    // Get all channel members (except sender if there is one)
-    // For bot messages (no sender), all non-muted members are included
+    // Get all channel members (except sender if there is one). Muted members
+    // stay in this list so their unread bookkeeping keeps running — mute
+    // suppresses notification delivery only (see notifyMembers below);
+    // otherwise messages received while muted would look already-read after
+    // unmuting, and the muted-activity indicator would have nothing to show.
     const allMembers = await ctx.db
       .query("chatChannelMembers")
       .withIndex("by_channel", (q) => q.eq("channelId", args.channelId))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("leftAt"), undefined),
-          q.eq(q.field("isMuted"), false)
-        )
-      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
       .collect();
 
     // Filter out sender if present
     const members = args.senderId
       ? allMembers.filter((m) => m.userId !== args.senderId)
       : allMembers;
+
+    // Notification fanout skips muted members; unread increments do not.
+    const notifyMembers = members.filter((m) => m.isMuted !== true);
 
     console.log(`[onMessageSent] Found ${members.length} eligible members for channel ${args.channelId}`);
 
@@ -223,7 +224,7 @@ export const onMessageSent = internalMutation({
 
     // Send push notifications via centralized notification system
     // Schedule an action to send notifications (actions can make external API calls)
-    if (members.length > 0) {
+    if (notifyMembers.length > 0) {
       const channel = await ctx.db.get(args.channelId);
       const sender = args.senderId ? await ctx.db.get(args.senderId) : null;
 
@@ -280,7 +281,7 @@ export const onMessageSent = internalMutation({
           if (g) groupMap.set(g._id, { _id: g._id, name: g.name, communityId: g.communityId });
         }
 
-        for (const member of members) {
+        for (const member of notifyMembers) {
           // Find which group this member belongs to
           let memberGroupId: Id<"groups"> | null = null;
           for (const gId of allGroupIds) {
@@ -358,7 +359,7 @@ export const onMessageSent = internalMutation({
         // bodies in a single fanout pass.
         const pendingRecipients: Id<"users">[] = [];
         const acceptedRecipients: Id<"users">[] = [];
-        for (const member of members) {
+        for (const member of notifyMembers) {
           // DMs are low-volume, so replies still notify by default; only an
           // explicit "none" mute on the thread suppresses the notification.
           if (isReply && threadStates.get(member.userId) === "none") {
@@ -451,7 +452,7 @@ export const onMessageSent = internalMutation({
         const mentionRecipients: Id<"users">[] = [];
         const regularRecipients: Id<"users">[] = [];
 
-        for (const member of members) {
+        for (const member of notifyMembers) {
           const target = decideRecipientBucket({
             isMentioned: !!message.mentionedUserIds?.includes(member.userId),
             isReply,
