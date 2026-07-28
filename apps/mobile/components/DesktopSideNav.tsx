@@ -5,6 +5,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 
 type NavItem = {
   key: string;
@@ -39,6 +40,13 @@ export function DesktopSideNav() {
 
   const isAdmin = user?.is_admin === true;
   const hasCommunity = !!community?.id;
+  const prayerEnabled = community?.churchFeatures?.prayerEnabled === true;
+
+  // whatsapp-shell (docs/plans/church-migration-ui-redesign/README.md §5,
+  // §9.5): flag off (or still loading) = `normalItems` below, unchanged.
+  // Never active during serving mode.
+  const whatsappShellFlag = useWhatsappShell();
+  const showWhatsappShell = whatsappShellFlag && !inServingMode;
 
   const inboxIcon = (isKnicksMode
     ? "basketball-outline"
@@ -140,7 +148,69 @@ export function DesktopSideNav() {
     },
   ];
 
-  const items = inServingMode ? servingItems : normalItems;
+  // whatsapp-shell set: Chats, Events, Prayer, admin (unlike mobile, admin
+  // stays available on desktop per the redesign), You.
+  const whatsappItems: NavItem[] = [
+    ...(hasCommunity
+      ? [
+          {
+            key: "inbox",
+            label: "Chats",
+            icon: inboxIcon,
+            iconFocused: inboxIconFocused,
+            href: "/inbox/" as Href,
+            match: (p: string) =>
+              p.startsWith("/inbox") || p.startsWith("/chat"),
+          },
+        ]
+      : []),
+    {
+      key: "events",
+      label: "Events",
+      icon: "calendar-outline",
+      iconFocused: "calendar",
+      href: "/(tabs)/events",
+      match: (p) => p.startsWith("/events"),
+    },
+    ...(hasCommunity && prayerEnabled
+      ? [
+          {
+            key: "prayer",
+            label: "Prayer",
+            icon: "heart-outline" as keyof typeof Ionicons.glyphMap,
+            iconFocused: "heart" as keyof typeof Ionicons.glyphMap,
+            href: "/(tabs)/prayer" as Href,
+            match: (p: string) => p.startsWith("/prayer"),
+          },
+        ]
+      : []),
+    ...(isAdmin && hasCommunity
+      ? [
+          {
+            key: "admin",
+            label: "Admin",
+            icon: "shield-checkmark-outline" as keyof typeof Ionicons.glyphMap,
+            iconFocused: "shield-checkmark" as keyof typeof Ionicons.glyphMap,
+            href: "/(tabs)/admin" as Href,
+            match: (p: string) => p.startsWith("/admin"),
+          },
+        ]
+      : []),
+    {
+      key: "profile",
+      label: "You",
+      icon: "person-outline",
+      iconFocused: "person",
+      href: "/(tabs)/profile",
+      match: (p) => p.startsWith("/profile"),
+    },
+  ];
+
+  const items = inServingMode
+    ? servingItems
+    : showWhatsappShell
+      ? whatsappItems
+      : normalItems;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface, borderRightColor: colors.border }]}>

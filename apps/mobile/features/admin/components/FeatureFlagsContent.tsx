@@ -57,6 +57,11 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
     description:
       "Themes the whole app in New York Knicks orange & blue, overriding every community's brand colors. Applies to all users across all communities. Off: communities use their own brand colors.",
   },
+  {
+    key: "whatsapp-shell-kill",
+    description:
+      "Kill switch: forces the WhatsApp-style shell off everywhere, overriding the whatsapp-shell PostHog flag. Off: the PostHog flag alone decides.",
+  },
 ];
 
 type FlagRow = {

@@ -48,6 +48,7 @@ import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { useCachedServingPlans } from "@features/serving/hooks/useCachedServingPlans";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -150,6 +151,9 @@ export function ChatInboxScreen({
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const hasCommunity = !!community?.id;
+  // Community page entry point (W2, docs/plans/church-migration-ui-redesign
+  // /README.md) — flag-gated, zero change when off.
+  const showCommunityEntry = useWhatsappShell() && hasCommunity;
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
   const { getInboxChannels, setInboxChannels } = useInboxCache();
   // Device network state. Drives the loading strategy: online we hold for a
@@ -629,6 +633,17 @@ export function ChatInboxScreen({
         >
           Inbox
         </Animated.Text>
+        {showCommunityEntry && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open community page"
+            onPress={() => router.push("/community" as any)}
+            style={styles.headerActionButton}
+            hitSlop={12}
+          >
+            <Avatar name={community?.name} imageUrl={community?.logo} size={28} />
+          </Pressable>
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Start a new chat"

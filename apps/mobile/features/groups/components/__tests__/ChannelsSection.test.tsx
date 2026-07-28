@@ -27,6 +27,12 @@ jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#007AFF" }),
 }));
 
+// Flag off = the behavior this suite asserts; the real hook would reach
+// PostHog + a Convex query that the partial api mock below doesn't provide.
+jest.mock("@hooks/useWhatsappShell", () => ({
+  useWhatsappShell: () => false,
+}));
+
 jest.mock("@hooks/useTheme", () => ({
   useTheme: () => ({
     colors: {

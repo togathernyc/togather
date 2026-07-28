@@ -765,6 +765,7 @@ export const getChannelBySlug = query({
       slug: getChannelSlug(resolvedChannel),
       isMember,
       role: channelMembership?.role,
+      isMuted: channelMembership?.isMuted,
       userGroupRole: groupMembership?.role,
       pendingShareForGroup,
       primaryGroupName,
@@ -1461,6 +1462,7 @@ export const listGroupChannels = query({
           isArchived: channel.isArchived,
           isMember,
           role: membership?.role,
+          isMuted: membership?.isMuted,
           unreadCount,
           isPinned,
           lastMessageAt: channel.lastMessageAt,
@@ -5419,5 +5421,347 @@ export const updatePinnedChannels = mutation({
     });
 
     return { success: true, pinnedCount: validPinnedSlugs.length };
+  },
+});
+
+// ============================================================================
+// Channel Discovery + Mute
+// ============================================================================
+// Backs the channel directory ("Channels you can join", W17) and per-channel
+// mute (schema already had chatChannelMembers.isMuted/mutedUntil; this is the
+// first mutation to write it). See docs/plans/church-migration-ui-redesign/.
+
+/**
+ * List a group's custom channels the caller can discover but hasn't joined —
+ * "Channels you can join" on the channel directory (W17). A channel is listed
+ * when it is `channelType === "custom"`, not leader-disabled, not archived,
+ * and `discoverable !== false` (discoverable defaults to on).
+ */
+export const listJoinableChannels = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+  },
+  returns: v.array(
+    v.object({
+      channelId: v.id("chatChannels"),
+      name: v.string(),
+      memberCount: v.number(),
+      joinMode: v.string(),
+      hasPendingRequest: v.boolean(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    // Caller must be an accepted member of the group (mirrors the accepted-
+    // membership filter used by getInboxChannels/addChannelMembers above).
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .first();
+
+    if (!groupMembership) {
+      throw new ConvexError("You must be a member of this group.");
+    }
+
+    const groupChannels = await loadGroupChannels(ctx, args.groupId);
+    const candidates = groupChannels.filter(
+      (channel) =>
+        channel.channelType === "custom" &&
+        !channel.isArchived &&
+        channelIsLeaderEnabled(channel) &&
+        channel.discoverable !== false
+    );
+
+    const results = await Promise.all(
+      candidates.map(async (channel) => {
+        const membership = await ctx.db
+          .query("chatChannelMembers")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channel._id).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("leftAt"), undefined))
+          .first();
+
+        if (membership) return null; // Already a member — not "joinable"
+
+        const pendingRequest = await ctx.db
+          .query("channelJoinRequests")
+          .withIndex("by_channel_user", (q) =>
+            q.eq("channelId", channel._id).eq("userId", userId)
+          )
+          .filter((q) => q.eq(q.field("status"), "pending"))
+          .first();
+
+        return {
+          channelId: channel._id,
+          name: channel.name,
+          memberCount: channel.memberCount,
+          joinMode: channel.joinMode || "open",
+          hasPendingRequest: pendingRequest !== null,
+        };
+      })
+    );
+
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
+  },
+});
+
+/**
+ * Toggle whether a custom channel is listed in its group's channel directory.
+ * Only group leaders or community admins may change this (mirrors the
+ * leader-or-admin-viewer pattern used elsewhere in this file, e.g. getChannel).
+ */
+export const setChannelDiscoverable = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    discoverable: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    if (channel.channelType !== "custom") {
+      throw new ConvexError("Only custom channels can be made discoverable.");
+    }
+    const groupId = channel.groupId;
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", groupId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    const isLeader = isLeaderRole(groupMembership?.role);
+    const isAdmin = !isLeader && (await isCommunityAdminForGroup(ctx, groupId, userId));
+
+    if (!isLeader && !isAdmin) {
+      throw new ConvexError(
+        "Only group leaders or community admins can change channel discoverability."
+      );
+    }
+
+    await ctx.db.patch(args.channelId, {
+      discoverable: args.discoverable,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Join (or request to join) a channel surfaced by `listJoinableChannels`.
+ *
+ * Mirrors `channelInvites.joinViaInviteLink`'s open/approval_required
+ * branching (same shape, re-derived here rather than imported: that mutation
+ * is keyed off an invite shortId and its own group-eligibility rules, and
+ * lives in a file this change doesn't touch). "open" adds the caller as a
+ * member immediately; "approval_required" creates a channelJoinRequest,
+ * reusing a pending request instead of duplicating it.
+ */
+export const joinDiscoverableChannel = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+  },
+  returns: v.object({
+    status: v.union(v.literal("joined"), v.literal("requested")),
+  }),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const channel = await ctx.db.get(args.channelId);
+    if (!channel) {
+      throw new ConvexError("Channel not found");
+    }
+    if (!channel.groupId) {
+      throw new ConvexError("This operation is only valid for group channels");
+    }
+    const groupId = channel.groupId;
+
+    if (
+      channel.channelType !== "custom" ||
+      channel.isArchived ||
+      !channelIsLeaderEnabled(channel) ||
+      channel.discoverable === false
+    ) {
+      throw new ConvexError("This channel is not open for discovery.");
+    }
+
+    const groupMembership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", groupId).eq("userId", userId)
+      )
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("leftAt"), undefined),
+          q.or(
+            q.eq(q.field("requestStatus"), undefined),
+            q.eq(q.field("requestStatus"), "accepted")
+          )
+        )
+      )
+      .first();
+
+    if (!groupMembership) {
+      throw new ConvexError("You must be a member of this group.");
+    }
+
+    const existingMembership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", userId)
+      )
+      .first();
+
+    if (existingMembership && !existingMembership.leftAt) {
+      return { status: "joined" as const };
+    }
+
+    const joinMode = channel.joinMode || "open";
+
+    if (joinMode === "open") {
+      const user = await ctx.db.get(userId);
+      const now = Date.now();
+
+      if (existingMembership && existingMembership.leftAt) {
+        // Reactivate a former member.
+        await ctx.db.patch(existingMembership._id, {
+          leftAt: undefined,
+          joinedAt: now,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      } else {
+        await ctx.db.insert("chatChannelMembers", {
+          channelId: channel._id,
+          userId,
+          role: "member",
+          joinedAt: now,
+          isMuted: false,
+          displayName: user
+            ? getDisplayName(user.firstName, user.lastName)
+            : undefined,
+          profilePhoto: user ? getMediaUrl(user.profilePhoto) : undefined,
+        });
+      }
+
+      await ctx.db.patch(channel._id, {
+        memberCount: channel.memberCount + 1,
+        updatedAt: now,
+      });
+
+      return { status: "joined" as const };
+    }
+
+    // approval_required — reuse a pending request; otherwise create one.
+    const existingRequest = await ctx.db
+      .query("channelJoinRequests")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", channel._id).eq("userId", userId)
+      )
+      .first();
+
+    if (existingRequest && existingRequest.status === "pending") {
+      return { status: "requested" as const };
+    }
+
+    if (existingRequest) {
+      // Mirror the invite-link flow's decline cooldown
+      // (channelInvites.joinViaInviteLink) so the directory can't be used to
+      // re-request — and re-notify leaders — right after a decline.
+      if (existingRequest.status === "declined") {
+        const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+        const declinedAt =
+          existingRequest.reviewedAt || existingRequest.requestedAt;
+        if (Date.now() - declinedAt < COOLDOWN_MS) {
+          throw new ConvexError(
+            "Your previous request was declined. Please wait 24 hours before requesting again.",
+          );
+        }
+      }
+      await ctx.db.patch(existingRequest._id, {
+        status: "pending",
+        requestedAt: Date.now(),
+        reviewedAt: undefined,
+        reviewedById: undefined,
+      });
+    } else {
+      await ctx.db.insert("channelJoinRequests", {
+        channelId: channel._id,
+        groupId,
+        userId,
+        status: "pending",
+        requestedAt: Date.now(),
+      });
+    }
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.notifications.senders.notifyChannelJoinRequest,
+      {
+        channelId: channel._id,
+        groupId,
+        requesterId: userId,
+        channelName: channel.name,
+        channelSlug: channel.slug || "",
+      }
+    );
+
+    return { status: "requested" as const };
+  },
+});
+
+/**
+ * Mute or unmute a channel for the caller — the per-channel mute promised by
+ * the `chatChannelMembers.isMuted` schema field (no UI wrote it until now).
+ */
+export const setChannelMuted = mutation({
+  args: {
+    token: v.string(),
+    channelId: v.id("chatChannels"),
+    muted: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const membership = await ctx.db
+      .query("chatChannelMembers")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId)
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+
+    if (!membership) {
+      throw new ConvexError("You are not a member of this channel.");
+    }
+
+    await ctx.db.patch(membership._id, {
+      isMuted: args.muted,
+    });
   },
 });

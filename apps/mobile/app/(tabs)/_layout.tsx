@@ -5,6 +5,7 @@ import { useAuth } from '@providers/AuthProvider';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
+import { useWhatsappShell } from '../../hooks/useWhatsappShell';
 import { DesktopSideNav } from '@components/DesktopSideNav';
 import { useEventModeStore } from '@/stores/eventModeStore';
 
@@ -33,15 +34,52 @@ export default function TabsLayout() {
   const inServingMode = isServingMode && eventTasksEnabled;
   const router = useRouter();
 
+  // `whatsapp-shell`-gated 4-tab shell (Chats · Events · Prayer · You). Never
+  // active during serving mode — see docs/plans/church-migration-ui-redesign
+  // /README.md §5, §9.5. Flag off (or still loading) = today's 6-tab layout,
+  // byte-for-byte.
+  const whatsappShellFlag = useWhatsappShell();
+  const showWhatsappShell = whatsappShellFlag && !inServingMode;
+
+  // Chat/Inbox is shared between the serving tab bar (as "Inbox", second
+  // slot) and the normal tab bar (as "Inbox", or "Chats" + first slot under
+  // the whatsapp shell) — defined once and placed at whichever JSX position
+  // produces the right visible order for the active mode.
+  const chatTabScreen = (
+    <Tabs.Screen
+      name="chat"
+      options={{
+        title: showWhatsappShell ? 'Chats' : 'Inbox',
+        // Only show Inbox/Chats tab when user has a community context
+        href: hasCommunity ? '/(tabs)/chat' : null,
+        tabBarIcon: ({ color, focused }) => (
+          <Ionicons
+            name={
+              isKnicksMode
+                ? focused
+                  ? 'basketball'
+                  : 'basketball-outline'
+                : focused
+                  ? 'chatbubbles'
+                  : 'chatbubbles-outline'
+            }
+            size={24}
+            color={color}
+          />
+        ),
+      }}
+    />
+  );
+
   const tabs = (
     <Tabs
       // Expo Router's Tabs computes its visible tab set from `href` at mount and
       // doesn't reliably re-render the bar when hrefs flip at runtime — so
-      // entering/leaving serving mode left the OLD tabs on screen until a
-      // refresh. Keying the navigator on the mode remounts it on that (rare)
-      // transition, recomputing the tab set. Stable within each mode, so normal
-      // navigation is unaffected.
-      key={inServingMode ? 'serving' : 'normal'}
+      // entering/leaving serving mode (or flipping the whatsapp-shell flag)
+      // left the OLD tabs on screen until a refresh. Keying the navigator on
+      // the mode remounts it on that (rare) transition, recomputing the tab
+      // set. Stable within each mode, so normal navigation is unaffected.
+      key={inServingMode ? 'serving' : showWhatsappShell ? 'whatsapp' : 'normal'}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
@@ -71,13 +109,20 @@ export default function TabsLayout() {
         }}
       />
 
+      {/* whatsapp-shell: Chats leads the tab bar (docs/plans/church-migration
+          -ui-redesign/README.md §5). Off (or serving mode): this renders
+          nothing and Inbox keeps its normal position below. */}
+      {showWhatsappShell && chatTabScreen}
+
       {/* Visible tabs - Order: Groups, Events, Inbox, (Admin for admins), Profile */}
-      {/* Groups/Events are hidden while serving mode is active. */}
+      {/* Groups/Events are hidden while serving mode is active. Groups (Search)
+          is also hidden under the whatsapp-shell — its route stays reachable,
+          just not tab-visible. */}
       <Tabs.Screen
         name="search"
         options={{
           title: 'Groups',
-          href: inServingMode ? null : '/(tabs)/search',
+          href: inServingMode || showWhatsappShell ? null : '/(tabs)/search',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'map' : 'map-outline'}
@@ -149,29 +194,10 @@ export default function TabsLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="chat"
-        options={{
-          title: 'Inbox',
-          // Only show Inbox tab when user has a community context
-          href: hasCommunity ? '/(tabs)/chat' : null,
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={
-                isKnicksMode
-                  ? focused
-                    ? 'basketball'
-                    : 'basketball-outline'
-                  : focused
-                    ? 'chatbubbles'
-                    : 'chatbubbles-outline'
-              }
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
+      {/* Normal-mode (non-whatsapp-shell) Inbox sits here, after Groups/Events,
+          matching today's tab order. Under the whatsapp shell it's rendered
+          first instead (above) — see `chatTabScreen`. */}
+      {!showWhatsappShell && chatTabScreen}
       {/* Serving-mode Tasks + Exit sit immediately after Inbox. */}
       <Tabs.Screen
         name="serving-tasks"
@@ -239,9 +265,13 @@ export default function TabsLayout() {
         options={{
           title: 'Admin',
           // Show Admin tab for community admins within a community OR Togather
-          // internal users. Hidden while serving mode is active.
+          // internal users. Hidden while serving mode is active, and hidden
+          // under the whatsapp-shell (admin moves into You + the community
+          // page there — its route stays reachable).
           href:
-            !inServingMode && ((isAdmin && hasCommunity) || isInternalUser)
+            !inServingMode &&
+            !showWhatsappShell &&
+            ((isAdmin && hasCommunity) || isInternalUser)
               ? '/(tabs)/admin'
               : null,
           tabBarIcon: ({ color, focused }) => (
@@ -256,7 +286,9 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          // "You" under the whatsapp-shell (docs/plans/church-migration-ui
+          // -redesign/README.md §5); "Profile" otherwise.
+          title: showWhatsappShell ? 'You' : 'Profile',
           // Hidden while serving mode is active to keep the serving tab bar to
           // Runsheet · Inbox · Tasks · Exit.
           href: inServingMode ? null : '/(tabs)/profile',
