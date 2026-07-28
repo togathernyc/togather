@@ -19,7 +19,8 @@ const OVERRIDE_STORAGE_KEY = "togather_feature_flag_overrides";
  * Format: ?ff_<flagKey>=true|1|false|0
  */
 function getUrlParamOverride(flagKey: string): boolean | undefined {
-  if (typeof window === "undefined") return undefined;
+  // `window` exists without `location` in the jest react-native environment.
+  if (typeof window === "undefined" || !window.location) return undefined;
   const params = new URLSearchParams(window.location.search);
   const value = params.get(`ff_${flagKey}`);
   if (value === "true" || value === "1") return true;

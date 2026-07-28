@@ -3896,7 +3896,7 @@ describe("listJoinableChannels", () => {
       api.functions.messaging.channels.createCustomChannel,
       { token: leaderToken, groupId, name: "Approval Needed" }
     );
-    await t.mutation(api.functions.messaging.channels.updateJoinMode, {
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
       token: leaderToken,
       channelId,
       joinMode: "approval_required",
@@ -4078,7 +4078,7 @@ describe("joinDiscoverableChannel", () => {
       api.functions.messaging.channels.createCustomChannel,
       { token: leaderToken, groupId, name: "Approval Channel" }
     );
-    await t.mutation(api.functions.messaging.channels.updateJoinMode, {
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
       token: leaderToken,
       channelId,
       joinMode: "approval_required",
@@ -4122,7 +4122,7 @@ describe("joinDiscoverableChannel", () => {
       api.functions.messaging.channels.createCustomChannel,
       { token: leaderToken, groupId, name: "Idempotent Channel" }
     );
-    await t.mutation(api.functions.messaging.channels.updateJoinMode, {
+    await t.mutation(api.functions.messaging.channelInvites.updateJoinMode, {
       token: leaderToken,
       channelId,
       joinMode: "approval_required",
