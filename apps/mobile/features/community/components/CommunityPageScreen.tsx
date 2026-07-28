@@ -35,7 +35,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { Avatar, AppImage } from "@components/ui";
+import { Avatar } from "@components/ui";
 import { useGroupSearchQuery } from "@features/groups/hooks/useGroups";
 import { useCommunityEvents } from "@features/events/hooks/useCommunityEvents";
 import { EventCardRow } from "@features/events/components/EventCardRow";
@@ -48,7 +48,7 @@ export function CommunityPageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { primaryColor } = useCommunityTheme();
+  const { primaryColor, accentLight } = useCommunityTheme();
   const { user, community } = useAuth();
 
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -153,13 +153,13 @@ export function CommunityPageScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Branded header band */}
-        <View style={[styles.brandBand, { backgroundColor: primaryColor }]}>
+        <View style={[styles.brandBand, { backgroundColor: accentLight }]}>
           <Avatar
             name={community?.name || "Community"}
             imageUrl={community?.logo ?? null}
             size={64}
           />
-          <Text style={styles.brandName} numberOfLines={2}>
+          <Text style={[styles.brandName, { color: colors.text }]} numberOfLines={2}>
             {community?.name || "Your Community"}
           </Text>
         </View>
@@ -392,7 +392,6 @@ const styles = StyleSheet.create({
   brandName: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#fff",
     textAlign: "center",
     paddingHorizontal: 24,
   },
