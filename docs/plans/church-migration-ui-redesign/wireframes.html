@@ -266,6 +266,36 @@
   .hrow .r{flex:1.25; display:flex; align-items:center; gap:8px}
   .hrow .r .dot{flex:0 0 auto}
 
+  /* group info / people additions */
+  .sw{width:36px;height:20px;border-radius:10px;background:var(--brand);position:relative;flex:0 0 auto}
+  .sw i{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;background:#fff;display:block}
+  .sw.off{background:#d5d1c9} .sw.off i{right:auto;left:2px}
+  .tag{font:700 8.5px ui-monospace,Menlo,monospace; letter-spacing:.05em; border-radius:5px; padding:2px 6px;
+    background:var(--fam-soft); color:var(--fam); flex:0 0 auto}
+  .tag.s{background:var(--sup-soft); color:var(--sup)}
+  .tag.a{background:#f7e6e4; color:#b3423a}
+  .actrow{display:flex; justify-content:center; gap:22px; padding:10px 0 4px}
+  .actrow .ac{display:flex; flex-direction:column; align-items:center; gap:3px; font:600 10px system-ui; color:var(--brand)}
+  .actrow .ac .hbtn{width:34px;height:34px;color:var(--brand);font-size:15px}
+  .redrow b{color:#b3423a}
+  .scorebar{display:flex; align-items:center; gap:8px; font-size:11.5px; margin:5px 0}
+  .scorebar .lbl{width:76px; color:#6f6a62}
+  .scorebar .prog{flex:1}
+  .scorebar .v{width:26px; text-align:right; font-variant-numeric:tabular-nums; color:#26231e; font-weight:700}
+  .pcard{margin:8px 12px 0; border:1px solid var(--screen-line); border-radius:13px; background:#fff; padding:9px 12px}
+  .reason{font-size:11px; color:#b3423a; font-weight:600; margin-top:3px}
+  .metrics{display:flex; gap:10px; font:600 10.5px system-ui; color:#8a847a; margin-top:5px}
+  .reachpill{background:var(--brand); color:#fff; font:700 10.5px system-ui; padding:4px 11px; border-radius:13px; flex:0 0 auto}
+  .tl{border-left:2px solid var(--screen-line); margin:4px 0 0 6px; padding-left:12px}
+  .tl .ti{margin:7px 0; font-size:11.5px}
+  .tl .ti b{display:block; font-size:11.5px}
+  .tl .ti span{color:#8a847a; font-size:10.5px}
+  .mrow{display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--screen-line); font-size:12px}
+  .mrow:last-child{border-bottom:0}
+  .mrow .wl{flex:1; color:#6f6a62}
+  .mrow .arr{color:#b3aea4; font-size:11px}
+  .mrow .tr2{flex:1.2; display:flex; gap:7px; align-items:center; font-weight:600}
+
   footer{margin-top:72px; border-top:1px solid var(--line); padding-top:16px; color:var(--muted); font-size:12.5px}
   a{color:var(--fam)}
   @media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto!important} }
@@ -285,11 +315,12 @@
 <header class="hero">
   <div class="eyebrow">Togather · Product Direction · Wireframes v1</div>
   <h1>Make Togather feel like home to a WhatsApp church</h1>
-  <p class="lede">Twelve annotated screens — nine mobile, three web. The shell mirrors the
+  <p class="lede">Sixteen annotated screens — twelve mobile, four web. The shell mirrors the
   WhatsApp Communities mental model churches already live in; Togather's superpowers surface
   inside familiar rooms instead of foreign tabs; and migration becomes a product with an
-  invite kit, member pre-import, and a temporary WhatsApp bridge. Companion brief:
-  <code>README.md</code> in this folder.</p>
+  invite kit, member pre-import, and a temporary WhatsApp bridge. Companions in this folder:
+  <code>README.md</code> (brief) and <code>FEATURE-MAP.md</code> (exhaustive
+  feature-inventory → new-home audit).</p>
   <div class="legend">
     <span class="chip"><i class="dot f"></i>WhatsApp-familiar anchor</span>
     <span class="chip"><i class="dot s"></i>Togather superpower</span>
@@ -673,9 +704,140 @@
   </div>
 </section>
 
+<!-- =============================== RUN YOUR CHURCH =============================== -->
+<section>
+  <div class="sec-head"><span class="k">04</span><h2>Running the church — group settings, people &amp; health</h2></div>
+  <p class="sec-note">Group settings today are split across three surfaces with inconsistent
+  gates; the People CRM hides behind an unrouted tab. The redesign consolidates each into one
+  WhatsApp-shaped page. Full field-by-field audit in <code>FEATURE-MAP.md</code>.</p>
+  <div class="rail">
+
+    <!-- W13 GROUP INFO -->
+    <div class="cell">
+      <div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
+        <div class="body">
+          <div class="chead"><span>‹</span><div style="flex:1"><b>Group info</b></div><span style="color:var(--brand);font-weight:700;font-size:12px">Edit</span></div>
+          <div class="list" style="background:#f4f2ee">
+            <div style="text-align:center; padding:10px 0 0">
+              <div class="av stack" style="width:54px;height:54px;margin:0 auto;font-size:16px">WT</div>
+              <div style="font-weight:800; font-size:16px; margin-top:5px">Worship Team</div>
+              <div style="font-size:11px; color:#8a847a">31 members · Serving Team · Sundays 8:00</div>
+              <div class="actrow"><span class="ac"><span class="hbtn">✦</span>Invite</span><span class="ac"><span class="hbtn">↗</span>Share</span><span class="ac"><span class="hbtn">⌕</span>Search</span></div>
+            </div>
+            <div class="hcard"><div class="row"><div class="av">🔕</div><div class="rt"><b>Mute group</b><span>Channels can be muted individually</span></div><div class="sw off"><i></i></div></div></div>
+            <div class="shead">Channels</div>
+            <div class="hcard">
+              <div class="row"><div class="av">#</div><div class="rt"><b>general</b><span>31 members</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>leaders</b><span>Private · part leaders</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>sopranos</b><span>Join by approval</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>sunday-production</b><span>Shared with Tech Team</span></div><div class="rm"><span class="tag s">SHARED</span></div></div>
+              <a class="golink">＋ Add channel</a>
+            </div>
+            <div class="shead">Leader tools</div>
+            <div class="hcard">
+              <div class="row"><div class="av">💗</div><div class="rt"><b>People</b><span>3 need attention</span></div><div class="rm"><span class="unread">3</span></div></div>
+              <div class="row"><div class="av">✓</div><div class="rt"><b>Attendance</b></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">▦</div><div class="rt"><b>Rostering &amp; run sheet</b></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">🤖</div><div class="rt"><b>Bots</b><span>Birthday · Communication on</span></div><div class="rm">›</div></div>
+            </div>
+            <div class="hcard">
+              <div class="row"><div class="av">👁</div><div class="rt"><b>Hidden from discovery</b></div><span class="tag a">ADMIN</span><div class="sw"><i></i></div></div>
+              <div class="row"><div class="av">✋</div><div class="rt"><b>Join approval</b><span>Group leaders approve</span></div><span class="tag a">ADMIN</span></div>
+              <div class="row redrow"><div class="av">←</div><div class="rt"><b>Leave group</b></div></div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <h3><span class="w">W13</span>Group info — one page</h3>
+      <ul class="notes">
+        <li><i class="dot f"></i>WhatsApp group-info anatomy: hero, icon action row, <b>Mute</b> (today buried in global Settings; per-channel mute exists in schema with no UI — P0 build), red Leave at bottom.</li>
+        <li><i class="dot s"></i>Channels, Leader tools (People/Attendance/Rostering/Run sheet/Resources/Toolbar), and Bots consolidate three scattered surfaces; shared channels badge inline.</li>
+        <li><i class="dot s"></i>Admin-only controls get an explicit ADMIN tag instead of being invisibly gated mid-form.</li>
+      </ul>
+    </div>
+
+    <!-- W14 PEOPLE -->
+    <div class="cell">
+      <div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
+        <div class="body">
+          <div class="chead"><span>‹</span><div style="flex:1"><b>People</b><span>Living Grace · assigned to you</span></div><span class="hbtn">⚙</span></div>
+          <div class="search">Search people · try status:red or assignee:me</div>
+          <div class="list" style="background:#f4f2ee">
+            <div class="shead" style="color:#b3423a">Needs attention (3)</div>
+            <div class="pcard">
+              <div class="row" style="border:0;padding:0"><div class="av">JO</div><div class="rt"><b>Joan Okafor</b><span>★ Sam T. assigned</span></div><span class="reachpill">Reach out →</span></div>
+              <div class="reason">21d since contact · missed last 3 Sundays</div>
+              <div class="metrics"><span>Connection <b style="color:#b3423a">28</b></span><span>Attend 40%</span><span>Serve 0%</span></div>
+            </div>
+            <div class="pcard">
+              <div class="row" style="border:0;padding:0"><div class="av">DA</div><div class="rt"><b>David A.</b><span style="color:#b0722a">No group leader · tap to assign</span></div><span class="reachpill">Reach out →</span></div>
+              <div class="reason">New member · no contact logged yet</div>
+              <div class="metrics"><span>Connection <b style="color:#b3423a">12</b></span><span>Attend —</span><span>Serve —</span></div>
+            </div>
+            <div class="shead" style="color:#b0722a">Watch (5)</div>
+            <div class="pcard">
+              <div class="row" style="border:0;padding:0"><div class="av">MG</div><div class="rt"><b>Maya G.</b><span>★ you</span></div><span class="reachpill">Reach out →</span></div>
+              <div class="reason">10d since text · attendance slipping</div>
+              <div class="metrics"><span>Connection <b style="color:#b0722a">54</b></span><span>Attend 62%</span><span>Serve 20%</span></div>
+            </div>
+            <div class="hcard"><div class="row"><div class="av">✓</div><div class="rt"><b>Healthy (312)</b><span>collapsed</span></div><div class="rm">›</div></div></div>
+            <div class="hcard"><div class="row"><div class="av">✉</div><div class="rt"><b>Invited (121)</b><span>pre-imported · not signed in yet</span></div><div class="rm">›</div></div></div>
+          </div>
+        </div>
+      </div></div>
+      <h3><span class="w">W14</span>People — the health checker</h3>
+      <ul class="notes">
+        <li><i class="dot s"></i>Triage bands (&lt;40 / 40–69 / ≥70) with the sacred <b>reason line</b> — the score is never a mystery. Reach-out pill logs Text / Call / In-person and lifts Connection immediately.</li>
+        <li><i class="dot s"></i>Today this hides behind an unrouted tab; new entries: Group info › Leader tools › People, and the Community-hub Admin card.</li>
+        <li><i class="dot m"></i>"Invited" band = pre-imported members who haven't signed in — the same rows the adoption dashboard counts.</li>
+      </ul>
+    </div>
+
+    <!-- W15 PERSON -->
+    <div class="cell">
+      <div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
+        <div class="body">
+          <div class="chead"><span>‹</span><div class="av">JO</div><div style="flex:1"><b>Joan Okafor</b><span>Young Adults · joined Mar 2025</span></div></div>
+          <div class="list" style="background:#f4f2ee">
+            <div class="actrow"><span class="ac"><span class="hbtn">✉</span>Text</span><span class="ac"><span class="hbtn">✆</span>Call</span><span class="ac"><span class="hbtn">✓</span>Log visit</span><span class="ac"><span class="hbtn">💤</span>Snooze</span></div>
+            <div class="pcard">
+              <div class="scorebar"><span class="lbl">Connection</span><div class="prog"><i style="width:28%;background:#b3423a"></i></div><span class="v">28</span></div>
+              <div class="scorebar"><span class="lbl">Attendance</span><div class="prog"><i style="width:40%;background:#b0722a"></i></div><span class="v">40</span></div>
+              <div class="scorebar"><span class="lbl">Serving</span><div class="prog"><i style="width:0%"></i></div><span class="v">0</span></div>
+              <div class="reason">21d since contact · missed last 3 Sundays</div>
+            </div>
+            <div class="hcard"><div class="row"><div class="av">★</div><div class="rt"><b>Assigned to Sam T.</b><span>Followup Bot · rotate leaders</span></div><div class="rm">Edit</div></div></div>
+            <div class="shead">History</div>
+            <div class="pcard">
+              <div class="tl">
+                <div class="ti"><b>Call · left voicemail</b><span>Sam T. · 21d ago</span></div>
+                <div class="ti"><b>Attended Sunday Service</b><span>24d ago</span></div>
+                <div class="ti"><b>Note: new job, traveling a lot</b><span>Sam T. · 32d ago</span></div>
+                <div class="ti"><b>Served · Setup crew</b><span>60d ago</span></div>
+              </div>
+            </div>
+            <div class="hcard">
+              <div class="row"><div class="av">🛡</div><div class="rt"><b>Role: Member</b><span>Make admin · Remove from community</span></div><span class="tag a">ADMIN</span></div>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <h3><span class="w">W15</span>Person page — unified</h3>
+      <ul class="notes">
+        <li><i class="dot s"></i>Merges today's three person views (leader follow-up detail, admin person screen, profile) into one page with role-gated sections.</li>
+        <li><i class="dot s"></i>Score bars + reason + timeline (touchpoints, notes, attendance, serving); back-datable logging kept. Followup Bot assignment now writes the CRM assignee of record (today it only @mentions in chat).</li>
+        <li><i class="dot f"></i>Contact actions up top like a phone contact card — Text/Call open the native apps and log the touch.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
 <!-- =============================== WEB =============================== -->
 <section>
-  <div class="sec-head"><span class="k">04</span><h2>Web — desktop client &amp; the migration on-ramp</h2></div>
+  <div class="sec-head"><span class="k">05</span><h2>Web — desktop client &amp; the migration on-ramp</h2></div>
   <p class="sec-note">The web client is the same Expo codebase; the split-pane inbox and nav rail
   already exist. W10 extends them WhatsApp-Web-style; W11–W12 are the admin migration product,
   desktop-first.</p>
@@ -784,6 +946,54 @@
         <li><i class="dot m"></i>Five steps wrapping the existing demo-community onboarding: church setup → mirror WhatsApp groups → CSV/contacts pre-import → invite kit → go live. Each mirrored group starts with exactly one visible channel (Rule 2), so day one looks like WhatsApp.</li>
         <li><i class="dot m"></i>QR poster + pre-written WhatsApp handoff message are net-new; links reuse <code>g/[shortId]</code> and community subdomains.</li>
         <li><i class="dot f"></i>Phone-number sign-in is the migration cheat code: members keep their identity, zero account setup.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="rail">
+    <!-- W16 WIZARD STEP 2: STRUCTURE MAPPING -->
+    <div class="cell wide">
+      <div class="browser">
+        <div class="bbar"><div class="bdots"><i></i><i></i><i></i></div><div class="url">togather.nyc/onboarding/migrate</div></div>
+        <div class="wiz">
+          <div class="wsteps">
+            <div class="shead" style="padding:0 18px 8px">Move from WhatsApp</div>
+            <div class="wstep done"><span class="n">✓</span>Your church</div>
+            <div class="wstep on"><span class="n">2</span>Mirror your groups</div>
+            <div class="wstep"><span class="n">3</span>Bring your people</div>
+            <div class="wstep"><span class="n">4</span>Invite kit</div>
+            <div class="wstep"><span class="n">5</span>Go live &amp; track</div>
+          </div>
+          <div class="wbody">
+            <h4>Mirror your WhatsApp structure</h4>
+            <p class="sub2">Does your church use more than one WhatsApp community? Map each one — every chat gets a home, and it all lives under one roof.</p>
+            <div class="kit">
+              <div class="kcard">
+                <b>Living Grace <span style="color:#8a847a;font-weight:600">· main community</span></b>
+                <div class="mrow"><span class="wl">💬 Young Adults</span><span class="arr">→</span><span class="tr2">Group<span class="tag">1 CHANNEL</span></span></div>
+                <div class="mrow"><span class="wl">💬 Men's Group</span><span class="arr">→</span><span class="tr2">Group<span class="tag">1 CHANNEL</span></span></div>
+                <div class="mrow"><span class="wl">💬 Dinner Crew</span><span class="arr">→</span><span class="tr2">Group<span class="tag">1 CHANNEL</span></span></div>
+                <div class="mrow"><span class="wl">📣 Announcements</span><span class="arr">→</span><span class="tr2">Community announcements</span></div>
+              </div>
+              <div class="kcard">
+                <b>LG Worship <span style="color:#8a847a;font-weight:600">· separate community</span></b>
+                <div class="mrow"><span class="wl">Whole community</span><span class="arr">→</span><span class="tr2">Group: Worship Team<span class="tag s">CHANNELS</span></span></div>
+                <div class="mrow"><span class="wl">💬 Part Leaders</span><span class="arr">→</span><span class="tr2"># leaders channel</span></div>
+                <div class="mrow"><span class="wl">💬 Sopranos</span><span class="arr">→</span><span class="tr2"># sopranos</span></div>
+                <div class="mrow"><span class="wl">💬 Band</span><span class="arr">→</span><span class="tr2"># band</span></div>
+                <div class="mrow"><span class="wl">📣 Announcements</span><span class="arr">→</span><span class="tr2"># announcements</span></div>
+                <div class="mrow"><span class="wl">💬 Sunday Production <i style="font-style:normal;color:#b3aea4">(w/ Tech)</i></span><span class="arr">→</span><span class="tr2"># shared channel<span class="tag s">SHARED</span></span></div>
+              </div>
+            </div>
+            <div class="imp" style="text-align:left">Members who straddled two WhatsApp communities land in <b>one</b> Togather group whose channel list matches the chats they already knew — one roof, one announcements feed.</div>
+            <div style="display:flex; justify-content:flex-end; margin-top:12px"><span class="kbtn fill" style="padding:6px 18px">Create 4 groups · 6 channels →</span></div>
+          </div>
+        </div>
+      </div>
+      <h3><span class="w">W16</span>Wizard step 2 — the stacked-communities mapping</h3>
+      <ul class="notes">
+        <li><i class="dot m"></i>First-class support for the workaround big churches invented: a ministry's separate WhatsApp community maps to a group-with-channels — part leaders → <code>leaders</code>, sections → custom channels, its announcements → the group's announcements channel.</li>
+        <li><i class="dot s"></i>Cross-ministry chats become shared channels — structure WhatsApp cannot express; the sprawl problem becomes the pitch.</li>
       </ul>
     </div>
   </div>

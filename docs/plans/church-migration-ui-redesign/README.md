@@ -4,8 +4,12 @@
 Communities, while keeping every Togather superpower (group finder, events, prayer,
 bots, channels, rostering) one tap away.
 
-**Companion wireframes:** [`wireframes.html`](./wireframes.html) — 12 annotated
-screens (9 mobile, 3 web). Open in a browser.
+**Companion wireframes:** [`wireframes.html`](./wireframes.html) — 16 annotated
+screens (12 mobile, 4 web). Open in a browser.
+**Companion feature map:** [`FEATURE-MAP.md`](./FEATURE-MAP.md) — exhaustive
+audit of every existing surface (group settings, leader tools, admin, People
+CRM/health, rostering/serving/tasks, notifications, settings, public links) and
+its new home, plus the cross-cutting gaps the audit surfaced.
 
 ---
 
@@ -160,6 +164,29 @@ Level-by-level mapping (also diagrammed in the wireframes):
 | — (no equivalent) | **Channels** within groups; shared/event channels | Extensibility superpower, leader-side opt-in |
 | Many communities, interleaved | **Community switcher** (Chats header avatar + You) | Focus superpower |
 
+**The stacked-communities workaround.** Big churches hack WhatsApp's missing
+depth by creating *extra communities*: the church has its overall community,
+and a large ministry (say, a 100-person worship team) spins up its **own**
+WhatsApp community so its chats — "Part Leaders", "Sopranos", "Band" — can act
+like channels. Members end up straddling two communities with two announcement
+feeds. This maps *exactly* onto Togather's model, and the migration wizard
+must treat it as a first-class case (wireframe W16):
+
+| Church's WhatsApp reality | Togather mapping |
+|---|---|
+| Overall church community | The community |
+| A chat in the church community | A group (one visible channel) |
+| A ministry's *separate* community (worship team) | **One group with channels** |
+| — its "Part Leaders" chat | The group's built-in `leaders` channel (or a custom channel if part leaders ≠ group leaders) |
+| — its "Sopranos" / "Band" chats | Custom channels |
+| — its announcements chat | The group's `announcements` channel |
+| A chat spanning ministries (e.g. "Sunday Production" across worship + tech) | A **shared channel** across groups — structure WhatsApp cannot express at all |
+
+Wizard step 2 therefore asks: *"Does your church use more than one WhatsApp
+community?"* — each extra community becomes a group-with-channels, and the
+sprawl problem (duplicate memberships, two announcement feeds to check)
+becomes the migration pitch: same structure, one roof, one announcements feed.
+
 ### Screen specs (wireframes 1–9)
 
 **W1 — Chats (home).** Keep `ChatInboxScreen`'s collapsing large-title header,
@@ -213,7 +240,45 @@ entry card so it's discoverable without the tab being first-run visible.
 (existing switcher), **Invite your church** (invite kit), **Use Togather on
 the web** (pairs with W10; replaces "Linked devices" mentally), Starred,
 Archived groups → then Admin tools (role-gated), Notifications, Privacy
-(blocked users), Help & feedback.
+(blocked users), Help & feedback. Absorbs today's `ProfileMenu` catch-all
+drawer (My events, My schedule, My prayers, Leader tools entries, Settings).
+
+**W13 — Group info page.** The biggest consolidation: today group settings are
+split across the Edit form, the group-detail GROUP ACTIONS card, and the
+leader-tools subtree, with inconsistent gates. The redesign gives every group
+**one WhatsApp-group-info-shaped page**: hero (photo, name, member count,
+description, group-type chip) → icon action row (Invite · Share · Search) →
+**Mute toggle** (promoting the per-group notification switch buried in global
+Settings today — and building the per-channel mute that exists in schema but
+has no UI) → Channels section (with create/reorder/shared-channel badges) →
+Events → **Leader tools card** (role-gated: People/Check-in, Attendance,
+Tasks, Rostering, Run sheet, Resources, Toolbar) → **Bots card** (kept
+prominent — a headline superpower) → Details (schedule, location, external
+link) → Settings rows with explicit `ADMIN` badges for community-admin-only
+controls (`hiddenFromDiscovery`, `joinApprovalMode`, archive) → red Leave
+group at bottom (WhatsApp convention). Full field-by-field mapping in
+FEATURE-MAP §3–4.
+
+**W14 — People (Check-in) list.** The member-health CRM, today hidden behind a
+`href: null` tab and a Profile-menu link. New entries: Group info › Leader
+tools › People (leaders, assigned-to-me default) and Community hub Admin card
+("3 need attention") → full list. Keeps everything that works: triage sections
+(Needs attention <40 / Watch 40–69 / Healthy ≥70), the **reason line** ("14d
+since contact · missed last 3" — the score is never a mystery), Reach-out pill
+(Text / Call / Log in-person), assignee line, desktop spreadsheet with saved
+views + filter DSL + map view. Migration tie-in: pre-imported members appear
+as **Invited** rows until first sign-in.
+
+**W15 — Person page (unified).** Merges the three overlapping person views
+(`FollowupDetailScreen`, admin `PersonDetailScreen`, profile) into one page
+with role-gated sections: header (contact actions) → health card (3 score bars
++ reason line + status/snooze) → assignees (and the Followup Bot fix: bot
+assignment now writes the CRM assignee of record) → log follow-up (in-person /
+call / text, back-datable) → timeline (touchpoints, notes, attendance,
+serving) → tasks → **Admin section** (role management, transfer primary
+admin, remove — primary-admin-gated). Naming decision: leader-side stays
+"Reach out"; the member-initiated `reach_out` request feature is renamed
+**"Ask for help"** in UI to kill the collision.
 
 ## 6. Web redesign
 
@@ -247,6 +312,26 @@ WhatsApp in an afternoon." Builds on the existing demo-community onboarding
 bars), overall adoption %, bridge status per group, "nudge stragglers" action
 (re-send WhatsApp handoff message), migration checklist completion.
 
+**W16 — Wizard step 2: mirror your WhatsApp structure.** First-class support
+for the stacked-communities workaround (§5 hierarchy table): the admin lists
+each WhatsApp community their church runs; the overall community's chats map
+to groups, and each *extra* community (worship team etc.) maps to a
+group-with-channels — its part-leaders chat to the `leaders` channel, section
+chats to custom channels, its announcements to the group's announcements
+channel. Cross-ministry chats become shared channels. The wizard renders this
+as a two-column mapping the admin can adjust before anything is created.
+
+**Admin console (desktop shell, W12's frame).** Nav: **Migration · Requests ·
+People · Broadcasts · Stats · Settings** (+ staff area). Key fixes from the
+audit (FEATURE-MAP §5): the fully-built but *orphaned* broadcast composer with
+its two-admin approval flow gets routed again (and gains "post to
+Announcements channel" as a delivery option alongside push/email);
+group-creation requests gain the "approve with modifications" UI the backend
+already supports; prayer reviews + chat-message flags unify into one
+Moderation queue; integrations (PCO/Clearstream/Flodesk) move here from
+leader-tools where they were always admin-gated anyway; duplicate-account
+merge and the staff screens get real navigation instead of URL-only access.
+
 ## 7. New migration features (net-new product)
 
 | Feature | What it is | Builds on | Phase |
@@ -260,14 +345,21 @@ bars), overall adoption %, bridge status per group, "nudge stragglers" action
 ## 8. Phasing
 
 - **P0 — Familiar shell + invite on-ramp:** tab reorder/rename (Chats first,
-  Community hub, You), Community hub screen, Chats-home restyle, invite kit
-  (QR + handoff message), member pre-import. *P0 is mostly re-composition of
-  existing screens — the chat stack, Explore, Events, Prayer are feature-frozen.*
-- **P1 — Migration wizard + bridge:** wizard steps 2–5 wrapping existing
-  onboarding, WhatsApp bridge on announcements, adoption dashboard, desktop
-  right-panel + desktop-aware Community/Events/Admin.
+  Community hub, You), Community hub screen, Chats-home restyle, **Group info
+  page consolidation (W13)**, **Mute UI** (per-group promotion + per-channel
+  build — the highest-frequency WhatsApp gesture, currently schema-only),
+  invite kit (QR + handoff message), member pre-import. *P0 is mostly
+  re-composition of existing screens — the chat stack, Explore, Events,
+  Prayer are feature-frozen.*
+- **P1 — Migration wizard + bridge + console:** wizard steps 2–5 including the
+  multi-community mapping (W16), WhatsApp bridge on announcements, adoption
+  dashboard, desktop right-panel + desktop-aware Community/Events/Admin,
+  admin console shell with revived Broadcasts, approve-with-modifications,
+  unified Moderation queue, **unified Person page (W15)** + People entries
+  un-hidden (W14), Followup-Bot-writes-assignee fix, "Ask for help" rename.
 - **P2 — Deepening:** chat history import exploration, per-community chat
-  themes (wallpaper), migration concierge tooling.
+  themes (wallpaper), migration concierge tooling, legacy score-pipeline
+  removal, on-break groups UI, admin-editable group type.
 
 ## 9. Engineering notes (grounded in current code)
 
