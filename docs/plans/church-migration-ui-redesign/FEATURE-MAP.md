@@ -38,7 +38,7 @@ Legend: 🟢 stays as-is (maybe restyled) · 🔀 moves · 🆕 net-new surface 
 | Channel invite links `ch/[shortId]` (open/approval) | Unchanged; also surfaced in invite kit | 🟢 |
 | Shared channels (invites, accept/decline, announcements-share confirm) | Group info → Channels section badges + channel info | 🟢 |
 | Per-channel mute | ⚠️ **Schema exists (`chatChannelMembers.isMuted`), zero UI.** Build it: long-press chat row + info-page row. WhatsApp muscle memory demands Mute — P0 | ⚠️🆕 |
-| Channel discovery (today: invite links or leader-add only — no browse) | **Channel directory (W17)**: "Channels you can join" via new `discoverable` toggle on custom channels + existing `joinMode` | 🆕 |
+| Channel discovery (today: invite links or leader-add only — no browse) | **Channel directory (W17)**: "Channels you can join" via new `discoverable` toggle on custom channels + existing `joinMode`. Decision: visible to every group member; `discoverable` defaults ON, leaders hide per channel | 🆕 |
 | Cluster overflow (member of many channels) | Hygiene rules (brief §5): cluster caps at main + 2 active sub-rows, "N more channels" collapse, muted channels sink + excluded from badge, inactive/archived leave the list; leader "quiet channels" tidy-up card | 🆕 |
 | Per-group notification toggle (buried in global Settings) | **Promoted to Group info page** ("Mute group") + stays in Settings | 🔀 |
 | Thread replies, reactions, polls, voice, GIFs, event/task/bug/reach-out/availability cards | Unchanged in-thread | 🟢 |

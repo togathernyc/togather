@@ -329,6 +329,10 @@ admin, remove — primary-admin-gated). Naming decision: leader-side stays
 row, "＋ Add channel" (leader), and the leader-only **quiet-channels tidy-up
 card** (hygiene rule 5). Reached from Group info › Channels and from the
 "N more channels" collapse row in Chats.
+**Decision:** "Channels you can join" is visible to **every group member** —
+`discoverable` defaults ON for custom channels; a leader can hide an
+individual channel (e.g. a sensitive care channel), and approval-required
+channels expose only their existence, never their contents.
 
 **W18 — Channel management page.** Consolidates today's 2,632-line
 `ChannelInfoScreen` into the WhatsApp-info shape: hero (`#name`, member count,
