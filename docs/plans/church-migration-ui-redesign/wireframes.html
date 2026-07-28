@@ -255,6 +255,16 @@
   .iatab .dot{flex:0 0 auto}
   .iatab small{margin-left:auto; color:var(--muted); font-size:11px}
   .iatab.gone{opacity:.45; text-decoration:line-through}
+  .hmap{border:1px solid var(--line); border-radius:14px; background:var(--card); padding:14px 18px 6px; margin-top:26px}
+  .hmap h3{margin:0 0 6px; font-size:13px}
+  .hmap h3 .k{font:600 10px ui-monospace,Menlo,monospace; letter-spacing:.1em; color:var(--muted);
+    text-transform:uppercase; display:block; margin-bottom:2px}
+  .hrow{display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13px}
+  .hrow:last-child{border-bottom:0}
+  .hrow .l{flex:1; color:var(--muted)}
+  .hrow .arr{flex:0 0 auto; color:var(--muted); font-size:12px}
+  .hrow .r{flex:1.25; display:flex; align-items:center; gap:8px}
+  .hrow .r .dot{flex:0 0 auto}
 
   footer{margin-top:72px; border-top:1px solid var(--line); padding-top:16px; color:var(--muted); font-size:12.5px}
   a{color:var(--fam)}
@@ -312,6 +322,20 @@
   <p class="sec-note">Discovery moves to the Community tab — exactly where WhatsApp puts
   "Groups you can join" — with the full map finder one tap deeper. Admin folds into You and
   a Community-hub card. Serving-mode tab swap is unchanged.</p>
+
+  <div class="hmap">
+    <h3><span class="k">Hierarchy reconciliation</span>The two products nest in opposite directions — stage the depth, don't flatten it</h3>
+    <div class="hrow"><span class="l">Chats — everything in your life, one flat list (62 unread)</span><span class="arr">→</span>
+      <span class="r"><i class="dot f"></i>Chats tab — everything <b>in your church</b>. Same shape, tighter scope; scope is the feature.</span></div>
+    <div class="hrow"><span class="l">Community — one item inside the list</span><span class="arr">→</span>
+      <span class="r"><i class="dot f"></i>Your church = <b>the whole app</b> (branding, subdomain) + the Community tab.</span></div>
+    <div class="hrow"><span class="l">Community group — a group <b>is</b> one chat thread</span><span class="arr">→</span>
+      <span class="r"><i class="dot f"></i>Group — <b>one row until it grows channels</b>. Single-channel groups are indistinguishable from WhatsApp groups.</span></div>
+    <div class="hrow"><span class="l">— no equivalent —</span><span class="arr">→</span>
+      <span class="r"><i class="dot s"></i>Channels (general · leaders · announcements · custom · shared · event). Leader-side opt-in; members inherit sub-rows only when a second channel is visible <b>to them</b>.</span></div>
+    <div class="hrow"><span class="l">Many communities interleaved in one list</span><span class="arr">→</span>
+      <span class="r"><i class="dot s"></i>Community switcher (Chats-header avatar + You tab) — one church at a time, zero foreign unreads.</span></div>
+  </div>
 </section>
 
 <!-- =============================== SHELL =============================== -->
@@ -324,15 +348,15 @@
       <div class="phone"><div class="scr">
         <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
         <div class="body">
-          <div class="bigtitle"><b>Chats</b><div class="hbtns"><span class="hbtn">⌕</span><span class="hbtn pri">＋</span></div></div>
+          <div class="bigtitle"><b>Chats</b><div class="hbtns"><span class="hbtn" style="background:var(--brand);color:#fff;border:0;font:800 10px system-ui">LG</span><span class="hbtn">⌕</span><span class="hbtn pri">＋</span></div></div>
           <div class="search">Search messages</div>
           <div class="list">
             <div class="row"><div class="av sq">🗄</div><div class="rt"><b>Archived</b></div><div class="rm">3</div></div>
             <div class="row"><div class="av sq brand stack">LG</div><div class="rt"><b>Living Grace Church</b><span>Announcements · Sunday setup at 8:30…</span></div><div class="rm"><span class="t on">12:52</span><span class="unread">5</span></div></div>
             <div class="row sub"><div class="av">📣</div><div class="rt"><b>Announcements</b><span>~Pastor Dan: This Sunday we're…</span></div><div class="rm"><span class="unread">2</span></div></div>
             <div class="row"><div class="av">YA</div><div class="rt"><b>Young Adults</b><span>Maya: who's in for Friday? 🙌</span></div><div class="rm"><span class="t on">Yest.</span><span class="unread">8</span></div></div>
-            <div class="row"><div class="av">WT</div><div class="rt"><b>Worship Team · Leaders</b><span>Sam: setlist attached</span></div><div class="rm"><span class="t">Yest.</span></div></div>
-            <div class="row"><div class="av">DP</div><div class="rt"><b>Dinner Party · Astoria</b><span>Poll: Which night works?</span></div><div class="rm"><span class="t">Sun</span></div></div>
+            <div class="row"><div class="av stack">WT</div><div class="rt"><b>Worship Team</b><span>Sam: setlist attached</span></div><div class="rm"><span class="t">Yest.</span></div></div>
+            <div class="row sub"><div class="av">#</div><div class="rt"><b>leaders</b><span>Jo: run-sheet published ✓</span></div><div class="rm"><span class="unread">1</span></div></div>
             <div class="row"><div class="av">JO</div><div class="rt"><b>Joan Okafor</b><span>Thank you for yesterday 🙏</span></div><div class="rm"><span class="t">Sun</span></div></div>
             <div class="row"><div class="av">✉</div><div class="rt"><b>Message requests</b><span>2 people you may know</span></div><div class="rm">›</div></div>
           </div>
@@ -348,7 +372,8 @@
       <h3><span class="w">W1</span>Chats — the new home</h3>
       <ul class="notes">
         <li><i class="dot f"></i>WhatsApp Chats anatomy: large title, search, Archived row, stacked-card community avatar, unread badges, green timestamps.</li>
-        <li><i class="dot f"></i>Church pinned first with its Announcements sub-row — replaces indented multi-channel sub-rows.</li>
+        <li><i class="dot f"></i>Rule 1, one row = one place you talk: Young Adults (single channel) is a plain row, exactly like a WhatsApp group; Worship Team has grown a <code>leaders</code> channel, so it clusters like a WhatsApp Communities row. Joan is a DM, interleaved as WhatsApp users expect.</li>
+        <li><i class="dot s"></i>Rule 2: channels appear only when a second one is visible to <em>you</em> — a migrated church starts all-plain-rows. Rule 3: the LG header avatar is the community switcher; one church at a time, zero foreign unreads.</li>
         <li><i class="dot s"></i>Message requests (Signal-style) and thread-bump ordering carry over from the existing inbox.</li>
       </ul>
     </div>
@@ -756,7 +781,7 @@
       </div>
       <h3><span class="w">W11</span>Migration wizard — invite kit step</h3>
       <ul class="notes">
-        <li><i class="dot m"></i>Five steps wrapping the existing demo-community onboarding: church setup → mirror WhatsApp groups → CSV/contacts pre-import → invite kit → go live.</li>
+        <li><i class="dot m"></i>Five steps wrapping the existing demo-community onboarding: church setup → mirror WhatsApp groups → CSV/contacts pre-import → invite kit → go live. Each mirrored group starts with exactly one visible channel (Rule 2), so day one looks like WhatsApp.</li>
         <li><i class="dot m"></i>QR poster + pre-written WhatsApp handoff message are net-new; links reuse <code>g/[shortId]</code> and community subdomains.</li>
         <li><i class="dot f"></i>Phone-number sign-in is the migration cheat code: members keep their identity, zero account setup.</li>
       </ul>

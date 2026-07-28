@@ -102,13 +102,74 @@ join") belongs on the community page, exactly where WhatsApp puts it — with
 Togather's map finder one tap deeper. The Admin tab's audience is tiny; a card
 in Community + a row in You serves it without spending a tab.
 
+### Hierarchy reconciliation — stage the superpower, don't flatten it
+
+The two products nest in *opposite directions*, and this is the single biggest
+source of migration confusion if handled naively:
+
+```
+WhatsApp:  Everything (DMs + groups + communities, one flat list)
+             └── Community
+                   └── Community group  (a group IS one chat thread)
+
+Togather:  Community  (the app context: subdomain, branding, membership)
+             └── Groups + DMs
+                   └── Group channels  (general / leaders / announcements / custom)
+```
+
+WhatsApp's flat top level is why the screenshots show a 62-unread Chats badge
+spanning weddings, family, and church. Togather's community-scoping and its
+group→channel depth are the **focus and extensibility superpowers** — we keep
+both, but render them through three rules:
+
+**Rule 1 — one row = one place you talk.** The Chats list translates hierarchy
+into WhatsApp-shaped rows. A single-channel group renders as a single row,
+indistinguishable from a WhatsApp group (existing `GroupedInboxItem` behavior —
+keep it). A multi-channel group renders as a cluster — group header row with
+its main channel in the prominent spot (`selectMainChannel.ts`) — which is
+*exactly* how a WhatsApp Communities row with stacked sub-chats already looks.
+Members never navigate an abstract hierarchy; they tap rows.
+
+**Rule 2 — channels are growth, not structure to learn.** A freshly migrated
+group *is* one thread, like the WhatsApp group it mirrors. Channels appear in
+a member's list only when a second channel becomes **visible to them**: leaders
+see `leaders` because they're leaders; members see `announcements` or custom
+channels only once leaders create/share them. The extensibility ladder —
+group → channels → shared channels → event channels → rostering — is opt-in
+per group, so a church can stay "WhatsApp-simple" forever and never see the
+depth it isn't using. Migration wizard default: each mirrored WhatsApp group
+gets exactly one visible channel.
+
+**Rule 3 — community scope is a feature we sell, not hide.** Where WhatsApp
+interleaves church chat with everything else in your life, opening Togather
+means *you're at church* — church branding, church people, zero foreign
+unreads. Onboarding and the migration handoff message should say this
+explicitly ("your church gets its own app"). The multi-community switcher
+parks where WhatsApp users expect account/community switching: the avatar in
+the Chats header and a row in You — present, never in the way (most members
+belong to one church; the flat all-communities list is WhatsApp's compromise,
+not its strength).
+
+Level-by-level mapping (also diagrammed in the wireframes):
+
+| WhatsApp level | Togather rendering | Note |
+|---|---|---|
+| Chats — everything, one list | **Chats tab — everything in your church** | Same shape, tighter scope; scope is the feature |
+| Community | **Your church = the whole app** + Community tab | Branding, subdomain, membership |
+| Community group (one thread) | **Group — one row until it grows channels** | Rule 1 + Rule 2 |
+| — (no equivalent) | **Channels** within groups; shared/event channels | Extensibility superpower, leader-side opt-in |
+| Many communities, interleaved | **Community switcher** (Chats header avatar + You) | Focus superpower |
+
 ### Screen specs (wireframes 1–9)
 
 **W1 — Chats (home).** Keep `ChatInboxScreen`'s collapsing large-title header,
 add: community row pinned first (church logo, stacked-card avatar treatment,
 Announcements preview), group rows with unread badges, DMs, Message Requests
-row, compose FAB. `selectMainChannel.ts` logic unchanged. This is mostly a
-restyle of the existing inbox, not a rebuild.
+row, compose FAB. `selectMainChannel.ts` logic unchanged. Applies hierarchy
+Rules 1–2: single-channel groups are plain rows; multi-channel groups render
+as WhatsApp-Communities-style clusters. The header avatar is the community
+switcher entry (Rule 3). This is mostly a restyle of the existing inbox, not
+a rebuild.
 
 **W2 — Community hub.** The WhatsApp community-info layout, made a living tab:
 branded header (logo, name, member count — community `primaryColor` band),
