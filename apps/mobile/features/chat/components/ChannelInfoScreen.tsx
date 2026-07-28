@@ -468,9 +468,17 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
     router.push(`/inbox/${groupId}/${channelSlug}/members` as any);
   }, [router, groupId, channelSlug]);
 
-  // Mute: reads the current user's chatChannelMembers.isMuted (surfaced
-  // additively on getChannelBySlug's payload). Falls back to false (unmuted)
-  // when the field isn't present yet.
+  // Mute: KNOWN GAP — as of this change, no query exposes the current user's
+  // chatChannelMembers.isMuted to the client. `getChannelBySlug` spreads the
+  // raw chatChannels *document* (`...resolvedChannel`) plus a couple of
+  // membership fields (`role`, `userGroupRole`) it adds explicitly, but
+  // `isMuted` lives on chatChannelMembers, not chatChannels, so it isn't in
+  // either. This reads it defensively (and will start working the moment a
+  // query adds `isMuted: channelMembership?.isMuted` the same way it already
+  // adds `role: channelMembership?.role`) but today always falls back to
+  // false/unmuted on load — the switch is otherwise fully wired end-to-end
+  // (writes via `setChannelMuted`, optimistic toggle for the rest of the
+  // session). See PR description for the follow-up.
   const isChannelMuted =
     mutedOverride ??
     ((channel as { isMuted?: boolean } | undefined)?.isMuted ?? false);
@@ -1608,7 +1616,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                         { color: colors.textSecondary },
                       ]}
                     >
-                      Listed in &ldquo;Channels you can join&rdquo;
+                      Listed in "Channels you can join"
                     </Text>
                   </View>
                   <Switch
