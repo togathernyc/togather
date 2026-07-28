@@ -38,6 +38,8 @@ Legend: 🟢 stays as-is (maybe restyled) · 🔀 moves · 🆕 net-new surface 
 | Channel invite links `ch/[shortId]` (open/approval) | Unchanged; also surfaced in invite kit | 🟢 |
 | Shared channels (invites, accept/decline, announcements-share confirm) | Group info → Channels section badges + channel info | 🟢 |
 | Per-channel mute | ⚠️ **Schema exists (`chatChannelMembers.isMuted`), zero UI.** Build it: long-press chat row + info-page row. WhatsApp muscle memory demands Mute — P0 | ⚠️🆕 |
+| Channel discovery (today: invite links or leader-add only — no browse) | **Channel directory (W17)**: "Channels you can join" via new `discoverable` toggle on custom channels + existing `joinMode` | 🆕 |
+| Cluster overflow (member of many channels) | Hygiene rules (brief §5): cluster caps at main + 2 active sub-rows, "N more channels" collapse, muted channels sink + excluded from badge, inactive/archived leave the list; leader "quiet channels" tidy-up card | 🆕 |
 | Per-group notification toggle (buried in global Settings) | **Promoted to Group info page** ("Mute group") + stays in Settings | 🔀 |
 | Thread replies, reactions, polls, voice, GIFs, event/task/bug/reach-out/availability cards | Unchanged in-thread | 🟢 |
 | External chat link ("Join on WhatsApp") | Kept, but reframed: migration bridge UI takes over during transition; external link demoted to a group-info detail row | 🔀 |
@@ -171,3 +173,4 @@ health workflow); code's "followup" naming stays internal. New homes:
 11. **No chat-message moderation queue** despite flags schema (§5).
 12. **Stale docs**: `docs/features/admin.md`, `docs/features/leader-tools.md`, CheckIn guide's phantom `features/check-in` path — fix alongside.
 13. **Route moves must update** `+native-intent.ts`, `KNOWN_APP_ROUTES` in the link-preview worker, and `app/__tests__/routing-conflicts.test.ts`.
+14. **Everything ships behind the community-scoped `whatsapp-shell` flag** (brief §9.5): default off, both shells in the bundle, PostHog targeting + Convex kill-switch, new routes gated at their entry points. Nothing leaks until the flag flips.

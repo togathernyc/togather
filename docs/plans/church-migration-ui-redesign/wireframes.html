@@ -296,6 +296,23 @@
   .mrow .arr{color:#b3aea4; font-size:11px}
   .mrow .tr2{flex:1.2; display:flex; gap:7px; align-items:center; font-weight:600}
 
+  /* rostering grid */
+  .rg{border:1px solid var(--screen-line); border-radius:10px; overflow:hidden; font-size:11.5px}
+  .rgrow{display:flex; border-bottom:1px solid var(--screen-line)}
+  .rgrow:last-child{border-bottom:0}
+  .rgc{flex:1; padding:8px 9px; border-left:1px solid var(--screen-line); min-width:0}
+  .rgc.role{flex:0 0 118px; border-left:0; font-weight:700}
+  .rgrow.rh{background:#fbfaf8; font-weight:700}
+  .rgrow.rh .rgc span{display:block; font-weight:500; color:#8a847a; font-size:10px}
+  .cchip{display:inline-flex; gap:4px; align-items:center; border:1px solid var(--screen-line); border-radius:12px;
+    padding:2px 8px; font-weight:600; font-size:10.5px; white-space:nowrap}
+  .cchip.ok{background:var(--fam-soft); border-color:transparent; color:var(--fam)}
+  .cchip.wait{background:var(--mig-soft); border-color:transparent; color:#b0722a}
+  .cchip.fill{border-style:dashed; color:#8a847a}
+  .lens{display:inline-flex; border:1px solid var(--screen-line); border-radius:14px; overflow:hidden; font:700 11px system-ui}
+  .lens i{font-style:normal; padding:4px 12px; color:#8a847a}
+  .lens i.on{background:#26231e; color:#fff}
+
   footer{margin-top:72px; border-top:1px solid var(--line); padding-top:16px; color:var(--muted); font-size:12.5px}
   a{color:var(--fam)}
   @media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto!important} }
@@ -315,7 +332,7 @@
 <header class="hero">
   <div class="eyebrow">Togather · Product Direction · Wireframes v1</div>
   <h1>Make Togather feel like home to a WhatsApp church</h1>
-  <p class="lede">Sixteen annotated screens — twelve mobile, four web. The shell mirrors the
+  <p class="lede">Nineteen annotated screens — fourteen mobile, five web. The shell mirrors the
   WhatsApp Communities mental model churches already live in; Togather's superpowers surface
   inside familiar rooms instead of foreign tabs; and migration becomes a product with an
   invite kit, member pre-import, and a temporary WhatsApp bridge. Companions in this folder:
@@ -822,6 +839,78 @@
         <li><i class="dot f"></i>Contact actions up top like a phone contact card — Text/Call open the native apps and log the touch.</li>
       </ul>
     </div>
+
+    <!-- W17 CHANNEL DIRECTORY -->
+    <div class="cell">
+      <div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
+        <div class="body">
+          <div class="chead"><span>‹</span><div style="flex:1"><b>Channels</b><span>Worship Team · 31 members</span></div></div>
+          <div class="list" style="background:#f4f2ee">
+            <div class="shead">Your channels</div>
+            <div class="hcard">
+              <div class="row"><div class="av">#</div><div class="rt"><b>general</b><span>Sam: setlist attached</span></div><div class="rm"><span class="unread">2</span></div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>leaders</b><span>Private · part leaders</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">🔕</div><div class="rt"><b>sopranos</b><span>Muted · won't expand your Chats</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>sunday-production</b><span>Shared with Tech Team</span></div><div class="rm"><span class="tag s">SHARED</span></div></div>
+            </div>
+            <div class="shead">Channels you can join</div>
+            <div class="hcard">
+              <div class="row"><div class="av">#</div><div class="rt"><b>altos</b><span>8 members · open</span></div><div class="rm"><span class="join">Join</span></div></div>
+              <div class="row"><div class="av">#</div><div class="rt"><b>prod-crew</b><span>12 members · approval required</span></div><div class="rm"><span class="join ghost">Request</span></div></div>
+            </div>
+            <div class="hcard">
+              <div class="row"><div class="av">🧹</div><div class="rt"><b>2 quiet channels</b><span>No messages in 60 days — review &amp; archive?</span></div><div class="rm"><span class="tag">LEADER</span></div></div>
+            </div>
+            <div class="hcard">
+              <div class="row"><div class="av">🗄</div><div class="rt"><b>Archived channels</b></div><div class="rm">1 ›</div></div>
+              <a class="golink">＋ Add channel</a>
+            </div>
+          </div>
+        </div>
+      </div></div>
+      <h3><span class="w">W17</span>Channel directory — the fractal page</h3>
+      <ul class="notes">
+        <li><i class="dot f"></i>Same shape as the community page, one level down: your channels, then <b>channels you can join</b>. Learn the pattern once, use it at both levels.</li>
+        <li><i class="dot s"></i>"Channels you can join" needs one net-new primitive: a <code>discoverable</code> toggle on custom channels (today: invite links or leader-add only). Join vs Request follows existing <code>joinMode</code>.</li>
+        <li><i class="dot s"></i>Hygiene lives here: muted channels marked, quiet-channels tidy-up card (leader, suggestion only), archived out of the way. Chats stays a recency surface — never a directory.</li>
+      </ul>
+    </div>
+
+    <!-- W18 CHANNEL MANAGEMENT -->
+    <div class="cell">
+      <div class="phone"><div class="scr">
+        <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
+        <div class="body">
+          <div class="chead"><span>‹</span><div style="flex:1"><b>Channel info</b></div><span style="color:var(--brand);font-weight:700;font-size:12px">Edit</span></div>
+          <div class="list" style="background:#f4f2ee">
+            <div style="text-align:center; padding:10px 0 2px">
+              <div class="av" style="width:50px;height:50px;margin:0 auto;font-size:20px">#</div>
+              <div style="font-weight:800; font-size:16px; margin-top:4px">sopranos</div>
+              <div style="font-size:11px; color:#8a847a">12 members · Worship Team · join by approval</div>
+            </div>
+            <div class="hcard"><div class="row"><div class="av">🔕</div><div class="rt"><b>Mute channel</b><span>Stays out of your Chats list</span></div><div class="sw"><i></i></div></div></div>
+            <div class="hcard"><div class="row"><div class="av">👥</div><div class="rt"><b>Members</b><span>12 · 1 pending request</span></div><div class="rm"><span class="unread">1</span></div></div></div>
+            <div class="shead">Leader controls</div>
+            <div class="hcard">
+              <div class="row"><div class="av">✎</div><div class="rt"><b>Name &amp; composer hint</b><span>"Share part recordings here"</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">🔎</div><div class="rt"><b>Discoverable</b><span>Listed in "Channels you can join"</span></div><div class="sw"><i></i></div></div>
+              <div class="row"><div class="av">✋</div><div class="rt"><b>Join mode</b><span>Approval required</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">🔗</div><div class="rt"><b>Invite link</b><span>togather.nyc/ch/sop4k · share or QR</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">⇄</div><div class="rt"><b>Share with groups</b><span>Not shared</span></div><div class="rm">›</div></div>
+              <div class="row"><div class="av">⏻</div><div class="rt"><b>Active</b><span>Disable to pause without deleting</span></div><div class="sw"><i></i></div></div>
+              <div class="row"><div class="av">🗄</div><div class="rt"><b>Archive channel</b></div><div class="rm">›</div></div>
+            </div>
+            <div class="hcard"><div class="row redrow"><div class="av">←</div><div class="rt"><b>Leave channel</b></div></div></div>
+          </div>
+        </div>
+      </div></div>
+      <h3><span class="w">W18</span>Channel management</h3>
+      <ul class="notes">
+        <li><i class="dot f"></i>WhatsApp-info shape for the 2,632-line <code>ChannelInfoScreen</code>: hero → Mute → Members → grouped Leader controls → red Leave. Per-type variants (PCO sync, cross-team selectors, announcements-share confirm) unchanged underneath.</li>
+        <li><i class="dot s"></i>Invite link gains a QR option (invite-kit machinery); Discoverable is the new hygiene-friendly alternative to link-sprawl.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
@@ -883,6 +972,54 @@
       <ul class="notes">
         <li><i class="dot f"></i>Three-pane WhatsApp Web shape: rail + list + thread. Rail and split-pane inbox already exist (<code>DesktopSideNav</code>, <code>useIsDesktopWeb</code>).</li>
         <li><i class="dot s"></i>Net-new right context panel: group info, upcoming events with RSVP, bot toggles, shared media — where Togather's extras live on desktop.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="rail">
+    <!-- W19 ROSTERING -->
+    <div class="cell wide">
+      <div class="browser">
+        <div class="bbar"><div class="bdots"><i></i><i></i><i></i></div><div class="url">livinggrace.togather.nyc/rostering/worship-team</div></div>
+        <div class="wiz">
+          <div class="wsteps">
+            <div class="shead" style="padding:0 18px 8px">Worship Team</div>
+            <div class="wstep on"><span class="n">▦</span>Roster</div>
+            <div class="wstep"><span class="n">👥</span>Teams &amp; roles</div>
+            <div class="wstep"><span class="n">🗓</span>Availability</div>
+            <div class="wstep"><span class="n">📄</span>Run sheets</div>
+            <div class="wstep"><span class="n">🎵</span>Songs</div>
+            <div class="wstep"><span class="n">☑</span>Event tasks</div>
+          </div>
+          <div class="wbody">
+            <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px">
+              <h4 style="margin:0">August roster</h4>
+              <span class="lens"><i class="on">Roles</i><i>People</i></span>
+              <span style="flex:1"></span>
+              <span class="kbtn" style="margin:0; padding:5px 14px">Collect availability</span>
+              <span class="kbtn fill" style="margin:0; padding:5px 14px">Publish · 2 pending</span>
+            </div>
+            <div class="rg">
+              <div class="rgrow rh"><div class="rgc role">Role</div><div class="rgc">Sun Aug 3<span>10:00 service</span></div><div class="rgc">Sun Aug 10<span>10:00 service</span></div><div class="rgc">Sun Aug 17<span>10:00 service</span></div></div>
+              <div class="rgrow"><div class="rgc role">Worship lead</div><div class="rgc"><span class="cchip ok">Sam ✓</span></div><div class="rgc"><span class="cchip wait">Maya …</span></div><div class="rgc"><span class="cchip fill">＋ Fill</span></div></div>
+              <div class="rgrow"><div class="rgc role">Drums</div><div class="rgc"><span class="cchip ok">Tunde ✓</span></div><div class="rgc"><span class="cchip ok">Tunde ✓</span></div><div class="rgc"><span class="cchip ok">Joan ✓</span></div></div>
+              <div class="rgrow"><div class="rgc role">Vocals ×2</div><div class="rgc"><span class="cchip ok">Grace ✓</span> <span class="cchip wait">Seyi …</span></div><div class="rgc"><span class="cchip ok">Grace ✓</span> <span class="cchip fill">＋ Fill</span></div><div class="rgc"><span class="cchip fill">＋ Fill ×2</span></div></div>
+              <div class="rgrow"><div class="rgc role">Sound</div><div class="rgc"><span class="cchip ok">David ✓</span></div><div class="rgc"><span class="cchip ok">David ✓</span></div><div class="rgc"><span class="cchip wait">Lola …</span></div></div>
+            </div>
+            <div style="display:flex; gap:14px; margin-top:12px; font-size:11.5px; color:#8a847a">
+              <span><span class="cchip ok" style="padding:1px 7px">✓</span> confirmed</span>
+              <span><span class="cchip wait" style="padding:1px 7px">…</span> awaiting reply</span>
+              <span><span class="cchip fill" style="padding:1px 7px">＋</span> needs someone — tap to see who's available</span>
+            </div>
+            <div class="imp" style="text-align:left; margin-top:12px">"Collect availability" drops an availability card into the team chat and a public no-login link (<b>/a/token</b>) for members not on Togather yet — replies feed the People lens, most-available first.</div>
+          </div>
+        </div>
+      </div>
+      <h3><span class="w">W19</span>Rostering — the scheduling superpower</h3>
+      <ul class="notes">
+        <li><i class="dot s"></i>Roles × services matrix (existing ADR-024 grid, given the desktop shell): confirmed / awaiting / needs-fill per cell; People lens sorts most-available-first — the availability→roster bridge. Publish notifies via chat + push, volunteers accept/decline from the assignment card.</li>
+        <li><i class="dot s"></i>Teams, cross-team channels, run sheets, songs, and event tasks keep their current structure; serving mode (Runsheet · Inbox · Tasks · Exit) is untouched.</li>
+        <li><i class="dot m"></i>The public availability link works pre-migration — a worship leader can start rostering while half the team is still on WhatsApp.</li>
       </ul>
     </div>
   </div>

@@ -4,8 +4,8 @@
 Communities, while keeping every Togather superpower (group finder, events, prayer,
 bots, channels, rostering) one tap away.
 
-**Companion wireframes:** [`wireframes.html`](./wireframes.html) — 16 annotated
-screens (12 mobile, 4 web). Open in a browser.
+**Companion wireframes:** [`wireframes.html`](./wireframes.html) — 19 annotated
+screens (14 mobile, 5 web). Open in a browser.
 **Companion feature map:** [`FEATURE-MAP.md`](./FEATURE-MAP.md) — exhaustive
 audit of every existing surface (group settings, leader tools, admin, People
 CRM/health, rostering/serving/tasks, notifications, settings, public links) and
@@ -165,6 +165,36 @@ the Chats header and a row in You — present, never in the way (most members
 belong to one church; the flat all-communities list is WhatsApp's compromise,
 not its strength).
 
+**The fractal rule — discovery repeats at every level.** WhatsApp's community
+page is an intermediary directory: Announcements, groups you're in, groups you
+can join. Our community page (W2) is exactly that. One level down, **each
+group gets the same page shape**: the channel directory (W17) shows *your
+channels* and **channels you can join** — open-join or request-to-join per the
+existing `joinMode`. This requires one small net-new primitive: a
+`discoverable` toggle on custom channels (today channels are only reachable
+via invite links or being added by a leader — there is no browse). A member
+who learned "community page → join a group" already knows "group page → join
+a channel."
+
+**Channel hygiene — membership never equals clutter.** What happens when a
+group has many channels and you're in all of them:
+
+1. **Chats is a recency surface, never a directory.** A group cluster shows
+   the main channel (existing `selectMainChannel` logic) plus at most **two**
+   sub-rows with unread/recent activity; everything else collapses behind an
+   "N more channels" row. Being in 12 channels never means 12 rows.
+2. **Muted channels sink.** A muted channel never expands the cluster and is
+   excluded from the group's unread count (the badge becomes a quiet dot if
+   only muted channels have activity). Mute-per-channel is the P0 build from
+   FEATURE-MAP §2.
+3. **Inactive and archived channels leave the list entirely** (the existing
+   per-type active-state toggles + archive).
+4. **The channel directory (W17) is the canonical "all channels" view** —
+   the place you go *looking* for a channel, so Chats never has to be.
+5. **Leaders get tidy-up nudges:** channels with no messages in 60 days
+   surface a "quiet channels" card in the directory suggesting archive
+   (suggestion only — never auto-archive).
+
 Level-by-level mapping (also diagrammed in the wireframes):
 
 | WhatsApp level | Togather rendering | Note |
@@ -293,6 +323,31 @@ admin, remove — primary-admin-gated). Naming decision: leader-side stays
 "Reach out"; the member-initiated `reach_out` request feature is renamed
 **"Ask for help"** in UI to kill the collision.
 
+**W17 — Channel directory.** The fractal intermediary page for a group:
+*Your channels* (with mute state inline), **Channels you can join**
+(`discoverable` custom channels, Join or Request per `joinMode`), archived
+row, "＋ Add channel" (leader), and the leader-only **quiet-channels tidy-up
+card** (hygiene rule 5). Reached from Group info › Channels and from the
+"N more channels" collapse row in Chats.
+
+**W18 — Channel management page.** Consolidates today's 2,632-line
+`ChannelInfoScreen` into the WhatsApp-info shape: hero (`#name`, member count,
+shared-with badge) → **Mute** toggle → Members row → **Leader controls** card
+(rename, composer hint, join mode, **discoverable** toggle, invite link with
+share/QR, share with groups, active state, archive) → red Leave channel.
+Per-type variants unchanged underneath (PCO sync settings, cross-team
+selectors, announcement-share confirm).
+
+**W19 — Rostering grid (desktop-first).** The scheduling superpower, kept
+structurally as-is (ADR-024–027) and given the desktop treatment it deserves:
+ROLES lens (rows = roles, columns = services; cells filled / awaiting /
+needed) and PEOPLE lens (most-available-first — the availability→roster
+bridge), Collect availability (in-chat `availability_request` cards + public
+`a/[token]` link), Publish per team, run-sheet and event-tasks entries per
+column. Mobile keeps the same grid (frozen first column) — unchanged from
+today. Serving mode (auto-enter 12h before service; Runsheet · Inbox · Tasks ·
+Exit) is untouched by the redesign.
+
 ## 6. Web redesign
 
 The web client is the Expo web build (react-native-web) — the desktop split-pane
@@ -396,6 +451,38 @@ merge and the staff screens get real navigation instead of URL-only access.
 - The CLAUDE.md guides rule applies: this redesign touches Create Community,
   Branding, Groups & Channels, Events, Prayer guides — update in the same PRs,
   and add a new **"Moving from WhatsApp"** guide to `guides/registry.ts`.
+
+## 9.5 Rollout — everything behind one flag
+
+**Nothing leaks until we flip it.** The entire redesign ships behind a single
+flag, **`whatsapp-shell`**, evaluated **per community** so pilot churches can
+run the new shell while everyone else sees today's app unchanged.
+
+- **Mechanism:** PostHog flag (already integrated) targeted by community id,
+  wrapped in one hook (`useWhatsappShell()`), with the Convex `featureFlags`
+  table (staff-managed, already exists — same infra as `chat-notification-collapse`)
+  as a global kill-switch that overrides PostHog to off. Per-user override via
+  the existing `dev/feature-flags` screen for QA.
+- **Gate points** (both variants stay in the bundle; the flag only picks):
+  `(tabs)/_layout.tsx` (4-tab vs current 6-tab set), `DesktopSideNav`,
+  `ChatInboxScreen` (cluster rendering + community row vs current rows),
+  group detail → Group info page (W13) vs current screens, `ProfileMenu` →
+  You tab (W9), compose sheet, channel directory/management variants
+  (W17–18). **New routes** (community page, migration wizard, invite kit,
+  admin console shell, Person page) are harmless when unlinked — gate their
+  *entry points*, not the routes.
+- **Guarantees:** default **off**; zero copy/nav/behavior changes when off;
+  no schema change alters current-shell behavior (additive fields only —
+  `discoverable`, `preRegistered`, mute UI writes to existing fields);
+  the kill-switch reverts instantly because both shells remain shipped.
+- **Rollout order:** staff/dev overrides → pilot migrating churches
+  (hand-picked, with the wizard) → all *new* communities → existing
+  communities → delete the old shell + the flag (remove-don't-deprecate,
+  per CLAUDE.md).
+- **Serving mode, chat message features, rostering internals, Convex APIs:**
+  shared between shells, not forked — the flag governs IA and screen
+  composition only, which is what keeps the fork cheap enough to hold open
+  for a few months.
 
 ## 10. Success metrics
 
