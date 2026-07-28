@@ -4407,6 +4407,9 @@ describe("muted members and unread bookkeeping", () => {
         senderId: leaderId,
         content: "Rehearsal moved to 7pm",
         contentType: "text",
+        createdAt: Date.now(),
+        isDeleted: false,
+        senderName: "Test Leader",
       });
     });
     await t.mutation(internal.functions.messaging.events.onMessageSent, {
