@@ -1749,6 +1749,14 @@ export default defineSchema({
     inviteEnabled: v.optional(v.boolean()), // toggle link on/off
     joinMode: v.optional(v.string()), // "open" | "approval_required"
     /**
+     * Whether a `channelType === "custom"` channel appears in its group's
+     * channel directory ("Channels you can join", W17). undefined/true =
+     * discoverable (default ON); false = leader hid it from the directory.
+     * Independent of `isEnabled`/`isArchived` — those already gate visibility
+     * and are checked separately wherever this flag is read.
+     */
+    discoverable: v.optional(v.boolean()),
+    /**
      * When true, this channel doubles as a serving team: its members are the
      * roster, and it can own teamRoles + be scheduled on eventPlans.
      * See ADR-023. Undefined/false = ordinary channel.
