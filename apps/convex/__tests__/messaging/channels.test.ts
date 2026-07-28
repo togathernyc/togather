@@ -4198,18 +4198,13 @@ describe("joinDiscoverableChannel", () => {
 
   test("rejects non-custom channels (e.g. main)", async () => {
     const t = convexTest(schema, modules);
-    const { groupId, accessToken } = await seedTestData(t);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
 
-    const mainChannelId = await t.run(async (ctx) => {
-      const main = await ctx.db
-        .query("chatChannels")
-        .withIndex("by_group_type", (q) =>
-          q.eq("groupId", groupId).eq("channelType", "main")
-        )
-        .first();
-      if (!main) throw new Error("seed data has no main channel");
-      return main._id;
-    });
+    const mainChannelId = await t.mutation(
+      api.functions.messaging.channels.createChannel,
+      { token: leaderToken, groupId, channelType: "main", name: "General Chat" }
+    );
 
     await expect(
       t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
