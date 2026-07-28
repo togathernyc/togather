@@ -330,7 +330,7 @@
 
 <!-- =============================== IA =============================== -->
 <section>
-  <div class="sec-head"><span class="k">00</span><h2>Information architecture — 6 tabs → 5, chats first</h2></div>
+  <div class="sec-head"><span class="k">00</span><h2>Information architecture — 6 tabs → 4, chats first</h2></div>
   <div class="ia">
     <div class="iacol">
       <h3><span class="k">Today</span>Map-first, six tabs</h3>
@@ -342,24 +342,25 @@
       <div class="iatab gone">Profile</div>
     </div>
     <div class="iacol">
-      <h3><span class="k">Proposed</span>WhatsApp-shaped shell</h3>
+      <h3><span class="k">Proposed</span>WhatsApp-shaped shell — 4 tabs</h3>
       <div class="iatab"><i class="dot f"></i>Chats <small>home — was Inbox</small></div>
-      <div class="iatab"><i class="dot f"></i>Community <small>hub; Explore folds in</small></div>
       <div class="iatab"><i class="dot s"></i>Events</div>
       <div class="iatab"><i class="dot s"></i>Prayer <small>feature-gated as today</small></div>
       <div class="iatab"><i class="dot f"></i>You <small>profile + settings + admin entry</small></div>
+      <div class="iatab" style="border-style:dashed"><i class="dot f"></i>Community page <small>pushed from the church row in Chats — not a tab</small></div>
     </div>
   </div>
-  <p class="sec-note">Discovery moves to the Community tab — exactly where WhatsApp puts
-  "Groups you can join" — with the full map finder one tap deeper. Admin folds into You and
-  a Community-hub card. Serving-mode tab swap is unchanged.</p>
+  <p class="sec-note">WhatsApp has no community tab, and neither do we: the community page
+  opens from the chat list (and doubles as the Chats empty state for new members). Discovery
+  ("Groups you can join") lives there, with the full map finder one tap deeper. Admin folds
+  into You and a community-page card. Serving-mode tab swap is unchanged.</p>
 
   <div class="hmap">
     <h3><span class="k">Hierarchy reconciliation</span>The two products nest in opposite directions — stage the depth, don't flatten it</h3>
     <div class="hrow"><span class="l">Chats — everything in your life, one flat list (62 unread)</span><span class="arr">→</span>
       <span class="r"><i class="dot f"></i>Chats tab — everything <b>in your church</b>. Same shape, tighter scope; scope is the feature.</span></div>
     <div class="hrow"><span class="l">Community — one item inside the list</span><span class="arr">→</span>
-      <span class="r"><i class="dot f"></i>Your church = <b>the whole app</b> (branding, subdomain) + the Community tab.</span></div>
+      <span class="r"><i class="dot f"></i>Your church = <b>the whole app</b> (branding, subdomain) + the community page, pushed from the Chats list.</span></div>
     <div class="hrow"><span class="l">Community group — a group <b>is</b> one chat thread</span><span class="arr">→</span>
       <span class="r"><i class="dot f"></i>Group — <b>one row until it grows channels</b>. Single-channel groups are indistinguishable from WhatsApp groups.</span></div>
     <div class="hrow"><span class="l">— no equivalent —</span><span class="arr">→</span>
@@ -371,7 +372,7 @@
 
 <!-- =============================== SHELL =============================== -->
 <section>
-  <div class="sec-head"><span class="k">01</span><h2>The shell — Chats · Community · You</h2></div>
+  <div class="sec-head"><span class="k">01</span><h2>The shell — Chats · Community page · You</h2></div>
   <div class="rail">
 
     <!-- W1 CHATS -->
@@ -393,7 +394,6 @@
           </div>
           <div class="tabbar">
             <div class="tab on"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="tab"><svg><use href="#i-comm"/></svg>Community</div>
             <div class="tab"><svg><use href="#i-cal"/></svg>Events</div>
             <div class="tab"><svg><use href="#i-heart"/></svg>Prayer</div>
             <div class="tab"><svg><use href="#i-you"/></svg>You</div>
@@ -403,7 +403,7 @@
       <h3><span class="w">W1</span>Chats — the new home</h3>
       <ul class="notes">
         <li><i class="dot f"></i>WhatsApp Chats anatomy: large title, search, Archived row, stacked-card community avatar, unread badges, green timestamps.</li>
-        <li><i class="dot f"></i>Rule 1, one row = one place you talk: Young Adults (single channel) is a plain row, exactly like a WhatsApp group; Worship Team has grown a <code>leaders</code> channel, so it clusters like a WhatsApp Communities row. Joan is a DM, interleaved as WhatsApp users expect.</li>
+        <li><i class="dot f"></i>Rule 1, one row = one place you talk: Young Adults (single channel) is a plain row, exactly like a WhatsApp group; Worship Team has grown a <code>leaders</code> channel, so it clusters like a WhatsApp Communities row. Joan is a DM, interleaved as WhatsApp users expect. Tapping the church cluster header opens the community page (W2).</li>
         <li><i class="dot s"></i>Rule 2: channels appear only when a second one is visible to <em>you</em> — a migrated church starts all-plain-rows. Rule 3: the LG header avatar is the community switcher; one church at a time, zero foreign unreads.</li>
         <li><i class="dot s"></i>Message requests (Signal-style) and thread-bump ordering carry over from the existing inbox.</li>
       </ul>
@@ -414,7 +414,7 @@
       <div class="phone"><div class="scr">
         <div class="sb"><span>9:41</span><span>LTE ▮▮▮</span></div>
         <div class="body">
-          <div class="hband"><div class="av sq">LG</div><div><b>Living Grace Church</b><span>412 members · Astoria, NY</span></div></div>
+          <div class="hband"><span style="font-size:16px">‹</span><div class="av sq">LG</div><div><b>Living Grace Church</b><span>412 members · Astoria, NY</span></div></div>
           <div class="list" style="background:#f4f2ee">
             <div class="hcard">
               <div class="row"><div class="av">📣</div><div class="rt"><b>Announcements</b><span>Sunday setup at 8:30 — need 4 hands</span></div><div class="rm"><span class="unread">2</span></div></div>
@@ -438,18 +438,11 @@
             </div>
             <div class="hcard"><div class="row"><div class="av">🛡</div><div class="rt"><b>Admin</b><span>Migration: 71% joined · 3 requests</span></div><div class="rm">›</div></div></div>
           </div>
-          <div class="tabbar">
-            <div class="tab"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="tab on"><svg><use href="#i-comm"/></svg>Community</div>
-            <div class="tab"><svg><use href="#i-cal"/></svg>Events</div>
-            <div class="tab"><svg><use href="#i-heart"/></svg>Prayer</div>
-            <div class="tab"><svg><use href="#i-you"/></svg>You</div>
-          </div>
         </div>
       </div></div>
-      <h3><span class="w">W2</span>Community — the hub</h3>
+      <h3><span class="w">W2</span>Community page — pushed from Chats</h3>
       <ul class="notes">
-        <li><i class="dot f"></i>WhatsApp community-info layout as a living tab: Announcements on top, "Your groups", "Groups you can join".</li>
+        <li><i class="dot f"></i>Not a tab — WhatsApp doesn't have one either. Opens by tapping the church row/header in Chats, exactly like WhatsApp community info: Announcements on top, "Your groups", "Groups you can join". Doubles as the Chats empty state for members with no groups yet (cold start).</li>
         <li><i class="dot s"></i>"Find your group" opens the full map finder (W6); events strip and Prayer/Serving cards surface superpowers in place.</li>
         <li><i class="dot m"></i>Admin card shows live migration adoption during the transition.</li>
       </ul>
@@ -482,7 +475,6 @@
           </div>
           <div class="tabbar">
             <div class="tab"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="tab"><svg><use href="#i-comm"/></svg>Community</div>
             <div class="tab"><svg><use href="#i-cal"/></svg>Events</div>
             <div class="tab"><svg><use href="#i-heart"/></svg>Prayer</div>
             <div class="tab on"><svg><use href="#i-you"/></svg>You</div>
@@ -657,7 +649,6 @@
           </div>
           <div class="tabbar">
             <div class="tab"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="tab"><svg><use href="#i-comm"/></svg>Community</div>
             <div class="tab on"><svg><use href="#i-cal"/></svg>Events</div>
             <div class="tab"><svg><use href="#i-heart"/></svg>Prayer</div>
             <div class="tab"><svg><use href="#i-you"/></svg>You</div>
@@ -689,7 +680,6 @@
           <div style="height:10px"></div>
           <div class="tabbar">
             <div class="tab"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="tab"><svg><use href="#i-comm"/></svg>Community</div>
             <div class="tab"><svg><use href="#i-cal"/></svg>Events</div>
             <div class="tab on"><svg><use href="#i-heart"/></svg>Prayer</div>
             <div class="tab"><svg><use href="#i-you"/></svg>You</div>
@@ -850,7 +840,6 @@
         <div class="bwin">
           <div class="rail-nav">
             <div class="rn on"><svg><use href="#i-chat"/></svg>Chats</div>
-            <div class="rn"><svg><use href="#i-comm"/></svg>Comm.</div>
             <div class="rn"><svg><use href="#i-cal"/></svg>Events</div>
             <div class="rn"><svg><use href="#i-heart"/></svg>Prayer</div>
             <div class="rn"><svg><use href="#i-shield"/></svg>Admin</div>

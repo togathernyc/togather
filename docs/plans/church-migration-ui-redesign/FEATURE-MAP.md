@@ -12,15 +12,15 @@ Legend: 🟢 stays as-is (maybe restyled) · 🔀 moves · 🆕 net-new surface 
 
 | Today | New home | |
 |---|---|---|
-| `(tabs)/search` "Groups" (map Explore) | Community tab → "Find your group" (full Explore one tap in) | 🔀 |
-| `(tabs)/events` | Events tab (position 3) | 🟢 |
+| `(tabs)/search` "Groups" (map Explore) | Community page (pushed from Chats church row) → "Find your group" (full Explore one tap in); also the Chats empty state | 🔀 |
+| `(tabs)/events` | Events tab (position 2) | 🟢 |
 | `(tabs)/chat` Inbox | **Chats tab (position 1, home)** | 🔀 |
 | `(tabs)/prayer` | Prayer tab (gated, unchanged) | 🟢 |
-| `(tabs)/admin` | You → Admin tools; Community hub Admin card; desktop console | 🔀 |
+| `(tabs)/admin` | You → Admin tools; community-page Admin card; desktop console | 🔀 |
 | `(tabs)/profile` + `ProfileMenu` catch-all drawer | **You tab** (WhatsApp "You" hierarchy) | 🔀 |
 | Hidden tabs `groups`/`tasks`/`people` (`href: null`) | People → Community hub card + You › Leader tools (unhidden, see §6); Tasks → You › Leader tools; groups redirect dies | ⚠️🔀 |
 | Serving-mode tab swap (Runsheet · Inbox · Tasks · Exit) | Unchanged | 🟢 |
-| `DesktopSideNav` + split-pane inbox | Desktop rail mirrors new 5 tabs + Admin (W10) | 🔀 |
+| `DesktopSideNav` + split-pane inbox | Desktop rail mirrors new 4 tabs + Admin (W10); community page opens from the chat list, as on mobile | 🔀 |
 | `ProfileMenu` items: View Profile / Switch Community / My Events / My Schedule / My Prayers / Dev Dashboard / Settings / Leader Tools (Tasks · People) | All re-homed into You tab groups (W9); Switch Community also in Chats-header avatar | 🔀 |
 
 ## 2. Chats & channels

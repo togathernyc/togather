@@ -90,21 +90,32 @@ screenshots of a church-adjacent community ("Peak and Pace", "LICG"):
 
 ## 5. Mobile IA redesign
 
-### Tabs: 6 → 5, chats first
+### Tabs: 6 → 4, chats first
 
 | # | Current | Proposed | Notes |
 |---|---|---|---|
 | 1 | Groups (map Explore) | **Chats** | Inbox becomes home, renamed. WhatsApp's anchor surface. |
-| 2 | Events | **Community** | New hub = WhatsApp "community info" page, alive. Explore folds in here. |
-| 3 | Inbox | **Events** | Unchanged feature, moved. |
-| 4 | Prayer | **Prayer** | Still gated on `churchFeatures.prayerEnabled`. |
-| 5 | Admin | **You** | Profile renamed; admin entry moves into You + Community hub. |
+| 2 | Events | **Events** | Unchanged feature, moved up. |
+| 3 | Inbox | **Prayer** | Still gated on `churchFeatures.prayerEnabled`. |
+| 4 | Prayer | **You** | Profile renamed; admin entry moves into You + the community page. |
+| 5 | Admin | — | Tab removed. |
 | 6 | Profile | — | Tab removed; serving-mode tab swap unchanged. |
+
+**The community page is a pushed screen, not a tab.** WhatsApp has no
+community tab — the community page opens from the chat list, and that's the
+muscle memory we mirror: tapping the church's cluster row (or header) in Chats
+pushes the community page (W2): Announcements, Your groups, **Groups you can
+join** + "Find your group" (the full map finder one tap deeper), this-week
+events, Prayer card, Admin card. A tab version would be ~70% duplication of
+Chats/Events/Prayer/You; the two things that genuinely live on this page are
+**discovery** and **cold start** — and cold start is solved where it actually
+occurs: a brand-new member with zero groups sees the same "Groups you can
+join" content as the Chats empty state.
 
 Rationale: WhatsApp users open the app to *chat*. Discovery ("Groups you can
 join") belongs on the community page, exactly where WhatsApp puts it — with
 Togather's map finder one tap deeper. The Admin tab's audience is tiny; a card
-in Community + a row in You serves it without spending a tab.
+on the community page + a row in You serves it without spending a tab.
 
 ### Hierarchy reconciliation — stage the superpower, don't flatten it
 
@@ -159,7 +170,7 @@ Level-by-level mapping (also diagrammed in the wireframes):
 | WhatsApp level | Togather rendering | Note |
 |---|---|---|
 | Chats — everything, one list | **Chats tab — everything in your church** | Same shape, tighter scope; scope is the feature |
-| Community | **Your church = the whole app** + Community tab | Branding, subdomain, membership |
+| Community | **Your church = the whole app** + community page (pushed from Chats) | Branding, subdomain, membership |
 | Community group (one thread) | **Group — one row until it grows channels** | Rule 1 + Rule 2 |
 | — (no equivalent) | **Channels** within groups; shared/event channels | Extensibility superpower, leader-side opt-in |
 | Many communities, interleaved | **Community switcher** (Chats header avatar + You) | Focus superpower |
@@ -198,7 +209,9 @@ as WhatsApp-Communities-style clusters. The header avatar is the community
 switcher entry (Rule 3). This is mostly a restyle of the existing inbox, not
 a rebuild.
 
-**W2 — Community hub.** The WhatsApp community-info layout, made a living tab:
+**W2 — Community page.** The WhatsApp community-info layout as a pushed screen
+(from the church row/header in Chats; also the Chats empty state for members
+with no groups yet):
 branded header (logo, name, member count — community `primaryColor` band),
 **Announcements** row, **Your groups** (rows w/ last-message previews),
 **Groups you can join** (2–3 suggestions + **"Find your group"** card with map
@@ -397,8 +410,9 @@ merge and the staff screens get real navigation instead of URL-only access.
 
 ## 11. Open questions
 
-1. Tab 2: "Community" vs the church's own name as the tab label (branding pull
-   vs consistency)?
+1. ~~Tab 2 label~~ Resolved: no Community tab — the community page is a pushed
+   screen from the Chats list (WhatsApp-native), and tabs are Chats · Events ·
+   Prayer · You.
 2. Should "Groups you can join" suggestions be admin-curated, algorithmic
    (Explore defaults), or both?
 3. Announcement replies: default on (WhatsApp behavior) or off (current
