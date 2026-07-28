@@ -173,12 +173,6 @@ export default function ChannelDirectoryScreen() {
         ) : (
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             {yourChannels.map((channel: any, idx: number) => {
-              // KNOWN GAP — listGroupChannels' return mapping (channels.ts)
-              // sets `role: membership?.role` per row but doesn't add an
-              // `isMuted` field, so this always reads false today. Wiring the
-              // indicator for real just needs `isMuted: membership?.isMuted`
-              // added next to `role` there; no client change required once
-              // that lands. See PR description for the follow-up.
               const isMuted = channel.isMuted === true;
               return (
                 <TouchableOpacity
