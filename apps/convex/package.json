@@ -21,6 +21,7 @@
     "@edge-runtime/vm": "^5.0.0",
     "convex-test": "^0.0.41",
     "react": "19.1.0",
+    "react-dom": "19.1.0",
     "vitest": "^2.0.0"
   }
 }
