@@ -232,10 +232,12 @@ function WaEventRow({
 
   // Right column: the going count as plain right-aligned gray text (S3.5's
   // treatment for a row's secondary fact), never a colored chip (§7). Hidden
-  // when the event opts out of showing counts, or when nobody's going yet.
+  // when the event opts out of showing counts — except for leaders, who keep
+  // the total for managing attendance (matches EventCard) — or when nobody's
+  // going yet.
   const goingCount: number = isCommunityWide
     ? card.totalGoing ?? 0
-    : card.hideRsvpCount === true
+    : card.hideRsvpCount === true && card.viewerIsLeader !== true
       ? 0
       : card.rsvpSummary?.totalGoing ?? 0;
 
