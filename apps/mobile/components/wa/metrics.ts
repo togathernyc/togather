@@ -85,35 +85,140 @@ export const WA_SEGMENTED_HEIGHT = 36;
 export const WA_QUICK_ACTION_CIRCLE = 38;
 
 // --- §4 Navigation chrome -----------------------------------------------------
+//
+// Calibrated against the owner's current-WhatsApp-iOS reference screenshots
+// (see WA-VISUAL-DELTAS.md S1/S2): iOS 26 design language — floating circular
+// buttons over the scrolling content instead of opaque nav bars, and a
+// floating rounded-island tab bar instead of an edge-to-edge one.
 
 /** Large title font size (at rest, leading-aligned). */
 export const WA_LARGE_TITLE_SIZE = 34;
 /** Collapsed nav title font size (centered, on scroll). */
 export const WA_NAV_TITLE_SIZE = 17;
 /** Circular header button diameter (⋯ / camera / compose +). */
-export const WA_HEADER_CIRCLE_SIZE = 40;
+export const WA_HEADER_CIRCLE_SIZE = 44;
 /** Gap between adjacent header circles. */
-export const WA_HEADER_CIRCLE_GAP = 8;
+export const WA_HEADER_CIRCLE_GAP = 10;
 /** Icon size centered inside a header circle. */
-export const WA_HEADER_ICON_SIZE = 18;
+export const WA_HEADER_ICON_SIZE = 22;
 /** Search pill height (fully rounded, radius = height/2). */
-export const WA_SEARCH_PILL_HEIGHT = 37;
+export const WA_SEARCH_PILL_HEIGHT = 44;
 /** Search pill magnifying-glass icon size. */
-export const WA_SEARCH_PILL_ICON_SIZE = 15;
+export const WA_SEARCH_PILL_ICON_SIZE = 17;
 /** Gap between the search pill's icon and placeholder text. */
 export const WA_SEARCH_PILL_ICON_GAP = 8;
 /** Search pill margin from each screen edge. */
 export const WA_SEARCH_PILL_MARGIN = 16;
 /** Gap between the large title and the search pill below it. */
 export const WA_SEARCH_PILL_TOP_GAP = 12;
-/** Tab bar content height (excludes safe-area inset). */
-export const WA_TAB_BAR_HEIGHT = 49;
+
+// --- S1 Floating chrome (buttons + shadows) ----------------------------------
+
+/**
+ * Floating button shadow — deliberately very light. The reference's circles
+ * read as "lifted paper", not as material cards: a 8px blur at 8% black.
+ * Expressed as RN shadow props (never a web-only `boxShadow` string) so it
+ * renders on iOS, Android (`elevation`) and RN-Web alike.
+ */
+export const WA_FLOATING_SHADOW = {
+  shadowColor: '#000000',
+  shadowOpacity: 0.08,
+  shadowRadius: 8,
+  shadowOffset: { width: 0, height: 2 },
+  elevation: 3,
+} as const;
+/** Slightly deeper lift for the tab-bar island (it sits over live content). */
+export const WA_ISLAND_SHADOW = {
+  shadowColor: '#000000',
+  shadowOpacity: 0.12,
+  shadowRadius: 16,
+  shadowOffset: { width: 0, height: 4 },
+  elevation: 8,
+} as const;
+/** Vertical gap between the floating-button row and the large title below it. */
+export const WA_FLOATING_ROW_TITLE_GAP = 10;
+
+// --- S2 Floating island tab bar ----------------------------------------------
+
+/** Island height (the pill itself, excluding its margins/safe inset). */
+export const WA_TAB_ISLAND_HEIGHT = 64;
+/** Island corner radius — fully rounded at `WA_TAB_ISLAND_HEIGHT`. */
+export const WA_TAB_ISLAND_RADIUS = WA_TAB_ISLAND_HEIGHT / 2;
+/** Island inset from each screen edge. */
+export const WA_TAB_ISLAND_MARGIN_H = 10;
+/** Gap between the island's bottom edge and the bottom safe inset. */
+export const WA_TAB_ISLAND_BOTTOM_GAP = 8;
+/** Island fill — near-white translucent (no expo-blur; rgba approximation). */
+export const WA_TAB_ISLAND_FILL_LIGHT = 'rgba(255,255,255,0.92)';
+/** Dark-mode island fill. */
+export const WA_TAB_ISLAND_FILL_DARK = 'rgba(31,44,52,0.94)';
 /** Tab bar icon size (outline; filled variant when active). */
-export const WA_TAB_ICON_SIZE = 25;
+export const WA_TAB_ICON_SIZE = 24;
 /** Gap between a tab's icon and its label. */
 export const WA_TAB_LABEL_GAP = 2;
+/** Tab label font size. */
+export const WA_TAB_LABEL_SIZE = 10;
+/**
+ * Every tab glyph + label is this neutral ink — active AND inactive. The green
+ * active tint was the loudest "not WhatsApp" signal in the audit (S2.2); the
+ * active tab is marked by the highlight pill below, never by hue.
+ */
+export const WA_TAB_INK_LIGHT = '#0A0A0A';
+/** Dark-mode tab ink. */
+export const WA_TAB_INK_DARK = '#E9EDEF';
+/** Highlight pill (wrapping icon+label) behind the active tab. */
+export const WA_TAB_ACTIVE_PILL_LIGHT = 'rgba(0,0,0,0.06)';
+/** Dark-mode active highlight pill. */
+export const WA_TAB_ACTIVE_PILL_DARK = 'rgba(255,255,255,0.10)';
+/** Active highlight pill corner radius. */
+export const WA_TAB_ACTIVE_PILL_RADIUS = 18;
 /** Tab badge offset (top-right of the icon). */
 export const WA_TAB_BADGE_OFFSET = -4;
+/** You-tab avatar glyph size (falls back to a person icon when no photo). */
+export const WA_TAB_AVATAR_SIZE = 24;
+
+/**
+ * Bottom padding a flag-on scroll surface needs so its last row clears the
+ * floating island (which is absolutely positioned, so it takes no layout
+ * space). Pass the screen's bottom safe-area inset.
+ */
+export function waTabBarClearance(bottomInset: number): number {
+  return bottomInset + WA_TAB_ISLAND_BOTTOM_GAP + WA_TAB_ISLAND_HEIGHT + 12;
+}
+
+// --- S7 Typography scale ------------------------------------------------------
+//
+// One scale for every flag-on surface (WA-VISUAL-DELTAS.md S7). Togather's
+// pre-pass sizes ran 1–2pt small and one weight light throughout; import these
+// rather than re-typing `fontSize: 17`.
+
+/** 34 heavy — screen large title ("Chats"). */
+export const WA_TYPE_LARGE_TITLE = 34;
+/** 28 bold — profile/entity hero name. */
+export const WA_TYPE_HERO_NAME = 28;
+/** 22 bold — screen header block (community landing name). */
+export const WA_TYPE_HEADER_BLOCK = 22;
+/** ~20 semibold gray — landing section headers ("Groups you're in"). */
+export const WA_TYPE_SECTION_HEADER = 20;
+/** 17 semibold — list row titles / 17 regular — grouped cell labels. */
+export const WA_TYPE_ROW_TITLE = 17;
+/** 16 — chat bubble body. */
+export const WA_TYPE_BUBBLE_BODY = 16;
+/** 15 — row subtitles / previews. */
+export const WA_TYPE_SUBTITLE = 15;
+/** 13 — footers, day pills. */
+export const WA_TYPE_FOOTNOTE = 13;
+/** 11 — in-bubble timestamps. */
+export const WA_TYPE_MICRO = 11;
+
+/** Large-title weight — SF Heavy-ish. */
+export const WA_WEIGHT_LARGE_TITLE = '800' as const;
+/** Hero-name / header-block weight. */
+export const WA_WEIGHT_BOLD = '700' as const;
+/** Row-title / nav-title weight. */
+export const WA_WEIGHT_SEMIBOLD = '600' as const;
+/** Body / cell-label weight. */
+export const WA_WEIGHT_REGULAR = '400' as const;
 
 // --- §5 Chat screen -------------------------------------------------------
 

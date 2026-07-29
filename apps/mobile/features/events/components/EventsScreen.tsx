@@ -44,6 +44,7 @@ import {
   WA_SEPARATOR_INSET,
   WA_AVATAR_LG,
   WA_GROUP_SPACING,
+  waTabBarClearance,
 } from '@components/wa';
 import { formatTimeWithTimezone } from '@togather/shared';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
@@ -451,7 +452,13 @@ export function EventsScreen() {
       <View
         style={[
           styles.floatingCreateContainer,
-          { paddingBottom: insets.bottom + 16 },
+          {
+            // Flag-on the tab bar is a floating island over the content (S2),
+            // so the CTA has to clear it rather than the old edge-to-edge bar.
+            paddingBottom: whatsappShellEnabled
+              ? waTabBarClearance(insets.bottom)
+              : insets.bottom + 16,
+          },
         ]}
       >
         <TouchableOpacity
@@ -596,10 +603,11 @@ export function EventsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
       {whatsappShellEnabled && (
-        // §4 large-title header. The existing List/Map toggle becomes the
-        // circular trailing buttons — the active one filled-accent, the
-        // other neutral, matching the "one filled-accent circle" pattern the
-        // kit already uses for the compose `+` elsewhere. The map view itself
+        // S1 floating-chrome header. The List/Map toggle is the trailing
+        // circle pair — both NEUTRAL white with black line glyphs
+        // (WA-VISUAL-DELTAS.md §7.1 / S5.1: the only green circle anywhere in
+        // the chrome is the Chats compose "+"; the active view instead reads
+        // from its glyph switching to the filled variant). The map view itself
         // is untouched below; only this entry point is restyled.
         <WaScreenHeader
           title="Events"
@@ -607,18 +615,15 @@ export function EventsScreen() {
             {
               icon: viewMode === 'list' ? 'list' : 'list-outline',
               onPress: () => setViewMode('list'),
-              accent: viewMode === 'list',
               accessibilityLabel: 'List view',
             },
             {
               icon: viewMode === 'map' ? 'map' : 'map-outline',
               onPress: () => setViewMode('map'),
-              accent: viewMode === 'map',
               accessibilityLabel: 'Map view',
             },
           ]}
-          accent={primaryColor}
-          style={{ paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }}
+          style={{ paddingTop: insets.top }}
         />
       )}
       {viewMode === 'map' ? (

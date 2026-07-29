@@ -17,8 +17,21 @@ export type { WaInsetGroupProps } from './WaInsetGroup';
 export { WaCell } from './WaCell';
 export type { WaCellProps, WaCellVariant } from './WaCell';
 
-export { WaScreenHeader } from './WaScreenHeader';
-export type { WaScreenHeaderProps, WaHeaderButton } from './WaScreenHeader';
+export { WaScreenHeader, WaSubScreenHeader } from './WaScreenHeader';
+export type {
+  WaScreenHeaderProps,
+  WaSubScreenHeaderProps,
+  WaHeaderButton,
+} from './WaScreenHeader';
+
+export { WaFloatingButton } from './WaFloatingButton';
+export type { WaFloatingButtonProps, WaFloatingButtonVariant } from './WaFloatingButton';
+
+export { WaLargeTitle } from './WaLargeTitle';
+export type { WaLargeTitleProps } from './WaLargeTitle';
+
+export { WaTabBar } from './WaTabBar';
+export type { WaTabBarProps } from './WaTabBar';
 
 export { WaDayPill } from './WaDayPill';
 export type { WaDayPillProps } from './WaDayPill';
