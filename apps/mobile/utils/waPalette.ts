@@ -125,28 +125,8 @@ export function hslToRgb({ h, s, l }: Hsl): Rgb {
   };
 }
 
-/**
- * Mixes `hex` toward `target` by `weight` (0 = pure `target`, 1 = pure `hex`).
- *
- * Used for the §1.3 outgoing-bubble light tint: "≈15–20% mix onto white ...
- * roughly `#25D366` at ~18% opacity over white" is `mix(hex, '#FFFFFF', 0.18)`.
- * Falls back to `hex` unchanged if either color fails to parse.
- */
-export function mix(hex: string, target: string, weight: number): string {
-  const a = hexToRgb(hex);
-  const b = hexToRgb(target);
-  if (!a || !b) return hex;
-  const w = clamp(weight, 0, 1);
-  return rgbToHex({
-    r: a.r * w + b.r * (1 - w),
-    g: a.g * w + b.g * (1 - w),
-    b: a.b * w + b.b * (1 - w),
-  });
-}
-
 // --- WhatsApp-shell accent derivation (spec §1) -----------------------------
 
-/** §1.6 — outgoing bubble in light mode is primaryColor mixed ~18% onto white. */
 /**
  * §1.6 light-mode outgoing bubble. A white-mix of the brand color desaturates
  * (a forest-green brand came out gray-sage next to WhatsApp's `#D9FDD3`);

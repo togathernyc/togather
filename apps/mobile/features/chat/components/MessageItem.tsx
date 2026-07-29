@@ -1226,9 +1226,9 @@ function MessageItemInner({
         <View style={[
           styles.messageContent,
           isOwnMessage && styles.ownMessageContent,
-          // §5 "Bubble geometry: max width ~78% of screen width" (flag-off
-          // keeps the original 75%). Also governs the content-type cards
-          // below (poll/event/task/etc.) since they share this same column.
+          // §S4.2 bubble geometry: max width from WA_BUBBLE_MAX_WIDTH_PCT.
+          // Also governs the content-type cards below (poll/event/task/etc.)
+          // since they share this same column.
           whatsappShellEnabled && styles.waMessageContent,
         ]}>
           {/* Sender name, flag-OFF only: a 11pt textSecondary line above the
