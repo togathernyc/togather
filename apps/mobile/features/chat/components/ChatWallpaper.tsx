@@ -59,12 +59,22 @@ export function ChatWallpaper() {
       style={[StyleSheet.absoluteFill, { backgroundColor: colors.chatWallpaper }]}
     >
       <View style={styles.grid} pointerEvents="none">
+        {/* Absolutely place each tile: flexWrap can only fit whole tiles per
+            row (one 256pt tile on a 390pt phone), leaving the remainder
+            untextured — explicit coordinates let edge tiles overflow and
+            clip instead. */}
         {Array.from({ length: columns * rows }, (_, i) => (
           <Image
             key={i}
             testID="chat-wallpaper-tile"
             source={source}
-            style={styles.tile}
+            style={[
+              styles.tile,
+              {
+                left: (i % columns) * WALLPAPER_TILE_SIZE,
+                top: Math.floor(i / columns) * WALLPAPER_TILE_SIZE,
+              },
+            ]}
           />
         ))}
       </View>
@@ -73,16 +83,14 @@ export function ChatWallpaper() {
 }
 
 const styles = StyleSheet.create({
-  // `flexWrap` + fixed-size children is what does the tiling: the row fills
-  // left-to-right and wraps every `columns` tiles. `overflow: hidden` keeps
-  // the final partial row/column from painting outside the layer.
+  // Tiles are absolutely positioned at explicit (col, row) coordinates;
+  // `overflow: hidden` clips the partial tiles at the right/bottom edges.
   grid: {
     ...StyleSheet.absoluteFillObject,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     overflow: 'hidden',
   },
   tile: {
+    position: 'absolute',
     width: WALLPAPER_TILE_SIZE,
     height: WALLPAPER_TILE_SIZE,
   },

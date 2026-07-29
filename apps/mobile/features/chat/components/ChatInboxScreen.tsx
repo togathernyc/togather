@@ -27,6 +27,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   useAnimatedScrollHandler,
+  useAnimatedReaction,
+  runOnJS,
   interpolate,
   Extrapolation,
 } from "react-native-reanimated";
@@ -882,6 +884,22 @@ export function ChatInboxScreen({
     scrollY.value = 0;
   }, [scrollY]);
 
+  // Once the collapsible block has (mostly) faded away it must also stop
+  // hit-testing: on Android and web an opacity-0 view still receives pointer
+  // events, so the hidden TextInput/chips would steal taps meant for the
+  // rows and the floating buttons under/behind them. Mirrored to JS state
+  // because `pointerEvents` isn't animatable.
+  const [waHeaderCollapsed, setWaHeaderCollapsed] = useState(false);
+  useAnimatedReaction(
+    () =>
+      collapseEnabled &&
+      interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP) > 0.85,
+    (collapsed, prev) => {
+      if (collapsed !== prev) runOnJS(setWaHeaderCollapsed)(collapsed);
+    },
+    [collapseEnabled],
+  );
+
   const largeTitleStyle = useAnimatedStyle(() => {
     const p = collapseEnabled
       ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
@@ -1013,7 +1031,7 @@ export function ChatInboxScreen({
 
       <Animated.View
         testID="wa-header-collapsible"
-        pointerEvents="box-none"
+        pointerEvents={waHeaderCollapsed ? "none" : "box-none"}
         style={[styles.waCollapsibleBlock, waCollapsibleBlockStyle]}
       >
         <View style={styles.waLargeTitleBlock}>
