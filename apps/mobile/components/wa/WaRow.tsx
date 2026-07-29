@@ -17,14 +17,10 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { AppImage } from '@components/ui/AppImage';
 import { useTheme } from '@hooks/useTheme';
 import { WaBadge } from './WaBadge';
+import { WaAvatar, WA_AVATAR_SQUIRCLE_RATIO } from './WaAvatar';
 import {
-  WA_ROW_HEIGHT,
-  WA_ROW_HEIGHT_NO_PREVIEW,
-  WA_AVATAR_LG,
-  WA_AVATAR_SQUIRCLE_RADIUS,
   WA_ROW_LEADING_PADDING,
   WA_ROW_AVATAR_GAP,
   WA_ROW_TRAILING_PADDING,
@@ -36,14 +32,47 @@ import {
   WA_DEFAULT_ACCENT,
 } from './metrics';
 
+// --- S6 row density -----------------------------------------------------
+//
+// WA-VISUAL-DELTAS.md S6.1, measured off the reference screenshots: "avatar
+// ~58px … row ~78px" — the biggest single density delta in the audit. These
+// supersede `metrics.ts`'s spec-derived 56/76 (that file is shared with
+// in-flight workstreams and is not edited here), so they live locally and are
+// re-exported for the surfaces that have to line up with them.
+
+/** List avatar diameter (S6.1). */
+export const WA_LIST_AVATAR = 58;
+/** Row height with a preview line present (S6.1). */
+export const WA_LIST_ROW_HEIGHT = 78;
+/** Row height for a title-only row. */
+export const WA_LIST_ROW_HEIGHT_NO_PREVIEW = 62;
+/**
+ * Separator inset — the hairline starts where the *title* starts, not where
+ * the avatar does (S6.1): leading padding + avatar + gap.
+ */
+export const WA_LIST_SEPARATOR_INSET =
+  WA_ROW_LEADING_PADDING + WA_LIST_AVATAR + WA_ROW_AVATAR_GAP; // 86
+
 export interface WaRowAvatarDescriptor {
   imageUrl?: string | null;
   /** Used for the initials placeholder and as the AppImage accessibility fallback. */
   label: string;
   /** 'circle' for people/groups/channels; 'squircle' is reserved for Communities (§6). */
   shape?: 'circle' | 'squircle';
-  /** Defaults to `WA_AVATAR_LG` (56pt). */
+  /** Defaults to `WA_LIST_AVATAR` (58pt). */
   size?: number;
+  /**
+   * Stable identity the fallback pastel hue is derived from (S5.2). Prefer a
+   * Convex id so a rename doesn't re-color the avatar; defaults to `label`.
+   */
+  seed?: string;
+  /**
+   * @deprecated Accepted but ignored. Callers used to pass a flat fill here —
+   * usually the community accent, which is exactly the "all-green fallback
+   * avatars everywhere" item on S5.2's kill list. Fallback discs are now
+   * always the muted per-entity pastel from `waAvatarColor.ts`; drop this prop
+   * at the call site.
+   */
   backgroundColor?: string;
 }
 
@@ -65,15 +94,16 @@ function WaRowGhostCards({ isDark }: { isDark: boolean }) {
   // clusters). Lighter fill / thin border, no content.
   const fill = isDark ? '#233138' : '#ECECEC';
   const border = isDark ? '#2A3942' : '#D8D8D8';
+  const radius = WA_LIST_AVATAR * WA_AVATAR_SQUIRCLE_RATIO;
   return (
     <>
       <View
         style={[
           styles.ghostCard,
           {
-            width: WA_AVATAR_LG,
-            height: WA_AVATAR_LG,
-            borderRadius: WA_AVATAR_SQUIRCLE_RADIUS,
+            width: WA_LIST_AVATAR,
+            height: WA_LIST_AVATAR,
+            borderRadius: radius,
             backgroundColor: fill,
             borderColor: border,
             top: -WA_GHOST_CARD_OFFSET * 2,
@@ -85,9 +115,9 @@ function WaRowGhostCards({ isDark }: { isDark: boolean }) {
         style={[
           styles.ghostCard,
           {
-            width: WA_AVATAR_LG,
-            height: WA_AVATAR_LG,
-            borderRadius: WA_AVATAR_SQUIRCLE_RADIUS,
+            width: WA_LIST_AVATAR,
+            height: WA_LIST_AVATAR,
+            borderRadius: radius,
             backgroundColor: fill,
             borderColor: border,
             top: -WA_GHOST_CARD_OFFSET,
@@ -107,20 +137,15 @@ function WaRowAvatar({ avatar, showGhostCards }: { avatar?: WaRowAvatarProp; sho
     return <>{avatar}</>;
   }
 
-  const size = avatar.size ?? WA_AVATAR_LG;
-  const shape = avatar.shape ?? 'circle';
-  const radius = shape === 'squircle' ? size * (WA_AVATAR_SQUIRCLE_RADIUS / WA_AVATAR_LG) : size / 2;
+  const size = avatar.size ?? WA_LIST_AVATAR;
 
   const image = (
-    <AppImage
-      source={avatar.imageUrl}
-      style={{ width: size, height: size, borderRadius: radius }}
-      optimizedWidth={Math.min(size * 2, 400)}
-      placeholder={{
-        type: 'initials',
-        name: avatar.label,
-        backgroundColor: avatar.backgroundColor ?? (isDark ? '#333333' : '#E5E5E5'),
-      }}
+    <WaAvatar
+      imageUrl={avatar.imageUrl}
+      label={avatar.label}
+      seed={avatar.seed}
+      shape={avatar.shape ?? 'circle'}
+      size={size}
     />
   );
 
@@ -143,12 +168,23 @@ export interface WaRowProps {
   /** Row title renders Semibold when true, Regular when false (§2). */
   isUnread?: boolean;
   subtitle?: string;
+  /**
+   * Subtitle line clamp. S6.1 allows message previews **up to 2 lines**;
+   * single-fact subtitles ("12 members", a role) stay on one. Default 1.
+   */
+  subtitleLines?: number;
   /** Bold-preview "you're mentioned" state (§2) — independent of `isUnread`. */
   subtitleEmphasis?: boolean;
   /** Right column, top line. Accent-colored when `isUnread`, `text.tertiary` otherwise (§1.3/§2). */
   timestamp?: string;
   /** Renders a `WaBadge` when > 0 and `showMutedDot` is false. */
   unreadCount?: number;
+  /**
+   * S6.3: put the disclosure chevron **inside** the unread capsule ("7 ›")
+   * instead of beside it — for rows standing for a container of chats
+   * (community, group parent). Ignored when there's no badge to draw.
+   */
+  badgeChevron?: boolean;
   /** A muted-chat bell-slash renders in place of the badge; the badge itself would stay accent-colored if both were shown (§3.1) — pass at most one of `unreadCount`/`showMutedDot` truthy at a time. */
   showMutedDot?: boolean;
   /** Trailing chevron for navigational (non-chat) full-bleed rows, e.g. a directory/contact list. */
@@ -172,9 +208,11 @@ export function WaRow({
   title,
   isUnread = false,
   subtitle,
+  subtitleLines = 1,
   subtitleEmphasis = false,
   timestamp,
   unreadCount,
+  badgeChevron = false,
   showMutedDot = false,
   showChevron = false,
   rightAccessory,
@@ -187,7 +225,7 @@ export function WaRow({
   testID,
 }: WaRowProps) {
   const { colors, isDark } = useTheme();
-  const minHeight = height ?? (subtitle ? WA_ROW_HEIGHT : WA_ROW_HEIGHT_NO_PREVIEW);
+  const minHeight = height ?? (subtitle ? WA_LIST_ROW_HEIGHT : WA_LIST_ROW_HEIGHT_NO_PREVIEW);
   const pressHighlight = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
 
   const content = (
@@ -212,7 +250,7 @@ export function WaRow({
               { color: colors.textSecondary },
               subtitleEmphasis && styles.subtitleEmphasis,
             ]}
-            numberOfLines={1}
+            numberOfLines={subtitleLines}
           >
             {subtitle}
           </Text>
@@ -247,11 +285,14 @@ export function WaRow({
                 style={showChevron ? styles.rightColumnItemGap : undefined}
               />
             ) : unreadCount && unreadCount > 0 ? (
-              <View style={showChevron ? styles.rightColumnItemGap : undefined}>
-                <WaBadge count={unreadCount} color={accent} />
+              <View style={showChevron && !badgeChevron ? styles.rightColumnItemGap : undefined}>
+                <WaBadge count={unreadCount} color={accent} showChevron={badgeChevron} />
               </View>
             ) : null}
-            {showChevron ? (
+            {/* The chevron is drawn once: inside the capsule when
+                `badgeChevron` and a badge is actually showing (S6.3),
+                otherwise as the standalone gray glyph. */}
+            {showChevron && !(badgeChevron && !showMutedDot && unreadCount && unreadCount > 0) ? (
               <Ionicons name="chevron-forward" size={WA_CHEVRON_SIZE} color={colors.textTertiary} />
             ) : null}
           </View>
@@ -287,6 +328,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingLeft: WA_ROW_LEADING_PADDING,
     paddingRight: WA_ROW_TRAILING_PADDING,
+    // Only matters when a 2-line preview outgrows `minHeight`; short rows are
+    // still exactly `WA_LIST_ROW_HEIGHT` tall.
+    paddingVertical: 8,
   },
   avatarSlot: {
     marginRight: WA_ROW_AVATAR_GAP,
@@ -300,9 +344,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
     justifyContent: 'center',
   },
+  // S6.1: 17pt semibold titles across the board — the reference's read and
+  // unread rows share one title weight; unread is signalled by the badge and
+  // the green timestamp, not by the name getting heavier.
   title: {
     fontSize: 17,
-    fontWeight: '400',
+    fontWeight: '600',
   },
   titleUnread: {
     fontWeight: '600',
@@ -338,6 +385,8 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   timestamp: {
-    fontSize: 13,
+    // S6.1/S6.2: 15pt, not the 13pt footnote size — the timestamp is a peer
+    // of the subtitle in the reference, not a caption.
+    fontSize: 15,
   },
 });

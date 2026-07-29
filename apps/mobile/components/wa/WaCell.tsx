@@ -3,8 +3,8 @@
  *
  * WHATSAPP-DESIGN-SYSTEM.md §3.2: plain flat monochrome icon glyph (never a
  * colored rounded-square background chip — "the single most common mistake"
- * per the spec), title, optional right-aligned value label, chevron. Four
- * row variants (§3.2/§1.4):
+ * per the spec), title, optional right-aligned value label, chevron. Five
+ * row variants (§3.2/§1.4 + WA-VISUAL-DELTAS.md S3.6):
  * - `navigational` — title (+ optional value) + chevron.
  * - `toggle` — title (+ optional description sub-line) + native `Switch`
  *   (never a custom toggle component, per §6).
@@ -14,6 +14,19 @@
  *   (§1.4). Pass `centered` for the modal/action-sheet rendering (20pt,
  *   centered, own row) instead of the default inline-grouped rendering
  *   (17pt, left-aligned) — §1.4 documents both.
+ * - `footer` — gray left-aligned metadata text inside the card ("Created by
+ *   … Created Jul 27, 2024.", S3.6). Not tappable-looking: 13pt, no icon, no
+ *   chevron, wraps freely.
+ *
+ * WA-VISUAL-DELTAS.md S3.2 recalibrations applied here (the screenshots
+ * supersede the design-system prose):
+ * - Cell icons default to `colors.text` — BLACK 24pt line glyphs, not the
+ *   thin `text.secondary` gray the audit flagged. Callers that genuinely
+ *   need a tinted glyph still pass `iconColor` (e.g. a WhatsApp/Telegram
+ *   brand mark on an external-chat row).
+ * - The trailing value+chevron block is explicitly vertically centered, so a
+ *   cell that grows past one line (a `description` sub-line) can't leave the
+ *   chevron hugging the row's top-right corner (S3.3).
  *
  * `trailingAccessory` (navigational variant only) is an escape hatch that
  * replaces the default value+chevron block with an arbitrary node — e.g. a
@@ -37,10 +50,16 @@ import {
   WA_CELL_ICON_LABEL_GAP,
   WA_CHEVRON_SIZE,
   WA_CHEVRON_GAP,
+  WA_SECTION_FOOTER_SIZE,
   WA_DEFAULT_ACCENT,
 } from './metrics';
 
-export type WaCellVariant = 'navigational' | 'toggle' | 'action' | 'destructive';
+export type WaCellVariant =
+  | 'navigational'
+  | 'toggle'
+  | 'action'
+  | 'destructive'
+  | 'footer';
 
 export interface WaCellProps {
   /** Monochrome glyph (Ionicons name). Omit for icon-less cells (action/destructive variants never show one). */
@@ -89,6 +108,18 @@ export function WaCell({
   const { colors, isDark } = useTheme();
   const minHeight = description ? WA_CELL_TALL_MIN_HEIGHT : WA_CELL_MIN_HEIGHT;
 
+  // S3.6 gray footer metadata, rendered as a row inside the card rather than
+  // below it (WaInsetGroup's own `footer` prop covers the below-card case).
+  if (variant === 'footer') {
+    return (
+      <View testID={testID} accessibilityRole="none">
+        <View style={styles.footerRow}>
+          <Text style={[styles.footerText, { color: colors.textTertiary }]}>{title}</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (variant === 'action' || variant === 'destructive') {
     const tone = variant === 'destructive' ? colors.destructive : accent;
     return (
@@ -121,7 +152,9 @@ export function WaCell({
           <View style={styles.iconColumn}>
             {iconNode ??
               (icon ? (
-                <Ionicons name={icon} size={WA_CELL_ICON_SIZE} color={iconColor ?? colors.textSecondary} />
+                // S3.2: black line glyph by default — `colors.text`, not the
+                // thin `text.secondary` gray the pre-pass used.
+                <Ionicons name={icon} size={WA_CELL_ICON_SIZE} color={iconColor ?? colors.text} />
               ) : null)}
           </View>
         ) : null}
@@ -146,14 +179,22 @@ export function WaCell({
         ) : trailingAccessory ? (
           trailingAccessory
         ) : (
-          <>
+          // S3.3: the value+chevron block is its own vertically-centered
+          // cluster. Left as bare siblings of a `description`-grown text
+          // column, the chevron rode the row's top-right corner.
+          <View style={styles.trailing}>
             {value ? (
               <Text style={[styles.value, { color: colors.textTertiary }]} numberOfLines={1}>
                 {value}
               </Text>
             ) : null}
-            <Ionicons name="chevron-forward" size={WA_CHEVRON_SIZE} color={colors.textTertiary} />
-          </>
+            <Ionicons
+              name="chevron-forward"
+              size={WA_CHEVRON_SIZE}
+              color={colors.textTertiary}
+              style={styles.chevron}
+            />
+          </View>
         )}
       </View>
     </RowContainer>
@@ -219,9 +260,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
+  trailing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    flexShrink: 0,
+  },
+  chevron: {
+    alignSelf: 'center',
+  },
   value: {
     fontSize: 17,
     marginRight: WA_CHEVRON_GAP,
+  },
+  footerRow: {
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingVertical: 12,
+  },
+  footerText: {
+    fontSize: WA_SECTION_FOOTER_SIZE,
+    fontWeight: '400',
+    lineHeight: 18,
   },
   plainRow: {
     justifyContent: 'center',

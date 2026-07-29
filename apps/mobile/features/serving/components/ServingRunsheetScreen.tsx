@@ -20,6 +20,16 @@ import { useRouter } from "expo-router";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import {
+  WA_GROUP_MARGIN,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { PlanRunSheet } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
@@ -45,6 +55,10 @@ function formatPlanDate(startsAt: number): string {
 export function ServingRunsheetScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  // Flag-on restyle only (WHATSAPP-DESIGN-SYSTEM.md §7). Note the run sheet
+  // itself is `PlanRunSheet` (leader-tools) — this screen only owns the
+  // per-plan section headers around it.
+  const wa = useWhatsappShell();
   const router = useRouter();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
 
@@ -67,7 +81,9 @@ export function ServingRunsheetScreen() {
   if (!isServingMode) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+        >
           Not currently serving on an event.
         </Text>
       </View>
@@ -79,7 +95,9 @@ export function ServingRunsheetScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+        >
           Loading run sheets…
         </Text>
       </View>
@@ -90,7 +108,9 @@ export function ServingRunsheetScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+        >
           No run sheet available.
         </Text>
       </View>
@@ -106,15 +126,21 @@ export function ServingRunsheetScreen() {
       }}
     >
       {plans.map((plan) => (
-        <View key={plan.planId} style={styles.planSection}>
-          <View style={styles.planHeader}>
+        <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
+          <View style={[styles.planHeader, wa && waStyles.planHeader]}>
             <Text
-              style={[styles.planTitle, { color: colors.text }]}
+              style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
               numberOfLines={1}
             >
               {plan.title}
             </Text>
-            <Text style={[styles.planDate, { color: colors.textTertiary }]}>
+            <Text
+              style={[
+                styles.planDate,
+                wa && waStyles.planDate,
+                { color: colors.textTertiary },
+              ]}
+            >
               {formatPlanDate(plan.startsAt)}
             </Text>
           </View>
@@ -160,4 +186,24 @@ const styles = StyleSheet.create({
   },
   planTitle: { fontSize: 16, fontWeight: "700", flexShrink: 1 },
   planDate: { fontSize: 13, fontWeight: "500" },
+});
+
+/**
+ * `whatsapp-shell` (flag-on) overrides, applied as
+ * `[styles.x, wa && waStyles.x]` so flag-off is byte-identical.
+ *
+ * This screen is thin — one section header per plan wrapped around
+ * `PlanRunSheet`. The header moves onto the §2 landing-section-header role
+ * (~20pt semibold sentence-case) with a 15pt gray date beside it, and the
+ * inter-plan gap onto `WA_GROUP_SPACING`.
+ */
+const waStyles = StyleSheet.create({
+  emptyText: { fontSize: WA_TYPE_SUBTITLE },
+  planSection: { paddingTop: WA_GROUP_SPACING },
+  planHeader: {
+    paddingHorizontal: WA_GROUP_MARGIN,
+    marginBottom: WA_SECTION_HEADER_GAP,
+  },
+  planTitle: { fontSize: WA_TYPE_SECTION_HEADER, fontWeight: WA_WEIGHT_SEMIBOLD },
+  planDate: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
 });

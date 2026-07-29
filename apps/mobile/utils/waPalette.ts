@@ -125,29 +125,25 @@ export function hslToRgb({ h, s, l }: Hsl): Rgb {
   };
 }
 
-/**
- * Mixes `hex` toward `target` by `weight` (0 = pure `target`, 1 = pure `hex`).
- *
- * Used for the §1.3 outgoing-bubble light tint: "≈15–20% mix onto white ...
- * roughly `#25D366` at ~18% opacity over white" is `mix(hex, '#FFFFFF', 0.18)`.
- * Falls back to `hex` unchanged if either color fails to parse.
- */
-export function mix(hex: string, target: string, weight: number): string {
-  const a = hexToRgb(hex);
-  const b = hexToRgb(target);
-  if (!a || !b) return hex;
-  const w = clamp(weight, 0, 1);
-  return rgbToHex({
-    r: a.r * w + b.r * (1 - w),
-    g: a.g * w + b.g * (1 - w),
-    b: a.b * w + b.b * (1 - w),
-  });
-}
-
 // --- WhatsApp-shell accent derivation (spec §1) -----------------------------
 
-/** §1.6 — outgoing bubble in light mode is primaryColor mixed ~18% onto white. */
-const BUBBLE_OUTGOING_LIGHT_TINT = 0.18;
+/**
+ * §1.6 light-mode outgoing bubble. A white-mix of the brand color desaturates
+ * (a forest-green brand came out gray-sage next to WhatsApp's `#D9FDD3`);
+ * WhatsApp instead keeps the bubble's lightness essentially constant (~92)
+ * and lets hue+saturation carry the brand. Calibrated against `#25D366` →
+ * `#D9FDD3` (S 70→85, L 49→92): saturation gets a fixed boost, lightness is
+ * pinned into a narrow light band regardless of the brand's own lightness.
+ */
+const BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST = 15;
+const BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS = 90;
+const BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS = 93;
+/**
+ * An (near-)achromatic brand color has no meaningful hue — `rgbToHsl` reports
+ * h=0 (red) for it, and boosting saturation would paint the bubble pink.
+ * Below this saturation the brand is treated as gray: no boost, no hue.
+ */
+const BUBBLE_OUTGOING_ACHROMATIC_MAX_SATURATION = 8;
 
 /**
  * Dark-mode accent shift, calibrated against the measured `#25D366` →
@@ -270,9 +266,18 @@ export function waAccentPalette(primaryColor: string, isDark: boolean): WaAccent
 
   const darkAdjustedAccent = darkAdjustedAccentOf(primaryColor);
   const accent = isDark ? darkAdjustedAccent : primaryColor;
+  const lightSaturation = rgbToHsl(hexToRgb(primaryColor)!).s;
   const bubbleOutgoing = isDark
     ? darkBubbleTintOf(primaryColor)
-    : mix(primaryColor, '#FFFFFF', BUBBLE_OUTGOING_LIGHT_TINT);
+    : shiftHsl(primaryColor, {
+        saturationBoost:
+          lightSaturation <= BUBBLE_OUTGOING_ACHROMATIC_MAX_SATURATION
+            ? 0
+            : BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST,
+        lightnessFactor: 10, // pin into the clamp band below
+        minLightness: BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS,
+        maxLightness: BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS,
+      });
 
   return {
     accent,

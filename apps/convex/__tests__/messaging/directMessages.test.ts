@@ -865,6 +865,130 @@ describe("searchUsersInSharedCommunities", () => {
 });
 
 // ============================================================================
+// listCommunityMembersForNewChat
+// ============================================================================
+
+describe("listCommunityMembersForNewChat", () => {
+  test("lists community members alphabetically without a search term", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Directory Community");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+      lastName: "Anderson",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+      lastName: "Coleman",
+    });
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+      lastName: "Brown",
+    });
+
+    const rows = await t.query(
+      api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+      { token: aToken, communityId },
+    );
+
+    // Sorted by last name — Brown before Coleman — and the caller is absent.
+    expect(rows.map((r) => r.userId)).toEqual([bId, cId]);
+    expect(rows[0]?.displayName).toContain("Bob");
+    expect(rows[0]?.sharedCommunityNames).toContain("Directory Community");
+  });
+
+  test("excludes blocked users in either direction and other communities", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Directory Blocking");
+    const { userId: aId, accessToken: aToken } = await createUserInCommunity(
+      t,
+      communityId,
+      { firstName: "Alice", lastName: "Anderson" },
+    );
+    const { userId: bId } = await createUserInCommunity(t, communityId, {
+      firstName: "Bob",
+      lastName: "Brown",
+    });
+    const { userId: cId } = await createUserInCommunity(t, communityId, {
+      firstName: "Carol",
+      lastName: "Coleman",
+    });
+    const { userId: dId } = await createUserInCommunity(t, communityId, {
+      firstName: "Dan",
+      lastName: "Dawson",
+    });
+    const { userId: outsiderId } = await createUserInOtherCommunity(t, {
+      firstName: "Eve",
+      lastName: "Evans",
+    });
+
+    await t.run(async (ctx) => {
+      // Caller blocked Bob; Carol blocked the caller.
+      await ctx.db.insert("chatUserBlocks", {
+        blockerId: aId,
+        blockedId: bId,
+        createdAt: Date.now(),
+      });
+      await ctx.db.insert("chatUserBlocks", {
+        blockerId: cId,
+        blockedId: aId,
+        createdAt: Date.now(),
+      });
+    });
+
+    const rows = await t.query(
+      api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+      { token: aToken, communityId },
+    );
+
+    const ids = rows.map((r) => r.userId);
+    expect(ids).toEqual([dId]);
+    expect(ids).not.toContain(bId);
+    expect(ids).not.toContain(cId);
+    expect(ids).not.toContain(outsiderId);
+  });
+
+  test("returns nothing when the caller isn't a member of the community", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Directory Closed");
+    await createUserInCommunity(t, communityId, {
+      firstName: "Insider",
+      lastName: "Ives",
+    });
+    const { accessToken: outsiderToken } = await createUserInOtherCommunity(t, {
+      firstName: "Outsider",
+      lastName: "Oakes",
+    });
+
+    const rows = await t.query(
+      api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+      { token: outsiderToken, communityId },
+    );
+    expect(rows).toEqual([]);
+  });
+
+  test("honors the limit argument", async () => {
+    const t = convexTest(schema, modules);
+    const communityId = await createCommunity(t, "Directory Limit");
+    const { accessToken: aToken } = await createUserInCommunity(t, communityId, {
+      firstName: "Alice",
+      lastName: "Anderson",
+    });
+    for (const name of ["Bea", "Cal", "Dot", "Eli"]) {
+      await createUserInCommunity(t, communityId, {
+        firstName: name,
+        lastName: name,
+      });
+    }
+
+    const rows = await t.query(
+      api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+      { token: aToken, communityId, limit: 2 },
+    );
+    expect(rows).toHaveLength(2);
+  });
+});
+
+// ============================================================================
 // getDirectInbox
 // ============================================================================
 

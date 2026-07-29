@@ -34,6 +34,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WaScreenHeader,
+  WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
+  WA_TAB_CONTENT_CLEARANCE,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+  waTabBarStripHeight,
+} from '@components/wa';
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -97,6 +112,7 @@ export function PrayerScreen() {
   const insets = useSafeAreaInsets();
   const { community } = useAuth();
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
   // `openAdd=1` is set by the `prayer.monday_nudge` deep link — one-tap from
   // the notification straight into the AddPrayerSheet. We guard with a ref-
@@ -215,23 +231,50 @@ export function PrayerScreen() {
   } else if (showCelebration) {
     hero = (
       <View style={styles.heroCenter}>
-        <View style={[styles.checkCircle, { backgroundColor: COMPLETED_GREEN }]}>
+        {/*
+         * Flag-on the celebration disc takes the community accent rather than
+         * iOS system green: S5.1 allows accent on a screen's one primary
+         * moment, and this view REPLACES the Pray button, so there's still
+         * only one accent element on screen at a time.
+         */}
+        <View
+          style={[
+            styles.checkCircle,
+            { backgroundColor: wa ? primaryColor : COMPLETED_GREEN },
+          ]}
+        >
           <Ionicons name="checkmark" size={44} color="#fff" />
         </View>
-        <Text style={[styles.celebTitle, { color: colors.text }]}>You prayed for 3</Text>
-        <Text style={[styles.celebBody, { color: colors.textSecondary }]}>
+        <Text style={[styles.celebTitle, wa && waStyles.celebTitle, { color: colors.text }]}>
+          You prayed for 3
+        </Text>
+        <Text style={[styles.celebBody, wa && waStyles.celebBody, { color: colors.textSecondary }]}>
           Thank you for taking the time. Your community is held up because of it.
         </Text>
         {current ? (
           <TouchableOpacity
-            style={[styles.secondaryButton, { borderColor: colors.border }]}
+            style={[
+              styles.secondaryButton,
+              wa && waStyles.secondaryButton,
+              { borderColor: colors.border },
+            ]}
             onPress={dismissCelebration}
             activeOpacity={0.85}
           >
-            <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Pray for more</Text>
+            <Text
+              style={[
+                styles.secondaryButtonText,
+                wa && waStyles.secondaryButtonText,
+                { color: colors.text },
+              ]}
+            >
+              Pray for more
+            </Text>
           </TouchableOpacity>
         ) : (
-          <Text style={[styles.celebFootnote, { color: colors.textTertiary }]}>
+          <Text
+            style={[styles.celebFootnote, wa && waStyles.celebFootnote, { color: colors.textTertiary }]}
+          >
             No more prayer requests right now — check back later.
           </Text>
         )}
@@ -240,13 +283,18 @@ export function PrayerScreen() {
   } else if (!current && todayCount > 0) {
     hero = (
       <View style={styles.heroCenter}>
-        <View style={[styles.checkCircle, { backgroundColor: COMPLETED_GREEN }]}>
+        <View
+          style={[
+            styles.checkCircle,
+            { backgroundColor: wa ? primaryColor : COMPLETED_GREEN },
+          ]}
+        >
           <Ionicons name="checkmark" size={36} color="#fff" />
         </View>
-        <Text style={[styles.celebTitle, { color: colors.text }]}>
+        <Text style={[styles.celebTitle, wa && waStyles.celebTitle, { color: colors.text }]}>
           You prayed for {todayCount} today
         </Text>
-        <Text style={[styles.celebBody, { color: colors.textSecondary }]}>
+        <Text style={[styles.celebBody, wa && waStyles.celebBody, { color: colors.textSecondary }]}>
           That's everyone waiting for prayer right now. Check back later.
         </Text>
       </View>
@@ -255,8 +303,10 @@ export function PrayerScreen() {
     hero = (
       <View style={styles.heroCenter}>
         <Ionicons name="heart-outline" size={44} color={colors.iconSecondary} />
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>All caught up</Text>
-        <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+        <Text style={[styles.emptyTitle, wa && waStyles.emptyTitle, { color: colors.text }]}>
+          All caught up
+        </Text>
+        <Text style={[styles.emptyBody, wa && waStyles.emptyBody, { color: colors.textSecondary }]}>
           There's no one waiting for prayer right now. Add a request for your community.
         </Text>
       </View>
@@ -274,6 +324,7 @@ export function PrayerScreen() {
         <View
           style={[
             styles.card,
+            wa && waStyles.card,
             {
               backgroundColor: colors.surface,
               borderColor: colors.border,
@@ -298,8 +349,16 @@ export function PrayerScreen() {
               )}
             </View>
             <View style={styles.cardHeaderText}>
-              <Text style={[styles.authorName, { color: colors.text }]}>{authorLabel}</Text>
-              <Text style={[styles.authorMeta, { color: colors.textTertiary }]}>
+              <Text style={[styles.authorName, wa && waStyles.authorName, { color: colors.text }]}>
+                {authorLabel}
+              </Text>
+              <Text
+                style={[
+                  styles.authorMeta,
+                  wa && waStyles.authorMeta,
+                  { color: colors.textTertiary },
+                ]}
+              >
                 {relativeTime(current.createdAt)} · {countLabel}
               </Text>
             </View>
@@ -325,23 +384,30 @@ export function PrayerScreen() {
           >
             <View style={styles.bodyWrap}>
               <Text
-                style={[styles.quoteMark, { color: primaryColor }]}
+                style={[
+                  styles.quoteMark,
+                  // S5: the Pray pill is this screen's only accent. The
+                  // decorative quote mark goes neutral gray flag-on.
+                  { color: wa ? colors.textTertiary : primaryColor },
+                ]}
                 accessibilityElementsHidden
                 importantForAccessibility="no"
               >
                 “
               </Text>
-              <Text style={[styles.body, { color: colors.text }]}>{current.bodyText}</Text>
+              <Text style={[styles.body, wa && waStyles.body, { color: colors.text }]}>
+                {current.bodyText}
+              </Text>
             </View>
           </ScrollView>
 
           <TouchableOpacity
-            style={[styles.prayButton, { backgroundColor: primaryColor }]}
+            style={[styles.prayButton, wa && waStyles.prayButton, { backgroundColor: primaryColor }]}
             onPress={() => setPraySessionOpen(true)}
             activeOpacity={0.85}
           >
             <Ionicons name="heart" size={18} color="#fff" />
-            <Text style={styles.prayButtonText}>Pray</Text>
+            <Text style={[styles.prayButtonText, wa && waStyles.prayButtonText]}>Pray</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -358,69 +424,157 @@ export function PrayerScreen() {
   const weekLabel = weekCount >= WEEK_PILL_MIN ? `${weekCount} this week` : null;
   const showHeaderRow = !isLoading && (setLabel || weekLabel);
 
+  const setProgress = (
+    <>
+      <Text
+        style={[
+          styles.progressLabel,
+          wa && waStyles.progressLabel,
+          { color: wa ? colors.text : colors.textSecondary },
+        ]}
+      >
+        {setLabel}
+      </Text>
+      <ProgressDots
+        count={SESSION_TARGET}
+        filled={Math.min(SESSION_TARGET, todayCount)}
+        complete={false}
+        baseColor={colors.border}
+        filledColor={wa ? colors.text : COMPLETED_GREEN}
+      />
+    </>
+  );
+
   return (
     <View
       style={[
         styles.container,
         { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top + 12 },
+        // Flag-on, the tab bar is a floating island over the content (S2).
+        // The prayed rail is a fixed footer (not scroll content), so the
+        // container must reserve the safe-area strip AND the island height
+        // for the rail to stay fully reachable above it.
+        wa && {
+          paddingBottom: waTabBarStripHeight(insets.bottom) + WA_TAB_CONTENT_CLEARANCE,
+        },
       ]}
     >
-      <View style={styles.topBar}>
-        <Text style={[styles.heading, { color: colors.text }]}>Pray for your community</Text>
-        <View style={styles.topRightRow}>
-          <TouchableOpacity
-            style={styles.topAction}
-            onPress={handleToggleNotifications}
-            hitSlop={8}
-            accessibilityLabel={
-              notifsMasterEnabled
-                ? 'Turn off prayer notifications'
-                : 'Turn on prayer notifications'
-            }
-            accessibilityRole="button"
-          >
-            <Ionicons
-              name={notifsMasterEnabled ? 'notifications-outline' : 'notifications-off-outline'}
-              size={22}
-              color={notifsMasterEnabled ? primaryColor : colors.iconSecondary}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.topAction}
-            onPress={() => setIsAddOpen(true)}
-            hitSlop={8}
-            accessibilityLabel="Request prayer"
-          >
-            <Ionicons name="add-circle-outline" size={22} color={primaryColor} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.topAction}
-            onPress={() => router.push('/(user)/my-prayers')}
-            hitSlop={8}
-            accessibilityLabel="My prayers"
-          >
-            <Text style={[styles.topActionText, { color: primaryColor }]}>My prayers</Text>
-          </TouchableOpacity>
+      {wa ? (
+        // S1 chrome, same shape as the Events tab: a row of floating NEUTRAL
+        // white circles over the content, then the 34pt large title on its own
+        // line. Each header action keeps its affordance — the bell's state now
+        // reads from the glyph (outline vs. off-outline) instead of a green
+        // tint (S5.2), and "My prayers" becomes a circle so no text button
+        // survives in the chrome. The screen's original framing copy moves to
+        // the 15pt gray subtitle below the title.
+        <>
+          <WaScreenHeader
+            title="Prayer"
+            trailingButtons={[
+              {
+                icon: notifsMasterEnabled
+                  ? 'notifications-outline'
+                  : 'notifications-off-outline',
+                onPress: handleToggleNotifications,
+                accessibilityLabel: notifsMasterEnabled
+                  ? 'Turn off prayer notifications'
+                  : 'Turn on prayer notifications',
+              },
+              {
+                icon: 'list-outline',
+                onPress: () => router.push('/(user)/my-prayers'),
+                accessibilityLabel: 'My prayers',
+              },
+              {
+                icon: 'add',
+                onPress: () => setIsAddOpen(true),
+                accessibilityLabel: 'Request prayer',
+              },
+            ]}
+          />
+          <Text style={[waStyles.headerSubtitle, { color: colors.textSecondary }]}>
+            Pray for your community
+          </Text>
+        </>
+      ) : (
+        <View style={styles.topBar}>
+          <Text style={[styles.heading, { color: colors.text }]}>Pray for your community</Text>
+          <View style={styles.topRightRow}>
+            <TouchableOpacity
+              style={styles.topAction}
+              onPress={handleToggleNotifications}
+              hitSlop={8}
+              accessibilityLabel={
+                notifsMasterEnabled
+                  ? 'Turn off prayer notifications'
+                  : 'Turn on prayer notifications'
+              }
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name={notifsMasterEnabled ? 'notifications-outline' : 'notifications-off-outline'}
+                size={22}
+                color={notifsMasterEnabled ? primaryColor : colors.iconSecondary}
+              />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.topAction}
+              onPress={() => setIsAddOpen(true)}
+              hitSlop={8}
+              accessibilityLabel="Request prayer"
+            >
+              <Ionicons name="add-circle-outline" size={22} color={primaryColor} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.topAction}
+              onPress={() => router.push('/(user)/my-prayers')}
+              hitSlop={8}
+              accessibilityLabel="My prayers"
+            >
+              <Text style={[styles.topActionText, { color: primaryColor }]}>My prayers</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
 
       {showHeaderRow ? (
-        <View style={styles.progressRow}>
+        <View style={[styles.progressRow, wa && waStyles.progressRow]}>
           {setLabel ? (
-            <>
-              <Text style={[styles.progressLabel, { color: colors.textSecondary }]}>{setLabel}</Text>
-              <ProgressDots
-                count={SESSION_TARGET}
-                filled={Math.min(SESSION_TARGET, todayCount)}
-                complete={false}
-                baseColor={colors.border}
-              />
-            </>
+            // Flag-on the label + dots become ONE neutral pill (S5: no colored
+            // or warning chips anywhere but the primary CTA). Flag-off they stay
+            // bare siblings of the row — the wrapper View's very presence is
+            // gated, not just its style.
+            wa ? (
+              <View style={[waStyles.pill, { backgroundColor: colors.surface }]}>
+                {setProgress}
+              </View>
+            ) : (
+              setProgress
+            )
           ) : null}
           {weekLabel ? (
-            <View style={[styles.todayPill, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Ionicons name="flame" size={11} color={COMPLETED_GREEN} />
-              <Text style={[styles.todayPillText, { color: colors.textSecondary }]}>{weekLabel}</Text>
+            <View
+              style={[
+                styles.todayPill,
+                wa && waStyles.pill,
+                wa && waStyles.weekPill,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Ionicons
+                name="flame"
+                size={wa ? 14 : 11}
+                color={wa ? colors.textSecondary : COMPLETED_GREEN}
+              />
+              <Text
+                style={[
+                  styles.todayPillText,
+                  wa && waStyles.weekPillText,
+                  { color: wa ? colors.text : colors.textSecondary },
+                ]}
+              >
+                {weekLabel}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -458,11 +612,14 @@ function ProgressDots({
   filled,
   complete,
   baseColor,
+  filledColor,
 }: {
   count: number;
   filled: number;
   complete: boolean;
   baseColor: string;
+  /** Ink for a completed dot — neutral text ink flag-on, iOS green flag-off. */
+  filledColor: string;
 }) {
   return (
     <View style={styles.dotsRow}>
@@ -473,7 +630,7 @@ function ProgressDots({
             key={i}
             style={[
               styles.dot,
-              { backgroundColor: isFilled ? COMPLETED_GREEN : baseColor },
+              { backgroundColor: isFilled ? filledColor : baseColor },
             ]}
           />
         );
@@ -640,4 +797,78 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   secondaryButtonText: { fontSize: 15, fontWeight: '600' },
+});
+
+/**
+ * Neutral pill height. WA's filter/status capsules are 34pt fully rounded with
+ * a 15pt dark label (WA-VISUAL-DELTAS.md D4, matching the inbox resource
+ * chips). Declared here rather than imported from `features/chat` so the
+ * prayer surface doesn't reach across features for a number.
+ */
+const WA_PILL_HEIGHT = 34;
+
+/**
+ * The whatsapp-shell skin (WHATSAPP-DESIGN-SYSTEM.md §7): the pray-session card
+ * mechanic survives — it IS the feature — but it stops being a
+ * bordered-and-shadowed "feature card" and becomes an inset-grouped surface at
+ * the WA radius, on the S7 type scale, with the accent left only on the Pray
+ * pill. Applied as `wa && waStyles.x` so flag-off rendering is untouched.
+ */
+const waStyles = StyleSheet.create({
+  // The framing copy the flag-off screen carries as its 20pt heading, re-set as
+  // the 15pt gray line under the large title (§3.2 hero subtitle).
+  headerSubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    marginTop: 2,
+    marginBottom: 14,
+  },
+
+  progressRow: { paddingHorizontal: WA_GROUP_MARGIN, gap: 8, marginBottom: 14 },
+  // Neutral capsule. The page background is already `surfaceSecondary`, so the
+  // fill is `surface` (WhatsApp's floating day-pill treatment) rather than the
+  // gray fill chips use when they sit on white — a gray-on-gray pill would
+  // simply vanish here.
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: WA_PILL_HEIGHT,
+    borderRadius: WA_PILL_HEIGHT / 2,
+    paddingHorizontal: 14,
+  },
+  progressLabel: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+  },
+  // Kills the hairline border and the old 10pt radius; `pill` supplies the rest.
+  weekPill: { borderWidth: 0, paddingVertical: 0, gap: 6, marginLeft: 'auto' },
+  weekPillText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+
+  // §7 "never cards-with-shadows": flat, borderless, 24pt radius.
+  card: {
+    borderRadius: WA_GROUP_RADIUS,
+    borderWidth: 0,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+    padding: 20,
+  },
+  authorName: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  authorMeta: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
+  body: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR, lineHeight: 25 },
+  // The screen's single accent element, as a fully-rounded WA CTA pill.
+  prayButton: { borderRadius: 26, paddingVertical: 15 },
+  prayButtonText: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // Empty / celebration states: centered glyph + 17pt title + 15pt gray body.
+  emptyTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  emptyBody: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR, lineHeight: 21 },
+  celebTitle: { fontSize: WA_TYPE_HEADER_BLOCK, fontWeight: WA_WEIGHT_BOLD },
+  celebBody: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR, lineHeight: 21 },
+  celebFootnote: { fontSize: WA_TYPE_FOOTNOTE },
+  secondaryButton: { borderRadius: 26, paddingVertical: 14, paddingHorizontal: 28 },
+  secondaryButtonText: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 });

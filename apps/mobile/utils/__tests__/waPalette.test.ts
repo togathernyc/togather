@@ -4,7 +4,6 @@ import {
   rgbToHsl,
   hslToRgb,
   isValidHex,
-  mix,
   waAccentPalette,
 } from '../waPalette';
 
@@ -53,28 +52,6 @@ describe('rgbToHsl / hslToRgb round trip', () => {
     expect(Math.round(roundTripped.r)).toBeCloseTo(rgb.r, 0);
     expect(Math.round(roundTripped.g)).toBeCloseTo(rgb.g, 0);
     expect(Math.round(roundTripped.b)).toBeCloseTo(rgb.b, 0);
-  });
-});
-
-describe('mix', () => {
-  test('mixes toward white at the spec-cited ~18% tint (§1.3 outgoing bubble)', () => {
-    // Spec: "WhatsApp's own #D9FDD3 is roughly #25D366 at ~18% opacity over white"
-    const tinted = mix('#25D366', '#FFFFFF', 0.18);
-    const rgb = hexToRgb(tinted)!;
-    // Should land close to the real WhatsApp light bubble color, well within
-    // the "roughly" tolerance the spec itself calls out.
-    expect(rgb.r).toBeGreaterThan(200);
-    expect(rgb.g).toBeGreaterThan(230);
-    expect(rgb.b).toBeGreaterThan(200);
-  });
-
-  test('weight 0 returns the target color, weight 1 returns the source color', () => {
-    expect(mix('#25D366', '#FFFFFF', 0)).toBe('#ffffff');
-    expect(mix('#25D366', '#FFFFFF', 1)).toBe('#25d366');
-  });
-
-  test('falls back to the source hex on invalid input', () => {
-    expect(mix('not-a-color', '#FFFFFF', 0.5)).toBe('not-a-color');
   });
 });
 

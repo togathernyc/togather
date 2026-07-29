@@ -1,54 +1,59 @@
 /**
  * CommunityPageScreen
  *
- * The WhatsApp "community info" analog (docs/plans/church-migration-ui-redesign
- * /README.md, "W2 — Community page"). A pushed screen — not a tab — opened
- * from the Chats list header when the whatsapp-shell flag is on. Read-only v1:
- * centered hero (branded identity + "Community · N groups"), quick-action
- * row, Community/Announcements segmented control, Announcements entry,
- * Groups you're in, Groups you can join (+ "Find your group"), This week's
- * events, and role-gated Prayer/Admin cells.
+ * WhatsApp's community **landing** screen (WA-VISUAL-DELTAS.md §5). A pushed
+ * screen — not a tab — opened from the Chats list header when the
+ * whatsapp-shell flag is on.
  *
- * Styled to WHATSAPP-DESIGN-SYSTEM.md §1/§3/§4/§6/§8 ("Community page"
- * checklist) fidelity using the `components/wa/*` foundation kit — see that
- * doc for the anatomy each section below implements.
+ * Anatomy, per §5 (which supersedes WHATSAPP-DESIGN-SYSTEM.md where they
+ * disagree — the deltas were derived from real WhatsApp iOS screenshots):
+ * floating back circle + ⋯ circle over the content (S1, no nav bar), a
+ * LEFT-aligned identity block (56pt squircle avatar · name 22pt bold ·
+ * "Community" 15pt gray), an Announcements row, then "Groups you're in" /
+ * "Groups you can join" sections — all as WHITE FULL-BLEED rows with
+ * text-column-inset separators, under ~20pt sentence-case gray section
+ * headers. A single floating green pill CTA sits at the bottom.
  *
- * Quick-action row (§3.2/§6/§8) maps to real destinations only — this
- * screen has no "Add Members"/"Add Groups" mutation to launch a sheet for,
- * so only Invite (`/(user)/invite`) and Search (`/(tabs)/search`) render,
- * per the design-system contract's "skip actions with no destination" rule.
+ * Deliberately REMOVED this pass (§5.6/§5.7): the centered hero, the
+ * Community/Announcements segmented control, and the circular Invite/Search
+ * quick-action row. The hero and segmented control belong to the community
+ * **info** screen; Invite and Search fold into the ⋯ menu, so no navigation
+ * target was lost.
  *
- * The Community/Announcements segmented control (§3.2, "Tab-style segmented
- * control") is the simplest faithful reading of the spec: "Community" is
- * always the active/rendered state (this screen's own sections, below);
- * tapping "Announcements" navigates straight to the announcement channel —
- * the same destination the Announcements row further down opens — rather
- * than building a second in-screen feed.
+ * Colors follow S5: the only green on this screen is the bottom CTA pill,
+ * unread badges/timestamps, and the accent-tinted Announcements glyph that
+ * §5.2 calls for explicitly. Photo-less group avatars use muted per-entity
+ * hues (the `components/wa` kit's `waAvatarColor`), never the brand accent —
+ * that all-green wall is on S5.2's kill list.
  *
  * Route: /(user)/community
  *
  * Backend (all pre-existing, no new Convex functions added):
  * - messaging.channels.getInboxChannels — resolves the Announcements group's
- *   main channel, same lookup ChatInboxScreen/GroupedInboxItem use. Also
- *   supplies the preview/timestamp/unread data for the Announcements row and
- *   gates whether the segmented control renders (no channel = no control).
+ *   main channel (same lookup ChatInboxScreen/GroupedInboxItem use) and
+ *   supplies preview/timestamp/unread for the Announcements row AND for the
+ *   "Groups you're in" rows (§5.4: member rows show a last-message preview).
  * - groups.queries.listForUser — "Groups you're in".
- * - groupSearch.searchGroupsWithMembership — "Groups you can join" (community
- *   explore defaults applied, same as GroupsScreen). This endpoint doesn't
- *   return a join-type/approval field, so rows stay chevron-only navigation
- *   (no Join/Request pill) per the design-system contract — no new mutation
- *   added this pass.
+ * - groupSearch.searchGroupsWithMembership — "Groups you can join".
  * - admin.settings.getExploreDefaults — community's default group-type filter.
  * - meetings.explore.communityEvents (via useCommunityEvents) — "This week".
  *
  * Data not available to this screen (rendered without, per contract):
- * - Total community group/member count for the identity subtitle — falls
- *   back to the count of groups the user is in ("Community · N groups"),
- *   since that's the only group count already fetched here.
- * - Admin adoption/pending counts — the Admin cell has no value label.
+ * - A group-creation mutation. The bottom CTA keeps this screen's existing
+ *   affordance — "Find your group" → community search — rather than being
+ *   relabelled "Add group", which would promise a create flow that doesn't
+ *   exist here.
  */
-import React, { useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
+import React, { useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  ActivityIndicator,
+  Modal,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -58,34 +63,42 @@ import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { waAccentPalette } from "@utils/waPalette";
-import { useAuthenticatedQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { AppImage } from "@components/ui/AppImage";
 import { useGroupSearchQuery } from "@features/groups/hooks/useGroups";
 import { useCommunityEvents } from "@features/events/hooks/useCommunityEvents";
 import { selectMainChannel } from "@features/chat/utils/selectMainChannel";
 import {
   WaRow,
-  WaInsetGroup,
   WaCell,
-  WaSectionLabel,
+  WaAvatar,
+  WaSeparator,
+  WaSubScreenHeader,
   WA_GROUP_MARGIN,
-  WA_GROUP_SPACING,
   WA_AVATAR_LG,
   WA_AVATAR_SQUIRCLE_RADIUS,
-  WA_AVATAR_PROFILE,
-  WA_QUICK_ACTION_CIRCLE,
-  WA_SEGMENTED_HEIGHT,
+  WA_SEPARATOR_INSET,
+  WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_SUBTITLE,
+  WA_TYPE_ROW_TITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_SEMIBOLD,
+  WA_FLOATING_SHADOW,
 } from "@components/wa";
 
 const MAX_SUGGESTED_GROUPS = 3;
 const MAX_THIS_WEEK_EVENTS = 8;
 
-/** Hero identity avatar — the profile-hero scale (§6) built from the same
- * squircle-radius ratio as the §3.1 list avatar (56pt → 18pt radius) so it
- * scales proportionally rather than using an arbitrary size. */
-const HERO_AVATAR_SIZE = WA_AVATAR_PROFILE;
-const HERO_AVATAR_RADIUS = HERO_AVATAR_SIZE * (WA_AVATAR_SQUIRCLE_RADIUS / WA_AVATAR_LG);
+/** §5.1 identity block — the 56pt squircle, same shape/radius ratio the list
+ * avatars use for community-level entities (S6.4). */
+const IDENTITY_AVATAR_SIZE = WA_AVATAR_LG;
+const IDENTITY_AVATAR_RADIUS = WA_AVATAR_SQUIRCLE_RADIUS;
+
+/** Height reserved under the scroll content so the last row clears the
+ * floating CTA pill (which is absolutely positioned and takes no layout). */
+const CTA_PILL_HEIGHT = 50;
+const CTA_PILL_CLEARANCE = CTA_PILL_HEIGHT + 24;
 
 /** Row-rail timestamp, matching §2's "12:52 PM" (today) / "Sunday" (this
  * week) / short-date (older) convention. Local to this screen — see the
@@ -100,58 +113,61 @@ function formatRowTimestamp(timestamp: number): string {
   return format(date, "M/d/yy");
 }
 
-/** §7 "leading small circular icon" — a plain circular icon bubble matching
- * avatar geometry, used sparingly (one per row-type, not one per row). */
-function WaIconAvatar({
-  icon,
-  tint,
-  background,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  tint: string;
-  background: string;
-}) {
+/**
+ * §5.3 section header — ~20pt sentence-case gray semibold, sitting directly
+ * on the white list (NOT `WaSectionLabel`, whose 13pt ALL-CAPS rendering is
+ * exactly what S3.5 flags as "reads as iOS-15, not WA"). Local to this
+ * screen so the shared kit stays untouched.
+ */
+function LandingSectionHeader({ children }: { children: string }) {
+  const { colors } = useTheme();
+  return (
+    <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{children}</Text>
+  );
+}
+
+/**
+ * §5.2 Announcements avatar — a rounded SQUARE (not the circle used for
+ * people/groups) with a megaphone glyph. The reference is pale-green on
+ * dark-green; Togather brand-maps green to the community accent
+ * (WHATSAPP-DESIGN-SYSTEM.md §1), so the pair here is accentLight on the
+ * dark-mode-corrected accent.
+ */
+function AnnouncementsAvatar({ tint, background }: { tint: string; background: string }) {
   return (
     <View
       style={[
-        styles.iconAvatar,
-        { width: WA_AVATAR_LG, height: WA_AVATAR_LG, borderRadius: WA_AVATAR_LG / 2, backgroundColor: background },
+        styles.announcementsAvatar,
+        {
+          width: WA_AVATAR_LG,
+          height: WA_AVATAR_LG,
+          borderRadius: WA_AVATAR_SQUIRCLE_RADIUS,
+          backgroundColor: background,
+        },
       ]}
     >
-      <Ionicons name={icon} size={22} color={tint} />
+      <Ionicons name="megaphone" size={26} color={tint} />
     </View>
   );
 }
 
-/** §3.2/§6/§8 quick-action row button — accent-tinted circular icon
- * (`WA_QUICK_ACTION_CIRCLE`), no fill, with a 13pt label below, no card
- * container (floats directly on `bg.grouped`). */
-function WaQuickAction({
-  icon,
-  label,
-  accent,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  accent: string;
-  onPress: () => void;
-}) {
-  const { colors } = useTheme();
+/** Neutral icon disc for the "This week" event rows — monochrome, never
+ * accent-filled (S5.1: green is reserved for the CTA/badges/links). */
+function EventAvatar({ background, tint }: { background: string; tint: string }) {
   return (
-    <Pressable onPress={onPress} style={styles.quickAction} hitSlop={8}>
-      <View
-        style={[
-          styles.quickActionCircle,
-          { width: WA_QUICK_ACTION_CIRCLE, height: WA_QUICK_ACTION_CIRCLE },
-        ]}
-      >
-        <Ionicons name={icon} size={22} color={accent} />
-      </View>
-      <Text style={[styles.quickActionLabel, { color: colors.text }]} numberOfLines={1}>
-        {label}
-      </Text>
-    </Pressable>
+    <View
+      style={[
+        styles.eventAvatar,
+        {
+          width: WA_AVATAR_LG,
+          height: WA_AVATAR_LG,
+          borderRadius: WA_AVATAR_LG / 2,
+          backgroundColor: background,
+        },
+      ]}
+    >
+      <Ionicons name="calendar-outline" size={24} color={tint} />
+    </View>
   );
 }
 
@@ -160,17 +176,24 @@ type GroupRowData = {
   name: string;
   imageUrl?: string | null;
   subtitle?: string | null;
+  timestamp?: string;
+  unreadCount?: number;
+  isMuted?: boolean;
 };
 
-/** Shared anatomy for "Groups you're in" / "Groups you can join" — a
- * WaSectionLabel + inset group of WaRows (§3.2), with a header-only fallback
- * (no empty white card) while loading or when there's nothing to show. */
+/**
+ * Shared anatomy for "Groups you're in" / "Groups you can join" (§5.3–§5.4):
+ * a sentence-case section header over white full-bleed `WaRow`s with
+ * text-column-inset hairlines. Header-only fallback while loading or empty —
+ * no empty white card.
+ */
 function GroupsSection({
   header,
   isLoading,
   emptyMessage,
   groups,
   accent,
+  showChevron,
   onPressGroup,
 }: {
   header: string;
@@ -178,41 +201,85 @@ function GroupsSection({
   emptyMessage: string;
   groups: GroupRowData[];
   accent: string;
+  /** §5.4: chevrons on joinable rows only — member rows carry time/badge instead. */
+  showChevron: boolean;
   onPressGroup: (id: string) => void;
 }) {
   const { colors } = useTheme();
 
-  if (isLoading) {
-    return (
-      <View>
-        <WaSectionLabel>{header}</WaSectionLabel>
-        <ActivityIndicator size="small" color={colors.textSecondary} style={styles.sectionLoading} />
-      </View>
-    );
-  }
-
-  if (groups.length === 0) {
-    return (
-      <View>
-        <WaSectionLabel>{header}</WaSectionLabel>
-        <WaSectionLabel variant="footer">{emptyMessage}</WaSectionLabel>
-      </View>
-    );
-  }
-
   return (
-    <WaInsetGroup header={header}>
-      {groups.map((group) => (
-        <WaRow
-          key={group.id}
-          avatar={{ imageUrl: group.imageUrl, label: group.name, backgroundColor: accent }}
-          title={group.name}
-          subtitle={group.subtitle ?? undefined}
-          showChevron
-          onPress={() => onPressGroup(group.id)}
-        />
-      ))}
-    </WaInsetGroup>
+    <View style={styles.section}>
+      <LandingSectionHeader>{header}</LandingSectionHeader>
+      {isLoading ? (
+        <ActivityIndicator size="small" color={colors.textSecondary} style={styles.sectionLoading} />
+      ) : groups.length === 0 ? (
+        <Text style={[styles.sectionEmpty, { color: colors.textTertiary }]}>{emptyMessage}</Text>
+      ) : (
+        groups.map((group, index) => (
+          <View key={group.id}>
+            <WaRow
+              avatar={{
+                imageUrl: group.imageUrl,
+                label: group.name,
+                // S5.2: the muted per-entity pastel, hashed off the stable
+                // group id so a rename doesn't re-color the disc. The kit
+                // owns the palette — no flat fill is passed here.
+                seed: group.id,
+              }}
+              title={group.name}
+              subtitle={group.subtitle ?? undefined}
+              isUnread={(group.unreadCount ?? 0) > 0}
+              timestamp={group.timestamp}
+              unreadCount={group.unreadCount}
+              showMutedDot={group.isMuted && !group.unreadCount}
+              showChevron={showChevron}
+              accent={accent}
+              onPress={() => onPressGroup(group.id)}
+            />
+            {index < groups.length - 1 ? <WaSeparator inset={WA_SEPARATOR_INSET} /> : null}
+          </View>
+        ))
+      )}
+    </View>
+  );
+}
+
+/**
+ * §5.7 — the ⋯ menu the floating trailing circle opens. Holds the actions
+ * the removed quick-action row used to expose (Invite, Search) so no
+ * destination is lost. Green text is legal here (S5.1: "action-link text").
+ */
+function CommunityMoreMenu({
+  visible,
+  accent,
+  onClose,
+  onInvite,
+  onSearch,
+}: {
+  visible: boolean;
+  accent: string;
+  onClose: () => void;
+  onInvite: () => void;
+  onSearch: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable
+        style={[styles.menuOverlay, { backgroundColor: colors.overlay }]}
+        onPress={onClose}
+        accessibilityLabel="Close menu"
+      >
+        <View
+          style={[styles.menuCard, { backgroundColor: colors.surfaceGrouped }]}
+          onStartShouldSetResponder={() => true}
+        >
+          <WaCell icon="person-add-outline" title="Invite people" accent={accent} onPress={onInvite} />
+          <WaSeparator inset={0} />
+          <WaCell icon="search-outline" title="Search" accent={accent} onPress={onSearch} />
+        </View>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -222,12 +289,20 @@ export function CommunityPageScreen() {
   const { colors, isDark } = useTheme();
   const { primaryColor, accentLight } = useCommunityTheme();
   const { user, community } = useAuth();
+  const [menuVisible, setMenuVisible] = useState(false);
   // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
   // verbatim in dark mode (see MessageItem/MessageInput/ConvexChatRoomScreen/
   // InviteKitScreen for the same pattern).
   const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const communityId = community?.id as Id<"communities"> | undefined;
+  // AuthProvider's cached community snapshot never carries `logo` (see the
+  // identical note in ChatInboxScreen) — read it from the community doc.
+  const communityDoc = useQuery(
+    api.functions.communities.getById,
+    communityId ? { communityId } : "skip",
+  );
+  const communityLogo = communityDoc?.logo ?? community?.logo;
   const isAdmin = user?.is_admin === true;
   const prayerEnabled = community?.churchFeatures?.prayerEnabled === true;
   const userTimezone = user?.timezone || "America/New_York";
@@ -261,6 +336,8 @@ export function CommunityPageScreen() {
 
   const openAnnouncements = () => {
     if (!announcementGroup || !announcementChannel) return;
+    // `/inbox/...` is a root-stack card — see `pushOutOfModal` below.
+    if (router.canDismiss?.()) router.dismissAll();
     router.push({
       pathname: `/inbox/${announcementGroup.group._id}/${announcementChannel.slug}` as any,
       params: {
@@ -284,15 +361,71 @@ export function CommunityPageScreen() {
     () => (myGroups ?? []).filter((g: any) => !g.isAnnouncementGroup),
     [myGroups]
   );
+
+  // §5.4 "member rows: last message preview + time/badge". The inbox query
+  // above already carries per-group channel metadata, so the preview comes
+  // from the group's main channel rather than a second round-trip.
+  const groupChatMeta = useMemo(() => {
+    const map = new Map<
+      string,
+      { preview?: string; timestamp?: number; unreadCount?: number; isMuted?: boolean }
+    >();
+    for (const entry of inboxChannels ?? []) {
+      // `selectMainChannel` is generic over its minimal `MainSpotChannel`
+      // shape; instantiating it at `any` keeps the richer inbox fields
+      // (preview/sender/muted) reachable, exactly as the announcements
+      // lookup above does.
+      const channel = selectMainChannel<any>(
+        ((entry as any).channels as any[]).filter(
+          (ch: any) => ch.isEnabled !== false && ch.channelType !== "event"
+        )
+      );
+      if (!channel) continue;
+      const preview = channel.lastMessagePreview
+        ? channel.lastMessageSenderName
+          ? `${channel.lastMessageSenderName}: ${channel.lastMessagePreview}`
+          : channel.lastMessagePreview
+        : undefined;
+      map.set(String((entry as any).group._id), {
+        preview,
+        timestamp: channel.lastMessageAt,
+        unreadCount: channel.unreadCount,
+        isMuted: channel.isMuted,
+      });
+    }
+    return map;
+  }, [inboxChannels]);
+
+  // §5.1: WhatsApp's floating back circle carries the total unread count
+  // ("‹ 62"). Sum across every enabled channel the inbox already loaded.
+  const totalUnread = useMemo(() => {
+    let total = 0;
+    for (const entry of inboxChannels ?? []) {
+      for (const ch of ((entry as any).channels as any[]) ?? []) {
+        if (ch.isEnabled === false) continue;
+        total += ch.unreadCount ?? 0;
+      }
+    }
+    return total;
+  }, [inboxChannels]);
+
   const yourGroupItems: GroupRowData[] = useMemo(
     () =>
-      yourGroups.map((g: any) => ({
-        id: g._id,
-        name: g.name,
-        imageUrl: g.preview,
-        subtitle: g.groupType?.name ?? null,
-      })),
-    [yourGroups]
+      yourGroups.map((g: any) => {
+        const meta = groupChatMeta.get(String(g._id));
+        return {
+          id: g._id,
+          name: g.name,
+          imageUrl: g.preview,
+          // Preview first (§5.4); group type is the fallback when the group
+          // has no messages yet.
+          subtitle: meta?.preview ?? g.groupType?.name ?? null,
+          timestamp: meta?.timestamp ? formatRowTimestamp(meta.timestamp) : undefined,
+          unreadCount: meta?.unreadCount,
+          isMuted: meta?.isMuted,
+        };
+      }),
+    [yourGroups, groupChatMeta]
   );
 
   // --- Groups you can join (community explore defaults, same as GroupsScreen) ---
@@ -329,219 +462,213 @@ export function CommunityPageScreen() {
   });
   const thisWeekEvents = (eventsData?.events ?? []).slice(0, MAX_THIS_WEEK_EVENTS);
 
-  const goToGroup = (groupId: string) => router.push(`/groups/${groupId}` as any);
-  const goToEvent = (shortId: string | null) => {
-    if (!shortId) return;
-    router.push(`/e/${shortId}?source=app` as any);
+  /**
+   * This screen renders inside the `(user)` route group, which `app/_layout.tsx`
+   * declares `presentation: "modal"`. A native modal sits above EVERY navigator
+   * screen, so pushing a root-stack route from here lands the destination
+   * *behind* the still-open modal on iOS — the user taps a group and nothing
+   * appears to happen. Dismiss the modal stack first, then push.
+   *
+   * Same pattern (and same comment) as `useStartDirectMessage`,
+   * `NotificationFeedScreen` and `NativeRunSheetView`. Destinations that stay
+   * INSIDE `(user)` (e.g. `/(user)/invite`) must NOT go through this — they
+   * belong to the modal's own stack.
+   */
+  const pushOutOfModal = (push: () => void) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    push();
   };
 
-  const groupCount = myGroups !== undefined ? yourGroups.length : undefined;
-  const identitySubtitle =
-    groupCount !== undefined
-      ? `Community · ${groupCount} ${groupCount === 1 ? "group" : "groups"}`
-      : "Community";
+  const goToGroup = (groupId: string) =>
+    pushOutOfModal(() => router.push(`/groups/${groupId}` as any));
+  const goToEvent = (shortId: string | null) => {
+    if (!shortId) return;
+    pushOutOfModal(() => router.push(`/e/${shortId}?source=app` as any));
+  };
+  const goToInvite = () => {
+    setMenuVisible(false);
+    router.push("/(user)/invite" as any);
+  };
+  const goToSearch = () => {
+    setMenuVisible(false);
+    pushOutOfModal(() => router.push("/(tabs)/search" as any));
+  };
+
+  const showUtilityRows = prayerEnabled || isAdmin;
 
   return (
     <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.backgroundGrouped },
-      ]}
+      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
     >
-      <View style={styles.navBar}>
-        <Pressable onPress={handleBack} hitSlop={12} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </Pressable>
-      </View>
+      {/* S1.1 floating chrome: back circle left, ⋯ circle right, no nav bar. */}
+      <WaSubScreenHeader
+        onBack={handleBack}
+        backBadge={totalUnread > 0 ? (totalUnread > 99 ? "99+" : String(totalUnread)) : undefined}
+        accent={waAccent}
+        trailingButtons={[
+          {
+            icon: "ellipsis-horizontal",
+            onPress: () => setMenuVisible(true),
+            accessibilityLabel: "More options",
+          },
+        ]}
+      />
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + CTA_PILL_CLEARANCE }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Community identity — centered squircle hero avatar (§6, the one
-            squircle in the system, profile-hero scale per §8), name,
-            "Community · N groups" hero subtitle (§2). */}
-        <View style={styles.identityRow}>
-          <AppImage
-            source={community?.logo}
-            style={{
-              width: HERO_AVATAR_SIZE,
-              height: HERO_AVATAR_SIZE,
-              borderRadius: HERO_AVATAR_RADIUS,
-            }}
-            optimizedWidth={HERO_AVATAR_SIZE * 2}
-            placeholder={{
-              type: "initials",
-              name: community?.name || "Community",
-              backgroundColor: waAccent,
-            }}
+        {/* §5.1 LEFT-aligned identity block — squircle avatar, 22pt bold
+            name, 15pt gray "Community". No centered hero (that's the info
+            screen, §5.6). */}
+        <View style={styles.identityBlock}>
+          <WaAvatar
+            imageUrl={communityLogo}
+            label={community?.name || "Community"}
+            seed={communityId ?? community?.name ?? "community"}
+            shape="squircle"
+            size={IDENTITY_AVATAR_SIZE}
+            // The kit's squircle ratio would give 21pt at this size; this block
+            // sits directly above the Announcements avatar, which is drawn
+            // locally at WA_AVATAR_SQUIRCLE_RADIUS, so pin the two corners equal.
+            style={{ borderRadius: IDENTITY_AVATAR_RADIUS }}
           />
-          <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
-            {community?.name || "Your Community"}
-          </Text>
-          <Text style={[styles.identitySubtitle, { color: colors.textSecondary }]}>
-            {identitySubtitle}
-          </Text>
+          <View style={styles.identityText}>
+            <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
+              {community?.name || "Your Community"}
+            </Text>
+            <Text style={[styles.identitySubtitle, { color: colors.textSecondary }]}>
+              Community
+            </Text>
+          </View>
         </View>
 
-        {/* Quick-action row (§3.2/§6/§8) — accent-icon-only circular
-            buttons, no fill. Mapped to real destinations only: this
-            screen has no "Add Members"/"Add Groups" mutation to launch, so
-            only Invite/Search render (see report). */}
-        <View style={styles.quickActionRow}>
-          <WaQuickAction
-            icon="person-add-outline"
-            label="Invite"
-            accent={waAccent}
-            onPress={() => router.push("/(user)/invite" as any)}
-          />
-          <WaQuickAction
-            icon="search-outline"
-            label="Search"
-            accent={waAccent}
-            onPress={() => router.push("/(tabs)/search" as any)}
-          />
-        </View>
-
-        {/* Community/Announcements segmented control (§3.2/§8) —
-            "Community" shows this screen's existing sections below (no
-            second feed built, per contract); "Announcements" navigates
-            straight to the announcement channel, the same destination the
-            Announcements row further down opens. */}
+        {/* §5.2 Announcements — white full-bleed row (not an inset card),
+            rounded-square accent avatar, preview + time/badge. */}
         {announcementGroup && announcementChannel ? (
-          // Deliberate deviation from §3.2's bg.grouped track: this screen
-          // itself sits on backgroundGrouped, which would make the track
-          // invisible — separator gives it the visible recessed fill.
-          <View style={[styles.segmentedTrack, { backgroundColor: colors.separator }]}>
-            <View style={[styles.segmentedPill, { backgroundColor: colors.surfaceGrouped }]}>
-              <Text style={[styles.segmentedLabel, styles.segmentedLabelSelected, { color: colors.text }]}>
-                Community
-              </Text>
-            </View>
-            <Pressable
+          <View style={styles.announcementsSection}>
+            <WaRow
+              avatar={<AnnouncementsAvatar tint={waAccent} background={accentLight} />}
+              title="Announcements"
+              isUnread={(announcementChannel.unreadCount ?? 0) > 0}
+              subtitle={announcementPreview}
+              timestamp={
+                announcementChannel.lastMessageAt
+                  ? formatRowTimestamp(announcementChannel.lastMessageAt)
+                  : undefined
+              }
+              unreadCount={announcementChannel.unreadCount}
+              showMutedDot={announcementChannel.isMuted && !announcementChannel.unreadCount}
+              accent={waAccent}
               onPress={openAnnouncements}
-              style={styles.segmentedPill}
-              accessibilityRole="button"
-              accessibilityLabel="Open Announcements"
-            >
-              <Text style={[styles.segmentedLabel, { color: colors.textSecondary }]}>
-                Announcements
-              </Text>
-            </Pressable>
+            />
           </View>
         ) : null}
 
-        {/* Announcements — WaRow inside an inset group (§3.2), megaphone
-            icon-bubble avatar, latest preview line, timestamp + unread badge. */}
-        {announcementGroup && announcementChannel ? (
-          <View style={styles.section}>
-            <WaInsetGroup>
-              <WaRow
-                avatar={<WaIconAvatar icon="megaphone" tint={waAccent} background={accentLight} />}
-                title="Announcements"
-                isUnread={(announcementChannel.unreadCount ?? 0) > 0}
-                subtitle={announcementPreview}
-                timestamp={
-                  announcementChannel.lastMessageAt
-                    ? formatRowTimestamp(announcementChannel.lastMessageAt)
-                    : undefined
-                }
-                unreadCount={announcementChannel.unreadCount}
-                showMutedDot={announcementChannel.isMuted && !announcementChannel.unreadCount}
-                showChevron
-                accent={waAccent}
-                onPress={openAnnouncements}
-              />
-            </WaInsetGroup>
-          </View>
-        ) : null}
+        <GroupsSection
+          header="Groups you're in"
+          isLoading={myGroups === undefined}
+          emptyMessage="You haven't joined any groups yet."
+          groups={yourGroupItems}
+          accent={waAccent}
+          showChevron={false}
+          onPressGroup={goToGroup}
+        />
 
-        {/* Groups you're in */}
-        <View style={styles.section}>
-          <GroupsSection
-            header="Groups you're in"
-            isLoading={myGroups === undefined}
-            emptyMessage="You haven't joined any groups yet."
-            groups={yourGroupItems}
-            accent={waAccent}
-            onPressGroup={goToGroup}
-          />
-        </View>
+        <GroupsSection
+          header="Groups you can join"
+          isLoading={suggestedGroupsLoading}
+          emptyMessage="No groups to join right now."
+          groups={suggestedGroupItems}
+          accent={waAccent}
+          showChevron
+          onPressGroup={goToGroup}
+        />
 
-        {/* Groups you can join + "Find your group" — the WhatsApp "Add
-            group" pill (§1.3: brand-mapped, accent-filled) at the section
-            bottom. No Join/Request pill on individual rows: this screen's
-            data has no join-type/approval field to key it off (see file
-            header), so rows stay chevron-only navigation, unchanged from
-            before. */}
-        <View style={styles.section}>
-          <GroupsSection
-            header="Groups you can join"
-            isLoading={suggestedGroupsLoading}
-            emptyMessage="No groups to join right now."
-            groups={suggestedGroupItems}
-            accent={waAccent}
-            onPressGroup={goToGroup}
-          />
-          <Pressable
-            onPress={() => router.push("/(tabs)/search" as any)}
-            style={({ pressed }) => [
-              styles.addGroupPill,
-              { backgroundColor: waAccent, opacity: pressed ? 0.85 : 1 },
-            ]}
-          >
-            <Ionicons name="add" size={20} color="#FFFFFF" />
-            <Text style={styles.addGroupPillText}>Find your group</Text>
-          </Pressable>
-        </View>
-
-        {/* This week — inset group of WaRows (calendar icon-bubble, event
-            title, time subtitle), replacing the old horizontal card strip. */}
+        {/* This week — same white full-bleed row anatomy. */}
         {!eventsLoading && thisWeekEvents.length > 0 ? (
           <View style={styles.section}>
-            <WaInsetGroup header="This week">
-              {thisWeekEvents.map((event: any) => {
-                const zonedDate = toZonedTime(new Date(event.scheduledAt), userTimezone);
-                const dateLabel = format(zonedDate, "EEE, M/d", { timeZone: userTimezone });
-                const timeLabel = formatTimeWithTimezone(new Date(event.scheduledAt), userTimezone);
-                return (
+            <LandingSectionHeader>This week</LandingSectionHeader>
+            {thisWeekEvents.map((event: any, index: number) => {
+              const zonedDate = toZonedTime(new Date(event.scheduledAt), userTimezone);
+              const dateLabel = format(zonedDate, "EEE, M/d", { timeZone: userTimezone });
+              const timeLabel = formatTimeWithTimezone(new Date(event.scheduledAt), userTimezone);
+              return (
+                <View key={event.id}>
                   <WaRow
-                    key={event.id}
-                    avatar={<WaIconAvatar icon="calendar" tint={waAccent} background={accentLight} />}
+                    avatar={
+                      <EventAvatar
+                        background={isDark ? "#2A3942" : "#EFEFEF"}
+                        tint={colors.textSecondary}
+                      />
+                    }
                     title={event.title || "Untitled Event"}
                     subtitle={`${dateLabel} · ${timeLabel}`}
                     showChevron
                     onPress={() => goToEvent(event.shortId)}
                   />
-                );
-              })}
-            </WaInsetGroup>
+                  {index < thisWeekEvents.length - 1 ? (
+                    <WaSeparator inset={WA_SEPARATOR_INSET} />
+                  ) : null}
+                </View>
+              );
+            })}
           </View>
         ) : null}
 
-        {/* Togather-plus utility rows — inset-grouped cells (§3.2/§7), not
-            custom cards: plain monochrome glyphs, no colored icon chips. */}
-        {prayerEnabled || isAdmin ? (
-          <View style={styles.section}>
-            <WaInsetGroup>
-              {prayerEnabled ? (
-                <WaCell
-                  icon="heart-outline"
-                  title="Prayer"
-                  onPress={() => router.push("/(tabs)/prayer" as any)}
-                />
-              ) : null}
-              {isAdmin ? (
-                <WaCell
-                  icon="shield-checkmark-outline"
-                  title="Admin"
-                  onPress={() => router.push("/(tabs)/admin" as any)}
-                />
-              ) : null}
-            </WaInsetGroup>
+        {/* Togather-plus utility rows — plain monochrome cells on the same
+            white surface, no colored icon chips (§7). */}
+        {showUtilityRows ? (
+          <View style={styles.utilitySection}>
+            {prayerEnabled ? (
+              <WaCell
+                icon="heart-outline"
+                title="Prayer"
+                onPress={() =>
+                  pushOutOfModal(() => router.push("/(tabs)/prayer" as any))
+                }
+              />
+            ) : null}
+            {prayerEnabled && isAdmin ? <WaSeparator inset={WA_SEPARATOR_INSET} /> : null}
+            {isAdmin ? (
+              <WaCell
+                icon="shield-checkmark-outline"
+                title="Admin"
+                onPress={() =>
+                  pushOutOfModal(() => router.push("/(tabs)/admin" as any))
+                }
+              />
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
+
+      {/* §5.5 the screen's single green CTA — a floating full-width pill over
+          the content. Labelled for the affordance that actually exists here
+          (join/browse), not WA's "Add group" create flow. */}
+      <View style={[styles.ctaWrap, { bottom: insets.bottom + 12 }]} pointerEvents="box-none">
+        <Pressable
+          onPress={goToSearch}
+          accessibilityRole="button"
+          accessibilityLabel="Find your group"
+          style={({ pressed }) => [
+            styles.ctaPill,
+            WA_FLOATING_SHADOW,
+            { backgroundColor: waAccent, opacity: pressed ? 0.85 : 1 },
+          ]}
+        >
+          <Ionicons name="add" size={22} color="#FFFFFF" />
+          <Text style={styles.ctaPillText}>Find your group</Text>
+        </Pressable>
+      </View>
+
+      <CommunityMoreMenu
+        visible={menuVisible}
+        accent={waAccent}
+        onClose={() => setMenuVisible(false)}
+        onInvite={goToInvite}
+        onSearch={goToSearch}
+      />
     </View>
   );
 }
@@ -550,94 +677,87 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  navBar: {
+  identityBlock: {
     flexDirection: "row",
-    alignItems: "center",
-    height: 44,
-    paddingHorizontal: 8,
-  },
-  backButton: {
-    padding: 4,
-  },
-  identityRow: {
     alignItems: "center",
     paddingHorizontal: WA_GROUP_MARGIN,
-    paddingTop: 12,
+    paddingTop: 16,
     paddingBottom: 20,
+    gap: 12,
+  },
+  identityText: {
+    flex: 1,
+    minWidth: 0,
   },
   identityName: {
-    fontSize: 22,
-    fontWeight: "700",
-    marginTop: 12,
-    textAlign: "center",
+    fontSize: WA_TYPE_HEADER_BLOCK,
+    fontWeight: WA_WEIGHT_BOLD,
   },
   identitySubtitle: {
-    fontSize: 15,
+    fontSize: WA_TYPE_SUBTITLE,
     marginTop: 2,
-    textAlign: "center",
   },
-  quickActionRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 40,
-    paddingBottom: 20,
-  },
-  quickAction: {
-    alignItems: "center",
-    width: 72,
-  },
-  quickActionCircle: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  quickActionLabel: {
-    fontSize: 13,
-    marginTop: 4,
-  },
-  segmentedTrack: {
-    flexDirection: "row",
-    marginHorizontal: WA_GROUP_MARGIN,
-    marginBottom: WA_GROUP_SPACING,
-    height: WA_SEGMENTED_HEIGHT,
-    borderRadius: WA_SEGMENTED_HEIGHT / 2,
-    padding: 2,
-  },
-  segmentedPill: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: (WA_SEGMENTED_HEIGHT - 4) / 2,
-  },
-  segmentedLabel: {
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  segmentedLabelSelected: {
-    fontWeight: "600",
+  announcementsSection: {
+    marginBottom: 4,
   },
   section: {
-    marginTop: WA_GROUP_SPACING,
+    marginTop: 20,
+  },
+  sectionHeader: {
+    fontSize: WA_TYPE_SECTION_HEADER,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingBottom: 6,
   },
   sectionLoading: {
     marginTop: 12,
+    alignSelf: "flex-start",
+    marginLeft: WA_GROUP_MARGIN,
   },
-  iconAvatar: {
+  sectionEmpty: {
+    fontSize: WA_TYPE_SUBTITLE,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 4,
+  },
+  utilitySection: {
+    marginTop: 20,
+  },
+  announcementsAvatar: {
     alignItems: "center",
     justifyContent: "center",
   },
-  addGroupPill: {
+  eventAvatar: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ctaWrap: {
+    position: "absolute",
+    left: WA_GROUP_MARGIN,
+    right: WA_GROUP_MARGIN,
+  },
+  ctaPill: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    marginHorizontal: WA_GROUP_MARGIN,
-    marginTop: 12,
-    height: 44,
-    borderRadius: 22,
+    height: CTA_PILL_HEIGHT,
+    borderRadius: CTA_PILL_HEIGHT / 2,
   },
-  addGroupPillText: {
-    fontSize: 17,
-    fontWeight: "600",
+  ctaPillText: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
     color: "#FFFFFF",
+  },
+  menuOverlay: {
+    flex: 1,
+    justifyContent: "flex-start",
+    alignItems: "flex-end",
+    paddingTop: 96,
+    paddingRight: WA_GROUP_MARGIN,
+  },
+  menuCard: {
+    minWidth: 220,
+    borderRadius: 14,
+    overflow: "hidden",
   },
 });

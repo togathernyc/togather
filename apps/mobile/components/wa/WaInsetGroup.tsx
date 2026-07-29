@@ -2,11 +2,13 @@
  * WaInsetGroup — the iOS inset-grouped card container (Settings, Community
  * info, Group/Channel info).
  *
- * WHATSAPP-DESIGN-SYSTEM.md §3.2: 10pt corner radius, 16pt horizontal screen
- * margin, optional UPPERCASE section header above the card and footer text
- * below it (via `WaSectionLabel` — pass `header`/`footer` strings here rather
- * than composing them yourself, so the 8pt header-to-card gap stays
- * consistent), internal hairlines between cells.
+ * WHATSAPP-DESIGN-SYSTEM.md §3.2 as recalibrated by WA-VISUAL-DELTAS.md S3:
+ * ~24pt corner radius (`WA_GROUP_RADIUS` — S3.1's single most visible card
+ * delta), 16pt horizontal screen margin, optional sentence-case section
+ * header above the card and footer text below it (via `WaSectionLabel` — pass
+ * `header`/`footer` strings here rather than composing them yourself, so the
+ * 8pt header-to-card gap stays consistent), internal hairlines between cells
+ * inset to the cells' label edge (S3.4).
  *
  * Renders each child as a card row separated by a `WaSeparator`. Screens
  * compose multiple `WaInsetGroup`s with `WA_GROUP_SPACING` between them —
@@ -22,22 +24,22 @@ import {
   WA_GROUP_RADIUS,
   WA_GROUP_MARGIN,
   WA_SECTION_HEADER_GAP,
-  WA_CELL_PADDING,
-  WA_CELL_ICON_COLUMN,
+  WA_CELL_LABEL_INSET,
 } from './metrics';
 
 export interface WaInsetGroupProps {
-  /** Uppercased automatically by `WaSectionLabel`; sits above the card. */
+  /** Sentence-case section header (rendered verbatim by `WaSectionLabel`); sits above the card. */
   header?: string;
   /** Sits below the card, sentence case. */
   footer?: string;
   /** `WaCell`s (or any row content) — a hairline is inserted between each. */
   children: React.ReactNode;
   /**
-   * Left inset for the internal hairlines. iOS inset-grouped lists align
-   * separators past the icon column to the label's leading edge, not the
-   * card's own padding — defaults to `WA_CELL_PADDING + WA_CELL_ICON_COLUMN`.
-   * Pass `0` for a group whose cells have no leading icon.
+   * Left inset for the internal hairlines. S3.4: separators start at the
+   * LABEL, i.e. past the whole icon well (padding + icon column + icon→label
+   * gap), not at the icon column's own leading edge — defaults to
+   * `WA_CELL_LABEL_INSET`. Pass `0` for a group whose cells have no leading
+   * icon, or an explicit value for rows with a wider avatar well.
    */
   separatorInset?: number;
 }
@@ -46,7 +48,7 @@ export function WaInsetGroup({
   header,
   footer,
   children,
-  separatorInset = WA_CELL_PADDING + WA_CELL_ICON_COLUMN,
+  separatorInset = WA_CELL_LABEL_INSET,
 }: WaInsetGroupProps) {
   const { colors } = useTheme();
   // React.Children.toArray already drops null/undefined/boolean children and

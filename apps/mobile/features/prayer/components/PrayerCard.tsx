@@ -26,6 +26,17 @@ interface Props {
   onPressPray: (prayer: PrayerCardData) => void;
 }
 
+/**
+ * NOTE: dead component. Nothing renders `<PrayerCard>` — `PrayerScreen` builds
+ * its own hero card inline, and every other importer of this file only wants the
+ * `PrayerCardData` type above. It was therefore deliberately left out of the
+ * whatsapp-shell restyle (2026-07-29): restyling a component no surface mounts
+ * would be untestable busywork.
+ *
+ * TODO: Investigate - either delete this component and keep the file as the
+ * `PrayerCardData` type module, or make `PrayerScreen` consume it. Don't restyle
+ * it while it's unreachable.
+ */
 export function PrayerCard({ prayer, onPressPray }: Props) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();

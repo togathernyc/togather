@@ -36,7 +36,15 @@ import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
-import { WaRow, WaSeparator, WA_SEPARATOR_INSET } from "@components/wa";
+import {
+  WaRow,
+  WaSeparator,
+  WA_SEPARATOR_INSET,
+  WA_SEARCH_PILL_HEIGHT,
+  WA_SEARCH_PILL_ICON_SIZE,
+  WA_TYPE_SECTION_HEADER,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import {
@@ -136,6 +144,18 @@ function StartChatScreen() {
       : "skip",
   );
 
+  // WhatsApp-shell (flag-gated) §6.3: WhatsApp lists your contacts the moment
+  // the sheet opens — an empty search-first screen is a structural miss. The
+  // search query above deliberately returns [] for an empty term, so browsing
+  // has its own endpoint. Flag off keeps the iMessage "nothing until you type"
+  // behavior, and this query never fires.
+  const directory = useQuery(
+    api.functions.messaging.directMessages.listCommunityMembersForNewChat,
+    whatsappShellEnabled && token && communityId && !hasQuery
+      ? { token, communityId }
+      : "skip",
+  );
+
   const createOrGetDirectChannel = useMutation(
     api.functions.messaging.directMessages.createOrGetDirectChannel,
   );
@@ -143,7 +163,16 @@ function StartChatScreen() {
     api.functions.messaging.directMessages.createGroupChat,
   );
 
-  const isLoadingResults = hasQuery && results === undefined && token != null;
+  /** Whether the list is showing the at-rest directory rather than search hits. */
+  const isBrowsing = whatsappShellEnabled && !hasQuery;
+  const listData: SearchResult[] = hasQuery
+    ? (results ?? [])
+    : isBrowsing
+      ? (directory ?? [])
+      : [];
+  const isLoadingResults =
+    token != null &&
+    (hasQuery ? results === undefined : isBrowsing && directory === undefined);
   const selectedCount = selected.size;
   const isGroupMode = selectedCount >= 2;
 
@@ -373,7 +402,9 @@ function StartChatScreen() {
       return (
         <View style={styles.emptyContainer}>
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Search for someone in your community{"\n"}to start a chat.
+            {isBrowsing
+              ? "No one else in your community yet."
+              : `Search for someone in your community\nto start a chat.`}
           </Text>
         </View>
       );
@@ -395,6 +426,7 @@ function StartChatScreen() {
     return null;
   }, [
     hasQuery,
+    isBrowsing,
     isLoadingResults,
     results,
     colors.textSecondary,
@@ -424,23 +456,17 @@ function StartChatScreen() {
           {
             paddingTop: insets.top + (whatsappShellEnabled ? 8 : 16),
             paddingBottom: whatsappShellEnabled ? 10 : 12,
-            borderBottomColor: whatsappShellEnabled ? colors.separator : colors.border,
+            // S1: WA screens carry no bar hairline. Flag off keeps its rule.
+            borderBottomWidth: whatsappShellEnabled ? 0 : StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
           },
         ]}
       >
         {whatsappShellEnabled ? (
-          // §4: dismiss actions render neutral `text.primary`, never accent
-          // (the back-chevron/Cancel-button rule) — "New chat" sheet's own
-          // dismiss reads as "Cancel" here rather than the generic "×" icon.
-          <TouchableOpacity
-            onPress={handleClose}
-            style={[styles.headerSide, styles.headerCancelHit]}
-            hitSlop={12}
-            accessibilityLabel="Cancel"
-            accessibilityRole="button"
-          >
-            <Text style={[styles.headerCancelText, { color: colors.text }]}>Cancel</Text>
-          </TouchableOpacity>
+          // §6.1: centered 17pt semibold title with an ×-in-a-light-circle on
+          // the RIGHT — the reference has no "Cancel" text button. The left
+          // slot is an equal-width spacer so the title stays optically centered.
+          <View style={styles.headerSide} />
         ) : (
           <TouchableOpacity
             onPress={handleClose}
@@ -455,7 +481,24 @@ function StartChatScreen() {
         <Text style={[styles.headerTitle, { color: colors.text }]}>
           {headerTitle}
         </Text>
-        <View style={styles.headerSide} />
+        {whatsappShellEnabled ? (
+          <View style={styles.headerSide}>
+            <TouchableOpacity
+              onPress={handleClose}
+              style={[
+                styles.headerDismissCircle,
+                { backgroundColor: colors.backgroundGrouped },
+              ]}
+              hitSlop={12}
+              accessibilityLabel="Close"
+              accessibilityRole="button"
+            >
+              <Ionicons name="close" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.headerSide} />
+        )}
       </View>
 
       {/* Selected chips */}
@@ -575,13 +618,19 @@ function StartChatScreen() {
           // glass icon inset, `text.tertiary` placeholder — no focus border
           // (WhatsApp's own search pill has none).
           <View style={[styles.waPill, { backgroundColor: colors.backgroundGrouped }]}>
-            <Ionicons name="search" size={15} color={colors.textTertiary} style={styles.waPillIcon} />
+            <Ionicons
+              name="search"
+              size={WA_SEARCH_PILL_ICON_SIZE}
+              color={colors.textTertiary}
+              style={styles.waPillIcon}
+            />
             <TextInput
               value={query}
               onChangeText={setQuery}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
-              placeholder="Search by name…"
+              // §6.2 placeholder style.
+              placeholder="Name, number…"
               placeholderTextColor={colors.textTertiary}
               autoCorrect={false}
               autoCapitalize="none"
@@ -617,16 +666,23 @@ function StartChatScreen() {
 
       {/* Results */}
       <FlatList
-        data={hasQuery ? results ?? [] : []}
+        data={listData}
         keyExtractor={(item) => item.userId}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         ListEmptyComponent={emptyState}
+        // §6.3: the at-rest directory gets a sentence-case gray header, so
+        // it reads as a section of the sheet rather than as search results.
+        ListHeaderComponent={
+          isBrowsing && listData.length > 0 ? (
+            <Text style={[styles.directoryHeader, { color: colors.textSecondary }]}>
+              Community members
+            </Text>
+          ) : null
+        }
         contentContainerStyle={
-          !hasQuery || (results?.length ?? 0) === 0
-            ? styles.emptyListContent
-            : undefined
+          listData.length === 0 ? styles.emptyListContent : undefined
         }
         // §3.1 hairline separators, inset to the text column — WaRow rows
         // carry no border of their own (unlike the flag-off bordered row).
@@ -701,15 +757,13 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "600",
   },
-  headerCancelHit: {
-    width: "auto",
-    minWidth: 44,
-    paddingHorizontal: 4,
-    alignItems: "flex-start",
-  },
-  headerCancelText: {
-    fontSize: 17,
-    fontWeight: "400",
+  // §6.1 dismiss — an × inside a light circle, right-aligned (flag-on only).
+  headerDismissCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   chipsRow: {
     flexGrow: 0,
@@ -780,12 +834,13 @@ const styles = StyleSheet.create({
   },
   // §4 search pill — fully rounded, `bg.grouped` fill, no border. Reused for
   // the optional "Chat name" field too (same input family, icon omitted).
+  // S6.5: the search pill is ~44pt tall — the pre-pass 37pt read as too thin.
   waPill: {
     flexDirection: "row",
     alignItems: "center",
-    height: 37,
-    borderRadius: 18.5,
-    paddingHorizontal: 12,
+    height: WA_SEARCH_PILL_HEIGHT,
+    borderRadius: WA_SEARCH_PILL_HEIGHT / 2,
+    paddingHorizontal: 14,
   },
   waPillIcon: {
     marginRight: 8,
@@ -798,6 +853,14 @@ const styles = StyleSheet.create({
   errorText: {
     marginTop: 8,
     fontSize: 13,
+  },
+  // §6.3/S3.5 — sentence-case gray section header, never ALL-CAPS.
+  directoryHeader: {
+    fontSize: WA_TYPE_SECTION_HEADER,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
   row: {
     flexDirection: "row",

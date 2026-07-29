@@ -3,6 +3,16 @@
 **Status:** source of truth for implementation. **Audience:** the ~10 agents building
 the `whatsapp-shell` flag-on UI (see [README.md §9.5](./README.md#95-rollout--everything-behind-one-flag)).
 
+> **Verification method: screenshot-first.** This spec is written to match
+> `WA-VISUAL-DELTAS.md` — a side-by-side comparison of current WhatsApp iOS
+> reference screenshots against the running flag-on app — not the other way
+> around. Where a number or a piece of chrome guidance here ever disagrees
+> with a fresh screenshot comparison, **the screenshots win and this doc gets
+> corrected**, not the reverse. The four parity PRs (#643 chrome/tab bar, #644
+> rows/cards/info, #645 chat surface, #647 community/new-chat) shipped against
+> `WA-VISUAL-DELTAS.md`'s numbers; this revision brings the spec back in line
+> with what they actually built (see the shipped kit: `apps/mobile/components/wa/`).
+
 ## 0. Product goal (read this first)
 
 > Behind the `whatsapp-shell` flag, Togather must be **visually indistinguishable from
@@ -16,13 +26,22 @@ the `whatsapp-shell` flag-on UI (see [README.md §9.5](./README.md#95-rollout--e
 > These must be **expressed in WhatsApp's existing visual vocabulary** (rows,
 > inset-grouped cells, bubbles, pills) — never as a new component language. See §7.
 
-Every value below was measured off the real WhatsApp iOS screenshots in
-`/root/.claude/uploads/66d31337-e89d-55e2-88f5-71fb939383a6/` (1320px-wide capture,
-i.e. an iPhone Pro-class screen at 3x — divide px by 3 for pt) and cross-checked
-against known WhatsApp iOS conventions. **Treat pt values as calibrated guidance for
-rhythm and proportion, not pixel law** — match the *relationships* (avatar-to-row-height
-ratio, badge-to-timestamp alignment, section gap vs. card corner radius) over chasing
-an exact pixel.
+Every value below was originally measured off real WhatsApp iOS screenshots
+(1320px-wide capture, i.e. an iPhone Pro-class screen at 3x — divide px by 3
+for pt) and cross-checked against known WhatsApp iOS conventions. **Treat pt
+values as calibrated guidance for rhythm and proportion, not pixel law** —
+match the *relationships* (avatar-to-row-height ratio, badge-to-timestamp
+alignment, section gap vs. card corner radius) over chasing an exact pixel.
+
+A second, later verification pass (`WA-VISUAL-DELTAS.md`, 2026-07-29) compared
+a fresh set of current-WhatsApp-iOS reference screenshots — the **iOS 26
+design language** (floating circular nav buttons over content, no opaque nav
+bars, a floating pill tab bar, ~24px-radius inset cards) — against the
+running flag-on app, and corrected numbers that the first pass got wrong or
+that had visibly drifted from current WhatsApp. That pass, not this original
+paragraph, is the calibration source for every value in this doc; see its
+own note: "where WHATSAPP-DESIGN-SYSTEM.md disagrees with these observations,
+the screenshots win."
 
 A same-directory screenshot (`a91c868c-IMG_1243.png`) also captured Togather's
 **current, pre-redesign** chats list — pastel category chips ("Announcements" in
@@ -41,7 +60,8 @@ anti-pattern the redesign eliminates.** It's referenced explicitly in §7.
 | `bg.plain` | `#FFFFFF` | Full-bleed list screens: Chats list, chat thread list rows, New chat sheet body |
 | `bg.grouped` | `#F2F2F2` (≈ iOS `systemGroupedBackground`) | Grouped/secondary screens: You tab, Community info, Chat theme, Settings |
 | `bg.card` | `#FFFFFF` | Inset-grouped cards/cells sitting on `bg.grouped` |
-| `bg.navBar` | `#FFFFFF` (opaque) / translucent-white on scroll-under | All nav bars — **not** WhatsApp's legacy teal header; current WhatsApp iOS uses a flat white bar |
+| `bg.navBar` | *(no fill — see §4)* | Current WhatsApp iOS (iOS 26 chrome) has **no opaque nav bar at all**: 44pt floating white circular buttons sit directly over the scrolling content, and titles float on the plain screen background. `bg.navBar` as a distinct opaque-bar token doesn't apply; the floating buttons use `colors.surface`/white per §4 |
+| `tabIsland.fill` | `rgba(255,255,255,0.97)` | The floating rounded-island tab bar (§4/§2) — near-white, not opaque white, not a per-tab tint |
 | `separator` | `#E5E5E5` (hairline, 1px @1x) | Full-bleed row dividers, inset-grouped intra-card dividers |
 | `text.primary` | `#000000` | Row titles, large title, nav title, bubble text |
 | `text.secondary` | `#6D6D72` (≈ iOS `secondaryLabel`) | Message previews (read), footnotes, section footers |
@@ -59,7 +79,8 @@ anti-pattern the redesign eliminates.** It's referenced explicitly in §7.
 | `bg.plain` | `#000000` | Chats list, full-bleed rows |
 | `bg.grouped` | `#000000` (WhatsApp dark keeps grouped screens black too, cards pop via card fill, not bg contrast) | You tab, Community info, Settings |
 | `bg.card` | `#1F2C34` | Inset-grouped cards/cells |
-| `bg.navBar` | `#1F2C34` (opaque) / translucent-dark on scroll-under | Nav bars |
+| `bg.navBar` | *(no fill — see §4)* | Same "no opaque bar" rule as light mode; floating buttons use `colors.surface` dark |
+| `tabIsland.fill` | `rgba(31,44,52,0.97)` | Floating island tab bar, dark mode |
 | `separator` | `#2A3942` | Dividers |
 | `text.primary` | `#E9EDEF` | Titles, bubble text |
 | `text.secondary` | `#8696A0` | Previews, footnotes |
@@ -69,10 +90,15 @@ anti-pattern the redesign eliminates.** It's referenced explicitly in §7.
 | `mention.blue` | `#53BDEB`-ish (WhatsApp's dark-mode link/mention blue) | Same roles, neutral |
 
 **Dark-mode accent rule:** never reuse the light-mode brand hex verbatim in dark mode.
-WhatsApp shifts `#25D366` → `#00A884` (higher lightness, slightly desaturated) purely
-for AA contrast on near-black surfaces. Apply an equivalent HSL lightness/saturation
-adjustment to each community's `primaryColor` rather than hard-coding two brand colors
-per community.
+WhatsApp shifts `#25D366` → `#00A884` for AA contrast on near-black surfaces. **Measured
+correction:** despite the "higher lightness, slightly desaturated" framing this section
+originally used, the concrete hex pair measures the opposite on both HSL lightness and
+W3C relative luminance — `#00A884` is *darker and more saturated* than `#25D366`, not
+lighter/desaturated. The shipped implementation (`waPalette.ts`) trusts the measured hex
+pair over that adjective and calibrates its shift constants (saturation +25, lightness
+×0.68, clamped 28–55 — see §1.6) against the actual delta. Apply an equivalent HSL
+saturation/lightness adjustment to each community's `primaryColor` rather than
+hard-coding two brand colors per community.
 
 ### 1.3 Brand-accent substitution rule
 
@@ -86,23 +112,24 @@ neutral, e.g. tinted the back button).
 | Unread row timestamp color | **Yes** | Read rows use `text.tertiary` gray instead |
 | Compose `+` FAB / header circular accent buttons | **Yes** | |
 | "Add group" / "Add Members" / "Add Groups" pill buttons & their icons | **Yes** | |
-| Outgoing chat bubble fill | **Yes**, as a **light tint** of `primaryColor` (≈15–20% mix onto white; WhatsApp's own `#D9FDD3` is roughly `#25D366` at ~18% opacity over white) — **not** the full-saturation brand color | Full-saturation brand color on a bubble reads too loud; WhatsApp never does this |
+| Outgoing chat bubble fill | **Yes**, as an **HSL-pinned light tint** of `primaryColor` (saturation +15, lightness clamped to 90–93 — see §1.6) — **not** the full-saturation brand color and **not** a flat opacity mix (a flat mix desaturates unpredictably depending on the brand color's own lightness) | Full-saturation brand color on a bubble reads too loud; WhatsApp never does this |
 | In-message/in-bubble URL links | **Yes** | Underlined, `accent` color |
 | Toggle "on" track color | **Yes** | |
 | New-chat-sheet action icons (New group/community/broadcast) | **Yes** | These are creation affordances, matching the FAB |
 | Action-sheet-style green text rows (Add to Favorites, Export chat, Add to list) | **Yes** | Left-aligned, no icon, no chevron — see §3.3 |
-| Active/selected tab icon+label (bottom tab bar) | **Yes** | Inactive tabs use `text.tertiary` |
 | "Going"/RSVP-affirmative semantic states *if* reusing WhatsApp's own green-for-positive convention | **Yes, but see §7** | Only when the state literally means "confirmed/positive" — don't brand-color RSVP chips just for prettiness |
-| Community/group avatar ring or default placeholder tint | **Yes** | Absent a photo, initials avatars use `accent` background |
 | — | | |
 | Back chevron + back-button label (WhatsApp shows unread-count-as-label, e.g. "‹ 62") | **No — stays `text.primary` black** | WhatsApp deliberately overrides iOS's default blue back button to neutral black. Do not brand this. |
 | Settings/info-screen leading icons (Media, Storage, Notifications, Chat theme, Lock chat, Encryption, etc.) | **No — stays `text.primary`/`text.secondary` black-gray, plain glyph, no colored background chip** | This is the single most common mistake: do NOT port iOS Settings-app's colored-rounded-square icon treatment. WhatsApp's own info screens use flat monochrome glyphs, no icon backgrounds at all. |
 | Sender name colors in group chats / @mention text | **No — fixed neutral rotating palette** | See §5; a deterministic per-sender palette (blue, orange, teal, purple, pink, olive…) unrelated to brand color. Never recolor these to `primaryColor`. |
 | Destructive red rows (Exit community, Report, Clear chat, Delete) | **No — stays system red**, see §1.1 | |
-| Nav bar background, large title text, row title text | **No — stays neutral white/black** | WhatsApp's nav chrome is deliberately colorless; only the *accents floating on it* (buttons, badges) carry brand color |
-| Chat wallpaper doodle pattern | **No — stays neutral beige/cream tone-on-tone**, unless the community explicitly picks a themed wallpaper (§1.5) | |
+| Floating-button fills, large title text, row title text | **No — stays neutral white/black** | There's no nav-bar fill to color at all (§4) — WhatsApp's chrome is deliberately colorless; only the *accents floating on it* (buttons, badges) carry brand color |
+| Chat wallpaper doodle pattern | **No — stays neutral cream tone-on-tone**, unless the community explicitly picks a themed wallpaper (§1.5) | |
 | Read-receipt double-check marks | **No.** Delivered = gray double-check. Read = **WhatsApp-blue** double-check (`#34B7F1`-ish), never brand-colored | This is WhatsApp's single most recognizable non-green color signal — don't touch it |
 | Muted-chat bell-slash glyph | **No — neutral gray** | |
+| Active/selected tab icon+label (bottom tab bar) | **No — stays one neutral ink whether focused or not** (`#0A0A0A` light / `#E9EDEF` dark) | This was the spec's own biggest miss (WA-VISUAL-DELTAS S2.2: "Togather's green filled active icon + green label is the single loudest 'not WhatsApp' signal on every screen"). The active tab is marked by a light-gray highlight pill wrapped around icon+label (`#E3E3E8` light / `rgba(255,255,255,0.16)` dark), never by color. See §4. |
+| Community/group/person/event fallback avatar (no photo) | **No — muted per-entity pastel, never `accent`/green** | A fixed 14-hue wheel (clay, apricot, sand, olive, moss, teal, sky, steel blue, periwinkle, iris, violet, orchid, rose, dusty pink), hashed deterministically per entity id (FNV-1a + avalanche finalizer so sibling ids don't cluster on one hue) — WhatsApp green (~142°) and iOS red (~0°) are deliberately excluded from the wheel. Structural (non-entity) discs — a channel "#" avatar, a "+N more channels" expander — use a separate hue-less neutral gray palette instead. See `apps/mobile/components/wa/waAvatarColor.ts` (`waAvatarPalette` / `waNeutralAvatarPalette`). |
+| Quick-action row icons (Add Members / Invite / Search on info screens) | **No — plain white/`bg.card` rounded action cards, dark glyph** | Superseded from an earlier "accent-tinted circular icon" treatment: the reference shows white button cards, not colored circle glyphs (WA-VISUAL-DELTAS S5.2 kill-list: "green circle Invite/Search glyphs on community page — WA uses white button cards"). See §3.2. |
 
 ### 1.4 Destructive red
 
@@ -111,21 +138,29 @@ Never brand-mapped (see table above). Used for: `Exit community` / `Exit group` 
 `Remove member`, `Delete message`. Two renderings:
 
 - **Inline grouped-list row** (Community info style): left-aligned red text, 17pt
-  regular, no leading icon, no chevron, same 44–52pt row height as neutral rows in
-  the same card.
+  regular, no leading icon, no chevron, same 54pt row height as neutral rows in
+  the same card (§3.2).
 - **Modal/action-sheet row** (native `UIAlertController`/action-sheet destructive
   action): centered red text, 20pt regular, full-width row, own card, no icon.
 
 ### 1.5 Chat wallpaper & doodle treatment
 
-Default wallpaper: warm beige/cream (`#ECE5DD` light / `#0B141A` dark) with a **very
-low-contrast tone-on-tone doodle pattern** — hand-drawn line-art icons (flowers, mugs,
-game controllers, keys — generic, non-thematic) tiled at low opacity (~8–12%),
-same hue family as the base so it reads as texture, not imagery. Confirmed directly
-in the screenshots (`0bc215fc`/`9908c84a`): the pattern sits *behind* every bubble and
-day pill, never interferes with text contrast.
+Default wallpaper: cream tone (`#F6F1E9`-area light / a matching dark variant) with a
+**very low-contrast tone-on-tone doodle pattern**, tiled at low opacity, same hue
+family as the base so it reads as texture, not imagery — sitting *behind* every
+bubble, day pill, and the translucent nav/composer bars, never interfering with text
+contrast.
 
-Togather mapping: default wallpaper stays this neutral beige/dark tone — **do not
+**Shipped implementation note:** the tile art is **original artwork generated by
+`scripts/generate-chat-wallpaper.mjs`**, not WhatsApp's own copyrighted doodle sheet
+— deliberately not reused. `ChatWallpaper.tsx` (`apps/mobile/features/chat/components/`)
+renders it as an absolutely-positioned, non-interactive layer: a base fill from the
+theme's `chatWallpaper` token, with a light/dark PNG tile (`chat-wallpaper-light.png` /
+`-dark.png`) repeated over it (`resizeMode="repeat"`). It's dropped once behind the
+whole chat-room screen (header, tab strip, message list, composer) rather than
+per-section, and only renders behind the flag-on chat surface.
+
+Togather mapping: default wallpaper stays this neutral cream/dark tone — **do not
 tint the wallpaper with `primaryColor`.** The WhatsApp "Chat theme" screen (§6) lets
 a user pick from a curated wallpaper+bubble-color gallery; Togather's community-level
 equivalent (P2 per README §11.5) would let an admin pick a *curated* wallpaper for
@@ -137,8 +172,22 @@ the accent substitution rule (bubble-tint-only) still reads clearly.
 | | Light | Dark |
 |---|---|---|
 | Incoming bubble | `#FFFFFF`, subtle drop shadow (`0 1px 0.5px rgba(0,0,0,0.08)`) | `#1F2C34` |
-| Outgoing bubble | `accent` at ~18% mix over white (WhatsApp's `#D9FDD3`) | `accent`-derived dark teal-green (WhatsApp's `#005C4B`) — a *saturated dark* tint, not a light tint, because dark-mode outgoing bubbles need to read as "filled," not "washed out" |
+| Outgoing bubble | `accent`, HSL-shifted (see below) — **not** a flat opacity mix over white | `accent`-derived dark teal-green shift — a *saturated dark* tint, not a light tint, because dark-mode outgoing bubbles need to read as "filled," not "washed out" |
 | Bubble text | `text.primary` in both — bubble fill never gets dark enough/light enough to need inverted text | `text.primary` |
+
+**Shipped derivation** (`apps/mobile/utils/waPalette.ts`, `waAccentPalette()`): a flat
+opacity mix (`primaryColor` at ~18% over white) desaturates unpredictably depending on
+the brand color's own lightness — a forest-green brand came out gray-sage instead of a
+WhatsApp-style pale mint. The shipped formula instead pins the bubble into WhatsApp's
+own measured light band regardless of input lightness:
+- **Light-mode outgoing:** saturation +15, lightness clamped to **90–93**. An
+  (near-)achromatic brand color (saturation ≤8, i.e. effectively gray) is exempted from
+  the saturation boost — boosting a hue-less color paints the bubble an unintended pink.
+- **Dark-mode outgoing:** saturation +30, lightness scaled ×0.37 and clamped to 12–30 —
+  calibrated against WhatsApp's own `#25D366` → `#005C4B` (L 48.6→18.0) shift.
+- **Dark-mode accent** (badges, FAB, active states — not the bubble) uses a separate,
+  lighter shift: saturation +25, lightness ×0.68 clamped to 28–55, calibrated against
+  `#25D366` → `#00A884`.
 
 ### 1.7 Badge-green → brand mapping rule
 
@@ -157,14 +206,21 @@ never a rainbow of category colors. See §7 for the explicit ban.
 All sizes in pt, SF Pro (San Francisco) system font, Dynamic Type should scale these
 but the spec below is at the default (Large) size class.
 
+Sizes below are the shipped **S7 scale** (`WA_TYPE_*` in `apps/mobile/components/wa/metrics.ts`)
+— WA-VISUAL-DELTAS.md's audit found the original spec-derived sizes ran "1–2pt small and
+one weight light throughout"; these are the corrected, measured values.
+
 | Role | Size / Weight | Color | Used |
 |---|---|---|---|
-| Large title | 34pt Bold | `text.primary` | "Chats", community name on Community info hero (slightly smaller, see below) |
-| Nav title (collapsed) | 17pt Semibold | `text.primary` | Centered title once large title scrolls away |
+| Large title | 34pt **Heavy** (weight 800) | `text.primary` | "Chats" only — floats directly over the plain background, no nav-bar fill (§4) |
+| Hero name (profile/entity hero) | 28pt Bold | `text.primary` | Group/channel/You-tab avatar hero name |
+| Header block (screen header) | 22pt Bold | `text.primary` | Community landing screen's left-aligned name block |
+| Sub-screen title (floating, centered) | 17pt Semibold | `text.primary` | Centered title floating over the grouped-gray background on sub-screens (Community info, New chat) — no bar fill |
 | Row title (chat/group name) | 17pt — **Semibold when unread, Regular when read** | `text.primary` | Chat list row primary line |
 | Row subtitle / message preview | 15pt Regular (**Semibold** only for the "you're mentioned" bold-preview state) | `text.secondary` (read) | Chat list row second line |
-| Timestamp (row) | 13pt Regular | `accent` if unread, `text.tertiary` if read | Right-aligned, top of row's right column |
-| Section header (grouped list) | 13pt Regular, UPPERCASE, tracking +0.5 | `text.secondary` | "Groups you're in", "Groups you can join", "Themes", "Customize" |
+| Timestamp (row) | 15pt Regular | `accent` if unread, `text.tertiary` if read | Right-aligned, top of row's right column |
+| Section header (landing screens) | ~20pt Semibold, **sentence-case** | `text.secondary` | "Groups you're in", "Groups you can join" — large, gray, never uppercase |
+| Section label (inset-grouped card group) | 15pt Regular, **sentence-case** | `text.secondary` | Above a card group, e.g. "Leader tools" — **no `toUpperCase()`, no letter-spacing**; ALL-CAPS 13pt labels ("MEMBERS", "LEADER TOOLS") are dead, see §3.2 |
 | Section footer | 13pt Regular | `text.tertiary` | Explanatory text under a card, e.g. "Created by…", "This chat has added privacy for your phone number. Learn more." |
 | Footnote / helper text | 13pt Regular | `text.tertiary` | Sub-line under a settings row (e.g. under "Lock chat") |
 | Grouped-list cell title | 17pt Regular | `text.primary` | "Media, links and docs", "Notifications" |
@@ -172,9 +228,9 @@ but the spec below is at the default (Large) size class.
 | Bubble text | 16pt Regular (measured ~15.5–17pt) | `text.primary` | Message body |
 | Bubble sender name (group chats) | 14–15pt Semibold | Per-sender neutral palette color (§5) | First line inside an incoming bubble, group chats only |
 | Bubble timestamp + ticks | 11pt Regular | `text.tertiary` on incoming; `rgba(0,0,0,0.45)`-on-tint (light) / `rgba(255,255,255,0.6)`-on-tint (dark) on outgoing | Bottom-right inside bubble, ticks immediately follow |
-| Day pill | 13pt Semibold | `text.secondary` on `bg.card`-ish pill fill | "Friday", "Sat, Jul 18" |
+| Day pill | 13pt Semibold | `text.secondary`, on a **solid** white/`#1F2C34` pill fill — **not translucent** (a translucent fill washed out against the wallpaper) | "Friday", "Sat, Jul 18" |
 | Composer placeholder | 17pt Regular | `text.tertiary` | Empty message input |
-| Tab bar label | 10pt Medium | `accent` (active) / `text.tertiary` (inactive) | Bottom tab bar |
+| Tab bar label | 10pt Semibold | **one neutral ink for both states** (`#0A0A0A` light / `#E9EDEF` dark) — never `accent`; the active tab is marked by a highlight pill, not a color change (§4) | Bottom tab bar |
 | Community/group member count, hero subtitle | 15pt Regular | `text.secondary` | "Community · 2 groups" |
 
 ---
@@ -183,11 +239,14 @@ but the spec below is at the default (Large) size class.
 
 ### 3.1 Full-bleed chat rows (Chats list, New-chat contact list)
 
-- **Row height:** 76pt (2-line preview present); 60pt if a row has no preview text.
-- **Avatar:** 56×56pt. Circular for people/groups/channels. **Rounded-square
-  ("squircle"), ~18pt corner radius, for Communities** — this is the one shape
-  distinction in the whole system and it's load-bearing: it's the only way a user
-  tells "this row opens a community" from "this row opens a chat" at a glance.
+- **Row height:** **78pt** (2-line preview present); 60pt if a row has no preview
+  text. Corrected up from an original 76pt spec figure — WA-VISUAL-DELTAS S6.1 flagged
+  avatar/row density as "the biggest single density delta" against the reference.
+- **Avatar:** **58×58pt** (corrected up from 56pt — same S6.1 finding). Circular for
+  people/groups/channels. **Rounded-square ("squircle") for Communities** — this is
+  the one shape distinction in the whole system and it's load-bearing: it's the only
+  way a user tells "this row opens a community" from "this row opens a chat" at a
+  glance. Shipped as a `shape: 'circle' | 'squircle'` prop on the shared row component.
 - **Leading padding:** 16pt from screen edge to avatar.
 - **Avatar-to-text gap:** 12pt.
 - **Trailing padding:** 16pt from text column edge to screen edge.
@@ -195,16 +254,22 @@ but the spec below is at the default (Large) size class.
   vertically: timestamp on top, badge/mute-icon below it, ~4pt gap.
 - **Unread badge:** filled `accent` capsule/circle, min 20pt diameter (grows
   horizontally past 2 digits, min 8pt horizontal padding), white bold 12pt numeral,
-  right-aligned under the timestamp.
+  right-aligned under the timestamp. **Community/multi-channel-cluster rows dock a
+  chevron inside the badge** instead of a plain numeral (e.g. "7 ›") — WA-VISUAL-DELTAS
+  S6.3; shipped as a `badgeChevron` prop.
 - **Muted indicator:** small gray bell-slash glyph (~14pt), sits left of (or in place
   of, if no unread) the badge position — badge itself stays `accent`-colored even
-  when muted; only the bell-slash communicates mute state (confirmed in
-  `a78a1684-IMG_1224.png`: "P&P Community Members 1B" shows a bell-slash **and** a
-  still-green "2" badge).
+  when muted; only the bell-slash communicates mute state.
+- **Timestamp format:** WhatsApp shows *when*, not *how long ago* — today's time
+  (`3:42 PM`), `Yesterday`, the weekday name for 2–6 calendar days back, then a short
+  numeric date (`7/3/26`). Boundaries are local-midnight-anchored (calendar days, not
+  elapsed hours), and both the time-of-day and short-date formats are locale-aware via
+  `Intl`. Replaces an elapsed-duration format (`now`/`12m`/`4h`/`4d`/`Jul 3`). See
+  `formatWaListTimestamp()` in `apps/mobile/components/wa/waListTimestamp.ts`.
 - **Separator:** 0.5–1px hairline, **inset to align with the text column** (starts
-  at `leading padding + avatar width + gap` = 16+56+12 = **84pt** from the left edge,
-  full-bleed to the right edge). Full-width separators (no inset) only appear before
-  section-starting utility rows like "Archived."
+  at `leading padding + avatar width + gap` from the left edge, full-bleed to the
+  right edge). Full-width separators (no inset) only appear before section-starting
+  utility rows like "Archived."
 - **Community/cluster stacked-card treatment:** when a row represents a community
   or a multi-channel group cluster, render 1–2 "ghost" card edges peeking from
   behind the primary squircle avatar's top-left corner — offset ~4–5pt diagonally,
@@ -220,20 +285,25 @@ but the spec below is at the default (Large) size class.
 ### 3.2 iOS inset-grouped lists (Settings, Community info, Group/Channel info)
 
 - **Screen background:** `bg.grouped`.
-- **Card corner radius:** 10pt (standard iOS `insetGrouped` radius — screenshots
-  read as 10–14pt; default to 10pt for consistency with system components).
+- **Card corner radius: 24pt.** Corrected way up from an original 10pt "standard iOS
+  `insetGrouped`" figure — WA-VISUAL-DELTAS S3.1 called the old 10–12pt radius
+  "visibly wrong at a glance" against current WhatsApp's ~24px cards; this was the
+  single most visible card delta in the whole audit.
 - **Card horizontal margin:** 16pt from screen edge.
-- **Cell height:** 44pt minimum (single-line, iOS tap-target floor); 52–64pt when a
-  cell wraps a description/footnote sub-line (e.g. "Lock chat" with its explanatory
-  text, or the phone-number-privacy row).
+- **Cell height: 54pt minimum** (single-line) — corrected up from a 44pt iOS
+  tap-target-floor figure that read as "too dense" (S3.2); 64–76pt when a cell wraps a
+  description/footnote sub-line (e.g. "Lock chat" with its explanatory text).
 - **Cell horizontal padding:** 16pt leading/trailing inside the card.
 - **Icon treatment: plain, flat, monochrome glyph — no colored rounded-square
   background chip.** This is a deliberate departure from Apple's own Settings app
-  (which uses colored icon badges) and must be followed exactly: icons are simple
-  SF Symbols-style outlines in `text.primary`/`text.secondary`, sized ~20–22pt,
-  20pt leading padding before the label starts (icon column is a fixed ~28pt).
-- **Chevron:** `chevron.right`, 13pt, `text.tertiary`, trailing edge, 8pt gap from
-  any value label.
+  (which uses colored icon badges) and must be followed exactly: icons are **24pt,
+  black** (`text.primary`, ~1.5px stroke — corrected from an original "thin gray
+  ~20-22pt" figure that read as too light/small), fixed 24pt icon column, 16pt gap
+  before the label starts.
+- **Chevron:** `chevron.right`, 13pt, `text.tertiary`, trailing edge, **vertically
+  centered on the row** — the original build had chevrons hugging the row's
+  top-right corner on every card, a misalignment WA-VISUAL-DELTAS S3.3 flagged
+  explicitly; 8pt gap from any value label.
 - **Value label:** right-aligned `text.tertiary`, 17pt, sits immediately left of the
   chevron — e.g. "5.4 MB >", "Off >", "On >", "13 >".
 - **Row variants observed:**
@@ -246,9 +316,14 @@ but the spec below is at the default (Large) size class.
     "Add to list", "Export chat" (§1.3 — brand-mapped)
   - *Destructive, no icon, no chevron, red*: "Clear chat", "Exit community",
     "Report announcements" (§1.4 — never brand-mapped)
-- **Section headers:** sit *above* their card, outside the white fill, 13pt
-  uppercase gray, 16pt leading padding matching the card margin, ~8pt gap to the
-  card below.
+- **Section labels: sentence-case, not ALL-CAPS.** WA info screens mostly carry
+  **no** section label at all; where one exists it's a plain sentence-case gray
+  string at 15pt (`text.secondary`, no `toUpperCase()`, no letter-spacing) sitting
+  *above* the card, 16pt leading padding matching the card margin, ~8pt gap to the
+  card below. **The old 12–13pt ALL-CAPS treatment ("MEMBERS", "LEADER TOOLS",
+  "GROUPS YOU'RE IN") is dead** — it read as iOS-15 Settings, not current WhatsApp
+  (S3.5). Landing-screen section headers ("Groups you're in") are a distinct, larger
+  ~20pt semibold sentence-case role — see §2.
 - **Section footers:** sit *below* their card, same margin, 13pt gray, wraps to
   multiple lines freely (e.g. "Created by +44 7581 068048. Created Jul 27, 2024.").
 - **Spacing between groups (cards):** ~24–32pt — visibly more generous than the
@@ -257,10 +332,13 @@ but the spec below is at the default (Large) size class.
   "Announcements"): full-width, ~36pt tall, rounded-rect selector, `bg.grouped`
   track, white/`bg.card` selected pill, sits between the hero and the first card,
   no card wrapper of its own.
-- **Quick-action row above the cards** (Community info's "Add Members / Add Groups /
-  Search"): 3-up equal-width unbordered buttons, each a small circular
-  accent-colored icon (36–40pt circle, `accent`-tinted icon, no filled background)
-  over a 13pt label, no card container — floats directly on `bg.grouped`.
+- **Action-button row above the cards** (Community/Group/Channel info's Invite /
+  Search / Mute / Open chat): **white rounded action cards**, not accent-tinted
+  circular icons. Corrected from an earlier "36–40pt circle, `accent`-tinted icon, no
+  filled background" treatment — WA-VISUAL-DELTAS S5.2 explicitly bans the green
+  circle Invite/Search glyphs Togather shipped first ("WA uses white button cards").
+  Shipped anatomy: ~76pt-tall, 18pt-radius white/`bg.card` cards in a row, a 24pt
+  glyph + 15pt label inside each, 10pt gap between adjacent cards.
 
 ### 3.3 Red/destructive rows & centered action rows
 
@@ -273,81 +351,137 @@ glance (icon+chevron = navigate; plain colored text = irreversible/singular acti
 
 ## 4. Navigation Chrome
 
-- **Large-title pattern:** standard iOS `UINavigationController` large-title
-  behavior — 34pt bold title sits below the nav bar at rest, collapses into a 17pt
-  semibold centered title as the user scrolls, with the large title's leading
-  alignment (never centered at rest).
-- **Header buttons above the large title** (not inline with a title): WhatsApp
-  floats its utility buttons in their own row *above* "Chats", not flanking it —
-  `⋯` (more) at leading edge, camera + compose `+` at trailing edge. Circular
-  buttons: 40pt diameter, `bg.grouped`-ish light-gray fill (white circle on white
-  bg reads via a subtle 1px border/shadow, per screenshot), icon ~18pt centered,
-  8pt gap between adjacent circles. The compose `+` is the one **filled `accent`**
-  circle among them — everything else is neutral gray/white.
+**Corrected wholesale for this revision.** The prior version of this section
+described classic-iOS chrome (opaque nav bars, a scroll-collapsing large title, an
+edge-to-edge tab bar). Current WhatsApp iOS — the **iOS 26 design language** the
+owner's reference screenshots show — uses none of that: **there is no opaque nav
+bar anywhere in the flag-on UI.** Every top-level and sub-screen instead floats
+circular buttons and titles directly over the scrolling/grouped-gray content. This
+was WA-VISUAL-DELTAS S1's top cross-cutting finding and PR #643 rebuilt the chrome
+kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
+
+- **No opaque nav bars, anywhere.** Top-level screens (Chats) float white **44pt
+  circular** buttons (`WA_HEADER_CIRCLE_SIZE`) directly over the content — e.g.
+  Chats: `⋯` circle top-left, camera circle + solid-accent `⊕` circle top-right —
+  with a subtle shadow (8px blur, 8% black — `WA_FLOATING_SHADOW`) rather than a
+  bar fill or hairline. Sub-screens (Community info, New chat) float a single
+  white circular back button (chevron, black) instead; chat rooms' back circle
+  contains the chevron **plus the total unread count** ("‹ 62"). Two button
+  variants only — `plain` (white/`surface` fill, black glyph — every circle
+  including the back button) and `accent` (solid brand fill, white glyph —
+  reserved for the Chats compose `+`, the only accent circle in the chrome). See
+  `WaFloatingButton.tsx`.
+- **Large title:** 34pt **Heavy** (weight 800), left-aligned, sits directly below
+  the floating-button row (10pt gap, `WA_FLOATING_ROW_TITLE_GAP`) — "Chats" only.
+  There is no scroll-collapse-into-a-bar behavior to preserve, because there's no
+  bar to collapse into.
+- **Sub-screen titles:** a **centered** 17pt semibold title (Community info, New
+  chat) floating with no bar fill over the plain/grouped-gray background — not a
+  collapsed large title, a standalone centered title.
+- **You tab has no large title at all.** Remove "You" as a title entirely — the
+  screen shows only the floating buttons plus the centered avatar hero below them.
+- **Header circle spacing/glyphs:** 44pt diameter, 10pt gap between adjacent
+  circles (`WA_HEADER_CIRCLE_GAP`), 22pt icon centered inside each
+  (`WA_HEADER_ICON_SIZE`).
   - **Togather adaptation:** since Togather's tab bar already anchors the
     community switcher (README §5, Rule 3) at this position, treat the `⋯`
-    slot as the community-switcher avatar per the existing plan; keep the
-    camera/compose slots as-is.
-- **Back chevron:** `chevron.left`, paired with a label — WhatsApp shows the
-  *previous screen's unread count* here ("‹ 62") rather than "Back" or the screen
-  title. **Both chevron and label render in `text.primary` black, never accent
-  blue** (WhatsApp overrides iOS's default blue back button — see §1.3). Togather
-  should show a meaningful previous-context label (e.g. community name) in the same
-  neutral color, not iOS system blue and not brand accent.
-- **Search pill:** 36–38pt tall, fully rounded (radius = height/2), `bg.grouped`-ish
-  fill (`systemGray6`-equivalent), 15pt `text.tertiary` magnifying-glass icon,
-  8pt gap to a 17pt placeholder in `text.tertiary` ("Ask Meta AI or Search" →
-  Togather: "Search"), full-width minus 16pt margins each side, sits 12pt below the
-  large title.
-- **Tab bar:** 49pt content height + safe-area inset, 5 tabs in WhatsApp (Updates ·
-  Calls · Meta AI · Chats · You), **Togather uses 4** (Chats · Events · Prayer ·
-  You per README §5). Icon 25×25pt outline (filled variant when active), label
-  10pt medium directly below, 2pt gap. Badge: small `accent`-filled pill,
-  positioned top-right of the icon, offset ~-4/-4pt, white bold numeral ~11pt, same
-  badge shape/rules as §3.1's row badge.
+    slot as the community-switcher avatar per the existing plan (pass it as
+    `children` to `WaFloatingButton` rather than an `icon`) — but it must still
+    render as a floating white circle, not a colored avatar chip beside the title.
+- **Back button:** floating white circle (see above), chevron **and** any label
+  render in `text.primary` black, never accent blue (WhatsApp overrides iOS's
+  default blue back button — see §1.3).
+- **Search pill: 44pt tall** (corrected up from an original 36–38pt figure —
+  WA-VISUAL-DELTAS S6.5 called the old pill "too thin"), fully rounded (radius =
+  height/2), `bg.grouped`-ish fill, 17pt `text.tertiary` magnifying-glass icon
+  (`WA_SEARCH_PILL_ICON_SIZE`), 8pt gap to a 17pt placeholder in `text.tertiary`,
+  full-width minus 16pt margins each side, sits 12pt below the large title.
+- **Tab bar: a floating rounded island, not an edge-to-edge bar.** This was the
+  original spec's biggest miss (S2.2: "Togather's green filled active icon + green
+  label is the single loudest 'not WhatsApp' signal on every screen"). Shipped
+  anatomy (`WaTabBar.tsx`):
+  - A pill inset **10pt** from each screen edge (`WA_TAB_ISLAND_MARGIN_H`),
+    sitting **8pt** above the bottom safe inset (`WA_TAB_ISLAND_BOTTOM_GAP`),
+    **64pt tall**, fully rounded (32pt radius), absolutely positioned so content
+    scrolls *underneath* it (not a translucent-on-scroll bar — a real floating
+    island, always).
+  - Fill: near-white **`rgba(255,255,255,0.97)`** light / **`rgba(31,44,52,0.97)`**
+    dark — deliberately near-opaque rather than a lighter translucency, since an
+    rgba fill can't blur and a lighter alpha let rows show through as a muddy
+    double-image the reference never shows.
+  - Icons **24pt** thin-line, label **10pt**, **2pt** gap between them — and both
+    render in **one neutral ink regardless of focus state** (`#0A0A0A` light /
+    `#E9EDEF` dark). **The active tab is never colored.** It's marked by a light
+    gray highlight pill wrapped around icon+label (`#E3E3E8` light /
+    `rgba(255,255,255,0.16)` dark, 18pt radius) — a clear step darker than the
+    near-white island but still unmistakably light.
+  - Unread badge rides the icon's top-right corner: `accent`-filled capsule,
+    white bold ~11pt numeral, offset ~-4/-4pt — same shape/rules as §3.1's row
+    badge.
+  - **You tab shows the user's own avatar photo** (24pt, falls back to a person
+    glyph) as its tab icon, not a generic "You" icon.
+  - Togather uses **4 tabs** (Chats · Events · Prayer · You per README §5); all
+    four get identical island styling — there's no per-tab exception.
+  - A screen pairs the island with two paddings so content doesn't run under it
+    unpainted: `waTabBarStripHeight(bottomInset)` on the container carrying the
+    page background (paints the strip below the island as page background, not
+    whatever row happens to scroll past there), and `WA_TAB_CONTENT_CLEARANCE`
+    (76pt) as the scroll content's bottom padding, so the last row clears the
+    island itself.
 
 ---
 
 ## 5. Chat Screen
 
-- **Wallpaper:** §1.5 — neutral beige/cream tone-on-tone doodle, full-bleed behind
-  the message list, persists correctly under the composer and status bar (extends
-  edge-to-edge).
+- **Wallpaper:** §1.5 — cream tone-on-tone doodle, dropped once behind the whole
+  chat-room screen (header, tab strip, message list, composer) so it stays visible
+  under the translucent nav/composer bars, extends edge-to-edge. Rendered by
+  `ChatWallpaper.tsx` as an absolutely-positioned layer, flag-on only.
+  **Implementation note:** the message list's own container must be transparent
+  for the wallpaper to show through at all — an earlier build painted it opaque
+  white unconditionally (covering the wallpaper, white bubbles, white day pills,
+  and gray timestamps entirely invisibly against it, WA-VISUAL-DELTAS S4's root
+  cause finding). `MessageList.tsx` now switches its background to `'transparent'`
+  under the whatsapp-shell flag.
 - **Bubble geometry:**
-  - **Max width:** ~78% of screen width (leaves a consistent ~22% gutter on the
-    opposite side from the avatar/tail).
-  - **Corner radius:** ~18pt on the three "open" corners; the corner nearest the
-    sender's origin (bottom-left for incoming, bottom-right for outgoing) is
-    squared/tailed on the **first bubble in a consecutive run**, ~4pt radius there,
-    full 18pt on continuation bubbles.
+  - **Max width: 75%** of screen width (corrected from an original ~78% figure;
+    `WA_BUBBLE_MAX_WIDTH_PCT`).
+  - **Corner radius:** 18pt on the three "open" corners (`WA_BUBBLE_RADIUS`); the
+    corner nearest the sender's origin (bottom-left for incoming, bottom-right for
+    outgoing) is squared/tailed on the **first bubble in a consecutive run**, 4pt
+    radius there (`WA_BUBBLE_TAIL_CORNER_RADIUS`), full 18pt on continuation
+    bubbles.
   - **Tail:** a small triangular/curved notch on the first bubble of a run only,
     pointing toward the avatar (incoming, left) or screen edge (outgoing, right);
     consecutive bubbles from the same sender drop the tail and tighten vertical
-    gap to ~2pt (vs. ~8–10pt between different senders/runs).
-  - **Bubble padding:** ~10pt vertical, ~12pt horizontal internal padding.
-  - **Horizontal margin:** incoming bubbles start ~8pt right of the avatar
+    gap to 2pt (`WA_BUBBLE_GROUPED_GAP`) vs. 9pt between different senders/runs
+    (`WA_BUBBLE_RUN_GAP`).
+  - **Bubble padding:** 10pt vertical, 12pt horizontal internal padding.
+  - **Horizontal margin:** incoming bubbles start 8pt right of the avatar
     (avatar only shown on the *last* bubble of an incoming run, others show blank
-    avatar-width gutter); outgoing bubbles hug the trailing edge with ~8pt margin,
+    avatar-width gutter); outgoing bubbles hug the trailing edge with 8pt margin,
     no avatar (it's "you").
 - **Grouping consecutive messages:** same sender + within a short time window
   (WhatsApp uses ~1 minute) collapse into one visual run: no repeated sender name,
-  no repeated avatar, tightened spacing (~2pt), only the *last* bubble in the run
+  no repeated avatar, tightened spacing (2pt), only the *last* bubble in the run
   shows a timestamp/ticks unless an individual bubble is tapped.
 - **In-bubble timestamp + ticks placement:** bottom-right corner of the *last*
   bubble in a run, inline after the text (text reflows around it, never a separate
   line unless the message is very short/single-word, where the timestamp still
-  right-aligns below). Ticks (outgoing only): single gray check = sent, double gray
-  check = delivered, **double WhatsApp-blue check = read** (never brand-accent —
-  §1.3).
-- **Day pills:** centered, floating capsule (13pt semibold text, `bg.card`-ish
-  translucent fill, ~6pt vertical/14pt horizontal padding, fully rounded), sticky
-  at the top of the viewport while its day's messages are in view, otherwise
-  inline between message groups ("Friday", "Fri, Jul 17", "Sat, Jul 18").
+  right-aligns below). 11pt (`WA_TYPE_MICRO`). Ticks (outgoing only): single gray
+  check = sent, double gray check = delivered, **double WhatsApp-blue check =
+  read** (never brand-accent — §1.3).
+- **Day pills: solid** floating capsule (13pt semibold text, **solid** white
+  light / `#1F2C34` dark fill with a soft shadow, 6pt vertical/14pt horizontal
+  padding, fully rounded), sticky at the top of the viewport while its day's
+  messages are in view, otherwise inline between message groups ("Friday",
+  "Fri, Jul 17", "Sat, Jul 18"). **Corrected from an originally-specced
+  translucent `bg.card`-ish fill** — against the doodle wallpaper a translucent
+  capsule washed out, so the shipped pill is solid (`WaDayPill.tsx`).
 - **Sender-name colors in groups:** shown as the first line inside the *first*
-  bubble of an incoming run only, 14–15pt semibold, colored from a **fixed neutral
-  rotating palette** deterministically hashed per sender (observed hues: blue,
-  green/olive, orange, teal, purple, pink — **not the brand accent**, per §1.3).
-  1:1 chats never show a sender name.
+  bubble of an incoming run only, 14–15pt semibold, colored from a **fixed
+  6-hue neutral rotating palette** deterministically hashed per sender —
+  **not the brand accent**, per §1.3. 1:1 chats never show a sender name.
 - **Reply-quote bar:** sits atop the bubble it's attached to, inside the same
   bubble shape (not a separate element) — a ~3pt colored left-border strip
   (matching the quoted sender's assigned neutral color) + the quoted sender's name
@@ -358,14 +492,25 @@ glance (icon+chevron = navigate; plain colored text = irreversible/singular acti
 - **Reaction chips:** small pill(s) anchored to the bottom-outer corner of a
   bubble, overlapping it by ~40%, white/`bg.card` fill with a thin border, 1px
   shadow, emoji ~13pt + count ~12pt if >1, tap to see who reacted.
-- **Composer anatomy** (left to right): `+` circle (attachment picker, 28pt icon,
-  no fill/neutral gray, NOT accent — it's a utility action not a "create" action)
-  → rounded pill text input (min 36pt tall, grows with content, `bg.card`-ish fill,
-  17pt placeholder) with a sticker/emoji glyph inset at its trailing edge inside
-  the pill → camera icon (outside the pill, trailing) → mic icon (outside,
-  trailing-most). **Send morph:** once text is entered, the trailing icon(s)
-  collapse into a single filled `accent` circular send button (arrow-up glyph);
-  clearing the text reverts to camera+mic.
+- **Composer bar:** translucent, sits directly over the wallpaper — **no hairline
+  border, no opaque fill.** `rgba(247,245,242,0.86)` light / `rgba(17,27,33,0.86)`
+  dark (`WA_COMPOSER_BAR_LIGHT`/`_DARK`), `borderTopWidth: 0`. Corrected from an
+  original "gray opaque bar" build.
+- **Composer anatomy** (left to right): plain `⊕` glyph (28pt, no circle, no fill —
+  **not** the boxed circle button treatment used elsewhere in the chrome; it's a
+  utility action not a "create" action) → rounded pill text input (min 36pt tall,
+  grows with content, white light / `#1F2C34` dark fill, 17pt placeholder) with a
+  sticker glyph inset at its trailing edge inside the pill → camera icon (outside
+  the pill, trailing) → mic icon (outside, trailing-most), shown only while the
+  field is empty. All non-pill glyphs ~24pt, neutral dark-gray/`icon` ink.
+  **Send morph:** once text is entered, camera/mic are replaced by a single
+  filled `accent` circular send button (arrow-up glyph); clearing the text
+  reverts to camera+mic.
+  - **Sticker/GIF glyph is gated behind a KLIPY API key.** It renders only when
+    `EXPO_PUBLIC_KLIPY_API_KEY` is set in the environment; the documented
+    degradation without a key is simply "GIF picker hidden" — no broken/disabled
+    icon state. Same gate applies to the GIF option in the attachment picker
+    opened from `⊕`. See `MessageInput.tsx`.
 - **Announcement footer note:** persistent, non-scrolling footer strip pinned
   above the composer (or replacing it entirely for non-admins in a
   read/react-only channel): centered, 13pt, `text.secondary` with the actionable
@@ -384,12 +529,24 @@ glance (icon+chevron = navigate; plain colored text = irreversible/singular acti
 - **Toggles:** native `UISwitch` geometry, 51×31pt, track = `text.tertiary`-ish gray
   off / `accent` on, white knob, standard iOS spring animation — never a custom
   toggle component.
-- **Avatars:** circular for person/group/channel (56pt list, ~96–120pt profile
-  hero); **squircle (≈18pt radius at 56pt size, scale proportionally) reserved
-  exclusively for Community identity** — never use the squircle for anything else,
-  it's the one shape-based semantic signal in the system. Stacked/fanned "ghost
-  card" treatment (§3.1) only ever appears behind a squircle (communities) or,
-  Togather-specific, a multi-channel group cluster's lead avatar.
+- **Avatars:** circular for person/group/channel (**58pt** list — corrected from
+  56pt, see §3.1 — 100pt profile hero, corrected from an original ~96–120pt
+  range); **squircle reserved exclusively for Community identity** — never use
+  the squircle for anything else, it's the one shape-based semantic signal in
+  the system. Stacked/fanned "ghost card" treatment (§3.1) only ever appears
+  behind a squircle (communities) or, Togather-specific, a multi-channel group
+  cluster's lead avatar.
+- **Fallback avatars (no photo): muted per-entity pastel, never brand green.**
+  A photo-less avatar gets a light, low-saturation disc (a fixed 14-hue wheel —
+  clay, apricot, sand, olive, moss, teal, sky, steel blue, periwinkle, iris,
+  violet, orchid, rose, dusty pink) with darker same-hue initials, hashed
+  deterministically per entity id so the same entity always lands on the same
+  disc. WhatsApp green and iOS destructive red are excluded from the wheel
+  entirely — a screen full of brand-green fallback avatars was one of the
+  audit's kill-list items (WA-VISUAL-DELTAS S5.2). A separate hue-less neutral
+  gray palette (light-gray fill, dark-gray glyph) covers non-entity structural
+  discs (a channel "#" avatar, a "+N more channels" expander). See §1.3 and
+  `apps/mobile/components/wa/waAvatarColor.ts`.
 - **FAB:** iOS has no Android-style floating action button — WhatsApp's "FAB
   equivalent" is the filled `accent` circular header button (compose `+`, §4).
   Do not introduce a bottom-corner floating circle; it's an Android pattern and
@@ -398,7 +555,8 @@ glance (icon+chevron = navigate; plain colored text = irreversible/singular acti
   monochrome/duotone illustration or icon (~80–120pt), 17pt semibold headline,
   15pt `text.secondary` supporting line, one primary `accent` pill button max —
   no card, no border, floats on `bg.plain`/`bg.grouped`.
-- **Banners:** full-width, sits below the nav bar, not a card (no rounded corners,
+- **Banners:** full-width, sits at the top of the scrolling content (there is no
+  nav bar to sit below — see §4), not a card (no rounded corners,
   edge-to-edge), single accompanying leading icon or none, dismiss `×` at trailing
   edge if dismissible, background is a light neutral (`bg.card`-ish) or a status
   tint (never brand-accent fill unless it's genuinely a "success/confirmed" banner)
@@ -433,7 +591,7 @@ the redesign.** Concretely:
   type, do it the way WhatsApp does: shape (squircle vs. circle avatar), an icon
   in the row's leading position, or plain descriptive text in the subtitle line —
   never a colored pill sitting where WhatsApp puts a timestamp/badge.
-- **Resources** → flat rows, WhatsApp-style: 56pt row height, leading **small
+- **Resources** → flat rows, WhatsApp-style: 78pt row height (§3.1), leading **small
   circular icon** (not a squircle, not a colored-square icon chip — a plain
   circular icon matching avatar geometry, ~40pt, single flat icon glyph, neutral
   or `accent`-tinted background circle used sparingly, e.g. one per resource
@@ -474,15 +632,15 @@ merging.
 
 | Surface | Must-match items |
 |---|---|
-| **Chats list** | 76pt rows · 56pt avatars (squircle for communities, circle otherwise) · separator inset at 84pt · unread badge = `accent` fill, white numeral · unread timestamp = `accent`, read timestamp = `text.tertiary` · large title 34pt bold + search pill below · header circles (⋯ / camera / `+`) above the title, `+` is the only filled-accent one |
-| **Chat room** | Beige/dark neutral wallpaper w/ tone-on-tone doodles · bubble corner radii + tail-on-first-of-run · outgoing = light `accent` tint, incoming = white/`bg.card` · sender-name neutral palette (not accent) · read ticks = WhatsApp-blue, never accent · day pills sticky · composer: `+` (neutral) → pill input → camera/mic → accent send-morph |
-| **Community page** | `bg.grouped` background, hero + segmented control (Community/Announcements) · quick-action row (Add Members/Groups/Search) = accent-icon-only, no fill · "Groups you're in" / "Groups you can join" as plain section-headed rows, not chips · Prayer/Serving/Admin as inset-grouped cells, not custom cards |
-| **Group info** | Hero (large circular avatar, name, member count) · icon action row (Invite/Share/Search, accent icons) · Mute toggle (native `UISwitch`, accent-on) · plain monochrome row icons throughout, no colored icon chips · red "Leave group" as last, unbordered, no-icon row |
+| **Chats list** | No opaque nav bar — floating ⋯/camera/`+` circles (44pt) over content, `+` the only filled-accent one · large title 34pt Heavy below the circles + 44pt search pill below that · 78pt rows · 58pt avatars (squircle for communities w/ chevron-in-badge, circle otherwise) · unread badge = `accent` fill, white numeral · unread timestamp = `accent` 15pt, read timestamp = `text.tertiary` · fallback avatars = muted per-entity pastel, never brand green · WA relative timestamp format (`3:42 PM` / `Yesterday` / weekday / `M/D/YY`) · floating island tab bar, neutral ink, no color on the active tab |
+| **Chat room** | Cream wallpaper w/ tone-on-tone doodles, visible through a transparent message-list container · bubble corner radii (18pt/4pt tail) + tail-on-first-of-run, max-width 75% · outgoing = HSL-pinned `accent` tint (L 90–93 light), incoming = white/`bg.card` · sender-name fixed 6-hue neutral palette (not accent) · read ticks = WhatsApp-blue, never accent · day pills solid (not translucent), sticky · floating back circle w/ unread count · composer: translucent bar, no hairline, plain `⊕` (no circle) → pill input w/ KLIPY-gated sticker glyph → camera/mic (empty-field only) → accent send-morph |
+| **Community page** | `bg.grouped` background, hero + segmented control (Community/Announcements) · action row (Add Members/Groups/Search) = **white rounded action cards**, not accent-icon circles · "Groups you're in" / "Groups you can join" as ~20pt sentence-case section headers, not ALL-CAPS chips · Prayer/Serving/Admin as inset-grouped cells (24pt radius, 54pt rows), not custom cards |
+| **Group info** | Floating back circle + centered floating title (no opaque bar) · Hero (100pt avatar, 28pt bold name, member count) · white action cards (Invite/Share/Search) · Mute toggle (native `UISwitch`, accent-on) · 24pt black monochrome row icons, vertically centered chevrons, no colored icon chips · red "Leave group" as last, unbordered, no-icon row |
 | **Channel info** | Same inset-grouped shape as Group info · Mute toggle first · leader-only rows visually identical to member rows (role-gating is logic, not a different visual style) · red "Leave channel" convention |
-| **Directory (channel/group finder list)** | Full-bleed rows matching §3.1 geometry even though content is discovery, not chat · "Join"/"Request to join" renders as an accent pill button trailing the row, not a chip |
-| **You tab** | `bg.grouped` background · profile hero (large circular avatar + name, centered) · stacked inset-grouped cards below, plain monochrome icons · no colored icon backgrounds anywhere on this screen |
-| **Events** | RSVP chips per §7 pill rules (accent-filled selected, outlined unselected) · event list rows follow §3.1/§3.2 row geometry depending on context (full-bleed "This week" strip vs. grouped list) · never a shadowed "event card" component |
-| **Compose sheet** | Drag handle + `×` dismiss · accent-colored creation-action icons (New group/community/broadcast) vs. neutral icons elsewhere · "Frequently contacted"/messaged section below the fixed actions, plain rows |
+| **Directory (channel/group finder list)** | Full-bleed rows matching §3.1 geometry (78pt/58pt) even though content is discovery, not chat · "Join"/"Request to join" renders as an accent pill button trailing the row, not a chip |
+| **You tab** | **No large title** — floating buttons only (search left, QR+edit right) · `bg.grouped` background · profile hero (100pt avatar + 28pt bold name, centered) · stacked inset-grouped cards below (24pt radius, 54pt rows), sentence-case or no section labels · no colored icon backgrounds anywhere on this screen |
+| **Events** | Floating neutral-white circle buttons (no stray green-filled one) · sentence-case gray section headers (not ALL-CAPS "MY EVENTS") · RSVP chips per §7 pill rules (accent-filled selected, outlined unselected) · event list rows follow §3.1/§3.2 row geometry (78pt/58pt full-bleed, or 24pt-radius/54pt grouped) · centered chevrons · never a shadowed "event card" component |
+| **Compose sheet** | Centered "New chat" 17pt semibold title + X-in-circle dismiss (not a "Cancel" text button) · community members list immediately, no search-first empty state · Drag handle · accent-colored creation-action icons (New group/community/broadcast) vs. neutral icons elsewhere · "Frequently contacted" section below the fixed actions, plain 78pt/58pt rows |
 | **Invite kit** | QR/poster surfaces are the one place a full-bleed branded visual is appropriate (it's a printable artifact, not in-app chrome) — but any in-app *row* that launches it (e.g. "Invite your church") must still be a plain inset-grouped row, accent icon only, per §3.2 |
 
 ---

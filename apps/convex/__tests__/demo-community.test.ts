@@ -300,7 +300,7 @@ describe("createDemoCommunity", () => {
 
     await expect(
       t.mutation(api.functions.demo.createDemoCommunity, { token, name: "   " }),
-    ).rejects.toThrow("Church name is required");
+    ).rejects.toThrow("Community name is required");
 
     await expect(
       t.mutation(api.functions.demo.createDemoCommunity, {

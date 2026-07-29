@@ -40,7 +40,25 @@ import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { ProgressBar } from "@components/ui/ProgressBar";
+import {
+  WA_CELL_MIN_HEIGHT,
+  WA_CELL_PADDING,
+  WA_CHEVRON_SIZE,
+  WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_SECTION_LABEL_SIZE,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
 import { useConnectionStatus } from "@providers/ConnectionProvider";
@@ -203,6 +221,10 @@ type EligiblePlan = {
 export function ServingTasksScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  // Flag-on restyle only (WHATSAPP-DESIGN-SYSTEM.md §7). Read once here and
+  // passed down as a prop rather than re-read per row — the hook fans out to
+  // three flag sources, two of them Convex queries.
+  const wa = useWhatsappShell();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
 
   // Every plan the user is serving today (soonest-first). One section each.
@@ -292,7 +314,9 @@ export function ServingTasksScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+        >
           Not currently serving on an event.
         </Text>
       </View>
@@ -314,7 +338,9 @@ export function ServingTasksScreen() {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        <Text
+          style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+        >
           Not currently serving on an event.
         </Text>
       </View>
@@ -330,7 +356,7 @@ export function ServingTasksScreen() {
       }}
     >
       {plans.map((plan) => (
-        <ServingTasksPlanSection key={plan.planId} plan={plan} />
+        <ServingTasksPlanSection key={plan.planId} plan={plan} wa={wa} />
       ))}
     </ScrollView>
   );
@@ -344,7 +370,7 @@ export function ServingTasksScreen() {
  * eligible plan by `ServingTasksScreen`; the global offline flush loop lives in
  * the parent — only the per-plan reconcile lives here.
  */
-function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
+function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const planId = plan.planId as Id<"eventPlans">;
@@ -682,7 +708,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
 
   return (
     <View style={styles.planSection}>
-      {isStale ? <OfflineBanner colors={colors} /> : null}
+      {isStale ? <OfflineBanner colors={colors} wa={wa} /> : null}
 
         <ServingHeader
           title={plan.title}
@@ -692,6 +718,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
           loading={effTasks === undefined}
           colors={colors}
           primaryColor={primaryColor}
+          wa={wa}
         />
 
         <SectionPills
@@ -700,6 +727,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
           onChange={setSection}
           colors={colors}
           primaryColor={primaryColor}
+          wa={wa}
         />
 
         {section === "mine" &&
@@ -710,6 +738,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
                 title="You're offline"
                 subtitle="Your tasks will appear once you've opened them with a connection."
                 colors={colors}
+                wa={wa}
               />
             ) : (
               <View style={styles.inlineLoading}>
@@ -718,7 +747,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
             )
           ) : (
             <>
-            {!hasPreloadedTasks ? <NoPreloadedNotice colors={colors} /> : null}
+            {!hasPreloadedTasks ? <NoPreloadedNotice colors={colors} wa={wa} /> : null}
             {SEGMENTS.map(({ key, label }) => {
             const segmentTasks = mineWithOverlay[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
@@ -726,13 +755,24 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
             const progress = total > 0 ? done / total : 0;
 
             return (
-              <View key={key} style={styles.segment}>
+              <View key={key} style={[styles.segment, wa && waStyles.segment]}>
                 <View style={styles.segmentHeader}>
-                  <Text style={[styles.segmentTitle, { color: colors.textSecondary }]}>
-                    {label.toUpperCase()}
+                  <Text
+                    style={[
+                      styles.segmentTitle,
+                      wa && waStyles.segmentTitle,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    {/* S3.5: ALL-CAPS section labels are dead flag-on. */}
+                    {wa ? label : label.toUpperCase()}
                   </Text>
                   <Text
-                    style={[styles.segmentCount, { color: colors.textTertiary }]}
+                    style={[
+                      styles.segmentCount,
+                      wa && waStyles.segmentCount,
+                      { color: colors.textTertiary },
+                    ]}
                   >
                     {done}/{total}
                   </Text>
@@ -750,12 +790,17 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
                 <View
                   style={[
                     styles.card,
+                    wa && waStyles.card,
                     { backgroundColor: colors.surface, borderColor: colors.border },
                   ]}
                 >
                   {segmentTasks.length === 0 ? (
                     <Text
-                      style={[styles.cardEmpty, { color: colors.textTertiary }]}
+                      style={[
+                        styles.cardEmpty,
+                        wa && waStyles.cardEmpty,
+                        { color: colors.textTertiary },
+                      ]}
                     >
                       Nothing here yet.
                     </Text>
@@ -767,6 +812,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
                         first={i === 0}
                         colors={colors}
                         primaryColor={primaryColor}
+                        wa={wa}
                         expanded={expandedId === task.key}
                         editing={editingId === task.key}
                         onToggle={() => toggle(task)}
@@ -813,6 +859,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
                     segment={key}
                     colors={colors}
                     primaryColor={primaryColor}
+                    wa={wa}
                     onCancel={() => setAddingSegment(null)}
                     onSubmit={async ({ title, note, timeLabel }) => {
                       if (!planId) return;
@@ -841,7 +888,13 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
                     accessibilityLabel={`Add a ${label} task`}
                   >
                     <Ionicons name="add" size={17} color={primaryColor} />
-                    <Text style={[styles.addButtonText, { color: primaryColor }]}>
+                    <Text
+                      style={[
+                        styles.addButtonText,
+                        wa && waStyles.addButtonText,
+                        { color: primaryColor },
+                      ]}
+                    >
                       Add my own task
                     </Text>
                   </Pressable>
@@ -860,6 +913,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
             primaryColor={primaryColor}
             onToggle={toggleShared}
             onOpenHowTo={openHowTo}
+            wa={wa}
           />
         )}
 
@@ -872,6 +926,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
             }
             colors={colors}
             primaryColor={primaryColor}
+            wa={wa}
           />
         )}
 
@@ -884,6 +939,7 @@ function ServingTasksPlanSection({ plan }: { plan: EligiblePlan }) {
             }
             colors={colors}
             primaryColor={primaryColor}
+            wa={wa}
           />
         )}
       <HowToViewer
@@ -922,6 +978,7 @@ function ServingHeader({
   loading,
   colors,
   primaryColor,
+  wa,
 }: {
   title: string;
   startsAt?: number;
@@ -930,15 +987,25 @@ function ServingHeader({
   loading: boolean;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   const allDone = total > 0 && done === total;
   return (
     <View style={styles.header}>
-      <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={2}>
+      <Text
+        style={[styles.headerTitle, wa && waStyles.headerTitle, { color: colors.text }]}
+        numberOfLines={2}
+      >
         {title}
       </Text>
       {startsAt ? (
-        <Text style={[styles.headerWhen, { color: colors.textSecondary }]}>
+        <Text
+          style={[
+            styles.headerWhen,
+            wa && waStyles.headerWhen,
+            { color: colors.textSecondary },
+          ]}
+        >
           {formatWhen(startsAt)}
         </Text>
       ) : null}
@@ -946,10 +1013,22 @@ function ServingHeader({
       {!loading && total > 0 ? (
         <View style={styles.readiness}>
           <View style={styles.readinessLabelRow}>
-            <Text style={[styles.readinessLabel, { color: colors.textSecondary }]}>
+            <Text
+              style={[
+                styles.readinessLabel,
+                wa && waStyles.readinessLabel,
+                { color: colors.textSecondary },
+              ]}
+            >
               {allDone ? "You're all set" : "Your readiness"}
             </Text>
-            <Text style={[styles.readinessCount, { color: colors.text }]}>
+            <Text
+              style={[
+                styles.readinessCount,
+                wa && waStyles.readinessCount,
+                { color: colors.text },
+              ]}
+            >
               {done} of {total}
             </Text>
           </View>
@@ -971,6 +1050,7 @@ interface TaskRowProps {
   first: boolean;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
   expanded: boolean;
   editing: boolean;
   onToggle: () => void;
@@ -997,6 +1077,7 @@ function TaskRow({
   first,
   colors,
   primaryColor,
+  wa,
   expanded,
   editing,
   onToggle,
@@ -1027,6 +1108,7 @@ function TaskRow({
     <View
       style={[
         styles.taskRow,
+        wa && waStyles.taskRow,
         !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
       ]}
     >
@@ -1042,13 +1124,14 @@ function TaskRow({
           <View
             style={[
               styles.checkbox,
+              wa && waStyles.checkbox,
               task.completed
                 ? { backgroundColor: primaryColor, borderColor: primaryColor }
                 : { borderColor: colors.textTertiary },
             ]}
           >
             {task.completed ? (
-              <Ionicons name="checkmark" size={15} color="#fff" />
+              <Ionicons name="checkmark" size={wa ? 16 : 15} color="#fff" />
             ) : null}
           </View>
         </Pressable>
@@ -1061,6 +1144,7 @@ function TaskRow({
           <Text
             style={[
               styles.taskTitle,
+              wa && waStyles.taskTitle,
               { color: colors.text },
               task.completed && styles.taskTitleDone,
             ]}
@@ -1070,7 +1154,7 @@ function TaskRow({
 
           {task.isPersonal ? (
             <View style={styles.taskMetaRow}>
-              <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
+              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
                 Added by you
               </Text>
             </View>
@@ -1080,6 +1164,7 @@ function TaskRow({
             <Text
               style={[
                 styles.inlineHowTo,
+                wa && waStyles.inlineHowTo,
                 { color: colors.textSecondary },
                 task.completed && styles.inlineHowToDone,
               ]}
@@ -1102,7 +1187,7 @@ function TaskRow({
               }
             }}
             hitSlop={6}
-            style={[styles.howToChip, { borderColor: colors.border }]}
+            style={[styles.howToChip, wa && waStyles.howToChip, { borderColor: colors.border }]}
             accessibilityRole="button"
             accessibilityLabel={
               howToType === "link"
@@ -1115,7 +1200,13 @@ function TaskRow({
               size={13}
               color={primaryColor}
             />
-            <Text style={[styles.howToChipText, { color: primaryColor }]}>
+            <Text
+              style={[
+                styles.howToChipText,
+                wa && waStyles.howToChipText,
+                { color: primaryColor },
+              ]}
+            >
               How-To
             </Text>
             <Ionicons
@@ -1128,7 +1219,7 @@ function TaskRow({
       </View>
 
       {expanded && task.isPersonal ? (
-        <View style={styles.taskDetail}>
+        <View style={[styles.taskDetail, wa && waStyles.taskDetail]}>
           {editing ? (
             <View style={styles.editForm}>
               <TextInput
@@ -1138,6 +1229,7 @@ function TaskRow({
                 placeholderTextColor={colors.textTertiary}
                 style={[
                   styles.input,
+                  wa && waStyles.input,
                   { color: colors.text, borderColor: colors.border },
                 ]}
               />
@@ -1149,6 +1241,7 @@ function TaskRow({
                 multiline
                 style={[
                   styles.input,
+                  wa && waStyles.input,
                   styles.inputMultiline,
                   { color: colors.text, borderColor: colors.border },
                 ]}
@@ -1196,6 +1289,7 @@ interface AddTaskFormProps {
   segment: Segment;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
   onCancel: () => void;
   onSubmit: (values: {
     title: string;
@@ -1208,6 +1302,7 @@ function AddTaskForm({
   segment,
   colors,
   primaryColor,
+  wa,
   onCancel,
   onSubmit,
 }: AddTaskFormProps) {
@@ -1218,7 +1313,7 @@ function AddTaskForm({
   const canSubmit = title.trim().length > 0;
 
   return (
-    <View style={[styles.addForm, { borderColor: colors.border }]}>
+    <View style={[styles.addForm, wa && waStyles.addForm, { borderColor: colors.border }]}>
       <TextInput
         value={title}
         onChangeText={setTitle}
@@ -1227,6 +1322,7 @@ function AddTaskForm({
         autoFocus
         style={[
           styles.input,
+          wa && waStyles.input,
           { color: colors.text, borderColor: colors.border },
         ]}
       />
@@ -1238,6 +1334,7 @@ function AddTaskForm({
         multiline
         style={[
           styles.input,
+          wa && waStyles.input,
           styles.inputMultiline,
           { color: colors.text, borderColor: colors.border },
         ]}
@@ -1251,6 +1348,7 @@ function AddTaskForm({
           placeholderTextColor={colors.textTertiary}
           style={[
             styles.input,
+            wa && waStyles.input,
             { color: colors.text, borderColor: colors.border },
           ]}
         />
@@ -1290,12 +1388,14 @@ function SectionPills({
   onChange,
   colors,
   primaryColor,
+  wa,
 }: {
   section: Section;
   counts: Record<Section, string | null>;
   onChange: (s: Section) => void;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   return (
     <ScrollView
@@ -1316,6 +1416,7 @@ function SectionPills({
             accessibilityLabel={label}
             style={[
               styles.pill,
+              wa && waStyles.pill,
               active
                 ? { backgroundColor: primaryColor, borderColor: primaryColor }
                 : { backgroundColor: colors.surface, borderColor: colors.border },
@@ -1324,6 +1425,7 @@ function SectionPills({
             <Text
               style={[
                 styles.pillText,
+                wa && waStyles.pillText,
                 { color: active ? "#fff" : colors.textSecondary },
               ]}
             >
@@ -1333,6 +1435,7 @@ function SectionPills({
               <View
                 style={[
                   styles.pillBadge,
+                  wa && waStyles.pillBadge,
                   {
                     backgroundColor: active
                       ? "rgba(255,255,255,0.25)"
@@ -1343,6 +1446,7 @@ function SectionPills({
                 <Text
                   style={[
                     styles.pillBadgeText,
+                    wa && waStyles.pillBadgeText,
                     { color: active ? "#fff" : colors.textTertiary },
                   ]}
                 >
@@ -1368,6 +1472,7 @@ function SharedSection({
   primaryColor,
   onToggle,
   onOpenHowTo,
+  wa,
 }: {
   tasks: SharedTask[] | undefined;
   optimistic: Record<string, boolean>;
@@ -1375,6 +1480,7 @@ function SharedSection({
   primaryColor: string;
   onToggle: (taskId: string, next: boolean) => void;
   onOpenHowTo: (t: SharedTask) => void;
+  wa: boolean;
 }) {
   if (tasks === undefined) return <SectionLoading colors={colors} />;
   if (tasks.length === 0) {
@@ -1384,6 +1490,7 @@ function SharedSection({
         title="No shared tasks"
         subtitle="Whole-team tasks show up here."
         colors={colors}
+        wa={wa}
       />
     );
   }
@@ -1398,12 +1505,25 @@ function SharedSection({
         const done = segTasks.filter(stateOf).length;
         const total = segTasks.length;
         return (
-          <View key={key} style={styles.segment}>
+          <View key={key} style={[styles.segment, wa && waStyles.segment]}>
             <View style={styles.segmentHeader}>
-              <Text style={[styles.segmentTitle, { color: colors.textSecondary }]}>
-                {label.toUpperCase()}
+              <Text
+                style={[
+                  styles.segmentTitle,
+                  wa && waStyles.segmentTitle,
+                  { color: colors.textSecondary },
+                ]}
+              >
+                {/* S3.5: ALL-CAPS section labels are dead flag-on. */}
+                {wa ? label : label.toUpperCase()}
               </Text>
-              <Text style={[styles.segmentCount, { color: colors.textTertiary }]}>
+              <Text
+                style={[
+                  styles.segmentCount,
+                  wa && waStyles.segmentCount,
+                  { color: colors.textTertiary },
+                ]}
+              >
                 {done}/{total}
               </Text>
             </View>
@@ -1415,6 +1535,7 @@ function SharedSection({
             <View
               style={[
                 styles.card,
+                wa && waStyles.card,
                 { backgroundColor: colors.surface, borderColor: colors.border },
               ]}
             >
@@ -1426,6 +1547,7 @@ function SharedSection({
                   first={i === 0}
                   colors={colors}
                   primaryColor={primaryColor}
+                  wa={wa}
                   onToggle={() => onToggle(task.taskId, !stateOf(task))}
                   onOpenHowTo={() => onOpenHowTo(task)}
                 />
@@ -1444,6 +1566,7 @@ function SharedTaskRow({
   first,
   colors,
   primaryColor,
+  wa,
   onToggle,
   onOpenHowTo,
 }: {
@@ -1452,6 +1575,7 @@ function SharedTaskRow({
   first: boolean;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
   onToggle: () => void;
   onOpenHowTo: () => void;
 }) {
@@ -1466,6 +1590,7 @@ function SharedTaskRow({
     <View
       style={[
         styles.taskRow,
+        wa && waStyles.taskRow,
         !first && {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
@@ -1484,13 +1609,14 @@ function SharedTaskRow({
           <View
             style={[
               styles.checkbox,
+              wa && waStyles.checkbox,
               completed
                 ? { backgroundColor: primaryColor, borderColor: primaryColor }
                 : { borderColor: colors.textTertiary },
             ]}
           >
             {completed ? (
-              <Ionicons name="checkmark" size={15} color="#fff" />
+              <Ionicons name="checkmark" size={wa ? 16 : 15} color="#fff" />
             ) : null}
           </View>
         </Pressable>
@@ -1499,6 +1625,7 @@ function SharedTaskRow({
           <Text
             style={[
               styles.taskTitle,
+              wa && waStyles.taskTitle,
               { color: colors.text },
               completed && styles.taskTitleDone,
             ]}
@@ -1509,12 +1636,12 @@ function SharedTaskRow({
           <View style={styles.taskMetaRow}>
             <View style={styles.teamCue}>
               <Ionicons name="people" size={12} color={colors.textTertiary} />
-              <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
+              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
                 Team task
               </Text>
             </View>
             {completed && task.completedByName ? (
-              <Text style={[styles.taskMeta, { color: colors.textTertiary }]}>
+              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
                 · Done by {task.completedByName}
               </Text>
             ) : null}
@@ -1524,6 +1651,7 @@ function SharedTaskRow({
             <Text
               style={[
                 styles.inlineHowTo,
+                wa && waStyles.inlineHowTo,
                 { color: colors.textSecondary },
                 completed && styles.inlineHowToDone,
               ]}
@@ -1544,7 +1672,7 @@ function SharedTaskRow({
               }
             }}
             hitSlop={6}
-            style={[styles.howToChip, { borderColor: colors.border }]}
+            style={[styles.howToChip, wa && waStyles.howToChip, { borderColor: colors.border }]}
             accessibilityRole="button"
             accessibilityLabel={
               howToType === "link"
@@ -1557,7 +1685,13 @@ function SharedTaskRow({
               size={13}
               color={primaryColor}
             />
-            <Text style={[styles.howToChipText, { color: primaryColor }]}>
+            <Text
+              style={[
+                styles.howToChipText,
+                wa && waStyles.howToChipText,
+                { color: primaryColor },
+              ]}
+            >
               How-To
             </Text>
             <Ionicons
@@ -1582,12 +1716,14 @@ function CrewSection({
   onToggleExpand,
   colors,
   primaryColor,
+  wa,
 }: {
   members: CrewMember[] | undefined;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   if (members === undefined) return <SectionLoading colors={colors} />;
   if (members.length === 0) {
@@ -1597,6 +1733,7 @@ function CrewSection({
         title="No crew yet"
         subtitle="Teammates serving this event will appear here."
         colors={colors}
+        wa={wa}
       />
     );
   }
@@ -1616,15 +1753,23 @@ function CrewSection({
   return (
     <View style={styles.sectionBody}>
       {groups.map((g) => (
-        <View key={g.teamId} style={styles.crewGroup}>
+        <View key={g.teamId} style={[styles.crewGroup, wa && waStyles.crewGroup]}>
           {showTeamHeaders ? (
-            <Text style={[styles.groupHeader, { color: colors.textSecondary }]}>
-              {g.teamName.toUpperCase()}
+            <Text
+              style={[
+                styles.groupHeader,
+                wa && waStyles.groupHeader,
+                { color: colors.textSecondary },
+              ]}
+            >
+              {/* S3.5: ALL-CAPS section labels are dead flag-on. */}
+              {wa ? g.teamName : g.teamName.toUpperCase()}
             </Text>
           ) : null}
           <View
             style={[
               styles.card,
+              wa && waStyles.card,
               { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
           >
@@ -1639,6 +1784,7 @@ function CrewSection({
                   onToggle={() => onToggleExpand(rowKey)}
                   colors={colors}
                   primaryColor={primaryColor}
+                  wa={wa}
                 />
               );
             })}
@@ -1656,6 +1802,7 @@ function CrewMemberRow({
   onToggle,
   colors,
   primaryColor,
+  wa,
 }: {
   member: CrewMember;
   first: boolean;
@@ -1663,6 +1810,7 @@ function CrewMemberRow({
   onToggle: () => void;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   const progress = member.total > 0 ? member.done / member.total : 0;
   const allDone = member.total > 0 && member.done === member.total;
@@ -1671,6 +1819,7 @@ function CrewMemberRow({
     <View
       style={[
         styles.expandRow,
+        wa && waStyles.expandRow,
         !first && {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
@@ -1686,15 +1835,24 @@ function CrewMemberRow({
       >
         <View style={styles.expandInfo}>
           <View style={styles.expandTitleRow}>
-            <Text style={[styles.expandTitle, { color: colors.text }]} numberOfLines={1}>
+            <Text
+              style={[styles.expandTitle, wa && waStyles.expandTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
               {member.name}
             </Text>
-            {member.isCurrentUser ? (
+            {/* §7 bans colored chips as a status device ("never a colored pill
+                sitting where WhatsApp puts a timestamp/badge") — and
+                `colors.warning` is a semantic hue outside the accent/
+                destructive pair the system allows. Flag-on, both signals
+                move into the subtitle as plain descriptive text; no
+                affordance is lost. */}
+            {!wa && member.isCurrentUser ? (
               <View style={[styles.youChip, { backgroundColor: primaryColor }]}>
                 <Text style={styles.youChipText}>You</Text>
               </View>
             ) : null}
-            {member.status === "unconfirmed" ? (
+            {!wa && member.status === "unconfirmed" ? (
               <View
                 style={[
                   styles.unconfirmedChip,
@@ -1706,14 +1864,26 @@ function CrewMemberRow({
               </View>
             ) : null}
           </View>
-          <Text style={[styles.expandSub, { color: colors.textTertiary }]} numberOfLines={1}>
-            {member.roleName}
+          <Text
+            style={[styles.expandSub, wa && waStyles.expandSub, { color: colors.textTertiary }]}
+            numberOfLines={1}
+          >
+            {wa
+              ? [
+                  member.roleName,
+                  member.isCurrentUser ? "You" : null,
+                  member.status === "unconfirmed" ? "Unconfirmed" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : member.roleName}
           </Text>
         </View>
         <View style={styles.expandRight}>
           <Text
             style={[
               styles.expandCount,
+              wa && waStyles.expandCount,
               { color: allDone ? primaryColor : colors.textSecondary },
             ]}
           >
@@ -1721,7 +1891,8 @@ function CrewMemberRow({
           </Text>
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
-            size={16}
+            // §3.2 chevrons are 13pt, text.tertiary, vertically centered.
+            size={wa ? WA_CHEVRON_SIZE : 16}
             color={colors.textTertiary}
           />
         </View>
@@ -1734,7 +1905,13 @@ function CrewMemberRow({
       {expanded ? (
         <View style={styles.readonlyList}>
           {member.tasks.length === 0 ? (
-            <Text style={[styles.readonlyEmpty, { color: colors.textTertiary }]}>
+            <Text
+              style={[
+                styles.readonlyEmpty,
+                wa && waStyles.readonlyEmpty,
+                { color: colors.textTertiary },
+              ]}
+            >
               No tasks assigned.
             </Text>
           ) : (
@@ -1746,6 +1923,7 @@ function CrewMemberRow({
                 howToType={t.howToType}
                 colors={colors}
                 primaryColor={primaryColor}
+                wa={wa}
               />
             ))
           )}
@@ -1765,12 +1943,14 @@ function AllTeamsSection({
   onToggleExpand,
   colors,
   primaryColor,
+  wa,
 }: {
   teams: AllTeamsTeam[] | undefined;
   expandedId: string | null;
   onToggleExpand: (id: string) => void;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   if (teams === undefined) return <SectionLoading colors={colors} />;
   if (teams.length === 0) {
@@ -1780,6 +1960,7 @@ function AllTeamsSection({
         title="No teams"
         subtitle="Teams serving this event will appear here."
         colors={colors}
+        wa={wa}
       />
     );
   }
@@ -1789,6 +1970,7 @@ function AllTeamsSection({
       <View
         style={[
           styles.card,
+          wa && waStyles.card,
           { backgroundColor: colors.surface, borderColor: colors.border },
         ]}
       >
@@ -1801,6 +1983,7 @@ function AllTeamsSection({
             onToggle={() => onToggleExpand(team.teamId)}
             colors={colors}
             primaryColor={primaryColor}
+            wa={wa}
           />
         ))}
       </View>
@@ -1815,6 +1998,7 @@ function TeamRow({
   onToggle,
   colors,
   primaryColor,
+  wa,
 }: {
   team: AllTeamsTeam;
   first: boolean;
@@ -1822,6 +2006,7 @@ function TeamRow({
   onToggle: () => void;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   const progress = team.total > 0 ? team.done / team.total : 0;
   const allDone = team.total > 0 && team.done === team.total;
@@ -1830,6 +2015,7 @@ function TeamRow({
     <View
       style={[
         styles.expandRow,
+        wa && waStyles.expandRow,
         !first && {
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
@@ -1844,7 +2030,10 @@ function TeamRow({
         accessibilityLabel={team.teamName}
       >
         <View style={styles.expandInfo}>
-          <Text style={[styles.expandTitle, { color: colors.text }]} numberOfLines={1}>
+          <Text
+            style={[styles.expandTitle, wa && waStyles.expandTitle, { color: colors.text }]}
+            numberOfLines={1}
+          >
             {team.teamName}
           </Text>
         </View>
@@ -1852,6 +2041,7 @@ function TeamRow({
           <Text
             style={[
               styles.expandCount,
+              wa && waStyles.expandCount,
               { color: allDone ? primaryColor : colors.textSecondary },
             ]}
           >
@@ -1859,7 +2049,8 @@ function TeamRow({
           </Text>
           <Ionicons
             name={expanded ? "chevron-up" : "chevron-down"}
-            size={16}
+            // §3.2 chevrons are 13pt, text.tertiary, vertically centered.
+            size={wa ? WA_CHEVRON_SIZE : 16}
             color={colors.textTertiary}
           />
         </View>
@@ -1872,7 +2063,13 @@ function TeamRow({
       {expanded ? (
         <View style={styles.readonlyList}>
           {team.tasks.length === 0 ? (
-            <Text style={[styles.readonlyEmpty, { color: colors.textTertiary }]}>
+            <Text
+              style={[
+                styles.readonlyEmpty,
+                wa && waStyles.readonlyEmpty,
+                { color: colors.textTertiary },
+              ]}
+            >
               No tasks yet.
             </Text>
           ) : (
@@ -1885,6 +2082,7 @@ function TeamRow({
                 howToType={t.howToType}
                 colors={colors}
                 primaryColor={primaryColor}
+                wa={wa}
               />
             ))
           )}
@@ -1907,6 +2105,7 @@ function ReadOnlyTaskItem({
   howToType,
   colors,
   primaryColor,
+  wa,
 }: {
   title: string;
   meta?: string;
@@ -1914,6 +2113,7 @@ function ReadOnlyTaskItem({
   howToType: HowToType;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   return (
     <View style={styles.roItem}>
@@ -1926,6 +2126,7 @@ function ReadOnlyTaskItem({
         <Text
           style={[
             styles.roItemTitle,
+            wa && waStyles.roItemTitle,
             { color: colors.text },
             completed && styles.taskTitleDone,
           ]}
@@ -1934,7 +2135,14 @@ function ReadOnlyTaskItem({
           {title}
         </Text>
         {meta ? (
-          <Text style={[styles.roItemMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.roItemMeta,
+              wa && waStyles.roItemMeta,
+              { color: colors.textTertiary },
+            ]}
+            numberOfLines={1}
+          >
             {meta}
           </Text>
         ) : null}
@@ -1951,11 +2159,23 @@ function ReadOnlyTaskItem({
 }
 
 /** Quiet banner shown when the tab is rendering a saved (offline) copy. */
-function OfflineBanner({ colors }: { colors: ThemeColors }) {
+function OfflineBanner({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
   return (
-    <View style={[styles.offlineBanner, { backgroundColor: colors.surface }]}>
+    <View
+      style={[
+        styles.offlineBanner,
+        wa && waStyles.offlineBanner,
+        { backgroundColor: colors.surface },
+      ]}
+    >
       <Ionicons name="cloud-offline-outline" size={14} color={colors.textSecondary} />
-      <Text style={[styles.offlineBannerText, { color: colors.textSecondary }]}>
+      <Text
+        style={[
+          styles.offlineBannerText,
+          wa && waStyles.offlineBannerText,
+          { color: colors.textSecondary },
+        ]}
+      >
         Offline · showing your saved copy
       </Text>
     </View>
@@ -1967,12 +2187,13 @@ function OfflineBanner({ colors }: { colors: ThemeColors }) {
  * (template) tasks. Explains the empty state and points the user to their team
  * lead, while the per-segment "Add my own task" affordances remain available.
  */
-function NoPreloadedNotice({ colors }: { colors: ThemeColors }) {
+function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
   return (
-    <View style={styles.segment}>
+    <View style={[styles.segment, wa && waStyles.segment]}>
       <View
         style={[
           styles.noticeCard,
+          wa && waStyles.noticeCard,
           { backgroundColor: colors.surface, borderColor: colors.border },
         ]}
       >
@@ -1982,10 +2203,18 @@ function NoPreloadedNotice({ colors }: { colors: ThemeColors }) {
           color={colors.textSecondary}
         />
         <View style={styles.noticeBody}>
-          <Text style={[styles.noticeMessage, { color: colors.text }]}>
+          <Text
+            style={[styles.noticeMessage, wa && waStyles.noticeMessage, { color: colors.text }]}
+          >
             No preloaded task. Please contact your team lead to add tasks.
           </Text>
-          <Text style={[styles.noticeHint, { color: colors.textTertiary }]}>
+          <Text
+            style={[
+              styles.noticeHint,
+              wa && waStyles.noticeHint,
+              { color: colors.textTertiary },
+            ]}
+          >
             You can still add your own tasks below.
           </Text>
         </View>
@@ -2007,20 +2236,34 @@ function SectionEmpty({
   title,
   subtitle,
   colors,
+  wa,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   title: string;
   subtitle?: string;
   colors: ThemeColors;
+  wa: boolean;
 }) {
   return (
     <View style={styles.sectionEmpty}>
       <Ionicons name={icon} size={30} color={colors.textTertiary} />
-      <Text style={[styles.sectionEmptyTitle, { color: colors.textSecondary }]}>
+      <Text
+        style={[
+          styles.sectionEmptyTitle,
+          wa && waStyles.sectionEmptyTitle,
+          { color: colors.textSecondary },
+        ]}
+      >
         {title}
       </Text>
       {subtitle ? (
-        <Text style={[styles.sectionEmptySub, { color: colors.textTertiary }]}>
+        <Text
+          style={[
+            styles.sectionEmptySub,
+            wa && waStyles.sectionEmptySub,
+            { color: colors.textTertiary },
+          ]}
+        >
           {subtitle}
         </Text>
       ) : null}
@@ -2246,4 +2489,128 @@ const styles = StyleSheet.create({
   },
   sectionEmptyTitle: { fontSize: 16, fontWeight: "600" },
   sectionEmptySub: { fontSize: 14, textAlign: "center", lineHeight: 19 },
+});
+
+/**
+ * `whatsapp-shell` (flag-on) style overrides — applied as
+ * `style={[styles.x, wa && waStyles.x]}` so flag-off renders `styles`
+ * byte-for-byte and only flag-on picks these up.
+ *
+ * This is a SKIN, not a restructure: every affordance, handler and piece of
+ * offline plumbing is untouched. What changes is the vocabulary
+ * (WHATSAPP-DESIGN-SYSTEM.md §7's four primitives — rows, inset-grouped
+ * cells, bubbles, pills):
+ *
+ *  - Cards go from radius-14 hairline-bordered boxes to §3.2 inset-grouped
+ *    cards: 24pt radius, no border.
+ *  - Rows get the §3.2 54pt minimum height and 16pt cell padding.
+ *  - Type moves onto the S7 scale (17 / 15 / 13) — the pre-pass sizes ran
+ *    "1–2pt small and one weight light throughout".
+ *  - ALL-CAPS 12pt letter-spaced section labels are dead (S3.5); they become
+ *    sentence-case 15pt gray. The `toUpperCase()` calls are dropped at the
+ *    call sites, not here.
+ *  - Chevrons drop to 13pt (WA_CHEVRON_SIZE).
+ *  - The offline banner becomes a pill rather than a rounded card.
+ *  - Italics (`cardEmpty`, `readonlyEmpty`) aren't in the system at all.
+ *
+ * The "You" / "Unconfirmed" colored chips are removed at their call site
+ * (see `CrewMemberRow`) rather than restyled — §7 bans colored chips as a
+ * status device outright, so they fold into the row's subtitle text.
+ */
+const waStyles = StyleSheet.create({
+  // Header (§2 header block)
+  headerTitle: {
+    fontSize: WA_TYPE_HEADER_BLOCK,
+    fontWeight: WA_WEIGHT_BOLD,
+    letterSpacing: 0,
+  },
+  headerWhen: { fontSize: WA_TYPE_SUBTITLE, marginTop: 6 },
+  readinessLabel: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  readinessCount: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // Segments — sentence-case section labels above 24pt inset cards.
+  segment: { paddingHorizontal: WA_GROUP_MARGIN, marginBottom: WA_GROUP_SPACING },
+  segmentTitle: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+  },
+  segmentCount: { fontSize: WA_SECTION_LABEL_SIZE, fontWeight: WA_WEIGHT_REGULAR },
+  card: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, marginTop: WA_SECTION_HEADER_GAP },
+  cardEmpty: { fontSize: WA_TYPE_SUBTITLE, fontStyle: "normal", padding: WA_CELL_PADDING },
+
+  noticeCard: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: WA_CELL_PADDING },
+  noticeMessage: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 22, fontWeight: WA_WEIGHT_REGULAR },
+  noticeHint: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18 },
+
+  // Task rows (§3.2 cell anatomy)
+  taskRow: {
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingVertical: 12,
+    minHeight: WA_CELL_MIN_HEIGHT,
+    justifyContent: "center",
+  },
+  checkbox: { width: 24, height: 24, borderRadius: 12 },
+  taskTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    lineHeight: 22,
+    fontWeight: WA_WEIGHT_REGULAR,
+  },
+  taskMeta: { fontSize: WA_TYPE_FOOTNOTE },
+  inlineHowTo: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 20 },
+  // Pill, per §7's pill vocabulary — outlined, accent text.
+  howToChip: { paddingHorizontal: 12, paddingVertical: 6 },
+  howToChipText: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  taskDetail: { paddingLeft: 36 },
+
+  // §3.2 "plain accent-colored action text, no icon, no chevron" row.
+  addButtonText: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR },
+  addForm: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: WA_CELL_PADDING },
+  input: {
+    borderRadius: 18,
+    borderWidth: 0,
+    fontSize: WA_TYPE_ROW_TITLE,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+
+  // Section pills (§7: unselected = card fill + separator border, selected = accent)
+  pill: { paddingHorizontal: 16, paddingVertical: 9 },
+  pillText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  pillBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 8 },
+  pillBadgeText: { fontSize: 12, fontWeight: WA_WEIGHT_BOLD },
+
+  // Crew grouping
+  crewGroup: { paddingHorizontal: WA_GROUP_MARGIN, marginBottom: WA_GROUP_SPACING },
+  groupHeader: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+    marginBottom: WA_SECTION_HEADER_GAP,
+  },
+
+  // Expandable crew/team rows
+  expandRow: {
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingTop: 14,
+    paddingBottom: 12,
+    minHeight: WA_CELL_MIN_HEIGHT,
+  },
+  expandTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR },
+  expandSub: { fontSize: WA_TYPE_SUBTITLE, marginTop: 3 },
+  expandCount: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+
+  // Read-only task lists inside an expanded row
+  readonlyEmpty: { fontSize: WA_TYPE_SUBTITLE, fontStyle: "normal" },
+  roItemTitle: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 20, fontWeight: WA_WEIGHT_REGULAR },
+  roItemMeta: { fontSize: WA_TYPE_FOOTNOTE },
+
+  // Status strip — a pill, not a rounded card (§6: banners aren't cards).
+  offlineBanner: { borderRadius: 999, marginHorizontal: WA_GROUP_MARGIN },
+  offlineBannerText: { fontSize: WA_TYPE_FOOTNOTE },
+
+  // Empty states
+  emptyText: { fontSize: WA_TYPE_SUBTITLE },
+  sectionEmptyTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  sectionEmptySub: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
 });
