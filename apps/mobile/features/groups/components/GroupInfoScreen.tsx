@@ -655,37 +655,35 @@ export function GroupInfoScreen() {
 
         {/* 2. ACTION ROW (§3.3) — white rounded button cards with an accent
             glyph and a dark label, replacing the accent-pill glyphs S5.2
-            kill-lists. Invite reuses the same share flow for v1 (no separate
-            invite-kit yet — see file-header deferral note). */}
-        {!!group.shortId && (
-          <View style={styles.actionRow}>
-            <WaActionCardRow>
+            kill-lists. §3.3 names Mute among the action buttons, so it moves
+            out of its own card here: as a button it has no switch slot, so it
+            flips on tap and its own label carries the state (same treatment as
+            Channel info, so the two info screens stay one screen family).
+            Invite reuses the same share flow for v1 (no separate invite-kit
+            yet — see file-header deferral note). It still runs the exact
+            per-group notification mutation NotificationPreferencesSection
+            uses. */}
+        <View style={styles.actionRow}>
+          <WaActionCardRow>
+            {!!group.shortId && (
               <WaActionCard icon="share-outline" label="Share" onPress={handleShareGroup} accent={waAccent} />
+            )}
+            {!!group.shortId && (
               <WaActionCard
                 icon="person-add-outline"
                 label="Invite"
                 onPress={handleShareGroup}
                 accent={waAccent}
               />
-            </WaActionCardRow>
-          </View>
-        )}
-
-        {/* 3. MUTE GROUP — WaCell toggle (§3.2/§6: native Switch, accent-on
-            track). Reuses the exact per-group notification query/mutation
-            NotificationPreferencesSection uses. */}
-        <View style={styles.waSection}>
-          <WaInsetGroup>
-            <WaCell
-              icon="notifications-off-outline"
-              title="Mute group"
-              variant="toggle"
-              toggleValue={isMuted}
-              onToggleChange={handleToggleMuted}
+            )}
+            <WaActionCard
+              icon={isMuted ? "notifications-outline" : "notifications-off-outline"}
+              label={isMuted ? "Unmute" : "Mute"}
+              onPress={() => handleToggleMuted(!isMuted)}
               disabled={isSavingMute}
               accent={waAccent}
             />
-          </WaInsetGroup>
+          </WaActionCardRow>
         </View>
 
         {/* 4. MEMBERS — WaInsetGroup: the MembersRow avatar-stack preview

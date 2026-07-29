@@ -239,7 +239,8 @@ describe("GroupInfoScreen", () => {
 
     expect(screen.queryByTestId("non-member-view")).toBeNull();
     expect(screen.getByText("Test Group")).toBeTruthy();
-    expect(screen.getByText("Mute group")).toBeTruthy();
+    // §3.3 promoted Mute out of its own card into the action-button row.
+    expect(screen.getByLabelText("Mute")).toBeTruthy();
     expect(screen.getByTestId("members-row")).toBeTruthy();
     expect(screen.getByTestId("channels-section")).toBeTruthy();
     expect(screen.getByTestId("bots-section")).toBeTruthy();
@@ -329,9 +330,9 @@ describe("GroupInfoScreen", () => {
       expect(StyleSheet.flatten(subtitle.props.style).fontSize).toBe(15);
     });
 
-    it("§3.3: Share/Invite render as ~76pt white action cards", () => {
+    it("§3.3: Share/Invite/Mute render as ~76pt white action cards", () => {
       render(<GroupInfoScreen />, { wrapper: createWrapper() });
-      for (const label of ["Share", "Invite"]) {
+      for (const label of ["Share", "Invite", "Mute"]) {
         const card = screen.getByLabelText(label);
         expect(StyleSheet.flatten(card.props.style).height).toBe(WA_ACTION_CARD_HEIGHT);
       }
