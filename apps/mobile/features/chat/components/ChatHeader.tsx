@@ -63,9 +63,14 @@ export const ChatHeader = memo(function ChatHeader({
         { backgroundColor: themeColors.surface },
         whatsappShellEnabled && {
           backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
-          // WA's nav row breathes below the status bar rather than hugging
-          // it (owner device feedback, 2026-07-29).
-          paddingTop: 12 + 8,
+          // WA's nav row is 44pt tall; the 40pt identity block plus these
+          // paddings lands ours at ~50. The earlier 20/12 came from "breathes
+          // below the status bar" device feedback and overshot by ~16pt —
+          // enough on its own to make the whole chat screen read zoomed in
+          // (calibrated pixel pass, 2026-07-29). Flag-off keeps
+          // `paddingVertical: 12`.
+          paddingTop: 8,
+          paddingBottom: 4,
         },
       ]}
     >
