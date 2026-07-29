@@ -30,10 +30,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { format, toZonedTime } from 'date-fns-tz';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { AppImage } from '@components/ui';
+import {
+  WaRow,
+  WaSectionLabel,
+  WaScreenHeader,
+  WaSeparator,
+  WA_SEPARATOR_INSET,
+  WA_AVATAR_LG,
+  WA_GROUP_SPACING,
+} from '@components/wa';
+import { formatTimeWithTimezone } from '@togather/shared';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
 import { useLaterEvents } from '../hooks/useLaterEvents';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
@@ -160,6 +172,121 @@ function HorizontalTileRow({ title, cards, colors }: HorizontalTileRowProps) {
   );
 }
 
+// --- WhatsApp-shell event rows (flag-gated) ---------------------------------
+// WHATSAPP-DESIGN-SYSTEM.md §7 "Event cards inside chat" governs bubble-shaped
+// events *inside a chat thread*; the Events tab itself is a full-bleed list
+// surface, so its rows follow the plain §3.1 WaRow anatomy instead (cover
+// thumbnail or calendar-glyph circle, title, one-line subtitle, trailing
+// chevron) — same treatment for individual and community-wide (CWE) cards,
+// so "horizontal card strips become rows" per this pass's brief. Flag off
+// renders the existing FeaturedEventTile/EventCardRow/EventRowCommunityWide
+// components below, untouched.
+
+/** Raw event/CWE card shape as returned by the Events tab queries — same
+ * union `Section`/`HorizontalTileRow` above already destructure ad hoc. */
+type EventTabCard = any;
+
+interface WaEventRowProps {
+  card: EventTabCard;
+  colors: ReturnType<typeof useTheme>['colors'];
+  accent: string;
+  userTimezone: string;
+  onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
+}
+
+function WaEventRow({ card, colors, accent, userTimezone, onCommunityWideTap }: WaEventRowProps) {
+  const router = useRouter();
+  const isCommunityWide = card.kind === 'community_wide';
+
+  const zonedDate = toZonedTime(new Date(card.scheduledAt), userTimezone);
+  const weekday = format(zonedDate, 'EEE', { timeZone: userTimezone });
+  const time = formatTimeWithTimezone(card.scheduledAt, userTimezone);
+  const title = card.title || 'Untitled Event';
+
+  // No per-card RSVP status is returned by the Events tab queries (see
+  // listForEventsTab/listLaterEvents) — only a chevron is shown in the right
+  // column (§8 "RSVP state as a small accent text label or chevron"), rather
+  // than inventing an RSVP label the backend doesn't give us.
+  const location = isCommunityWide
+    ? card.groupCount === 1
+      ? '1 location'
+      : `${card.groupCount} locations`
+    : card.locationOverride || card.group.name;
+  const subtitle = `${weekday} ${time} · ${location}`;
+
+  const coverImage: string | null | undefined = isCommunityWide
+    ? card.coverImage
+    : card.coverImage || card.group?.image;
+
+  const handlePress = () => {
+    if (isCommunityWide) {
+      onCommunityWideTap(card.parentId as Id<'communityWideEvents'>);
+    } else if (card.shortId) {
+      router.push(`/e/${card.shortId}?source=app`);
+    }
+  };
+
+  return (
+    <WaRow
+      avatar={
+        coverImage
+          ? { imageUrl: coverImage, label: title, shape: 'circle' }
+          : (
+              <View style={[styles.waCalendarGlyph, { backgroundColor: accent + '14' }]}>
+                <Ionicons name="calendar-outline" size={22} color={accent} />
+              </View>
+            )
+      }
+      title={title}
+      subtitle={subtitle}
+      showChevron
+      accent={accent}
+      onPress={handlePress}
+    />
+  );
+}
+
+interface WaEventSectionProps {
+  title: string;
+  cards: EventTabCard[];
+  colors: ReturnType<typeof useTheme>['colors'];
+  accent: string;
+  userTimezone: string;
+  onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
+}
+
+function WaEventSection({
+  title,
+  cards,
+  colors,
+  accent,
+  userTimezone,
+  onCommunityWideTap,
+}: WaEventSectionProps) {
+  if (!cards || cards.length === 0) return null;
+  return (
+    <View style={styles.waSection}>
+      <WaSectionLabel>{title}</WaSectionLabel>
+      <View>
+        {cards.map((card, index) => (
+          <React.Fragment
+            key={card.kind === 'community_wide' ? `cw-${String(card.parentId)}` : String(card.id)}
+          >
+            <WaEventRow
+              card={card}
+              colors={colors}
+              accent={accent}
+              userTimezone={userTimezone}
+              onCommunityWideTap={onCommunityWideTap}
+            />
+            {index < cards.length - 1 ? <WaSeparator inset={WA_SEPARATOR_INSET} /> : null}
+          </React.Fragment>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 interface GreetingProps {
   firstName: string | null;
   colors: ReturnType<typeof useTheme>['colors'];
@@ -192,6 +319,8 @@ export function EventsScreen() {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const hasCommunityContext = !!community?.id;
+  const whatsappShellEnabled = useWhatsappShell();
+  const userTimezone = user?.timezone || 'America/New_York';
 
   const [expandedParentId, setExpandedParentId] =
     useState<Id<'communityWideEvents'> | null>(null);
@@ -303,14 +432,22 @@ export function EventsScreen() {
   // Floating controls — no static header. The List/Map toggle floats
   // over the top-left; the Create Event CTA floats over the bottom
   // center (above the tab bar). Content scrolls beneath them.
+  //
+  // Flag-on: the List/Map toggle moves into the WaScreenHeader's circular
+  // trailing buttons (§4 "header buttons above the large title"), so it's
+  // skipped here — the Create Event button stays floating either way (its
+  // handler/position are untouched per this pass's brief), just with its
+  // shadow killed on the flag-on path (§7 "never cards-with-shadows").
   const renderFloatingControls = () => (
     <>
-      <View
-        style={[styles.floatingToggle, { top: insets.top + 12 }]}
-        pointerEvents="box-none"
-      >
-        {renderViewToggle()}
-      </View>
+      {!whatsappShellEnabled && (
+        <View
+          style={[styles.floatingToggle, { top: insets.top + 12 }]}
+          pointerEvents="box-none"
+        >
+          {renderViewToggle()}
+        </View>
+      )}
       <View
         style={[
           styles.floatingCreateContainer,
@@ -318,7 +455,11 @@ export function EventsScreen() {
         ]}
       >
         <TouchableOpacity
-          style={[styles.floatingCreateButton, { backgroundColor: primaryColor }]}
+          style={[
+            styles.floatingCreateButton,
+            whatsappShellEnabled && styles.floatingCreateButtonWa,
+            { backgroundColor: primaryColor },
+          ]}
           onPress={handleCreateEvent}
           activeOpacity={0.85}
         >
@@ -333,6 +474,10 @@ export function EventsScreen() {
   // scroll content only clears the status bar, and the toggle visually
   // overlaps the empty area next to the first section header.
   const contentTopPadding = insets.top + 8;
+  // Flag-on: a real (non-floating) WaScreenHeader now occupies that top
+  // space, so the scroll content only needs a small gap below it — reusing
+  // `contentTopPadding` here would double the header's own top inset.
+  const mainContentTopPadding = whatsappShellEnabled ? 8 : contentTopPadding;
 
   // Infinite scroll: trigger loadMore when the user gets within a page of
   // the bottom. Runs on every scroll event; the pagination hook guards
@@ -450,6 +595,32 @@ export function EventsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
+      {whatsappShellEnabled && (
+        // §4 large-title header. The existing List/Map toggle becomes the
+        // circular trailing buttons — the active one filled-accent, the
+        // other neutral, matching the "one filled-accent circle" pattern the
+        // kit already uses for the compose `+` elsewhere. The map view itself
+        // is untouched below; only this entry point is restyled.
+        <WaScreenHeader
+          title="Events"
+          trailingButtons={[
+            {
+              icon: viewMode === 'list' ? 'list' : 'list-outline',
+              onPress: () => setViewMode('list'),
+              accent: viewMode === 'list',
+              accessibilityLabel: 'List view',
+            },
+            {
+              icon: viewMode === 'map' ? 'map' : 'map-outline',
+              onPress: () => setViewMode('map'),
+              accent: viewMode === 'map',
+              accessibilityLabel: 'Map view',
+            },
+          ]}
+          accent={primaryColor}
+          style={{ paddingTop: insets.top, backgroundColor: colors.backgroundSecondary }}
+        />
+      )}
       {viewMode === 'map' ? (
         <EventsMapView enabled={viewMode === 'map'} />
       ) : (
@@ -463,7 +634,7 @@ export function EventsScreen() {
               style={styles.scrollView}
               contentContainerStyle={[
                 styles.scrollContent,
-                { paddingTop: contentTopPadding },
+                { paddingTop: mainContentTopPadding },
               ]}
               onScroll={handleScroll}
               scrollEventThrottle={200}
@@ -489,25 +660,64 @@ export function EventsScreen() {
             primaryColor={primaryColor}
             onMakePlans={handleCreateEvent}
           />
-          <HorizontalTileRow title="My Events" cards={myEvents} colors={colors} />
-          <Section
-            title="Next Up"
-            cards={nextUp}
-            onCommunityWideTap={handleCommunityWideTap}
-            colors={colors}
-          />
-          <Section
-            title="This Week"
-            cards={thisWeek}
-            onCommunityWideTap={handleCommunityWideTap}
-            colors={colors}
-          />
-          <Section
-            title="Later"
-            cards={laterCards}
-            onCommunityWideTap={handleCommunityWideTap}
-            colors={colors}
-          />
+          {whatsappShellEnabled ? (
+            <>
+              <WaEventSection
+                title="My Events"
+                cards={myEvents}
+                colors={colors}
+                accent={primaryColor}
+                userTimezone={userTimezone}
+                onCommunityWideTap={handleCommunityWideTap}
+              />
+              <WaEventSection
+                title="Next Up"
+                cards={nextUp}
+                colors={colors}
+                accent={primaryColor}
+                userTimezone={userTimezone}
+                onCommunityWideTap={handleCommunityWideTap}
+              />
+              <WaEventSection
+                title="This Week"
+                cards={thisWeek}
+                colors={colors}
+                accent={primaryColor}
+                userTimezone={userTimezone}
+                onCommunityWideTap={handleCommunityWideTap}
+              />
+              <WaEventSection
+                title="Later"
+                cards={laterCards}
+                colors={colors}
+                accent={primaryColor}
+                userTimezone={userTimezone}
+                onCommunityWideTap={handleCommunityWideTap}
+              />
+            </>
+          ) : (
+            <>
+              <HorizontalTileRow title="My Events" cards={myEvents} colors={colors} />
+              <Section
+                title="Next Up"
+                cards={nextUp}
+                onCommunityWideTap={handleCommunityWideTap}
+                colors={colors}
+              />
+              <Section
+                title="This Week"
+                cards={thisWeek}
+                onCommunityWideTap={handleCommunityWideTap}
+                colors={colors}
+              />
+              <Section
+                title="Later"
+                cards={laterCards}
+                onCommunityWideTap={handleCommunityWideTap}
+                colors={colors}
+              />
+            </>
+          )}
           {laterStatus === 'LoadingMore' && (
             <View style={styles.loadMoreIndicator}>
               <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -637,9 +847,31 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  // §7: "never cards-with-shadows" — kills the shadow/elevation above on the
+  // flag-on path only; position/handler/label are untouched.
+  floatingCreateButtonWa: {
+    ...Platform.select({
+      web: { boxShadow: 'none' },
+      default: { shadowOpacity: 0, elevation: 0 },
+    }),
+  },
   section: {
     marginTop: 28, // breathing room between section groups (Next Up → This week → Later)
     marginBottom: 8,
+  },
+  // WhatsApp-shell sections (flag-gated) — WaSectionLabel supplies its own
+  // header-to-row gap (§3.2's WA_SECTION_HEADER_GAP), so this only adds the
+  // generous inter-section rhythm (§3.2 "visibly more generous than the
+  // header-to-card gap").
+  waSection: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waCalendarGlyph: {
+    width: WA_AVATAR_LG,
+    height: WA_AVATAR_LG,
+    borderRadius: WA_AVATAR_LG / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sectionTitle: {
     fontSize: 19,

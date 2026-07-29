@@ -35,6 +35,8 @@ import { Avatar } from "@components/ui/Avatar";
 import { useAuth } from "@providers/AuthProvider";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { WaRow, WaSeparator, WA_SEPARATOR_INSET } from "@components/wa";
 import { useQuery, useMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import {
@@ -77,6 +79,7 @@ function StartChatScreen() {
   const { token, community, user } = useAuth();
   const { primaryColor, accentLight } = useCommunityTheme();
   const { colors, isDark } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
   const communityId = community?.id as Id<"communities"> | undefined;
 
   const [query, setQuery] = useState("");
