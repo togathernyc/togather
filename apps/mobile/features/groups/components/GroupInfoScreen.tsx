@@ -12,18 +12,28 @@
  *
  * Rendered only behind the `whatsapp-shell` flag (see
  * `app/groups/[group_id]/index.tsx`); `GroupDetailScreen` is untouched and
- * keeps rendering when the flag is off.
+ * keeps rendering when the flag is off. Because this screen only ever
+ * mounts flag-on, it's styled unconditionally to
+ * `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md` §3b
+ * (inset-grouped) / §8 ("Group info" checklist) using the `components/wa/*`
+ * kit — `bg.grouped` canvas, `WaInsetGroup`/`WaCell` for every card, plain
+ * monochrome cell icons, red destructive cells with no icon/chevron.
  *
  * Deferred from the full W13 spec (out of scope for this composition pass):
  *   - Hero photo tap-to-viewer, cadence, description, and the edit pencil
- *     all come for free from the existing `GroupHeader` component.
+ *     all come for free from the existing `GroupHeader` component (already
+ *     a centered circular-avatar hero — out of this pass's touched-file
+ *     list, so left as-is).
  *   - "Search" in the icon action row (README's icon list) — the task's
  *     explicit v1 scope is Share + Invite only.
  *   - Events section (README lists it between Channels and Leader tools) —
  *     not in this task's explicit numbered scope; left for a follow-up pass.
  *   - Pinned-channel reorder mode and per-channel mute — `ChannelsSection`
- *     is rendered unmodified, so it ships whatever that component already
- *     supports today.
+ *     is rendered unmodified (explicitly out of scope for this restyle
+ *     pass), so it ships whatever that component already supports/looks
+ *     like today — including its own `colors.background`/bordered-card
+ *     styling, which now sits on this screen's `bg.grouped` canvas as a
+ *     known, deferred visual seam (see file-level restyle note below).
  *   - `isOnBreak` / `isPublic` settings rows — FEATURE-MAP §3 flags these as
  *     "schema-only, no UI today" backlog items, not part of this page yet.
  */
@@ -72,13 +82,18 @@ import { MembersRow } from "./MembersRow";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
 import { GroupBotsSection } from "./GroupBotsSection";
-import { sectionStyles } from "./sectionStyles";
 import { isGroupMember, formatCadence } from "../utils";
 import { formatError } from "@/utils/error-handling";
 import {
   getExternalChatInfo,
   openExternalChatLink,
 } from "@features/chat/utils/externalChat";
+import {
+  WaInsetGroup,
+  WaCell,
+  WA_GROUP_SPACING,
+  WA_GROUP_MARGIN,
+} from "@components/wa";
 
 export function GroupInfoScreen() {
   // Router param name/shape matches the route file
@@ -511,16 +526,17 @@ export function GroupInfoScreen() {
   return (
     <>
       <ScrollView
-        style={[styles.scrollView, { backgroundColor: colors.background }]}
+        style={[styles.scrollView, { backgroundColor: colors.backgroundGrouped }]}
         contentContainerStyle={{ paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={handleRefresh} tintColor={colors.link} />
         }
       >
-        {/* 1. HERO — photo/name/cadence/description/edit-pencil all come
-            from the unmodified GroupHeader. We only add the member-count +
-            group-type meta line it doesn't already render. */}
+        {/* 1. HERO — centered photo/name come from the unmodified
+            GroupHeader (already a §6-style centered circular hero — out of
+            this pass's touched-file list). We only add the §2 "member
+            count, hero subtitle" meta line it doesn't already render. */}
         <GroupHeader group={group} canEdit={canEditGroup} />
         {heroMetaParts.length > 0 && (
           <Text style={[styles.heroMeta, { color: colors.textSecondary }]}>
@@ -528,31 +544,32 @@ export function GroupInfoScreen() {
           </Text>
         )}
 
-        {/* 2. ICON ACTION ROW — Share + Invite. Invite reuses the same
-            share flow for v1 (no separate invite-kit yet). */}
+        {/* 2. ICON ACTION ROW (§3.2/§8) — Share + Invite. Accent-tinted
+            glyphs on a card-colored pill, no card container around the
+            row itself. Invite reuses the same share flow for v1 (no
+            separate invite-kit yet — see file-header deferral note). */}
         {!!group.shortId && (
           <View style={styles.iconActionRow}>
-            <IconAction icon="share-outline" label="Share" onPress={handleShareGroup} />
-            <IconAction icon="person-add-outline" label="Invite" onPress={handleShareGroup} />
+            <IconAction icon="share-outline" label="Share" onPress={handleShareGroup} accent={primaryColor} />
+            <IconAction icon="person-add-outline" label="Invite" onPress={handleShareGroup} accent={primaryColor} />
           </View>
         )}
 
-        {/* 3. MUTE GROUP — reuses the exact per-group notification
-            query/mutation NotificationPreferencesSection uses. */}
-        <View style={sectionStyles.section}>
-          <View style={[sectionStyles.card, { backgroundColor: colors.surfaceSecondary }]}>
-            <View style={styles.muteRow}>
-              <Ionicons name="notifications-off-outline" size={20} color={colors.icon} />
-              <Text style={[styles.muteLabel, { color: colors.text }]}>Mute group</Text>
-              <Switch
-                value={isMuted}
-                onValueChange={handleToggleMuted}
-                disabled={isSavingMute}
-                trackColor={{ false: colors.border, true: primaryColor }}
-                thumbColor={colors.textInverse}
-              />
-            </View>
-          </View>
+        {/* 3. MUTE GROUP — WaCell toggle (§3.2/§6: native Switch, accent-on
+            track). Reuses the exact per-group notification query/mutation
+            NotificationPreferencesSection uses. */}
+        <View style={styles.waSection}>
+          <WaInsetGroup>
+            <WaCell
+              icon="notifications-off-outline"
+              title="Mute group"
+              variant="toggle"
+              toggleValue={isMuted}
+              onToggleChange={handleToggleMuted}
+              disabled={isSavingMute}
+              accent={primaryColor}
+            />
+          </WaInsetGroup>
         </View>
 
         {/* 4. MEMBERS — same tap gates GroupDetailScreen applies
