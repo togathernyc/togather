@@ -291,7 +291,7 @@ export const WA_WEIGHT_REGULAR = '400' as const;
 // --- §5 Chat screen -------------------------------------------------------
 
 /** Bubble max width as a fraction of screen width. */
-export const WA_BUBBLE_MAX_WIDTH_PCT = 0.78;
+export const WA_BUBBLE_MAX_WIDTH_PCT = 0.75;
 /** Bubble corner radius on the three "open" corners. */
 export const WA_BUBBLE_RADIUS = 18;
 /** Corner radius at the sender-origin corner on the first bubble of a run (the "tail" corner). */
