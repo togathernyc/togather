@@ -53,6 +53,14 @@ export const WA_BUBBLE_BODY_LINE_HEIGHT = 21;
 export const WA_BUBBLE_SENDER_SIZE = 15;
 export const WA_BUBBLE_TIMESTAMP_SIZE = 11;
 
-/** §S4.6 composer field: fully-rounded, ~44px tall. */
-export const WA_COMPOSER_FIELD_HEIGHT = 44;
-export const WA_COMPOSER_FIELD_RADIUS = 22;
+/**
+ * §S4.6 composer field: fully-rounded. The 44 here was an iOS
+ * minimum-tap-target number, not a measurement — the calibrated pixel pass
+ * (2026-07-29) put WhatsApp's empty field at 32pt, and the extra 12 was a big
+ * part of why the composer bar read "zoomed in". The field still GROWS with
+ * content, and the send/attach buttons around it keep their own 44pt hit
+ * areas, so the tap target doesn't regress.
+ */
+export const WA_COMPOSER_FIELD_HEIGHT = 32;
+/** Fully-rounded: always half the field height. */
+export const WA_COMPOSER_FIELD_RADIUS = WA_COMPOSER_FIELD_HEIGHT / 2;
