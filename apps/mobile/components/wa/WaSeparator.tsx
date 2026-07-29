@@ -3,9 +3,14 @@
  *
  * WHATSAPP-DESIGN-SYSTEM.md §3.1: "0.5-1px hairline, inset to align with the
  * text column" for full-bleed chat rows (pass
- * `inset={WA_LIST_SEPARATOR_INSET}` — the S6.1-calibrated 86pt from `WaRow`,
- * which starts the hairline at the title's x-position), and §3.2's
- * card-internal hairlines (pass `inset={0}` or omit).
+ * `inset={WA_LIST_SEPARATOR_INSET}` — the 84pt from `WaRow`, which starts the
+ * hairline at the title's x-position), and §3.2's card-internal hairlines
+ * (pass `inset={0}` or omit).
+ *
+ * The hairline also stops 16pt short of the RIGHT edge: WhatsApp's row
+ * dividers are inset on both sides, and running ours to the screen edge was
+ * one of the "chrome is inflated" tells in the calibrated pixel pass
+ * (2026-07-29).
  *
  * WA-VISUAL-DELTAS.md S6/§1.6: an inset hairline is the **only** thing that
  * separates rows in the reference — there are no heavier seams, gaps, or
@@ -38,5 +43,6 @@ export function WaSeparator({ inset = 0, color }: WaSeparatorProps) {
 const styles = StyleSheet.create({
   separator: {
     height: StyleSheet.hairlineWidth,
+    marginRight: 16,
   },
 });
