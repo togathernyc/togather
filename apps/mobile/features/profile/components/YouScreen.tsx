@@ -8,13 +8,18 @@
  * `ProfileMenu` catch-all drawer.
  *
  * WHATSAPP-DESIGN-SYSTEM.md §3.2 (inset-grouped lists) + §4 (nav chrome) +
- * §8 You-tab checklist: `backgroundGrouped` canvas, `WaScreenHeader` large
- * title, a profile-hero tall cell (`YouProfileCell` — ~56pt avatar + name +
- * community subtitle + chevron, matching the reference Settings screenshot's
- * avatar/name/status treatment; a local variant since `WaCell`'s icon column
- * is fixed at 28pt, too narrow for this avatar size), stacked
- * `WaInsetGroup`/`WaCell` cards below it, plain monochrome icons — never a
+ * §8 You-tab checklist, as recalibrated by WA-VISUAL-DELTAS.md §4: a
+ * `backgroundGrouped` canvas, no large title (S1.3 — WA's You tab shows
+ * floating buttons only), a CENTERED hero (100pt avatar disc, 28pt bold name,
+ * 15pt gray community subtitle) with the first card starting BELOW it, then
+ * stacked `WaInsetGroup`/`WaCell` cards with plain monochrome icons — never a
  * colored icon-chip background.
+ *
+ * §4.2/§4.3 note: the hero used to be an in-card "tall cell" (56pt avatar +
+ * name + chevron, styled after the iOS Settings screenshot). The reference
+ * You tab has no such row — the avatar and name float centered on the grouped
+ * background above the cards — so that layout is gone rather than kept
+ * alongside the new one.
  *
  * Every route and permission gate below is copied verbatim from
  * `ProfileMenu.tsx` / `ProfileScreen.tsx` / `(tabs)/_layout.tsx` (Admin tab
@@ -23,7 +28,6 @@
  */
 import React from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import Constants from "expo-constants";
@@ -38,28 +42,24 @@ import {
   WaCell,
   WaScreenHeader,
   WA_GROUP_SPACING,
-  WA_CELL_PADDING,
-  WA_ROW_AVATAR_GAP,
-  WA_AVATAR_LG,
-  WA_CHEVRON_SIZE,
+  WA_AVATAR_PROFILE,
+  WA_HERO_NAME_GAP,
+  WA_HERO_SUBTITLE_GAP,
+  WA_TYPE_HERO_NAME,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
   WA_TAB_CONTENT_CLEARANCE,
   waTabBarStripHeight,
 } from "@components/wa";
 
 /**
- * WaCell's icon column is a fixed 28pt (`WA_CELL_ICON_COLUMN`) — too narrow
- * for the ~56–60pt "tall cell" profile avatar the You-tab reference
- * screenshot shows (avatar + name + status), so this is a minimal local row
- * variant rather than a misuse of `WaCell`'s `iconNode` slot. It stays
- * consistent with the kit: `WA_AVATAR_LG` (the same 56pt avatar size §3.1
- * list rows use), `WA_CELL_PADDING`/`WA_ROW_AVATAR_GAP`/`WA_CHEVRON_SIZE`
- * for spacing, and it's meant to sit as the sole child of a `WaInsetGroup`
- * so it still gets the card fill/corner-radius/press-highlight for free.
+ * WaHero — §4.2's centered You-tab hero: a 100pt avatar disc, the user's name
+ * at 28pt bold, and the community name at 15pt gray beneath it, all centered
+ * on the grouped-gray canvas with no card behind them. Tapping it opens the
+ * user's own profile (the destination the old in-card hero row had); editing
+ * stays on the header's pencil button, as before.
  */
-const YOU_PROFILE_AVATAR_SIZE = WA_AVATAR_LG;
-const YOU_PROFILE_CELL_MIN_HEIGHT = 84;
-
-function YouProfileCell({
+function YouHero({
   name,
   imageUrl,
   subtitle,
@@ -72,28 +72,26 @@ function YouProfileCell({
   onPress: () => void;
   disabled?: boolean;
 }) {
-  const { colors, isDark } = useTheme();
-  const pressHighlight = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
+  const { colors } = useTheme();
+  const displayName = name || "Your profile";
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [pressed && { backgroundColor: pressHighlight }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${displayName}, view profile`}
+      style={({ pressed }) => [styles.hero, pressed && styles.heroPressed]}
+      testID="you-hero"
     >
-      <View style={[styles.profileRow, { minHeight: YOU_PROFILE_CELL_MIN_HEIGHT }]}>
-        <Avatar name={name} imageUrl={imageUrl} size={YOU_PROFILE_AVATAR_SIZE} />
-        <View style={styles.profileTextColumn}>
-          <Text style={[styles.profileName, { color: colors.text }]} numberOfLines={1}>
-            {name || "Your profile"}
-          </Text>
-          {subtitle ? (
-            <Text style={[styles.profileSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-              {subtitle}
-            </Text>
-          ) : null}
-        </View>
-        <Ionicons name="chevron-forward" size={WA_CHEVRON_SIZE} color={colors.textTertiary} />
-      </View>
+      <Avatar name={displayName} imageUrl={imageUrl} size={WA_AVATAR_PROFILE} />
+      <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={2}>
+        {displayName}
+      </Text>
+      {subtitle ? (
+        <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          {subtitle}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -184,24 +182,19 @@ export function YouScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile hero cell — WhatsApp Settings' avatar+name+status tall
-            cell (§8 You-tab checklist): ~56pt avatar, name + community
-            subtitle, chevron. Navigates to View Profile (ProfileMenu's
-            "View Profile" row / route); editing is the header's pencil
-            action. */}
-        <View style={styles.group}>
-          <WaInsetGroup>
-            <YouProfileCell
-              name={fullName}
-              imageUrl={user?.profile_photo}
-              subtitle={community?.name}
-              onPress={() => {
-                if (userId) router.push(`/(user)/profile/${userId}`);
-              }}
-              disabled={!userId}
-            />
-          </WaInsetGroup>
-        </View>
+        {/* Centered hero (§4.2) — 100pt avatar, 28pt bold name, 15pt gray
+            community subtitle, no card. Navigates to View Profile
+            (ProfileMenu's "View Profile" row / route); editing is the
+            header's pencil action. */}
+        <YouHero
+          name={fullName}
+          imageUrl={user?.profile_photo}
+          subtitle={community?.name}
+          onPress={() => {
+            if (userId) router.push(`/(user)/profile/${userId}`);
+          }}
+          disabled={!userId}
+        />
 
         {/* Switch community (ProfileMenu.handleSwitchCommunity) · Invite your church
             (ProfileMenu's whatsappShell-gated row — unconditional here since this whole
@@ -350,23 +343,24 @@ const styles = StyleSheet.create({
   group: {
     marginBottom: WA_GROUP_SPACING,
   },
-  profileRow: {
-    flexDirection: "row",
+  hero: {
     alignItems: "center",
-    paddingHorizontal: WA_CELL_PADDING,
+    paddingHorizontal: 24,
+    marginBottom: WA_GROUP_SPACING,
   },
-  profileTextColumn: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: WA_ROW_AVATAR_GAP,
-    marginRight: 8,
+  heroPressed: {
+    opacity: 0.7,
   },
-  profileName: {
-    fontSize: 17,
-    fontWeight: "600",
+  heroName: {
+    marginTop: WA_HERO_NAME_GAP,
+    fontSize: WA_TYPE_HERO_NAME,
+    fontWeight: WA_WEIGHT_BOLD,
+    textAlign: "center",
   },
-  profileSubtitle: {
-    fontSize: 15,
-    marginTop: 2,
+  heroSubtitle: {
+    marginTop: WA_HERO_SUBTITLE_GAP,
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: "400",
+    textAlign: "center",
   },
 });
