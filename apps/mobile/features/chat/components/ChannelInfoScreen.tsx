@@ -2700,6 +2700,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // whatsapp-shell hero — sized to the kit's WA_AVATAR_PROFILE (§6).
+  heroIconCircleWa: {
+    width: WA_AVATAR_PROFILE,
+    height: WA_AVATAR_PROFILE,
+    borderRadius: WA_AVATAR_PROFILE / 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   heroName: {
     marginTop: 16,
     fontSize: 22,
@@ -2718,6 +2726,15 @@ const styles = StyleSheet.create({
   heroSubtitle: {
     marginTop: 4,
     fontSize: 13,
+  },
+  // §2 "Community/group member count, hero subtitle": 15pt Regular.
+  heroSubtitleWa: {
+    marginTop: 4,
+    fontSize: 15,
+    fontWeight: "400",
+  },
+  waSection: {
+    marginTop: WA_GROUP_SPACING,
   },
   sharedPill: {
     flexDirection: "row",
