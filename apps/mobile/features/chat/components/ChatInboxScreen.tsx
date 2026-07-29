@@ -81,6 +81,12 @@ type InboxChannel = {
   unreadCount: number;
   isShared?: boolean;
   isEnabled?: boolean;
+  /**
+   * Whether the current user has muted this channel. Drives the flag-gated
+   * Chats-list hygiene in `GroupedInboxItem` (cluster caps + muted sink) —
+   * see docs/plans/church-migration-ui-redesign/README.md, "Channel hygiene".
+   */
+  isMuted?: boolean;
   meetingId?: Id<"meetings">;
   meetingScheduledAt?: number | null;
   /**
@@ -151,9 +157,15 @@ export function ChatInboxScreen({
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
   const hasCommunity = !!community?.id;
+  const whatsappShellEnabled = useWhatsappShell();
   // Community page entry point (W2, docs/plans/church-migration-ui-redesign
   // /README.md) — flag-gated, zero change when off.
-  const showCommunityEntry = useWhatsappShell() && hasCommunity;
+  const showCommunityEntry = whatsappShellEnabled && hasCommunity;
+  // Chats-first retitle (W1, same doc) — only the collapsing header's large
+  // and small titles change; the plain fallback header used by the loading/
+  // no-community states is left as "Inbox", mirroring showCommunityEntry's
+  // scope above.
+  const collapsingHeaderTitle = whatsappShellEnabled ? "Chats" : "Inbox";
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
   const { getInboxChannels, setInboxChannels } = useInboxCache();
   // Device network state. Drives the loading strategy: online we hold for a
@@ -624,14 +636,14 @@ export function ChatInboxScreen({
           style={[styles.largeTitleWrap, largeTitleStyle]}
           pointerEvents="none"
         >
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{collapsingHeaderTitle}</Text>
         </Animated.View>
         <Animated.Text
           style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
           numberOfLines={1}
           pointerEvents="none"
         >
-          Inbox
+          {collapsingHeaderTitle}
         </Animated.Text>
         {showCommunityEntry && (
           <Pressable
