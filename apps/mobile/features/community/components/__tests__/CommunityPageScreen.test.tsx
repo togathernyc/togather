@@ -14,8 +14,16 @@ import { useAuthenticatedQuery } from "@services/api/convex";
 
 const mockPush = jest.fn();
 const mockBack = jest.fn();
+const mockDismissAll = jest.fn();
+const mockCanDismiss = jest.fn(() => true);
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush, back: mockBack, canGoBack: () => true }),
+  useRouter: () => ({
+    push: mockPush,
+    back: mockBack,
+    canGoBack: () => true,
+    canDismiss: mockCanDismiss,
+    dismissAll: mockDismissAll,
+  }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -112,9 +120,11 @@ jest.mock("@services/api/convex", () => ({
       messaging: { channels: { getInboxChannels: "getInboxChannels" } },
       groups: { queries: { listForUser: "listForUser" } },
       admin: { settings: { getExploreDefaults: "getExploreDefaults" } },
+      communities: { getById: "getById" },
     },
   },
   useAuthenticatedQuery: jest.fn(),
+  useQuery: jest.fn(),
 }));
 
 jest.mock("@features/groups/hooks/useGroups", () => ({
@@ -214,5 +224,81 @@ describe("CommunityPageScreen — §5 landing anatomy", () => {
     const { getByLabelText } = render(<CommunityPageScreen />);
     fireEvent.press(getByLabelText("Back"));
     expect(mockBack).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The screen lives in the `(user)` route group, which `app/_layout.tsx`
+ * declares `presentation: "modal"`. Pushing a ROOT-stack route from inside
+ * that modal lands the destination *behind* it on iOS — the owner's
+ * device report ("taps render behind the popup modal not in front of it").
+ * Every out-of-`(user)` destination must therefore dismiss the modal stack
+ * before pushing, the same way useStartDirectMessage /
+ * NotificationFeedScreen / NativeRunSheetView already do.
+ */
+describe("CommunityPageScreen — dismisses the (user) modal before leaving it", () => {
+  /** Asserts dismissAll ran, and ran BEFORE the push (order matters). */
+  const expectDismissedThenPushed = (expected: unknown) => {
+    expect(mockDismissAll).toHaveBeenCalled();
+    expect(mockPush).toHaveBeenCalledWith(expected);
+    expect(mockDismissAll.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0],
+    );
+  };
+
+  it("dismisses before opening a group page", () => {
+    const { getByText } = render(<CommunityPageScreen />);
+    fireEvent.press(getByText("Worship Team"));
+    expectDismissedThenPushed("/groups/group-worship");
+  });
+
+  it("dismisses before opening the announcements channel", () => {
+    const { getByText } = render(<CommunityPageScreen />);
+    fireEvent.press(getByText("Announcements"));
+    expect(mockDismissAll).toHaveBeenCalled();
+    expect(mockDismissAll.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0],
+    );
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: "/inbox/group-announce/general",
+      }),
+    );
+  });
+
+  it("dismisses before the green CTA opens community search", () => {
+    const { getByLabelText } = render(<CommunityPageScreen />);
+    fireEvent.press(getByLabelText("Find your group"));
+    expectDismissedThenPushed("/(tabs)/search");
+  });
+
+  it("closes the ⋯ menu and dismisses before Search navigates out", () => {
+    const { getByLabelText, getByText, queryByText } = render(
+      <CommunityPageScreen />,
+    );
+    fireEvent.press(getByLabelText("More options"));
+    fireEvent.press(getByText("Search"));
+    // Menu closed (its other item is gone), and we left via a dismissAll.
+    expect(queryByText("Invite people")).toBeNull();
+    expectDismissedThenPushed("/(tabs)/search");
+  });
+
+  it("keeps Invite a plain push — it stays INSIDE the (user) modal stack", () => {
+    const { getByLabelText, getByText, queryByText } = render(
+      <CommunityPageScreen />,
+    );
+    fireEvent.press(getByLabelText("More options"));
+    fireEvent.press(getByText("Invite people"));
+    expect(queryByText("Search")).toBeNull();
+    expect(mockPush).toHaveBeenCalledWith("/(user)/invite");
+    expect(mockDismissAll).not.toHaveBeenCalled();
+  });
+
+  it("does not call dismissAll when there is nothing to dismiss", () => {
+    mockCanDismiss.mockReturnValueOnce(false);
+    const { getByText } = render(<CommunityPageScreen />);
+    fireEvent.press(getByText("Worship Team"));
+    expect(mockDismissAll).not.toHaveBeenCalled();
+    expect(mockPush).toHaveBeenCalledWith("/groups/group-worship");
   });
 });

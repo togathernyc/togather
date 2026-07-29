@@ -172,26 +172,74 @@ const WA_SEPARATOR_INSET_SUB = 16 + WA_SUB_AVATAR_SIZE + 12; // 72
 const WA_UTILITY_ICON_WELL = 36;
 
 /**
- * Small circular placeholder used in place of a photo for channel sub-rows:
- * a "#" glyph by default, a megaphone for the announcements channel.
+ * Avatar for a channel sub-row: the PARENT GROUP's avatar (photo when it has
+ * one, otherwise the group's pastel initials disc), rendered muted, with the
+ * channel's own glyph as a small corner badge.
  *
- * S5.2: these are structural glyphs, not entities, so they take the neutral
- * light-gray/dark-gray pair — never a tint, and never the community accent.
+ * Owner directive (2026-07-29). The previous neutral "#" disc gave every
+ * cluster's sub-rows the same anonymous gray blob, so a scan of the list
+ * couldn't tell which group a sub-row belonged to. Reusing the parent's
+ * avatar makes the cluster read as one family; the ~55% opacity plus the
+ * smaller size step is what keeps it subordinate to the cluster header
+ * directly above rather than competing with it.
+ *
+ * The badge deliberately stays at FULL opacity — it's the row's identity
+ * ("this is a channel, not the group itself"), and muting it too made it
+ * illegible at this size. It's also visually distinct from the slashed-bell
+ * mute badge `WaAvatar` renders (bottom-right ring vs. this filled disc), so a
+ * muted row still reads as muted.
  */
-function WaChannelIcon({ channelType, size, isDark }: { channelType: string; size: number; isDark: boolean }) {
+function WaChannelAvatar({
+  channelType,
+  size,
+  isDark,
+  group,
+  surfaceColor,
+}: {
+  channelType: string;
+  size: number;
+  isDark: boolean;
+  group: { _id: string; name: string; preview?: string | null };
+  surfaceColor: string;
+}) {
   const palette = waNeutralAvatarPalette(isDark);
+  const badgeSize = Math.round(size * 0.41); // 18 at the 44pt sub-row avatar
   return (
-    <View
-      style={[
-        styles.waIconCircle,
-        { width: size, height: size, borderRadius: size / 2, backgroundColor: palette.background },
-      ]}
-    >
-      {channelType === "announcements" ? (
-        <Ionicons name="megaphone" size={size * 0.45} color={palette.foreground} />
-      ) : (
-        <Text style={[styles.waIconGlyph, { color: palette.foreground, fontSize: size * 0.4 }]}>#</Text>
-      )}
+    <View style={[styles.waSubAvatarWrap, { width: size, height: size }]}>
+      <View style={styles.waSubAvatarMuted}>
+        <WaAvatar
+          imageUrl={group.preview}
+          label={group.name}
+          seed={group._id}
+          shape="circle"
+          size={size}
+        />
+      </View>
+      <View
+        style={[
+          styles.waChannelBadge,
+          {
+            width: badgeSize,
+            height: badgeSize,
+            borderRadius: badgeSize / 2,
+            backgroundColor: palette.background,
+            borderColor: surfaceColor,
+          },
+        ]}
+      >
+        {channelType === "announcements" ? (
+          <Ionicons name="megaphone" size={badgeSize * 0.55} color={palette.foreground} />
+        ) : (
+          <Text
+            style={[
+              styles.waIconGlyph,
+              { color: palette.foreground, fontSize: badgeSize * 0.62 },
+            ]}
+          >
+            #
+          </Text>
+        )}
+      </View>
     </View>
   );
 }
@@ -488,38 +536,14 @@ function GroupedInboxItemInner({
     [router, group._id]
   );
 
-  // Flag-on resource row: flat WhatsApp anatomy — small circular icon
-  // avatar, title, chevron-forward. No pill background, no external-link
-  // glyph (unlike the flag-off card below).
-  const renderResourceRowWa = useCallback(
-    (resource: InboxResourceData) => (
-      <Pressable
-        key={resource._id}
-        onPress={() => handleResourcePress(resource)}
-        style={({ pressed }) => [
-          styles.waRow,
-          { backgroundColor: colors.surface },
-          pressed && { backgroundColor: colors.surfaceSecondary },
-        ]}
-      >
-        <View
-          style={[
-            styles.waIconCircle,
-            { width: WA_SUB_AVATAR_SIZE, height: WA_SUB_AVATAR_SIZE, borderRadius: WA_SUB_AVATAR_SIZE / 2, backgroundColor: colors.surfaceSecondary },
-          ]}
-        >
-          <ResourceIcon name={resource.icon} size={16} color={colors.textSecondary} />
-        </View>
-        <View style={styles.waContent}>
-          <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
-            {resource.title}
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-      </Pressable>
-    ),
-    [colors, handleResourcePress]
-  );
+  // NOTE: there is deliberately no flag-on resource ROW. Under the whatsapp
+  // shell, inbox resources are lifted out of the list entirely and rendered as
+  // a horizontal chip row under the search pill in `ChatInboxScreen`'s header
+  // (owner directive, 2026-07-29): a full 76pt chat-anatomy row for "Giving" or
+  // "Bulletin" made a static link look like an unread conversation, and one
+  // per group meant they interleaved through the list instead of reading as one
+  // set of shortcuts. `resources` is still accepted here — the flag-off layout
+  // below is unchanged.
 
   // Resource sub-rows rendered under the group, styled like sub-channels with
   // the same L-connector. Shared between the single- and multi-channel layouts.
@@ -649,19 +673,6 @@ function GroupedInboxItemInner({
               colors={colors}
             />
           </Pressable>
-          {resources && resources.length > 0 && (
-            <>
-              <WaSeparator inset={WA_SEPARATOR_INSET_MAIN} borderColor={colors.border} />
-              {resources.map((resource, i) => (
-                <React.Fragment key={resource._id}>
-                  {renderResourceRowWa(resource)}
-                  {i < resources.length - 1 && (
-                    <WaSeparator inset={WA_SEPARATOR_INSET_SUB} borderColor={colors.border} />
-                  )}
-                </React.Fragment>
-              ))}
-            </>
-          )}
         </View>
       );
     }
@@ -826,7 +837,8 @@ function GroupedInboxItemInner({
     const clusterHasUnread = mainHasUnread || totalUnread > 0;
 
     // Sub-rows below the main row: secondary channels, then the "N more"
-    // row, then resources — one flat list, hairline-separated.
+    // row — one flat list, hairline-separated. (Resources are NOT here
+    // flag-on; see the note above `resourceRows`.)
     const subRows: React.ReactNode[] = [];
     secondaryChannels.forEach((channel) => {
       const channelHasUnread = channel.unreadCount > 0;
@@ -841,7 +853,13 @@ function GroupedInboxItemInner({
             isActiveGroup && activeChannelSlug === channel.slug && { backgroundColor: colors.surfaceSecondary },
           ]}
         >
-          <WaChannelIcon channelType={channel.channelType} size={WA_SUB_AVATAR_SIZE} isDark={isDark} />
+          <WaChannelAvatar
+            channelType={channel.channelType}
+            size={WA_SUB_AVATAR_SIZE}
+            isDark={isDark}
+            group={group}
+            surfaceColor={colors.surface}
+          />
           <View style={styles.waContent}>
             <Text
               style={[styles.waTitle, { color: colors.text }]}
@@ -899,10 +917,6 @@ function GroupedInboxItemInner({
         </Pressable>
       );
     }
-
-    (resources ?? []).forEach((resource) => {
-      subRows.push(renderResourceRowWa(resource));
-    });
 
     return (
       <View style={{ backgroundColor: colors.surface }}>
@@ -1420,6 +1434,27 @@ const styles = StyleSheet.create({
   },
   waIconGlyph: {
     fontWeight: "700",
+  },
+  // Channel sub-row avatar: same 12pt gap to the text column every other
+  // WaRow avatar uses, so sub-rows still align with the cluster header.
+  waSubAvatarWrap: {
+    marginRight: 12,
+  },
+  // The parent group's avatar, dimmed so the sub-row reads as subordinate to
+  // the cluster header above it rather than as a second full chat row.
+  waSubAvatarMuted: {
+    opacity: 0.55,
+  },
+  // Channel glyph badge riding the avatar's bottom-right corner. Full opacity
+  // (it's the row's identity marker) with a surface-colored ring so it stays
+  // legible against a photo.
+  waChannelBadge: {
+    position: "absolute",
+    right: -1,
+    bottom: -1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
   },
   // "Archived"-style utility row: an icon well, not a disc — no fill.
   waUtilityIconWell: {

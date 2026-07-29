@@ -223,3 +223,84 @@ Intentional Togather surface — but chrome must obey the system:
 
 Sequencing: WS-B and WS-A in parallel (disjoint files), then C/D/E on top of
 B's primitives. Screenshot pair required in every PR description.
+
+---
+
+## Device-feedback pass (2026-07-29, after WS-A…F landed)
+
+Everything above was verified on **Expo web**. The owner then ran the flag-on
+build on a real iPhone and three of the four items below were invisible on web
+by construction. The lesson is now a standing rule for this plan: **web parity
+is not device parity — anything touching Reanimated, `resizeMode`, or a native
+view must be checked on a device before it counts as done** (CLAUDE.md's
+native-media rule, extended to layout).
+
+### D1. Never animate a LAYOUT prop from a Reanimated worklet (P0)
+
+The flag-on Chats header reserved its large-title and search-pill space by
+animating their `height`. On web the browser discards the invalid animated
+value and the static CSS height wins, so it looked perfect. On iOS Fabric
+(reanimated **4.1.6** — a known-broken release; do NOT bump it) animated layout
+props race the ShadowTree commit: **at rest the header rendered already
+collapsed**, so the first rows sat under the floating buttons, and expanding it
+painted through row content.
+
+The pattern flag-on surfaces must use instead:
+
+1. The header is `position: absolute` over the scroll view — it takes no layout
+   space, so nothing about it can race a layout commit.
+2. Its height is reserved by a **plain React `paddingTop`** on the scroll
+   view's `contentContainerStyle`, plus a `minHeight` so a short list can still
+   scroll far enough to finish the collapse.
+3. The collapse animates **`opacity` and `transform` only**.
+4. The overlay is `pointerEvents="box-none"`.
+5. Anything that used to sit between the header and the list (banners, chips)
+   moves into `ListHeaderComponent`, or it gets painted over.
+
+`features/chat/components/waInboxHeaderGeometry.ts` holds the geometry and both
+animated styles as pure functions so "no layout key in a flag-on animated
+style" is a unit test, not a convention. Copy that shape for any other
+collapsing header.
+
+### D2. `resizeMode="repeat"` does not tile on iOS
+
+The chat wallpaper used one absolute-fill `<Image resizeMode="repeat">`. RN-Web
+maps that to `background-repeat: repeat`; **UIKit stretched it instead**, so a
+low-alpha doodle sheet smeared into what read as a flat cream tint. `ChatWallpaper`
+now lays out an explicit `ceil(w/256) x ceil(h/256)` grid of 256pt images. The
+generator emits a 256px tile with motifs in the reference's ~40-55pt band, each
+wrapped across all nine tile offsets so the repeat is seamless, at 0.10 (light)
+/ 0.07 (dark) ink — the old 0.08/0.05 were invisible on a real screen.
+
+### D3. Scrolled-state nav scrim (amends S1.1)
+
+S1.1 said "no opaque nav bars" and that is still right at rest — but with
+content scrolling *under* floating buttons, rows smear through the status bar.
+Flag-on Chats paints a static-height scrim behind the nav zone
+(`WA_NAV_SCRIM_LIGHT` / `WA_NAV_SCRIM_DARK`, 0.92) whose **opacity** fades in
+with the collapse. Deliberately **not** in any kit header component: Events and
+You render their headers in flow, so a shared scrim would band them permanently.
+
+### D4. Owner product directives (amend S2.5, §1.5, §1)
+
+- **S2.5 is superseded.** Flag-on tab order is **Groups · Events · Chats ·
+  Prayer · You**, with Chats dead-centre (Groups · Events · Chats · You when
+  the community has prayer off). Groups is the existing `search` route, no
+  longer hidden under the shell, with a neutral people glyph instead of the map
+  pin. Group discovery is the tab churches actually navigate from.
+- **§1.5 is superseded.** Channel sub-rows drop the neutral "#" disc for the
+  **parent group's avatar at ~55% opacity** with the channel glyph as a
+  full-opacity corner badge. The anonymous gray disc made every cluster's
+  sub-rows identical; the parent avatar plus the 44pt size step is what makes a
+  cluster read as one family.
+- **Resources leave the list.** They are now a horizontal strip of neutral
+  WhatsApp-style filter chips (34pt, fully rounded, gray fill, 15pt dark label)
+  under the search pill, inside the collapsible block. A 76pt chat-anatomy row
+  for "Giving" read as an unread conversation, and one set per group scattered
+  them down the list.
+- **Community logo in the header circle.** It always fell back to initials
+  because `AuthProvider` builds its community snapshot from the profile query's
+  `activeCommunity*` fields, which carry name and church features but **no
+  logo**. The Chats header reads the logo from the community doc directly
+  rather than widening the disk-cached, app-wide auth snapshot — if another
+  surface needs it, widen the snapshot there rather than repeating this query.

@@ -205,6 +205,22 @@ export const WA_TAB_ISLAND_BOTTOM_GAP = 8;
 export const WA_TAB_ISLAND_FILL_LIGHT = 'rgba(255,255,255,0.97)';
 /** Dark-mode island fill. */
 export const WA_TAB_ISLAND_FILL_DARK = 'rgba(31,44,52,0.97)';
+/**
+ * Scrim painted behind the floating nav zone once a screen's content has
+ * scrolled up under it (WA-VISUAL-DELTAS.md S1.1: the circles stay floating,
+ * but the strip they sit in stops being see-through so rows don't smear
+ * through the status bar). Same near-opaque rgba treatment as the tab island
+ * — no `expo-blur`, per ADR-013.
+ *
+ * Deliberately NOT wired into any kit header component: only the Chats list
+ * scrolls its content under a floating nav zone. Events/You render their
+ * headers in flow, so a kit-level scrim would paint a permanent band there.
+ * `ChatInboxScreen` is the sole consumer.
+ */
+export const WA_NAV_SCRIM_LIGHT = 'rgba(255,255,255,0.92)';
+/** Dark-mode nav scrim. */
+export const WA_NAV_SCRIM_DARK = 'rgba(17,27,33,0.92)';
+
 /** Tab bar icon size (outline; filled variant when active). */
 export const WA_TAB_ICON_SIZE = 24;
 /** Gap between a tab's icon and its label. */
