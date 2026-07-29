@@ -40,8 +40,6 @@ import {
   WaLargeTitle,
   WaSeparator,
   WA_LIST_SEPARATOR_INSET,
-  WA_LIST_AVATAR,
-  WA_AVATAR_SQUIRCLE_RATIO,
   WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
   WA_TAB_CONTENT_CLEARANCE,
@@ -63,6 +61,7 @@ import { EventRowCommunityWide } from './EventRowCommunityWide';
 import { FeaturedEventTile } from './FeaturedEventTile';
 import { CommunityWideEventSheet } from './CommunityWideEventSheet';
 import { EventsMapView } from './EventsMapView';
+import { WaEventThumbnail } from './WaEventThumbnail';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 import type { Id } from '@services/api/convex';
 
@@ -203,29 +202,9 @@ function HorizontalTileRow({ title, cards, colors }: HorizontalTileRowProps) {
  * union `Section`/`HorizontalTileRow` above already destructure ad hoc. */
 type EventTabCard = any;
 
-/**
- * Fallback thumbnail for an event with no cover image: a neutral rounded-square
- * tile with a monochrome calendar glyph. Deliberately NOT accent-tinted —
- * S5.1 keeps green for the CTA pill, action links and unread signals only, and
- * a tinted disc on every image-less row was the loudest color leak on this
- * screen. Square (not circle) so it reads as the same media slot as a real
- * cover photo, per S6's "generous thumbnails".
- */
-function WaEventThumbnail({ background, tint }: { background: string; tint: string }) {
-  return (
-    <View
-      style={[styles.waEventThumbnail, { backgroundColor: background }]}
-      testID="wa-event-thumbnail"
-    >
-      <Ionicons name="calendar-outline" size={24} color={tint} />
-    </View>
-  );
-}
-
 interface WaEventRowProps {
   card: EventTabCard;
   colors: ReturnType<typeof useTheme>['colors'];
-  isDark: boolean;
   accent: string;
   userTimezone: string;
   onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
@@ -234,7 +213,6 @@ interface WaEventRowProps {
 function WaEventRow({
   card,
   colors,
-  isDark,
   accent,
   userTimezone,
   onCommunityWideTap,
@@ -278,12 +256,7 @@ function WaEventRow({
       avatar={
         coverImage
           ? { imageUrl: coverImage, label: title, shape: 'squircle' }
-          : (
-              <WaEventThumbnail
-                background={isDark ? '#2A3942' : '#EFEFEF'}
-                tint={colors.textSecondary}
-              />
-            )
+          : <WaEventThumbnail />
       }
       title={title}
       subtitle={subtitle}
@@ -322,7 +295,6 @@ interface WaEventSectionProps {
   title: string;
   cards: EventTabCard[];
   colors: ReturnType<typeof useTheme>['colors'];
-  isDark: boolean;
   accent: string;
   userTimezone: string;
   onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
@@ -332,7 +304,6 @@ function WaEventSection({
   title,
   cards,
   colors,
-  isDark,
   accent,
   userTimezone,
   onCommunityWideTap,
@@ -349,7 +320,6 @@ function WaEventSection({
             <WaEventRow
               card={card}
               colors={colors}
-              isDark={isDark}
               accent={accent}
               userTimezone={userTimezone}
               onCommunityWideTap={onCommunityWideTap}
@@ -947,7 +917,6 @@ export function EventsScreen() {
                 title="My events"
                 cards={myEvents}
                 colors={colors}
-                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -956,7 +925,6 @@ export function EventsScreen() {
                 title="Next up"
                 cards={nextUp}
                 colors={colors}
-                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -965,7 +933,6 @@ export function EventsScreen() {
                 title="This week"
                 cards={thisWeek}
                 colors={colors}
-                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -974,7 +941,6 @@ export function EventsScreen() {
                 title="Later"
                 cards={laterCards}
                 colors={colors}
-                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -1160,15 +1126,6 @@ const styles = StyleSheet.create({
     fontWeight: WA_WEIGHT_SEMIBOLD,
     paddingHorizontal: WA_GROUP_MARGIN,
     paddingBottom: 6,
-  },
-  // S6 "generous thumbnails": the same 58pt box a cover photo fills, as a
-  // rounded square with a monochrome glyph.
-  waEventThumbnail: {
-    width: WA_LIST_AVATAR,
-    height: WA_LIST_AVATAR,
-    borderRadius: WA_LIST_AVATAR * WA_AVATAR_SQUIRCLE_RATIO,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   // Right-aligned gray secondary fact + vertically centered chevron (S3.3/S6).
   waRowTrailing: {
