@@ -111,6 +111,7 @@ import {
   WaActionCard,
   WaActionCardRow,
   waAvatarPalette,
+  waAvatarInitials,
   WA_GROUP_SPACING,
   WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
@@ -619,9 +620,22 @@ export function GroupInfoScreen() {
               style={styles.heroAvatar}
               optimizedWidth={Math.min(WA_AVATAR_PROFILE * 2, 400)}
               placeholder={{
-                type: "initials",
-                name: groupName,
+                // `custom`, not `initials`: AppImage's initials variant
+                // hardcodes white text, but the pastel palette pairs its
+                // light fill with a darker same-hue ink (S5.2).
+                type: "custom",
                 backgroundColor: waAvatarPalette(groupName, isDark).background,
+                render: () => (
+                  <Text
+                    style={{
+                      color: waAvatarPalette(groupName, isDark).foreground,
+                      fontSize: WA_AVATAR_PROFILE * 0.4,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {waAvatarInitials(groupName)}
+                  </Text>
+                ),
               }}
             />
           </TouchableOpacity>
