@@ -179,10 +179,10 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
   });
 
   it("strips the TextInput's own border and fill (the pill owns them)", () => {
-    const { getByPlaceholderText } = render(
+    const { getByTestId } = render(
       <MessageInput channelId={'test-channel' as any} />
     );
-    const style = StyleSheet.flatten(getByPlaceholderText('Message...').props.style);
+    const style = StyleSheet.flatten(getByTestId('wa-composer-input').props.style);
     expect(style.borderWidth).toBe(0);
     expect(style.backgroundColor).toBe('transparent');
     expect(style.minHeight).toBe(WA_FIELD_HEIGHT);
@@ -211,11 +211,11 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
   });
 
   it('floats the bar on the wallpaper: translucent fill, no hairline', () => {
-    const { getByPlaceholderText } = render(
+    const { getByTestId } = render(
       <MessageInput channelId={'test-channel' as any} />
     );
     // Walk up from the input to the outermost composer container.
-    let node: any = getByPlaceholderText('Message...');
+    let node: any = getByTestId('wa-composer-input');
     let barStyle: any = null;
     while (node) {
       const style = StyleSheet.flatten(node.props?.style);
