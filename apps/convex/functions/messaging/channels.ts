@@ -1238,6 +1238,8 @@ export const listGroupChannels = query({
     isArchived: v.boolean(),
     isMember: v.boolean(),
     role: v.optional(v.string()),
+    /** Caller's chatChannelMembers.isMuted — whatsapp-shell mute state. */
+    isMuted: v.optional(v.boolean()),
     unreadCount: v.number(),
     isPinned: v.boolean(),
     lastMessageAt: v.optional(v.number()),
