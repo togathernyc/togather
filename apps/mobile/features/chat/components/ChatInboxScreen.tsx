@@ -1583,22 +1583,30 @@ export function ChatInboxScreen({
         {whatsappShellEnabled ? renderWaCollapsingHeader() : renderCollapsingHeader()}
         {isSearching ? (
           // Flag-on the header is an overlay, so results would start underneath
-          // it. Searching also pins the header expanded (`collapseEnabled`
-          // is false), so the offset is the full expanded height.
-          <View
-            style={[
-              styles.list,
-              whatsappShellEnabled && {
-                paddingTop: waHeaderExpandedHeight(waInsetTop, waChipsHeight),
-              },
-            ]}
-          >
+          // it — offset them by its full expanded height (searching pins the
+          // header expanded: `collapseEnabled` is false while `isSearching`).
+          // Flag-off the header is in flow, so the results render bare exactly
+          // as before, with no extra wrapper in the tree.
+          whatsappShellEnabled ? (
+            <View
+              style={[
+                styles.list,
+                { paddingTop: waHeaderExpandedHeight(waInsetTop, waChipsHeight) },
+              ]}
+            >
+              <InboxSearchResults
+                query={trimmedSearch}
+                results={searchResults?.results}
+                truncated={searchResults?.truncated}
+              />
+            </View>
+          ) : (
             <InboxSearchResults
               query={trimmedSearch}
               results={searchResults?.results}
               truncated={searchResults?.truncated}
             />
-          </View>
+          )
         ) : (
           <>
             {/* Flag-off these sit above the list, between the in-flow header
