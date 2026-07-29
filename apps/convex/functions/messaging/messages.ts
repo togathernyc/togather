@@ -274,6 +274,84 @@ export const getMessage = query({
   },
 });
 
+// ============================================================================
+// WhatsApp-shell reply/thread derivation (flag-on `getMessages` only)
+// ============================================================================
+
+/**
+ * How many of a thread's newest live replies we read per parent. Enough to
+ * answer the activation question (0 / 1 / many) AND to fill the summary pill's
+ * three overlapping replier avatars even when the same person replied several
+ * times in a row.
+ */
+const WA_THREAD_PROBE = 10;
+
+/** A parent's newest live (non-deleted) replies, newest-first. */
+type WaThreadProbe = Doc<"chatMessages">[];
+
+/**
+ * Read a parent message's newest live replies, memoized per handler run.
+ *
+ * Called once per replied-to message in the page AND once per reply candidate
+ * (to decide whether that reply is the thread's only one), so the cache is what
+ * keeps this at one indexed read per *thread* rather than per row.
+ *
+ * Note this is keyed on `parentMessageId` alone and never reads the parent doc,
+ * so it still answers correctly for a reply whose parent was deleted.
+ */
+async function probeThread(
+  ctx: QueryCtx,
+  cache: Map<string, WaThreadProbe>,
+  parentMessageId: Id<"chatMessages">,
+): Promise<WaThreadProbe> {
+  const cached = cache.get(parentMessageId);
+  if (cached) return cached;
+  const replies = await ctx.db
+    .query("chatMessages")
+    .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", parentMessageId))
+    .filter((q) => q.eq(q.field("isDeleted"), false))
+    .order("desc")
+    .take(WA_THREAD_PROBE);
+  cache.set(parentMessageId, replies);
+  return replies;
+}
+
+/**
+ * The quoted-parent context rendered INSIDE a reply's own bubble (the §5
+ * "reply-quote bar"), denormalized here at read time.
+ *
+ * This is what replaces the old floating "ghost" pointer's pagination job: the
+ * reply carries its parent's sender + snippet, so a reply can render its quote
+ * correctly even when the parent is hundreds of messages further up and not in
+ * the loaded window. A missing (hard-deleted) or soft-deleted parent yields
+ * `parentDeleted: true`, which the client renders as WhatsApp's "Original
+ * message was deleted" quote rather than a blank strip.
+ */
+async function buildReplyQuote(
+  ctx: QueryCtx,
+  parentMessageId: Id<"chatMessages">,
+) {
+  const parent = await ctx.db.get(parentMessageId);
+  if (!parent || parent.isDeleted) {
+    return {
+      parentMessageId,
+      parentDeleted: true,
+      parentSenderId: parent?.senderId,
+      parentSenderName: parent?.senderName,
+      parentContent: "",
+      parentAttachmentType: undefined as string | undefined,
+    };
+  }
+  return {
+    parentMessageId,
+    parentDeleted: false,
+    parentSenderId: parent.senderId,
+    parentSenderName: parent.senderName,
+    parentContent: parent.content ?? "",
+    parentAttachmentType: parent.attachments?.[0]?.type,
+  };
+}
+
 /**
  * Get messages for a channel with pagination.
  */
@@ -285,6 +363,22 @@ export const getMessages = query({
     cursor: v.optional(v.string()),
     /** Group context from the chat route (required for shared-channel visibility rules). */
     viewingGroupId: v.optional(v.id("groups")),
+    /**
+     * WhatsApp-shell reply rendering (flag-on clients only; see
+     * `useWhatsappShell`). Flag-off callers omit it and get byte-identical
+     * behaviour: every reply filtered out of the timeline, no decoration.
+     *
+     * When true:
+     *  - a reply is ADMITTED to the timeline when it is its parent's ONLY live
+     *    reply, and carries `replyQuote` (the quoted-parent context for the
+     *    in-bubble §5 quote bar);
+     *  - a message with TWO OR MORE live replies carries `threadSummary` (the
+     *    one collapsed "N replies · <time> ›" pill) and its replies stay out of
+     *    the timeline.
+     * The 1-vs-2 boundary is the activation rule; see MessageList's flag-on
+     * timeline for the full rationale and edge cases.
+     */
+    waReplies: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -444,6 +538,8 @@ export const getMessages = query({
     const OVER_FETCH_MULTIPLIER = 3;
     const fetchBatch = limit * OVER_FETCH_MULTIPLIER;
     const accepted: Doc<"chatMessages">[] = [];
+    // One entry per thread touched while scanning this page — see `probeThread`.
+    const threadProbes = new Map<string, WaThreadProbe>();
     // Track all message IDs we've already processed across batches to avoid
     // duplicates when using lte on the same timestamp boundary.
     const processedIds = new Set<string>(cursorSeenIds ?? []);
@@ -483,7 +579,18 @@ export const getMessages = query({
 
         // Filter: top-level, not deleted, not blocked
         if (m.isDeleted) continue;
-        if (m.parentMessageId) continue;
+        if (m.parentMessageId) {
+          // Flag-off (and any caller that omits `waReplies`): replies never
+          // appear in the timeline — they live only in the thread screen.
+          if (!args.waReplies) continue;
+          // Flag-on: admit a reply only while it is its parent's SOLE live
+          // reply. Comparing identity (not just `length === 1`) is what makes
+          // this order-independent: whichever reply is the only one left
+          // standing is the one that renders inline, no matter which arrived
+          // first or which sibling was deleted.
+          const siblings = await probeThread(ctx, threadProbes, m.parentMessageId);
+          if (siblings.length !== 1 || siblings[0]._id !== m._id) continue;
+        }
         if (m.senderId && blockedUserIds.has(m.senderId)) continue;
 
         accepted.push(m);
@@ -551,8 +658,148 @@ export const getMessages = query({
     const withLiveProfile = await attachLiveSenderProfile(ctx, chronologicalMessages);
     const decorated = await attachSenderNotifsDisabled(ctx, withLiveProfile);
 
+    if (!args.waReplies) {
+      return {
+        messages: decorated,
+        hasMore,
+        cursor,
+      };
+    }
+
+    // --- Flag-on reply/thread decoration -----------------------------------
+    //
+    // Per-thread reads are already memoized from the scan above, so a message
+    // that floated a probe while being admitted doesn't pay for a second one.
+    //
+    // The unread dot on a summary pill is an APPROXIMATION: there is no
+    // per-thread read state in the schema (only per-channel `chatReadState`),
+    // so "unread" means "a reply landed after you last read this channel".
+    // Good enough to draw the eye; not exact per-thread bookkeeping.
+    const readState = await ctx.db
+      .query("chatReadState")
+      .withIndex("by_channel_user", (q) =>
+        q.eq("channelId", args.channelId).eq("userId", userId),
+      )
+      .first();
+    const lastReadAt = readState?.lastReadAt ?? 0;
+
+    // Pass 1: work out what each row needs, collecting every user whose LIVE
+    // name/avatar we'll have to resolve (quoted parents' authors + summary
+    // repliers). Message rows snapshot those at send time and the timeline
+    // already overrides them from `users` (`attachLiveSenderProfile`) — the
+    // quote bar and pill must not regress to stale snapshots.
+    type Plan =
+      | { row: (typeof decorated)[number]; kind: "plain" }
+      | {
+          row: (typeof decorated)[number];
+          kind: "reply";
+          quote: Awaited<ReturnType<typeof buildReplyQuote>>;
+        }
+      | {
+          row: (typeof decorated)[number];
+          kind: "thread";
+          replies: WaThreadProbe;
+        };
+    const plans: Plan[] = [];
+    const liveUserIds = new Set<Id<"users">>();
+
+    for (const m of decorated) {
+      if (m.parentMessageId) {
+        const quote = await buildReplyQuote(ctx, m.parentMessageId);
+        if (quote.parentSenderId) liveUserIds.add(quote.parentSenderId);
+        plans.push({ row: m, kind: "reply", quote });
+        continue;
+      }
+      if (!m.threadReplyCount) {
+        plans.push({ row: m, kind: "plain" });
+        continue;
+      }
+      const replies = await probeThread(ctx, threadProbes, m._id);
+      // 0 live replies (all deleted) or exactly 1 (which renders inline as its
+      // own bubble) → no pill. The pill is strictly the "there's more in this
+      // conversation" affordance.
+      if (replies.length < 2) {
+        plans.push({ row: m, kind: "plain" });
+        continue;
+      }
+      for (const reply of replies) {
+        if (reply.senderId) liveUserIds.add(reply.senderId);
+      }
+      plans.push({ row: m, kind: "thread", replies });
+    }
+
+    const liveUserList = Array.from(liveUserIds);
+    const liveUserDocs = await Promise.all(liveUserList.map((id) => ctx.db.get(id)));
+    const liveUsers = new Map<Id<"users">, Doc<"users">>();
+    liveUserList.forEach((id, i) => {
+      const doc = liveUserDocs[i];
+      if (doc) liveUsers.set(id, doc);
+    });
+    const liveName = (id: Id<"users"> | undefined, fallback: string | undefined) => {
+      const doc = id ? liveUsers.get(id) : undefined;
+      return doc ? getDisplayName(doc.firstName, doc.lastName) : fallback;
+    };
+    const livePhoto = (id: Id<"users"> | undefined) => {
+      const doc = id ? liveUsers.get(id) : undefined;
+      return doc?.profilePhoto ? (getMediaUrl(doc.profilePhoto) ?? undefined) : undefined;
+    };
+
+    // Pass 2: attach.
+    const withThreads = plans.map((plan) => {
+      if (plan.kind === "plain") return plan.row;
+      if (plan.kind === "reply") {
+        return {
+          ...plan.row,
+          replyQuote: {
+            ...plan.quote,
+            parentSenderName: liveName(
+              plan.quote.parentSenderId,
+              plan.quote.parentSenderName,
+            ),
+          },
+        };
+      }
+      const repliers: Array<{
+        userId?: Id<"users">;
+        name?: string;
+        profilePhoto?: string;
+      }> = [];
+      const seenRepliers = new Set<string>();
+      for (const reply of plan.replies) {
+        const key = reply.senderId ?? `anon:${reply._id}`;
+        if (seenRepliers.has(key)) continue;
+        seenRepliers.add(key);
+        repliers.push({
+          userId: reply.senderId,
+          name: liveName(reply.senderId, reply.senderName),
+          profilePhoto: livePhoto(reply.senderId),
+        });
+        if (repliers.length === 3) break;
+      }
+      return {
+        ...plan.row,
+        threadSummary: {
+          // `threadReplyCount` is a monotonic send counter (never decremented
+          // when a reply is deleted), so it can overstate a thread. The probe
+          // is exact up to its cap — trust it while it is, and only fall back
+          // to the stored counter for threads deeper than the probe.
+          replyCount:
+            plan.replies.length < WA_THREAD_PROBE
+              ? plan.replies.length
+              : Math.max(plan.replies.length, plan.row.threadReplyCount ?? 0),
+          lastReplyAt: plan.replies[0].createdAt,
+          // Your own reply is never "unread" — otherwise every thread you
+          // just posted in would light up until you re-read the channel.
+          hasUnread: plan.replies.some(
+            (r) => r.createdAt > lastReadAt && r.senderId !== userId,
+          ),
+          repliers,
+        },
+      };
+    });
+
     return {
-      messages: decorated,
+      messages: withThreads,
       hasMore,
       cursor,
     };
