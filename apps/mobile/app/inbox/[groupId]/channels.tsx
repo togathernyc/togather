@@ -10,10 +10,10 @@
  * pending). Leaders get a footer link to the existing create-channel screen.
  *
  * Reached from the group page's CHANNELS card ("See all channels", flag-gated
- * on whatsapp-shell) and, per the redesign brief, the inbox's "N more
- * channels" collapse row. The route itself is harmless when unlinked, so it
- * isn't flag-gated — only its entry points are (per the redesign's rollout
- * rule: new routes are safe to ship unlinked).
+ * on whatsapp-shell) and the inbox's "N more channels" collapse row. The
+ * route also guards itself (defense in depth): deep links or stale
+ * navigation state bypass flag-gated entry points, so the wrapper below
+ * redirects when the shell is off.
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -25,7 +25,7 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -40,6 +40,7 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
 import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "@features/groups/hooks/useGroupChannels";
+import { useWhatsappShellState } from "@hooks/useWhatsappShell";
 
 type JoinableChannel = {
   channelId: Id<"chatChannels">;
@@ -49,7 +50,20 @@ type JoinableChannel = {
   hasPendingRequest: boolean;
 };
 
-export default function ChannelDirectoryScreen() {
+export default function ChannelDirectoryRoute() {
+  // Defense in depth: honor the flag at the route itself, not just its
+  // flag-gated entry points (deep links can bypass entries). Wrapper keeps
+  // the screen's hook order intact across flag flips.
+  const { groupId } = useLocalSearchParams<{ groupId: string }>();
+  const { enabled, loaded } = useWhatsappShellState();
+  if (!loaded) return null;
+  if (!enabled) {
+    return <Redirect href={(groupId ? `/inbox/${groupId}` : "/inbox") as any} />;
+  }
+  return <ChannelDirectoryScreen />;
+}
+
+function ChannelDirectoryScreen() {
   const { groupId } = useLocalSearchParams<{ groupId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();

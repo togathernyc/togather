@@ -30,17 +30,28 @@ const POSTHOG_FLAG_KEY = "whatsapp-shell";
 const FORCE_ON_FLAG_KEY = "whatsapp-shell-on";
 const KILL_SWITCH_FLAG_KEY = "whatsapp-shell-kill";
 
-export function useWhatsappShell(): boolean {
+/**
+ * Loading-aware variant for route guards: screens that must redirect when
+ * the shell is off should wait for `loaded` before deciding, or a flag-on
+ * user gets bounced during the initial flag fetch.
+ */
+export function useWhatsappShellState(): { enabled: boolean; loaded: boolean } {
   const posthogEnabled = useFeatureFlag(POSTHOG_FLAG_KEY);
   const { enabled: forceOnEnabled, loaded: forceOnLoaded } =
     useConvexFeatureFlag(FORCE_ON_FLAG_KEY);
   const { enabled: killSwitchEnabled, loaded: killSwitchLoaded } =
     useConvexFeatureFlag(KILL_SWITCH_FLAG_KEY);
 
-  // Convex flag state isn't confirmed yet — stay on the current shell
-  // rather than risk showing the new one before we know it's not been
-  // force-disabled (or flashing it off for force-on users).
-  if (!killSwitchLoaded || !forceOnLoaded) return false;
+  const loaded = killSwitchLoaded && forceOnLoaded;
+  return {
+    loaded,
+    // Convex flag state isn't confirmed yet — stay on the current shell
+    // rather than risk showing the new one before we know it's not been
+    // force-disabled (or flashing it off for force-on users).
+    enabled: loaded && (posthogEnabled || forceOnEnabled) && !killSwitchEnabled,
+  };
+}
 
-  return (posthogEnabled || forceOnEnabled) && !killSwitchEnabled;
+export function useWhatsappShell(): boolean {
+  return useWhatsappShellState().enabled;
 }
