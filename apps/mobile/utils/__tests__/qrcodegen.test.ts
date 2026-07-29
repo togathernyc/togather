@@ -83,3 +83,22 @@ describe('qrModules', () => {
     expect(() => qrModules(tooLong)).toThrow(/too long/i);
   });
 });
+
+describe('golden vector', () => {
+  // Full-matrix regression check: this exact output was verified scannable
+  // (independent zbar decode round-trip during PR #637 review). A change in
+  // ECC, interleaving, masking, or format-info placement — which the
+  // structural tests above cannot see — changes this hash.
+  test('known input reproduces the verified matrix', () => {
+    const mods = qrModules('https://livinggrace.togather.nyc');
+    expect(mods.length).toBe(29); // version 3
+
+    const s = mods.map((r) => r.map((b) => (b ? '1' : '0')).join('')).join('|');
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    expect(h.toString(16)).toBe('a03d811b');
+  });
+});

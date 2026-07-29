@@ -57,8 +57,10 @@ export function InviteKitScreen() {
     community?.subdomain ? DOMAIN_CONFIG.communityUrl(community.subdomain) : null;
   const communityName = community?.name || 'Our church';
 
+  // Copy per the brief's Rule 3: the handoff message says the community-scope
+  // pitch explicitly ("your church gets its own app").
   const whatsappMessage = communityUrl
-    ? `Hi everyone! \u{1F44B} ${communityName} is moving to Togather — same groups, plus events & RSVPs. Join here: ${communityUrl}. Sign in with your phone number and you're in.`
+    ? `Hi everyone! \u{1F44B} ${communityName} is moving to Togather — our church gets its own app: same groups, plus events & RSVPs, with none of the other-group noise. Join here: ${communityUrl}. Sign in with your phone number and you're in.`
     : null;
 
   const myGroups = useAuthenticatedQuery(
@@ -75,8 +77,12 @@ export function InviteKitScreen() {
   }, [myGroups]);
 
   const handleCopy = async (text: string, label: string) => {
-    await Clipboard.setStringAsync(text);
-    Alert.alert('Copied', `${label} copied to clipboard.`);
+    try {
+      await Clipboard.setStringAsync(text);
+      Alert.alert('Copied', `${label} copied to clipboard.`);
+    } catch {
+      Alert.alert('Copy failed', 'Please try again.');
+    }
   };
 
   const handleShare = async (message: string, url?: string) => {

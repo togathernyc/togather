@@ -559,7 +559,11 @@ export function GroupInfoScreen() {
             (announcement-group + non-member guard). */}
         {((group.members && group.members.length > 0) ||
           (group.leaders && group.leaders.length > 0) ||
-          (group.members_count && group.members_count > 0)) && (
+          (group.members_count && group.members_count > 0) ||
+          // Never let pending requests vanish just because membership
+          // signals are empty — GroupDetailScreen shows its Requests tile
+          // independently of the members card.
+          showRequestsBadge) && (
           <View style={sectionStyles.section}>
             <Text style={[sectionStyles.sectionHeader, { color: colors.textSecondary }]}>
               MEMBERS{group.members_count ? ` · ${group.members_count}` : ""}

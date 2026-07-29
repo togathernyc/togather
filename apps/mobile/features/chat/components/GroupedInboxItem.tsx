@@ -416,7 +416,13 @@ function GroupedInboxItemInner({
 
   // Single channel display - simple row (same layout as original ChatInboxScreen)
   if (isSingleChannel && primaryChannel) {
-    const hasUnread = primaryChannel.unreadCount > 0;
+    // Under the whatsapp shell, a muted channel's unread doesn't light up the
+    // row or show a numeric badge — a quiet dot marks the activity instead
+    // (hygiene rule 2), mirroring the multi-channel cluster path below.
+    const primaryMuted =
+      whatsappShellEnabled && primaryChannel.isMuted === true;
+    const hasUnread = primaryChannel.unreadCount > 0 && !primaryMuted;
+    const hasMutedUnread = primaryMuted && primaryChannel.unreadCount > 0;
     const isActive = isActiveGroup && activeChannelSlug === primaryChannel.slug;
     // In serving mode a team's channels are flattened into separate rows, so
     // title each by its own `#team-channel` identity rather than the shared
@@ -521,6 +527,10 @@ function GroupedInboxItemInner({
               {primaryChannel.unreadCount > 99 ? "99+" : primaryChannel.unreadCount}
             </Text>
           </View>
+        ) : hasMutedUnread ? (
+          <View
+            style={[styles.mutedUnreadDot, { backgroundColor: colors.textTertiary }]}
+          />
         ) : null}
       </Pressable>
       {resourceRows}
@@ -572,7 +582,11 @@ function GroupedInboxItemInner({
         (isExpanded || ch.unreadCount > 0 || (isActiveGroup && activeChannelSlug === ch.slug))
     );
   }
-  const mainHasUnread = mainChannel.unreadCount > 0;
+  // Under the whatsapp shell a muted main channel's unread must not bold or
+  // highlight the row (hygiene rule 2) — the quiet dot below covers it.
+  const mainHasUnread =
+    mainChannel.unreadCount > 0 &&
+    !(whatsappShellEnabled && mainChannel.isMuted === true);
 
   return (
     <View style={[styles.groupedContainer, { backgroundColor: colors.surface }]}>
