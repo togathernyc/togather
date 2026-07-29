@@ -21,7 +21,7 @@
  * gate) — no new permission logic is introduced here. See the gate-by-gate
  * mapping in each row's inline comment.
  */
-import React, { useMemo } from "react";
+import React from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,8 +29,6 @@ import { useRouter } from "expo-router";
 import Constants from "expo-constants";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
-import { useCommunityTheme } from "@hooks/useCommunityTheme";
-import { waAccentPalette } from "@utils/waPalette";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { Avatar } from "@components/ui";
@@ -44,6 +42,8 @@ import {
   WA_ROW_AVATAR_GAP,
   WA_AVATAR_LG,
   WA_CHEVRON_SIZE,
+  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarStripHeight,
 } from "@components/wa";
 
 /**
@@ -102,12 +102,7 @@ export function YouScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, community, logout } = useAuth();
-  const { colors, isDark } = useTheme();
-  const { primaryColor } = useCommunityTheme();
-  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
-  // verbatim in dark mode (see MessageItem/MessageInput/ConvexChatRoomScreen/
-  // InviteKitScreen for the same pattern).
-  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
+  const { colors } = useTheme();
 
   const userId = user?.id as Id<"users"> | undefined;
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -157,9 +152,19 @@ export function YouScreen() {
     Constants.expoConfig?.version;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.backgroundGrouped },
+        // Reserve the strip below the floating island on the container that
+        // carries the page background, so the home-indicator gap paints page
+        // gray rather than showing whatever row scrolls past underneath.
+        { paddingBottom: waTabBarStripHeight(insets.bottom) },
+      ]}
+    >
+      {/* No large title here on purpose — WA's You/Settings tab shows floating
+          buttons only (WA-VISUAL-DELTAS.md S1.3 / §4.1). */}
       <WaScreenHeader
-        title="You"
         trailingButtons={[
           {
             icon: "create-outline",
@@ -167,12 +172,16 @@ export function YouScreen() {
             accessibilityLabel: "Edit profile",
           },
         ]}
-        accent={waAccent}
         style={{ paddingTop: insets.top }}
       />
 
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          // The tab bar is a floating island over the content (S2) — pad past
+          // it. The safe-area strip below it is reserved by the container.
+          { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Profile hero cell — WhatsApp Settings' avatar+name+status tall

@@ -2,6 +2,8 @@ import { View } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
+import { Avatar } from '@components/ui';
+import { WaTabBar, WA_TAB_AVATAR_SIZE } from '@components/wa';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useIsDesktopWeb } from '../../hooks/useIsDesktopWeb';
@@ -80,6 +82,16 @@ export default function TabsLayout() {
       // the mode remounts it on that (rare) transition, recomputing the tab
       // set. Stable within each mode, so normal navigation is unaffected.
       key={inServingMode ? 'serving' : showWhatsappShell ? 'whatsapp' : 'normal'}
+      // Flag-on: the edge-to-edge bar is replaced by the floating rounded
+      // island (WA-VISUAL-DELTAS.md S2) via the framework's own `tabBar`
+      // customization point — the navigator itself is unchanged. Flag off (or
+      // desktop web, which hides the bar entirely) keeps React Navigation's
+      // default bar, byte-for-byte.
+      tabBar={
+        showWhatsappShell && !isDesktopWeb
+          ? (props) => <WaTabBar {...props} badgeColor={primaryColor} />
+          : undefined
+      }
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: primaryColor,
@@ -292,13 +304,23 @@ export default function TabsLayout() {
           // Hidden while serving mode is active to keep the serving tab bar to
           // Runsheet · Inbox · Tasks · Exit.
           href: inServingMode ? null : '/(tabs)/profile',
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'person' : 'person-outline'}
-              size={24}
-              color={color}
-            />
-          ),
+          // Flag-on: the You tab's icon is the user's own avatar photo
+          // (WA-VISUAL-DELTAS.md S2.4), falling back to the person glyph when
+          // there's no photo — which is also exactly the flag-off icon.
+          tabBarIcon: ({ color, focused }) =>
+            showWhatsappShell && user?.profile_photo ? (
+              <Avatar
+                name={`${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim()}
+                imageUrl={user.profile_photo}
+                size={WA_TAB_AVATAR_SIZE}
+              />
+            ) : (
+              <Ionicons
+                name={focused ? 'person' : 'person-outline'}
+                size={24}
+                color={color}
+              />
+            ),
         }}
       />
     </Tabs>
