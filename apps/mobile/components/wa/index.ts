@@ -65,4 +65,7 @@ export type { WaSectionLabelProps } from './WaSectionLabel';
 export { WaActionCard, WaActionCardRow } from './WaActionCard';
 export type { WaActionCardProps } from './WaActionCard';
 
+export { waPastelAvatar } from './avatarPalette';
+export type { WaPastelAvatar } from './avatarPalette';
+
 export * from './metrics';

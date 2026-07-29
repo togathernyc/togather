@@ -19,11 +19,24 @@
  * kit — `bg.grouped` canvas, `WaInsetGroup`/`WaCell` for every card, plain
  * monochrome cell icons, red destructive cells with no icon/chevron.
  *
+ * WA-VISUAL-DELTAS.md §3 (Group/Channel info) layer, applied on top:
+ *   - No opaque nav bar. `WaSubScreenHeader` puts a floating white back circle
+ *     over the grouped-gray canvas with a centered 17pt "Group info" title
+ *     (§3.1). This replaces `GroupHeader`, which owned the old bar AND the
+ *     hero; that component is shared with the flag-off `GroupDetailScreen` /
+ *     `GroupNonMemberView`, so it is left untouched and this screen renders
+ *     its own hero instead (flag-off stays byte-identical).
+ *   - Hero (§3.2): 100pt avatar (muted pastel initial disc when there's no
+ *     photo — never brand green, S5.2), 28pt bold name, 15pt gray
+ *     "N members · Type" subtitle. Cadence moved off the hero because the
+ *     Details card below already carries it; photo tap-to-viewer, the edit
+ *     pencil, and the description all carried over from `GroupHeader`.
+ *   - Action row (§3.3): white rounded `WaActionCard`s, replacing the
+ *     accent-glyph pills.
+ *   - All cards inherit the S3 kit anatomy (24px radius, 52–56pt rows, black
+ *     glyphs, centered chevrons, sentence-case labels) with no per-screen work.
+ *
  * Deferred from the full W13 spec (out of scope for this composition pass):
- *   - Hero photo tap-to-viewer, cadence, description, and the edit pencil
- *     all come for free from the existing `GroupHeader` component (already
- *     a centered circular-avatar hero — out of this pass's touched-file
- *     list, so left as-is).
  *   - "Search" in the icon action row (README's icon list) — the task's
  *     explicit v1 scope is Share + Invite only.
  *   - Events section (README lists it between Channels and Leader tools) —
@@ -54,6 +67,7 @@ import {
   Switch,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -78,7 +92,6 @@ import { useWithdrawJoinRequest } from "../hooks/useWithdrawJoinRequest";
 import { useMyPendingJoinRequests } from "../hooks/useMyPendingJoinRequests";
 import { PendingRequestLimitModal } from "./PendingRequestLimitModal";
 import { GroupDetailSkeleton } from "./GroupDetailSkeleton";
-import { GroupHeader } from "./GroupHeader";
 import { MembersRow } from "./MembersRow";
 import { GroupNonMemberView } from "./GroupNonMemberView";
 import { ChannelsSection } from "./ChannelsSection";
@@ -89,11 +102,28 @@ import {
   getExternalChatInfo,
   openExternalChatLink,
 } from "@features/chat/utils/externalChat";
+import { AppImage } from "@components/ui/AppImage";
+import { ImageViewerManager } from "@/providers/ImageViewerProvider";
 import {
   WaInsetGroup,
   WaCell,
+  WaSubScreenHeader,
+  WaActionCard,
+  WaActionCardRow,
+  waPastelAvatar,
   WA_GROUP_SPACING,
   WA_GROUP_MARGIN,
+  WA_AVATAR_PROFILE,
+  WA_HERO_NAME_GAP,
+  WA_HERO_SUBTITLE_GAP,
+  WA_CELL_MIN_HEIGHT,
+  WA_CELL_PADDING,
+  WA_TYPE_HERO_NAME,
+  WA_TYPE_SUBTITLE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_FOOTNOTE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_REGULAR,
 } from "@components/wa";
 
 export function GroupInfoScreen() {
@@ -102,6 +132,7 @@ export function GroupInfoScreen() {
   const params = useLocalSearchParams<{ group_id: string }>();
   const group_id = params.group_id;
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
@@ -521,42 +552,122 @@ export function GroupInfoScreen() {
   const externalChatInfo = externalChatLink ? getExternalChatInfo(externalChatLink) : null;
 
   const showDetailsCard = !!cadence || !!address || !!meetingTypeLabel || !!externalChatLink;
-  const heroMetaParts = [
+  const groupName = group.title || group.name || "Group";
+  const groupPhoto = group.preview || group.image_url || null;
+  const groupDescription = group.description?.trim() || "";
+  // §3.2 hero subtitle: "62 members" (+ the group type, Togather's own extra
+  // signal). Cadence lives in the Details card, not here.
+  const heroSubtitle = [
     group.members_count
       ? `${group.members_count} member${group.members_count === 1 ? "" : "s"}`
       : null,
     group.group_type_name || null,
-  ].filter(Boolean) as string[];
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/groups");
+    }
+  };
+
+  const handleEditGroup = () => {
+    if (group._id) router.push(`/groups/${group._id}/edit`);
+  };
+
+  const handleViewPhoto = () => {
+    if (groupPhoto) ImageViewerManager.show([groupPhoto], 0);
+  };
 
   return (
-    <>
+    <View
+      style={[
+        styles.screen,
+        { backgroundColor: colors.backgroundGrouped, paddingTop: insets.top },
+      ]}
+    >
+      {/* §3.1 — floating back circle + centered 17pt title over the
+          grouped-gray canvas. No bar fill, no hairline. */}
+      <WaSubScreenHeader title="Group info" onBack={handleBack} />
+
       <ScrollView
-        style={[styles.scrollView, { backgroundColor: colors.backgroundGrouped }]}
+        style={styles.scrollView}
         contentContainerStyle={{ paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={handleRefresh} tintColor={colors.link} />
         }
       >
-        {/* 1. HERO — centered photo/name come from the unmodified
-            GroupHeader (already a §6-style centered circular hero — out of
-            this pass's touched-file list). We only add the §2 "member
-            count, hero subtitle" meta line it doesn't already render. */}
-        <GroupHeader group={group} canEdit={canEditGroup} />
-        {heroMetaParts.length > 0 && (
-          <Text style={[styles.heroMeta, { color: colors.textSecondary }]}>
-            {heroMetaParts.join(" · ")}
-          </Text>
-        )}
+        {/* 1. HERO (§3.2) — 100pt avatar (muted pastel initial disc as the
+            no-photo fallback, never brand green per S5.2), 28pt bold name
+            with the leader/admin edit pencil, 15pt gray subtitle, optional
+            description. */}
+        <View style={styles.hero}>
+          <TouchableOpacity
+            activeOpacity={groupPhoto ? 0.85 : 1}
+            onPress={handleViewPhoto}
+            disabled={!groupPhoto}
+            accessibilityRole={groupPhoto ? "button" : undefined}
+            accessibilityLabel={groupPhoto ? "View group photo" : undefined}
+          >
+            <AppImage
+              source={groupPhoto}
+              testID="group-hero-avatar"
+              style={styles.heroAvatar}
+              optimizedWidth={Math.min(WA_AVATAR_PROFILE * 2, 400)}
+              placeholder={{
+                type: "initials",
+                name: groupName,
+                backgroundColor: waPastelAvatar(groupName, isDark).background,
+              }}
+            />
+          </TouchableOpacity>
 
-        {/* 2. ICON ACTION ROW (§3.2/§8) — Share + Invite. Accent-tinted
-            glyphs on a card-colored pill, no card container around the
-            row itself. Invite reuses the same share flow for v1 (no
-            separate invite-kit yet — see file-header deferral note). */}
+          <TouchableOpacity
+            activeOpacity={canEditGroup ? 0.7 : 1}
+            onPress={canEditGroup ? handleEditGroup : undefined}
+            disabled={!canEditGroup}
+            style={styles.heroNameRow}
+          >
+            <Text style={[styles.heroName, { color: colors.text }]} numberOfLines={2}>
+              {groupName}
+            </Text>
+            {canEditGroup && (
+              <Ionicons name="pencil" size={16} color={colors.textSecondary} style={styles.heroPencil} />
+            )}
+          </TouchableOpacity>
+
+          {!!heroSubtitle && (
+            <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>{heroSubtitle}</Text>
+          )}
+          {!!groupDescription && (
+            <Text
+              style={[styles.heroDescription, { color: colors.textSecondary }]}
+              numberOfLines={3}
+            >
+              {groupDescription}
+            </Text>
+          )}
+        </View>
+
+        {/* 2. ACTION ROW (§3.3) — white rounded button cards with an accent
+            glyph and a dark label, replacing the accent-pill glyphs S5.2
+            kill-lists. Invite reuses the same share flow for v1 (no separate
+            invite-kit yet — see file-header deferral note). */}
         {!!group.shortId && (
-          <View style={styles.iconActionRow}>
-            <IconAction icon="share-outline" label="Share" onPress={handleShareGroup} accent={waAccent} />
-            <IconAction icon="person-add-outline" label="Invite" onPress={handleShareGroup} accent={waAccent} />
+          <View style={styles.actionRow}>
+            <WaActionCardRow>
+              <WaActionCard icon="share-outline" label="Share" onPress={handleShareGroup} accent={waAccent} />
+              <WaActionCard
+                icon="person-add-outline"
+                label="Invite"
+                onPress={handleShareGroup}
+                accent={waAccent}
+              />
+            </WaActionCardRow>
           </View>
         )}
 
@@ -755,13 +866,17 @@ export function GroupInfoScreen() {
           </View>
         )}
 
-        {/* 10. BOTTOM RED ROWS (§1.4/§3.3/§8) — Leave (hidden for
-            announcement groups) as a plain WaCell destructive row (no
-            icon, no chevron); Archive (admin only) stays a bespoke
-            destructive row so it can carry the trailing ADMIN tag WaCell
-            has no slot for. */}
+        {/* 10. DESTRUCTIVE ZONE (§3.6) — Leave (hidden for announcement
+            groups) as a plain WaCell destructive row (no icon, no chevron);
+            Archive (admin only) stays a bespoke destructive row so it can
+            carry the trailing ADMIN tag WaCell has no slot for, built to the
+            same 17pt/regular WA_CELL_* metrics. The share link rides below as
+            §3.6's gray footer metadata. */}
         <View style={styles.waSection}>
-          <WaInsetGroup separatorInset={0}>
+          <WaInsetGroup
+            separatorInset={0}
+            footer={group.shortId ? DOMAIN_CONFIG.groupShareUrl(group.shortId) : undefined}
+          >
             {!group.is_announcement_group && (
               <WaCell variant="destructive" title="Leave Group" onPress={handleLeaveGroup} />
             )}
@@ -779,38 +894,7 @@ export function GroupInfoScreen() {
           </WaInsetGroup>
         </View>
       </ScrollView>
-    </>
-  );
-}
-
-/**
- * IconAction — the §3.2 "quick-action row" button (Add Members/Add Groups/
- * Search on the reference Community-info screenshot): a card-colored pill,
- * accent-tinted glyph, 13pt label. Accent-colored per §8's Group-info
- * checklist ("icon action row … accent icons") — distinct from the
- * monochrome rule that governs cell icons *inside* an inset-grouped card.
- */
-function IconAction({
-  icon,
-  label,
-  onPress,
-  accent,
-}: {
-  icon: React.ComponentProps<typeof Ionicons>["name"];
-  label: string;
-  onPress: () => void;
-  accent: string;
-}) {
-  const { colors } = useTheme();
-  return (
-    <TouchableOpacity
-      style={[styles.iconAction, { backgroundColor: colors.surfaceGrouped }]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <Ionicons name={icon} size={22} color={accent} />
-      <Text style={[styles.iconActionLabel, { color: colors.text }]}>{label}</Text>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -870,6 +954,9 @@ function SettingsToggleRow({
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   scrollView: {
     flex: 1,
   },
@@ -893,35 +980,48 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  // §2 "Community/group member count, hero subtitle": 15pt Regular, text.secondary.
-  heroMeta: {
-    marginTop: -16,
-    marginBottom: 8,
-    fontSize: 15,
-    fontWeight: "400",
+  // §3.2 hero — centered 100pt disc, 28pt bold name, 15pt gray subtitle.
+  hero: {
+    alignItems: "center",
+    paddingTop: 16,
+    paddingHorizontal: 24,
+  },
+  heroAvatar: {
+    width: WA_AVATAR_PROFILE,
+    height: WA_AVATAR_PROFILE,
+    borderRadius: WA_AVATAR_PROFILE / 2,
+  },
+  heroNameRow: {
+    marginTop: WA_HERO_NAME_GAP,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  heroName: {
+    fontSize: WA_TYPE_HERO_NAME,
+    fontWeight: WA_WEIGHT_BOLD,
+    textAlign: "center",
+  },
+  heroPencil: {
+    marginTop: 4,
+  },
+  heroSubtitle: {
+    marginTop: WA_HERO_SUBTITLE_GAP,
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    textAlign: "center",
+  },
+  heroDescription: {
+    marginTop: 8,
+    fontSize: WA_TYPE_FOOTNOTE,
+    lineHeight: 18,
     textAlign: "center",
   },
   waSection: {
     marginTop: WA_GROUP_SPACING,
   },
-  iconActionRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 12,
-    paddingHorizontal: WA_GROUP_MARGIN,
-    paddingVertical: 12,
-  },
-  iconAction: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 14,
-    borderRadius: 14,
-  },
-  iconActionLabel: {
-    fontSize: 13,
-    fontWeight: "500",
+  actionRow: {
+    marginTop: WA_GROUP_SPACING,
   },
   requestsBadgeRow: {
     flexDirection: "row",
@@ -954,8 +1054,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   settingsRowLabel: {
-    fontSize: 16,
-    fontWeight: "500",
+    // S3.2: cell labels are 17pt regular, not 16/500.
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_REGULAR,
   },
   settingsRowDescription: {
     fontSize: 13,
@@ -974,17 +1075,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
   },
+  // Built to WaCell's own destructive-row metrics so it can't drift from the
+  // "Leave Group" row directly above it.
   dangerRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    minHeight: 48,
+    paddingHorizontal: WA_CELL_PADDING,
+    minHeight: WA_CELL_MIN_HEIGHT,
   },
   dangerLabel: {
-    fontSize: 16,
-    fontWeight: "500",
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_REGULAR,
   },
   modalOverlay: {
     flex: 1,

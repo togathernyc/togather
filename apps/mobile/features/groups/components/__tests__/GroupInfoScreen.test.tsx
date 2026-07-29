@@ -1,7 +1,10 @@
 import React from "react";
+import { StyleSheet } from "react-native";
 import { render, screen } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GroupInfoScreen } from "../GroupInfoScreen";
+import { waPastelAvatar, WA_AVATAR_PROFILE, WA_TYPE_HERO_NAME, WA_ACTION_CARD_HEIGHT } from "@components/wa";
+import { DEFAULT_PRIMARY_COLOR } from "@togather/shared";
 import { useGroupDetails, useLeaveGroup, useJoinGroup, useArchiveGroup } from "../../hooks";
 import { useAuth } from "@providers/AuthProvider";
 import { useUserData } from "@features/profile/hooks/useUserData";
@@ -101,6 +104,9 @@ jest.mock("@components/ui", () => {
   };
 });
 
+// GroupHeader is no longer used by this screen (WA-VISUAL-DELTAS.md §3.1/§3.2
+// replaced its opaque bar + hero with WaSubScreenHeader and a local WA hero);
+// it stays mocked only because GroupNonMemberView still renders it.
 jest.mock("../GroupHeader", () => {
   const { View, Text } = require("react-native");
   return {
@@ -111,6 +117,10 @@ jest.mock("../GroupHeader", () => {
     ),
   };
 });
+
+jest.mock("@/providers/ImageViewerProvider", () => ({
+  ImageViewerManager: { show: jest.fn() },
+}));
 
 jest.mock("../GroupNonMemberView", () => {
   const { View, Text } = require("react-native");
@@ -228,7 +238,7 @@ describe("GroupInfoScreen", () => {
     render(<GroupInfoScreen />, { wrapper: createWrapper() });
 
     expect(screen.queryByTestId("non-member-view")).toBeNull();
-    expect(screen.getByTestId("group-header-title")).toBeTruthy();
+    expect(screen.getByText("Test Group")).toBeTruthy();
     expect(screen.getByText("Mute group")).toBeTruthy();
     expect(screen.getByTestId("members-row")).toBeTruthy();
     expect(screen.getByTestId("channels-section")).toBeTruthy();
@@ -259,10 +269,12 @@ describe("GroupInfoScreen", () => {
 
     render(<GroupInfoScreen />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("LEADER TOOLS")).toBeTruthy();
+    // S3.5 killed the ALL-CAPS section labels — sentence case now.
+    expect(screen.getByText("Leader tools")).toBeTruthy();
+    expect(screen.queryByText("LEADER TOOLS")).toBeNull();
     expect(screen.getByText("People")).toBeTruthy();
     expect(screen.getByText("Rostering")).toBeTruthy();
-    expect(screen.getByText("SETTINGS")).toBeTruthy();
+    expect(screen.getByText("Settings")).toBeTruthy();
     expect(screen.getAllByText("ADMIN").length).toBeGreaterThan(0);
     expect(screen.getByText("Archive Group")).toBeTruthy();
   });
@@ -275,8 +287,54 @@ describe("GroupInfoScreen", () => {
 
     render(<GroupInfoScreen />, { wrapper: createWrapper() });
 
-    expect(screen.queryByText("LEADER TOOLS")).toBeNull();
-    expect(screen.queryByText("SETTINGS")).toBeNull();
+    expect(screen.queryByText("Leader tools")).toBeNull();
+    expect(screen.queryByText("Settings")).toBeNull();
     expect(screen.queryByText("Archive Group")).toBeNull();
+  });
+
+  // --- WA-VISUAL-DELTAS.md §3 ------------------------------------------------
+
+  describe("WA visual deltas (§3)", () => {
+    beforeEach(() => {
+      (useGroupDetails as jest.Mock).mockReturnValue({ data: mockGroup, isLoading: false, error: null });
+      (useAuth as jest.Mock).mockReturnValue({ user: { id: 1 } });
+      (useUserData as jest.Mock).mockReturnValue({ data: { group_memberships: [] }, isLoading: false });
+      (isGroupMember as jest.Mock).mockReturnValue(true);
+    });
+
+    it("§3.1: renders a floating sub-screen header, not GroupHeader's opaque bar", () => {
+      render(<GroupInfoScreen />, { wrapper: createWrapper() });
+      expect(screen.getByText("Group info")).toBeTruthy();
+      expect(screen.getByLabelText("Back")).toBeTruthy();
+      expect(screen.queryByTestId("group-header")).toBeNull();
+    });
+
+    it("§3.2: hero avatar is a 100pt disc with a muted pastel (non-green) fallback", () => {
+      render(<GroupInfoScreen />, { wrapper: createWrapper() });
+      const avatar = screen.getByTestId("group-hero-avatar-placeholder");
+      const style = StyleSheet.flatten(avatar.props.style);
+      expect(style.width).toBe(WA_AVATAR_PROFILE);
+      expect(style.borderRadius).toBe(WA_AVATAR_PROFILE / 2);
+      expect(style.backgroundColor).toBe(waPastelAvatar("Test Group", false).background);
+      expect(style.backgroundColor).not.toBe(DEFAULT_PRIMARY_COLOR);
+    });
+
+    it("§3.2: the hero name is 28pt bold and the subtitle is 15pt gray", () => {
+      render(<GroupInfoScreen />, { wrapper: createWrapper() });
+      const nameStyle = StyleSheet.flatten(screen.getByText("Test Group").props.style);
+      expect(nameStyle.fontSize).toBe(WA_TYPE_HERO_NAME);
+      expect(nameStyle.fontWeight).toBe("700");
+
+      const subtitle = screen.getByText("2 members · Small Group");
+      expect(StyleSheet.flatten(subtitle.props.style).fontSize).toBe(15);
+    });
+
+    it("§3.3: Share/Invite render as ~76pt white action cards", () => {
+      render(<GroupInfoScreen />, { wrapper: createWrapper() });
+      for (const label of ["Share", "Invite"]) {
+        const card = screen.getByLabelText(label);
+        expect(StyleSheet.flatten(card.props.style).height).toBe(WA_ACTION_CARD_HEIGHT);
+      }
+    });
   });
 });
