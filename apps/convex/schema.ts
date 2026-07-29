@@ -3938,4 +3938,28 @@ export default defineSchema({
     .index("by_fund_status", ["fundId", "status"])
     .index("by_submitter", ["submitterId"])
     .index("by_increaseTransferId", ["increaseTransferId"]),
+
+  /**
+   * Immutable audit trail for every non-ledger finance action (ADR-032 §4).
+   * Money movement is already fully audited by append-only ledgerEntries;
+   * this table covers the control plane: role grants/revocations, card
+   * issue/freeze/limit changes, expense approvals/denials, onboarding status
+   * transitions, and fund freezes/closures. Rows are never patched or
+   * deleted. Write via logFinanceAudit() in lib/finance/audit.ts.
+   */
+  financeAuditEvents: defineTable({
+    communityId: v.id("communities"),
+    fundId: v.optional(v.id("funds")),
+    // Undefined actor = system action (webhook, cron), named in detailsJson.
+    actorUserId: v.optional(v.id("users")),
+    // Dot-namespaced, e.g. "role.granted", "card.frozen", "expense.approved",
+    // "onboarding.status_changed", "fund.swept".
+    action: v.string(),
+    // JSON-encoded context (before/after values, target user, amounts).
+    // Stored as a string so the shape can evolve without schema migrations.
+    detailsJson: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId", "createdAt"])
+    .index("by_fund", ["fundId", "createdAt"]),
 });
