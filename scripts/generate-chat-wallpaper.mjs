@@ -31,7 +31,11 @@ const repoRoot = path.resolve(__dirname, '..');
 const requireFromWeb = createRequire(path.join(repoRoot, 'apps/web/package.json'));
 const { Resvg } = requireFromWeb('@resvg/resvg-js');
 
-const TILE = 512;
+// 256px tile. The app tiles this explicitly in JS (`ChatWallpaper` lays out a
+// grid of 256pt <Image>s) rather than via `resizeMode="repeat"`, which UIKit
+// silently stretched on device — a 512pt sheet smeared over the screen read as
+// a flat cream. At 256 the motifs below land at the reference's ~40-55pt.
+const TILE = 256;
 
 // --- Motifs -----------------------------------------------------------------
 // Each motif is drawn in its own local space roughly centered on (0,0) and
@@ -80,11 +84,18 @@ function mulberry32(seed) {
   };
 }
 
-/** Lays motifs out on a jittered 4x4 grid, kept clear of the tile edges so no
- *  motif is clipped where the tile repeats. */
+/**
+ * Lays motifs out on a jittered 4x4 grid at ~40-55px each (the density the
+ * owner's WhatsApp reference shows: clearly visible line art, still subtle).
+ *
+ * Each motif is emitted NINE times — once in place and once per neighbouring
+ * tile offset (±TILE on each axis) — so a motif that overhangs an edge is
+ * completed by its wrapped twin on the opposite edge. Without that the grid of
+ * <Image> tiles shows a hard seam wherever a motif was clipped.
+ */
 function buildTileSvg({ ink, inkOpacity }) {
   const rand = mulberry32(20260729);
-  const cols = 5;
+  const cols = 4;
   const cell = TILE / cols;
   const parts = [];
   const order = [...motifNames];
@@ -92,15 +103,20 @@ function buildTileSvg({ ink, inkOpacity }) {
   for (let row = 0; row < cols; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const name = order[(row * cols + col) % order.length];
-      const jitterX = (rand() - 0.5) * (cell * 0.22);
-      const jitterY = (rand() - 0.5) * (cell * 0.22);
+      const jitterX = (rand() - 0.5) * (cell * 0.3);
+      const jitterY = (rand() - 0.5) * (cell * 0.3);
       const cx = col * cell + cell / 2 + jitterX;
       const cy = row * cell + cell / 2 + jitterY;
       const rotation = Math.round((rand() - 0.5) * 44);
-      const scale = (0.55 + rand() * 0.22).toFixed(3);
-      parts.push(
-        `<g transform="translate(${cx.toFixed(2)} ${cy.toFixed(2)}) rotate(${rotation}) scale(${scale})"><path d="${motifs[name]}"/></g>`
-      );
+      // Motif paths span ~48 units, so this lands each one at ~41-53px.
+      const scale = (0.86 + rand() * 0.24).toFixed(3);
+      for (const dx of [-TILE, 0, TILE]) {
+        for (const dy of [-TILE, 0, TILE]) {
+          parts.push(
+            `<g transform="translate(${(cx + dx).toFixed(2)} ${(cy + dy).toFixed(2)}) rotate(${rotation}) scale(${scale})"><path d="${motifs[name]}"/></g>`
+          );
+        }
+      }
     }
   }
 
@@ -111,9 +127,12 @@ ${parts.join('\n')}
 </svg>`;
 }
 
+// Ink opacity raised from 0.08/0.05 after the device check: at the old values
+// the pattern was invisible on a real screen (it only ever read on a
+// brightness-boosted desktop browser).
 const variants = [
-  { file: 'chat-wallpaper-light.png', ink: '#3B4A54', inkOpacity: 0.08 },
-  { file: 'chat-wallpaper-dark.png', ink: '#FFFFFF', inkOpacity: 0.05 },
+  { file: 'chat-wallpaper-light.png', ink: '#3B4A54', inkOpacity: 0.1 },
+  { file: 'chat-wallpaper-dark.png', ink: '#FFFFFF', inkOpacity: 0.07 },
 ];
 
 const outDir = path.join(repoRoot, 'apps/mobile/assets/images');
