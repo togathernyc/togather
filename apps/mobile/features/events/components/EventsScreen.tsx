@@ -30,7 +30,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { format, toZonedTime } from 'date-fns-tz';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
@@ -38,16 +37,24 @@ import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { AppImage } from '@components/ui';
 import {
   WaRow,
-  WaSectionLabel,
-  WaScreenHeader,
+  WaLargeTitle,
   WaSeparator,
-  WA_SEPARATOR_INSET,
-  WA_AVATAR_LG,
+  WA_LIST_SEPARATOR_INSET,
+  WA_LIST_AVATAR,
+  WA_AVATAR_SQUIRCLE_RATIO,
+  WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
   WA_TAB_CONTENT_CLEARANCE,
+  WA_TAB_ACTIVE_PILL_LIGHT,
+  WA_TAB_ACTIVE_PILL_DARK,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_TYPE_FOOTNOTE,
+  WA_WEIGHT_SEMIBOLD,
   waTabBarStripHeight,
 } from '@components/wa';
-import { formatTimeWithTimezone } from '@togather/shared';
+import { formatWaEventWhen } from '../utils/waEventWhen';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
 import { useLaterEvents } from '../hooks/useLaterEvents';
 import { useMyRsvpedEvents } from '../hooks/useCommunityEvents';
@@ -60,6 +67,14 @@ import type { CommunityEvent } from '../hooks/useCommunityEvents';
 import type { Id } from '@services/api/convex';
 
 type ViewMode = 'list' | 'map';
+
+/**
+ * Flag-on List/Map chip height — WhatsApp's filter-chip band (WA-VISUAL-DELTAS
+ * D4: "34pt, fully rounded, gray fill, 15pt dark label"), matching the Chats
+ * list's resource-chip strip. Kept local rather than imported from
+ * `features/chat` so the two surfaces don't couple.
+ */
+const WA_VIEW_CHIP_HEIGHT = 34;
 
 /**
  * Adapter: maps a SingleEventCard (backend shape with Convex ids) into the
@@ -177,44 +192,74 @@ function HorizontalTileRow({ title, cards, colors }: HorizontalTileRowProps) {
 // --- WhatsApp-shell event rows (flag-gated) ---------------------------------
 // WHATSAPP-DESIGN-SYSTEM.md §7 "Event cards inside chat" governs bubble-shaped
 // events *inside a chat thread*; the Events tab itself is a full-bleed list
-// surface, so its rows follow the plain §3.1 WaRow anatomy instead (cover
-// thumbnail or calendar-glyph circle, title, one-line subtitle, trailing
-// chevron) — same treatment for individual and community-wide (CWE) cards,
-// so "horizontal card strips become rows" per this pass's brief. Flag off
-// renders the existing FeaturedEventTile/EventCardRow/EventRowCommunityWide
-// components below, untouched.
+// surface, so its rows follow the plain §3.1/S6 WaRow anatomy instead — a 58pt
+// rounded-square thumbnail, 17pt semibold title, 15pt gray "when · where"
+// subtitle, right-aligned gray attendance text and a vertically centered
+// chevron — same treatment for individual and community-wide (CWE) cards.
+// Flag off renders the existing FeaturedEventTile/EventCardRow/
+// EventRowCommunityWide components below, untouched.
 
 /** Raw event/CWE card shape as returned by the Events tab queries — same
  * union `Section`/`HorizontalTileRow` above already destructure ad hoc. */
 type EventTabCard = any;
 
+/**
+ * Fallback thumbnail for an event with no cover image: a neutral rounded-square
+ * tile with a monochrome calendar glyph. Deliberately NOT accent-tinted —
+ * S5.1 keeps green for the CTA pill, action links and unread signals only, and
+ * a tinted disc on every image-less row was the loudest color leak on this
+ * screen. Square (not circle) so it reads as the same media slot as a real
+ * cover photo, per S6's "generous thumbnails".
+ */
+function WaEventThumbnail({ background, tint }: { background: string; tint: string }) {
+  return (
+    <View
+      style={[styles.waEventThumbnail, { backgroundColor: background }]}
+      testID="wa-event-thumbnail"
+    >
+      <Ionicons name="calendar-outline" size={24} color={tint} />
+    </View>
+  );
+}
+
 interface WaEventRowProps {
   card: EventTabCard;
   colors: ReturnType<typeof useTheme>['colors'];
+  isDark: boolean;
   accent: string;
   userTimezone: string;
   onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
 }
 
-function WaEventRow({ card, colors, accent, userTimezone, onCommunityWideTap }: WaEventRowProps) {
+function WaEventRow({
+  card,
+  colors,
+  isDark,
+  accent,
+  userTimezone,
+  onCommunityWideTap,
+}: WaEventRowProps) {
   const router = useRouter();
   const isCommunityWide = card.kind === 'community_wide';
 
-  const zonedDate = toZonedTime(new Date(card.scheduledAt), userTimezone);
-  const weekday = format(zonedDate, 'EEE', { timeZone: userTimezone });
-  const time = formatTimeWithTimezone(card.scheduledAt, userTimezone);
   const title = card.title || 'Untitled Event';
+  const when = formatWaEventWhen(card.scheduledAt, userTimezone);
 
-  // No per-card RSVP status is returned by the Events tab queries (see
-  // listForEventsTab/listLaterEvents) — only a chevron is shown in the right
-  // column (§8 "RSVP state as a small accent text label or chevron"), rather
-  // than inventing an RSVP label the backend doesn't give us.
   const location = isCommunityWide
     ? card.groupCount === 1
       ? '1 location'
       : `${card.groupCount} locations`
     : card.locationOverride || card.group.name;
-  const subtitle = `${weekday} ${time} · ${location}`;
+  const subtitle = `${when} · ${location}`;
+
+  // Right column: the going count as plain right-aligned gray text (S3.5's
+  // treatment for a row's secondary fact), never a colored chip (§7). Hidden
+  // when the event opts out of showing counts, or when nobody's going yet.
+  const goingCount: number = isCommunityWide
+    ? card.totalGoing ?? 0
+    : card.hideRsvpCount === true
+      ? 0
+      : card.rsvpSummary?.totalGoing ?? 0;
 
   const coverImage: string | null | undefined = isCommunityWide
     ? card.coverImage
@@ -232,19 +277,44 @@ function WaEventRow({ card, colors, accent, userTimezone, onCommunityWideTap }: 
     <WaRow
       avatar={
         coverImage
-          ? { imageUrl: coverImage, label: title, shape: 'circle' }
+          ? { imageUrl: coverImage, label: title, shape: 'squircle' }
           : (
-              <View style={[styles.waCalendarGlyph, { backgroundColor: accent + '14' }]}>
-                <Ionicons name="calendar-outline" size={22} color={accent} />
-              </View>
+              <WaEventThumbnail
+                background={isDark ? '#2A3942' : '#EFEFEF'}
+                tint={colors.textSecondary}
+              />
             )
       }
       title={title}
       subtitle={subtitle}
-      showChevron
       accent={accent}
       onPress={handlePress}
+      testID="wa-event-row"
+      showChevron={goingCount === 0}
+      rightAccessory={
+        goingCount > 0 ? (
+          <View style={styles.waRowTrailing}>
+            <Text style={[styles.waRowTrailingText, { color: colors.textTertiary }]}>
+              {goingCount} going
+            </Text>
+            <Ionicons name="chevron-forward" size={13} color={colors.textTertiary} />
+          </View>
+        ) : undefined
+      }
     />
+  );
+}
+
+/**
+ * Landing-surface section header (S3.5 / per-screen §5.3): ~20pt sentence-case
+ * gray semibold sitting directly on the page background — never the 12pt
+ * ALL-CAPS iOS-15 label the pre-pass screen used. Same anatomy as the community
+ * landing's "Groups you're in".
+ */
+function WaSectionHeader({ children }: { children: string }) {
+  const { colors } = useTheme();
+  return (
+    <Text style={[styles.waSectionHeader, { color: colors.textSecondary }]}>{children}</Text>
   );
 }
 
@@ -252,6 +322,7 @@ interface WaEventSectionProps {
   title: string;
   cards: EventTabCard[];
   colors: ReturnType<typeof useTheme>['colors'];
+  isDark: boolean;
   accent: string;
   userTimezone: string;
   onCommunityWideTap: (parentId: Id<'communityWideEvents'>) => void;
@@ -261,6 +332,7 @@ function WaEventSection({
   title,
   cards,
   colors,
+  isDark,
   accent,
   userTimezone,
   onCommunityWideTap,
@@ -268,7 +340,7 @@ function WaEventSection({
   if (!cards || cards.length === 0) return null;
   return (
     <View style={styles.waSection}>
-      <WaSectionLabel>{title}</WaSectionLabel>
+      <WaSectionHeader>{title}</WaSectionHeader>
       <View>
         {cards.map((card, index) => (
           <React.Fragment
@@ -277,14 +349,42 @@ function WaEventSection({
             <WaEventRow
               card={card}
               colors={colors}
+              isDark={isDark}
               accent={accent}
               userTimezone={userTimezone}
               onCommunityWideTap={onCommunityWideTap}
             />
-            {index < cards.length - 1 ? <WaSeparator inset={WA_SEPARATOR_INSET} /> : null}
+            {index < cards.length - 1 ? <WaSeparator inset={WA_LIST_SEPARATOR_INSET} /> : null}
           </React.Fragment>
         ))}
       </View>
+    </View>
+  );
+}
+
+/**
+ * WA-style empty state (S7 type scale): centered monochrome glyph, 17pt title,
+ * 15pt gray subtitle. The flag-off variant keeps its 18/14pt pair.
+ */
+function WaEmptyState({
+  title,
+  subtitle,
+  colors,
+}: {
+  title: string;
+  subtitle: string;
+  colors: ReturnType<typeof useTheme>['colors'];
+}) {
+  return (
+    <View style={styles.centerContainer}>
+      <Ionicons
+        name="calendar-outline"
+        size={64}
+        color={colors.textTertiary}
+        style={styles.waEmptyGlyph}
+      />
+      <Text style={[styles.waEmptyTitle, { color: colors.text }]}>{title}</Text>
+      <Text style={[styles.waEmptySubtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
     </View>
   );
 }
@@ -294,10 +394,40 @@ interface GreetingProps {
   colors: ReturnType<typeof useTheme>['colors'];
   primaryColor: string;
   onMakePlans: () => void;
+  /** Flag-on: the quiet left-aligned header block. Flag-off: the centered hero. */
+  whatsappShell?: boolean;
 }
 
-function Greeting({ firstName, colors, primaryColor, onMakePlans }: GreetingProps) {
+function Greeting({
+  firstName,
+  colors,
+  primaryColor,
+  onMakePlans,
+  whatsappShell = false,
+}: GreetingProps) {
   const hello = firstName ? `Hey ${firstName}` : 'Hey there';
+
+  // Flag-on: the greeting is a quiet header block under the large title —
+  // left-aligned at the row inset, on the S7 scale (17 semibold / 15 gray),
+  // with the accent spent only on the "Make plans" action link (S5.1) and no
+  // underline (WA action text is plain colored text).
+  if (whatsappShell) {
+    return (
+      <View style={styles.waGreeting}>
+        <Text style={[styles.waGreetingTitle, { color: colors.text }]}>{hello}</Text>
+        <Text style={[styles.waGreetingSubtitle, { color: colors.textSecondary }]}>
+          Life is better in community.{' '}
+          <Text
+            style={[styles.waGreetingAction, { color: primaryColor }]}
+            onPress={onMakePlans}
+          >
+            Make plans
+          </Text>
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.greeting}>
       <Text style={[styles.greetingTitle, { color: colors.text }]}>{hello}</Text>
@@ -318,7 +448,7 @@ export function EventsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { community, user } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const hasCommunityContext = !!community?.id;
   const whatsappShellEnabled = useWhatsappShell();
@@ -431,13 +561,77 @@ export function EventsScreen() {
     );
   };
 
+  /**
+   * Flag-on List/Map switch — WhatsApp's filter-chip anatomy (D4 "Resources
+   * leave the list": 34pt fully-rounded chips, light gray fill, 15pt dark
+   * label), the same strip the Chats list carries under its search pill. It
+   * replaces the pre-pass pair of floating header circles: this is a *view
+   * filter*, not a nav action, and the chips make the current view legible at
+   * rest instead of hiding it in a glyph's fill variant. Selection is a step-
+   * darker neutral pill (the tab bar's active-pill treatment) — never green
+   * (S5.1: the Create Event pill is this screen's only accent).
+   *
+   * Rendered outside the list/map branch so the user can always switch back.
+   */
+  const renderWaViewChips = () => {
+    if (!hasCommunityContext) return null;
+    const chips: Array<{ mode: ViewMode; label: string; icon: 'list' | 'map' }> = [
+      { mode: 'list', label: 'List', icon: 'list' },
+      { mode: 'map', label: 'Map', icon: 'map' },
+    ];
+    return (
+      <View style={styles.waChipsRow} testID="wa-events-view-chips">
+        {chips.map((chip) => {
+          const active = viewMode === chip.mode;
+          return (
+            <TouchableOpacity
+              key={chip.mode}
+              style={[
+                styles.waChip,
+                {
+                  backgroundColor: active
+                    ? isDark
+                      ? WA_TAB_ACTIVE_PILL_DARK
+                      : WA_TAB_ACTIVE_PILL_LIGHT
+                    : colors.surfaceSecondary,
+                },
+              ]}
+              onPress={() => setViewMode(chip.mode)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${chip.label} view`}
+            >
+              <Ionicons
+                name={active ? chip.icon : (`${chip.icon}-outline` as const)}
+                size={15}
+                color={active ? colors.text : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.waChipLabel,
+                  {
+                    color: active ? colors.text : colors.textSecondary,
+                    fontWeight: active ? WA_WEIGHT_SEMIBOLD : '500',
+                  },
+                ]}
+              >
+                {chip.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    );
+  };
+
   // Floating controls — no static header. The List/Map toggle floats
   // over the top-left; the Create Event CTA floats over the bottom
   // center (above the tab bar). Content scrolls beneath them.
   //
-  // Flag-on: the List/Map toggle moves into the WaScreenHeader's circular
-  // trailing buttons (§4 "header buttons above the large title"), so it's
-  // skipped here — the Create Event button stays floating either way (its
+  // Flag-on: the List/Map toggle becomes the neutral chip strip under the
+  // large title (`renderWaViewChips`), so it's skipped here — the Create Event
+  // button stays floating either way (its
   // handler/position are untouched per this pass's brief), just with its
   // shadow killed on the flag-on path (§7 "never cards-with-shadows").
   const renderFloatingControls = () => (
@@ -484,10 +678,17 @@ export function EventsScreen() {
   // scroll content only clears the status bar, and the toggle visually
   // overlaps the empty area next to the first section header.
   const contentTopPadding = insets.top + 8;
-  // Flag-on: a real (non-floating) WaScreenHeader now occupies that top
-  // space, so the scroll content only needs a small gap below it — reusing
+  // Flag-on: the large title + chip strip render in flow above the list, so the
+  // scroll content only needs a small gap below them — reusing
   // `contentTopPadding` here would double the header's own top inset.
   const mainContentTopPadding = whatsappShellEnabled ? 8 : contentTopPadding;
+
+  // Flag-on the screen is a WhatsApp list surface: white (S6 full-bleed rows
+  // with text-column-inset hairlines, exactly like the community landing),
+  // not the grouped gray the card-based flag-off layout needs.
+  const pageBackground = whatsappShellEnabled
+    ? colors.surface
+    : colors.backgroundSecondary;
 
   // Flag-on: reserve the strip below the floating island on the container that
   // carries the page background, so the home-indicator gap paints page gray
@@ -517,24 +718,88 @@ export function EventsScreen() {
   if (!hasCommunityContext) {
     const myEvents = myRsvpedEventsData?.events ?? [];
     return (
-      <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }, waStripPadding]}>
+      <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
+        {whatsappShellEnabled && (
+          <WaLargeTitle style={{ paddingTop: insets.top + 8 }}>Events</WaLargeTitle>
+        )}
         {isLoadingMyRsvps ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="small" color={colors.textSecondary} />
           </View>
         ) : myEvents.length === 0 ? (
-          <View style={styles.centerContainer}>
-            <Ionicons
-              name="calendar-outline"
-              size={48}
-              color={colors.textSecondary}
-              style={{ marginBottom: 16 }}
+          whatsappShellEnabled ? (
+            <WaEmptyState
+              title="No upcoming events"
+              subtitle="Events you RSVP to will appear here"
+              colors={colors}
             />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
-            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-              Events you RSVP to will appear here
-            </Text>
-          </View>
+          ) : (
+            <View style={styles.centerContainer}>
+              <Ionicons
+                name="calendar-outline"
+                size={48}
+                color={colors.textSecondary}
+                style={{ marginBottom: 16 }}
+              />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                Events you RSVP to will appear here
+              </Text>
+            </View>
+          )
+        ) : whatsappShellEnabled ? (
+          // Same S6 row anatomy as the community-context list — the pre-pass
+          // fallback used shadowed cards with an accent date line and a tinted
+          // RSVP chip, all three banned by §7/S5.1.
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.waMyRsvpsContent}
+          >
+            {myEvents.map((event: any, index: number) => (
+              <React.Fragment key={event.id}>
+                <WaRow
+                  avatar={{
+                    imageUrl: event.coverImage || event.group.image,
+                    label: event.title || event.group.name,
+                    seed: String(event.id),
+                    shape: 'squircle',
+                  }}
+                  title={event.title || event.group.name}
+                  subtitle={[
+                    formatWaEventWhen(event.scheduledAt, userTimezone),
+                    event.group.name,
+                    event.community?.name,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  subtitleLines={2}
+                  accent={primaryColor}
+                  onPress={() => router.push(`/e/${event.shortId}?source=app`)}
+                  showChevron={!event.rsvpStatus?.optionLabel}
+                  rightAccessory={
+                    event.rsvpStatus?.optionLabel ? (
+                      <View style={styles.waRowTrailing}>
+                        <Text
+                          style={[styles.waRowTrailingText, { color: colors.textTertiary }]}
+                          numberOfLines={1}
+                        >
+                          {event.rsvpStatus.optionLabel}
+                        </Text>
+                        <Ionicons
+                          name="chevron-forward"
+                          size={13}
+                          color={colors.textTertiary}
+                        />
+                      </View>
+                    ) : undefined
+                  }
+                />
+                {index < myEvents.length - 1 ? (
+                  <WaSeparator inset={WA_LIST_SEPARATOR_INSET} />
+                ) : null}
+              </React.Fragment>
+            ))}
+          </ScrollView>
         ) : (
           <ScrollView
             style={styles.scrollView}
@@ -611,30 +876,16 @@ export function EventsScreen() {
     laterCards.length > 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }, waStripPadding]}>
+    <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
       {whatsappShellEnabled && (
-        // S1 floating-chrome header. The List/Map toggle is the trailing
-        // circle pair — both NEUTRAL white with black line glyphs
-        // (WA-VISUAL-DELTAS.md §7.1 / S5.1: the only green circle anywhere in
-        // the chrome is the Chats compose "+"; the active view instead reads
-        // from its glyph switching to the filled variant). The map view itself
-        // is untouched below; only this entry point is restyled.
-        <WaScreenHeader
-          title="Events"
-          trailingButtons={[
-            {
-              icon: viewMode === 'list' ? 'list' : 'list-outline',
-              onPress: () => setViewMode('list'),
-              accessibilityLabel: 'List view',
-            },
-            {
-              icon: viewMode === 'map' ? 'map' : 'map-outline',
-              onPress: () => setViewMode('map'),
-              accessibilityLabel: 'Map view',
-            },
-          ]}
-          style={{ paddingTop: insets.top }}
-        />
+        // S1/S7 chrome, in flow (this screen doesn't scroll content under a
+        // floating nav zone — see metrics.ts's note on the nav scrim): 34pt
+        // heavy large title, then the neutral List/Map chip strip. The map view
+        // itself is untouched below; only its entry point is restyled.
+        <>
+          <WaLargeTitle style={{ paddingTop: insets.top + 8 }}>Events</WaLargeTitle>
+          {renderWaViewChips()}
+        </>
       )}
       {viewMode === 'map' ? (
         <EventsMapView enabled={viewMode === 'map'} />
@@ -649,54 +900,72 @@ export function EventsScreen() {
               style={styles.scrollView}
               contentContainerStyle={[
                 styles.scrollContent,
+                // Flag-on rows are full-bleed (WaRow supplies its own 16pt
+                // leading inset), so the card-era horizontal padding has to go
+                // or every hairline stops 16pt short of both edges.
+                whatsappShellEnabled && styles.waScrollContent,
                 { paddingTop: mainContentTopPadding },
               ]}
               onScroll={handleScroll}
               scrollEventThrottle={200}
             >
-          {!hasAnyContent && (
-            <View style={styles.centerContainer}>
-              <Ionicons
-                name="calendar-outline"
-                size={48}
-                color={colors.textSecondary}
-                style={{ marginBottom: 16 }}
+          {!hasAnyContent &&
+            (whatsappShellEnabled ? (
+              <WaEmptyState
+                title="No upcoming events"
+                subtitle="Check back later or create one yourself."
+                colors={colors}
               />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
-              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-                Check back later or create one yourself.
-              </Text>
-            </View>
-          )}
+            ) : (
+              <View style={styles.centerContainer}>
+                <Ionicons
+                  name="calendar-outline"
+                  size={48}
+                  color={colors.textSecondary}
+                  style={{ marginBottom: 16 }}
+                />
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>No upcoming events</Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                  Check back later or create one yourself.
+                </Text>
+              </View>
+            ))}
 
           <Greeting
             firstName={user?.first_name ?? null}
             colors={colors}
             primaryColor={primaryColor}
             onMakePlans={handleCreateEvent}
+            whatsappShell={whatsappShellEnabled}
           />
           {whatsappShellEnabled ? (
+            // Sentence-case section headers (S3.5): "My events", not
+            // "MY EVENTS" and not Title Case either — WhatsApp's landing
+            // headers read as a sentence.
             <>
               <WaEventSection
-                title="My Events"
+                title="My events"
                 cards={myEvents}
                 colors={colors}
+                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
               />
               <WaEventSection
-                title="Next Up"
+                title="Next up"
                 cards={nextUp}
                 colors={colors}
+                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
               />
               <WaEventSection
-                title="This Week"
+                title="This week"
                 cards={thisWeek}
                 colors={colors}
+                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -705,6 +974,7 @@ export function EventsScreen() {
                 title="Later"
                 cards={laterCards}
                 colors={colors}
+                isDark={isDark}
                 accent={primaryColor}
                 userTimezone={userTimezone}
                 onCommunityWideTap={handleCommunityWideTap}
@@ -874,19 +1144,92 @@ const styles = StyleSheet.create({
     marginTop: 28, // breathing room between section groups (Next Up → This week → Later)
     marginBottom: 8,
   },
-  // WhatsApp-shell sections (flag-gated) — WaSectionLabel supplies its own
-  // header-to-row gap (§3.2's WA_SECTION_HEADER_GAP), so this only adds the
-  // generous inter-section rhythm (§3.2 "visibly more generous than the
-  // header-to-card gap").
+  // --- WhatsApp-shell (flag-on) styles ------------------------------------
+  waScrollContent: {
+    paddingHorizontal: 0,
+  },
+  // §3.2 "visibly more generous than the header-to-card gap" — the rhythm
+  // between one section's last row and the next section's header.
   waSection: {
     marginTop: WA_GROUP_SPACING,
   },
-  waCalendarGlyph: {
-    width: WA_AVATAR_LG,
-    height: WA_AVATAR_LG,
-    borderRadius: WA_AVATAR_LG / 2,
+  // S3.5 / §5.3 landing section header: ~20pt sentence-case gray semibold on
+  // the page background, no card, no uppercase.
+  waSectionHeader: {
+    fontSize: WA_TYPE_SECTION_HEADER,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingBottom: 6,
+  },
+  // S6 "generous thumbnails": the same 58pt box a cover photo fills, as a
+  // rounded square with a monochrome glyph.
+  waEventThumbnail: {
+    width: WA_LIST_AVATAR,
+    height: WA_LIST_AVATAR,
+    borderRadius: WA_LIST_AVATAR * WA_AVATAR_SQUIRCLE_RATIO,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Right-aligned gray secondary fact + vertically centered chevron (S3.3/S6).
+  waRowTrailing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  waRowTrailingText: {
+    fontSize: WA_TYPE_FOOTNOTE,
+  },
+  // WA filter-chip strip (D4): 34pt fully-rounded, light gray fill, 15pt label.
+  waChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 12,
+  },
+  waChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: WA_VIEW_CHIP_HEIGHT,
+    borderRadius: WA_VIEW_CHIP_HEIGHT / 2,
+    paddingHorizontal: 14,
+  },
+  waChipLabel: {
+    fontSize: WA_TYPE_SUBTITLE,
+  },
+  waGreeting: {
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 2,
+  },
+  waGreetingTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  waGreetingSubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+    lineHeight: 20,
+  },
+  waGreetingAction: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  waEmptyGlyph: {
+    marginBottom: 12,
+  },
+  waEmptyTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+    marginBottom: 6,
+  },
+  waEmptySubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+    textAlign: 'center',
+  },
+  waMyRsvpsContent: {
+    paddingTop: 8,
+    paddingBottom: 120, // leaves room for the floating Create Event button
   },
   sectionTitle: {
     fontSize: 19,
