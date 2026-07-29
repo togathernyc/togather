@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GroupInfoScreen } from "../GroupInfoScreen";
 import { waPastelAvatar, WA_AVATAR_PROFILE, WA_TYPE_HERO_NAME, WA_ACTION_CARD_HEIGHT } from "@components/wa";
-import { DEFAULT_PRIMARY_COLOR } from "@togather/shared";
+import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useGroupDetails, useLeaveGroup, useJoinGroup, useArchiveGroup } from "../../hooks";
 import { useAuth } from "@providers/AuthProvider";
 import { useUserData } from "@features/profile/hooks/useUserData";

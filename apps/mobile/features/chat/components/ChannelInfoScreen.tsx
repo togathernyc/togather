@@ -96,9 +96,20 @@ import {
   WaInsetGroup,
   WaCell,
   WaRow,
+  WaSubScreenHeader,
+  WaActionCard,
+  WaActionCardRow,
+  waPastelAvatar,
   WA_GROUP_SPACING,
   WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
+  WA_HERO_NAME_GAP,
+  WA_CHEVRON_SIZE,
+  WA_CHEVRON_GAP,
+  WA_SECTION_LABEL_SIZE,
+  WA_TYPE_HERO_NAME,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
 } from "@components/wa";
 
 type Props = {
@@ -953,6 +964,8 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   // §3.2 "hairlines align with the label's leading edge" — leading padding
   // (16) + this section's 40pt avatar + avatar-to-text gap (12).
   const waMemberRowSeparatorInset = 16 + 40 + 12;
+  // §3.2 muted pastel entity disc — only read flag-on (see the hero JSX).
+  const heroPastel = waPastelAvatar(channelDisplayName, isDark);
 
   return (
     <View
@@ -964,7 +977,16 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
         },
       ]}
     >
-      <Header onBack={handleBack} colors={colors} />
+      {/* §3.1 — flag-on drops the opaque bar entirely for a floating back
+          circle + centered 17pt title over the grouped-gray canvas. Flag-off
+          keeps the original `Header` bar byte-identical. (The loading/error
+          branches above stay on `Header` in both states: they paint
+          `colors.surface`, not the grouped canvas the floating chrome needs.) */}
+      {whatsappShell ? (
+        <WaSubScreenHeader title="Channel info" onBack={handleBack} />
+      ) : (
+        <Header onBack={handleBack} colors={colors} />
+      )}
 
       <ScrollView
         style={styles.scroll}
@@ -990,10 +1012,19 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
           <View
             style={[
               whatsappShell ? styles.heroIconCircleWa : styles.heroIconCircle,
-              { backgroundColor: iconCfg.bg },
+              // §3.2: flag-on swaps the per-type tinted disc (pale green for
+              // General, pale red for Announcements…) for a muted pastel
+              // entity disc — S5.2 bans brand-green fallback avatars, and the
+              // channel's own glyph still carries the type signal.
+              { backgroundColor: whatsappShell ? heroPastel.background : iconCfg.bg },
             ]}
+            testID="channel-hero-disc"
           >
-            <Ionicons name={iconCfg.icon} size={48} color={iconCfg.color} />
+            <Ionicons
+              name={iconCfg.icon}
+              size={48}
+              color={whatsappShell ? heroPastel.ink : iconCfg.color}
+            />
           </View>
           {isRenameable && isLeader ? (
             <TouchableOpacity
@@ -1004,7 +1035,10 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             >
               <View style={styles.heroTitleRow}>
                 <Text
-                  style={[styles.heroName, { color: colors.text, marginTop: 0 }]}
+                  style={[
+                    whatsappShell ? styles.heroNameWa : styles.heroName,
+                    { color: colors.text, marginTop: 0 },
+                  ]}
                   numberOfLines={2}
                 >
                   {isCustom ? `#${channelDisplayName}` : channelDisplayName}
@@ -1019,7 +1053,10 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             </TouchableOpacity>
           ) : (
             <Text
-              style={[styles.heroName, { color: colors.text }]}
+              style={[
+                whatsappShell ? styles.heroNameWa : styles.heroName,
+                { color: colors.text },
+              ]}
               numberOfLines={2}
             >
               {isCustom || isPco ? `#${channelDisplayName}` : channelDisplayName}
@@ -1143,27 +1180,33 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
 
         {!isPendingShareInvite && (
         <>
-        {/* Open chat + Mute channel (W18) — §3.2 regroups both into one
-            WaInsetGroup when whatsapp-shell is on (Mute channel is
-            member-only: a leader viewing a channel they haven't joined has
-            no membership row to mute). Flag-off renders the original
-            bespoke cards unchanged. */}
+        {/* Open chat + Mute channel (W18) — §3.3 promotes both out of a card
+            into the white rounded action-button row that sits between the
+            hero and the first card group ("~76px tall, green glyph + 15pt
+            dark label instead of plain cells"). Mute is member-only (a leader
+            viewing a channel they haven't joined has no membership row to
+            mute); as a button it flips on tap and its own label carries the
+            state, since an action card has no switch slot. Flag-off renders
+            the original bespoke cards unchanged. */}
         {whatsappShell ? (
           <View style={styles.waSection}>
-            <WaInsetGroup>
-              <WaCell icon="chatbubbles-outline" title="Open chat" onPress={handleOpenChat} />
-              {isMemberOfChannel && (
-                <WaCell
-                  icon={isChannelMuted ? "notifications-off-outline" : "notifications-outline"}
-                  title="Mute channel"
-                  variant="toggle"
-                  toggleValue={isChannelMuted}
-                  onToggleChange={handleToggleMuted}
+            <WaActionCardRow>
+              <WaActionCard
+                icon="chatbubbles-outline"
+                label="Open chat"
+                onPress={handleOpenChat}
+                accent={waAccent}
+              />
+              {isMemberOfChannel ? (
+                <WaActionCard
+                  icon={isChannelMuted ? "notifications-outline" : "notifications-off-outline"}
+                  label={isChannelMuted ? "Unmute" : "Mute"}
+                  onPress={() => handleToggleMuted(!isChannelMuted)}
                   disabled={muteToggling}
                   accent={waAccent}
                 />
-              )}
-            </WaInsetGroup>
+              ) : null}
+            </WaActionCardRow>
           </View>
         ) : (
           <>
@@ -1397,8 +1440,18 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                       key={m.id}
                       avatar={{ imageUrl: m.profilePhoto, label: displayName, size: 40 }}
                       title={`${displayName}${isSelf ? " (you)" : ""}`}
-                      subtitle={isOwner ? "Owner" : undefined}
-                      showChevron
+                      // §3.5: the role reads as right-aligned gray TEXT beside
+                      // the chevron, not as a subtitle under the name (which
+                      // also grew the row to the 76pt two-line height).
+                      // `rightAccessory` is used rather than the default right
+                      // column because that column top-aligns its contents —
+                      // the accessory slot centers them (S3.3).
+                      rightAccessory={
+                        <MemberRoleAccessory
+                          role={isOwner ? "Owner" : undefined}
+                          colors={colors}
+                        />
+                      }
                       onPress={() => router.push(`/profile/${m.userId}` as any)}
                     />
                   );
@@ -2680,6 +2733,34 @@ function Header({
   );
 }
 
+/**
+ * MemberRoleAccessory — §3.5's member-row trailing cluster: the role as
+ * right-aligned gray text followed by a vertically-centered chevron.
+ *
+ * `WaRow`'s default right column top-aligns its stack (it's built for a
+ * timestamp above a badge), which is what left chevrons hugging the row corner
+ * across the info screens. The `rightAccessory` slot centers instead, so
+ * member rows route through it.
+ */
+function MemberRoleAccessory({
+  role,
+  colors,
+}: {
+  role?: string;
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <View style={styles.memberRoleAccessory} testID="member-role-accessory">
+      {role ? (
+        <Text style={[styles.memberRoleText, { color: colors.textTertiary }]} numberOfLines={1}>
+          {role}
+        </Text>
+      ) : null}
+      <Ionicons name="chevron-forward" size={WA_CHEVRON_SIZE} color={colors.textTertiary} />
+    </View>
+  );
+}
+
 function SectionHeader({
   colors,
   label,
@@ -2761,7 +2842,7 @@ function CrossTeamMembersSections({
           <View style={styles.waSection}>
             <View style={styles.waPermanentHeaderRow}>
               <Text style={[styles.waPermanentHeaderLabel, { color: colors.textSecondary }]}>
-                PERMANENT
+                Permanent
               </Text>
               {canManage && (
                 <TouchableOpacity
@@ -3052,6 +3133,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
+  // §3.2 hero name — 28pt bold (S7's hero-name step), vs the flag-off 22pt.
+  heroNameWa: {
+    marginTop: WA_HERO_NAME_GAP,
+    fontSize: WA_TYPE_HERO_NAME,
+    fontWeight: WA_WEIGHT_BOLD,
+    textAlign: "center",
+  },
+  memberRoleAccessory: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: WA_CHEVRON_GAP,
+  },
+  memberRoleText: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: "400",
+  },
   heroTitleRow: {
     marginTop: 16,
     flexDirection: "row",
@@ -3084,10 +3181,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: WA_GROUP_MARGIN,
     marginBottom: 8,
   },
+  // S3.5 — matches WaSectionLabel's own header treatment (15pt sentence-case
+  // gray, no tracking) so this bespoke row can't drift from the kit labels
+  // sitting above the other cards.
   waPermanentHeaderLabel: {
-    fontSize: 13,
+    fontSize: WA_SECTION_LABEL_SIZE,
     fontWeight: "400",
-    letterSpacing: 0.5,
   },
   waPermanentAddButton: {
     flexDirection: "row",
