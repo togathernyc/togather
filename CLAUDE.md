@@ -227,12 +227,15 @@ appear on a real device — so CI cannot catch them. Rules:
   tree onto react@19.1.0 while react-dom — if left undeclared — is
   auto-installed as a transitive peer at the latest in-range version, and
   react-dom/server hard-errors at render time on any react/react-dom version
-  skew (React >= 19.2). That skew shipped once: verification emails (the one
+  skew (React 19's `ensureCorrectIsomorphicReactVersion` — present in 19.1.0's
+  server builds too). That skew shipped once: verification emails (the one
   backend path that executes react-dom, via `@react-email/render` in
   `functions/auth/emailOtp.ts`) threw in production while all of CI stayed
-  green. Backstops: `__tests__/email-render.test.ts` renders the real template
-  through the real react-dom, and `check-react-consistency` (>= 1.2.0) fails
-  any lockfile containing a `react-dom@X(react@Y)` pair with X ≠ Y.
+  green. Backstop: `__tests__/email-render.test.ts` renders the real template
+  through the real react-dom, so a skew fails CI. (A static lockfile gate for
+  `react-dom@X(react@Y)` pairs lands in `@supa-media/native-safety` 1.2.0;
+  this repo is on 1.1.0 — until that's released and bumped, the render test
+  is the only guard.)
 - **Native Fabric view crashes cascade.** When an Expo native *view* crashes
   (e.g. `ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
   undefined)`), it corrupts the Fabric view registry and **breaks other native
