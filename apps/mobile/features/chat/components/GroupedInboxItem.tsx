@@ -143,6 +143,95 @@ function getServingChannelLabel(teamName: string, channel: ChannelData): string 
 // -ui-redesign/README.md, "Channel hygiene".
 const MAX_SECONDARY_CHANNELS = 2;
 
+// --- WhatsApp-shell row anatomy (flag-gated) --------------------------------
+// Flat, full-bleed rows matching WhatsApp's Chats list: circular avatar,
+// bold title + gray preview line, a top-aligned right column with timestamp
+// above the unread badge, and hairline separators instead of card gaps. Only
+// used when `whatsappShellEnabled` — the flag-off layout above is untouched.
+const WA_MAIN_AVATAR_SIZE = 50;
+const WA_SUB_AVATAR_SIZE = 38;
+// Separator inset so the hairline starts at the text column, not the avatar.
+const WA_SEPARATOR_INSET_MAIN = 16 + WA_MAIN_AVATAR_SIZE + 12; // 78
+const WA_SEPARATOR_INSET_SUB = 16 + WA_SUB_AVATAR_SIZE + 12; // 66
+
+/**
+ * Small circular placeholder used in place of a photo for channel sub-rows:
+ * a "#" glyph by default, a megaphone for the announcements channel.
+ */
+function WaChannelIcon({
+  channelType,
+  size,
+  colors,
+}: {
+  channelType: string;
+  size: number;
+  colors: { surfaceSecondary: string; textSecondary: string };
+}) {
+  return (
+    <View
+      style={[
+        styles.waIconCircle,
+        { width: size, height: size, borderRadius: size / 2, backgroundColor: colors.surfaceSecondary },
+      ]}
+    >
+      {channelType === "announcements" ? (
+        <Ionicons name="megaphone" size={size * 0.45} color={colors.textSecondary} />
+      ) : (
+        <Text style={[styles.waIconGlyph, { color: colors.textSecondary, fontSize: size * 0.4 }]}>#</Text>
+      )}
+    </View>
+  );
+}
+
+/**
+ * WhatsApp-anatomy right column: timestamp (accent-colored when the row has
+ * unread activity) stacked above the unread badge / muted dot / spinner.
+ */
+function WaRightColumn({
+  timestamp,
+  hasUnread,
+  unreadCount,
+  showMutedDot,
+  isLoading,
+  primaryColor,
+  colors,
+}: {
+  timestamp?: string;
+  hasUnread: boolean;
+  unreadCount?: number;
+  showMutedDot?: boolean;
+  isLoading?: boolean;
+  primaryColor: string;
+  colors: { textTertiary: string };
+}) {
+  return (
+    <View style={styles.waRightColumn}>
+      {timestamp ? (
+        <Text
+          style={[styles.waTimestamp, { color: hasUnread ? primaryColor : colors.textTertiary }]}
+          numberOfLines={1}
+        >
+          {timestamp}
+        </Text>
+      ) : null}
+      {isLoading ? (
+        <ActivityIndicator size="small" color={primaryColor} style={styles.waRightColumnSpacer} />
+      ) : hasUnread && unreadCount ? (
+        <View style={[styles.waBadge, { backgroundColor: primaryColor }]}>
+          <Text style={styles.waBadgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+        </View>
+      ) : showMutedDot ? (
+        <View style={[styles.waMutedDot, { backgroundColor: colors.textTertiary }]} />
+      ) : null}
+    </View>
+  );
+}
+
+/** Hairline row separator, inset so it starts at the text column. */
+function WaSeparator({ inset, borderColor }: { inset: number; borderColor: string }) {
+  return <View style={[styles.waSeparator, { marginLeft: inset, backgroundColor: borderColor }]} />;
+}
+
 // Helper to get badge colors dynamically for any group type ID
 function getBadgeColors(typeId: string): { bg: string; text: string } {
   // Convert Convex ID to a numeric hash for color scheme lookup
@@ -374,6 +463,39 @@ function GroupedInboxItemInner({
     [router, group._id]
   );
 
+  // Flag-on resource row: flat WhatsApp anatomy — small circular icon
+  // avatar, title, chevron-forward. No pill background, no external-link
+  // glyph (unlike the flag-off card below).
+  const renderResourceRowWa = useCallback(
+    (resource: InboxResourceData) => (
+      <Pressable
+        key={resource._id}
+        onPress={() => handleResourcePress(resource)}
+        style={({ pressed }) => [
+          styles.waRow,
+          { backgroundColor: colors.surface },
+          pressed && { backgroundColor: colors.surfaceSecondary },
+        ]}
+      >
+        <View
+          style={[
+            styles.waIconCircle,
+            { width: WA_SUB_AVATAR_SIZE, height: WA_SUB_AVATAR_SIZE, borderRadius: WA_SUB_AVATAR_SIZE / 2, backgroundColor: colors.surfaceSecondary },
+          ]}
+        >
+          <ResourceIcon name={resource.icon} size={16} color={colors.textSecondary} />
+        </View>
+        <View style={styles.waContent}>
+          <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
+            {resource.title}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+      </Pressable>
+    ),
+    [colors, handleResourcePress]
+  );
+
   // Resource sub-rows rendered under the group, styled like sub-channels with
   // the same L-connector. Shared between the single- and multi-channel layouts.
   const resourceRows =
@@ -442,6 +564,83 @@ function GroupedInboxItemInner({
     const singleWrapperProps = resourceRows
       ? { style: [styles.groupedContainer, { backgroundColor: colors.surface }] }
       : {};
+
+    // WhatsApp-shell flat row anatomy — see the constant block above. Only
+    // active when the flag is on; the flag-off return below is unchanged.
+    if (whatsappShellEnabled) {
+      const timestamp = primaryChannel.lastMessageAt
+        ? formatRelativeTime(primaryChannel.lastMessageAt)
+        : undefined;
+      return (
+        <View style={{ backgroundColor: colors.surface }}>
+          <Pressable
+            onPress={() => handleChannelPress(primaryChannel)}
+            style={({ pressed }) => [
+              styles.waRow,
+              { backgroundColor: colors.surface },
+              pressed && { backgroundColor: colors.surfaceSecondary },
+              isActive && { backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            <AppImage
+              source={group.preview}
+              style={styles.waAvatarMain}
+              optimizedWidth={150}
+              placeholder={{
+                type: "initials",
+                name: group.name,
+                backgroundColor: isDark ? "#333" : "#E5E5E5",
+              }}
+            />
+            <View style={styles.waContent}>
+              <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
+                {rowTitle}
+              </Text>
+              {servingMode && (
+                <Text
+                  style={[styles.waSubtext, { color: colors.textTertiary }]}
+                  numberOfLines={1}
+                >
+                  in {group.name}
+                </Text>
+              )}
+              <Text
+                style={[
+                  styles.waPreview,
+                  { color: colors.textSecondary },
+                  hasUnread && { fontWeight: "600", color: colors.text },
+                ]}
+                numberOfLines={1}
+              >
+                {getMessagePreview(primaryChannel)}
+              </Text>
+            </View>
+            <WaRightColumn
+              timestamp={timestamp}
+              hasUnread={hasUnread}
+              unreadCount={primaryChannel.unreadCount}
+              showMutedDot={hasMutedUnread}
+              isLoading={loadingChannelId === primaryChannel._id}
+              primaryColor={primaryColor}
+              colors={colors}
+            />
+          </Pressable>
+          {resources && resources.length > 0 && (
+            <>
+              <WaSeparator inset={WA_SEPARATOR_INSET_MAIN} borderColor={colors.border} />
+              {resources.map((resource, i) => (
+                <React.Fragment key={resource._id}>
+                  {renderResourceRowWa(resource)}
+                  {i < resources.length - 1 && (
+                    <WaSeparator inset={WA_SEPARATOR_INSET_SUB} borderColor={colors.border} />
+                  )}
+                </React.Fragment>
+              ))}
+            </>
+          )}
+        </View>
+      );
+    }
 
     return (
       <SingleWrapper {...(singleWrapperProps as any)}>
@@ -587,6 +786,169 @@ function GroupedInboxItemInner({
   const mainHasUnread =
     mainChannel.unreadCount > 0 &&
     !(whatsappShellEnabled && mainChannel.isMuted === true);
+
+  // WhatsApp-shell flat cluster: main row + visible sub-rows + "N more" +
+  // resources, each a flat full-bleed row separated by hairlines (no cards,
+  // no connector lines, no gaps). Only active when the flag is on; the
+  // flag-off cluster below is unchanged.
+  if (whatsappShellEnabled) {
+    // Cluster header timestamp: most recent activity across the rows this
+    // cluster actually renders (main + visible secondaries), so the header
+    // reflects what's visible rather than channels hidden by the cap/mute.
+    const mostRecentTimestamp = Math.max(
+      mainChannel.lastMessageAt ?? 0,
+      ...secondaryChannels.map((c) => c.lastMessageAt ?? 0)
+    );
+    const clusterHasUnread = mainHasUnread || totalUnread > 0;
+
+    // Sub-rows below the main row: secondary channels, then the "N more"
+    // row, then resources — one flat list, hairline-separated.
+    const subRows: React.ReactNode[] = [];
+    secondaryChannels.forEach((channel) => {
+      const channelHasUnread = channel.unreadCount > 0;
+      subRows.push(
+        <Pressable
+          key={channel._id}
+          onPress={() => handleChannelPress(channel)}
+          style={({ pressed }) => [
+            styles.waRow,
+            { backgroundColor: colors.surface },
+            pressed && { backgroundColor: colors.surfaceSecondary },
+            isActiveGroup && activeChannelSlug === channel.slug && { backgroundColor: colors.surfaceSecondary },
+          ]}
+        >
+          <WaChannelIcon channelType={channel.channelType} size={WA_SUB_AVATAR_SIZE} colors={colors} />
+          <View style={styles.waContent}>
+            <Text
+              style={[styles.waTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {channel.name}
+            </Text>
+            <Text
+              style={[
+                styles.waPreview,
+                { color: colors.textSecondary },
+                channelHasUnread && { fontWeight: "600", color: colors.text },
+              ]}
+              numberOfLines={1}
+            >
+              {getMessagePreview(channel)}
+            </Text>
+          </View>
+          <WaRightColumn
+            timestamp={channel.lastMessageAt ? formatRelativeTime(channel.lastMessageAt) : undefined}
+            hasUnread={channelHasUnread}
+            unreadCount={channel.unreadCount}
+            isLoading={loadingChannelId === channel._id}
+            primaryColor={primaryColor}
+            colors={colors}
+          />
+        </Pressable>
+      );
+    });
+
+    if (hiddenChannelCount > 0) {
+      subRows.push(
+        <Pressable
+          key="more"
+          onPress={() => router.push(`/inbox/${group._id}/channels` as any)}
+          style={({ pressed }) => [
+            styles.waRow,
+            { backgroundColor: colors.surface },
+            pressed && { backgroundColor: colors.surfaceSecondary },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={`${hiddenChannelCount} more channel${hiddenChannelCount === 1 ? "" : "s"}`}
+        >
+          <View
+            style={[
+              styles.waIconCircle,
+              { width: WA_SUB_AVATAR_SIZE, height: WA_SUB_AVATAR_SIZE, borderRadius: WA_SUB_AVATAR_SIZE / 2, backgroundColor: colors.surfaceSecondary },
+            ]}
+          >
+            <Ionicons name="ellipsis-horizontal" size={16} color={colors.textSecondary} />
+          </View>
+          <Text style={[styles.waPreview, { color: colors.textSecondary, flex: 1 }]} numberOfLines={1}>
+            {hiddenChannelCount} more channel{hiddenChannelCount === 1 ? "" : "s"}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+        </Pressable>
+      );
+    }
+
+    (resources ?? []).forEach((resource) => {
+      subRows.push(renderResourceRowWa(resource));
+    });
+
+    return (
+      <View style={{ backgroundColor: colors.surface }}>
+        <Pressable
+          onPress={() => handleChannelPress(mainChannel)}
+          onLongPress={handleLongPress}
+          delayLongPress={300}
+          // @ts-expect-error - onContextMenu is a web-only prop
+          onContextMenu={handleContextMenu}
+          style={({ pressed }) => [
+            styles.waRow,
+            { backgroundColor: colors.surface },
+            pressed && { backgroundColor: colors.surfaceSecondary },
+            isActiveGroup && activeChannelSlug === mainChannel.slug && { backgroundColor: colors.surfaceSecondary },
+          ]}
+        >
+          <AppImage
+            source={group.preview}
+            style={styles.waAvatarMain}
+            optimizedWidth={150}
+            placeholder={{
+              type: "initials",
+              name: group.name,
+              backgroundColor: isDark ? "#333" : "#E5E5E5",
+            }}
+          />
+          <View style={styles.waContent}>
+            <Text
+              style={[styles.waTitle, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {group.name}
+            </Text>
+            <Text
+              style={[
+                styles.waPreview,
+                { color: colors.textSecondary },
+                mainHasUnread && { fontWeight: "600", color: colors.text },
+              ]}
+              numberOfLines={1}
+            >
+              {getMessagePreview(mainChannel)}
+            </Text>
+          </View>
+          <WaRightColumn
+            timestamp={mostRecentTimestamp ? formatRelativeTime(mostRecentTimestamp) : undefined}
+            hasUnread={clusterHasUnread}
+            unreadCount={totalUnread}
+            showMutedDot={hasMutedOnlyUnread}
+            isLoading={loadingChannelId === mainChannel._id}
+            primaryColor={primaryColor}
+            colors={colors}
+          />
+        </Pressable>
+
+        {subRows.length > 0 && (
+          <WaSeparator inset={WA_SEPARATOR_INSET_MAIN} borderColor={colors.border} />
+        )}
+        {subRows.map((row, i) => (
+          <React.Fragment key={i}>
+            {row}
+            {i < subRows.length - 1 && (
+              <WaSeparator inset={WA_SEPARATOR_INSET_SUB} borderColor={colors.border} />
+            )}
+          </React.Fragment>
+        ))}
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.groupedContainer, { backgroundColor: colors.surface }]}>
@@ -1008,5 +1370,85 @@ const styles = StyleSheet.create({
   },
   subChannelSharedIcon: {
     marginRight: 4,
+  },
+
+  // --- WhatsApp-shell flat row anatomy (flag-gated) -------------------------
+  // A single row shape reused by main rows, sub-rows, "N more", and resource
+  // rows — differing only in avatar size/content. No card background, no
+  // border radius, no margins; hairline separators (below) do the dividing.
+  waRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  waAvatarMain: {
+    width: WA_MAIN_AVATAR_SIZE,
+    height: WA_MAIN_AVATAR_SIZE,
+    borderRadius: WA_MAIN_AVATAR_SIZE / 2,
+    marginRight: 12,
+  },
+  waIconCircle: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  waIconGlyph: {
+    fontWeight: "700",
+  },
+  waContent: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+  },
+  waTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  waSubtext: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  waPreview: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  // Right column: timestamp stacked above the badge/dot, top-aligned like
+  // WhatsApp (not vertically centered against the two-line content block).
+  waRightColumn: {
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+    marginLeft: 8,
+    alignSelf: "stretch",
+    paddingTop: 1,
+  },
+  waTimestamp: {
+    fontSize: 12,
+  },
+  waRightColumnSpacer: {
+    marginTop: 4,
+  },
+  waBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    marginTop: 4,
+  },
+  waBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  waMutedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 6,
+  },
+  waSeparator: {
+    height: StyleSheet.hairlineWidth,
   },
 });

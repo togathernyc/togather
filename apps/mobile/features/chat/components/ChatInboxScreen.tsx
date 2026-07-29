@@ -509,6 +509,7 @@ export function ChatInboxScreen({
             primaryColor={primaryColor}
             colors={colors}
             onPress={() => router.push("/notifications" as any)}
+            whatsappShellEnabled={whatsappShellEnabled}
           />
         );
       }
@@ -548,7 +549,7 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup, inServingMode]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
   );
 
   // Key extractor for FlatList
@@ -1136,6 +1137,18 @@ export function ChatInboxScreen({
               style={styles.list}
               onScroll={onListScroll}
               scrollEventThrottle={16}
+              // WhatsApp-shell rows are flat and full-bleed, so hairline
+              // dividers (not card gaps) mark row boundaries — flag-gated;
+              // flag off renders no separator, same as before.
+              ItemSeparatorComponent={
+                whatsappShellEnabled
+                  ? () => (
+                      <View
+                        style={[styles.waListSeparator, { backgroundColor: colors.border }]}
+                      />
+                    )
+                  : undefined
+              }
             />
           </>
         )}
@@ -1738,6 +1751,12 @@ interface NotificationsInboxRowProps {
     surface: string;
   };
   onPress: () => void;
+  /**
+   * Flag-gated flat restyle (see docs/plans/church-migration-ui-redesign
+   * /README.md): a small primary-tinted circle instead of the solid-fill
+   * bell block. Flag off renders byte-identical to before.
+   */
+  whatsappShellEnabled?: boolean;
 }
 
 /**
@@ -1750,6 +1769,7 @@ function NotificationsInboxRow({
   primaryColor,
   colors,
   onPress,
+  whatsappShellEnabled,
 }: NotificationsInboxRowProps) {
   return (
     <Pressable
@@ -1761,9 +1781,18 @@ function NotificationsInboxRow({
       }`}
     >
       <View
-        style={[styles.notificationsIcon, { backgroundColor: primaryColor }]}
+        style={[
+          styles.notificationsIcon,
+          whatsappShellEnabled
+            ? { width: 50, height: 50, borderRadius: 25, backgroundColor: primaryColor + "14" }
+            : { backgroundColor: primaryColor },
+        ]}
       >
-        <Ionicons name="notifications" size={26} color="#ffffff" />
+        <Ionicons
+          name="notifications"
+          size={whatsappShellEnabled ? 24 : 26}
+          color={whatsappShellEnabled ? primaryColor : "#ffffff"}
+        />
       </View>
       <View style={styles.dmRowContent}>
         <View style={styles.dmRowTopLine}>
@@ -2068,6 +2097,13 @@ const styles = StyleSheet.create({
   },
   listContainer: {
     paddingVertical: 8,
+  },
+  // WhatsApp-shell hairline row divider (flag-gated). Inset to roughly the
+  // text column so it starts past the avatar, matching GroupedInboxItem's
+  // internal separators.
+  waListSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 78,
   },
 
   // Events section
