@@ -58,8 +58,14 @@ Togather captures: `.playwright-mcp/tg-01…tg-08` (regenerate via Playwright at
    gray left-aligned footer metadata ("Created by … Created Jul 27, 2024.").
 
 ### S4. Chat surface (bubbles + wallpaper) — LARGEST GAP
-Flag-on chat rooms today render the flag-OFF Slack-style rows: flat avatar +
-name + black text on white, plain-text date separators, no bubbles. Target:
+Flag-on chat rooms today LOOK like the flag-off Slack-style rows, but the WA
+branch actually renders — invisibly. Root cause (verified 2026-07-29):
+`MessageList.tsx` paints its container `themeColors.surface` (white)
+unconditionally (~line 650, also loading/empty branches ~633/640), covering
+the `chatWallpaper` tint `ConvexChatRoomScreen` applies — so white bubbles,
+white day pills, and in-bubble gray timestamps all vanish against white.
+Wave 3's in-code comment records MessageList's container as out of its touch
+list. Fix the container, then close the fidelity gaps. Target:
 1. **Wallpaper**: cream (#F6F1E9-area) with the line-art doodle pattern at low
    opacity — bundle a static wallpaper asset (PNG, `require()`, plus dark
    variant), NOT a flat tint. Applied to the whole thread area and under the
