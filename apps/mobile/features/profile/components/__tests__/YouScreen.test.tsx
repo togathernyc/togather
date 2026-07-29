@@ -8,14 +8,15 @@
  */
 import React from "react";
 import { StyleSheet } from "react-native";
-import { render } from "@testing-library/react-native";
+import { render, fireEvent } from "@testing-library/react-native";
 import { YouScreen } from "../YouScreen";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery } from "@services/api/convex";
 import { WA_AVATAR_PROFILE, WA_TYPE_HERO_NAME } from "@components/wa";
 
+const mockPush = jest.fn();
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({ push: mockPush, replace: jest.fn(), back: jest.fn() }),
 }));
 
 jest.mock("@providers/AuthProvider", () => ({
@@ -43,15 +44,27 @@ jest.mock("@components/ui", () => {
   };
 });
 
+/** Base auth double: a plain member of a community. */
+const member = {
+  user: { id: "user-1", first_name: "Ada", last_name: "Lovelace" },
+  community: { id: "community-1", name: "Demo Community" },
+  isLoading: false,
+  logout: jest.fn(),
+};
+const asAuth = (overrides: Record<string, unknown>) => ({ ...member, ...overrides });
+
+const COMMUNITY_ADMIN_ROWS = [
+  "Join requests",
+  "Members",
+  "Attendance stats",
+  "Community settings",
+];
+
 describe("YouScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (useAuthenticatedQuery as jest.Mock).mockReturnValue(undefined);
-    (useAuth as jest.Mock).mockReturnValue({
-      user: { id: "user-1", first_name: "Ada", last_name: "Lovelace" },
-      community: { id: "community-1", name: "Demo Community" },
-      logout: jest.fn(),
-    });
+    (useAuth as jest.Mock).mockReturnValue(member);
   });
 
   it("§4.2: renders a centered hero with a 100pt avatar and 28pt bold name", () => {
@@ -103,5 +116,122 @@ describe("YouScreen", () => {
     expect(queryByText("You")).toBeNull();
     expect(getByText("Leader tools")).toBeTruthy();
     expect(queryByText("LEADER TOOLS")).toBeNull();
+  });
+
+  describe("Settings group (IA regroup)", () => {
+    it("splits the old catch-all Notifications row into one row per destination", () => {
+      const { getByText } = render(<YouScreen />);
+      expect(getByText("Settings")).toBeTruthy();
+      for (const label of ["Account", "Appearance", "Notifications", "Privacy & blocked"]) {
+        expect(getByText(label)).toBeTruthy();
+      }
+    });
+
+    it("routes each Settings row at its own /(user)/you/* leaf, not the legacy Settings screen", () => {
+      const { getByText } = render(<YouScreen />);
+      const expected: Array<[string, string]> = [
+        ["Account", "/(user)/you/account"],
+        ["Appearance", "/(user)/you/appearance"],
+        ["Notifications", "/(user)/you/notifications"],
+        // Unchanged — this row already had a dedicated route.
+        ["Privacy & blocked", "/(user)/settings/blocked-users"],
+      ];
+      for (const [label, route] of expected) {
+        mockPush.mockClear();
+        fireEvent.press(getByText(label));
+        expect(mockPush).toHaveBeenCalledWith(route);
+      }
+      // The 10-section legacy scroll is no longer a destination from this screen.
+      expect(mockPush).not.toHaveBeenCalledWith("/(user)/settings");
+    });
+
+    it("moves App info out of the legacy Settings scroll into the App group", () => {
+      const { getByText } = render(<YouScreen />);
+      fireEvent.press(getByText("App info"));
+      expect(mockPush).toHaveBeenCalledWith("/(user)/you/app-info");
+    });
+  });
+
+  describe("Admin group gates (mirror AdminScreen's tab visibility)", () => {
+    it("a plain member sees no Admin group at all", () => {
+      const { queryByText } = render(<YouScreen />);
+      expect(queryByText("Admin")).toBeNull();
+      expect(queryByText("Admin tools")).toBeNull();
+      for (const label of [...COMMUNITY_ADMIN_ROWS, "Staff dashboard"]) {
+        expect(queryByText(label)).toBeNull();
+      }
+    });
+
+    it("a community admin sees the four community rows and no staff dashboard", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_admin: true } })
+      );
+      const { getByText, queryByText } = render(<YouScreen />);
+      expect(getByText("Admin")).toBeTruthy();
+      for (const label of COMMUNITY_ADMIN_ROWS) expect(getByText(label)).toBeTruthy();
+      expect(queryByText("Staff dashboard")).toBeNull();
+    });
+
+    it("each community-admin row routes at its own /(user)/you/admin/* leaf", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_admin: true } })
+      );
+      const { getByText } = render(<YouScreen />);
+      const expected: Array<[string, string]> = [
+        ["Join requests", "/(user)/you/admin/requests"],
+        ["Members", "/(user)/you/admin/members"],
+        ["Attendance stats", "/(user)/you/admin/stats"],
+        ["Community settings", "/(user)/you/admin/community"],
+      ];
+      for (const [label, route] of expected) {
+        mockPush.mockClear();
+        fireEvent.press(getByText(label));
+        expect(mockPush).toHaveBeenCalledWith(route);
+      }
+      // The segmented catch-all is no longer a destination from this screen
+      // (the route itself stays live for deep links and flag-off).
+      expect(mockPush).not.toHaveBeenCalledWith("/(tabs)/admin");
+    });
+
+    it("internal staff who are not community admins see ONLY the staff dashboard", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_staff: true } })
+      );
+      const { getByText, queryByText } = render(<YouScreen />);
+      expect(getByText("Admin")).toBeTruthy();
+      fireEvent.press(getByText("Staff dashboard"));
+      expect(mockPush).toHaveBeenCalledWith("/(user)/you/admin/staff");
+      for (const label of COMMUNITY_ADMIN_ROWS) expect(queryByText(label)).toBeNull();
+    });
+
+    it("internal staff with no community still see the staff dashboard (AdminScreen's Dashboard-only case)", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_superuser: true }, community: null })
+      );
+      const { getByText, queryByText } = render(<YouScreen />);
+      expect(getByText("Staff dashboard")).toBeTruthy();
+      for (const label of COMMUNITY_ADMIN_ROWS) expect(queryByText(label)).toBeNull();
+    });
+
+    it("an admin with no community sees no admin rows", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_admin: true }, community: null })
+      );
+      const { queryByText } = render(<YouScreen />);
+      expect(queryByText("Admin")).toBeNull();
+      for (const label of [...COMMUNITY_ADMIN_ROWS, "Staff dashboard"]) {
+        expect(queryByText(label)).toBeNull();
+      }
+    });
+
+    it("a staff member who is also a community admin sees all five rows", () => {
+      (useAuth as jest.Mock).mockReturnValue(
+        asAuth({ user: { ...member.user, is_admin: true, is_staff: true } })
+      );
+      const { getByText } = render(<YouScreen />);
+      for (const label of [...COMMUNITY_ADMIN_ROWS, "Staff dashboard"]) {
+        expect(getByText(label)).toBeTruthy();
+      }
+    });
   });
 });
