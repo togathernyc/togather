@@ -17,6 +17,8 @@ import { MyRequestsSection } from "./MyRequestsSection";
 import { Environment } from "@/services/environment";
 import { isDevToolsEscapeHatchEnabled } from "@hooks/useDevToolsEscapeHatch";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { YouScreen } from "./YouScreen";
 
 export function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -24,6 +26,7 @@ export function ProfileScreen() {
   const { user, logout } = useAuth();
   const { colors } = useTheme();
   const [escapeHatchEnabled, setEscapeHatchEnabled] = useState(false);
+  const whatsappShell = useWhatsappShell();
 
   // Check for escape hatch when screen focuses (re-checks after Settings changes)
   useFocusEffect(
@@ -43,6 +46,14 @@ export function ProfileScreen() {
     await logout();
     router.replace("/");
   };
+
+  // whatsapp-shell flag on: render the WhatsApp "You" tab (README.md "W9 —
+  // You") instead of today's Profile screen. Flag off (or still loading —
+  // `useWhatsappShell` defaults to false until confirmed) falls through to
+  // the exact tree below, unchanged.
+  if (whatsappShell) {
+    return <YouScreen />;
+  }
 
   return (
     <ScrollView style={[styles.scrollView, { backgroundColor: colors.backgroundSecondary }]}>
