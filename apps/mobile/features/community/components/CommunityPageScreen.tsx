@@ -404,9 +404,9 @@ export function CommunityPageScreen() {
             straight to the announcement channel, the same destination the
             Announcements row further down opens. */}
         {announcementGroup && announcementChannel ? (
-          {/* Deliberate deviation from §3.2's bg.grouped track: this screen
-              itself sits on backgroundGrouped, which would make the track
-              invisible — separator gives it the visible recessed fill. */}
+          // Deliberate deviation from §3.2's bg.grouped track: this screen
+          // itself sits on backgroundGrouped, which would make the track
+          // invisible — separator gives it the visible recessed fill.
           <View style={[styles.segmentedTrack, { backgroundColor: colors.separator }]}>
             <View style={[styles.segmentedPill, { backgroundColor: colors.surfaceGrouped }]}>
               <Text style={[styles.segmentedLabel, styles.segmentedLabelSelected, { color: colors.text }]}>
