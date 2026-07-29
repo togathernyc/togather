@@ -888,6 +888,22 @@ function MessageItemInner({
     audioAttachments.length === 0 &&
     !message.blastId;
 
+  // Paragraph direction decides which corner the inline stamp anchors to:
+  // under RTL bidi layout the end-of-flow reservation lands at the visual
+  // LEFT, so the visible stamp must follow it there (WhatsApp does the same —
+  // Arabic/Hebrew bubbles carry their timestamp bottom-left). Direction comes
+  // from the first strong-directional character, like the text engine's own
+  // first-strong heuristic.
+  const firstStrongDirectionalChar = (message.content ?? '').match(
+    // First strong-directional character: LTR letters (Latin/Greek/Cyrillic)
+    // or the RTL blocks (Hebrew/Arabic/Syriac + presentation forms).
+    /[A-Za-z\u00C0-\u024F\u0370-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u
+  )?.[0];
+  const isRtlMessage =
+    useInlineTimestamp &&
+    firstStrongDirectionalChar !== undefined &&
+    /[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u.test(firstStrongDirectionalChar);
+
   /**
    * The reservation's text. Every space is a NBSP so the slug wraps as one unit
    * but never breaks mid-way (a broken slug would leave the absolute timestamp
@@ -1407,8 +1423,15 @@ function MessageItemInner({
                       whatsappShellEnabled && styles.waBubbleFooter,
                       // The visible cluster the reservation stands in for: same
                       // nodes, same colors, just lifted out of flow into the
-                      // bubble's bottom-right corner.
+                      // bubble's bottom trailing corner — bottom-right for LTR
+                      // text, bottom-LEFT for RTL, where bidi layout puts the
+                      // end-of-flow reservation (WhatsApp does the same).
                       useInlineTimestamp && styles.waInlineTimestampAnchor,
+                      useInlineTimestamp &&
+                        isRtlMessage && {
+                          right: undefined,
+                          left: WA_BUBBLE_PADDING_H,
+                        },
                     ]}
                     // The reservation is part of the body Text, so the time is
                     // already in that element's accessibility label — voicing

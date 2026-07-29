@@ -253,6 +253,35 @@ describe('MessageItem inline timestamp (flag-on)', () => {
     expect(style.marginTop).toBe(0);
   });
 
+  it('anchors bottom-LEFT for RTL text, where bidi layout puts the reservation', () => {
+    const { getByTestId } = render(
+      <MessageItem
+        message={{ ...incoming, content: 'שלום לכולם' }}
+        currentUserId={'user-1' as any}
+      />
+    );
+    const style = StyleSheet.flatten(
+      getByTestId('wa-bubble-footer', { includeHiddenElements: true }).props.style
+    );
+    expect(style.position).toBe('absolute');
+    expect(style.left).toBe(12);
+    expect(style.right).toBeUndefined();
+  });
+
+  it('stays bottom-right when LTR text merely contains an RTL word', () => {
+    const { getByTestId } = render(
+      <MessageItem
+        message={{ ...incoming, content: 'The word שלום means peace' }}
+        currentUserId={'user-1' as any}
+      />
+    );
+    const style = StyleSheet.flatten(
+      getByTestId('wa-bubble-footer', { includeHiddenElements: true }).props.style
+    );
+    expect(style.right).toBe(12);
+    expect(style.left).toBeUndefined();
+  });
+
   it('moves the bubble bottom padding onto the text block', () => {
     const { getByText } = render(
       <MessageItem message={incoming} currentUserId={'user-1' as any} />
