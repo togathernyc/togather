@@ -314,9 +314,13 @@ export function MessageList({
 
       // First in its run if the previous message is from a different sender
       // (or there's no previous message — sender-change/boundary rule).
+      // A missing senderId (bot/system message, schema marks it optional)
+      // always starts its own run: two different bots would otherwise
+      // compare undefined === undefined and merge into one run.
       // isLastInGroup is filled in by the backward pass below, once the
       // full timeline (including any optimistic messages) is known.
-      const isFirstInGroup = !previousMsg || msg.senderId !== previousMsg.senderId;
+      const isFirstInGroup =
+        !previousMsg || !msg.senderId || msg.senderId !== previousMsg.senderId;
       items.push({ type: 'message', data: msg, isFirstInGroup, isLastInGroup: false });
       previousMsg = msg;
     });
@@ -384,7 +388,10 @@ export function MessageList({
         nextMsg = undefined;
         continue;
       }
-      item.isLastInGroup = !nextMsg || item.data.senderId !== nextMsg.senderId;
+      // Mirror the forward pass's undefined-senderId rule: a bot/system
+      // message is always the last of its own run.
+      item.isLastInGroup =
+        !nextMsg || !item.data.senderId || item.data.senderId !== nextMsg.senderId;
       nextMsg = item.data;
     }
 
