@@ -147,7 +147,17 @@ export function mix(hex: string, target: string, weight: number): string {
 // --- WhatsApp-shell accent derivation (spec §1) -----------------------------
 
 /** §1.6 — outgoing bubble in light mode is primaryColor mixed ~18% onto white. */
-const BUBBLE_OUTGOING_LIGHT_TINT = 0.18;
+/**
+ * §1.6 light-mode outgoing bubble. A white-mix of the brand color desaturates
+ * (a forest-green brand came out gray-sage next to WhatsApp's `#D9FDD3`);
+ * WhatsApp instead keeps the bubble's lightness essentially constant (~92)
+ * and lets hue+saturation carry the brand. Calibrated against `#25D366` →
+ * `#D9FDD3` (S 70→85, L 49→92): saturation gets a fixed boost, lightness is
+ * pinned into a narrow light band regardless of the brand's own lightness.
+ */
+const BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST = 15;
+const BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS = 90;
+const BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS = 93;
 
 /**
  * Dark-mode accent shift, calibrated against the measured `#25D366` →
@@ -272,7 +282,12 @@ export function waAccentPalette(primaryColor: string, isDark: boolean): WaAccent
   const accent = isDark ? darkAdjustedAccent : primaryColor;
   const bubbleOutgoing = isDark
     ? darkBubbleTintOf(primaryColor)
-    : mix(primaryColor, '#FFFFFF', BUBBLE_OUTGOING_LIGHT_TINT);
+    : shiftHsl(primaryColor, {
+        saturationBoost: BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST,
+        lightnessFactor: 10, // pin into the clamp band below
+        minLightness: BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS,
+        maxLightness: BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS,
+      });
 
   return {
     accent,

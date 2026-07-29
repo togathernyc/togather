@@ -1758,6 +1758,9 @@ const styles = StyleSheet.create({
   waBubbleFooter: {
     paddingHorizontal: WA_BUBBLE_PADDING_H,
     paddingBottom: WA_BUBBLE_PADDING_V,
+    // §S4.2 "timestamp … inside bottom-RIGHT" — the flag-off footer is a
+    // left-packed row; WhatsApp right-aligns the timestamp cluster.
+    justifyContent: 'flex-end',
   },
   // §5 "Reaction chips ... overlapping it by ~40%" — negative top margin
   // pulls the (unmoved-in-the-tree) reactions row up over the bubble's

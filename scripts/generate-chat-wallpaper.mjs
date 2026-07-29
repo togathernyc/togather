@@ -84,7 +84,7 @@ function mulberry32(seed) {
  *  motif is clipped where the tile repeats. */
 function buildTileSvg({ ink, inkOpacity }) {
   const rand = mulberry32(20260729);
-  const cols = 4;
+  const cols = 5;
   const cell = TILE / cols;
   const parts = [];
   const order = [...motifNames];
@@ -97,7 +97,7 @@ function buildTileSvg({ ink, inkOpacity }) {
       const cx = col * cell + cell / 2 + jitterX;
       const cy = row * cell + cell / 2 + jitterY;
       const rotation = Math.round((rand() - 0.5) * 44);
-      const scale = (0.85 + rand() * 0.35).toFixed(3);
+      const scale = (0.55 + rand() * 0.22).toFixed(3);
       parts.push(
         `<g transform="translate(${cx.toFixed(2)} ${cy.toFixed(2)}) rotate(${rotation}) scale(${scale})"><path d="${motifs[name]}"/></g>`
       );

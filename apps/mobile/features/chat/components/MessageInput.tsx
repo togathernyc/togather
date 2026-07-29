@@ -1598,7 +1598,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     paddingHorizontal: 0,
     minHeight: WA_COMPOSER_FIELD_HEIGHT,
-  },
+    // WhatsApp's field shows no focus ring; RN-Web's TextInput otherwise
+    // paints the browser's focus outline around it. Ignored on native.
+    outlineStyle: 'none',
+  } as any,
   waFieldGlyph: {
     paddingHorizontal: 6,
     height: WA_COMPOSER_FIELD_HEIGHT,
