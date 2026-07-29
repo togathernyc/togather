@@ -96,6 +96,12 @@ const mockRouter = {
   replace: jest.fn(),
 };
 
+// Flag off = the behavior this suite asserts; the real hook reaches PostHog +
+// a Convex query the partial api mocks here don't provide.
+jest.mock('@hooks/useWhatsappShell', () => ({
+  useWhatsappShell: () => false,
+}));
+
 jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
   useLocalSearchParams: jest.fn(() => ({
