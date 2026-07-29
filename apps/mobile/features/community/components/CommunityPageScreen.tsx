@@ -387,6 +387,19 @@ export function CommunityPageScreen() {
     return map;
   }, [inboxChannels]);
 
+  // §5.1: WhatsApp's floating back circle carries the total unread count
+  // ("‹ 62"). Sum across every enabled channel the inbox already loaded.
+  const totalUnread = useMemo(() => {
+    let total = 0;
+    for (const entry of inboxChannels ?? []) {
+      for (const ch of ((entry as any).channels as any[]) ?? []) {
+        if (ch.isEnabled === false) continue;
+        total += ch.unreadCount ?? 0;
+      }
+    }
+    return total;
+  }, [inboxChannels]);
+
   const yourGroupItems: GroupRowData[] = useMemo(
     () =>
       yourGroups.map((g: any) => {
@@ -463,6 +476,7 @@ export function CommunityPageScreen() {
       {/* S1.1 floating chrome: back circle left, ⋯ circle right, no nav bar. */}
       <WaSubScreenHeader
         onBack={handleBack}
+        backBadge={totalUnread > 0 ? (totalUnread > 99 ? "99+" : String(totalUnread)) : undefined}
         accent={waAccent}
         trailingButtons={[
           {
