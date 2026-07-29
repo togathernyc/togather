@@ -416,6 +416,25 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          {/* ADR-032 group giving: community-level onboarding (legal name,
+              EIN, address, Stripe identity verification) lives outside any
+              one group, so it's a top-level leader-tools route rather than
+              nested under a specific group's giving screens. */}
+          <TouchableOpacity
+            style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            onPress={() => router.push("/(user)/leader-tools/finance-setup")}
+          >
+            <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
+              <Ionicons name="wallet-outline" size={20} color={themePrimaryColor} />
+            </View>
+            <View style={styles.quickLinkInfo}>
+              <Text style={[styles.quickLinkName, { color: colors.text }]}>Community Finance</Text>
+              <Text style={[styles.quickLinkDescription, { color: colors.textSecondary }]}>
+                Set up giving, spending, and reimbursements
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
           {settings?.churchFeatures?.prayerEnabled ? (
             <TouchableOpacity
               style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
