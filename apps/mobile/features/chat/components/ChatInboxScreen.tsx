@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   View,
   Text,
+  TextInput,
   StyleSheet,
   ActivityIndicator,
   ScrollView,
@@ -67,6 +68,144 @@ const MIN_SEARCH_LENGTH = 2;
 const NAV_ROW_HEIGHT = 44;
 const SEARCH_BLOCK_HEIGHT = 64;
 const COLLAPSE_DISTANCE = NAV_ROW_HEIGHT + SEARCH_BLOCK_HEIGHT;
+
+// --- WhatsApp-shell row anatomy (flag-gated) --------------------------------
+// Brings the remaining row kinds this screen renders directly (DM, event,
+// Notifications, Message Requests) into the same flat WaRow anatomy
+// GroupedInboxItem.tsx already applies to group/channel/resource rows — same
+// 50pt avatar, same right column, same separator inset — so the blended Chats
+// list reads as one row language instead of two interleaved ones (see
+// docs/plans/church-migration-ui-redesign/WA-GAP-MATRIX.md, Chats-list rows).
+// Duplicated locally (not imported from `components/wa/WaRow`, which uses a
+// 56pt avatar) because GroupedInboxItem's WA_MAIN_AVATAR_SIZE=50 is the
+// metric already shipped and visible in this list; matching it here — rather
+// than the generic kit's 56pt — is what actually fixes the size mismatch the
+// gap matrix calls out. Only rendered when `whatsappShellEnabled`; every
+// flag-off row below is unchanged.
+const WA_ROW_AVATAR_SIZE = 50;
+const WA_ROW_SEPARATOR_INSET = 16 + WA_ROW_AVATAR_SIZE + 12; // 78, matches GroupedInboxItem
+
+/** Format a timestamp the same way GroupedInboxItem's row anatomy does, so
+ * every row in the blended list (group, DM, event, notifications, requests)
+ * shows recency in the same shape ("now", "2h", "Yesterday", "Jan 15"). */
+function formatRelativeTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now.getTime() - date.getTime();
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d`;
+
+  const months = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  const month = months[date.getMonth()];
+  const day = date.getDate();
+
+  if (date.getFullYear() !== now.getFullYear()) {
+    return `${month} ${day}, ${date.getFullYear()}`;
+  }
+
+  return `${month} ${day}`;
+}
+
+/**
+ * Right column shared by every WaRow-anatomy row in this file: timestamp
+ * (accent when unread) stacked above the unread badge. Mirrors
+ * GroupedInboxItem's `WaRightColumn` (no `isLoading`/`showMutedDot` here —
+ * none of this file's rows show a loading spinner or a muted dot).
+ */
+function WaRowRightColumn({
+  timestamp,
+  hasUnread,
+  unreadCount,
+  primaryColor,
+  colors,
+}: {
+  timestamp?: string;
+  hasUnread: boolean;
+  unreadCount?: number;
+  primaryColor: string;
+  colors: { textTertiary: string };
+}) {
+  return (
+    <View style={styles.waRightColumn}>
+      {timestamp ? (
+        <Text
+          style={[styles.waTimestamp, { color: hasUnread ? primaryColor : colors.textTertiary }]}
+          numberOfLines={1}
+        >
+          {timestamp}
+        </Text>
+      ) : null}
+      {hasUnread && unreadCount ? (
+        <View style={[styles.waBadge, { backgroundColor: primaryColor }]}>
+          <Text style={styles.waBadgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * WhatsApp-shell search pill (flag-gated) — WHATSAPP-DESIGN-SYSTEM.md §4:
+ * 36-38pt tall, fully rounded, `bg.grouped`-ish fill, magnifying-glass icon +
+ * placeholder. Built locally rather than reusing the shared `SearchBar` (its
+ * own stylesheet bakes in a bordered-box shape that isn't reachable via
+ * props, and this pass is scoped to this file only) — same debounced
+ * search-as-you-type behavior as `SearchBar`.
+ */
+function WaChatSearchPill({
+  onSearch,
+  onClear,
+  colors,
+}: {
+  onSearch: (text: string) => void;
+  onClear: () => void;
+  colors: { backgroundGrouped: string; textTertiary: string; text: string };
+}) {
+  const [value, setValue] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleChangeText = (text: string) => {
+    setValue(text);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onSearch(text), 300);
+  };
+
+  const handleClear = () => {
+    setValue("");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    onClear();
+  };
+
+  return (
+    <View style={[styles.waSearchPill, { backgroundColor: colors.backgroundGrouped }]}>
+      <Ionicons name="search" size={15} color={colors.textTertiary} style={styles.waSearchIcon} />
+      <TextInput
+        style={[styles.waSearchInput, { color: colors.text }]}
+        placeholder="Search"
+        placeholderTextColor={colors.textTertiary}
+        value={value}
+        onChangeText={handleChangeText}
+        returnKeyType="search"
+        onSubmitEditing={() => onSearch(value)}
+      />
+      {value.length > 0 && (
+        <Pressable onPress={handleClear} hitSlop={8} accessibilityRole="button" accessibilityLabel="Clear search">
+          <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
 
 // Type for a channel as returned by getInboxChannels
 type InboxChannel = {
@@ -466,6 +605,50 @@ export function ChatInboxScreen({
         );
       }
       if (item.kind === "requests-link") {
+        // Not a serving-mode row (only pushed in the non-serving branch of
+        // listItemsWithDm below), so it gets the flat WA treatment same as
+        // every other top-level row: glyph circle avatar, title + subtitle,
+        // chevron (it navigates to a list, same as GroupedInboxItem's
+        // "N more channels" row — no unread badge, since the subtitle already
+        // states the pending count).
+        if (whatsappShellEnabled) {
+          return (
+            <Pressable
+              onPress={() => router.push("/inbox/requests" as any)}
+              style={({ pressed }) => [
+                styles.waRow,
+                pressed && { backgroundColor: colors.surfaceSecondary },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.count} message request${item.count === 1 ? "" : "s"}`}
+            >
+              <View
+                style={[
+                  styles.waIconCircle,
+                  {
+                    width: WA_ROW_AVATAR_SIZE,
+                    height: WA_ROW_AVATAR_SIZE,
+                    borderRadius: WA_ROW_AVATAR_SIZE / 2,
+                    backgroundColor: primaryColor + "14",
+                  },
+                ]}
+              >
+                <Ionicons name="mail-unread-outline" size={22} color={primaryColor} />
+              </View>
+              <View style={styles.waContent}>
+                <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
+                  Message Requests
+                </Text>
+                <Text style={[styles.waPreview, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {item.count} pending
+                </Text>
+              </View>
+              <View style={styles.waChevronColumn}>
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              </View>
+            </Pressable>
+          );
+        }
         return (
           <Pressable
             onPress={() => router.push("/inbox/requests" as any)}
@@ -519,10 +702,14 @@ export function ChatInboxScreen({
             row={item.item}
             primaryColor={primaryColor}
             colors={colors}
+            whatsappShellEnabled={whatsappShellEnabled}
           />
         );
       }
       if (item.kind === "ghost") {
+        // Serving-mode only (see the `inServingMode` branch of
+        // listItemsWithDm below) — left untouched entirely per this pass's
+        // brief, same as the rest of serving mode.
         return <GhostChannelCard channel={item.item} />;
       }
       if (item.kind === "event") {
@@ -532,6 +719,7 @@ export function ChatInboxScreen({
             isActive={Boolean(
               sidebarMode && activeChannelSlug === item.item.channel.slug,
             )}
+            whatsappShellEnabled={whatsappShellEnabled}
           />
         );
       }
@@ -637,7 +825,15 @@ export function ChatInboxScreen({
           style={[styles.largeTitleWrap, largeTitleStyle]}
           pointerEvents="none"
         >
-          <Text style={[styles.headerTitle, { color: colors.text }]}>{collapsingHeaderTitle}</Text>
+          <Text
+            style={[
+              styles.headerTitle,
+              whatsappShellEnabled && styles.headerTitleWa,
+              { color: colors.text },
+            ]}
+          >
+            {collapsingHeaderTitle}
+          </Text>
         </Animated.View>
         <Animated.Text
           style={[styles.smallTitle, { color: colors.text }, smallTitleStyle]}
@@ -647,33 +843,58 @@ export function ChatInboxScreen({
           {collapsingHeaderTitle}
         </Animated.Text>
         {showCommunityEntry && (
+          // §4: the "⋯" header-circle slot is the community switcher per the
+          // Togather adaptation noted in components/wa/WaScreenHeader's JSDoc —
+          // styled as the same 40pt neutral-gray circle as the other header
+          // buttons. Only ever rendered when the flag is on (showCommunityEntry).
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Open community page"
             onPress={() => router.push("/community" as any)}
-            style={styles.headerActionButton}
+            style={[
+              styles.headerActionButton,
+              styles.headerActionButtonWa,
+              { marginRight: 8, backgroundColor: colors.backgroundGrouped },
+            ]}
             hitSlop={12}
           >
-            <Avatar name={community?.name} imageUrl={community?.logo} size={28} />
+            <Avatar name={community?.name} imageUrl={community?.logo} size={32} />
           </Pressable>
         )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Start a new chat"
           onPress={() => router.push("/inbox/new" as any)}
-          style={styles.headerActionButton}
+          style={[
+            styles.headerActionButton,
+            // §4: the compose "+" is the one filled-accent circle among the
+            // header buttons — everything else stays neutral gray/white.
+            whatsappShellEnabled && [styles.headerActionButtonWa, { backgroundColor: primaryColor }],
+          ]}
           hitSlop={12}
         >
-          <Ionicons name="create-outline" size={24} color={colors.text} />
+          <Ionicons
+            name="create-outline"
+            size={whatsappShellEnabled ? 18 : 24}
+            color={whatsappShellEnabled ? "#FFFFFF" : colors.text}
+          />
         </Pressable>
       </View>
 
       <Animated.View style={[styles.searchWrap, searchStyle]}>
-        <SearchBar
-          placeholder="Search messages"
-          onSearch={setSearchTerm}
-          onClear={() => setSearchTerm("")}
-        />
+        {whatsappShellEnabled ? (
+          <WaChatSearchPill
+            onSearch={setSearchTerm}
+            onClear={() => setSearchTerm("")}
+            colors={colors}
+          />
+        ) : (
+          <SearchBar
+            placeholder="Search messages"
+            onSearch={setSearchTerm}
+            onClear={() => setSearchTerm("")}
+          />
+        )}
       </Animated.View>
 
       <Animated.View
@@ -689,19 +910,30 @@ export function ChatInboxScreen({
   // "no community" empty state since the picker has nothing to search.
   const renderHeader = (showCompose: boolean) => (
     <View style={[styles.header, { paddingTop: headerPaddingTop }]}>
-      <Text style={[styles.headerTitle, { color: colors.text }]}>Inbox</Text>
+      <Text
+        style={[
+          styles.headerTitle,
+          whatsappShellEnabled && styles.headerTitleWa,
+          { color: colors.text },
+        ]}
+      >
+        {whatsappShellEnabled ? "Chats" : "Inbox"}
+      </Text>
       {showCompose && (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Start a new chat"
           onPress={() => router.push("/inbox/new" as any)}
-          style={styles.headerActionButton}
+          style={[
+            styles.headerActionButton,
+            whatsappShellEnabled && [styles.headerActionButtonWa, { backgroundColor: primaryColor }],
+          ]}
           hitSlop={12}
         >
           <Ionicons
             name="create-outline"
-            size={24}
-            color={colors.text}
+            size={whatsappShellEnabled ? 18 : 24}
+            color={whatsappShellEnabled ? "#FFFFFF" : colors.text}
           />
         </Pressable>
       )}
@@ -1082,18 +1314,28 @@ export function ChatInboxScreen({
           {renderHeader(true)}
           <EnableNotificationsBanner />
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
-            <Ionicons
-              name="chatbubbles-outline"
-              size={48}
-              color={colors.iconSecondary}
-              style={{ marginBottom: 16 }}
-            />
             {/* Serving mode always pins the Team card, so the inbox is never
                 empty there — this branch only renders outside serving mode. */}
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>No Groups Yet</Text>
-            <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-              Join a group to start chatting
-            </Text>
+            {whatsappShellEnabled ? (
+              // §6 Empty states, as narrowed by this pass's brief: simple
+              // centered secondary text, no illustration/icon.
+              <Text style={[styles.waEmptyText, { color: colors.textSecondary }]}>
+                No chats yet
+              </Text>
+            ) : (
+              <>
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={48}
+                  color={colors.iconSecondary}
+                  style={{ marginBottom: 16 }}
+                />
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>No Groups Yet</Text>
+                <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
+                  Join a group to start chatting
+                </Text>
+              </>
+            )}
           </ScrollView>
         </View>
       </Wrapper>
@@ -1186,6 +1428,9 @@ function EventsSection({ rows, activeChannelSlug }: EventsSectionProps) {
 interface EventInboxRowItemProps {
   row: EventInboxRow;
   isActive: boolean;
+  /** WA-GAP-MATRIX #2c: flat WaRow anatomy, no accent bar/pill/CTA. Flag off
+   * renders the existing bespoke card below, byte-identical to before. */
+  whatsappShellEnabled?: boolean;
 }
 
 /**
@@ -1377,7 +1622,7 @@ function DirectionsButton({
   );
 }
 
-function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
+function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRowItemProps) {
   const router = useRouter();
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
@@ -1463,6 +1708,95 @@ function EventInboxRowItem({ row, isActive }: EventInboxRowItemProps) {
   // on web. Instead, layout lives on the inner View and we flip the bg via
   // state + onPressIn/Out.
   const [isPressed, setIsPressed] = useState(false);
+
+  // WA-GAP-MATRIX #2c: "the most un-WhatsApp row shape in the list" — same
+  // flat WaRow anatomy as every other row, no accent bar, no urgency pill, no
+  // inline Directions CTA. The right column's timestamp carries what's left
+  // of the urgency signal (last-message time, falling back to "Live now" or
+  // the event's scheduled time when there's no message yet); location /
+  // Directions remain reachable by opening the event itself. Reuses the same
+  // `isPressed` press-state workaround as the flag-off row below (RN Web
+  // drops layout styles passed via Pressable's function-form `style`).
+  if (whatsappShellEnabled) {
+    const timestamp = channel.lastMessageAt
+      ? formatRelativeTime(channel.lastMessageAt)
+      : isLive
+        ? "Live now"
+        : eventWhen?.when;
+    return (
+      <Pressable
+        onPress={handlePress}
+        onPressIn={() => setIsPressed(true)}
+        onPressOut={() => setIsPressed(false)}
+        accessibilityRole="button"
+        accessibilityLabel={`${group.name} — ${channel.name}${
+          eventWhen ? `, ${eventWhen.when}` : ""
+        }${hasUnread ? `, ${channel.unreadCount} unread` : ""}`}
+      >
+        <View
+          style={[
+            styles.waRow,
+            {
+              backgroundColor: isPressed || isActive ? colors.surfaceSecondary : colors.surface,
+            },
+          ]}
+        >
+          {channel.meetingCoverImage ? (
+            <AppImage
+              source={channel.meetingCoverImage}
+              style={[styles.waAvatarMain, isPast && styles.eventAvatarMuted]}
+              optimizedWidth={150}
+              placeholder={{
+                type: "initials",
+                name: channel.name,
+                backgroundColor: isDark ? "#333" : "#E5E5E5",
+              }}
+            />
+          ) : (
+            <View
+              style={[
+                styles.waIconCircle,
+                {
+                  width: WA_ROW_AVATAR_SIZE,
+                  height: WA_ROW_AVATAR_SIZE,
+                  borderRadius: WA_ROW_AVATAR_SIZE / 2,
+                  backgroundColor: colors.surfaceSecondary,
+                },
+                isPast && styles.eventAvatarMuted,
+              ]}
+            >
+              <Ionicons name="calendar" size={22} color={colors.textSecondary} />
+            </View>
+          )}
+          <View style={styles.waContent}>
+            <Text
+              style={[styles.waTitle, { color: isPast ? colors.textSecondary : colors.text }]}
+              numberOfLines={1}
+            >
+              {group.name}: {channel.name}
+            </Text>
+            <Text
+              style={[
+                styles.waPreview,
+                { color: isPast ? colors.textTertiary : colors.textSecondary },
+                hasUnread && !isPast && { fontWeight: "600", color: colors.text },
+              ]}
+              numberOfLines={1}
+            >
+              {messagePreview}
+            </Text>
+          </View>
+          <WaRowRightColumn
+            timestamp={timestamp}
+            hasUnread={hasUnread && !isPast}
+            unreadCount={channel.unreadCount}
+            primaryColor={primaryColor}
+            colors={colors}
+          />
+        </View>
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable
@@ -1645,12 +1979,21 @@ interface DirectMessageRowProps {
   colors: {
     text: string;
     textSecondary: string;
+    textTertiary: string;
     surface: string;
+    surfaceSecondary: string;
   };
+  /**
+   * WA-GAP-MATRIX #2a/#2b: flat WaRow anatomy — 50pt avatar (was 56pt,
+   * mismatched against GroupedInboxItem's rows) and a timestamp (previously
+   * dead-code-only, never rendered). Flag off renders byte-identical to
+   * before.
+   */
+  whatsappShellEnabled?: boolean;
 }
 
 
-function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) {
+function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: DirectMessageRowProps) {
   const router = useRouter();
 
   // Display name: for 1:1, the other member; for group_dm, the channel name
@@ -1691,6 +2034,60 @@ function DirectMessageRow({ row, primaryColor, colors }: DirectMessageRowProps) 
       },
     });
   };
+
+  if (whatsappShellEnabled) {
+    const hasUnread = row.unreadCount > 0;
+    const timestamp = row.lastMessageAt ? formatRelativeTime(row.lastMessageAt) : undefined;
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.waRow, pressed && { backgroundColor: colors.surfaceSecondary }]}
+      >
+        <View style={styles.waAvatarSlot}>
+          {useStackedAvatars ? (
+            <StackedMemberAvatars
+              members={row.otherMembers.map((m) => ({
+                name: m.displayName,
+                imageUrl: m.profilePhoto,
+              }))}
+              surfaceColor={colors.surface}
+              size={WA_ROW_AVATAR_SIZE}
+            />
+          ) : (
+            <Avatar
+              name={primaryAvatar?.displayName ?? headerName}
+              imageUrl={primaryAvatar?.profilePhoto ?? undefined}
+              size={WA_ROW_AVATAR_SIZE}
+              notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
+              notificationsBadgeRingColor={colors.surface}
+            />
+          )}
+        </View>
+        <View style={styles.waContent}>
+          <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
+            {headerName}
+          </Text>
+          <Text
+            style={[
+              styles.waPreview,
+              { color: colors.textSecondary },
+              hasUnread && { fontWeight: "600", color: colors.text },
+            ]}
+            numberOfLines={1}
+          >
+            {previewWithSender}
+          </Text>
+        </View>
+        <WaRowRightColumn
+          timestamp={timestamp}
+          hasUnread={hasUnread}
+          unreadCount={row.unreadCount}
+          primaryColor={primaryColor}
+          colors={colors}
+        />
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable onPress={onPress} style={styles.dmRow}>
@@ -1748,7 +2145,9 @@ interface NotificationsInboxRowProps {
   colors: {
     text: string;
     textSecondary: string;
+    textTertiary: string;
     surface: string;
+    surfaceSecondary: string;
   };
   onPress: () => void;
   /**
@@ -1771,6 +2170,56 @@ function NotificationsInboxRow({
   onPress,
   whatsappShellEnabled,
 }: NotificationsInboxRowProps) {
+  if (whatsappShellEnabled) {
+    const hasUnread = row.unreadCount > 0;
+    return (
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.waRow, pressed && { backgroundColor: colors.surfaceSecondary }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Notifications${
+          row.unreadCount > 0 ? `, ${row.unreadCount} unread` : ""
+        }`}
+      >
+        <View
+          style={[
+            styles.waIconCircle,
+            {
+              width: WA_ROW_AVATAR_SIZE,
+              height: WA_ROW_AVATAR_SIZE,
+              borderRadius: WA_ROW_AVATAR_SIZE / 2,
+              backgroundColor: primaryColor + "14",
+            },
+          ]}
+        >
+          <Ionicons name="notifications" size={22} color={primaryColor} />
+        </View>
+        <View style={styles.waContent}>
+          <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
+            Notifications
+          </Text>
+          <Text
+            style={[
+              styles.waPreview,
+              { color: colors.textSecondary },
+              hasUnread && { fontWeight: "600", color: colors.text },
+            ]}
+            numberOfLines={1}
+          >
+            {row.previewTitle}
+          </Text>
+        </View>
+        <WaRowRightColumn
+          timestamp={formatRelativeTime(row.sortTime)}
+          hasUnread={hasUnread}
+          unreadCount={row.unreadCount}
+          primaryColor={primaryColor}
+          colors={colors}
+        />
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable
       onPress={onPress}
@@ -1781,18 +2230,9 @@ function NotificationsInboxRow({
       }`}
     >
       <View
-        style={[
-          styles.notificationsIcon,
-          whatsappShellEnabled
-            ? { width: 50, height: 50, borderRadius: 25, backgroundColor: primaryColor + "14" }
-            : { backgroundColor: primaryColor },
-        ]}
+        style={[styles.notificationsIcon, { backgroundColor: primaryColor }]}
       >
-        <Ionicons
-          name="notifications"
-          size={whatsappShellEnabled ? 24 : 26}
-          color={whatsappShellEnabled ? primaryColor : "#ffffff"}
-        />
+        <Ionicons name="notifications" size={26} color="#ffffff" />
       </View>
       <View style={styles.dmRowContent}>
         <View style={styles.dmRowTopLine}>
@@ -2098,12 +2538,125 @@ const styles = StyleSheet.create({
   listContainer: {
     paddingVertical: 8,
   },
-  // WhatsApp-shell hairline row divider (flag-gated). Inset to roughly the
-  // text column so it starts past the avatar, matching GroupedInboxItem's
-  // internal separators.
+  // WhatsApp-shell hairline row divider (flag-gated). Inset to the text
+  // column so it starts past the avatar, matching GroupedInboxItem's
+  // internal separators — applies uniformly between every top-level row this
+  // FlatList renders (group clusters, DMs, events, notifications, requests).
   waListSeparator: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 78,
+    marginLeft: WA_ROW_SEPARATOR_INSET,
+  },
+
+  // --- WhatsApp-shell shared row anatomy (flag-gated) -----------------------
+  // Same shape/metrics as GroupedInboxItem.tsx's local `wa*` styles (not
+  // imported — those aren't exported, and this pass is scoped to this file),
+  // reused here by DM, event, notifications, and message-request rows so the
+  // whole blended Chats list reads as one row language.
+  waRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  waAvatarMain: {
+    width: WA_ROW_AVATAR_SIZE,
+    height: WA_ROW_AVATAR_SIZE,
+    borderRadius: WA_ROW_AVATAR_SIZE / 2,
+    marginRight: 12,
+  },
+  // Wraps avatar-slot nodes that manage their own sizing (Avatar,
+  // StackedMemberAvatars) so they still get the row's standard gap.
+  waAvatarSlot: {
+    marginRight: 12,
+  },
+  waIconCircle: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  waContent: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: "center",
+  },
+  waTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  waPreview: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  // Right column: timestamp stacked above the badge, top-aligned like
+  // WhatsApp (not vertically centered against the two-line content block).
+  waRightColumn: {
+    alignItems: "flex-end",
+    justifyContent: "flex-start",
+    marginLeft: 8,
+    alignSelf: "stretch",
+    paddingTop: 1,
+  },
+  waTimestamp: {
+    fontSize: 12,
+  },
+  waBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 6,
+    marginTop: 4,
+  },
+  waBadgeText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  // Trailing chevron column for navigational (non-chat) flat rows, e.g.
+  // Message Requests — vertically centered against the row rather than
+  // top-aligned like the timestamp/badge column above.
+  waChevronColumn: {
+    width: 60,
+    alignItems: "flex-end",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+  // §4 large title (34pt) — layered on top of the shared `headerTitle` style
+  // only when the flag is on, so the flag-off "Inbox" title is untouched.
+  headerTitleWa: {
+    fontSize: 34,
+  },
+  // §4 circular header buttons (40pt, neutral-gray fill) — the compose "+"
+  // additionally gets a filled-accent background via an inline style where
+  // it's used; the community-avatar entry sits on the same gray fill.
+  headerActionButtonWa: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  // §4 search pill: fully rounded, `bg.grouped`-ish fill, 37pt tall.
+  waSearchPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 37,
+    borderRadius: 37 / 2,
+    marginTop: 12,
+    paddingHorizontal: 12,
+  },
+  waSearchIcon: {
+    marginRight: 8,
+  },
+  waSearchInput: {
+    flex: 1,
+    fontSize: 17,
+    padding: 0,
+  },
+  // §6 empty state, simplified per this pass's brief: centered secondary
+  // text only, no illustration/icon.
+  waEmptyText: {
+    fontSize: 15,
+    textAlign: "center",
   },
 
   // Events section
