@@ -20,10 +20,11 @@
  *   calls these out separately: "Channel '#' discs: neutral light-gray fill,
  *   dark-gray glyph."
  *
- * This module is the canonical implementation for the whole app — WS-E's
- * `features/community/utils/entityAvatarColor.ts` (built in parallel on
- * another branch) should collapse into this at integration rather than the
- * other way round, since this one lives in the shared `components/wa` kit.
+ * This module is the canonical implementation for the whole app. WS-E's
+ * parallel `features/community/utils/entityAvatarColor.ts` was folded into it
+ * at integration (and deleted) rather than the other way round, since this one
+ * lives in the shared `components/wa` kit and its hash has the avalanche
+ * finalizer that Convex-id seeds need.
  */
 
 export interface WaAvatarPalette {

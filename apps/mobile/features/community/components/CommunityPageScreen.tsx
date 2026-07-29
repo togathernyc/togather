@@ -23,8 +23,8 @@
  * Colors follow S5: the only green on this screen is the bottom CTA pill,
  * unread badges/timestamps, and the accent-tinted Announcements glyph that
  * §5.2 calls for explicitly. Photo-less group avatars use muted per-entity
- * hues (`entityAvatarColor`), never the brand accent — that all-green wall
- * is on S5.2's kill list.
+ * hues (the `components/wa` kit's `waAvatarColor`), never the brand accent —
+ * that all-green wall is on S5.2's kill list.
  *
  * Route: /(user)/community
  *
@@ -65,14 +65,13 @@ import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { waAccentPalette } from "@utils/waPalette";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { AppImage } from "@components/ui/AppImage";
 import { useGroupSearchQuery } from "@features/groups/hooks/useGroups";
 import { useCommunityEvents } from "@features/events/hooks/useCommunityEvents";
 import { selectMainChannel } from "@features/chat/utils/selectMainChannel";
-import { entityAvatarColor } from "../utils/entityAvatarColor";
 import {
   WaRow,
   WaCell,
+  WaAvatar,
   WaSeparator,
   WaSubScreenHeader,
   WA_GROUP_MARGIN,
@@ -194,7 +193,6 @@ function GroupsSection({
   emptyMessage,
   groups,
   accent,
-  isDark,
   showChevron,
   onPressGroup,
 }: {
@@ -203,7 +201,6 @@ function GroupsSection({
   emptyMessage: string;
   groups: GroupRowData[];
   accent: string;
-  isDark: boolean;
   /** §5.4: chevrons on joinable rows only — member rows carry time/badge instead. */
   showChevron: boolean;
   onPressGroup: (id: string) => void;
@@ -224,7 +221,10 @@ function GroupsSection({
               avatar={{
                 imageUrl: group.imageUrl,
                 label: group.name,
-                backgroundColor: entityAvatarColor(group.id, isDark),
+                // S5.2: the muted per-entity pastel, hashed off the stable
+                // group id so a rename doesn't re-color the disc. The kit
+                // owns the palette — no flat fill is passed here.
+                seed: group.id,
               }}
               title={group.name}
               subtitle={group.subtitle ?? undefined}
@@ -481,19 +481,16 @@ export function CommunityPageScreen() {
             name, 15pt gray "Community". No centered hero (that's the info
             screen, §5.6). */}
         <View style={styles.identityBlock}>
-          <AppImage
-            source={community?.logo}
-            style={{
-              width: IDENTITY_AVATAR_SIZE,
-              height: IDENTITY_AVATAR_SIZE,
-              borderRadius: IDENTITY_AVATAR_RADIUS,
-            }}
-            optimizedWidth={IDENTITY_AVATAR_SIZE * 2}
-            placeholder={{
-              type: "initials",
-              name: community?.name || "Community",
-              backgroundColor: entityAvatarColor(communityId ?? community?.name, isDark),
-            }}
+          <WaAvatar
+            imageUrl={community?.logo}
+            label={community?.name || "Community"}
+            seed={communityId ?? community?.name ?? "community"}
+            shape="squircle"
+            size={IDENTITY_AVATAR_SIZE}
+            // The kit's squircle ratio would give 21pt at this size; this block
+            // sits directly above the Announcements avatar, which is drawn
+            // locally at WA_AVATAR_SQUIRCLE_RADIUS, so pin the two corners equal.
+            style={{ borderRadius: IDENTITY_AVATAR_RADIUS }}
           />
           <View style={styles.identityText}>
             <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
@@ -533,7 +530,6 @@ export function CommunityPageScreen() {
           emptyMessage="You haven't joined any groups yet."
           groups={yourGroupItems}
           accent={waAccent}
-          isDark={isDark}
           showChevron={false}
           onPressGroup={goToGroup}
         />
@@ -544,7 +540,6 @@ export function CommunityPageScreen() {
           emptyMessage="No groups to join right now."
           groups={suggestedGroupItems}
           accent={waAccent}
-          isDark={isDark}
           showChevron
           onPressGroup={goToGroup}
         />
