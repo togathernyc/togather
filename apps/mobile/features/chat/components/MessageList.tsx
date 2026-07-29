@@ -627,17 +627,24 @@ export function MessageList({
     };
   }, [isLoading, messages.length]);
 
+  // §S4.1: flag-on, the chat room paints a doodle wallpaper behind the whole
+  // screen. Painting `surface` here covered it with white-on-white, which is
+  // why the flag-on bubbles/day pills rendered but were invisible — the list
+  // must be transparent so the wallpaper shows through (all three branches:
+  // loading, empty, and the real list below). Flag-off is unchanged.
+  const listBackground = whatsappShellEnabled ? 'transparent' : themeColors.surface;
+
   // Loading state or waiting for messages — show empty container
   if (messages.length === 0 && !showEmptyState) {
     return (
-      <View style={[styles.container, { backgroundColor: themeColors.surface }]} />
+      <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]} />
     );
   }
 
   // Empty state — only shown after delay confirms no messages
   if (showEmptyState && messages.length === 0) {
     return (
-      <View style={[styles.centerContainer, { backgroundColor: themeColors.surface }]}>
+      <View testID="message-list-empty" style={[styles.centerContainer, { backgroundColor: listBackground }]}>
         <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
         <Text style={[styles.emptyTitle, { color: themeColors.text }]}>No messages yet</Text>
         <Text style={[styles.emptySubtext, { color: themeColors.textSecondary }]}>Start the conversation!</Text>
@@ -647,7 +654,7 @@ export function MessageList({
 
   return (
     <ReactionsProvider messageIds={messageIds} channelId={channelId}>
-      <View style={[styles.container, { backgroundColor: themeColors.surface }]}>
+      <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]}>
         <FlatList
           ref={listRef}
           data={listItems}

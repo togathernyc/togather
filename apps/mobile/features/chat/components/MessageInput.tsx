@@ -51,6 +51,14 @@ import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { waAccentPalette } from '@utils/waPalette';
+import {
+  WA_CHAT_FIELD_LIGHT,
+  WA_CHAT_FIELD_DARK,
+  WA_COMPOSER_BAR_LIGHT,
+  WA_COMPOSER_BAR_DARK,
+  WA_COMPOSER_FIELD_HEIGHT,
+  WA_COMPOSER_FIELD_RADIUS,
+} from '../waChatChrome';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
@@ -1021,10 +1029,14 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       style={[
         styles.container,
         { backgroundColor: themeColors.surface, borderTopColor: themeColors.border },
-        // §5 "flat bar on wallpaper" — the composer sits directly on the
-        // chat wallpaper with no dividing hairline above it (the pill input
-        // carries its own border instead).
-        whatsappShellEnabled && { backgroundColor: themeColors.chatWallpaper, borderTopWidth: 0 },
+        // §S4.6 "translucent light bar over wallpaper (rgba fill, no
+        // hairline)" — the composer floats on the chat wallpaper rather than
+        // sitting in its own opaque strip; the pill field below carries the
+        // only visible edge.
+        whatsappShellEnabled && {
+          backgroundColor: isDark ? WA_COMPOSER_BAR_DARK : WA_COMPOSER_BAR_LIGHT,
+          borderTopWidth: 0,
+        },
       ]}
     >
       {/* Mention Autocomplete */}
@@ -1212,9 +1224,10 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         />
       ) : whatsappShellEnabled ? (
       <>
-      {/* Input Row — WhatsApp-shell composer anatomy (§5): '+' (neutral,
-          opens the same attachment panel) → pill text field (surface fill,
-          hairline border) → camera + mic (neutral) that morph into a single
+      {/* Input Row — WhatsApp-shell composer anatomy (§S4.6): plain '⊕' glyph
+          (no circled background, opens the same attachment panel) → fully
+          rounded white field with a sticker/emoji glyph inside its right edge
+          → camera + mic dark-gray line glyphs, which morph into a single
           accent send circle once there's something to send. Every handler
           below is the same one the flag-off row uses; only the icon
           arrangement and colors differ. */}
@@ -1226,33 +1239,58 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             disabled={uploading || isSending}
           >
             <Animated.View style={{ transform: [{ rotate: plusRotation }] }}>
-              <Ionicons name="add" size={26} color={uploading ? themeColors.textTertiary : themeColors.icon} />
+              <Ionicons name="add" size={28} color={uploading ? themeColors.textTertiary : themeColors.icon} />
             </Animated.View>
           </Pressable>
         )}
 
-        <TextInput
-          ref={textInputRef}
+        {/* §S4.6 "fully-rounded white field ~44px with sticker/emoji glyph
+            inside right" — the field is a container so the glyph can sit
+            *inside* the pill; the TextInput itself drops its border/fill. */}
+        <View
+          testID="wa-composer-field"
           style={[
-            styles.input,
-            isWeb ? styles.inputWeb : styles.inputNative,
-            { borderColor: themeColors.separator, backgroundColor: themeColors.surface, color: themeColors.text },
+            styles.waFieldWrap,
+            { backgroundColor: isDark ? WA_CHAT_FIELD_DARK : WA_CHAT_FIELD_LIGHT },
           ]}
-          value={text}
-          onChangeText={handleTextChange}
-          onSelectionChange={handleSelectionChange}
-          onContentSizeChange={isWeb ? undefined : (event) => {
-            const contentHeight = event.nativeEvent.contentSize.height;
-            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
-            setNativeScrollEnabled(contentHeight >= maxContentHeight);
-          }}
-          placeholder={placeholder || "Message..."}
-          placeholderTextColor={themeColors.textTertiary}
-          multiline
-          scrollEnabled={isWeb ? true : nativeScrollEnabled}
-          maxLength={2000}
-          editable={!uploading}
-        />
+        >
+          <TextInput
+            ref={textInputRef}
+            style={[
+              styles.input,
+              isWeb ? styles.inputWeb : styles.inputNative,
+              { color: themeColors.text },
+              styles.waInput,
+            ]}
+            value={text}
+            onChangeText={handleTextChange}
+            onSelectionChange={handleSelectionChange}
+            onContentSizeChange={isWeb ? undefined : (event) => {
+              const contentHeight = event.nativeEvent.contentSize.height;
+              const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+              setNativeScrollEnabled(contentHeight >= maxContentHeight);
+            }}
+            placeholder={placeholder || "Message..."}
+            placeholderTextColor={themeColors.textTertiary}
+            multiline
+            scrollEnabled={isWeb ? true : nativeScrollEnabled}
+            maxLength={2000}
+            editable={!uploading}
+          />
+          {/* Hidden without a KLIPY key — the documented degradation is "GIF
+              picker hidden", matching the attachment-sheet option's gate. */}
+          {!recipientPending && !!process.env.EXPO_PUBLIC_KLIPY_API_KEY && (
+            <Pressable
+              style={styles.waFieldGlyph}
+              onPress={() => setShowGifPicker(true)}
+              disabled={uploading || isSending}
+              accessibilityRole="button"
+              accessibilityLabel="Stickers and GIFs"
+            >
+              <Ionicons name="happy-outline" size={22} color={themeColors.icon} />
+            </Pressable>
+          )}
+        </View>
 
         {canSend ? (
           <Pressable
@@ -1539,6 +1577,38 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.4,
+  },
+  // --- WhatsApp-shell composer (flag-gated, §S4.6) ---------------------------
+  // Additive-only: layered on top of the flag-off styles above, which are
+  // never edited.
+  /** Fully-rounded field that holds the TextInput plus the in-field sticker
+   *  glyph. Carries the fill, radius and horizontal padding the bare
+   *  `styles.input` used to own. */
+  waFieldWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    minHeight: WA_COMPOSER_FIELD_HEIGHT,
+    borderRadius: WA_COMPOSER_FIELD_RADIUS,
+    paddingLeft: 16,
+    paddingRight: 4,
+  },
+  /** The TextInput inside `waFieldWrap`: no border/fill of its own (the wrap
+   *  draws them) and no horizontal padding (ditto). */
+  waInput: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
+    minHeight: WA_COMPOSER_FIELD_HEIGHT,
+    // WhatsApp's field shows no focus ring; RN-Web's TextInput otherwise
+    // paints the browser's focus outline around it. Ignored on native.
+    outlineStyle: 'none',
+  } as any,
+  waFieldGlyph: {
+    paddingHorizontal: 6,
+    height: WA_COMPOSER_FIELD_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   videoExpirationHint: {
     alignItems: 'center',
