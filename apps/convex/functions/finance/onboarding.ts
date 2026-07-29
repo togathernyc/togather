@@ -35,6 +35,7 @@ import { requireCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { hasFundRole, isActiveLeader } from "../../lib/helpers";
 import { now } from "../../lib/utils";
+import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import {
   createConnectedAccount,
   createAccountOnboardingLink,
@@ -96,6 +97,7 @@ export const startOnboarding = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireGroupGivingEnabled(ctx);
 
     if (!isValidEin(args.ein)) {
       throw new Error(
@@ -344,6 +346,7 @@ export const getOnboardingStatus = query({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireGroupGivingEnabled(ctx);
 
     const finance = await ctx.db
       .query("communityFinance")
@@ -399,6 +402,7 @@ export const enableGroupGiving = mutation({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireGroupGivingEnabled(ctx);
 
     const group = await ctx.db.get(args.groupId);
     if (!group || group.communityId !== args.communityId) {
@@ -684,6 +688,7 @@ export const assertAdminAndGetFinance = internalQuery({
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireGroupGivingEnabled(ctx);
     return await ctx.db
       .query("communityFinance")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))

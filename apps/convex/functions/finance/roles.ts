@@ -14,6 +14,7 @@ import { requireAuth } from "../../lib/auth";
 import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import {
   requireFundRoleOrGroupLeader,
   isActiveMember,
@@ -165,6 +166,7 @@ export const grantFundRole = mutation({
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
     await requireFundRoleOrGroupLeader(ctx, args.fundId, callerId, "finance_admin");
+    await requireGroupGivingEnabled(ctx);
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {

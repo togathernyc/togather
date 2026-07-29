@@ -39,6 +39,10 @@ import { logFinanceAudit } from "../../lib/finance/audit";
 import { buildDonationReceiptEmail } from "../../lib/finance/receipts";
 import { getResendClient } from "../../lib/resend";
 import { now, getDisplayName } from "../../lib/utils";
+import {
+  isGroupGivingEnabled,
+  requireGroupGivingEnabled,
+} from "../../lib/finance/flag";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -180,6 +184,9 @@ export const getFundOverview = query({
   args: { token: v.string(), groupId: v.id("groups") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    if (!(await isGroupGivingEnabled(ctx))) {
+      return null; // Flag off — hides the fund screen entirely.
+    }
 
     const fund = await ctx.db
       .query("funds")
@@ -245,6 +252,9 @@ export const getGivingContext = query({
   args: { token: v.string(), groupId: v.id("groups") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    if (!(await isGroupGivingEnabled(ctx))) {
+      return null; // Flag off — hides the giving tile, give sheet, and hub.
+    }
 
     const fund = await ctx.db
       .query("funds")
@@ -288,6 +298,7 @@ export const prepareDonationIntent = internalQuery({
   args: { token: v.string(), fundId: v.id("funds") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx); // Gate donation creation at the source.
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {

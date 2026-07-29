@@ -48,6 +48,14 @@ async function seedGivingFixture(
   t: ReturnType<typeof convexTest>,
 ): Promise<GivingFixture> {
   return await t.run(async (ctx) => {
+    // Group giving is behind the app-wide "group-giving" feature flag
+    // (default OFF) — enable it for these tests; flag-off behavior has its
+    // own dedicated cases.
+    await ctx.db.insert("featureFlags", {
+      key: "group-giving",
+      enabled: true,
+      updatedAt: Date.now(),
+    });
     const timestamp = Date.now();
 
     const communityId = await ctx.db.insert("communities", {
@@ -873,6 +881,14 @@ interface JobsFixture {
 
 async function seedJobsFixture(t: ReturnType<typeof convexTest>): Promise<JobsFixture> {
   return await t.run(async (ctx) => {
+    // Group giving is behind the app-wide "group-giving" feature flag
+    // (default OFF) — enable it for these tests; flag-off behavior has its
+    // own dedicated cases.
+    await ctx.db.insert("featureFlags", {
+      key: "group-giving",
+      enabled: true,
+      updatedAt: Date.now(),
+    });
     const timestamp = Date.now();
     const communityId = await ctx.db.insert("communities", {
       name: "Jobs Test Church",

@@ -20,6 +20,7 @@ import { requireAuth } from "../../lib/auth";
 import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { isCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import {
   requireFundRole,
@@ -113,6 +114,7 @@ export const submitExpense = mutation({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
@@ -209,6 +211,7 @@ export const approveExpense = mutation({
   args: { token: v.string(), expenseId: v.id("expenses") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
 
     const expense = await ctx.db.get(args.expenseId);
     if (!expense) {

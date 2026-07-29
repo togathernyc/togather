@@ -81,6 +81,13 @@ export function SettingsContent() {
   // Billing data
   const { community, token, user, exitToCommunitySelection } = useAuth();
   const isPrimaryAdmin = user?.is_primary_admin ?? false;
+  // Group giving is behind the app-wide "group-giving" feature flag
+  // (default off, flipped by Togather staff in /(user)/admin/features) —
+  // hide the Community Finance entry entirely until it's on.
+  const groupGivingEnabled = useQuery(api.functions.admin.featureFlags.getFeatureFlag, {
+    key: "group-giving",
+  });
+
   const billing = useQuery(
     api.functions.ee.billing.getSubscriptionStatus,
     community?.id && token
@@ -420,6 +427,7 @@ export function SettingsContent() {
               EIN, address, Stripe identity verification) lives outside any
               one group, so it's a top-level leader-tools route rather than
               nested under a specific group's giving screens. */}
+          {groupGivingEnabled ? (
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             onPress={() => router.push("/(user)/leader-tools/finance-setup")}
@@ -435,6 +443,7 @@ export function SettingsContent() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          ) : null}
           {settings?.churchFeatures?.prayerEnabled ? (
             <TouchableOpacity
               style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}

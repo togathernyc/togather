@@ -69,6 +69,14 @@ async function seedOnboardingFixture(
   t: ReturnType<typeof convexTest>,
 ): Promise<OnboardingFixture> {
   const ids = await t.run(async (ctx) => {
+    // Group giving is behind the app-wide "group-giving" feature flag
+    // (default OFF) — enable it for these tests; flag-off behavior has its
+    // own dedicated cases.
+    await ctx.db.insert("featureFlags", {
+      key: "group-giving",
+      enabled: true,
+      updatedAt: Date.now(),
+    });
     const timestamp = Date.now();
     const suffix = Math.floor(Math.random() * 1_000_000);
 
