@@ -15,6 +15,12 @@
  *   centered, own row) instead of the default inline-grouped rendering
  *   (17pt, left-aligned) — §1.4 documents both.
  *
+ * `trailingAccessory` (navigational variant only) is an escape hatch that
+ * replaces the default value+chevron block with an arbitrary node — e.g. a
+ * tappable copy-icon button (Invite kit's per-group links, §8: "per-group
+ * links as WaCells with copy accessories"). Purely additive: omitting it
+ * keeps the standard value/chevron rendering exactly as before.
+ *
  * Presentational only: reads `useTheme()` for neutral grays/destructive red;
  * brand accent is an explicit prop, never read from community theme here.
  */
@@ -48,6 +54,8 @@ export interface WaCellProps {
   description?: string;
   /** Right-aligned value before the chevron, e.g. "5.4 MB", "Off", "On" (`navigational` only). */
   value?: string;
+  /** Replaces the default value+chevron block entirely (`navigational` only) — e.g. a copy-icon button. */
+  trailingAccessory?: React.ReactNode;
   variant?: WaCellVariant;
   /** `toggle` only. */
   toggleValue?: boolean;
@@ -68,6 +76,7 @@ export function WaCell({
   title,
   description,
   value,
+  trailingAccessory,
   variant = 'navigational',
   toggleValue,
   onToggleChange,
@@ -134,6 +143,8 @@ export function WaCell({
             thumbColor="#FFFFFF"
             disabled={disabled}
           />
+        ) : trailingAccessory ? (
+          trailingAccessory
         ) : (
           <>
             {value ? (
