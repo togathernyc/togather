@@ -63,6 +63,9 @@ export const ChatHeader = memo(function ChatHeader({
         { backgroundColor: themeColors.surface },
         whatsappShellEnabled && {
           backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+          // WA's nav row breathes below the status bar rather than hugging
+          // it (owner device feedback, 2026-07-29).
+          paddingTop: 12 + 8,
         },
       ]}
     >
