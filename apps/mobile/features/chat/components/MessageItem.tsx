@@ -64,6 +64,13 @@ import {
   WA_BUBBLE_RUN_GAP,
   WA_BUBBLE_GROUPED_GAP,
 } from '@components/wa/metrics';
+import {
+  WA_BUBBLE_SHADOW,
+  WA_BUBBLE_BODY_SIZE,
+  WA_BUBBLE_BODY_LINE_HEIGHT,
+  WA_BUBBLE_SENDER_SIZE,
+  WA_BUBBLE_TIMESTAMP_SIZE,
+} from '../waChatChrome';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
 
 /**
@@ -591,7 +598,14 @@ function MessageItemInner({
   const renderMessageContent = () => {
     if (message.isDeleted) {
       return (
-        <Text style={[styles.messageText, styles.deletedText, { color: themeColors.textTertiary }]}>
+        <Text
+          style={[
+            styles.messageText,
+            whatsappShellEnabled && styles.waMessageText,
+            styles.deletedText,
+            { color: themeColors.textTertiary },
+          ]}
+        >
           This message was deleted
         </Text>
       );
@@ -606,7 +620,15 @@ function MessageItemInner({
     }
 
     return (
-      <Text style={[styles.messageText, { color: themeColors.text }, isOwnMessage && { color: themeColors.chatBubbleOwnText }]}>
+      <Text
+        style={[
+          styles.messageText,
+          // §S4.2 "16px body" — flag-off keeps the 14pt baseline.
+          whatsappShellEnabled && styles.waMessageText,
+          { color: themeColors.text },
+          isOwnMessage && { color: themeColors.chatBubbleOwnText },
+        ]}
+      >
         {parts.map((part, index) => {
           if (part.type === 'mention') {
             return (
@@ -805,6 +827,21 @@ function MessageItemInner({
     documentAttachments.length === 0 &&
     audioAttachments.length === 0 &&
     videoAttachments.length === 0;
+
+  // Bubbles wrapping media rely on the base `overflow: 'hidden'` to round the
+  // photo/video corners, which on iOS also suppresses the bubble shadow — see
+  // `styles.waMessageBubbleShadow`.
+  const bubbleClipsMedia = validImageAttachments.length > 0 || videoAttachments.length > 0;
+
+  // §S4.2: flag-on, an incoming message's sender name renders *inside* the
+  // bubble's top padding rather than on a line above it — but never on an
+  // edge-to-edge image-only bubble, whose fill is transparent (the label
+  // would float on the wallpaper with nothing behind it).
+  const showInBubbleSenderName =
+    whatsappShellEnabled &&
+    !isOwnMessage &&
+    (isFirstInGroup ?? true) &&
+    !isImageOnlyMessage;
 
   // Handle image tap - open gallery viewer
   const handleImagePress = useCallback((index: number) => {
@@ -1194,28 +1231,11 @@ function MessageItemInner({
           // below (poll/event/task/etc.) since they share this same column.
           whatsappShellEnabled && styles.waMessageContent,
         ]}>
-          {/* Sender name (only for others' messages). WhatsApp shell: 14pt
-              semibold in a deterministic per-sender neutral color instead of
-              the flag-off 11pt textSecondary line (§5, §1.3 — never the
-              brand accent). §5 grouping: shown only on the first bubble of a
-              run — `!whatsappShellEnabled ||` short-circuits so flag-off
-              never reads `isFirstInGroup`, and undefined defaults to shown
-              (standalone run), matching pre-grouping flag-on rendering. */}
-          {!isOwnMessage && (!whatsappShellEnabled || (isFirstInGroup ?? true)) && (
-            <Text
-              style={[
-                styles.senderName,
-                { color: themeColors.textSecondary },
-                whatsappShellEnabled && styles.waSenderName,
-                // Bot/system messages have no senderId (optional in schema) —
-                // fall back to the neutral secondary rather than crashing.
-                whatsappShellEnabled && {
-                  color: message.senderId
-                    ? waSenderColor(message.senderId, isDark)
-                    : themeColors.textSecondary,
-                },
-              ]}
-            >
+          {/* Sender name, flag-OFF only: a 11pt textSecondary line above the
+              bubble. Flag-on it moves *inside* the bubble (§S4.2) — see
+              `showInBubbleSenderName` below. */}
+          {!isOwnMessage && !whatsappShellEnabled && (
+            <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>
               {message.senderName || 'Unknown'}
             </Text>
           )}
@@ -1234,6 +1254,7 @@ function MessageItemInner({
                   // (standalone run), reproducing the previous uniform
                   // tail-corner rendering before MessageList wired grouping.
                   whatsappShellEnabled && styles.waMessageBubble,
+                  whatsappShellEnabled && !bubbleClipsMedia && styles.waMessageBubbleShadow,
                   whatsappShellEnabled &&
                     (isOwnMessage
                       ? ((isFirstInGroup ?? true) ? styles.waOwnMessageBubble : styles.waOwnMessageBubbleContinuation)
@@ -1247,8 +1268,34 @@ function MessageItemInner({
                       },
                 ]}
               >
+                {/* §S4.2 "sender name 15 semibold per-sender color INSIDE
+                    bubble". §5 grouping: only on the first bubble of a run
+                    (undefined defaults to a standalone run). The per-sender
+                    color is a deterministic hash of `senderId` (never the
+                    brand accent); bots/system messages carry no senderId and
+                    fall back to the neutral secondary. */}
+                {showInBubbleSenderName && (
+                  <Text
+                    style={[
+                      styles.waSenderNameInBubble,
+                      {
+                        color: message.senderId
+                          ? waSenderColor(message.senderId, isDark)
+                          : themeColors.textSecondary,
+                      },
+                    ]}
+                  >
+                    {message.senderName || 'Unknown'}
+                  </Text>
+                )}
                 {hasTextContent && (
-                  <View style={[styles.bubbleTextContent, whatsappShellEnabled && styles.waBubbleTextContent]}>
+                  <View
+                    style={[
+                      styles.bubbleTextContent,
+                      whatsappShellEnabled && styles.waBubbleTextContent,
+                      showInBubbleSenderName && styles.waBubbleTextContentUnderName,
+                    ]}
+                  >
                     {renderMessageContent()}
                   </View>
                 )}
@@ -1283,6 +1330,8 @@ function MessageItemInner({
                     <Text
                       style={[
                         styles.timestamp,
+                        // §S4.2 "timestamp 11px gray inside bottom-right".
+                        whatsappShellEnabled && styles.waTimestamp,
                         { color: themeColors.textTertiary },
                         isOwnMessage && { color: themeColors.textSecondary },
                         // §5 "on outgoing, rgba-on-tint" — overrides the
@@ -1646,12 +1695,47 @@ const styles = StyleSheet.create({
   waMessageContent: {
     maxWidth: `${WA_BUBBLE_MAX_WIDTH_PCT * 100}%`,
   },
-  waSenderName: {
-    fontSize: 14,
+  // §S4.2 "sender name 15 semibold per-sender color INSIDE bubble" — flag-on
+  // the name moves from a line above the bubble into the bubble's own top
+  // padding, which is why it owns the padding rather than a margin.
+  waSenderNameInBubble: {
+    fontSize: WA_BUBBLE_SENDER_SIZE,
     fontWeight: '600',
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingTop: WA_BUBBLE_PADDING_V,
+    marginBottom: 1,
+  },
+  /** Text block directly under an in-bubble sender name — the name already
+   *  paid the bubble's top padding. */
+  waBubbleTextContentUnderName: {
+    paddingTop: 0,
+  },
+  // §S4.2 "16px body".
+  waMessageText: {
+    fontSize: WA_BUBBLE_BODY_SIZE,
+    lineHeight: WA_BUBBLE_BODY_LINE_HEIGHT,
+  },
+  // §S4.2 "timestamp 11px gray inside bottom-right".
+  waTimestamp: {
+    fontSize: WA_BUBBLE_TIMESTAMP_SIZE,
   },
   waMessageBubble: {
     borderRadius: WA_BUBBLE_RADIUS,
+  },
+  /**
+   * §S4.2 "subtle shadow (WA bubbles have a ~1px soft drop shadow)" — what
+   * separates a white incoming bubble from the cream wallpaper behind it.
+   *
+   * `overflow: 'visible'` is load-bearing: iOS sets `clipsToBounds` for
+   * `overflow: 'hidden'` (the base `messageBubble` style), and a clipped
+   * layer renders no shadow at all. Bubbles that actually need the clip —
+   * the ones wrapping a photo/video, where it rounds the media's corners —
+   * therefore opt out of the shadow instead; their media already gives them
+   * a hard edge against the wallpaper.
+   */
+  waMessageBubbleShadow: {
+    overflow: 'visible',
+    ...WA_BUBBLE_SHADOW,
   },
   waOwnMessageBubble: {
     borderBottomRightRadius: WA_BUBBLE_TAIL_CORNER_RADIUS,
