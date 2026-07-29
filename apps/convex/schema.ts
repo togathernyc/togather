@@ -3919,6 +3919,10 @@ export default defineSchema({
     submitterId: v.id("users"),
     amountCents: v.number(),
     kind: v.union(v.literal("card_charge"), v.literal("reimbursement")),
+    // What the money was for, shown in the approvals queue ("pizza for
+    // outreach night"). Optional: card-charge expenses start with only the
+    // merchant name from the card webhook.
+    description: v.optional(v.string()),
     // R2 object key. Optional because a card-charge expense is created by the
     // transaction webhook before the cardholder attaches a receipt (the nudge
     // flow); reimbursements always have one at submission.
