@@ -16,6 +16,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_SHEET_DISMISS_SIZE,
+  WA_SHEET_HANDLE_HEIGHT,
+  WA_SHEET_HANDLE_TOP_GAP,
+  WA_SHEET_HANDLE_WIDTH,
+  WA_SHEET_RADIUS,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { useAuthenticatedMutation, api } from '@services/api/convex';
 import { formatError } from '@/utils/error-handling';
 import type { Id } from '@services/api/convex';
@@ -128,6 +140,7 @@ function detectsAccusation(text: string): boolean {
 
 export function AddPrayerSheet({ visible, onClose, onPosted }: Props) {
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
   const { user, community } = useAuth();
   const [text, setText] = useState('');
@@ -222,17 +235,35 @@ export function AddPrayerSheet({ visible, onClose, onPosted }: Props) {
         style={styles.backdrop}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
-          <View style={styles.headerRow}>
-            <Text style={[styles.title, { color: colors.text }]}>Share a prayer request</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={12} disabled={isSubmitting}>
-              <Ionicons name="close" size={24} color={colors.iconSecondary} />
+        <View style={[styles.sheet, wa && waStyles.sheet, { backgroundColor: colors.surface }]}>
+          {/* §6 sheet anatomy: drag handle, then a centered 17pt semibold
+              title with an X-in-circle dismiss at the trailing edge. */}
+          {wa ? (
+            <View style={[waStyles.handle, { backgroundColor: colors.border }]} />
+          ) : null}
+          <View style={[styles.headerRow, wa && waStyles.headerRow]}>
+            <Text style={[styles.title, wa && waStyles.title, { color: colors.text }]}>
+              Share a prayer request
+            </Text>
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={12}
+              disabled={isSubmitting}
+              accessibilityLabel={wa ? 'Close' : undefined}
+              style={wa ? [waStyles.dismiss, { backgroundColor: colors.surfaceSecondary }] : undefined}
+            >
+              <Ionicons
+                name="close"
+                size={wa ? 20 : 24}
+                color={wa ? colors.textSecondary : colors.iconSecondary}
+              />
             </TouchableOpacity>
           </View>
 
           <TextInput
             style={[
               styles.input,
+              wa && waStyles.input,
               {
                 backgroundColor: colors.inputBackground,
                 color: colors.text,
@@ -248,18 +279,20 @@ export function AddPrayerSheet({ visible, onClose, onPosted }: Props) {
             editable={!isSubmitting}
           />
           <View style={styles.metaRow}>
-            <Text style={[styles.hint, { color: colors.textTertiary }]}>
+            <Text style={[styles.hint, wa && waStyles.footnote, { color: colors.textTertiary }]}>
               Try not to use real names — "my brother" or "a friend" is best.
             </Text>
-            <Text style={[styles.charCount, { color: colors.textTertiary }]}>
+            <Text style={[styles.charCount, wa && waStyles.footnote, { color: colors.textTertiary }]}>
               {charsLeft} left
             </Text>
           </View>
 
           <View style={styles.anonRow}>
             <View style={{ flex: 1, paddingRight: 12 }}>
-              <Text style={[styles.anonTitle, { color: colors.text }]}>Post anonymously</Text>
-              <Text style={[styles.anonHint, { color: colors.textTertiary }]}>
+              <Text style={[styles.anonTitle, wa && waStyles.anonTitle, { color: colors.text }]}>
+                Post anonymously
+              </Text>
+              <Text style={[styles.anonHint, wa && waStyles.footnote, { color: colors.textTertiary }]}>
                 Shown as: {previewName}
               </Text>
             </View>
@@ -273,6 +306,7 @@ export function AddPrayerSheet({ visible, onClose, onPosted }: Props) {
           <TouchableOpacity
             style={[
               styles.submitButton,
+              wa && waStyles.submitButton,
               { backgroundColor: primaryColor },
               (isSubmitting || text.trim().length === 0) && { opacity: 0.5 },
             ]}
@@ -283,7 +317,7 @@ export function AddPrayerSheet({ visible, onClose, onPosted }: Props) {
             {isSubmitting ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Text style={styles.submitText}>Post Prayer</Text>
+              <Text style={[styles.submitText, wa && waStyles.submitText]}>Post Prayer</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -362,4 +396,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+});
+
+/**
+ * whatsapp-shell skin for the compose sheet (§6 sheet anatomy): drag handle,
+ * centered 17pt semibold title with an X-in-circle dismiss, a fill-only (no
+ * border) rounded input, and the post CTA as a fully-rounded accent pill.
+ */
+const waStyles = StyleSheet.create({
+  sheet: {
+    borderTopLeftRadius: WA_SHEET_RADIUS,
+    borderTopRightRadius: WA_SHEET_RADIUS,
+    paddingTop: WA_SHEET_HANDLE_TOP_GAP,
+  },
+  handle: {
+    width: WA_SHEET_HANDLE_WIDTH,
+    height: WA_SHEET_HANDLE_HEIGHT,
+    borderRadius: WA_SHEET_HANDLE_HEIGHT / 2,
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  headerRow: { marginBottom: 18 },
+  // Optically centered without an extra spacer view: the leading margin
+  // balances the trailing dismiss circle.
+  title: {
+    flex: 1,
+    textAlign: 'center',
+    marginLeft: WA_SHEET_DISMISS_SIZE,
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  dismiss: {
+    width: WA_SHEET_DISMISS_SIZE,
+    height: WA_SHEET_DISMISS_SIZE,
+    borderRadius: WA_SHEET_DISMISS_SIZE / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // WA text fields are fill-only — no hairline border, softer radius.
+  input: { borderWidth: 0, borderRadius: 18, padding: 16, fontSize: WA_TYPE_ROW_TITLE },
+  footnote: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
+  anonTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR },
+  submitButton: { borderRadius: 26, paddingVertical: 15 },
+  submitText: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 });

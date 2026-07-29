@@ -12,6 +12,16 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_GROUP_RADIUS,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 
 const COMPLETED_GREEN = '#34C759';
 
@@ -73,6 +83,8 @@ export function PrayedCard({
   variant: 'rail' | 'list';
 }) {
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
+  const { primaryColor } = useCommunityTheme();
 
   const isAnonymous = prayer.authorDisplayName == null;
   const authorLabel = prayer.authorDisplayName ?? 'Anonymous';
@@ -85,52 +97,97 @@ export function PrayedCard({
     <TouchableOpacity
       style={[
         isRail ? styles.cardRail : styles.cardList,
+        wa && (isRail ? waStyles.cardRail : waStyles.cardList),
         { backgroundColor: colors.surface, borderColor: colors.border },
       ]}
       onPress={onPress}
       activeOpacity={0.85}
     >
-      <View style={styles.headerRow}>
-        <View style={[styles.avatar, { backgroundColor: avatarBg }]}>
+      <View style={[styles.headerRow, wa && waStyles.headerRow]}>
+        <View style={[styles.avatar, wa && waStyles.avatar, { backgroundColor: avatarBg }]}>
           {isAnonymous ? (
-            <Ionicons name="eye-off-outline" size={14} color="#5C5C66" />
+            <Ionicons name="eye-off-outline" size={wa ? 16 : 14} color="#5C5C66" />
           ) : (
-            <Text style={styles.avatarText}>{avatarInitials}</Text>
+            <Text style={[styles.avatarText, wa && waStyles.avatarText]}>{avatarInitials}</Text>
           )}
         </View>
         <View style={styles.headerText}>
           <Text
-            style={[styles.author, { color: colors.text }]}
+            style={[styles.author, wa && waStyles.author, { color: colors.text }]}
             numberOfLines={1}
           >
             {authorLabel}
           </Text>
-          <Text style={[styles.meta, { color: colors.textTertiary }]} numberOfLines={1}>
+          <Text
+            style={[styles.meta, wa && waStyles.meta, { color: colors.textTertiary }]}
+            numberOfLines={1}
+          >
             You prayed {relativeTime(prayer.prayedAt)}
           </Text>
         </View>
         {prayer.hasNewUpdate ? (
-          <View style={[styles.updateDot, { backgroundColor: COMPLETED_GREEN }]} />
+          // A "there's an update" dot is exactly WhatsApp's unread badge, and
+          // S5.1 keeps accent on unread indicators — so flag-on it takes the
+          // community accent instead of iOS system green.
+          <View
+            style={[
+              styles.updateDot,
+              { backgroundColor: wa ? primaryColor : COMPLETED_GREEN },
+            ]}
+          />
         ) : null}
       </View>
 
       <Text
-        style={[styles.body, { color: colors.text }]}
+        style={[styles.body, wa && waStyles.body, { color: colors.text }]}
         numberOfLines={isRail ? 3 : 4}
       >
         {prayer.bodyText}
       </Text>
 
       {prayer.status !== 'active' ? (
-        <View style={styles.statusRow}>
+        <View style={[styles.statusRow, wa && waStyles.statusRow]}>
+          {/*
+           * §7 bans colored taxonomy chips: flag-on both statuses render as the
+           * same neutral gray capsule with dark text, distinguished by the word
+           * in it — never by hue, and never with white-on-green.
+           */}
           {prayer.status === 'answered' ? (
-            <View style={[styles.statusBadge, { backgroundColor: COMPLETED_GREEN }]}>
-              <Ionicons name="checkmark" size={11} color="#fff" />
-              <Text style={styles.statusBadgeText}>Answered</Text>
+            <View
+              style={[
+                styles.statusBadge,
+                wa && waStyles.statusBadge,
+                { backgroundColor: wa ? colors.surfaceSecondary : COMPLETED_GREEN },
+              ]}
+            >
+              {wa ? null : <Ionicons name="checkmark" size={11} color="#fff" />}
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  wa && waStyles.statusBadgeText,
+                  wa && { color: colors.textSecondary },
+                ]}
+              >
+                Answered
+              </Text>
             </View>
           ) : (
-            <View style={[styles.statusBadge, { backgroundColor: colors.textTertiary }]}>
-              <Text style={styles.statusBadgeText}>Archived</Text>
+            <View
+              style={[
+                styles.statusBadge,
+                wa && waStyles.statusBadge,
+                { backgroundColor: wa ? colors.surfaceSecondary : colors.textTertiary },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.statusBadgeText,
+                  wa && waStyles.statusBadgeText,
+                  wa && { color: colors.textSecondary },
+                ]}
+              >
+                Archived
+              </Text>
             </View>
           )}
         </View>
@@ -192,4 +249,36 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   statusBadgeText: { color: '#fff', fontSize: 10, fontWeight: '600' },
+});
+
+/**
+ * whatsapp-shell skin: flat 24pt-radius cards (§7 "never cards-with-shadows",
+ * and never a hairline-bordered mini-card either), the S7 type scale (17pt
+ * name / 15pt body / 13pt meta), and neutral status capsules. The rail card
+ * widens because the type grew — same move ServingTeamScreen made when its
+ * names went 14 → 17pt.
+ */
+const waStyles = StyleSheet.create({
+  cardRail: {
+    width: 264,
+    minHeight: 152,
+    borderRadius: WA_GROUP_RADIUS,
+    borderWidth: 0,
+    padding: 16,
+  },
+  cardList: {
+    borderRadius: WA_GROUP_RADIUS,
+    borderWidth: 0,
+    padding: 16,
+    marginBottom: 12,
+  },
+  headerRow: { gap: 10, marginBottom: 10 },
+  avatar: { width: 32, height: 32, borderRadius: 16 },
+  avatarText: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  author: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  meta: { fontSize: WA_TYPE_FOOTNOTE, marginTop: 1 },
+  body: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
+  statusRow: { marginTop: 10 },
+  statusBadge: { height: 26, borderRadius: 13, paddingHorizontal: 10, gap: 0 },
+  statusBadgeText: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
 });

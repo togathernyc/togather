@@ -3,6 +3,18 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, Alert } from 'react-na
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_GROUP_RADIUS,
+  WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_LARGE_TITLE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_LARGE_TITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { useAuthenticatedMutation, api } from '@services/api/convex';
 import { formatError } from '@/utils/error-handling';
 import { CrisisResourceCard } from './CrisisResourceCard';
@@ -33,6 +45,7 @@ interface Props {
  */
 export function PraySession({ prayer, visible, onClose, onPrayed }: Props) {
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
   const [secondsLeft, setSecondsLeft] = useState(TIMER_SECONDS);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -94,28 +107,42 @@ export function PraySession({ prayer, visible, onClose, onPrayed }: Props) {
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         {showConfirm ? (
-          <View style={[styles.confirmSheet, { backgroundColor: colors.surface }]}>
-            <View style={[styles.confirmCircle, { backgroundColor: COMPLETED_GREEN }]}>
+          <View style={[styles.confirmSheet, wa && waStyles.sheet, { backgroundColor: colors.surface }]}>
+            <View
+              style={[
+                styles.confirmCircle,
+                // The confirmation disc is the accent moment of the pray flow
+                // (S5.1 "primary CTA"), so flag-on it takes the community
+                // accent rather than iOS system green.
+                { backgroundColor: wa ? primaryColor : COMPLETED_GREEN },
+              ]}
+            >
               <Ionicons name="checkmark" size={40} color="#fff" />
             </View>
-            <Text style={[styles.confirmTitle, { color: colors.text }]}>
+            <Text style={[styles.confirmTitle, wa && waStyles.confirmTitle, { color: colors.text }]}>
               Prayed for {confirmTarget}
             </Text>
-            <Text style={[styles.confirmBody, { color: colors.textSecondary }]}>
+            <Text
+              style={[styles.confirmBody, wa && waStyles.confirmBody, { color: colors.textSecondary }]}
+            >
               Your prayer was sent.
             </Text>
           </View>
         ) : (
-          <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+          <View style={[styles.sheet, wa && waStyles.sheet, { backgroundColor: colors.surface }]}>
             <View style={styles.headerRow}>
-              <Text style={[styles.title, { color: colors.text }]}>Praying</Text>
+              <Text style={[styles.title, wa && waStyles.title, { color: colors.text }]}>
+                Praying
+              </Text>
               <TouchableOpacity onPress={onClose} hitSlop={12}>
-                <Ionicons name="close" size={24} color={colors.iconSecondary} />
+                <Ionicons name="close" size={24} color={wa ? colors.text : colors.iconSecondary} />
               </TouchableOpacity>
             </View>
 
             {prayer.crisisFlag ? <CrisisResourceCard /> : null}
-            <Text style={[styles.body, { color: colors.text }]}>{prayer.bodyText}</Text>
+            <Text style={[styles.body, wa && waStyles.body, { color: colors.text }]}>
+              {prayer.bodyText}
+            </Text>
 
             <View style={styles.timerContainer}>
               <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSecondary }]}>
@@ -126,8 +153,12 @@ export function PraySession({ prayer, visible, onClose, onPrayed }: Props) {
                   ]}
                 />
               </View>
-              <Text style={[styles.timeText, { color: colors.text }]}>{timeLabel}</Text>
-              <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+              <Text style={[styles.timeText, wa && waStyles.timeText, { color: colors.text }]}>
+                {timeLabel}
+              </Text>
+              <Text
+                style={[styles.helperText, wa && waStyles.helperText, { color: colors.textTertiary }]}
+              >
                 Take 3 minutes to pray for this request.
               </Text>
             </View>
@@ -135,6 +166,7 @@ export function PraySession({ prayer, visible, onClose, onPrayed }: Props) {
             <TouchableOpacity
               style={[
                 styles.doneButton,
+                wa && waStyles.doneButton,
                 { backgroundColor: primaryColor },
                 isSubmitting && { opacity: 0.6 },
               ]}
@@ -142,7 +174,7 @@ export function PraySession({ prayer, visible, onClose, onPrayed }: Props) {
               disabled={isSubmitting}
               activeOpacity={0.85}
             >
-              <Text style={styles.doneButtonText}>
+              <Text style={[styles.doneButtonText, wa && waStyles.doneButtonText]}>
                 {secondsLeft > 0 ? 'I prayed, mark done' : 'Done'}
               </Text>
             </TouchableOpacity>
@@ -238,4 +270,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+});
+
+/**
+ * whatsapp-shell skin for the pray-session modal: WA card radius, the S7 type
+ * scale (22pt bold header block, 17pt body, 34pt heavy timer numeral) and the
+ * done CTA as a fully-rounded accent pill.
+ */
+const waStyles = StyleSheet.create({
+  sheet: { borderRadius: WA_GROUP_RADIUS },
+  title: { fontSize: WA_TYPE_HEADER_BLOCK, fontWeight: WA_WEIGHT_BOLD },
+  body: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR, lineHeight: 25 },
+  timeText: { fontSize: WA_TYPE_LARGE_TITLE, fontWeight: WA_WEIGHT_LARGE_TITLE },
+  helperText: { fontSize: WA_TYPE_SUBTITLE },
+  doneButton: { borderRadius: 26, paddingVertical: 15 },
+  doneButtonText: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  confirmTitle: { fontSize: WA_TYPE_HEADER_BLOCK, fontWeight: WA_WEIGHT_BOLD },
+  confirmBody: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
 });
