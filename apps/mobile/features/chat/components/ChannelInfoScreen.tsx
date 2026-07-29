@@ -99,7 +99,7 @@ import {
   WaSubScreenHeader,
   WaActionCard,
   WaActionCardRow,
-  waPastelAvatar,
+  waAvatarPalette,
   WA_GROUP_SPACING,
   WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
@@ -965,7 +965,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   // (16) + this section's 40pt avatar + avatar-to-text gap (12).
   const waMemberRowSeparatorInset = 16 + 40 + 12;
   // §3.2 muted pastel entity disc — only read flag-on (see the hero JSX).
-  const heroPastel = waPastelAvatar(channelDisplayName, isDark);
+  const heroPastel = waAvatarPalette(channelDisplayName, isDark);
 
   return (
     <View
@@ -1023,7 +1023,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             <Ionicons
               name={iconCfg.icon}
               size={48}
-              color={whatsappShell ? heroPastel.ink : iconCfg.color}
+              color={whatsappShell ? heroPastel.foreground : iconCfg.color}
             />
           </View>
           {isRenameable && isLeader ? (

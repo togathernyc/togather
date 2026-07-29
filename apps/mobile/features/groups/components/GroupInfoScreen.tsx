@@ -110,7 +110,7 @@ import {
   WaSubScreenHeader,
   WaActionCard,
   WaActionCardRow,
-  waPastelAvatar,
+  waAvatarPalette,
   WA_GROUP_SPACING,
   WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
@@ -621,7 +621,7 @@ export function GroupInfoScreen() {
               placeholder={{
                 type: "initials",
                 name: groupName,
-                backgroundColor: waPastelAvatar(groupName, isDark).background,
+                backgroundColor: waAvatarPalette(groupName, isDark).background,
               }}
             />
           </TouchableOpacity>

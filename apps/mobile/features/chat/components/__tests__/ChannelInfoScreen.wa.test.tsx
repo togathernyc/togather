@@ -12,7 +12,7 @@ import { ChannelInfoScreen } from "../ChannelInfoScreen";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { useQuery } from "@services/api/convex";
 import {
-  waPastelAvatar,
+  waAvatarPalette,
   WA_TYPE_HERO_NAME,
   WA_ACTION_CARD_HEIGHT,
 } from "@components/wa";
@@ -121,7 +121,7 @@ describe("ChannelInfoScreen — WA visual deltas (§3)", () => {
     renderScreen();
     const disc = screen.getByTestId("channel-hero-disc");
     const style = StyleSheet.flatten(disc.props.style);
-    expect(style.backgroundColor).toBe(waPastelAvatar("General", false).background);
+    expect(style.backgroundColor).toBe(waAvatarPalette("General", false).background);
 
     screen.unmount();
     (useWhatsappShell as jest.Mock).mockReturnValue(false);
