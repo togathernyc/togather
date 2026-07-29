@@ -103,6 +103,14 @@ const WA_TIMESTAMP_ON_TINT_LIGHT = 'rgba(0,0,0,0.45)';
 const WA_TIMESTAMP_ON_TINT_DARK = 'rgba(255,255,255,0.6)';
 
 /**
+ * Incoming-message avatar diameter, flag-on. The one chat-surface measurement
+ * that came in SMALLER than the reference (ours 24 vs WA's 30) in the
+ * calibrated pixel pass, 2026-07-29 — 28 closes most of the gap without
+ * pushing the bubble column inward.
+ */
+const WA_INCOMING_AVATAR = 28;
+
+/**
  * The Togather brand mark, shown as the avatar for automated bot messages
  * (contentType "bot" with no human sender) so the bot reads as first-party
  * rather than an initials placeholder.
@@ -1178,6 +1186,7 @@ function MessageItemInner({
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
+          whatsappShellEnabled && styles.waContainer,
           // §5 consecutive-message grouping: tighten the vertical gap within a
           // run (~2pt) vs. between different senders/runs (~9pt). Overrides
           // the flag-off `marginVertical: 2` baseline in `styles.container`
@@ -1202,7 +1211,10 @@ function MessageItemInner({
             Pressable still renders but its press is a no-op. */}
         {!isOwnMessage && (
           <Pressable
-            style={styles.avatarContainer}
+            style={[
+              styles.avatarContainer,
+              whatsappShellEnabled && styles.waAvatarContainer,
+            ]}
             onPress={handleAvatarPress}
             disabled={!onAvatarPress}
             accessibilityRole={onAvatarPress ? 'button' : undefined}
@@ -1211,11 +1223,15 @@ function MessageItemInner({
             }
           >
             {!message.senderId && message.contentType === 'bot' && !message.senderProfilePhoto ? (
-              <Image source={TOGATHER_BOT_AVATAR} style={styles.avatar} resizeMode="cover" />
+              <Image
+                source={TOGATHER_BOT_AVATAR}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
+                resizeMode="cover"
+              />
             ) : (
               <AppImage
                 source={message.senderProfilePhoto}
-                style={styles.avatar}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
                 optimizedWidth={50}
                 placeholder={{
                   type: 'initials',
@@ -1226,7 +1242,7 @@ function MessageItemInner({
             )}
             {message.senderNotificationsDisabled ? (
               <NotificationsDisabledBadge
-                avatarSize={24}
+                avatarSize={whatsappShellEnabled ? WA_INCOMING_AVATAR : 24}
                 ringColor={themeColors.background}
               />
             ) : null}
@@ -1702,8 +1718,27 @@ const styles = StyleSheet.create({
   // Additive-only: applied via extra entries in a style array alongside the
   // flag-off styles above, which are never edited. See WHATSAPP-DESIGN-
   // SYSTEM.md §5.
+  /**
+   * §S4 gutter. This padding STACKS with `MessageList`'s `waListContent`, so
+   * the pair has to be read together: 4 + 4 = 8pt from each screen edge, vs
+   * the 24 the two 12s used to add up to (WA measures 7.5 — calibrated pixel
+   * pass, 2026-07-29).
+   */
+  waContainer: {
+    paddingHorizontal: 4,
+  },
   waMessageContent: {
     maxWidth: `${WA_BUBBLE_MAX_WIDTH_PCT * 100}%`,
+  },
+  /** See `WA_INCOMING_AVATAR`. */
+  waAvatarContainer: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+  },
+  waAvatar: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+    borderRadius: WA_INCOMING_AVATAR / 2,
   },
   // §S4.2 "sender name 15 semibold per-sender color INSIDE bubble" — flag-on
   // the name moves from a line above the bubble into the bubble's own top

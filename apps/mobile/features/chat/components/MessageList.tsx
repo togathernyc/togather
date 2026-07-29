@@ -687,7 +687,10 @@ export function MessageList({
               }
             }, 300);
           }}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[
+            styles.listContent,
+            whatsappShellEnabled && styles.waListContent,
+          ]}
           keyboardDismissMode="on-drag"
           // Performance optimizations
           removeClippedSubviews={true}
@@ -739,6 +742,15 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  /**
+   * §S4 gutter (flag-gated). This list's 12pt and `MessageItem`'s own 12pt
+   * container padding STACK, so flag-on bubbles were inset 24pt from each
+   * screen edge where WhatsApp insets them 7.5. 4 here + 4 there = 8, as close
+   * as two integer paddings get (calibrated pixel pass, 2026-07-29).
+   */
+  waListContent: {
+    paddingHorizontal: 4,
   },
   loadingText: {
     marginTop: 16,
