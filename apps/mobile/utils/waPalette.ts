@@ -138,6 +138,12 @@ export function hslToRgb({ h, s, l }: Hsl): Rgb {
 const BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST = 15;
 const BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS = 90;
 const BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS = 93;
+/**
+ * An (near-)achromatic brand color has no meaningful hue — `rgbToHsl` reports
+ * h=0 (red) for it, and boosting saturation would paint the bubble pink.
+ * Below this saturation the brand is treated as gray: no boost, no hue.
+ */
+const BUBBLE_OUTGOING_ACHROMATIC_MAX_SATURATION = 8;
 
 /**
  * Dark-mode accent shift, calibrated against the measured `#25D366` →
@@ -260,10 +266,14 @@ export function waAccentPalette(primaryColor: string, isDark: boolean): WaAccent
 
   const darkAdjustedAccent = darkAdjustedAccentOf(primaryColor);
   const accent = isDark ? darkAdjustedAccent : primaryColor;
+  const lightSaturation = rgbToHsl(hexToRgb(primaryColor)!).s;
   const bubbleOutgoing = isDark
     ? darkBubbleTintOf(primaryColor)
     : shiftHsl(primaryColor, {
-        saturationBoost: BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST,
+        saturationBoost:
+          lightSaturation <= BUBBLE_OUTGOING_ACHROMATIC_MAX_SATURATION
+            ? 0
+            : BUBBLE_OUTGOING_LIGHT_SATURATION_BOOST,
         lightnessFactor: 10, // pin into the clamp band below
         minLightness: BUBBLE_OUTGOING_LIGHT_MIN_LIGHTNESS,
         maxLightness: BUBBLE_OUTGOING_LIGHT_MAX_LIGHTNESS,

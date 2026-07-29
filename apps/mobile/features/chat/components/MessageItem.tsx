@@ -332,6 +332,16 @@ function MessageItemInner({
 
   const isOwnMessage = message.senderId === currentUserId;
 
+  // Card-style content renders outside the chat bubble (see the bubble gate
+  // below) — which also means it can't carry the flag-on in-bubble sender
+  // name, so these keep the above-content name line under the shell.
+  const isSpecialCardMessage =
+    message.contentType === 'reach_out_request' ||
+    message.contentType === 'task_card' ||
+    message.contentType === 'bug_card' ||
+    message.contentType === 'poll' ||
+    message.contentType === 'availability_request';
+
   // Get read receipts (only for own messages, skip for optimistic)
   const { readByCount, totalMembers, isLoading: readReceiptsLoading } = useReadReceipts(
     isOwnMessage && !isOptimistic ? message._id : null,
@@ -1231,17 +1241,17 @@ function MessageItemInner({
           // since they share this same column.
           whatsappShellEnabled && styles.waMessageContent,
         ]}>
-          {/* Sender name, flag-OFF only: a 11pt textSecondary line above the
-              bubble. Flag-on it moves *inside* the bubble (§S4.2) — see
-              `showInBubbleSenderName` below. */}
-          {!isOwnMessage && !whatsappShellEnabled && (
+          {/* Sender name above the content: flag-off always; flag-on only for
+              card-style messages, whose content skips the bubble (and with it
+              the in-bubble name from §S4.2). */}
+          {!isOwnMessage && (!whatsappShellEnabled || isSpecialCardMessage) && (
             <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>
               {message.senderName || 'Unknown'}
             </Text>
           )}
 
           {/* Message bubble (hidden for special card messages) */}
-          {message.contentType !== "reach_out_request" && message.contentType !== "task_card" && message.contentType !== "bug_card" && message.contentType !== "poll" && message.contentType !== "availability_request" && (
+          {!isSpecialCardMessage && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[

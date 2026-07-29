@@ -189,10 +189,25 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
   });
 
   it('puts a sticker/emoji glyph inside the field, not beside it', () => {
-    const { getByLabelText, getByTestId } = render(
+    // The glyph only exists when the GIF backend is configured (documented
+    // degradation without a key: "GIF picker hidden").
+    process.env.EXPO_PUBLIC_KLIPY_API_KEY = 'test-key';
+    try {
+      const { getByLabelText, getByTestId } = render(
+        <MessageInput channelId={'test-channel' as any} />
+      );
+      expect(isInside(getByLabelText('Stickers and GIFs'), getByTestId('wa-composer-field'))).toBe(true);
+    } finally {
+      delete process.env.EXPO_PUBLIC_KLIPY_API_KEY;
+    }
+  });
+
+  it('hides the sticker/emoji glyph when no GIF backend is configured', () => {
+    delete process.env.EXPO_PUBLIC_KLIPY_API_KEY;
+    const { queryByLabelText } = render(
       <MessageInput channelId={'test-channel' as any} />
     );
-    expect(isInside(getByLabelText('Stickers and GIFs'), getByTestId('wa-composer-field'))).toBe(true);
+    expect(queryByLabelText('Stickers and GIFs')).toBeNull();
   });
 
   it('floats the bar on the wallpaper: translucent fill, no hairline', () => {

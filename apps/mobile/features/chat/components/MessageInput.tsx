@@ -1277,7 +1277,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             maxLength={2000}
             editable={!uploading}
           />
-          {!recipientPending && (
+          {/* Hidden without a KLIPY key — the documented degradation is "GIF
+              picker hidden", matching the attachment-sheet option's gate. */}
+          {!recipientPending && !!process.env.EXPO_PUBLIC_KLIPY_API_KEY && (
             <Pressable
               style={styles.waFieldGlyph}
               onPress={() => setShowGifPicker(true)}
