@@ -121,6 +121,14 @@ export function Events() {
             whole community. Public means anyone with the link can view the
             event; RSVPing still requires login.
           </Step>
+          <Step n={6}>
+            <strong>Check-in at the door.</strong> On the day, open the event
+            from leader tools and tap <Term>Check in</Term> to run down the
+            <Term>Going</Term> list, tapping each person as they arrive. Added
+            names count as <Term>Present</Term> in your attendance numbers, and
+            walk-ins without an account can be added by name. See{" "}
+            <em>Check in: take attendance at the door</em> below.
+          </Step>
         </Steps>
 
         <Callout tone="note" title="Reminders: which channel?">
@@ -159,6 +167,53 @@ export function Events() {
         <Figure caption="An event card as members see it in the feed.">
           {/* swap-in: <img src="/images/guides/events-card.png" /> */}
           <EventCardMock />
+        </Figure>
+      </Section>
+
+      <Section id="checkin" title="Check in: take attendance at the door">
+        <P>
+          When it's time to gather, you don't want to hunt through a
+          group-by-group attendance grid — you want the door list for{" "}
+          <em>this</em> event. Open the event from{" "}
+          <Term>Leader tools → [group] → Events → [event]</Term> and tap{" "}
+          <Term>Check in</Term>. You'll see everyone who RSVP'd{" "}
+          <Term>Going</Term>, each with a tap-to-check circle and a live{" "}
+          <Term>N / M checked in</Term> count at the top.
+        </P>
+
+        <Steps>
+          <Step n={1}>
+            <strong>Tap to check in.</strong> Tapping a person marks them{" "}
+            <Term>Present</Term> and stamps the time; tapping again undoes it.
+            Every change saves immediately, so a second leader checking people
+            in on their own phone sees the same list update live.
+          </Step>
+          <Step n={2}>
+            <strong>Walk-ins.</strong> Someone showed up who didn't RSVP — or
+            doesn't have a Togather account? Tap <Term>Add walk-in</Term>,
+            enter a first name (last name and phone are optional), and they're
+            added already checked in. Added by mistake? Remove them with the
+            trash icon.
+          </Step>
+          <Step n={3}>
+            <strong>It feeds your numbers.</strong> A check-in is the same{" "}
+            <Term>Present</Term> record the app already uses, so attendance and
+            member-health stats stay correct — you're not tracking it twice.
+          </Step>
+        </Steps>
+
+        <Callout tone="note" title="Who can check people in">
+          <p>
+            Check-in is for people who manage the event — the event's hosts, the
+            group's leaders, or a community admin. Regular attendees never see
+            the <Term>Check in</Term> button, and the actions are enforced on
+            the server, not just hidden.
+          </p>
+        </Callout>
+
+        <Figure caption="The Check-in screen: a live checked-in count, the Going list with tap-to-check circles, and Add walk-in. Rendered mock — labels match the real screen.">
+          {/* swap-in: <img src="/images/guides/events-checkin.png" /> */}
+          <CheckInMock />
         </Figure>
       </Section>
 
@@ -251,6 +306,80 @@ function ToggleOn() {
     <span className="flex h-5 w-9 flex-shrink-0 items-center rounded-full bg-primary-600 px-0.5">
       <span className="ml-auto h-4 w-4 rounded-full bg-white" />
     </span>
+  );
+}
+
+/**
+ * Check-in screen — mirrors the real screen: a summary card with the live
+ * "N / M checked in" count and progress bar, the Going list with tap-to-check
+ * circles (filled green = checked in, empty = not yet), a Walk-ins row, and the
+ * dashed "Add walk-in" button.
+ */
+function CheckInMock() {
+  const going = [
+    { name: "Gina Going", initials: "GG", color: "bg-primary-400", checkedIn: true, time: "6:58 PM" },
+    { name: "Mel Member", initials: "MM", color: "bg-accent-500", checkedIn: true, time: "7:01 PM" },
+    { name: "Sam Rivera", initials: "SR", color: "bg-amber-500", checkedIn: false, time: null },
+  ];
+  return (
+    <PhoneFrame title="Check in">
+      <div className="bg-neutral-50 p-3">
+        {/* Summary card. */}
+        <div className="rounded-xl bg-white p-3.5 shadow-sm">
+          <div className="text-[17px] font-bold text-neutral-900">
+            3 / 4 checked in
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-neutral-100">
+            <div className="h-2 rounded-full bg-emerald-500" style={{ width: "75%" }} />
+          </div>
+        </div>
+
+        {/* Going list. */}
+        <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+          Going (3)
+        </div>
+        <div className="mt-2 space-y-2">
+          {going.map((p) => (
+            <div key={p.name} className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
+              <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${p.color} text-[11px] font-semibold text-white`}>
+                {p.initials}
+              </span>
+              <div className="flex-1">
+                <div className="text-[14px] font-semibold text-neutral-900">{p.name}</div>
+                <div className={`text-[12px] ${p.checkedIn ? "text-emerald-600" : "text-neutral-500"}`}>
+                  {p.checkedIn ? `Checked in · ${p.time}` : "Tap to check in"}
+                </div>
+              </div>
+              {p.checkedIn ? (
+                <span className="text-[22px] leading-none text-emerald-500">✅</span>
+              ) : (
+                <span className="inline-block h-[22px] w-[22px] rounded-full border-2 border-neutral-300" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Walk-ins. */}
+        <div className="mt-4 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+          Walk-ins (1)
+        </div>
+        <div className="mt-2 flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
+          <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-neutral-400 text-[11px] font-semibold text-white">
+            AD
+          </span>
+          <div className="flex-1">
+            <div className="text-[14px] font-semibold text-neutral-900">Ada</div>
+            <div className="text-[12px] text-emerald-600">Checked in · 7:03 PM</div>
+          </div>
+          <span className="text-[16px] leading-none text-neutral-400">🗑️</span>
+        </div>
+
+        {/* Add walk-in. */}
+        <div className="mt-3 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary-400 py-3 text-[14px] font-semibold text-primary-600">
+          <span className="text-[16px] leading-none">＋</span> Add walk-in
+        </div>
+      </div>
+    </PhoneFrame>
   );
 }
 
