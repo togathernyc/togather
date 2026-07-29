@@ -35,7 +35,7 @@ import * as Clipboard from 'expo-clipboard';
 import { DOMAIN_CONFIG } from '@togather/shared';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
-import { Card } from '@components/ui/Card';
+import { Card } from '@components/ui';
 import { QrCode } from '@components/ui/QrCode';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
