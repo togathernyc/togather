@@ -1134,11 +1134,14 @@ function MessageItemInner({
           // §5 consecutive-message grouping: tighten the vertical gap within a
           // run (~2pt) vs. between different senders/runs (~9pt). Overrides
           // the flag-off `marginVertical: 2` baseline in `styles.container`
-          // above — undefined props default to a standalone run (both first
-          // and last), landing on the wider run-boundary gap on both sides.
+          // above — undefined props default to a standalone run (first in
+          // group), landing on the wider run-boundary gap. RN does not
+          // collapse vertical margins, so the whole gap lives on marginTop
+          // (owned by the lower bubble) and marginBottom is zeroed —
+          // otherwise adjacent rows' margins would sum to 4pt/18pt.
           whatsappShellEnabled && {
             marginTop: (isFirstInGroup ?? true) ? WA_BUBBLE_RUN_GAP : WA_BUBBLE_GROUPED_GAP,
-            marginBottom: (isLastInGroup ?? true) ? WA_BUBBLE_RUN_GAP : WA_BUBBLE_GROUPED_GAP,
+            marginBottom: 0,
           },
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
           isHighlighted && styles.highlightedContainer,

@@ -324,7 +324,11 @@ export function MessageList({
     // Append optimistic messages at the end (newest, after all server messages)
     // Skip optimistic messages that already have a matching real message (dedup)
     if (optimisticMessages && optimisticMessages.length > 0) {
-      const lastServerMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
+      // Predecessor for grouping is the forward pass's final `previousMsg`,
+      // not raw `messages[length-1]`: the constructed timeline may end with a
+      // ghost or date separator (both reset `previousMsg` to undefined), and
+      // an optimistic message must not merge into a run across that boundary.
+      const lastTimelineMsg = previousMsg;
 
       // For deduplication, check recent server messages (last 5 is plenty).
       // Track which server messages have already been matched so that
@@ -352,7 +356,7 @@ export function MessageList({
       });
 
       pendingOptimistic.forEach((optMsg, index) => {
-        const prevMsg = index === 0 ? lastServerMsg : pendingOptimistic[index - 1];
+        const prevMsg = index === 0 ? lastTimelineMsg : pendingOptimistic[index - 1];
         const isFirstInGroup = !prevMsg || optMsg.senderId !== prevMsg.senderId;
 
         items.push({
