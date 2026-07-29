@@ -260,8 +260,19 @@ export const WA_TAB_AVATAR_SIZE = 24;
  * and rows show in the gap under the island (which reads as a dirty band, and
  * on a white page as an outright dark one when a dark avatar lands there).
  */
+/**
+ * How far the island's bottom edge sits above the screen's bottom edge.
+ * WhatsApp's island rides LOW — nearly flush with the home indicator (owner's
+ * reference, 2026-07-29) — so on home-indicator devices (inset ~34) it sits
+ * well inside the safe area rather than stacked on top of it. Inset-less
+ * devices keep the plain gap.
+ */
+export function waTabBarBottomOffset(bottomInset: number): number {
+  return Math.max(WA_TAB_ISLAND_BOTTOM_GAP, bottomInset - 20);
+}
+
 export function waTabBarStripHeight(bottomInset: number): number {
-  return bottomInset + WA_TAB_ISLAND_BOTTOM_GAP;
+  return waTabBarBottomOffset(bottomInset);
 }
 
 /**

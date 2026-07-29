@@ -112,6 +112,7 @@ interface MentionMatch {
 const MAX_INPUT_LINES = 8;
 const LINE_HEIGHT = 20;
 const INPUT_PADDING_VERTICAL = 10;
+
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
@@ -1256,6 +1257,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         >
           <TextInput
             ref={textInputRef}
+            testID="wa-composer-input"
             style={[
               styles.input,
               isWeb ? styles.inputWeb : styles.inputNative,
@@ -1270,13 +1272,26 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
               const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
               setNativeScrollEnabled(contentHeight >= maxContentHeight);
             }}
-            placeholder={placeholder || "Message..."}
-            placeholderTextColor={themeColors.textTertiary}
+            // The hint renders as the overlay Text below, not as a native
+            // placeholder: `numberOfLines={1}` is the only truncation that is
+            // correct at every width, font scale, and script — a character
+            // cap wraps on wide glyphs and can split surrogate pairs.
+            placeholder={undefined}
             multiline
             scrollEnabled={isWeb ? true : nativeScrollEnabled}
             maxLength={2000}
             editable={!uploading}
           />
+          {text.length === 0 && (
+            <Text
+              pointerEvents="none"
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={[styles.waHintOverlay, { color: themeColors.textTertiary }]}
+            >
+              {(placeholder ?? "").trim() || "Message..."}
+            </Text>
+          )}
           {/* Hidden without a KLIPY key — the documented degradation is "GIF
               picker hidden", matching the attachment-sheet option's gate. */}
           {!recipientPending && !!process.env.EXPO_PUBLIC_KLIPY_API_KEY && (
@@ -1604,6 +1619,17 @@ const styles = StyleSheet.create({
     // paints the browser's focus outline around it. Ignored on native.
     outlineStyle: 'none',
   } as any,
+  /** Empty-field hint overlay: one quiet italic line, vertically centered
+   *  in the pill; sits behind taps (pointerEvents none) and clear of the
+   *  in-field sticker glyph. */
+  waHintOverlay: {
+    position: 'absolute',
+    left: 16,
+    right: 44,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: WA_COMPOSER_FIELD_HEIGHT,
+  },
   waFieldGlyph: {
     paddingHorizontal: 6,
     height: WA_COMPOSER_FIELD_HEIGHT,
