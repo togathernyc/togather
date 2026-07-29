@@ -34,6 +34,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import { WA_TAB_CONTENT_CLEARANCE, waTabBarStripHeight } from '@components/wa';
 import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
@@ -97,6 +99,7 @@ export function PrayerScreen() {
   const insets = useSafeAreaInsets();
   const { community } = useAuth();
   const { colors } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
   // `openAdd=1` is set by the `prayer.monday_nudge` deep link — one-tap from
   // the notification straight into the AddPrayerSheet. We guard with a ref-
@@ -363,6 +366,13 @@ export function PrayerScreen() {
       style={[
         styles.container,
         { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top + 12 },
+        // Flag-on, the tab bar is a floating island over the content (S2).
+        // The prayed rail is a fixed footer (not scroll content), so the
+        // container must reserve the safe-area strip AND the island height
+        // for the rail to stay fully reachable above it.
+        whatsappShellEnabled && {
+          paddingBottom: waTabBarStripHeight(insets.bottom) + WA_TAB_CONTENT_CLEARANCE,
+        },
       ]}
     >
       <View style={styles.topBar}>
