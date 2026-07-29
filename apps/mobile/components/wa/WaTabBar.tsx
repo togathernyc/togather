@@ -9,9 +9,12 @@
  *   - a pill inset `WA_TAB_ISLAND_MARGIN_H` from each screen edge, sitting
  *     `WA_TAB_ISLAND_BOTTOM_GAP` above the bottom safe inset, ~64pt tall /
  *     fully rounded, near-white translucent fill + soft shadow;
- *   - absolutely positioned, so content scrolls *underneath* it — flag-on
- *     scroll surfaces add `waTabBarClearance(insets.bottom)` bottom padding so
- *     their last row still clears it;
+ *   - absolutely positioned, so content scrolls *underneath* it. Flag-on
+ *     screens pair that with two paddings: `waTabBarStripHeight(insets.bottom)`
+ *     on the container carrying the page background (so the strip below the
+ *     island paints as page background, not as whatever row happens to be
+ *     scrolling past there), and `WA_TAB_CONTENT_CLEARANCE` on the scroll
+ *     content so its last row clears the island itself;
  *   - thin-line 24pt glyphs and 10pt labels, all in ONE neutral ink whether
  *     focused or not. The active tab is marked by a highlight pill wrapped
  *     around its icon+label — never by a green tint (S2.2, the single loudest

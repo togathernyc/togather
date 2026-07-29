@@ -148,10 +148,16 @@ export const WA_TAB_ISLAND_RADIUS = WA_TAB_ISLAND_HEIGHT / 2;
 export const WA_TAB_ISLAND_MARGIN_H = 10;
 /** Gap between the island's bottom edge and the bottom safe inset. */
 export const WA_TAB_ISLAND_BOTTOM_GAP = 8;
-/** Island fill — near-white translucent (no expo-blur; rgba approximation). */
-export const WA_TAB_ISLAND_FILL_LIGHT = 'rgba(255,255,255,0.92)';
+/**
+ * Island fill — near-white, only just translucent. WhatsApp's island is a real
+ * blur, so content passing under it is diffused into a wash; an rgba fill can't
+ * blur, and at the 0.92 we first tried, rows stayed fully legible through the
+ * island (a muddy double-image the reference never shows). Erring opaque is the
+ * closer approximation.
+ */
+export const WA_TAB_ISLAND_FILL_LIGHT = 'rgba(255,255,255,0.97)';
 /** Dark-mode island fill. */
-export const WA_TAB_ISLAND_FILL_DARK = 'rgba(31,44,52,0.94)';
+export const WA_TAB_ISLAND_FILL_DARK = 'rgba(31,44,52,0.97)';
 /** Tab bar icon size (outline; filled variant when active). */
 export const WA_TAB_ICON_SIZE = 24;
 /** Gap between a tab's icon and its label. */
@@ -166,10 +172,15 @@ export const WA_TAB_LABEL_SIZE = 10;
 export const WA_TAB_INK_LIGHT = '#0A0A0A';
 /** Dark-mode tab ink. */
 export const WA_TAB_INK_DARK = '#E9EDEF';
-/** Highlight pill (wrapping icon+label) behind the active tab. */
-export const WA_TAB_ACTIVE_PILL_LIGHT = 'rgba(0,0,0,0.06)';
-/** Dark-mode active highlight pill. */
-export const WA_TAB_ACTIVE_PILL_DARK = 'rgba(255,255,255,0.10)';
+/**
+ * Highlight pill (wrapping icon+label) behind the active tab: a LIGHT gray,
+ * a clear step darker than the near-white island but still unmistakably light,
+ * with the glyph and label staying near-black on top of it. A 6%-black alpha
+ * landed around #EFEFEF — too faint to read as a pill at all.
+ */
+export const WA_TAB_ACTIVE_PILL_LIGHT = '#E3E3E8';
+/** Dark-mode active highlight pill — a step LIGHTER than the island, near-white glyph on top. */
+export const WA_TAB_ACTIVE_PILL_DARK = 'rgba(255,255,255,0.16)';
 /** Active highlight pill corner radius. */
 export const WA_TAB_ACTIVE_PILL_RADIUS = 18;
 /** Tab badge offset (top-right of the icon). */
@@ -178,13 +189,23 @@ export const WA_TAB_BADGE_OFFSET = -4;
 export const WA_TAB_AVATAR_SIZE = 24;
 
 /**
- * Bottom padding a flag-on scroll surface needs so its last row clears the
- * floating island (which is absolutely positioned, so it takes no layout
- * space). Pass the screen's bottom safe-area inset.
+ * Height of the strip BELOW the island — the bottom safe inset plus the
+ * island's gap. A flag-on screen reserves this as padding on the container
+ * that carries its page background, so that strip paints as page background
+ * instead of live list content: the island is absolutely positioned and takes
+ * no layout space, so without this the scroll viewport runs to the screen edge
+ * and rows show in the gap under the island (which reads as a dirty band, and
+ * on a white page as an outright dark one when a dark avatar lands there).
  */
-export function waTabBarClearance(bottomInset: number): number {
-  return bottomInset + WA_TAB_ISLAND_BOTTOM_GAP + WA_TAB_ISLAND_HEIGHT + 12;
+export function waTabBarStripHeight(bottomInset: number): number {
+  return bottomInset + WA_TAB_ISLAND_BOTTOM_GAP;
 }
+
+/**
+ * Bottom padding for a scroll surface whose container already reserves
+ * `waTabBarStripHeight` — enough for the last row to clear the island itself.
+ */
+export const WA_TAB_CONTENT_CLEARANCE = WA_TAB_ISLAND_HEIGHT + 12;
 
 // --- S7 Typography scale ------------------------------------------------------
 //

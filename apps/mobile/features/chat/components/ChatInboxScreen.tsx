@@ -57,7 +57,8 @@ import {
   WA_SEARCH_PILL_HEIGHT,
   WA_SEARCH_PILL_ICON_SIZE,
   WA_TYPE_ROW_TITLE,
-  waTabBarClearance,
+  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarStripHeight,
 } from "@components/wa";
 
 // Inbox event visibility is now driven server-side by
@@ -782,6 +783,13 @@ export function ChatInboxScreen({
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
 
+  // Flag-on: reserve the strip below the floating island on the container that
+  // carries the page background, so the home-indicator gap paints white rather
+  // than showing whatever list row happens to scroll past underneath.
+  const waStripPadding = whatsappShellEnabled
+    ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
+    : null;
+
   // --- WhatsApp-style collapsing header -------------------------------------
   // The large title + search bar live *above* the list (not inside it) so the
   // single SearchBar instance stays mounted when the list swaps to search
@@ -1331,7 +1339,7 @@ export function ChatInboxScreen({
   if (!hasCommunity) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
           {renderHeader(false)}
           <View style={styles.centered}>
             <Ionicons
@@ -1369,7 +1377,7 @@ export function ChatInboxScreen({
   if (showLoadingSpinner) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
           {renderHeader(true)}
           <View style={styles.centered}>
             <ActivityIndicator size="large" color={primaryColor} />
@@ -1383,7 +1391,7 @@ export function ChatInboxScreen({
   if (!hasInboxItems) {
     return (
       <Wrapper>
-        <View style={[styles.container, { backgroundColor: colors.surface }]}>
+        <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
           {renderHeader(true)}
           <EnableNotificationsBanner />
           <ScrollView contentContainerStyle={styles.centeredScrollContent}>
@@ -1417,7 +1425,7 @@ export function ChatInboxScreen({
 
   return (
     <Wrapper>
-      <View style={[styles.container, { backgroundColor: colors.surface }]}>
+      <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
         {whatsappShellEnabled ? renderWaCollapsingHeader() : renderCollapsingHeader()}
         {isSearching ? (
           <InboxSearchResults
@@ -1452,9 +1460,11 @@ export function ChatInboxScreen({
                 styles.listContainer,
                 // The flag-on tab bar is a floating island absolutely
                 // positioned over the content (S2), so it takes no layout
-                // space — pad the list so its last row still clears it.
+                // space — pad the list so its last row still clears it. The
+                // safe-area strip below the island is reserved by the
+                // container (`waStripPadding`) instead.
                 whatsappShellEnabled && {
-                  paddingBottom: waTabBarClearance(insets.bottom),
+                  paddingBottom: WA_TAB_CONTENT_CLEARANCE,
                 },
               ]}
               style={styles.list}

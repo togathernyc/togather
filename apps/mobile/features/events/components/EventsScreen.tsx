@@ -44,7 +44,8 @@ import {
   WA_SEPARATOR_INSET,
   WA_AVATAR_LG,
   WA_GROUP_SPACING,
-  waTabBarClearance,
+  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarStripHeight,
 } from '@components/wa';
 import { formatTimeWithTimezone } from '@togather/shared';
 import { useEventsByTimeWindow } from '../hooks/useEventsByTimeWindow';
@@ -455,8 +456,10 @@ export function EventsScreen() {
           {
             // Flag-on the tab bar is a floating island over the content (S2),
             // so the CTA has to clear it rather than the old edge-to-edge bar.
+            // The safe-area strip below the island is already reserved by the
+            // container, so this only has to clear the island itself.
             paddingBottom: whatsappShellEnabled
-              ? waTabBarClearance(insets.bottom)
+              ? WA_TAB_CONTENT_CLEARANCE
               : insets.bottom + 16,
           },
         ]}
@@ -486,6 +489,13 @@ export function EventsScreen() {
   // `contentTopPadding` here would double the header's own top inset.
   const mainContentTopPadding = whatsappShellEnabled ? 8 : contentTopPadding;
 
+  // Flag-on: reserve the strip below the floating island on the container that
+  // carries the page background, so the home-indicator gap paints page gray
+  // rather than showing whatever content scrolls past underneath.
+  const waStripPadding = whatsappShellEnabled
+    ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
+    : null;
+
   // Infinite scroll: trigger loadMore when the user gets within a page of
   // the bottom. Runs on every scroll event; the pagination hook guards
   // against duplicate fetches via its internal status state.
@@ -507,7 +517,7 @@ export function EventsScreen() {
   if (!hasCommunityContext) {
     const myEvents = myRsvpedEventsData?.events ?? [];
     return (
-      <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }, waStripPadding]}>
         {isLoadingMyRsvps ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -601,7 +611,7 @@ export function EventsScreen() {
     laterCards.length > 0;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }]}>
+    <View style={[styles.container, { backgroundColor: colors.backgroundSecondary }, waStripPadding]}>
       {whatsappShellEnabled && (
         // S1 floating-chrome header. The List/Map toggle is the trailing
         // circle pair — both NEUTRAL white with black line glyphs

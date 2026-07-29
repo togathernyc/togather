@@ -42,7 +42,8 @@ import {
   WA_ROW_AVATAR_GAP,
   WA_AVATAR_LG,
   WA_CHEVRON_SIZE,
-  waTabBarClearance,
+  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarStripHeight,
 } from "@components/wa";
 
 /**
@@ -151,7 +152,16 @@ export function YouScreen() {
     Constants.expoConfig?.version;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: colors.backgroundGrouped },
+        // Reserve the strip below the floating island on the container that
+        // carries the page background, so the home-indicator gap paints page
+        // gray rather than showing whatever row scrolls past underneath.
+        { paddingBottom: waTabBarStripHeight(insets.bottom) },
+      ]}
+    >
       {/* No large title here on purpose — WA's You/Settings tab shows floating
           buttons only (WA-VISUAL-DELTAS.md S1.3 / §4.1). */}
       <WaScreenHeader
@@ -168,8 +178,9 @@ export function YouScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          // The tab bar is a floating island over the content (S2) — pad past it.
-          { paddingBottom: waTabBarClearance(insets.bottom) },
+          // The tab bar is a floating island over the content (S2) — pad past
+          // it. The safe-area strip below it is reserved by the container.
+          { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
         ]}
         showsVerticalScrollIndicator={false}
       >
