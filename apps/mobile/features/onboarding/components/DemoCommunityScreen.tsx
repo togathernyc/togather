@@ -47,7 +47,7 @@ const MAX_NAMED_ITEMS = 12;
 
 const TOTAL_STEPS = 4;
 const STEP_TITLES = [
-  "About your church",
+  "About your community",
   "Campuses & teams",
   "Service times",
   "Branding",
@@ -321,11 +321,11 @@ export function DemoCommunityScreen() {
             <Ionicons name="sparkles" size={32} color={colors.link} />
           </View>
           <Text style={[styles.cardTitle, { color: colors.text }]}>
-            Try Togather with your church
+            Try Togather with your community
           </Text>
           <Text style={[styles.cardMessage, { color: colors.textSecondary }]}>
             Sign in first, then we'll set up a demo community that looks and
-            feels like your church — no payment or commitment required.
+            feels like your community — no payment or commitment required.
           </Text>
           <Pressable
             onPress={() => router.push("/(auth)/landing")}
@@ -356,7 +356,7 @@ export function DemoCommunityScreen() {
             conversations, and events. You're the admin — rename it, re-brand
             it, and click around. Everything works. When you're ready, tap
             "Go live" on the demo banner to add payment ($1/month per active
-            member) and open it to your congregation.
+            member) and open it to your community.
           </Text>
           <View
             style={[
@@ -619,7 +619,7 @@ export function DemoCommunityScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 — About your church
+// Step 1 — About your community
 // ---------------------------------------------------------------------------
 
 function StepAboutChurch({
@@ -643,7 +643,7 @@ function StepAboutChurch({
     <>
       <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Church name</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Community name</Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
             value={name}
@@ -655,7 +655,7 @@ function StepAboutChurch({
 
         <View style={styles.fieldRow}>
           <View style={[styles.fieldGroup, styles.fieldHalf]}>
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Church size</Text>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Community size</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
               value={totalSize}
