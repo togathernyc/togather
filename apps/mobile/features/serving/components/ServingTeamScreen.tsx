@@ -32,7 +32,23 @@ import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { Avatar } from "@components/ui/Avatar";
+import {
+  WaSubScreenHeader,
+  WA_CELL_PADDING,
+  WA_GROUP_MARGIN,
+  WA_GROUP_RADIUS,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_SECTION_LABEL_SIZE,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import {
   ActionMenuSheet,
   type MenuAction,
@@ -87,6 +103,8 @@ export function ServingTeamScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // Flag-on restyle only (WHATSAPP-DESIGN-SYSTEM.md §7).
+  const wa = useWhatsappShell();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
 
   const roster = useAuthenticatedQuery(
@@ -136,7 +154,16 @@ export function ServingTeamScreen() {
   const plans = roster?.plans ?? [];
   const hasAnyTeams = plans.some((p) => p.teams.length > 0);
 
-  const header = (
+  // §4: current WhatsApp iOS has no opaque nav bar — a floating white circle
+  // back button and a centered 17pt title sit directly over the content.
+  const header = wa ? (
+    <WaSubScreenHeader
+      title="Team"
+      onBack={handleBack}
+      accent={primaryColor}
+      style={{ paddingTop: insets.top + 8 }}
+    />
+  ) : (
     <View
       style={[
         styles.header,
@@ -168,7 +195,9 @@ export function ServingTeamScreen() {
             size={30}
             color={colors.textTertiary}
           />
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          <Text
+            style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+          >
             Not currently serving on an event.
           </Text>
         </View>
@@ -183,7 +212,9 @@ export function ServingTeamScreen() {
             size={30}
             color={colors.textTertiary}
           />
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+          <Text
+            style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
+          >
             No one else is on the team yet.
           </Text>
         </View>
@@ -192,16 +223,20 @@ export function ServingTeamScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         >
           {plans.map((plan) => (
-            <View key={plan.planId} style={styles.planSection}>
-              <View style={styles.planHeader}>
+            <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
+              <View style={[styles.planHeader, wa && waStyles.planHeader]}>
                 <Text
-                  style={[styles.planTitle, { color: colors.text }]}
+                  style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
                   numberOfLines={1}
                 >
                   {plan.title}
                 </Text>
                 <Text
-                  style={[styles.planDate, { color: colors.textTertiary }]}
+                  style={[
+                    styles.planDate,
+                    wa && waStyles.planDate,
+                    { color: colors.textTertiary },
+                  ]}
                 >
                   {formatPlanDate(plan.eventDate)}
                 </Text>
@@ -209,7 +244,11 @@ export function ServingTeamScreen() {
 
               {plan.teams.length === 0 ? (
                 <Text
-                  style={[styles.planEmpty, { color: colors.textTertiary }]}
+                  style={[
+                    styles.planEmpty,
+                    wa && waStyles.planEmpty,
+                    { color: colors.textTertiary },
+                  ]}
                 >
                   No one on this team yet.
                 </Text>
@@ -220,16 +259,22 @@ export function ServingTeamScreen() {
                   contentContainerStyle={styles.teamsRow}
                 >
                   {plan.teams.map((team) => (
-                    <View key={team.teamId} style={styles.teamColumn}>
+                    <View
+                      key={team.teamId}
+                      style={[styles.teamColumn, wa && waStyles.teamColumn]}
+                    >
                       <Text
                         style={[
                           styles.teamName,
+                          wa && waStyles.teamName,
                           { color: colors.textSecondary },
                         ]}
                         numberOfLines={1}
                       >
+                        {/* S3.5: the ALL-CAPS letter-spaced label is dead. */}
                         {team.name}
                       </Text>
+                      <View style={[styles.teamPeople, wa && waStyles.teamPeople]}>
                       {team.people.map((person, i) => {
                         // No actionable card for yourself, or for someone with
                         // neither a DM path (no community context) nor a phone —
@@ -243,6 +288,8 @@ export function ServingTeamScreen() {
                             person={person}
                             colors={colors}
                             primaryColor={primaryColor}
+                            wa={wa}
+                            first={i === 0}
                             actionable={actionable}
                             onPress={() =>
                               actionable ? setSelected(person) : undefined
@@ -250,6 +297,7 @@ export function ServingTeamScreen() {
                           />
                         );
                       })}
+                      </View>
                     </View>
                   ))}
                 </ScrollView>
@@ -278,12 +326,17 @@ function PersonCard({
   person,
   colors,
   primaryColor,
+  wa,
+  first,
   actionable,
   onPress,
 }: {
   person: RosterPerson;
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  wa: boolean;
+  /** First row in its team card — suppresses the intra-card hairline. */
+  first: boolean;
   /** Whether tapping does anything (has a message/text action available). */
   actionable: boolean;
   onPress: () => void;
@@ -301,7 +354,13 @@ function PersonCard({
       disabled={!actionable}
       style={[
         styles.personCard,
+        wa && waStyles.personCard,
         { backgroundColor: colors.surface, borderColor: colors.border },
+        wa &&
+          !first && {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+          },
       ]}
       accessibilityRole={actionable ? "button" : "text"}
       accessibilityLabel={
@@ -320,7 +379,7 @@ function PersonCard({
           size={28}
         />
         <Text
-          style={[styles.personName, { color: colors.text }]}
+          style={[styles.personName, wa && waStyles.personName, { color: colors.text }]}
           numberOfLines={1}
         >
           {person.displayName}
@@ -328,15 +387,25 @@ function PersonCard({
         </Text>
       </View>
       <View style={styles.roleRow}>
-        <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
+        {/* §7 bans a per-entity color as a taxonomy device — one arbitrary hue
+            per role is exactly the banned "pastel category chip" pattern,
+            just rendered as a dot. Flag-on the role reads as plain text. */}
+        {wa ? null : (
+          <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
+        )}
         <Text
-          style={[styles.roleText, { color: colors.textSecondary }]}
+          style={[styles.roleText, wa && waStyles.roleText, { color: colors.textSecondary }]}
           numberOfLines={1}
         >
-          {person.roleName}
+          {/* Flag-on the unconfirmed signal folds into this line rather than
+              becoming a `colors.warning`-filled pill (§7: no new semantic
+              hue families). Nothing is lost — the a11y label already says it. */}
+          {wa && person.status === "unconfirmed"
+            ? `${person.roleName} · Unconfirmed`
+            : person.roleName}
         </Text>
       </View>
-      {person.status === "unconfirmed" ? (
+      {!wa && person.status === "unconfirmed" ? (
         <UnconfirmedBadge colors={colors} />
       ) : null}
     </TouchableOpacity>
@@ -394,6 +463,8 @@ const styles = StyleSheet.create({
   planEmpty: { fontSize: 13, paddingHorizontal: 16, paddingBottom: 8 },
   teamsRow: { paddingHorizontal: 16, gap: 12 },
   teamColumn: { width: TEAM_COL_WIDTH, gap: 8 },
+  // Holds the column's person rows; flag-on it becomes the inset-grouped card.
+  teamPeople: { gap: 8 },
   teamName: {
     fontSize: 11,
     fontWeight: "800",
@@ -427,4 +498,54 @@ const styles = StyleSheet.create({
     color: "#fff",
     letterSpacing: 0.2,
   },
+});
+
+/**
+ * `whatsapp-shell` (flag-on) style overrides — applied as
+ * `style={[styles.x, wa && waStyles.x]}`, so flag-off renders `styles`
+ * byte-for-byte.
+ *
+ * The team grid keeps its shape (one horizontally-scrolling column per team,
+ * a row per volunteer) but stops speaking in mini-cards: per
+ * WHATSAPP-DESIGN-SYSTEM.md §7 a column becomes ONE inset-grouped card
+ * (24pt radius, no border) whose volunteers are flat rows separated by
+ * hairlines — "no custom card component, no shadow, no unique corner
+ * radius". The ALL-CAPS letter-spaced column label, the per-role color dot
+ * and the `colors.warning` "Unconfirmed" pill are dropped at their call
+ * sites (§7 bans colored taxonomy/status chips outright); the unconfirmed
+ * signal survives as text on the role line.
+ */
+const waStyles = StyleSheet.create({
+  emptyText: { fontSize: WA_TYPE_SUBTITLE },
+
+  planSection: { paddingTop: WA_GROUP_SPACING },
+  planHeader: { paddingHorizontal: WA_GROUP_MARGIN, marginBottom: WA_SECTION_HEADER_GAP },
+  // §2 landing section header: ~20pt semibold, sentence case.
+  planTitle: { fontSize: WA_TYPE_SECTION_HEADER, fontWeight: WA_WEIGHT_SEMIBOLD },
+  planDate: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  planEmpty: { fontSize: WA_TYPE_SUBTITLE, paddingHorizontal: WA_GROUP_MARGIN },
+
+  // Type grew (names 14 -> 17pt, roles 12 -> 13pt), so the column widens to
+  // keep a two-word name and its role on one line each.
+  teamColumn: { width: 200, gap: WA_SECTION_HEADER_GAP },
+  // §3.2 section label: sentence-case 15pt gray, no letter-spacing.
+  teamName: {
+    fontSize: WA_SECTION_LABEL_SIZE,
+    fontWeight: WA_WEIGHT_REGULAR,
+    letterSpacing: 0,
+    textTransform: "none",
+    paddingBottom: 0,
+  },
+  // The column's people become one inset-grouped card.
+  teamPeople: { borderRadius: WA_GROUP_RADIUS, overflow: "hidden", gap: 0 },
+  // ...so each person is a flat row inside it, not a bordered card.
+  personCard: {
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingHorizontal: WA_CELL_PADDING - 4,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  personName: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_REGULAR },
+  roleText: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
 });
