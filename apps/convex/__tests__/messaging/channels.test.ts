@@ -4307,6 +4307,38 @@ describe("joinDiscoverableChannel", () => {
   });
 });
 
+describe("listGroupChannels isMuted", () => {
+  // Regression: prod's returns-validator rejected the row once isMuted was
+  // added to the mapping but not the validator (convex-test doesn't enforce
+  // returns validators, so only a field-presence assertion can pin this).
+  test("reports the caller's muted state per row", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(t, communityId, groupId);
+
+    const { channelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Mutable" }
+    );
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId,
+    });
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId,
+      muted: true,
+    });
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+    const muted = channels.find((c: any) => c._id === channelId);
+    expect(muted?.isMuted).toBe(true);
+  });
+});
+
 describe("setChannelMuted", () => {
   test("member can mute and unmute a channel they belong to", async () => {
     const t = convexTest(schema, modules);
