@@ -169,11 +169,11 @@ export function YouScreen() {
                 onPress={() => router.push("/(user)/my-prayers")}
               />
             ) : null}
-            {/* Admin-gated like its only pre-existing entry point
-                (Settings QuickLinksSection) — the destination's query
-                silently skips for non-admins, so an ungated row would
-                land members on a screen that never loads. */}
-            {showAdminTools ? (
+            {/* Gated exactly like its pre-existing entry point
+                (QuickLinksSection: user.is_admin) and the destination's own
+                access check — internal staff who aren't community admins
+                would hit an "Admins only" dead end. */}
+            {isAdmin && hasCommunity ? (
               <WaCell
                 icon="archive-outline"
                 title="Archived groups"

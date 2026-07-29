@@ -1176,7 +1176,13 @@ function MessageItemInner({
                 styles.senderName,
                 { color: themeColors.textSecondary },
                 whatsappShellEnabled && styles.waSenderName,
-                whatsappShellEnabled && { color: waSenderColor(message.senderId, isDark) },
+                // Bot/system messages have no senderId (optional in schema) —
+                // fall back to the neutral secondary rather than crashing.
+                whatsappShellEnabled && {
+                  color: message.senderId
+                    ? waSenderColor(message.senderId, isDark)
+                    : themeColors.textSecondary,
+                },
               ]}
             >
               {message.senderName || 'Unknown'}
