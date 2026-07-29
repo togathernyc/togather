@@ -34,8 +34,13 @@ export const WA_RIGHT_COLUMN_WIDTH = 60;
 export const WA_RIGHT_COLUMN_GAP = 4;
 /** Unread badge minimum diameter (grows horizontally past 2 digits). */
 export const WA_BADGE_MIN_DIAMETER = 20;
-/** Unread badge minimum horizontal padding once it grows past a circle. */
-export const WA_BADGE_MIN_H_PADDING = 8;
+/**
+ * Unread badge minimum horizontal padding once it grows past a circle.
+ * Measured off the reference at 5pt, not the spec prose's 8: at 8 a two-digit
+ * count inflated the capsule into a wide lozenge instead of WhatsApp's snug
+ * one (calibrated pixel pass, 2026-07-29).
+ */
+export const WA_BADGE_MIN_H_PADDING = 5;
 /** Muted bell-slash glyph size. */
 export const WA_MUTED_GLYPH_SIZE = 14;
 /**
@@ -191,8 +196,12 @@ export const WA_FLOATING_ROW_TITLE_GAP = 10;
 export const WA_TAB_ISLAND_HEIGHT = 64;
 /** Island corner radius — fully rounded at `WA_TAB_ISLAND_HEIGHT`. */
 export const WA_TAB_ISLAND_RADIUS = WA_TAB_ISLAND_HEIGHT / 2;
-/** Island inset from each screen edge. */
-export const WA_TAB_ISLAND_MARGIN_H = 10;
+/**
+ * Island inset from each screen edge. WhatsApp's island is visibly narrower
+ * than the screen — 20pt of page shows on either side, where the earlier 10
+ * read as an almost-full-bleed bar (calibrated pixel pass, 2026-07-29).
+ */
+export const WA_TAB_ISLAND_MARGIN_H = 20;
 /** Gap between the island's bottom edge and the bottom safe inset. */
 export const WA_TAB_ISLAND_BOTTOM_GAP = 8;
 /**
@@ -319,12 +328,16 @@ export const WA_WEIGHT_REGULAR = '400' as const;
 
 /** Bubble max width as a fraction of screen width. */
 export const WA_BUBBLE_MAX_WIDTH_PCT = 0.75;
-/** Bubble corner radius on the three "open" corners. */
-export const WA_BUBBLE_RADIUS = 18;
+/**
+ * Bubble corner radius on the three "open" corners. Measured at 12 in the
+ * reference, not the spec prose's 18 — the rounder radius was a large part of
+ * why our bubbles read "zoomed in" (calibrated pixel pass, 2026-07-29).
+ */
+export const WA_BUBBLE_RADIUS = 12;
 /** Corner radius at the sender-origin corner on the first bubble of a run (the "tail" corner). */
 export const WA_BUBBLE_TAIL_CORNER_RADIUS = 4;
-/** Bubble internal vertical padding. */
-export const WA_BUBBLE_PADDING_V = 10;
+/** Bubble internal vertical padding (measured 7, not the prose's 10). */
+export const WA_BUBBLE_PADDING_V = 7;
 /** Bubble internal horizontal padding. */
 export const WA_BUBBLE_PADDING_H = 12;
 /** Horizontal margin from the screen edge / avatar to the bubble. */
@@ -333,8 +346,13 @@ export const WA_BUBBLE_MARGIN = 8;
 export const WA_BUBBLE_GROUPED_GAP = 2;
 /** Vertical gap between different senders/runs. */
 export const WA_BUBBLE_RUN_GAP = 9;
-/** Day pill vertical padding. */
-export const WA_DAY_PILL_PADDING_V = 6;
+/**
+ * Day pill vertical padding. WhatsApp's capsule is a tight band around its
+ * 13pt label — measured 2pt, where 6 gave a chunky lozenge. Width comes from
+ * `WaDayPill`'s `minWidth` instead, so short labels ("Today") still read as a
+ * capsule rather than a stub.
+ */
+export const WA_DAY_PILL_PADDING_V = 2;
 /** Day pill horizontal padding. */
 export const WA_DAY_PILL_PADDING_H = 14;
 /** Fraction a reaction chip overlaps its bubble's bottom-outer corner. */

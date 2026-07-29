@@ -2,7 +2,8 @@
  * WaBadge — the unread-count capsule.
  *
  * WHATSAPP-DESIGN-SYSTEM.md §3.1: "filled `accent` capsule/circle, min 20pt
- * diameter (grows horizontally past 2 digits, min 8pt horizontal padding),
+ * diameter (grows horizontally past 2 digits, min `WA_BADGE_MIN_H_PADDING`
+ * horizontal padding — measured 5pt, not the prose's 8),
  * white bold 12pt numeral." §1.3: the fill is always brand-mapped — pass the
  * resolved accent (e.g. from `utils/waPalette.ts`'s `waAccentPalette()`) via
  * the `color` prop; this component never reads community theme itself.
