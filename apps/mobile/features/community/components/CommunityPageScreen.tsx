@@ -4,45 +4,166 @@
  * The WhatsApp "community info" analog (docs/plans/church-migration-ui-redesign
  * /README.md, "W2 — Community page"). A pushed screen — not a tab — opened
  * from the Chats list header when the whatsapp-shell flag is on. Read-only v1:
- * branded header, Announcements entry, Your groups, Groups you can join (+
- * "Find your group"), This week's events, and role-gated Prayer/Admin cards.
+ * branded identity header, Announcements entry, Groups you're in, Groups you
+ * can join (+ "Find your group"), This week's events, and role-gated
+ * Prayer/Admin cells.
+ *
+ * Styled to WHATSAPP-DESIGN-SYSTEM.md §1/§3/§4/§8 ("Community page" checklist)
+ * fidelity using the `components/wa/*` foundation kit — see that doc for the
+ * anatomy each section below implements.
  *
  * Route: /(user)/community
  *
  * Backend (all pre-existing, no new Convex functions added):
  * - messaging.channels.getInboxChannels — resolves the Announcements group's
- *   main channel, same lookup ChatInboxScreen/GroupedInboxItem use.
- * - groups.queries.listForUser — "Your groups".
+ *   main channel, same lookup ChatInboxScreen/GroupedInboxItem use. Also
+ *   supplies the preview/timestamp/unread data for the Announcements row.
+ * - groups.queries.listForUser — "Groups you're in".
  * - groupSearch.searchGroupsWithMembership — "Groups you can join" (community
- *   explore defaults applied, same as GroupsScreen).
+ *   explore defaults applied, same as GroupsScreen). This endpoint doesn't
+ *   return a join-type/approval field, so rows stay chevron-only navigation
+ *   (no Join/Request pill) per the design-system contract — no new mutation
+ *   added this pass.
  * - admin.settings.getExploreDefaults — community's default group-type filter.
  * - meetings.explore.communityEvents (via useCommunityEvents) — "This week".
+ *
+ * Data not available to this screen (rendered without, per contract):
+ * - Total community group/member count for the identity subtitle — falls
+ *   back to the count of groups the user is in ("Community · N groups"),
+ *   since that's the only group count already fetched here.
+ * - Admin adoption/pending counts — the Admin cell has no value label.
  */
 import React, { useMemo } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  ActivityIndicator,
-} from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { format, toZonedTime } from "date-fns-tz";
+import { formatTimeWithTimezone } from "@togather/shared";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
-import { Avatar } from "@components/ui";
+import { AppImage } from "@components/ui/AppImage";
 import { useGroupSearchQuery } from "@features/groups/hooks/useGroups";
 import { useCommunityEvents } from "@features/events/hooks/useCommunityEvents";
-import { EventCardRow } from "@features/events/components/EventCardRow";
 import { selectMainChannel } from "@features/chat/utils/selectMainChannel";
+import {
+  WaRow,
+  WaInsetGroup,
+  WaCell,
+  WaSectionLabel,
+  WA_GROUP_MARGIN,
+  WA_GROUP_SPACING,
+  WA_AVATAR_LG,
+  WA_AVATAR_SQUIRCLE_RADIUS,
+} from "@components/wa";
 
 const MAX_SUGGESTED_GROUPS = 3;
 const MAX_THIS_WEEK_EVENTS = 8;
+
+/** Hero identity avatar — bigger than the §3.1 list avatar (56pt) but built
+ * from the same squircle-radius ratio so it scales proportionally per §6. */
+const HERO_AVATAR_SIZE = 80;
+const HERO_AVATAR_RADIUS = HERO_AVATAR_SIZE * (WA_AVATAR_SQUIRCLE_RADIUS / WA_AVATAR_LG);
+
+/** Row-rail timestamp, matching §2's "12:52 PM" (today) / "Sunday" (this
+ * week) / short-date (older) convention. Local to this screen — see the
+ * file header's "self-contained" note. */
+function formatRowTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000);
+  const isSameCalendarDay = date.toDateString() === now.toDateString();
+  if (isSameCalendarDay) return format(date, "h:mm a");
+  if (diffDays < 7) return format(date, "EEEE");
+  return format(date, "M/d/yy");
+}
+
+/** §7 "leading small circular icon" — a plain circular icon bubble matching
+ * avatar geometry, used sparingly (one per row-type, not one per row). */
+function WaIconAvatar({
+  icon,
+  tint,
+  background,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  tint: string;
+  background: string;
+}) {
+  return (
+    <View
+      style={[
+        styles.iconAvatar,
+        { width: WA_AVATAR_LG, height: WA_AVATAR_LG, borderRadius: WA_AVATAR_LG / 2, backgroundColor: background },
+      ]}
+    >
+      <Ionicons name={icon} size={22} color={tint} />
+    </View>
+  );
+}
+
+type GroupRowData = {
+  id: string;
+  name: string;
+  imageUrl?: string | null;
+  subtitle?: string | null;
+};
+
+/** Shared anatomy for "Groups you're in" / "Groups you can join" — a
+ * WaSectionLabel + inset group of WaRows (§3.2), with a header-only fallback
+ * (no empty white card) while loading or when there's nothing to show. */
+function GroupsSection({
+  header,
+  isLoading,
+  emptyMessage,
+  groups,
+  accent,
+  onPressGroup,
+}: {
+  header: string;
+  isLoading: boolean;
+  emptyMessage: string;
+  groups: GroupRowData[];
+  accent: string;
+  onPressGroup: (id: string) => void;
+}) {
+  const { colors } = useTheme();
+
+  if (isLoading) {
+    return (
+      <View>
+        <WaSectionLabel>{header}</WaSectionLabel>
+        <ActivityIndicator size="small" color={colors.textSecondary} style={styles.sectionLoading} />
+      </View>
+    );
+  }
+
+  if (groups.length === 0) {
+    return (
+      <View>
+        <WaSectionLabel>{header}</WaSectionLabel>
+        <WaSectionLabel variant="footer">{emptyMessage}</WaSectionLabel>
+      </View>
+    );
+  }
+
+  return (
+    <WaInsetGroup header={header}>
+      {groups.map((group) => (
+        <WaRow
+          key={group.id}
+          avatar={{ imageUrl: group.imageUrl, label: group.name, backgroundColor: accent }}
+          title={group.name}
+          subtitle={group.subtitle ?? undefined}
+          showChevron
+          onPress={() => onPressGroup(group.id)}
+        />
+      ))}
+    </WaInsetGroup>
+  );
+}
 
 export function CommunityPageScreen() {
   const router = useRouter();
@@ -54,6 +175,7 @@ export function CommunityPageScreen() {
   const communityId = community?.id as Id<"communities"> | undefined;
   const isAdmin = user?.is_admin === true;
   const prayerEnabled = community?.churchFeatures?.prayerEnabled === true;
+  const userTimezone = user?.timezone || "America/New_York";
 
   const handleBack = () => {
     if (router.canGoBack()) router.back();
@@ -76,6 +198,12 @@ export function CommunityPageScreen() {
       )
     : undefined;
 
+  const announcementPreview = announcementChannel?.lastMessagePreview
+    ? announcementChannel.lastMessageSenderName
+      ? `${announcementChannel.lastMessageSenderName}: ${announcementChannel.lastMessagePreview}`
+      : announcementChannel.lastMessagePreview
+    : undefined;
+
   const openAnnouncements = () => {
     if (!announcementGroup || !announcementChannel) return;
     router.push({
@@ -92,7 +220,7 @@ export function CommunityPageScreen() {
     });
   };
 
-  // --- Your groups ---
+  // --- Groups you're in ---
   const myGroups = useAuthenticatedQuery(
     api.functions.groups.queries.listForUser,
     communityId ? { communityId } : "skip"
@@ -101,13 +229,23 @@ export function CommunityPageScreen() {
     () => (myGroups ?? []).filter((g: any) => !g.isAnnouncementGroup),
     [myGroups]
   );
+  const yourGroupItems: GroupRowData[] = useMemo(
+    () =>
+      yourGroups.map((g: any) => ({
+        id: g._id,
+        name: g.name,
+        imageUrl: g.preview,
+        subtitle: g.groupType?.name ?? null,
+      })),
+    [yourGroups]
+  );
 
   // --- Groups you can join (community explore defaults, same as GroupsScreen) ---
   const exploreDefaults = useAuthenticatedQuery(
     api.functions.admin.settings.getExploreDefaults,
     communityId ? { communityId } : "skip"
   );
-  const { data: searchResults } = useGroupSearchQuery({
+  const { data: searchResults, isLoading: suggestedGroupsLoading } = useGroupSearchQuery({
     groupTypeId: exploreDefaults?.groupTypes?.[0],
     limit: 20,
   });
@@ -118,6 +256,16 @@ export function CommunityPageScreen() {
         .slice(0, MAX_SUGGESTED_GROUPS),
     [searchResults]
   );
+  const suggestedGroupItems: GroupRowData[] = useMemo(
+    () =>
+      suggestedGroups.map((g: any) => ({
+        id: g.id,
+        name: g.name,
+        imageUrl: g.preview,
+        subtitle: g.memberCount === 1 ? "1 member" : `${g.memberCount} members`,
+      })),
+    [suggestedGroups]
+  );
 
   // --- This week ---
   const { data: eventsData, isLoading: eventsLoading } = useCommunityEvents({
@@ -127,237 +275,173 @@ export function CommunityPageScreen() {
   const thisWeekEvents = (eventsData?.events ?? []).slice(0, MAX_THIS_WEEK_EVENTS);
 
   const goToGroup = (groupId: string) => router.push(`/groups/${groupId}` as any);
+  const goToEvent = (shortId: string | null) => {
+    if (!shortId) return;
+    router.push(`/e/${shortId}?source=app` as any);
+  };
+
+  const groupCount = myGroups !== undefined ? yourGroups.length : undefined;
+  const identitySubtitle =
+    groupCount !== undefined
+      ? `Community · ${groupCount} ${groupCount === 1 ? "group" : "groups"}`
+      : "Community";
 
   return (
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.surface },
+        { paddingTop: insets.top, backgroundColor: colors.backgroundGrouped },
       ]}
     >
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={handleBack} hitSlop={12} style={styles.back}>
+      <View style={styles.navBar}>
+        <Pressable onPress={handleBack} hitSlop={12} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color={colors.text} />
-        </TouchableOpacity>
-        <Text
-          style={[styles.headerTitle, { color: colors.text }]}
-          numberOfLines={1}
-        >
-          Community
-        </Text>
-        <View style={styles.headerSpacer} />
+        </Pressable>
       </View>
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Branded header band */}
-        <View style={[styles.brandBand, { backgroundColor: accentLight }]}>
-          <Avatar
-            name={community?.name || "Community"}
-            imageUrl={community?.logo ?? null}
-            size={64}
+        {/* Community identity — squircle avatar (§6, the one squircle in the
+            system), name, "Community · N groups" hero subtitle (§2). */}
+        <View style={styles.identityRow}>
+          <AppImage
+            source={community?.logo}
+            style={{
+              width: HERO_AVATAR_SIZE,
+              height: HERO_AVATAR_SIZE,
+              borderRadius: HERO_AVATAR_RADIUS,
+            }}
+            optimizedWidth={HERO_AVATAR_SIZE * 2}
+            placeholder={{
+              type: "initials",
+              name: community?.name || "Community",
+              backgroundColor: primaryColor,
+            }}
           />
-          <Text style={[styles.brandName, { color: colors.text }]} numberOfLines={2}>
-            {community?.name || "Your Community"}
-          </Text>
+          <View style={styles.identityText}>
+            <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
+              {community?.name || "Your Community"}
+            </Text>
+            <Text style={[styles.identitySubtitle, { color: colors.textSecondary }]}>
+              {identitySubtitle}
+            </Text>
+          </View>
         </View>
 
-        {/* Announcements */}
-        {announcementGroup && announcementChannel && (
-          <TouchableOpacity
-            style={[styles.row, { borderBottomColor: colors.border }]}
-            onPress={openAnnouncements}
-            activeOpacity={0.7}
-          >
-            <View
-              style={[
-                styles.iconBubble,
-                { backgroundColor: colors.surfaceSecondary },
-              ]}
-            >
-              <Ionicons name="megaphone" size={20} color={primaryColor} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>
-                Announcements
-              </Text>
-              <Text style={[styles.rowSubtitle, { color: colors.textSecondary }]}>
-                Only leaders can post here
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        )}
+        {/* Announcements — WaRow inside an inset group (§3.2), megaphone
+            icon-bubble avatar, latest preview line, timestamp + unread badge. */}
+        {announcementGroup && announcementChannel ? (
+          <View style={styles.section}>
+            <WaInsetGroup>
+              <WaRow
+                avatar={<WaIconAvatar icon="megaphone" tint={primaryColor} background={accentLight} />}
+                title="Announcements"
+                isUnread={(announcementChannel.unreadCount ?? 0) > 0}
+                subtitle={announcementPreview}
+                timestamp={
+                  announcementChannel.lastMessageAt
+                    ? formatRowTimestamp(announcementChannel.lastMessageAt)
+                    : undefined
+                }
+                unreadCount={announcementChannel.unreadCount}
+                showMutedDot={announcementChannel.isMuted && !announcementChannel.unreadCount}
+                showChevron
+                accent={primaryColor}
+                onPress={openAnnouncements}
+              />
+            </WaInsetGroup>
+          </View>
+        ) : null}
 
-        {/* Your groups */}
-        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-          YOUR GROUPS
-        </Text>
-        {myGroups === undefined ? (
-          <ActivityIndicator
-            size="small"
-            color={colors.text}
-            style={styles.sectionLoading}
+        {/* Groups you're in */}
+        <View style={styles.section}>
+          <GroupsSection
+            header="Groups you're in"
+            isLoading={myGroups === undefined}
+            emptyMessage="You haven't joined any groups yet."
+            groups={yourGroupItems}
+            accent={primaryColor}
+            onPressGroup={goToGroup}
           />
-        ) : yourGroups.length === 0 ? (
-          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>
-            You haven't joined any groups yet.
-          </Text>
-        ) : (
-          yourGroups.map((group: any) => (
-            <GroupRow
-              key={group._id}
-              name={group.name}
-              imageUrl={group.preview}
-              subtitle={group.groupType?.name}
-              onPress={() => goToGroup(group._id)}
-            />
-          ))
-        )}
+        </View>
 
-        {/* Groups you can join */}
-        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-          GROUPS YOU CAN JOIN
-        </Text>
-        {suggestedGroups.map((group: any) => (
-          <GroupRow
-            key={group.id}
-            name={group.name}
-            imageUrl={group.preview}
-            subtitle={
-              group.memberCount === 1 ? "1 member" : `${group.memberCount} members`
-            }
-            onPress={() => goToGroup(group.id)}
+        {/* Groups you can join + "Find your group" — the WhatsApp "Add
+            group" pill (§1.3: brand-mapped, accent-filled) at the section
+            bottom. No Join/Request pill on individual rows: this screen's
+            data has no join-type/approval field to key it off (see file
+            header), so rows stay chevron-only navigation, unchanged from
+            before. */}
+        <View style={styles.section}>
+          <GroupsSection
+            header="Groups you can join"
+            isLoading={suggestedGroupsLoading}
+            emptyMessage="No groups to join right now."
+            groups={suggestedGroupItems}
+            accent={primaryColor}
+            onPressGroup={goToGroup}
           />
-        ))}
-        <TouchableOpacity
-          style={[styles.row, { borderBottomColor: colors.border }]}
-          onPress={() => router.push("/(tabs)/search" as any)}
-          activeOpacity={0.7}
-        >
-          <View
-            style={[
-              styles.iconBubble,
-              { backgroundColor: colors.surfaceSecondary },
+          <Pressable
+            onPress={() => router.push("/(tabs)/search" as any)}
+            style={({ pressed }) => [
+              styles.addGroupPill,
+              { backgroundColor: primaryColor, opacity: pressed ? 0.85 : 1 },
             ]}
           >
-            <Ionicons name="compass" size={20} color={primaryColor} />
+            <Ionicons name="add" size={20} color="#FFFFFF" />
+            <Text style={styles.addGroupPillText}>Find your group</Text>
+          </Pressable>
+        </View>
+
+        {/* This week — inset group of WaRows (calendar icon-bubble, event
+            title, time subtitle), replacing the old horizontal card strip. */}
+        {!eventsLoading && thisWeekEvents.length > 0 ? (
+          <View style={styles.section}>
+            <WaInsetGroup header="This week">
+              {thisWeekEvents.map((event: any) => {
+                const zonedDate = toZonedTime(new Date(event.scheduledAt), userTimezone);
+                const dateLabel = format(zonedDate, "EEE, M/d", { timeZone: userTimezone });
+                const timeLabel = formatTimeWithTimezone(new Date(event.scheduledAt), userTimezone);
+                return (
+                  <WaRow
+                    key={event.id}
+                    avatar={<WaIconAvatar icon="calendar" tint={primaryColor} background={accentLight} />}
+                    title={event.title || "Untitled Event"}
+                    subtitle={`${dateLabel} · ${timeLabel}`}
+                    showChevron
+                    onPress={() => goToEvent(event.shortId)}
+                  />
+                );
+              })}
+            </WaInsetGroup>
           </View>
-          <View style={styles.rowText}>
-            <Text style={[styles.rowTitle, { color: colors.text }]}>
-              Find your group
-            </Text>
+        ) : null}
+
+        {/* Togather-plus utility rows — inset-grouped cells (§3.2/§7), not
+            custom cards: plain monochrome glyphs, no colored icon chips. */}
+        {prayerEnabled || isAdmin ? (
+          <View style={styles.section}>
+            <WaInsetGroup>
+              {prayerEnabled ? (
+                <WaCell
+                  icon="heart-outline"
+                  title="Prayer"
+                  onPress={() => router.push("/(tabs)/prayer" as any)}
+                />
+              ) : null}
+              {isAdmin ? (
+                <WaCell
+                  icon="shield-checkmark-outline"
+                  title="Admin"
+                  onPress={() => router.push("/(tabs)/admin" as any)}
+                />
+              ) : null}
+            </WaInsetGroup>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-        </TouchableOpacity>
-
-        {/* This week */}
-        {eventsLoading ? null : thisWeekEvents.length > 0 && (
-          <>
-            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-              THIS WEEK
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.thisWeekScroll}
-            >
-              {thisWeekEvents.map((event: any) => (
-                <View key={event.id} style={styles.thisWeekCard}>
-                  <EventCardRow event={event} />
-                </View>
-              ))}
-            </ScrollView>
-          </>
-        )}
-
-        {/* Prayer */}
-        {prayerEnabled && (
-          <TouchableOpacity
-            style={[styles.row, { borderBottomColor: colors.border, marginTop: 8 }]}
-            onPress={() => router.push("/(tabs)/prayer" as any)}
-            activeOpacity={0.7}
-          >
-            <View
-              style={[
-                styles.iconBubble,
-                { backgroundColor: colors.surfaceSecondary },
-              ]}
-            >
-              <Ionicons name="heart" size={20} color={primaryColor} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>Prayer</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        )}
-
-        {/* Admin */}
-        {isAdmin && (
-          <TouchableOpacity
-            style={[styles.row, { borderBottomColor: colors.border }]}
-            onPress={() => router.push("/(tabs)/admin" as any)}
-            activeOpacity={0.7}
-          >
-            <View
-              style={[
-                styles.iconBubble,
-                { backgroundColor: colors.surfaceSecondary },
-              ]}
-            >
-              <Ionicons name="shield-checkmark" size={20} color={primaryColor} />
-            </View>
-            <View style={styles.rowText}>
-              <Text style={[styles.rowTitle, { color: colors.text }]}>Admin</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        )}
+        ) : null}
       </ScrollView>
     </View>
-  );
-}
-
-// Shared row shape for "Your groups" and "Groups you can join" — identical
-// layout, only the subtitle source differs, so one small local component
-// instead of duplicating the row twice.
-function GroupRow({
-  name,
-  imageUrl,
-  subtitle,
-  onPress,
-}: {
-  name: string;
-  imageUrl?: string | null;
-  subtitle?: string | null;
-  onPress: () => void;
-}) {
-  const { colors } = useTheme();
-  return (
-    <TouchableOpacity
-      style={[styles.row, { borderBottomColor: colors.border }]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <Avatar name={name} imageUrl={imageUrl} size={44} />
-      <View style={styles.rowText}>
-        <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
-          {name}
-        </Text>
-        {subtitle && (
-          <Text
-            style={[styles.rowSubtitle, { color: colors.textSecondary }]}
-            numberOfLines={1}
-          >
-            {subtitle}
-          </Text>
-        )}
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-    </TouchableOpacity>
   );
 }
 
@@ -365,83 +449,58 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
+  navBar: {
     flexDirection: "row",
     alignItems: "center",
+    height: 44,
     paddingHorizontal: 8,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  back: {
+  backButton: {
     padding: 4,
   },
-  headerTitle: {
-    flex: 1,
-    fontSize: 17,
-    fontWeight: "600",
-    textAlign: "center",
-  },
-  headerSpacer: {
-    width: 36,
-  },
-  brandBand: {
-    alignItems: "center",
-    paddingVertical: 24,
-    gap: 10,
-  },
-  brandName: {
-    fontSize: 20,
-    fontWeight: "700",
-    textAlign: "center",
-    paddingHorizontal: 24,
-  },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 8,
-  },
-  sectionLoading: {
-    paddingVertical: 12,
-  },
-  emptyText: {
-    fontSize: 14,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  row: {
+  identityRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 12,
+    paddingBottom: 24,
+    gap: 16,
   },
-  iconBubble: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  identityText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  identityName: {
+    fontSize: 22,
+    fontWeight: "700",
+  },
+  identitySubtitle: {
+    fontSize: 15,
+    marginTop: 2,
+  },
+  section: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  sectionLoading: {
+    marginTop: 12,
+  },
+  iconAvatar: {
     alignItems: "center",
     justifyContent: "center",
   },
-  rowText: {
-    flex: 1,
-    gap: 2,
+  addGroupPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginHorizontal: WA_GROUP_MARGIN,
+    marginTop: 12,
+    height: 44,
+    borderRadius: 22,
   },
-  rowTitle: {
-    fontSize: 16,
+  addGroupPillText: {
+    fontSize: 17,
     fontWeight: "600",
-  },
-  rowSubtitle: {
-    fontSize: 13,
-  },
-  thisWeekScroll: {
-    paddingHorizontal: 12,
-    gap: 12,
-  },
-  thisWeekCard: {
-    width: 280,
+    color: "#FFFFFF",
   },
 });
