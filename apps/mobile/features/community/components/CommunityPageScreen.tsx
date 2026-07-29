@@ -329,6 +329,8 @@ export function CommunityPageScreen() {
 
   const openAnnouncements = () => {
     if (!announcementGroup || !announcementChannel) return;
+    // `/inbox/...` is a root-stack card — see `pushOutOfModal` below.
+    if (router.canDismiss?.()) router.dismissAll();
     router.push({
       pathname: `/inbox/${announcementGroup.group._id}/${announcementChannel.slug}` as any,
       params: {
@@ -453,10 +455,28 @@ export function CommunityPageScreen() {
   });
   const thisWeekEvents = (eventsData?.events ?? []).slice(0, MAX_THIS_WEEK_EVENTS);
 
-  const goToGroup = (groupId: string) => router.push(`/groups/${groupId}` as any);
+  /**
+   * This screen renders inside the `(user)` route group, which `app/_layout.tsx`
+   * declares `presentation: "modal"`. A native modal sits above EVERY navigator
+   * screen, so pushing a root-stack route from here lands the destination
+   * *behind* the still-open modal on iOS — the user taps a group and nothing
+   * appears to happen. Dismiss the modal stack first, then push.
+   *
+   * Same pattern (and same comment) as `useStartDirectMessage`,
+   * `NotificationFeedScreen` and `NativeRunSheetView`. Destinations that stay
+   * INSIDE `(user)` (e.g. `/(user)/invite`) must NOT go through this — they
+   * belong to the modal's own stack.
+   */
+  const pushOutOfModal = (push: () => void) => {
+    if (router.canDismiss?.()) router.dismissAll();
+    push();
+  };
+
+  const goToGroup = (groupId: string) =>
+    pushOutOfModal(() => router.push(`/groups/${groupId}` as any));
   const goToEvent = (shortId: string | null) => {
     if (!shortId) return;
-    router.push(`/e/${shortId}?source=app` as any);
+    pushOutOfModal(() => router.push(`/e/${shortId}?source=app` as any));
   };
   const goToInvite = () => {
     setMenuVisible(false);
@@ -464,7 +484,7 @@ export function CommunityPageScreen() {
   };
   const goToSearch = () => {
     setMenuVisible(false);
-    router.push("/(tabs)/search" as any);
+    pushOutOfModal(() => router.push("/(tabs)/search" as any));
   };
 
   const showUtilityRows = prayerEnabled || isAdmin;
@@ -597,7 +617,9 @@ export function CommunityPageScreen() {
               <WaCell
                 icon="heart-outline"
                 title="Prayer"
-                onPress={() => router.push("/(tabs)/prayer" as any)}
+                onPress={() =>
+                  pushOutOfModal(() => router.push("/(tabs)/prayer" as any))
+                }
               />
             ) : null}
             {prayerEnabled && isAdmin ? <WaSeparator inset={WA_SEPARATOR_INSET} /> : null}
@@ -605,7 +627,9 @@ export function CommunityPageScreen() {
               <WaCell
                 icon="shield-checkmark-outline"
                 title="Admin"
-                onPress={() => router.push("/(tabs)/admin" as any)}
+                onPress={() =>
+                  pushOutOfModal(() => router.push("/(tabs)/admin" as any))
+                }
               />
             ) : null}
           </View>
