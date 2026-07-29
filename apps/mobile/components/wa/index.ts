@@ -62,4 +62,7 @@ export type { WaBadgeProps } from './WaBadge';
 export { WaSectionLabel } from './WaSectionLabel';
 export type { WaSectionLabelProps } from './WaSectionLabel';
 
+export { WaActionCard, WaActionCardRow } from './WaActionCard';
+export type { WaActionCardProps } from './WaActionCard';
+
 export * from './metrics';

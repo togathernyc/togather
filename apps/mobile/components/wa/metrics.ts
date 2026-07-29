@@ -47,42 +47,89 @@ export const WA_SEPARATOR_INSET = WA_ROW_LEADING_PADDING + WA_AVATAR_LG + WA_ROW
 export const WA_GHOST_CARD_OFFSET = 4.5;
 
 // --- §3.2 iOS inset-grouped lists --------------------------------------------
+//
+// Recalibrated against the owner's WhatsApp iOS reference screenshots
+// (WA-VISUAL-DELTAS.md S3): the pre-pass values were derived from the spec
+// prose and read as iOS-15 Settings, not as current WhatsApp — a 10pt radius
+// on 44pt rows with thin gray 21pt glyphs. The screenshots win (see the doc's
+// preamble), so these are the measured values.
 
-/** Inset-grouped card corner radius. */
-export const WA_GROUP_RADIUS = 10;
+/**
+ * Inset-grouped card corner radius. S3.1: "~24px (Togather ~12 — visibly
+ * wrong at a glance)" — the single most visible card delta in the audit.
+ */
+export const WA_GROUP_RADIUS = 24;
 /** Card horizontal margin from the screen edge. */
 export const WA_GROUP_MARGIN = 16;
-/** Cell minimum height (single-line, iOS tap-target floor). */
-export const WA_CELL_MIN_HEIGHT = 44;
+/** Cell minimum height (single-line). S3.2 measures the band at 52–56pt. */
+export const WA_CELL_MIN_HEIGHT = 54;
 /** Cell minimum height when it wraps a description/footnote sub-line. */
-export const WA_CELL_TALL_MIN_HEIGHT = 52;
+export const WA_CELL_TALL_MIN_HEIGHT = 64;
 /** Cell maximum height when it wraps a description/footnote sub-line. */
-export const WA_CELL_TALL_MAX_HEIGHT = 64;
+export const WA_CELL_TALL_MAX_HEIGHT = 76;
 /** Cell horizontal padding inside the card. */
 export const WA_CELL_PADDING = 16;
-/** Monochrome glyph icon size inside a cell (no colored background chip). */
-export const WA_CELL_ICON_SIZE = 21;
-/** Fixed icon column width inside a cell. */
-export const WA_CELL_ICON_COLUMN = 28;
 /**
- * Gap between the icon column and the label text. Spec: "20pt leading
- * padding before the label starts (icon column is a fixed ~28pt)" — read as
- * the icon→label gap, distinct from `WA_CELL_PADDING` (the card's own
- * leading/trailing inset).
+ * Monochrome glyph icon size inside a cell (no colored background chip).
+ * S3.2: "left icon 24px, **black** ~1.5px-stroke glyphs (not thin gray)" —
+ * the stroke weight comes from Ionicons' `-outline` set at this size; the ink
+ * is `colors.text`, which `WaCell` applies as the default (was
+ * `text.secondary`, which read as the "thin gray" the audit flagged).
  */
-export const WA_CELL_ICON_LABEL_GAP = 20;
+export const WA_CELL_ICON_SIZE = 24;
+/** Fixed icon column width inside a cell — exactly the glyph box. */
+export const WA_CELL_ICON_COLUMN = 24;
+/**
+ * Gap between the icon column and the label text, distinct from
+ * `WA_CELL_PADDING` (the card's own leading/trailing inset).
+ */
+export const WA_CELL_ICON_LABEL_GAP = 16;
+/**
+ * Leading edge of a cell's LABEL — where S3.4 wants card-internal hairlines to
+ * start ("separators inset to the label start, after the icon well"), not the
+ * icon column's own start. `WaInsetGroup` defaults `separatorInset` to this.
+ */
+export const WA_CELL_LABEL_INSET =
+  WA_CELL_PADDING + WA_CELL_ICON_COLUMN + WA_CELL_ICON_LABEL_GAP; // 56
 /** Chevron glyph size. */
 export const WA_CHEVRON_SIZE = 13;
 /** Gap between a value label and its trailing chevron. */
 export const WA_CHEVRON_GAP = 8;
 /** Gap between a section header and the card below it. */
 export const WA_SECTION_HEADER_GAP = 8;
+/**
+ * Section-header type size. S3.5 kills the 12–13pt ALL-CAPS iOS-15 label:
+ * WhatsApp's info surfaces carry either no label at all or a sentence-case
+ * gray one. `WaSectionLabel` renders `header` at this size, verbatim (no
+ * `toUpperCase()`).
+ */
+export const WA_SECTION_LABEL_SIZE = 15;
+/** Section-footer (gray metadata) type size — S3.6's "Created by … Created Jul 27, 2024." */
+export const WA_SECTION_FOOTER_SIZE = 13;
 /** Vertical spacing between grouped cards (visibly more generous than the header-to-card gap). */
 export const WA_GROUP_SPACING = 28;
 /** Segmented control height (e.g. "Community" / "Announcements"). */
 export const WA_SEGMENTED_HEIGHT = 36;
 /** Quick-action circular icon size (Add Members / Add Groups / Search). */
 export const WA_QUICK_ACTION_CIRCLE = 38;
+
+// --- S3/§3.3 Action-button cards ---------------------------------------------
+//
+// The row of white rounded-rect buttons that sits between an info screen's hero
+// and its first card group (Open chat / Mute / Invite / Search) — per-screen
+// §3.3 and S5.2's "WA uses white button cards", replacing the green circle
+// glyphs Togather had.
+
+/** Action-card height. */
+export const WA_ACTION_CARD_HEIGHT = 76;
+/** Action-card corner radius (softer than the group card, still WA-round). */
+export const WA_ACTION_CARD_RADIUS = 18;
+/** Gap between adjacent action cards in the row. */
+export const WA_ACTION_CARD_GAP = 10;
+/** Accent glyph size inside an action card. */
+export const WA_ACTION_CARD_ICON_SIZE = 24;
+/** Dark label under the glyph. */
+export const WA_ACTION_CARD_LABEL_SIZE = 15;
 
 // --- §4 Navigation chrome -----------------------------------------------------
 //
@@ -288,8 +335,15 @@ export const WA_SHEET_DISMISS_SIZE = 36;
 export const WA_TOGGLE_WIDTH = 51;
 /** Native `UISwitch`-geometry toggle height. */
 export const WA_TOGGLE_HEIGHT = 31;
-/** Profile-hero circular avatar size. */
-export const WA_AVATAR_PROFILE = 108;
+/**
+ * Profile/entity-hero circular avatar size. S3 per-screen §3.2/§4.2 both
+ * measure the hero disc at ~100pt (was 108 from the spec prose).
+ */
+export const WA_AVATAR_PROFILE = 100;
+/** Gap between the hero avatar and the 28pt bold name below it. */
+export const WA_HERO_NAME_GAP = 12;
+/** Gap between the hero name and its 15pt gray subtitle. */
+export const WA_HERO_SUBTITLE_GAP = 4;
 /** Empty-state illustration/icon size. */
 export const WA_EMPTY_STATE_ICON_SIZE = 100;
 
