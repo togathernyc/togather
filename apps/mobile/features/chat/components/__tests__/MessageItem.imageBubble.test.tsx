@@ -20,6 +20,13 @@ jest.mock('@features/chat/hooks/useLinkPreview', () => ({
   useLinkPreview: () => ({ preview: null, loading: false }),
 }));
 jest.mock('@services/api/convex', () => ({ api: {} }));
+// WhatsApp-shell flag (WHATSAPP-DESIGN-SYSTEM.md §5, gated in MessageItem):
+// `useWhatsappShell` internally calls `useConvexFeatureFlag`, which
+// dereferences `api.functions.admin.featureFlags.getFeatureFlag` — the local
+// `@services/api/convex` mock above has no `functions` tree, so that
+// dereference throws unless the whole flag hook is stubbed here. Flag-off is
+// the default the rest of this test file already assumes.
+jest.mock('@hooks/useWhatsappShell', () => ({ useWhatsappShell: () => false }));
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock('../EventLinkCard', () => ({ EventLinkCard: () => null }));
 jest.mock('../LinkPreviewCard', () => ({ LinkPreviewCard: () => null }));
