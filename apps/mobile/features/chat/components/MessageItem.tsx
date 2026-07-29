@@ -103,6 +103,14 @@ const WA_TIMESTAMP_ON_TINT_LIGHT = 'rgba(0,0,0,0.45)';
 const WA_TIMESTAMP_ON_TINT_DARK = 'rgba(255,255,255,0.6)';
 
 /**
+ * Incoming-message avatar diameter, flag-on. The one chat-surface measurement
+ * that came in SMALLER than the reference (ours 24 vs WA's 30) in the
+ * calibrated pixel pass, 2026-07-29 — 28 closes most of the gap without
+ * pushing the bubble column inward.
+ */
+const WA_INCOMING_AVATAR = 28;
+
+/**
  * The Togather brand mark, shown as the avatar for automated bot messages
  * (contentType "bot" with no human sender) so the bot reads as first-party
  * rather than an initials placeholder.
@@ -617,6 +625,7 @@ function MessageItemInner({
           ]}
         >
           This message was deleted
+          {inlineTimestampReservation}
         </Text>
       );
     }
@@ -664,6 +673,9 @@ function MessageItemInner({
           }
           return <Text key={index}>{part.value}</Text>;
         })}
+        {/* LAST inline child, after every mention/URL/plain run — see
+            `timestampReservation`. */}
+        {inlineTimestampReservation}
       </Text>
     );
   };
@@ -852,6 +864,62 @@ function MessageItemInner({
     !isOwnMessage &&
     (isFirstInGroup ?? true) &&
     !isImageOnlyMessage;
+
+  // --- §5 "Bubble timestamp + ticks placement": WhatsApp's inline timestamp --
+  //
+  // WhatsApp does not give the timestamp a row of its own. It reserves an
+  // INVISIBLE slug at the very end of the message's text flow and paints the
+  // real timestamp absolutely in the bubble's bottom-right corner. A short
+  // message therefore gets the time beside its last line instead of under it
+  // (~15pt of bubble height back, per message); wrapped text just flows around
+  // the reservation, and if the last line is already full the slug wraps to a
+  // line of its own — which is what WhatsApp does too.
+  //
+  // Only correct when the text run is the bubble's LAST content: with media, a
+  // document/audio player, or the SMS-blast badge below it, an absolutely
+  // positioned bottom-right timestamp would land on top of that content. Those
+  // bubbles keep the flag-on footer row.
+  const useInlineTimestamp =
+    whatsappShellEnabled &&
+    hasTextContent &&
+    !isImageOnlyMessage &&
+    !bubbleClipsMedia &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    !message.blastId;
+
+  // Paragraph direction decides which corner the inline stamp anchors to:
+  // under RTL bidi layout the end-of-flow reservation lands at the visual
+  // LEFT, so the visible stamp must follow it there (WhatsApp does the same —
+  // Arabic/Hebrew bubbles carry their timestamp bottom-left). Direction comes
+  // from the first strong-directional character, like the text engine's own
+  // first-strong heuristic.
+  const firstStrongDirectionalChar = (message.content ?? '').match(
+    // First strong-directional character: LTR letters (Latin/Greek/Cyrillic)
+    // or the RTL blocks (Hebrew/Arabic/Syriac + presentation forms).
+    /[A-Za-z\u00C0-\u024F\u0370-\u04FF]|[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u
+  )?.[0];
+  const isRtlMessage =
+    useInlineTimestamp &&
+    firstStrongDirectionalChar !== undefined &&
+    /[\u0590-\u08FF\uFB1D-\uFDFD\uFE70-\uFEFF]/u.test(firstStrongDirectionalChar);
+
+  /**
+   * The reservation's text. Every space is a NBSP so the slug wraps as one unit
+   * but never breaks mid-way (a broken slug would leave the absolute timestamp
+   * sitting on top of body copy). "(edited)" joins it, and the whole thing
+   * renders at the timestamp's own 11pt, so the reservation is always at least
+   * as wide as the visible cluster it stands in for.
+   */
+  const timestampReservation = `\u00A0\u00A0${formatMessageTime(message.createdAt)}${
+    message.editedAt && !message.isDeleted ? '\u00A0(edited)' : ''
+  }`.replace(/ /g, '\u00A0');
+
+  const inlineTimestampReservation = useInlineTimestamp ? (
+    <Text testID="wa-timestamp-reservation" style={styles.waInlineTimestampReservation}>
+      {timestampReservation}
+    </Text>
+  ) : null;
 
   // Handle image tap - open gallery viewer
   const handleImagePress = useCallback((index: number) => {
@@ -1178,6 +1246,7 @@ function MessageItemInner({
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
+          whatsappShellEnabled && styles.waContainer,
           // §5 consecutive-message grouping: tighten the vertical gap within a
           // run (~2pt) vs. between different senders/runs (~9pt). Overrides
           // the flag-off `marginVertical: 2` baseline in `styles.container`
@@ -1202,7 +1271,10 @@ function MessageItemInner({
             Pressable still renders but its press is a no-op. */}
         {!isOwnMessage && (
           <Pressable
-            style={styles.avatarContainer}
+            style={[
+              styles.avatarContainer,
+              whatsappShellEnabled && styles.waAvatarContainer,
+            ]}
             onPress={handleAvatarPress}
             disabled={!onAvatarPress}
             accessibilityRole={onAvatarPress ? 'button' : undefined}
@@ -1211,11 +1283,15 @@ function MessageItemInner({
             }
           >
             {!message.senderId && message.contentType === 'bot' && !message.senderProfilePhoto ? (
-              <Image source={TOGATHER_BOT_AVATAR} style={styles.avatar} resizeMode="cover" />
+              <Image
+                source={TOGATHER_BOT_AVATAR}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
+                resizeMode="cover"
+              />
             ) : (
               <AppImage
                 source={message.senderProfilePhoto}
-                style={styles.avatar}
+                style={[styles.avatar, whatsappShellEnabled && styles.waAvatar]}
                 optimizedWidth={50}
                 placeholder={{
                   type: 'initials',
@@ -1226,7 +1302,7 @@ function MessageItemInner({
             )}
             {message.senderNotificationsDisabled ? (
               <NotificationsDisabledBadge
-                avatarSize={24}
+                avatarSize={whatsappShellEnabled ? WA_INCOMING_AVATAR : 24}
                 ringColor={themeColors.background}
               />
             ) : null}
@@ -1304,6 +1380,9 @@ function MessageItemInner({
                       styles.bubbleTextContent,
                       whatsappShellEnabled && styles.waBubbleTextContent,
                       showInBubbleSenderName && styles.waBubbleTextContentUnderName,
+                      // With the footer lifted out of layout, the text block
+                      // owns the bubble's bottom padding.
+                      useInlineTimestamp && styles.waBubbleTextContentInline,
                     ]}
                   >
                     {renderMessageContent()}
@@ -1336,7 +1415,32 @@ function MessageItemInner({
                     (iMessage shows no inline timestamp on photos; date separators and the
                     read-receipt row below the bubble still convey timing). */}
                 {!isImageOnlyMessage && (
-                  <View style={[styles.messageFooter, styles.bubbleFooter, whatsappShellEnabled && styles.waBubbleFooter]}>
+                  <View
+                    testID="wa-bubble-footer"
+                    style={[
+                      styles.messageFooter,
+                      styles.bubbleFooter,
+                      whatsappShellEnabled && styles.waBubbleFooter,
+                      // The visible cluster the reservation stands in for: same
+                      // nodes, same colors, just lifted out of flow into the
+                      // bubble's bottom trailing corner — bottom-right for LTR
+                      // text, bottom-LEFT for RTL, where bidi layout puts the
+                      // end-of-flow reservation (WhatsApp does the same).
+                      useInlineTimestamp && styles.waInlineTimestampAnchor,
+                      useInlineTimestamp &&
+                        isRtlMessage && {
+                          right: undefined,
+                          left: WA_BUBBLE_PADDING_H,
+                        },
+                    ]}
+                    // The reservation is part of the body Text, so the time is
+                    // already in that element's accessibility label — voicing
+                    // this copy too would just stutter it.
+                    accessibilityElementsHidden={useInlineTimestamp}
+                    importantForAccessibility={
+                      useInlineTimestamp ? 'no-hide-descendants' : undefined
+                    }
+                  >
                     <Text
                       style={[
                         styles.timestamp,
@@ -1702,8 +1806,27 @@ const styles = StyleSheet.create({
   // Additive-only: applied via extra entries in a style array alongside the
   // flag-off styles above, which are never edited. See WHATSAPP-DESIGN-
   // SYSTEM.md §5.
+  /**
+   * §S4 gutter. This padding STACKS with `MessageList`'s `waListContent`, so
+   * the pair has to be read together: 4 + 4 = 8pt from each screen edge, vs
+   * the 24 the two 12s used to add up to (WA measures 7.5 — calibrated pixel
+   * pass, 2026-07-29).
+   */
+  waContainer: {
+    paddingHorizontal: 4,
+  },
   waMessageContent: {
     maxWidth: `${WA_BUBBLE_MAX_WIDTH_PCT * 100}%`,
+  },
+  /** See `WA_INCOMING_AVATAR`. */
+  waAvatarContainer: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+  },
+  waAvatar: {
+    width: WA_INCOMING_AVATAR,
+    height: WA_INCOMING_AVATAR,
+    borderRadius: WA_INCOMING_AVATAR / 2,
   },
   // §S4.2 "sender name 15 semibold per-sender color INSIDE bubble" — flag-on
   // the name moves from a line above the bubble into the bubble's own top
@@ -1771,6 +1894,34 @@ const styles = StyleSheet.create({
     // §S4.2 "timestamp … inside bottom-RIGHT" — the flag-off footer is a
     // left-packed row; WhatsApp right-aligns the timestamp cluster.
     justifyContent: 'flex-end',
+  },
+  /** Bottom padding the (now out-of-flow) footer used to provide. */
+  waBubbleTextContentInline: {
+    paddingBottom: WA_BUBBLE_PADDING_V,
+  },
+  /**
+   * The invisible slug appended to the end of the text flow. `opacity: 0` is
+   * the spec'd treatment; `color: 'transparent'` is belt-and-braces because
+   * nested `<Text>` runs only honor a subset of styles on Android, and a
+   * visibly duplicated timestamp would be a loud bug.
+   */
+  waInlineTimestampReservation: {
+    opacity: 0,
+    color: 'transparent',
+    fontSize: WA_BUBBLE_TIMESTAMP_SIZE,
+  },
+  /**
+   * The real timestamp cluster, pinned to the bubble's bottom-right corner so
+   * it sits beside the last line of text rather than under it. The row's own
+   * flow paddings/margins are zeroed — they'd otherwise offset the anchor.
+   */
+  waInlineTimestampAnchor: {
+    position: 'absolute',
+    right: WA_BUBBLE_PADDING_H,
+    bottom: WA_BUBBLE_PADDING_V - 1,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    marginTop: 0,
   },
   // §5 "Reaction chips ... overlapping it by ~40%" — negative top margin
   // pulls the (unmoved-in-the-tree) reactions row up over the bubble's

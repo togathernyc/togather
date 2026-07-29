@@ -1245,7 +1245,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
           </Pressable>
         )}
 
-        {/* §S4.6 "fully-rounded white field ~44px with sticker/emoji glyph
+        {/* §S4.6 "fully-rounded white field with sticker/emoji glyph
             inside right" — the field is a container so the glyph can sit
             *inside* the pill; the TextInput itself drops its border/fill. */}
         <View
@@ -1615,6 +1615,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     paddingHorizontal: 0,
     minHeight: WA_COMPOSER_FIELD_HEIGHT,
+    // Load-bearing for the field height: `styles.input`'s 10pt vertical
+    // padding alone puts a one-line field at ~40pt, so `minHeight` would never
+    // be the binding constraint and the pill would ignore
+    // `WA_COMPOSER_FIELD_HEIGHT` entirely. Sizing the padding off the line box
+    // instead lands one line exactly on the field height, and each extra line
+    // still adds exactly `LINE_HEIGHT`.
+    paddingVertical: (WA_COMPOSER_FIELD_HEIGHT - LINE_HEIGHT) / 2,
     // WhatsApp's field shows no focus ring; RN-Web's TextInput otherwise
     // paints the browser's focus outline around it. Ignored on native.
     outlineStyle: 'none',
@@ -1625,6 +1632,9 @@ const styles = StyleSheet.create({
   waHintOverlay: {
     position: 'absolute',
     left: 16,
+    // Clearance for the in-field sticker glyph (22pt icon + its 6pt side
+    // padding + the wrap's 4pt right padding = 38, rounded up) — NOT the field
+    // height, which this deliberately does not track.
     right: 44,
     fontSize: 14,
     fontStyle: 'italic',

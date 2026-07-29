@@ -8,6 +8,11 @@
  * component renders the pill itself only — stickiness/positioning is the
  * chat-room screen's responsibility (scroll-driven, not presentational).
  *
+ * The calibrated pixel pass (2026-07-29) tightened the vertical padding to
+ * `WA_DAY_PILL_PADDING_V` (2pt) and gave the capsule a fixed `minWidth`
+ * instead: WhatsApp's pill is a *wide, thin* band, and padding alone made
+ * short labels ("Today") stubby and tall ones chunky.
+ *
  * WA-VISUAL-DELTAS.md §S4.3 revises the fill: against the doodle wallpaper a
  * translucent capsule washed out, so the pill is a *solid* white (light) /
  * slate (dark) capsule with a soft shadow — "floating white capsules", crisp
@@ -57,6 +62,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: WA_DAY_PILL_PADDING_V,
     paddingHorizontal: WA_DAY_PILL_PADDING_H,
+    // A wide, thin band: the label is centered in a fixed-width capsule rather
+    // than the capsule shrink-wrapping the label.
+    minWidth: 98,
+    alignItems: 'center',
+    justifyContent: 'center',
     // §S4.3 "subtle shadow" — lifts the capsule off the patterned wallpaper.
     shadowColor: '#000',
     shadowOpacity: 0.12,

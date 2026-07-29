@@ -210,7 +210,11 @@ export const ChatTabBar = memo(function ChatTabBar({
                   />
                 ) : (
                   <Text
-                    style={[styles.tabText, { color: tabColor }]}
+                    style={[
+                      styles.tabText,
+                      whatsappShellEnabled && styles.waTabText,
+                      { color: tabColor },
+                    ]}
                     numberOfLines={1}
                   >
                     {displayName}
@@ -629,7 +633,9 @@ const styles = StyleSheet.create({
   waTabBar: {
     borderBottomWidth: 0,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    // Calibrated pixel pass (2026-07-29): 6 here plus 6 on each pill stacked
+    // into 24pt of vertical chrome around a 13pt label. 4+4 matches WA.
+    paddingVertical: 4,
   },
   /** Light-gray segmented track the active pill sits in. */
   waTabBarScrollContent: {
@@ -637,10 +643,15 @@ const styles = StyleSheet.create({
     padding: 3,
   },
   waTab: {
-    paddingVertical: 6,
+    paddingVertical: 4,
     paddingHorizontal: 14,
     marginRight: 2,
     borderRadius: 13,
+  },
+  /** §S7: flag-on channel tab labels are 13pt (flag-off keeps the 14pt
+   *  `tabText`, which the "Join" external-chat pill also shares). */
+  waTabText: {
+    fontSize: 13,
   },
   /** White (light) / slate (dark) active pill — NEVER the brand/green fill. */
   waTabActive: {

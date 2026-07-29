@@ -177,8 +177,15 @@ const styles = StyleSheet.create({
   },
   // §2.2 nav chrome (flag-gated): translucent fill over the chat wallpaper,
   // no hairline — the wallpaper itself is the separation.
+  //
+  // The paddings match `ChatHeader`'s flag-on override: WA's nav row is 44pt,
+  // and 8/4 around the 44pt title hit area lands ours at ~50 instead of the
+  // ~68 the shared `paddingVertical: 12` gave (calibrated pixel pass,
+  // 2026-07-29). Flag-off keeps `paddingVertical: 12`.
   waHeader: {
     borderBottomWidth: 0,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   /** §S7: sub-screen subtitles are 13pt (flag-off keeps 12). */
   waSubtitleText: {
