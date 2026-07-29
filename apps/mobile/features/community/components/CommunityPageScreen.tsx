@@ -4,20 +4,34 @@
  * The WhatsApp "community info" analog (docs/plans/church-migration-ui-redesign
  * /README.md, "W2 — Community page"). A pushed screen — not a tab — opened
  * from the Chats list header when the whatsapp-shell flag is on. Read-only v1:
- * branded identity header, Announcements entry, Groups you're in, Groups you
- * can join (+ "Find your group"), This week's events, and role-gated
- * Prayer/Admin cells.
+ * centered hero (branded identity + "Community · N groups"), quick-action
+ * row, Community/Announcements segmented control, Announcements entry,
+ * Groups you're in, Groups you can join (+ "Find your group"), This week's
+ * events, and role-gated Prayer/Admin cells.
  *
- * Styled to WHATSAPP-DESIGN-SYSTEM.md §1/§3/§4/§8 ("Community page" checklist)
- * fidelity using the `components/wa/*` foundation kit — see that doc for the
- * anatomy each section below implements.
+ * Styled to WHATSAPP-DESIGN-SYSTEM.md §1/§3/§4/§6/§8 ("Community page"
+ * checklist) fidelity using the `components/wa/*` foundation kit — see that
+ * doc for the anatomy each section below implements.
+ *
+ * Quick-action row (§3.2/§6/§8) maps to real destinations only — this
+ * screen has no "Add Members"/"Add Groups" mutation to launch a sheet for,
+ * so only Invite (`/(user)/invite`) and Search (`/(tabs)/search`) render,
+ * per the design-system contract's "skip actions with no destination" rule.
+ *
+ * The Community/Announcements segmented control (§3.2, "Tab-style segmented
+ * control") is the simplest faithful reading of the spec: "Community" is
+ * always the active/rendered state (this screen's own sections, below);
+ * tapping "Announcements" navigates straight to the announcement channel —
+ * the same destination the Announcements row further down opens — rather
+ * than building a second in-screen feed.
  *
  * Route: /(user)/community
  *
  * Backend (all pre-existing, no new Convex functions added):
  * - messaging.channels.getInboxChannels — resolves the Announcements group's
  *   main channel, same lookup ChatInboxScreen/GroupedInboxItem use. Also
- *   supplies the preview/timestamp/unread data for the Announcements row.
+ *   supplies the preview/timestamp/unread data for the Announcements row and
+ *   gates whether the segmented control renders (no channel = no control).
  * - groups.queries.listForUser — "Groups you're in".
  * - groupSearch.searchGroupsWithMembership — "Groups you can join" (community
  *   explore defaults applied, same as GroupsScreen). This endpoint doesn't
@@ -58,14 +72,18 @@ import {
   WA_GROUP_SPACING,
   WA_AVATAR_LG,
   WA_AVATAR_SQUIRCLE_RADIUS,
+  WA_AVATAR_PROFILE,
+  WA_QUICK_ACTION_CIRCLE,
+  WA_SEGMENTED_HEIGHT,
 } from "@components/wa";
 
 const MAX_SUGGESTED_GROUPS = 3;
 const MAX_THIS_WEEK_EVENTS = 8;
 
-/** Hero identity avatar — bigger than the §3.1 list avatar (56pt) but built
- * from the same squircle-radius ratio so it scales proportionally per §6. */
-const HERO_AVATAR_SIZE = 80;
+/** Hero identity avatar — the profile-hero scale (§6) built from the same
+ * squircle-radius ratio as the §3.1 list avatar (56pt → 18pt radius) so it
+ * scales proportionally rather than using an arbitrary size. */
+const HERO_AVATAR_SIZE = WA_AVATAR_PROFILE;
 const HERO_AVATAR_RADIUS = HERO_AVATAR_SIZE * (WA_AVATAR_SQUIRCLE_RADIUS / WA_AVATAR_LG);
 
 /** Row-rail timestamp, matching §2's "12:52 PM" (today) / "Sunday" (this
@@ -101,6 +119,38 @@ function WaIconAvatar({
     >
       <Ionicons name={icon} size={22} color={tint} />
     </View>
+  );
+}
+
+/** §3.2/§6/§8 quick-action row button — accent-tinted circular icon
+ * (`WA_QUICK_ACTION_CIRCLE`), no fill, with a 13pt label below, no card
+ * container (floats directly on `bg.grouped`). */
+function WaQuickAction({
+  icon,
+  label,
+  accent,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  accent: string;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable onPress={onPress} style={styles.quickAction} hitSlop={8}>
+      <View
+        style={[
+          styles.quickActionCircle,
+          { width: WA_QUICK_ACTION_CIRCLE, height: WA_QUICK_ACTION_CIRCLE },
+        ]}
+      >
+        <Ionicons name={icon} size={22} color={accent} />
+      </View>
+      <Text style={[styles.quickActionLabel, { color: colors.text }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -303,8 +353,9 @@ export function CommunityPageScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Community identity — squircle avatar (§6, the one squircle in the
-            system), name, "Community · N groups" hero subtitle (§2). */}
+        {/* Community identity — centered squircle hero avatar (§6, the one
+            squircle in the system, profile-hero scale per §8), name,
+            "Community · N groups" hero subtitle (§2). */}
         <View style={styles.identityRow}>
           <AppImage
             source={community?.logo}
@@ -320,15 +371,60 @@ export function CommunityPageScreen() {
               backgroundColor: primaryColor,
             }}
           />
-          <View style={styles.identityText}>
-            <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
-              {community?.name || "Your Community"}
-            </Text>
-            <Text style={[styles.identitySubtitle, { color: colors.textSecondary }]}>
-              {identitySubtitle}
-            </Text>
-          </View>
+          <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
+            {community?.name || "Your Community"}
+          </Text>
+          <Text style={[styles.identitySubtitle, { color: colors.textSecondary }]}>
+            {identitySubtitle}
+          </Text>
         </View>
+
+        {/* Quick-action row (§3.2/§6/§8) — accent-icon-only circular
+            buttons, no fill. Mapped to real destinations only: this
+            screen has no "Add Members"/"Add Groups" mutation to launch, so
+            only Invite/Search render (see report). */}
+        <View style={styles.quickActionRow}>
+          <WaQuickAction
+            icon="person-add-outline"
+            label="Invite"
+            accent={primaryColor}
+            onPress={() => router.push("/(user)/invite" as any)}
+          />
+          <WaQuickAction
+            icon="search-outline"
+            label="Search"
+            accent={primaryColor}
+            onPress={() => router.push("/(tabs)/search" as any)}
+          />
+        </View>
+
+        {/* Community/Announcements segmented control (§3.2/§8) —
+            "Community" shows this screen's existing sections below (no
+            second feed built, per contract); "Announcements" navigates
+            straight to the announcement channel, the same destination the
+            Announcements row further down opens. */}
+        {announcementGroup && announcementChannel ? (
+          // Deliberate deviation from §3.2's bg.grouped track: this screen
+          // itself sits on backgroundGrouped, which would make the track
+          // invisible — separator gives it the visible recessed fill.
+          <View style={[styles.segmentedTrack, { backgroundColor: colors.separator }]}>
+            <View style={[styles.segmentedPill, { backgroundColor: colors.surfaceGrouped }]}>
+              <Text style={[styles.segmentedLabel, styles.segmentedLabelSelected, { color: colors.text }]}>
+                Community
+              </Text>
+            </View>
+            <Pressable
+              onPress={openAnnouncements}
+              style={styles.segmentedPill}
+              accessibilityRole="button"
+              accessibilityLabel="Open Announcements"
+            >
+              <Text style={[styles.segmentedLabel, { color: colors.textSecondary }]}>
+                Announcements
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {/* Announcements — WaRow inside an inset group (§3.2), megaphone
             icon-bubble avatar, latest preview line, timestamp + unread badge. */}
@@ -459,24 +555,60 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   identityRow: {
-    flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: WA_GROUP_MARGIN,
     paddingTop: 12,
-    paddingBottom: 24,
-    gap: 16,
-  },
-  identityText: {
-    flex: 1,
-    minWidth: 0,
+    paddingBottom: 20,
   },
   identityName: {
     fontSize: 22,
     fontWeight: "700",
+    marginTop: 12,
+    textAlign: "center",
   },
   identitySubtitle: {
     fontSize: 15,
     marginTop: 2,
+    textAlign: "center",
+  },
+  quickActionRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 40,
+    paddingBottom: 20,
+  },
+  quickAction: {
+    alignItems: "center",
+    width: 72,
+  },
+  quickActionCircle: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickActionLabel: {
+    fontSize: 13,
+    marginTop: 4,
+  },
+  segmentedTrack: {
+    flexDirection: "row",
+    marginHorizontal: WA_GROUP_MARGIN,
+    marginBottom: WA_GROUP_SPACING,
+    height: WA_SEGMENTED_HEIGHT,
+    borderRadius: WA_SEGMENTED_HEIGHT / 2,
+    padding: 2,
+  },
+  segmentedPill: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: (WA_SEGMENTED_HEIGHT - 4) / 2,
+  },
+  segmentedLabel: {
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  segmentedLabelSelected: {
+    fontWeight: "600",
   },
   section: {
     marginTop: WA_GROUP_SPACING,

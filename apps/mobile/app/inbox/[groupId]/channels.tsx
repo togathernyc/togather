@@ -13,7 +13,13 @@
  * on whatsapp-shell) and the inbox's "N more channels" collapse row. The
  * route also guards itself (defense in depth): deep links or stale
  * navigation state bypass flag-gated entry points, so the wrapper below
- * redirects when the shell is off.
+ * redirects when the shell is off. Because this screen only ever mounts
+ * flag-on, it's styled unconditionally to
+ * `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md` §3.1
+ * (full-bleed rows — this is a discovery list, not a settings surface) /
+ * §8 ("Directory" checklist) using the `components/wa/*` kit: `WaRow` +
+ * `WaSeparator` rows on `bg.plain`, `WaSectionLabel` section headers, and
+ * Join/Request rendered as small accent text-buttons trailing each row.
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -22,6 +28,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   ActivityIndicator,
   Alert,
 } from "react-native";
@@ -41,6 +48,7 @@ import { useTheme } from "@hooks/useTheme";
 import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "@features/groups/hooks/useGroupChannels";
 import { useWhatsappShellState } from "@hooks/useWhatsappShell";
+import { WaRow, WaSeparator, WaSectionLabel, WA_ROW_LEADING_PADDING } from "@components/wa";
 
 type JoinableChannel = {
   channelId: Id<"chatChannels">;
@@ -175,11 +183,11 @@ function ChannelDirectoryScreen() {
   }, [router, groupId]);
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surfaceSecondary }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
+      <View style={[styles.header, { backgroundColor: colors.navBarBackground, borderBottomColor: colors.separator }]}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton} hitSlop={12}>
+          <Ionicons name="chevron-back" size={28} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Channels</Text>
         <View style={styles.headerRight} />
@@ -187,91 +195,55 @@ function ChannelDirectoryScreen() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Your channels */}
-        <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>
-          YOUR CHANNELS
-        </Text>
+        {/* Your channels — full-bleed §3.1 rows (§8 Directory checklist:
+            "even though content is discovery, not chat"). */}
+        <View style={styles.sectionLabelWrapper}>
+          <WaSectionLabel>Your channels</WaSectionLabel>
+        </View>
         {channels === undefined ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color={primaryColor} />
-            </View>
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={primaryColor} />
           </View>
         ) : yourChannels.length === 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              You're not in any channels in this group yet.
-            </Text>
-          </View>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            You're not in any channels in this group yet.
+          </Text>
         ) : (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            {yourChannels.map((channel: any, idx: number) => {
-              const isMuted = channel.isMuted === true;
-              return (
-                <TouchableOpacity
-                  key={channel._id}
-                  activeOpacity={0.7}
+          <View>
+            {yourChannels.map((channel: any, idx: number) => (
+              <React.Fragment key={channel._id}>
+                {idx > 0 && <WaSeparator />}
+                <WaRow
+                  title={channel.name}
+                  subtitle={`${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}`}
+                  showMutedDot={channel.isMuted === true}
+                  showChevron
+                  height={60}
                   onPress={() => handleOpenYourChannel(channel.slug)}
-                  style={[
-                    styles.row,
-                    idx > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.border,
-                    },
-                  ]}
-                >
-                  <View style={styles.rowInfo}>
-                    <View style={styles.rowNameLine}>
-                      <Text
-                        style={[styles.rowName, { color: colors.text }]}
-                        numberOfLines={1}
-                      >
-                        {channel.name}
-                      </Text>
-                      {isMuted && (
-                        <Ionicons
-                          name="notifications-off-outline"
-                          size={14}
-                          color={colors.textTertiary}
-                          style={styles.mutedIcon}
-                        />
-                      )}
-                    </View>
-                    <Text
-                      style={[styles.rowSubtitle, { color: colors.textSecondary }]}
-                      numberOfLines={1}
-                    >
-                      {channel.memberCount} member{channel.memberCount !== 1 ? "s" : ""}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-                </TouchableOpacity>
-              );
-            })}
+                />
+              </React.Fragment>
+            ))}
           </View>
         )}
 
-        {/* Channels you can join */}
-        <Text style={[styles.sectionHeader, styles.sectionHeaderSpaced, { color: colors.textSecondary }]}>
-          CHANNELS YOU CAN JOIN
-        </Text>
+        {/* Channels you can join — Join/Request render as small accent
+            text-buttons trailing the row (§8: not a chip). */}
+        <View style={[styles.sectionLabelWrapper, styles.sectionHeaderSpaced]}>
+          <WaSectionLabel>Channels you can join</WaSectionLabel>
+        </View>
         {joinable === undefined ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color={primaryColor} />
-            </View>
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color={primaryColor} />
           </View>
         ) : joinable.length === 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No channels open to join right now.
-            </Text>
-          </View>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            No channels open to join right now.
+          </Text>
         ) : (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <View>
             {joinable.map((channel, idx) => {
               const id = channel.channelId as string;
               const status = localStatus[id];
@@ -289,55 +261,34 @@ function ChannelDirectoryScreen() {
                     : "Join";
               const disabled = isBusy || isJoined || alreadyRequested;
               return (
-                <View
-                  key={channel.channelId}
-                  style={[
-                    styles.row,
-                    idx > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.border,
-                    },
-                  ]}
-                >
-                  <View style={styles.rowInfo}>
-                    <Text style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
-                      {channel.name}
-                    </Text>
-                    <Text
-                      style={[styles.rowSubtitle, { color: colors.textSecondary }]}
-                      numberOfLines={1}
-                    >
-                      {channel.memberCount} member{channel.memberCount !== 1 ? "s" : ""}
-                      {isRequestMode ? " · Approval required" : ""}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => handleJoinOrRequest(channel)}
-                    disabled={disabled}
-                    style={[
-                      styles.joinButton,
-                      {
-                        backgroundColor: disabled
-                          ? colors.surfaceSecondary
-                          : primaryColor + "15",
-                        borderColor: disabled ? colors.border : primaryColor,
-                      },
-                    ]}
-                  >
-                    {isBusy ? (
-                      <ActivityIndicator size="small" color={primaryColor} />
-                    ) : (
-                      <Text
-                        style={[
-                          styles.joinButtonText,
-                          { color: disabled ? colors.textTertiary : primaryColor },
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
+                <React.Fragment key={channel.channelId}>
+                  {idx > 0 && <WaSeparator />}
+                  <WaRow
+                    title={channel.name}
+                    subtitle={`${channel.memberCount} member${channel.memberCount !== 1 ? "s" : ""}${isRequestMode ? " · Approval required" : ""}`}
+                    height={60}
+                    rightAccessory={
+                      isBusy ? (
+                        <ActivityIndicator size="small" color={primaryColor} />
+                      ) : (
+                        <Pressable
+                          onPress={() => handleJoinOrRequest(channel)}
+                          disabled={disabled}
+                          hitSlop={8}
+                        >
+                          <Text
+                            style={[
+                              styles.joinButtonText,
+                              { color: disabled ? colors.textTertiary : primaryColor },
+                            ]}
+                          >
+                            {label}
+                          </Text>
+                        </Pressable>
+                      )
+                    }
+                  />
+                </React.Fragment>
               );
             })}
           </View>
@@ -346,7 +297,7 @@ function ChannelDirectoryScreen() {
         {/* Leader-only footer link to the existing create-channel screen. */}
         {isLeader && (
           <TouchableOpacity
-            style={[styles.createCard, { backgroundColor: colors.surface }]}
+            style={styles.createRow}
             onPress={handleCreateChannel}
             activeOpacity={0.7}
           >
@@ -389,83 +340,43 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  // No horizontal padding here — WaRow/WaSectionLabel bring their own §3.1
+  // edge padding (16pt), so an outer padded container would double it.
   scrollContent: {
-    padding: 16,
+    paddingTop: 12,
     paddingBottom: 32,
   },
-  sectionHeader: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.6,
+  sectionLabelWrapper: {
     marginBottom: 8,
-    paddingHorizontal: 8,
   },
   sectionHeaderSpaced: {
     marginTop: 24,
   },
-  card: {
-    borderRadius: 12,
-    overflow: "hidden",
-  },
   loadingRow: {
     paddingVertical: 24,
+    paddingHorizontal: WA_ROW_LEADING_PADDING,
     alignItems: "center",
   },
   emptyText: {
     fontSize: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: WA_ROW_LEADING_PADDING,
     paddingVertical: 20,
     textAlign: "center",
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    minHeight: 56,
-    gap: 12,
-  },
-  rowInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  rowNameLine: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  rowName: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  mutedIcon: {
-    marginLeft: 6,
-  },
-  rowSubtitle: {
-    marginTop: 2,
-    fontSize: 13,
-  },
-  joinButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    minWidth: 76,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  // §3.2 "Plain text action" convention (§1.3) — small accent text, no
+  // border/fill, per this screen's explicit restyle instruction.
   joinButtonText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
   },
-  createCard: {
+  createRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginTop: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 12,
     justifyContent: "center",
+    gap: 8,
+    marginTop: 16,
+    paddingHorizontal: WA_ROW_LEADING_PADDING,
+    paddingVertical: 14,
   },
   createLabel: {
     fontSize: 15,
