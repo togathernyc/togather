@@ -31,11 +31,13 @@ import type { Id } from '@services/api/convex';
 import { useMessages } from '../hooks/useMessages';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { MessageItem } from './MessageItem';
 import { GhostThreadPointer } from './GhostThreadPointer';
 import { buildThreadAwareTimeline } from '../utils/threadTimeline';
 import { ReactionsProvider } from '../context/ReactionsContext';
 import { useChatPrefetch } from '../context/ChatPrefetchContext';
+import { WaDayPill } from '@components/wa/WaDayPill';
 
 // Message type from Convex (matches schema.ts chatMessages table)
 interface Message {
@@ -189,6 +191,10 @@ export function MessageList({
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
+  // WHATSAPP-DESIGN-SYSTEM.md §5 "Day pills" — flag-gated swap of the date
+  // separator to the WaDayPill capsule; flag-off keeps today's line+label
+  // separator byte-identical.
+  const whatsappShellEnabled = useWhatsappShell();
   const router = useRouter();
   const listRef = useRef<FlatList<ListItem>>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -443,6 +449,18 @@ export function MessageList({
   const renderItem = useCallback(
     ({ item }: { item: ListItem }) => {
       if (item.type === 'dateSeparator') {
+        // §5 "Day pills: centered, floating capsule ... `bg.card`-ish
+        // translucent fill". Flag-off keeps the original line+label
+        // separator; stickiness/positioning is out of scope here (§5 notes
+        // it's the chat-room screen's responsibility, and it's unchanged by
+        // this pass regardless).
+        if (whatsappShellEnabled) {
+          return (
+            <View style={styles.waDateSeparatorContainer}>
+              <WaDayPill label={item.date} />
+            </View>
+          );
+        }
         return (
           <View style={styles.dateSeparatorContainer}>
             <View style={[styles.dateSeparatorLine, { backgroundColor: themeColors.border }]} />
@@ -524,7 +542,7 @@ export function MessageList({
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, effectiveHighlightId, handleGhostOpenThread, handleGhostScrollToOriginal]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, effectiveHighlightId, handleGhostOpenThread, handleGhostScrollToOriginal, whatsappShellEnabled, themeColors]
   );
 
   // Key extractor
@@ -703,6 +721,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginHorizontal: 12,
     textTransform: 'uppercase',
+  },
+  // §5 day pill: centered, floating capsule — no divider lines (wallpaper
+  // shows through around it).
+  waDateSeparatorContainer: {
+    alignItems: 'center',
+    marginVertical: 16,
   },
   scrollToBottomButton: {
     position: 'absolute',
