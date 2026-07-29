@@ -4,7 +4,7 @@
  *
  * These pin the restyle so a later pass can't quietly regress it back toward
  * the flag-off explore surface: 44pt search pill, 34pt neutral filter chips
- * (never accent-FILLED), 58pt row avatars, sentence-case section headers, one
+ * (never accent-FILLED), WA_LIST_AVATAR row avatars, sentence-case section headers, one
  * green CTA, and every affordance the map-first layout had still reachable.
  *
  * The flag-off twin lives in `GroupsScreen.flag.test.tsx`.
@@ -13,6 +13,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { WaGroupsScreen, type ExploreGroup } from '../WaGroupsScreen';
+import { WA_LIST_AVATAR } from '@components/wa';
 
 const ACCENT = '#1E8449';
 
@@ -213,9 +214,9 @@ describe('WaGroupsScreen — rows and sections (S6/§5.3)', () => {
     expect(getByText('Teams · 1 member')).toBeTruthy();
   });
 
-  it('draws 58pt row avatars (S6.1)', () => {
+  it('draws WA_LIST_AVATAR row avatars (S6.1)', () => {
     const { toJSON } = renderScreen();
-    const avatars = flattenStyles(toJSON()).filter((s) => s.width === 58 && s.height === 58);
+    const avatars = flattenStyles(toJSON()).filter((s) => s.width === WA_LIST_AVATAR && s.height === WA_LIST_AVATAR);
     expect(avatars.length).toBeGreaterThan(0);
   });
 
