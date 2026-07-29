@@ -5,8 +5,28 @@
  * the spec these implement. Import metrics constants from `./metrics` rather
  * than re-typing raw numbers on a surface.
  */
-export { WaRow } from './WaRow';
+export {
+  WaRow,
+  WA_LIST_AVATAR,
+  WA_LIST_ROW_HEIGHT,
+  WA_LIST_ROW_HEIGHT_NO_PREVIEW,
+  WA_LIST_SEPARATOR_INSET,
+} from './WaRow';
 export type { WaRowProps, WaRowAvatarProp, WaRowAvatarDescriptor } from './WaRow';
+
+export { WaAvatar, WA_AVATAR_SQUIRCLE_RATIO } from './WaAvatar';
+export type { WaAvatarProps } from './WaAvatar';
+
+export {
+  waAvatarHash,
+  waAvatarHue,
+  waAvatarPalette,
+  waNeutralAvatarPalette,
+  waAvatarInitials,
+} from './waAvatarColor';
+export type { WaAvatarPalette } from './waAvatarColor';
+
+export { formatWaListTimestamp } from './waListTimestamp';
 
 export { WaSeparator } from './WaSeparator';
 export type { WaSeparatorProps } from './WaSeparator';
@@ -41,5 +61,9 @@ export type { WaBadgeProps } from './WaBadge';
 
 export { WaSectionLabel } from './WaSectionLabel';
 export type { WaSectionLabelProps } from './WaSectionLabel';
+
+export { WaActionCard, WaActionCardRow } from './WaActionCard';
+export type { WaActionCardProps } from './WaActionCard';
+
 
 export * from './metrics';

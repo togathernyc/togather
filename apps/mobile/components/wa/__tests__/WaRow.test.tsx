@@ -66,6 +66,31 @@ describe('WaRow', () => {
     expect(getByText('DC')).toBeTruthy();
   });
 
+  it('clamps the subtitle to one line by default and to two when asked (S6.1)', () => {
+    const { getByText, rerender } = render(<WaRow title="General" subtitle="a long preview" />);
+    expect(getByText('a long preview').props.numberOfLines).toBe(1);
+    rerender(<WaRow title="General" subtitle="a long preview" subtitleLines={2} />);
+    expect(getByText('a long preview').props.numberOfLines).toBe(2);
+  });
+
+  it('folds the chevron into the unread capsule for group-parent rows (S6.3)', () => {
+    const { getByText, queryByText } = render(
+      <WaRow title="Worship Team" isUnread unreadCount={7} showChevron badgeChevron />
+    );
+    expect(getByText('7')).toBeTruthy();
+    expect(getByText('›')).toBeTruthy();
+    // The standalone gray glyph must not ALSO render — one chevron per row.
+    expect(queryByText('chevron-forward')).toBeNull();
+  });
+
+  it('falls back to the standalone chevron when a badgeChevron row has nothing unread', () => {
+    const { getByText, queryByText } = render(
+      <WaRow title="Worship Team" unreadCount={0} showChevron badgeChevron />
+    );
+    expect(getByText('chevron-forward')).toBeTruthy();
+    expect(queryByText('›')).toBeNull();
+  });
+
   it('renders a custom avatar node as-is', () => {
     const { getByText } = render(<WaRow title="Custom" avatar={<Text>custom-avatar</Text>} />);
     expect(getByText('custom-avatar')).toBeTruthy();

@@ -51,13 +51,19 @@ import { useEventModeStore } from "@/stores/eventModeStore";
 import { useCachedServingPlans } from "@features/serving/hooks/useCachedServingPlans";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
+  WaAvatar,
+  WaBadge,
   WaFloatingButton,
   WaLargeTitle,
   WA_HEADER_CIRCLE_SIZE,
+  WA_LIST_AVATAR,
+  WA_LIST_SEPARATOR_INSET,
   WA_SEARCH_PILL_HEIGHT,
   WA_SEARCH_PILL_ICON_SIZE,
   WA_TYPE_ROW_TITLE,
   WA_TAB_CONTENT_CLEARANCE,
+  formatWaListTimestamp,
+  waNeutralAvatarPalette,
   waTabBarStripHeight,
 } from "@components/wa";
 
@@ -90,45 +96,13 @@ const WA_LARGE_TITLE_BLOCK_HEIGHT = 48;
 // 50pt avatar, same right column, same separator inset — so the blended Chats
 // list reads as one row language instead of two interleaved ones (see
 // docs/plans/church-migration-ui-redesign/WA-GAP-MATRIX.md, Chats-list rows).
-// Duplicated locally (not imported from `components/wa/WaRow`, which uses a
-// 56pt avatar) because GroupedInboxItem's WA_MAIN_AVATAR_SIZE=50 is the
-// metric already shipped and visible in this list; matching it here — rather
-// than the generic kit's 56pt — is what actually fixes the size mismatch the
-// gap matrix calls out. Only rendered when `whatsappShellEnabled`; every
-// flag-off row below is unchanged.
-const WA_ROW_AVATAR_SIZE = 50;
-const WA_ROW_SEPARATOR_INSET = 16 + WA_ROW_AVATAR_SIZE + 12; // 78, matches GroupedInboxItem
-
-/** Format a timestamp the same way GroupedInboxItem's row anatomy does, so
- * every row in the blended list (group, DM, event, notifications, requests)
- * shows recency in the same shape ("now", "2h", "Yesterday", "Jan 15"). */
-function formatRelativeTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / (1000 * 60));
-  const hours = Math.floor(diff / (1000 * 60 * 60));
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days}d`;
-
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  const month = months[date.getMonth()];
-  const day = date.getDate();
-
-  if (date.getFullYear() !== now.getFullYear()) {
-    return `${month} ${day}, ${date.getFullYear()}`;
-  }
-
-  return `${month} ${day}`;
-}
+// Density is the kit's (WA-VISUAL-DELTAS.md S6.1: ~58pt avatar, ~78pt row,
+// hairline inset to the title's x-position) rather than numbers re-typed
+// here, so this list and `GroupedInboxItem`'s cluster rows — which read as
+// one blended list — can't drift apart again. Only rendered when
+// `whatsappShellEnabled`; every flag-off row below is unchanged.
+const WA_ROW_AVATAR_SIZE = WA_LIST_AVATAR; // 58
+const WA_ROW_SEPARATOR_INSET = WA_LIST_SEPARATOR_INSET; // 86
 
 /**
  * Right column shared by every WaRow-anatomy row in this file: timestamp
@@ -160,8 +134,8 @@ function WaRowRightColumn({
         </Text>
       ) : null}
       {hasUnread && unreadCount ? (
-        <View style={[styles.waBadge, { backgroundColor: primaryColor }]}>
-          <Text style={styles.waBadgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text>
+        <View style={styles.waBadgeSlot}>
+          <WaBadge count={unreadCount} color={primaryColor} />
         </View>
       ) : null}
     </View>
@@ -321,7 +295,7 @@ export function ChatInboxScreen({
   const { user, community } = useAuth();
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const hasCommunity = !!community?.id;
   const whatsappShellEnabled = useWhatsappShell();
   // Community page entry point (W2, docs/plans/church-migration-ui-redesign
@@ -649,6 +623,9 @@ export function ChatInboxScreen({
               accessibilityRole="button"
               accessibilityLabel={`${item.count} message request${item.count === 1 ? "" : "s"}`}
             >
+              {/* S5.1/S5.2: no green tint on a fallback disc — green is
+                  reserved for unread badges and unread timestamps. System
+                  rows take the same neutral disc as channel "#" glyphs. */}
               <View
                 style={[
                   styles.waIconCircle,
@@ -656,11 +633,15 @@ export function ChatInboxScreen({
                     width: WA_ROW_AVATAR_SIZE,
                     height: WA_ROW_AVATAR_SIZE,
                     borderRadius: WA_ROW_AVATAR_SIZE / 2,
-                    backgroundColor: primaryColor + "14",
+                    backgroundColor: waNeutralAvatarPalette(isDark).background,
                   },
                 ]}
               >
-                <Ionicons name="mail-unread-outline" size={22} color={primaryColor} />
+                <Ionicons
+                  name="mail-unread-outline"
+                  size={24}
+                  color={waNeutralAvatarPalette(isDark).foreground}
+                />
               </View>
               <View style={styles.waContent}>
                 <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
@@ -764,7 +745,7 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
+    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, isDark, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
   );
 
   // Key extractor for FlatList
@@ -1810,7 +1791,7 @@ function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRo
   // drops layout styles passed via Pressable's function-form `style`).
   if (whatsappShellEnabled) {
     const timestamp = channel.lastMessageAt
-      ? formatRelativeTime(channel.lastMessageAt)
+      ? formatWaListTimestamp(channel.lastMessageAt)
       : isLive
         ? "Live now"
         : eventWhen?.when;
@@ -1833,15 +1814,12 @@ function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRo
           ]}
         >
           {channel.meetingCoverImage ? (
-            <AppImage
-              source={channel.meetingCoverImage}
-              style={[styles.waAvatarMain, isPast && styles.eventAvatarMuted]}
-              optimizedWidth={150}
-              placeholder={{
-                type: "initials",
-                name: channel.name,
-                backgroundColor: isDark ? "#333" : "#E5E5E5",
-              }}
+            <WaAvatar
+              imageUrl={channel.meetingCoverImage}
+              label={channel.name}
+              seed={channel._id}
+              size={WA_ROW_AVATAR_SIZE}
+              style={[styles.waAvatarGap, isPast && styles.eventAvatarMuted] as any}
             />
           ) : (
             <View
@@ -1851,12 +1829,12 @@ function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRo
                   width: WA_ROW_AVATAR_SIZE,
                   height: WA_ROW_AVATAR_SIZE,
                   borderRadius: WA_ROW_AVATAR_SIZE / 2,
-                  backgroundColor: colors.surfaceSecondary,
+                  backgroundColor: waNeutralAvatarPalette(isDark).background,
                 },
                 isPast && styles.eventAvatarMuted,
               ]}
             >
-              <Ionicons name="calendar" size={22} color={colors.textSecondary} />
+              <Ionicons name="calendar" size={24} color={waNeutralAvatarPalette(isDark).foreground} />
             </View>
           )}
           <View style={styles.waContent}>
@@ -1872,7 +1850,7 @@ function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRo
                 { color: isPast ? colors.textTertiary : colors.textSecondary },
                 hasUnread && !isPast && { fontWeight: "600", color: colors.text },
               ]}
-              numberOfLines={1}
+              numberOfLines={2}
             >
               {messagePreview}
             </Text>
@@ -2128,7 +2106,7 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
 
   if (whatsappShellEnabled) {
     const hasUnread = row.unreadCount > 0;
-    const timestamp = row.lastMessageAt ? formatRelativeTime(row.lastMessageAt) : undefined;
+    const timestamp = row.lastMessageAt ? formatWaListTimestamp(row.lastMessageAt) : undefined;
     return (
       <Pressable
         onPress={onPress}
@@ -2145,8 +2123,13 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
               size={WA_ROW_AVATAR_SIZE}
             />
           ) : (
-            <Avatar
-              name={primaryAvatar?.displayName ?? headerName}
+            // S5.2: `Avatar`'s initials placeholder hashes to a palette that
+            // is 2/5 brand green and paints the letters white — the exact
+            // "all-green fallback avatars" pattern the audit flags. WaAvatar
+            // gives a photo-less person a muted per-entity pastel instead.
+            <WaAvatar
+              label={primaryAvatar?.displayName ?? headerName}
+              seed={primaryAvatar?.userId ?? row.channelId}
               imageUrl={primaryAvatar?.profilePhoto ?? undefined}
               size={WA_ROW_AVATAR_SIZE}
               notificationsDisabled={primaryAvatar?.notificationsDisabled ?? false}
@@ -2164,7 +2147,7 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
               { color: colors.textSecondary },
               hasUnread && { fontWeight: "600", color: colors.text },
             ]}
-            numberOfLines={1}
+            numberOfLines={2}
           >
             {previewWithSender}
           </Text>
@@ -2261,8 +2244,10 @@ function NotificationsInboxRow({
   onPress,
   whatsappShellEnabled,
 }: NotificationsInboxRowProps) {
+  const { isDark } = useTheme();
   if (whatsappShellEnabled) {
     const hasUnread = row.unreadCount > 0;
+    const neutralDisc = waNeutralAvatarPalette(isDark);
     return (
       <Pressable
         onPress={onPress}
@@ -2272,6 +2257,8 @@ function NotificationsInboxRow({
           row.unreadCount > 0 ? `, ${row.unreadCount} unread` : ""
         }`}
       >
+        {/* Neutral disc, not a green-tinted one (S5.1) — green in this list
+            means "unread", and the bell is not an unread signal. */}
         <View
           style={[
             styles.waIconCircle,
@@ -2279,11 +2266,11 @@ function NotificationsInboxRow({
               width: WA_ROW_AVATAR_SIZE,
               height: WA_ROW_AVATAR_SIZE,
               borderRadius: WA_ROW_AVATAR_SIZE / 2,
-              backgroundColor: primaryColor + "14",
+              backgroundColor: neutralDisc.background,
             },
           ]}
         >
-          <Ionicons name="notifications" size={22} color={primaryColor} />
+          <Ionicons name="notifications" size={24} color={neutralDisc.foreground} />
         </View>
         <View style={styles.waContent}>
           <Text style={[styles.waTitle, { color: colors.text }]} numberOfLines={1}>
@@ -2295,13 +2282,13 @@ function NotificationsInboxRow({
               { color: colors.textSecondary },
               hasUnread && { fontWeight: "600", color: colors.text },
             ]}
-            numberOfLines={1}
+            numberOfLines={2}
           >
             {row.previewTitle}
           </Text>
         </View>
         <WaRowRightColumn
-          timestamp={formatRelativeTime(row.sortTime)}
+          timestamp={formatWaListTimestamp(row.sortTime)}
           hasUnread={hasUnread}
           unreadCount={row.unreadCount}
           primaryColor={primaryColor}
@@ -2643,16 +2630,16 @@ const styles = StyleSheet.create({
   // imported — those aren't exported, and this pass is scoped to this file),
   // reused here by DM, event, notifications, and message-request rows so the
   // whole blended Chats list reads as one row language.
+  // S6.1 density: a 58pt avatar plus this padding lands the row at ~78pt.
   waRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  waAvatarMain: {
-    width: WA_ROW_AVATAR_SIZE,
-    height: WA_ROW_AVATAR_SIZE,
-    borderRadius: WA_ROW_AVATAR_SIZE / 2,
+  // Standard avatar→text gap, for avatar nodes that size themselves
+  // (WaAvatar, StackedMemberAvatars).
+  waAvatarGap: {
     marginRight: 12,
   },
   // Wraps avatar-slot nodes that manage their own sizing (Avatar,
@@ -2671,11 +2658,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   waTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "600",
   },
   waPreview: {
-    fontSize: 14,
+    fontSize: 15,
     marginTop: 2,
   },
   // Right column: timestamp stacked above the badge, top-aligned like
@@ -2688,21 +2675,11 @@ const styles = StyleSheet.create({
     paddingTop: 1,
   },
   waTimestamp: {
-    fontSize: 12,
+    // S6.1/S6.2: 15pt — a peer of the preview line, not a caption.
+    fontSize: 15,
   },
-  waBadge: {
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 6,
+  waBadgeSlot: {
     marginTop: 4,
-  },
-  waBadgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
   },
   // Trailing chevron column for navigational (non-chat) flat rows, e.g.
   // Message Requests — vertically centered against the row rather than
