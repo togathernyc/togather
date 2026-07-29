@@ -869,6 +869,19 @@ export function ChatInboxScreen({
     if (!isSearching) scrollY.value = 0;
   }, [isSearching, scrollY]);
 
+  // Same desync, second cause. `scrollY` lives on this component, but the list
+  // below it unmounts and remounts independently — any auxiliary subscription
+  // going briefly `undefined` swaps us through the loading branch, and the
+  // list comes back scrolled to the top while `scrollY` still holds the old
+  // offset. Flag-off that only produced a collapsed-but-plausible header;
+  // flag-on the padding is static, so it leaves a 112pt hole above the first
+  // row (reproduced on device, 2026-07-29). The list's `onLayout` is the one
+  // signal we get for "this list is freshly laid out", so re-sync there.
+  // Rotation also fires it, where re-expanding the header is fine too.
+  const handleListLayout = useCallback(() => {
+    scrollY.value = 0;
+  }, [scrollY]);
+
   const largeTitleStyle = useAnimatedStyle(() => {
     const p = collapseEnabled
       ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
@@ -1634,6 +1647,10 @@ export function ChatInboxScreen({
               ]}
               style={styles.list}
               onScroll={onListScroll}
+              // Flag-on only: re-sync the collapse progress when this list is
+              // freshly laid out (see `handleListLayout`). Flag-off the header
+              // has no static padding to leave a hole, so it stays untouched.
+              onLayout={whatsappShellEnabled ? handleListLayout : undefined}
               scrollEventThrottle={16}
               // WhatsApp-shell rows are flat and full-bleed, so hairline
               // dividers (not card gaps) mark row boundaries — flag-gated;
