@@ -9,6 +9,12 @@ jest.mock("expo-router", () => ({
   useRouter: jest.fn(),
 }));
 
+// Flag off = the behavior this suite asserts; the real hook would reach
+// PostHog + a Convex query that the partial api mock below doesn't provide.
+jest.mock("@hooks/useWhatsappShell", () => ({
+  useWhatsappShell: () => false,
+}));
+
 jest.mock("@providers/AuthProvider", () => ({
   useAuth: jest.fn(),
 }));

@@ -4429,3 +4429,67 @@ describe("muted members and unread bookkeeping", () => {
     expect(readState?.unreadCount).toBe(1);
   });
 });
+
+describe("getInboxChannels — isMuted", () => {
+  test("surfaces the caller's own isMuted for each channel", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, userId, accessToken } = await seedTestData(t);
+    const { accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId
+    );
+
+    // Main channel the seeded user is a member of by default (unmuted).
+    const mainChannelId = await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "general",
+        channelType: "main",
+        name: "General",
+        createdById: userId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+
+    // A second, custom channel the user mutes via the real mutation.
+    const { channelId: customChannelId } = await t.mutation(
+      api.functions.messaging.channels.createCustomChannel,
+      { token: leaderToken, groupId, name: "Quiet Channel" }
+    );
+    await t.mutation(api.functions.messaging.channels.joinDiscoverableChannel, {
+      token: accessToken,
+      channelId: customChannelId,
+    });
+    await t.mutation(api.functions.messaging.channels.setChannelMuted, {
+      token: accessToken,
+      channelId: customChannelId,
+      muted: true,
+    });
+
+    const result = await t.query(api.functions.messaging.channels.getInboxChannels, {
+      token: accessToken,
+      communityId,
+    });
+
+    const groupEntry = result.find((g) => g.group._id === groupId);
+    expect(groupEntry).toBeDefined();
+
+    const mainChannel = groupEntry?.channels.find((c) => c._id === mainChannelId);
+    const customChannel = groupEntry?.channels.find((c) => c._id === customChannelId);
+
+    expect(mainChannel?.isMuted).toBe(false);
+    expect(customChannel?.isMuted).toBe(true);
+  });
+});

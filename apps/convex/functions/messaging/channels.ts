@@ -1602,6 +1602,18 @@ export const getInboxChannels = query({
 
     const userChannelIds = new Set(userChannelMemberships.map((m) => m.channelId));
 
+    // Channels this user has muted (chatChannelMembers.isMuted), keyed by
+    // channelId. Every channel the inbox can show the user is one they hold a
+    // membership row for, so a miss here safely defaults to "not muted" below.
+    // Mirrors how `listGroupChannels` surfaces `isMuted` from the membership
+    // row (see `isMuted: membership?.isMuted` above) — flag-gated inbox
+    // hygiene (docs/plans/church-migration-ui-redesign/README.md, "Channel
+    // hygiene") uses this to sink muted channels out of sub-rows and the
+    // group's aggregated unread badge.
+    const mutedChannelIds = new Set(
+      userChannelMemberships.filter((m) => m.isMuted).map((m) => m.channelId)
+    );
+
     // Get read states for all user's channels
     const unreadCounts = new Map<string, number>();
     for (const membership of userChannelMemberships) {
@@ -1818,6 +1830,14 @@ export const getInboxChannels = query({
         unreadCount: number;
         isShared: boolean | undefined;
         isEnabled: boolean | undefined;
+        /**
+         * Whether the current user has muted this channel
+         * (`chatChannelMembers.isMuted`). Additive field for the flag-gated
+         * Chats-list hygiene rules (cluster caps + muted sink) — see
+         * docs/plans/church-migration-ui-redesign/README.md, "Channel
+         * hygiene".
+         */
+        isMuted: boolean;
         meetingId: Id<"meetings"> | undefined;
         meetingScheduledAt: number | null;
         /**
@@ -1937,6 +1957,7 @@ export const getInboxChannels = query({
           unreadCount: unreadCounts.get(ch._id) || 0,
           isShared: ch.isShared || undefined,
           isEnabled: ch.isEnabled,
+          isMuted: mutedChannelIds.has(ch._id),
           meetingId: ch.meetingId,
           meetingScheduledAt:
             ch.channelType === "event" && ch.meetingId

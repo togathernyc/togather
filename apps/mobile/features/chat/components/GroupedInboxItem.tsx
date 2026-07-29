@@ -26,6 +26,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { AppImage } from "@components/ui";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import type { Id } from "@services/api/convex";
 import { useAwaitPrefetch, useTriggerPrefetch } from "../hooks/usePrefetchChannel";
@@ -46,6 +47,14 @@ interface ChannelData {
   isEnabled?: boolean;
   meetingId?: Id<"meetings">;
   meetingScheduledAt?: number | null;
+  /**
+   * Whether the current user has muted this channel
+   * (`chatChannelMembers.isMuted`, surfaced additively by `getInboxChannels`).
+   * Drives the flag-gated Channel hygiene rules below — muted channels never
+   * occupy a sub-row slot and are excluded from the aggregated unread badge.
+   * See docs/plans/church-migration-ui-redesign/README.md, "Channel hygiene".
+   */
+  isMuted?: boolean;
 }
 
 // Type for group data from getInboxChannels query
@@ -129,6 +138,11 @@ function getServingChannelLabel(teamName: string, channel: ChannelData): string 
   }
 }
 
+// Channel hygiene cluster cap (flag-gated, whatsapp-shell only): the main
+// channel plus at most this many sub-rows. See docs/plans/church-migration
+// -ui-redesign/README.md, "Channel hygiene".
+const MAX_SECONDARY_CHANNELS = 2;
+
 // Helper to get badge colors dynamically for any group type ID
 function getBadgeColors(typeId: string): { bg: string; text: string } {
   // Convert Convex ID to a numeric hash for color scheme lookup
@@ -184,6 +198,10 @@ function GroupedInboxItemInner({
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const isDesktopWeb = useIsDesktopWeb();
+  // Chats-list hygiene (cluster caps, muted sink, N-more collapse) — flag-gated
+  // per docs/plans/church-migration-ui-redesign/README.md, "Channel hygiene".
+  // Flag off leaves every behavior below byte-identical to before.
+  const whatsappShellEnabled = useWhatsappShell();
   const userId = user?.id as Id<"users"> | undefined;
   const isLeader = userRole === "leader";
   const badgeColors = getBadgeColors(group.groupTypeId);
@@ -267,10 +285,28 @@ function GroupedInboxItemInner({
     [userId]
   );
 
-  // Calculate total unread count for the group
-  const totalUnread = useMemo(
-    () => channels.reduce((sum, ch) => sum + ch.unreadCount, 0),
-    [channels]
+  // Calculate total unread count for the group. Flag on: muted channels are
+  // excluded from the aggregate (Channel hygiene rule 2) — a muted channel's
+  // unread never bumps the group's number.
+  const totalUnread = useMemo(() => {
+    if (!whatsappShellEnabled) {
+      return channels.reduce((sum, ch) => sum + ch.unreadCount, 0);
+    }
+    return channels.reduce(
+      (sum, ch) => sum + (ch.isMuted ? 0 : ch.unreadCount),
+      0
+    );
+  }, [channels, whatsappShellEnabled]);
+
+  // True only when every channel with unread activity is muted — the badge
+  // above hides that unread, so a quiet dot signals "something happened here"
+  // without a number, rather than the row looking fully caught-up.
+  const hasMutedOnlyUnread = useMemo(
+    () =>
+      whatsappShellEnabled &&
+      totalUnread === 0 &&
+      channels.some((ch) => ch.isMuted && ch.unreadCount > 0),
+    [whatsappShellEnabled, totalUnread, channels]
   );
 
   // Check if this group has multiple channels (can be expanded)
@@ -380,7 +416,13 @@ function GroupedInboxItemInner({
 
   // Single channel display - simple row (same layout as original ChatInboxScreen)
   if (isSingleChannel && primaryChannel) {
-    const hasUnread = primaryChannel.unreadCount > 0;
+    // Under the whatsapp shell, a muted channel's unread doesn't light up the
+    // row or show a numeric badge — a quiet dot marks the activity instead
+    // (hygiene rule 2), mirroring the multi-channel cluster path below.
+    const primaryMuted =
+      whatsappShellEnabled && primaryChannel.isMuted === true;
+    const hasUnread = primaryChannel.unreadCount > 0 && !primaryMuted;
+    const hasMutedUnread = primaryMuted && primaryChannel.unreadCount > 0;
     const isActive = isActiveGroup && activeChannelSlug === primaryChannel.slug;
     // In serving mode a team's channels are flattened into separate rows, so
     // title each by its own `#team-channel` identity rather than the shared
@@ -485,6 +527,10 @@ function GroupedInboxItemInner({
               {primaryChannel.unreadCount > 99 ? "99+" : primaryChannel.unreadCount}
             </Text>
           </View>
+        ) : hasMutedUnread ? (
+          <View
+            style={[styles.mutedUnreadDot, { backgroundColor: colors.textTertiary }]}
+          />
         ) : null}
       </Pressable>
       {resourceRows}
@@ -502,16 +548,45 @@ function GroupedInboxItemInner({
     return null;
   }
 
-  // Show secondary channels if expanded, if they have unread messages, or if one is
-  // the channel the user is currently viewing. The active check keeps the selected
-  // channel visible when another channel is promoted into the main spot, so the
-  // currently-open channel never silently disappears from the row.
-  const secondaryChannels = channels.filter(
-    (ch) =>
-      ch._id !== mainChannel._id &&
-      (isExpanded || ch.unreadCount > 0 || (isActiveGroup && activeChannelSlug === ch.slug))
-  );
-  const mainHasUnread = mainChannel.unreadCount > 0;
+  // Secondary (sub-row) channel selection.
+  //
+  // Flag off: show secondary channels if expanded, if they have unread
+  // messages, or if one is the channel the user is currently viewing. The
+  // active check keeps the selected channel visible when another channel is
+  // promoted into the main spot, so the currently-open channel never
+  // silently disappears from the row. Unchanged from before this slice.
+  //
+  // Flag on: Channel hygiene rule 1 (cluster caps) — the main channel plus at
+  // most MAX_SECONDARY_CHANNELS more, chosen unread-first then most-recent
+  // activity. Rule 2 (muted sink) — a muted channel never occupies a sub-row
+  // slot. Anything not shown (cap overflow or muted) is counted for the
+  // "N more channels" row below.
+  let secondaryChannels: ChannelData[];
+  let hiddenChannelCount = 0;
+  if (whatsappShellEnabled) {
+    const others = channels.filter((ch) => ch._id !== mainChannel._id);
+    const unmutedCandidates = others.filter((ch) => !ch.isMuted);
+    const ranked = [...unmutedCandidates].sort((a, b) => {
+      const aUnread = a.unreadCount > 0 ? 1 : 0;
+      const bUnread = b.unreadCount > 0 ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      return (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0);
+    });
+    secondaryChannels = ranked.slice(0, MAX_SECONDARY_CHANNELS);
+    const shownIds = new Set(secondaryChannels.map((c) => c._id));
+    hiddenChannelCount = others.filter((ch) => !shownIds.has(ch._id)).length;
+  } else {
+    secondaryChannels = channels.filter(
+      (ch) =>
+        ch._id !== mainChannel._id &&
+        (isExpanded || ch.unreadCount > 0 || (isActiveGroup && activeChannelSlug === ch.slug))
+    );
+  }
+  // Under the whatsapp shell a muted main channel's unread must not bold or
+  // highlight the row (hygiene rule 2) — the quiet dot below covers it.
+  const mainHasUnread =
+    mainChannel.unreadCount > 0 &&
+    !(whatsappShellEnabled && mainChannel.isMuted === true);
 
   return (
     <View style={[styles.groupedContainer, { backgroundColor: colors.surface }]}>
@@ -579,7 +654,9 @@ function GroupedInboxItemInner({
           </View>
         </View>
 
-        {/* Loading or Unread indicator */}
+        {/* Loading or Unread indicator. When hygiene is on and every unread
+            channel is muted, show a quiet dot instead of a numeric badge
+            (Channel hygiene rule 2) rather than looking fully caught-up. */}
         {loadingChannelId === mainChannel._id ? (
           <ActivityIndicator size="small" color={primaryColor} style={styles.loadingIndicator} />
         ) : totalUnread > 0 ? (
@@ -588,6 +665,11 @@ function GroupedInboxItemInner({
               {totalUnread > 99 ? "99+" : totalUnread}
             </Text>
           </View>
+        ) : hasMutedOnlyUnread ? (
+          <View
+            style={[styles.mutedUnreadDot, { backgroundColor: colors.textTertiary }]}
+            accessibilityLabel="Muted unread activity"
+          />
         ) : null}
       </Pressable>
 
@@ -642,6 +724,36 @@ function GroupedInboxItemInner({
           </View>
         );
       })}
+
+      {/* "N more channels" collapse row — Channel hygiene rule: whatever the
+          cap/mute rules above hid still needs a way out, to the channel
+          directory (W17). Flag-gated; never renders when off. */}
+      {whatsappShellEnabled && hiddenChannelCount > 0 && (
+        <View style={styles.subChannelContainer}>
+          <View style={styles.connectorContainer}>
+            <View style={[styles.connectorVertical, { backgroundColor: colors.border }]} />
+            <View style={[styles.connectorHorizontal, { backgroundColor: colors.border }]} />
+          </View>
+          <Pressable
+            onPress={() => router.push(`/inbox/${group._id}/channels` as any)}
+            style={({ pressed }) => [
+              styles.subChannelCard,
+              { backgroundColor: colors.surfaceSecondary, borderColor: "transparent" },
+              pressed && { backgroundColor: isDark ? colors.border : "#E8E8E8" },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`${hiddenChannelCount} more channel${hiddenChannelCount === 1 ? "" : "s"}`}
+          >
+            <Text
+              style={[styles.subChannelPreview, { color: colors.textSecondary, flex: 1 }]}
+              numberOfLines={1}
+            >
+              {hiddenChannelCount} more channel{hiddenChannelCount === 1 ? "" : "s"}
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+      )}
 
       {/* Resource sub-rows */}
       {resourceRows}
@@ -739,6 +851,14 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   loadingIndicator: {
+    marginLeft: 8,
+  },
+  // Muted-unread indicator (Channel hygiene rule 2): a quiet dot in place of
+  // the numeric badge when only muted channels have unread activity.
+  mutedUnreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     marginLeft: 8,
   },
 
