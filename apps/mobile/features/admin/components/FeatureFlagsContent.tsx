@@ -58,9 +58,14 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
       "Themes the whole app in New York Knicks orange & blue, overriding every community's brand colors. Applies to all users across all communities. Off: communities use their own brand colors.",
   },
   {
+    key: "whatsapp-shell-on",
+    description:
+      "Force-enables the WhatsApp-style shell (Chats-first tabs, community page, group info page, channel directory, mute) for ALL users system-wide — no PostHog needed. Use for staging or before PostHog targeting is set up; whatsapp-shell-kill still wins if both are on.",
+  },
+  {
     key: "whatsapp-shell-kill",
     description:
-      "Kill switch: forces the WhatsApp-style shell off everywhere, overriding the whatsapp-shell PostHog flag. Off: the PostHog flag alone decides.",
+      "Kill switch: forces the WhatsApp-style shell off everywhere, overriding both the whatsapp-shell PostHog flag and whatsapp-shell-on. Off: the other two decide.",
   },
 ];
 
