@@ -16,6 +16,8 @@ import { useExploreFilters } from '../hooks/useExploreFilters';
 import { filterExploreGroups } from '../utils/filterGroups';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import { WaGroupsScreen } from './WaGroupsScreen';
 import { useQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { Alert } from 'react-native';
@@ -33,6 +35,7 @@ export function GroupsScreen() {
   const { user, community, token } = useAuth();
   const { primaryColor } = useCommunityTheme();
   const { colors } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
   const isAdmin = user?.is_admin === true;
   // Check if user has community context (required for groups queries)
   const hasCommunityContext = !!community?.id;
@@ -296,6 +299,32 @@ export function GroupsScreen() {
       meetingType: newFilters.meetingType,
     });
   }, [setExploreFilters]);
+
+  // Flag-on: the WhatsApp-shell directory surface replaces the map-first
+  // explore layout below (see WaGroupsScreen's header for why). Everything
+  // above this line — queries, admin defaults, filters, geocoding — is shared
+  // by both shells; only the presentation forks. Placed after every hook so
+  // hook order never depends on the flag.
+  if (whatsappShellEnabled) {
+    return (
+      <WaGroupsScreen
+        hasCommunityContext={hasCommunityContext}
+        isLoading={isLoading}
+        groups={filteredGroups}
+        groupsWithLocation={groupsWithLocation}
+        selectedGroup={selectedGroup}
+        onGroupSelect={handleGroupSelect}
+        onBoundsChange={handleBoundsChange}
+        mapboxToken={mapboxToken}
+        searchQuery={searchQuery}
+        onSearchChange={handleSearchChange}
+        groupTypes={groupTypes || []}
+        filters={groupFilters}
+        onFilterChange={handleGroupFilterChange}
+        onAddGroup={handleRequestGroupPress}
+      />
+    );
+  }
 
   // Show error state only if there's an error and no cached data
   if (error && !groupsData) {

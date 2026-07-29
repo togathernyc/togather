@@ -112,7 +112,7 @@ export function ProfileMenu() {
             <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
               <Ionicons name="person-add-outline" size={20} color={colors.text} />
             </View>
-            <Text style={[styles.menuText, { color: colors.text }]}>Invite your church</Text>
+            <Text style={[styles.menuText, { color: colors.text }]}>Invite your community</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           </TouchableOpacity>
         ) : null}

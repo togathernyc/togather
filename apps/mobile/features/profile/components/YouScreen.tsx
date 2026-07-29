@@ -196,7 +196,7 @@ export function YouScreen() {
           disabled={!userId}
         />
 
-        {/* Switch community (ProfileMenu.handleSwitchCommunity) · Invite your church
+        {/* Switch community (ProfileMenu.handleSwitchCommunity) · Invite your community
             (ProfileMenu's whatsappShell-gated row — unconditional here since this whole
             screen only renders when the flag is on). "Use Togather on the web" omitted:
             no existing URL/help route to land it on — see report. */}
@@ -211,7 +211,7 @@ export function YouScreen() {
             />
             <WaCell
               icon="person-add-outline"
-              title="Invite your church"
+              title="Invite your community"
               onPress={() => router.push("/(user)/invite")}
             />
           </WaInsetGroup>

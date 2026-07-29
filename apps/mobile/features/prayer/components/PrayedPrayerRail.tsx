@@ -22,6 +22,13 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_GROUP_MARGIN,
+  WA_TYPE_SECTION_HEADER,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { PrayedCard } from './PrayedCard';
@@ -31,6 +38,7 @@ const RAIL_LIMIT = 10;
 export function PrayedPrayerRail({ communityId }: { communityId: Id<'communities'> }) {
   const router = useRouter();
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
 
   const items = useAuthenticatedQuery(
@@ -42,14 +50,25 @@ export function PrayedPrayerRail({ communityId }: { communityId: Id<'communities
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.headerRow}>
-        <Text style={[styles.title, { color: colors.text }]}>Prayers you've prayed</Text>
+      <View style={[styles.headerRow, wa && waStyles.headerRow]}>
+        <Text
+          style={[
+            styles.title,
+            wa && waStyles.title,
+            { color: wa ? colors.textSecondary : colors.text },
+          ]}
+        >
+          Prayers you've prayed
+        </Text>
         <TouchableOpacity
           onPress={() => router.push('/(user)/prayed-for')}
           hitSlop={8}
           accessibilityLabel="See all prayers you've prayed for"
         >
-          <Text style={[styles.seeAll, { color: primaryColor }]}>See all</Text>
+          {/* S3.6: an accent TEXT link is legal WA vocabulary — no chip. */}
+          <Text style={[styles.seeAll, wa && waStyles.seeAll, { color: primaryColor }]}>
+            See all
+          </Text>
         </TouchableOpacity>
       </View>
       <ScrollView
@@ -88,4 +107,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 10,
   },
+});
+
+/**
+ * whatsapp-shell skin: the rail keeps its shape but its title becomes a WA
+ * landing section header (~20pt sentence-case gray, S3.5 — no 14pt bold
+ * mini-heading) and "See all" grows to the 15pt subtitle scale as an accent
+ * text link.
+ */
+const waStyles = StyleSheet.create({
+  headerRow: { paddingHorizontal: WA_GROUP_MARGIN, marginBottom: 8 },
+  title: { fontSize: WA_TYPE_SECTION_HEADER, fontWeight: WA_WEIGHT_SEMIBOLD },
+  seeAll: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 });

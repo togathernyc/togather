@@ -205,6 +205,35 @@ Intentional Togather surface — but chrome must obey the system:
 4. "+ Create Event" green pill ✓ correct pattern.
 5. Tab bar → S2.
 
+### 8. Groups tab (divergence screen, added 2026-07-29 per owner directive)
+
+D4 restored Groups as the flag-on tab bar's first entry; the owner then asked
+for the screen behind it ("groups page as well"). Flag-off it is a map-first
+explore surface — full-bleed Mapbox with a `@gorhom` bottom sheet of shadowed
+`GroupCard`s over it, a green floating filter circle, a green floating "+", and
+a filter modal whose group-type options carry per-type color dots. That is four
+S5.2 kill-list items in one screen. Flag-on (`WaGroupsScreen`) it becomes a
+directory:
+
+1. Chrome per S1 + the Events tab's neutral List/Map circle pair; "Groups" large
+   title; 44pt fully-rounded live search pill (S6.5).
+2. **Filters become a chip strip, and the modal goes away** (D4's chip anatomy:
+   34pt, fully rounded, gray fill, 15pt dark label, horizontal scroll). It
+   carries "All" + one chip per group type + the two meeting types, so both
+   filter families the modal held stay reachable inline. Selected chip = the
+   §1.6 pale accent tint with accent ink (WhatsApp's own selected-"All"
+   treatment) — never an accent-FILLED chip, never a per-type hue.
+3. Rows per S6 (58pt pastel-fallback avatars, 17/15pt, centered chevrons,
+   hairlines inset to the title), full-bleed on white. A row goes straight to
+   `/groups/[id]` — the single action the map's preview card ever offered.
+4. Sections are **membership**, not map geometry: ~20pt sentence-case gray
+   "Groups you're in" / "Groups you can join" (§5.3), replacing "Groups on map
+   (n)" / "Groups not on map". The directory lists every group matching the
+   filters; map-bounds filtering is a map concern and stays in the map view.
+5. One green element: the bottom floating "Add group" pill (S5.1).
+6. **The map is not dropped** — it lives behind the header's Map circle, still
+   rendering the untouched `ExploreMap` + `FloatingGroupCard` preview.
+
 ---
 
 ## Workstream mapping (one PR each, flag-on only, flag-off byte-identical)

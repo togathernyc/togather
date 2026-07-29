@@ -17,6 +17,15 @@ import { useRouter, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_GROUP_RADIUS,
+  WA_TYPE_FOOTNOTE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_REGULAR,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 
 function statusBadge(status: string): { label: string; color: string } {
@@ -52,6 +61,7 @@ export function MyPrayersScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
   const prayers = useAuthenticatedQuery(api.functions.prayers.myPrayers, {});
 
@@ -64,10 +74,18 @@ export function MyPrayersScreen() {
             <ActivityIndicator color={primaryColor} />
           </View>
         ) : prayers.length === 0 ? (
-          <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.emptyCard,
+              wa && waStyles.emptyCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
             <Ionicons name="heart-outline" size={36} color={colors.iconSecondary} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>No prayers yet</Text>
-            <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+            <Text style={[styles.emptyTitle, wa && waStyles.emptyTitle, { color: colors.text }]}>
+              No prayers yet
+            </Text>
+            <Text style={[styles.emptyBody, wa && waStyles.emptyBody, { color: colors.textSecondary }]}>
               When you post a prayer request, it'll show up here.
             </Text>
           </View>
@@ -78,37 +96,108 @@ export function MyPrayersScreen() {
             return (
               <TouchableOpacity
                 key={p.id}
-                style={[styles.row, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                style={[
+                  styles.row,
+                  wa && waStyles.row,
+                  { backgroundColor: colors.surface, borderColor: colors.border },
+                ]}
                 onPress={() => router.push(`/(user)/my-prayers/${p.id}`)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.body, { color: colors.text }]} numberOfLines={3}>
+                <Text
+                  style={[styles.body, wa && waStyles.body, { color: colors.text }]}
+                  numberOfLines={3}
+                >
                   {p.bodyText}
                 </Text>
                 <View style={styles.metaRow}>
                   {/* Hide the lifecycle "Active" pill when moderation is in
                      flight or held — the moderation status is the more
-                     urgent thing for the author to see. */}
+                     urgent thing for the author to see.
+
+                     Flag-on every one of these becomes the SAME neutral gray
+                     capsule with dark text: §7 bans colored taxonomy chips
+                     outright ("Active" blue, "Awaiting admin" orange,
+                     "Resource added" red), and the word in the capsule is
+                     what carries the meaning. */}
                   {modBadge ? (
-                    <View style={[styles.badge, { backgroundColor: modBadge.color }]}>
-                      <Text style={styles.badgeText}>{modBadge.label}</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        wa && waStyles.badge,
+                        { backgroundColor: wa ? colors.surfaceSecondary : modBadge.color },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          wa && waStyles.badgeText,
+                          wa && { color: colors.textSecondary },
+                        ]}
+                      >
+                        {modBadge.label}
+                      </Text>
                     </View>
                   ) : (
-                    <View style={[styles.badge, { backgroundColor: badge.color }]}>
-                      <Text style={styles.badgeText}>{badge.label}</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        wa && waStyles.badge,
+                        { backgroundColor: wa ? colors.surfaceSecondary : badge.color },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          wa && waStyles.badgeText,
+                          wa && { color: colors.textSecondary },
+                        ]}
+                      >
+                        {badge.label}
+                      </Text>
                     </View>
                   )}
                   {p.isAnonymous && (
-                    <View style={[styles.badge, { backgroundColor: colors.textTertiary }]}>
-                      <Text style={styles.badgeText}>Anonymous</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        wa && waStyles.badge,
+                        { backgroundColor: wa ? colors.surfaceSecondary : colors.textTertiary },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          wa && waStyles.badgeText,
+                          wa && { color: colors.textSecondary },
+                        ]}
+                      >
+                        Anonymous
+                      </Text>
                     </View>
                   )}
                   {p.crisisFlag && (
-                    <View style={[styles.badge, { backgroundColor: '#C0392B' }]}>
-                      <Text style={styles.badgeText}>Resource added</Text>
+                    <View
+                      style={[
+                        styles.badge,
+                        wa && waStyles.badge,
+                        { backgroundColor: wa ? colors.surfaceSecondary : '#C0392B' },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          wa && waStyles.badgeText,
+                          wa && { color: colors.textSecondary },
+                        ]}
+                      >
+                        Resource added
+                      </Text>
                     </View>
                   )}
-                  <Text style={[styles.countText, { color: colors.textTertiary }]}>
+                  <Text
+                    style={[styles.countText, wa && waStyles.countText, { color: colors.textTertiary }]}
+                  >
                     {p.prayedForCount} prayed
                   </Text>
                 </View>
@@ -161,4 +250,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginLeft: 'auto',
   },
+});
+
+/**
+ * whatsapp-shell skin: flat 24pt-radius rows (§7 — no bordered mini-cards), the
+ * S7 type scale, and the whole taxonomy-chip family collapsed into one neutral
+ * gray capsule.
+ *
+ * Follow-up: this screen still renders the stock opaque `Stack.Screen` nav bar.
+ * S1 wants a floating back circle + centered floating title (`WaSubScreenHeader`)
+ * — a navigation change, not a restyle, so it's deliberately out of this pass.
+ */
+const waStyles = StyleSheet.create({
+  emptyCard: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: 28 },
+  emptyTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  emptyBody: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
+  row: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: 16, marginBottom: 12 },
+  body: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 24, marginBottom: 12 },
+  badge: { height: 26, borderRadius: 13, paddingHorizontal: 10, justifyContent: 'center' },
+  badgeText: { fontSize: WA_TYPE_FOOTNOTE, fontWeight: WA_WEIGHT_REGULAR },
+  countText: { fontSize: WA_TYPE_FOOTNOTE },
 });

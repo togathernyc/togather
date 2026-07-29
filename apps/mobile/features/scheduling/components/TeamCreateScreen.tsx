@@ -151,7 +151,7 @@ export function TeamCreateScreen() {
         <TextInput
           value={name}
           onChangeText={setName}
-          placeholder="e.g. Worship, Hospitality, Communion Prep"
+          placeholder="e.g. Music, Hospitality, Setup Crew"
           placeholderTextColor={colors.inputPlaceholder}
           maxLength={50}
           autoFocus

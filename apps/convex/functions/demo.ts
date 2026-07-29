@@ -342,7 +342,7 @@ const GETTING_STARTED_MISSIONS = [
     key: "update_giving",
     title: "Make giving yours",
     instruction:
-      "Make giving yours — open the announcements group → ⓘ Info → Toolbar Settings, and point 'Partner with us' at your church's giving page.",
+      "Make giving yours — open the announcements group → ⓘ Info → Toolbar Settings, and point 'Partner with us' at your community's giving page.",
   },
   {
     key: "birthday_bot",
@@ -1139,7 +1139,7 @@ export const createDemoCommunity = mutation({
     const userId = await requireAuth(ctx, args.token);
 
     const name = args.name.trim();
-    if (!name) throw new Error("Church name is required");
+    if (!name) throw new Error("Community name is required");
     if (args.primaryColor && !isValidHex(args.primaryColor)) {
       throw new Error("Primary color must be a hex color like #3B82F6");
     }

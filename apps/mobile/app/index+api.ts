@@ -20,12 +20,12 @@ function generateLandingPageHtml(): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Togather - Connect Your Community</title>
-  <meta name="description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for churches and communities.">
+  <meta name="description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for communities.">
   <meta name="theme-color" content="#D4A574">
 
   <!-- Open Graph -->
   <meta property="og:title" content="Togather - Connect Your Community">
-  <meta property="og:description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for churches and communities.">
+  <meta property="og:description" content="Togather brings your groups, messaging, and events together in one place. The all-in-one platform for communities.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="${landingUrl}">
   <meta property="og:image" content="${landingUrl}/og-image.png">
@@ -369,7 +369,7 @@ ul, ol { list-style: none; }
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              <span>Built for churches</span>
+              <span>Built for communities</span>
             </div>
           </div>
         </div>
@@ -567,7 +567,7 @@ ul, ol { list-style: none; }
             <div class="step-number">2</div>
             <div class="step-content">
               <h3>Join your community</h3>
-              <p>Search for your church or organization and connect with your people.</p>
+              <p>Search for your community or organization and connect with your people.</p>
             </div>
           </div>
 
@@ -608,7 +608,7 @@ ul, ol { list-style: none; }
             <p class="perspective-desc">
               See at a glance who's showing up and who's been absent. Track attendance
               patterns, send timely follow-ups, and make data-driven decisions about
-              your ministry. No more spreadsheets or guesswork.
+              your community. No more spreadsheets or guesswork.
             </p>
             <ul class="perspective-list">
               <li>Attendance tracking with visual trends</li>

@@ -17,6 +17,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { PrayedCard } from './PrayedCard';
@@ -27,6 +33,7 @@ export function PrayedHistoryScreen() {
   const router = useRouter();
   const { community } = useAuth();
   const { colors } = useTheme();
+  const wa = useWhatsappShell();
   const { primaryColor } = useCommunityTheme();
 
   const items = useAuthenticatedQuery(
@@ -48,8 +55,10 @@ export function PrayedHistoryScreen() {
       ) : !items || items.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="heart-outline" size={36} color={colors.iconSecondary} />
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>Nothing here yet</Text>
-          <Text style={[styles.emptyBody, { color: colors.textSecondary }]}>
+          <Text style={[styles.emptyTitle, wa && waStyles.emptyTitle, { color: colors.text }]}>
+            Nothing here yet
+          </Text>
+          <Text style={[styles.emptyBody, wa && waStyles.emptyBody, { color: colors.textSecondary }]}>
             Prayers you pray for in your community will show up here so you can revisit them.
           </Text>
         </View>
@@ -85,4 +94,17 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
+});
+
+/**
+ * whatsapp-shell skin: the cards themselves are `PrayedCard`'s flag-on
+ * `variant="list"` treatment, so all that's left here is the empty state on the
+ * S7 scale (17pt title + 15pt gray body).
+ *
+ * Follow-up: still renders the stock opaque `Stack.Screen` nav bar rather than
+ * S1's floating back circle — a navigation change, not a restyle.
+ */
+const waStyles = StyleSheet.create({
+  emptyTitle: { fontSize: WA_TYPE_ROW_TITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  emptyBody: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
 });

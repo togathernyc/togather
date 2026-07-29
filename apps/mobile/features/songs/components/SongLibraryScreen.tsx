@@ -230,7 +230,7 @@ export function SongLibraryScreen() {
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
               {search.trim()
                 ? "No songs match your search."
-                : "No songs yet. Add your worship songs here so run sheets can link to them."}
+                : "No songs yet. Add your songs here so run sheets can link to them."}
             </Text>
           ) : (
             <View style={styles.list}>
