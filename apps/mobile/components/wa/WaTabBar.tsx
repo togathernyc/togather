@@ -33,7 +33,7 @@ import {
   WA_TAB_ISLAND_HEIGHT,
   WA_TAB_ISLAND_RADIUS,
   WA_TAB_ISLAND_MARGIN_H,
-  WA_TAB_ISLAND_BOTTOM_GAP,
+  waTabBarBottomOffset,
   WA_TAB_ISLAND_FILL_LIGHT,
   WA_TAB_ISLAND_FILL_DARK,
   WA_TAB_ICON_SIZE,
@@ -78,7 +78,7 @@ export function WaTabBar({ state, descriptors, navigation, badgeColor }: WaTabBa
     <View
       style={[
         styles.wrapper,
-        { paddingBottom: insets.bottom + WA_TAB_ISLAND_BOTTOM_GAP },
+        { paddingBottom: waTabBarBottomOffset(insets.bottom) },
       ]}
       pointerEvents="box-none"
     >

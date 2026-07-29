@@ -112,6 +112,19 @@ interface MentionMatch {
 const MAX_INPUT_LINES = 8;
 const LINE_HEIGHT = 20;
 const INPUT_PADDING_VERTICAL = 10;
+
+/**
+ * Cap a channel hint to one placeholder line (WhatsApp shell): a long hint
+ * wraps and inflates the empty multiline field to several lines, which the
+ * reference never shows. ~34 chars fits the field at the hint's 14pt.
+ */
+const WA_HINT_MAX_CHARS = 26;
+function waSingleLineHint(hint: string | undefined): string {
+  const trimmed = (hint ?? "").trim();
+  if (!trimmed) return "Message...";
+  if (trimmed.length <= WA_HINT_MAX_CHARS) return trimmed;
+  return `${trimmed.slice(0, WA_HINT_MAX_CHARS - 1).trimEnd()}…`;
+}
 const TYPING_STOP_DELAY = 3000; // 3 seconds
 const LINK_PREVIEW_DEBOUNCE = 500; // 500ms debounce for URL detection
 
@@ -1261,6 +1274,11 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
               isWeb ? styles.inputWeb : styles.inputNative,
               { color: themeColors.text },
               styles.waInput,
+              // WhatsApp's hint is a single quiet italic line; channel hints
+              // can be long, so cap them (a wrapped placeholder inflates the
+              // whole multiline field). The style flips back to the normal
+              // typing style the moment there's any text.
+              text.length === 0 && styles.waInputHint,
             ]}
             value={text}
             onChangeText={handleTextChange}
@@ -1270,7 +1288,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
               const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
               setNativeScrollEnabled(contentHeight >= maxContentHeight);
             }}
-            placeholder={placeholder || "Message..."}
+            placeholder={waSingleLineHint(placeholder)}
             placeholderTextColor={themeColors.textTertiary}
             multiline
             scrollEnabled={isWeb ? true : nativeScrollEnabled}
@@ -1604,6 +1622,11 @@ const styles = StyleSheet.create({
     // paints the browser's focus outline around it. Ignored on native.
     outlineStyle: 'none',
   } as any,
+  /** Empty-field hint: smaller and italic, per the WA reference. */
+  waInputHint: {
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
   waFieldGlyph: {
     paddingHorizontal: 6,
     height: WA_COMPOSER_FIELD_HEIGHT,

@@ -20,13 +20,17 @@ export const WA_CHAT_FIELD_DARK = '#1F2C34';
  * §2.2 "translucent near-white bar over the wallpaper" — the chat-room nav
  * header and channel tab strip. Alpha lets the doodle pattern read faintly
  * through, which is what makes the bar look layered rather than opaque.
+ * Hue is the WALLPAPER's own warm tone slightly lifted, not a neutral gray:
+ * on the owner's device the earlier cool near-white read as a distinct band
+ * against the cream wallpaper, where WhatsApp's bars are barely
+ * distinguishable from it (device comparison, 2026-07-29).
  */
-export const WA_CHAT_CHROME_LIGHT = 'rgba(247, 245, 242, 0.92)';
+export const WA_CHAT_CHROME_LIGHT = 'rgba(241, 236, 229, 0.9)';
 export const WA_CHAT_CHROME_DARK = 'rgba(17, 27, 33, 0.92)';
 
 /** §S4.6 composer bar: "translucent light bar over wallpaper (rgba fill, no hairline)". */
-export const WA_COMPOSER_BAR_LIGHT = 'rgba(247, 245, 242, 0.86)';
-export const WA_COMPOSER_BAR_DARK = 'rgba(17, 27, 33, 0.86)';
+export const WA_COMPOSER_BAR_LIGHT = 'rgba(241, 236, 229, 0.85)';
+export const WA_COMPOSER_BAR_DARK = 'rgba(17, 27, 33, 0.85)';
 
 /** §2.3 neutral channel tab strip: white active pill on a light-gray track. */
 export const WA_TAB_TRACK_LIGHT = 'rgba(0, 0, 0, 0.05)';
