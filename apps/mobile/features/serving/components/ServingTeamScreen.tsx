@@ -274,30 +274,38 @@ export function ServingTeamScreen() {
                         {/* S3.5: the ALL-CAPS letter-spaced label is dead. */}
                         {team.name}
                       </Text>
-                      <View style={[styles.teamPeople, wa && waStyles.teamPeople]}>
-                      {team.people.map((person, i) => {
-                        // No actionable card for yourself, or for someone with
-                        // neither a DM path (no community context) nor a phone —
-                        // opening an empty action sheet would be a dead end.
-                        const actionable =
-                          !person.isSelf &&
-                          (canMessage || !!person.phone);
-                        return (
-                          <PersonCard
-                            key={`${person.userId}:${person.roleName}:${i}`}
-                            person={person}
-                            colors={colors}
-                            primaryColor={primaryColor}
-                            wa={wa}
-                            first={i === 0}
-                            actionable={actionable}
-                            onPress={() =>
-                              actionable ? setSelected(person) : undefined
-                            }
-                          />
+                      {(() => {
+                        const cards = team.people.map((person, i) => {
+                          // No actionable card for yourself, or for someone with
+                          // neither a DM path (no community context) nor a phone —
+                          // opening an empty action sheet would be a dead end.
+                          const actionable =
+                            !person.isSelf &&
+                            (canMessage || !!person.phone);
+                          return (
+                            <PersonCard
+                              key={`${person.userId}:${person.roleName}:${i}`}
+                              person={person}
+                              colors={colors}
+                              primaryColor={primaryColor}
+                              wa={wa}
+                              first={i === 0}
+                              actionable={actionable}
+                              onPress={() =>
+                                actionable ? setSelected(person) : undefined
+                              }
+                            />
+                          );
+                        });
+                        // The rounded-card wrapper exists flag-on only —
+                        // flag-off keeps origin/main's bare list (byte-
+                        // identical tree), spaced by the column's own gap.
+                        return wa ? (
+                          <View style={waStyles.teamPeople}>{cards}</View>
+                        ) : (
+                          <>{cards}</>
                         );
-                      })}
-                      </View>
+                      })()}
                     </View>
                   ))}
                 </ScrollView>
@@ -464,7 +472,6 @@ const styles = StyleSheet.create({
   teamsRow: { paddingHorizontal: 16, gap: 12 },
   teamColumn: { width: TEAM_COL_WIDTH, gap: 8 },
   // Holds the column's person rows; flag-on it becomes the inset-grouped card.
-  teamPeople: { gap: 8 },
   teamName: {
     fontSize: 11,
     fontWeight: "800",
