@@ -36,7 +36,9 @@ export default function TabsLayout() {
   const inServingMode = isServingMode && eventTasksEnabled;
   const router = useRouter();
 
-  // `whatsapp-shell`-gated 4-tab shell (Chats · Events · Prayer · You). Never
+  // `whatsapp-shell`-gated island shell (Groups · Events · Chats · Prayer ·
+  // You, with Chats centred; Prayer drops out when the community has it off).
+  // Never
   // active during serving mode — see docs/plans/church-migration-ui-redesign
   // /README.md §5, §9.5. Flag off (or still loading) = today's 6-tab layout,
   // byte-for-byte.
@@ -44,9 +46,11 @@ export default function TabsLayout() {
   const showWhatsappShell = whatsappShellFlag && !inServingMode;
 
   // Chat/Inbox is shared between the serving tab bar (as "Inbox", second
-  // slot) and the normal tab bar (as "Inbox", or "Chats" + first slot under
+  // slot) and the normal tab bar (as "Inbox", or "Chats" + CENTER slot under
   // the whatsapp shell) — defined once and placed at whichever JSX position
-  // produces the right visible order for the active mode.
+  // produces the right visible order for the active mode. Visible order is
+  // JSX order: React Navigation ignores the `false` branch entirely, so the
+  // flag-off tab order is unaffected by where the flag-on copy sits.
   const chatTabScreen = (
     <Tabs.Screen
       name="chat"
@@ -121,23 +125,32 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* whatsapp-shell: Chats leads the tab bar (docs/plans/church-migration
-          -ui-redesign/README.md §5). Off (or serving mode): this renders
-          nothing and Inbox keeps its normal position below. */}
-      {showWhatsappShell && chatTabScreen}
-
       {/* Visible tabs - Order: Groups, Events, Inbox, (Admin for admins), Profile */}
-      {/* Groups/Events are hidden while serving mode is active. Groups (Search)
-          is also hidden under the whatsapp-shell — its route stays reachable,
-          just not tab-visible. */}
+      {/* Groups/Events are hidden while serving mode is active. */}
       <Tabs.Screen
         name="search"
         options={{
           title: 'Groups',
-          href: inServingMode || showWhatsappShell ? null : '/(tabs)/search',
+          // Visible in BOTH shells. The whatsapp-shell pass originally dropped
+          // Groups; the owner asked for it back (2026-07-29) — group discovery
+          // is the tab churches actually navigate from, and WhatsApp's own
+          // island carries five tabs comfortably. Serving-mode hiding is
+          // unchanged.
+          href: inServingMode ? null : '/(tabs)/search',
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
-              name={focused ? 'map' : 'map-outline'}
+              name={
+                showWhatsappShell
+                  ? // Neutral line glyph from the same family as the rest of
+                    // the flag-on island (S2.2) — the map pin reads as a
+                    // location feature, which this tab is only partly about.
+                    focused
+                    ? 'people'
+                    : 'people-outline'
+                  : focused
+                    ? 'map'
+                    : 'map-outline'
+              }
               size={24}
               color={color}
             />
@@ -158,6 +171,13 @@ export default function TabsLayout() {
           ),
         }}
       />
+
+      {/* whatsapp-shell: Chats sits in the CENTRE slot, after Groups/Events and
+          before Prayer/You — Groups · Events · Chats · Prayer · You (and
+          Groups · Events · Chats · You when the community has prayer off).
+          Off (or serving mode): this renders nothing and Inbox keeps its
+          normal position below. */}
+      {showWhatsappShell && chatTabScreen}
       <Tabs.Screen
         name="tasks"
         options={{
