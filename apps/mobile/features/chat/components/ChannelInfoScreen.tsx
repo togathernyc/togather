@@ -96,6 +96,7 @@ import {
   WaCell,
   WaRow,
   WA_GROUP_SPACING,
+  WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
 } from "@components/wa";
 
@@ -2692,12 +2693,22 @@ function SectionHeader({
  *   - "Permanent" — manually pinned members ("Added manually"), each with a
  *     remove action; a header [+ Add] opens the people picker.
  * A person who is both pinned AND role-matched appears in both sections.
+ *
+ * whatsapp-shell on: §3.2 inset-grouped — both sections become
+ * `WaInsetGroup`s of `WaRow`s (avatar/title/subtitle, trailing sync glyph
+ * or remove button via `rightAccessory`). `WaInsetGroup`'s `header` is a
+ * plain string with no trailing element slot, so the "PERMANENT" + [+ Add]
+ * header stays the same bespoke row as flag-off, restyled to the kit's
+ * §2 header type scale (13pt uppercase, `WA_GROUP_MARGIN` leading padding)
+ * instead of the flag-off `sectionHeader` style — matching the precedent in
+ * `GroupInfoScreen`'s `SettingsToggleRow` for slots the kit doesn't cover.
  */
 function CrossTeamMembersSections({
   membership,
   colors,
   primaryColor,
   canManage,
+  whatsappShell,
   onAdd,
   onRemove,
   onOpenProfile,
@@ -2706,12 +2717,89 @@ function CrossTeamMembersSections({
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
   canManage: boolean;
+  whatsappShell: boolean;
   onAdd: () => void;
   onRemove: (userId: Id<"users">, name: string) => void;
   onOpenProfile: (userId: Id<"users">) => void;
 }) {
   const syncedRoleMembers = membership?.syncedRoleMembers ?? [];
   const permanentMembers = membership?.permanentMembers ?? [];
+
+  if (whatsappShell) {
+    return (
+      <>
+        {syncedRoleMembers.length > 0 && (
+          <View style={styles.waSection}>
+            <WaInsetGroup header="Synced by role" separatorInset={16 + 40 + 12}>
+              {syncedRoleMembers.map((m) => (
+                <WaRow
+                  key={`${m.userId}:${m.roleId}`}
+                  avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                  title={m.name}
+                  subtitle={`${m.teamName} · ${m.roleName}`}
+                  onPress={() => onOpenProfile(m.userId)}
+                  rightAccessory={
+                    <Ionicons name="sync" size={16} color={colors.textTertiary} />
+                  }
+                />
+              ))}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {(permanentMembers.length > 0 || canManage) && (
+          <View style={styles.waSection}>
+            <View style={styles.waPermanentHeaderRow}>
+              <Text style={[styles.waPermanentHeaderLabel, { color: colors.textSecondary }]}>
+                PERMANENT
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  onPress={onAdd}
+                  style={styles.waPermanentAddButton}
+                  hitSlop={8}
+                >
+                  <Ionicons name="add" size={18} color={primaryColor} />
+                  <Text style={[styles.waPermanentAddLabel, { color: primaryColor }]}>
+                    Add
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {permanentMembers.length > 0 ? (
+              <WaInsetGroup separatorInset={16 + 40 + 12}>
+                {permanentMembers.map((m) => (
+                  <WaRow
+                    key={m.userId}
+                    avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                    title={m.name}
+                    subtitle="Added manually"
+                    onPress={() => onOpenProfile(m.userId)}
+                    rightAccessory={
+                      canManage ? (
+                        <TouchableOpacity
+                          onPress={() => onRemove(m.userId, m.name)}
+                          style={[styles.waRemoveButton, { backgroundColor: colors.surfaceGrouped }]}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="remove" size={18} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </WaInsetGroup>
+            ) : (
+              <Text style={[styles.waPermanentEmptyText, { color: colors.textTertiary }]}>
+                No permanent members yet. Add people who should always be in this
+                channel.
+              </Text>
+            )}
+          </View>
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -2975,6 +3063,42 @@ const styles = StyleSheet.create({
   },
   waSection: {
     marginTop: WA_GROUP_SPACING,
+  },
+  // "PERMANENT" header + [+ Add] — WaInsetGroup's `header` has no trailing
+  // element slot, so this stays a bespoke row (§2 header type scale: 13pt
+  // uppercase, WA_GROUP_MARGIN leading padding) rather than a WaSectionLabel.
+  waPermanentHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: WA_GROUP_MARGIN,
+    marginBottom: 8,
+  },
+  waPermanentHeaderLabel: {
+    fontSize: 13,
+    fontWeight: "400",
+    letterSpacing: 0.5,
+  },
+  waPermanentAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  waPermanentAddLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  waRemoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waPermanentEmptyText: {
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 4,
+    fontSize: 13,
   },
   sharedPill: {
     flexDirection: "row",
