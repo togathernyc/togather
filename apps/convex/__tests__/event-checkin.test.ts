@@ -262,6 +262,86 @@ describe("event check-in — check in / undo", () => {
   });
 });
 
+describe("event check-in — Going roster", () => {
+  test("goingRoster returns EVERY Going attendee to a manager who has not RSVPed (>10)", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, communityId, groupId } =
+      await seedCheckInFixture(t);
+
+    // Add 14 more "Going" RSVPers (15 total with Gina) — well past the
+    // 10-per-option preview cap in meetingRsvps.list. The leader running the
+    // event has NOT RSVPed, which is the exact scenario that trips the cap.
+    const EXTRA_GOING = 14;
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < EXTRA_GOING; i++) {
+        const uid = await ctx.db.insert("users", {
+          firstName: `Going${i}`,
+          lastName: "Attendee",
+          email: `going-${i}@test.com`,
+          phone: `+1555599${String(i).padStart(4, "0")}`,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.db.insert("userCommunities", {
+          userId: uid,
+          communityId,
+          roles: 1,
+          status: 1,
+          createdAt: now,
+        });
+        await ctx.db.insert("groupMembers", {
+          groupId,
+          userId: uid,
+          role: "member",
+          joinedAt: now,
+          notificationsEnabled: true,
+        });
+        await ctx.db.insert("meetingRsvps", {
+          meetingId,
+          userId: uid,
+          rsvpOptionId: GOING_RSVP_OPTION_ID,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+
+    const totalGoing = EXTRA_GOING + 1; // + Gina from the fixture
+
+    // Sanity check: the shared list() query truncates to a 10-person preview
+    // for the (non-RSVPed) manager — the bug this roster query exists to fix.
+    const preview = await t.query(api.functions.meetingRsvps.list, {
+      meetingId,
+      token: leaderToken,
+    });
+    const previewGoing = preview.rsvps.find(
+      (r) => r.option.id === GOING_RSVP_OPTION_ID
+    );
+    expect(previewGoing?.users.length).toBe(10);
+
+    // goingRoster returns the FULL roster so the check-in list and the N/M
+    // count are complete.
+    const roster = await t.query(api.functions.meetingRsvps.goingRoster, {
+      meetingId,
+      token: leaderToken,
+    });
+    expect(roster).toHaveLength(totalGoing);
+  });
+
+  test("goingRoster rejects a non-manager", async () => {
+    const t = convexTest(schema, modules);
+    const { memberToken, meetingId } = await seedCheckInFixture(t);
+
+    await expect(
+      t.query(api.functions.meetingRsvps.goingRoster, {
+        token: memberToken,
+        meetingId,
+      })
+    ).rejects.toThrow();
+  });
+});
+
 describe("event check-in — walk-ins", () => {
   test("a leader adds a walk-in and can remove it", async () => {
     const t = convexTest(schema, modules);

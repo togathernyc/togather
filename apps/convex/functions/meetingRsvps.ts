@@ -14,7 +14,12 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { now, getMediaUrl } from "../lib/utils";
 import { requireAuth, getOptionalAuth } from "../lib/auth";
-import { PAST_EVENT_BUFFER_MS, isNotifiedRsvpOptionId } from "../lib/meetingConfig";
+import {
+  PAST_EVENT_BUFFER_MS,
+  isNotifiedRsvpOptionId,
+  GOING_RSVP_OPTION_ID,
+} from "../lib/meetingConfig";
+import { canEditMeeting } from "../lib/meetingPermissions";
 import {
   getMaxGuestsForMeeting,
   isGoingOption,
@@ -239,6 +244,66 @@ export const list = query({
       total: rsvps.length,
       totalWithGuests: rsvps.length + totalGuests,
     };
+  },
+});
+
+/**
+ * Full "Going" roster for a meeting — for event managers taking attendance.
+ *
+ * Unlike `list`, which returns a capped 10-per-option *preview* to anyone who
+ * hasn't RSVPed (a cosmetic cap for a view-only guest list), this returns
+ * EVERY user who RSVPed "Going". The check-in screen is an interactive door
+ * list: the manager must be able to act on — and count — every attendee, not
+ * just the first ten. Gated by `canEditMeeting` (event host / group leaders /
+ * community admins), the same rule the attendance mutations enforce, so the
+ * full roster is only exposed to people already authorized to manage it.
+ */
+export const goingRoster = query({
+  args: {
+    token: v.string(),
+    meetingId: v.id("meetings"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view the check-in roster"
+      );
+    }
+
+    // All "Going" RSVPs for this meeting (safety limit matches list()).
+    const rsvps = await ctx.db
+      .query("meetingRsvps")
+      .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
+      .take(500);
+
+    const goingRsvps = rsvps.filter(
+      (r) => r.rsvpOptionId === GOING_RSVP_OPTION_ID
+    );
+
+    // Batch-fetch user docs for O(1) mapping.
+    const userIds = goingRsvps.map((r) => r.userId);
+    const users = await Promise.all(userIds.map((id) => ctx.db.get(id)));
+
+    return goingRsvps
+      .map((rsvp, i) => {
+        const user = users[i];
+        if (!user) return null;
+        return {
+          id: user._id,
+          firstName: user.firstName || "",
+          lastName: user.lastName || "",
+          profileImage: getMediaUrl(user.profilePhoto),
+          guestCount: rsvp.guestCount ?? 0,
+        };
+      })
+      .filter((u): u is NonNullable<typeof u> => u !== null);
   },
 });
 

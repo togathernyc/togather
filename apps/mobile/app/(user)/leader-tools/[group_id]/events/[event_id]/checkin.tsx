@@ -27,7 +27,6 @@ import { Avatar } from "@components/ui/Avatar";
 import { CustomModal } from "@components/ui/Modal";
 import { ToastManager } from "@components/ui/Toast";
 import { useTheme } from "@hooks/useTheme";
-import { GOING_RSVP_OPTION_ID } from "@/features/events/components/EventRsvpSection";
 import {
   ATTENDANCE_PRESENT,
   ATTENDANCE_ABSENT,
@@ -77,14 +76,17 @@ function CheckInPage() {
   );
   const isLoadingPermission = canManage === undefined && !!meetingId && !!token;
 
-  // Going roster.
-  const rsvpData = useQuery(
-    api.functions.meetingRsvps.list,
-    meetingId
-      ? { meetingId: meetingId as Id<"meetings">, token: token ?? undefined }
+  // Going roster. Uses the manager-gated `goingRoster` (not `meetingRsvps.list`,
+  // which caps non-RSVPed callers at a 10-person preview) so every "Going"
+  // attendee can be checked in and the N/M count is complete — a manager
+  // running an event often hasn't RSVPed to it themselves.
+  const goingRoster = useQuery(
+    api.functions.meetingRsvps.goingRoster,
+    meetingId && token
+      ? { meetingId: meetingId as Id<"meetings">, token }
       : "skip"
   );
-  const isLoadingRsvp = rsvpData === undefined && !!meetingId;
+  const isLoadingRsvp = goingRoster === undefined && !!meetingId && !!token;
 
   // Who is currently marked Present.
   const attendance = useQuery(
@@ -115,10 +117,8 @@ function CheckInPage() {
   const [showAddWalkIn, setShowAddWalkIn] = useState(false);
 
   const goingUsers: GoingUser[] = useMemo(
-    () =>
-      rsvpData?.rsvps?.find((r) => r.option.id === GOING_RSVP_OPTION_ID)
-        ?.users ?? [],
-    [rsvpData]
+    () => goingRoster ?? [],
+    [goingRoster]
   );
 
   const attendanceByUser = useMemo(
