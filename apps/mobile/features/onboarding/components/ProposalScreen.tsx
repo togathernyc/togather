@@ -210,7 +210,7 @@ export function ProposalScreen() {
             ]}
             value={communityName}
             onChangeText={setCommunityName}
-            placeholder="e.g. Grace Church NYC"
+            placeholder="e.g. Riverside Community NYC"
             placeholderTextColor={colors.inputPlaceholder}
             autoCapitalize="words"
           />

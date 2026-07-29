@@ -83,7 +83,7 @@ describe("YouScreen", () => {
     const { getByText } = render(<YouScreen />);
     for (const label of [
       "Switch community",
-      "Invite your church",
+      "Invite your community",
       "My events",
       "My schedule",
       "Notifications",

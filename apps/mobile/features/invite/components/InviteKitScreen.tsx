@@ -1,5 +1,5 @@
 /**
- * InviteKitScreen — "Invite your church"
+ * InviteKitScreen — "Invite your community"
  *
  * Member/admin-facing Invite Kit, adapted from the migration-wizard invite
  * kit concept (docs/plans/church-migration-ui-redesign/README.md §6, W11
@@ -83,12 +83,12 @@ export function InviteKitScreen() {
 
   const communityUrl =
     community?.subdomain ? DOMAIN_CONFIG.communityUrl(community.subdomain) : null;
-  const communityName = community?.name || 'Our church';
+  const communityName = community?.name || 'Our community';
 
   // Copy per the brief's Rule 3: the handoff message says the community-scope
-  // pitch explicitly ("your church gets its own app").
+  // pitch explicitly ("your community gets its own app").
   const whatsappMessage = communityUrl
-    ? `Hi everyone! \u{1F44B} ${communityName} is moving to Togather — our church gets its own app: same groups, plus events & RSVPs, with none of the other-group noise. Join here: ${communityUrl}. Sign in with your phone number and you're in.`
+    ? `Hi everyone! \u{1F44B} ${communityName} is moving to Togather — our community gets its own app: same groups, plus events & RSVPs, with none of the other-group noise. Join here: ${communityUrl}. Sign in with your phone number and you're in.`
     : null;
 
   const myGroups = useAuthenticatedQuery(
@@ -136,7 +136,7 @@ export function InviteKitScreen() {
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Invite your church</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Invite your community</Text>
         <View style={styles.backButton} />
       </View>
 
