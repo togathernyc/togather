@@ -362,6 +362,7 @@ describe("getGivingContext", () => {
     });
     expect(live).toEqual({
       fundId: s.fundId,
+      fundName: "Young Adults Fund",
       communityLegalName: "Test Church Inc.",
       suggestedAmountsCents: [1000, 5000, 10000],
       givingLive: true,

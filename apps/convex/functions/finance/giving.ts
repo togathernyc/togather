@@ -267,6 +267,7 @@ export const getGivingContext = query({
 
     return {
       fundId: fund._id,
+      fundName: fund.name,
       communityLegalName: communityFinance?.legalName ?? community?.name ?? "",
       suggestedAmountsCents: SUGGESTED_AMOUNTS_CENTS,
       givingLive,

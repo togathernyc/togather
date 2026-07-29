@@ -123,7 +123,7 @@ export function GiveScreenView({
                 Fund
               </Text>
               <Text style={[styles.confirmationValue, { color: colors.text }]}>
-                {context.communityLegalName}
+                {context.fundName}
               </Text>
             </View>
             {!!intent && (

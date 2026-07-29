@@ -75,6 +75,7 @@ jest.mock("@components/ui", () => {
 
 const liveContext: GivingContext = {
   fundId: "fund1",
+  fundName: "Young Adults — Manhattan",
   communityLegalName: "First Church Inc.",
   suggestedAmountsCents: [1000, 5000, 10000],
   givingLive: true,

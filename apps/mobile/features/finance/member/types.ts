@@ -47,6 +47,7 @@ export interface MyExpense {
 
 export interface GivingContext {
   fundId: string;
+  fundName: string;
   communityLegalName: string;
   suggestedAmountsCents: readonly number[];
   givingLive: boolean;
