@@ -625,6 +625,7 @@ function MessageItemInner({
           ]}
         >
           This message was deleted
+          {inlineTimestampReservation}
         </Text>
       );
     }
@@ -672,6 +673,9 @@ function MessageItemInner({
           }
           return <Text key={index}>{part.value}</Text>;
         })}
+        {/* LAST inline child, after every mention/URL/plain run — see
+            `timestampReservation`. */}
+        {inlineTimestampReservation}
       </Text>
     );
   };
@@ -860,6 +864,46 @@ function MessageItemInner({
     !isOwnMessage &&
     (isFirstInGroup ?? true) &&
     !isImageOnlyMessage;
+
+  // --- §5 "Bubble timestamp + ticks placement": WhatsApp's inline timestamp --
+  //
+  // WhatsApp does not give the timestamp a row of its own. It reserves an
+  // INVISIBLE slug at the very end of the message's text flow and paints the
+  // real timestamp absolutely in the bubble's bottom-right corner. A short
+  // message therefore gets the time beside its last line instead of under it
+  // (~15pt of bubble height back, per message); wrapped text just flows around
+  // the reservation, and if the last line is already full the slug wraps to a
+  // line of its own — which is what WhatsApp does too.
+  //
+  // Only correct when the text run is the bubble's LAST content: with media, a
+  // document/audio player, or the SMS-blast badge below it, an absolutely
+  // positioned bottom-right timestamp would land on top of that content. Those
+  // bubbles keep the flag-on footer row.
+  const useInlineTimestamp =
+    whatsappShellEnabled &&
+    hasTextContent &&
+    !isImageOnlyMessage &&
+    !bubbleClipsMedia &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    !message.blastId;
+
+  /**
+   * The reservation's text. Every space is a NBSP so the slug wraps as one unit
+   * but never breaks mid-way (a broken slug would leave the absolute timestamp
+   * sitting on top of body copy). "(edited)" joins it, and the whole thing
+   * renders at the timestamp's own 11pt, so the reservation is always at least
+   * as wide as the visible cluster it stands in for.
+   */
+  const timestampReservation = `\u00A0\u00A0${formatMessageTime(message.createdAt)}${
+    message.editedAt && !message.isDeleted ? '\u00A0(edited)' : ''
+  }`.replace(/ /g, '\u00A0');
+
+  const inlineTimestampReservation = useInlineTimestamp ? (
+    <Text testID="wa-timestamp-reservation" style={styles.waInlineTimestampReservation}>
+      {timestampReservation}
+    </Text>
+  ) : null;
 
   // Handle image tap - open gallery viewer
   const handleImagePress = useCallback((index: number) => {
@@ -1320,6 +1364,9 @@ function MessageItemInner({
                       styles.bubbleTextContent,
                       whatsappShellEnabled && styles.waBubbleTextContent,
                       showInBubbleSenderName && styles.waBubbleTextContentUnderName,
+                      // With the footer lifted out of layout, the text block
+                      // owns the bubble's bottom padding.
+                      useInlineTimestamp && styles.waBubbleTextContentInline,
                     ]}
                   >
                     {renderMessageContent()}
@@ -1352,7 +1399,25 @@ function MessageItemInner({
                     (iMessage shows no inline timestamp on photos; date separators and the
                     read-receipt row below the bubble still convey timing). */}
                 {!isImageOnlyMessage && (
-                  <View style={[styles.messageFooter, styles.bubbleFooter, whatsappShellEnabled && styles.waBubbleFooter]}>
+                  <View
+                    testID="wa-bubble-footer"
+                    style={[
+                      styles.messageFooter,
+                      styles.bubbleFooter,
+                      whatsappShellEnabled && styles.waBubbleFooter,
+                      // The visible cluster the reservation stands in for: same
+                      // nodes, same colors, just lifted out of flow into the
+                      // bubble's bottom-right corner.
+                      useInlineTimestamp && styles.waInlineTimestampAnchor,
+                    ]}
+                    // The reservation is part of the body Text, so the time is
+                    // already in that element's accessibility label — voicing
+                    // this copy too would just stutter it.
+                    accessibilityElementsHidden={useInlineTimestamp}
+                    importantForAccessibility={
+                      useInlineTimestamp ? 'no-hide-descendants' : undefined
+                    }
+                  >
                     <Text
                       style={[
                         styles.timestamp,
@@ -1806,6 +1871,34 @@ const styles = StyleSheet.create({
     // §S4.2 "timestamp … inside bottom-RIGHT" — the flag-off footer is a
     // left-packed row; WhatsApp right-aligns the timestamp cluster.
     justifyContent: 'flex-end',
+  },
+  /** Bottom padding the (now out-of-flow) footer used to provide. */
+  waBubbleTextContentInline: {
+    paddingBottom: WA_BUBBLE_PADDING_V,
+  },
+  /**
+   * The invisible slug appended to the end of the text flow. `opacity: 0` is
+   * the spec'd treatment; `color: 'transparent'` is belt-and-braces because
+   * nested `<Text>` runs only honor a subset of styles on Android, and a
+   * visibly duplicated timestamp would be a loud bug.
+   */
+  waInlineTimestampReservation: {
+    opacity: 0,
+    color: 'transparent',
+    fontSize: WA_BUBBLE_TIMESTAMP_SIZE,
+  },
+  /**
+   * The real timestamp cluster, pinned to the bubble's bottom-right corner so
+   * it sits beside the last line of text rather than under it. The row's own
+   * flow paddings/margins are zeroed — they'd otherwise offset the anchor.
+   */
+  waInlineTimestampAnchor: {
+    position: 'absolute',
+    right: WA_BUBBLE_PADDING_H,
+    bottom: WA_BUBBLE_PADDING_V - 1,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    marginTop: 0,
   },
   // §5 "Reaction chips ... overlapping it by ~40%" — negative top margin
   // pulls the (unmoved-in-the-tree) reactions row up over the bubble's
