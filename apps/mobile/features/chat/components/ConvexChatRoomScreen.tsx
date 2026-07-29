@@ -42,6 +42,7 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
 import { ChatRoomHeader } from "./ChatRoomHeader";
 import { ChatPrivacyCard } from "./ChatPrivacyCard";
+import { ChatWallpaper } from "./ChatWallpaper";
 import { ChatNavigation, type ChannelTab } from "./ChatNavigation";
 import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
@@ -1196,11 +1197,30 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
+      style={[
+        styles.container,
+        { paddingTop: insets.top, backgroundColor: colors.surface },
+        // §S4.1: the wallpaper layer below fills the Pressable (which starts
+        // under `paddingTop`), so the status-bar strip takes the wallpaper's
+        // base color to avoid a white band above a cream thread.
+        whatsappShellEnabled && { backgroundColor: colors.chatWallpaper },
+      ]}
       behavior="padding"
       keyboardVerticalOffset={0}
     >
-      <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
+      <Pressable
+        style={[
+          styles.container,
+          { backgroundColor: colors.surface },
+          whatsappShellEnabled && styles.waTransparent,
+        ]}
+        onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}
+      >
+        {/* §S4.1 "applied to the whole thread area and under the translucent
+            nav/composer" — one non-interactive layer behind every child, so
+            the header, tab strip, list and composer all sit on the same
+            wallpaper instead of each painting its own background. */}
+        {whatsappShellEnabled && <ChatWallpaper />}
         {isAdHocChannel && adHocChannelType ? (
           <ChatRoomHeader
             channelType={adHocChannelType}
@@ -1286,18 +1306,15 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 upending the chat scroll behavior. */}
             {isAdHocChannel && <ChatPrivacyCard />}
             {/* Message List - handles its own loading state when channelId is null.
-                §5 "Wallpaper: full-bleed behind the message list" — flag-gated
-                background swap; flag-off keeps inheriting the screen's surface
-                color as before.
-                NOTE: day-pill/date-separator rendering (also §5) and the
-                bubble reply-quote bar (§5) both live entirely inside
-                MessageList.tsx, which is out of scope for this pass (touch
-                list is ConvexChatRoomScreen/MessageItem/MessageInput/
-                ChatRoomHeader only) — not implemented here; see PR notes. */}
+                §S4.1: the wallpaper is painted once at screen level above, so
+                this wrapper (and MessageList itself) must stay transparent —
+                painting `chatWallpaper` here again would flatten the doodle
+                pattern back out. Flag-off keeps inheriting the screen's
+                surface color as before. */}
             <View
               style={[
                 styles.chatContainer,
-                whatsappShellEnabled && { backgroundColor: colors.chatWallpaper },
+                whatsappShellEnabled && styles.waTransparent,
               ]}
             >
               <MessageList
@@ -1412,7 +1429,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
               // with the actionable noun in accent" — flag-on restyle of the
               // same read-only affordance below (base styles reused, new
               // wa* entries added; the flag-off branch is untouched).
-              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, { backgroundColor: colors.chatWallpaper }]}>
+              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, styles.waTransparent]}>
                 <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
                   {isCommunityAdminGroupView ? (
                     isRoleLoading ? (
@@ -1594,6 +1611,12 @@ const styles = StyleSheet.create({
   },
   waReadOnlyText: {
     fontSize: 13,
+  },
+  // §S4.1 — every flag-on layer between the wallpaper and the content must be
+  // see-through, or the pattern gets painted over (the "white on white"
+  // bug this pass fixes).
+  waTransparent: {
+    backgroundColor: "transparent",
   },
 });
 
