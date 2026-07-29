@@ -152,7 +152,20 @@ function formatDateSeparator(timestamp: number): string {
 
 // List item type (message, date separator, or floating "ghost" thread pointer)
 type ListItem =
-  | { type: 'message'; data: Message; showSenderInfo: boolean; isOptimistic?: boolean; optimisticStatus?: string }
+  | {
+      type: 'message';
+      data: Message;
+      // WHATSAPP-DESIGN-SYSTEM.md §5 consecutive-message grouping: whether
+      // this message starts/ends a same-sender run (sender changes, or a
+      // date separator/ghost sits on that side — "keep it simple" per the
+      // spec, no time-gap heuristic). Computed below and threaded down to
+      // MessageItem so flag-on rendering can collapse repeated sender names
+      // and tighten bubble geometry within a run.
+      isFirstInGroup: boolean;
+      isLastInGroup: boolean;
+      isOptimistic?: boolean;
+      optimisticStatus?: string;
+    }
   | { type: 'dateSeparator'; date: string }
   | {
       type: 'ghost';
@@ -276,6 +289,9 @@ export function MessageList({
       if (dateKey !== previousDateKey) {
         items.push({ type: 'dateSeparator', date: formatDateSeparator(ts) });
         previousDateKey = dateKey;
+        // A date separator visually breaks the sender-grouping run too —
+        // §5's grouping boundary is "sender changes OR separator boundary".
+        previousMsg = undefined;
       }
 
       if (entry.kind === 'ghost') {
@@ -296,16 +312,27 @@ export function MessageList({
         return;
       }
 
-      // Show sender info if previous message is from a different sender.
-      const showSenderInfo = !previousMsg || msg.senderId !== previousMsg.senderId;
-      items.push({ type: 'message', data: msg, showSenderInfo });
+      // First in its run if the previous message is from a different sender
+      // (or there's no previous message — sender-change/boundary rule).
+      // A missing senderId (bot/system message, schema marks it optional)
+      // always starts its own run: two different bots would otherwise
+      // compare undefined === undefined and merge into one run.
+      // isLastInGroup is filled in by the backward pass below, once the
+      // full timeline (including any optimistic messages) is known.
+      const isFirstInGroup =
+        !previousMsg || !msg.senderId || msg.senderId !== previousMsg.senderId;
+      items.push({ type: 'message', data: msg, isFirstInGroup, isLastInGroup: false });
       previousMsg = msg;
     });
 
     // Append optimistic messages at the end (newest, after all server messages)
     // Skip optimistic messages that already have a matching real message (dedup)
     if (optimisticMessages && optimisticMessages.length > 0) {
-      const lastServerMsg = messages.length > 0 ? messages[messages.length - 1] : undefined;
+      // Predecessor for grouping is the forward pass's final `previousMsg`,
+      // not raw `messages[length-1]`: the constructed timeline may end with a
+      // ghost or date separator (both reset `previousMsg` to undefined), and
+      // an optimistic message must not merge into a run across that boundary.
+      const lastTimelineMsg = previousMsg;
 
       // For deduplication, check recent server messages (last 5 is plenty).
       // Track which server messages have already been matched so that
@@ -333,17 +360,39 @@ export function MessageList({
       });
 
       pendingOptimistic.forEach((optMsg, index) => {
-        const prevMsg = index === 0 ? lastServerMsg : pendingOptimistic[index - 1];
-        const showSenderInfo = !prevMsg || optMsg.senderId !== prevMsg.senderId;
+        const prevMsg = index === 0 ? lastTimelineMsg : pendingOptimistic[index - 1];
+        const isFirstInGroup = !prevMsg || optMsg.senderId !== prevMsg.senderId;
 
         items.push({
           type: 'message',
           data: optMsg as any,
-          showSenderInfo,
+          isFirstInGroup,
+          isLastInGroup: false,
           isOptimistic: true,
           optimisticStatus: optMsg._status,
         });
       });
+    }
+
+    // Fill in isLastInGroup with a backward pass mirroring the forward
+    // isFirstInGroup pass above: a message is last in its run when no
+    // message from the same sender immediately follows it in time, or a
+    // non-message boundary (date separator/ghost) follows. Runs over the
+    // full chronological `items` array — real timeline messages and any
+    // optimistic messages just appended above — so the server/optimistic
+    // seam is handled by the same single pass.
+    let nextMsg: Message | undefined;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (item.type !== 'message') {
+        nextMsg = undefined;
+        continue;
+      }
+      // Mirror the forward pass's undefined-senderId rule: a bot/system
+      // message is always the last of its own run.
+      item.isLastInGroup =
+        !nextMsg || !item.data.senderId || item.data.senderId !== nextMsg.senderId;
+      nextMsg = item.data;
     }
 
     // Reverse for inverted list (newest first)
@@ -534,6 +583,8 @@ export function MessageList({
               onMessageDoubleTap(message, event);
             }
           }}
+          isFirstInGroup={item.isFirstInGroup}
+          isLastInGroup={item.isLastInGroup}
           isOptimistic={item.isOptimistic}
           optimisticStatus={item.optimisticStatus as any}
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}

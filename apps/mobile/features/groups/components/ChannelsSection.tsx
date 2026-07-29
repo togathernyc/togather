@@ -44,6 +44,12 @@ import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { errorMessage } from "@/utils/error-handling";
 import { useGroupChannels } from "../hooks/useGroupChannels";
 import { ChannelJoinRequestsBanner } from "./ChannelJoinRequestsBanner";
+import {
+  WaInsetGroup,
+  WaRow,
+  WaCell,
+  WA_GROUP_SPACING,
+} from "@components/wa";
 
 interface ChannelsSectionProps {
   groupId: string;
@@ -200,6 +206,17 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
   }, [router, groupId]);
 
   if (channels === undefined) {
+    if (whatsappShell) {
+      return (
+        <View style={styles.waContainer}>
+          <WaInsetGroup header="Channels">
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color={primaryColor} />
+            </View>
+          </WaInsetGroup>
+        </View>
+      );
+    }
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <Text style={[styles.header, { color: colors.textSecondary }]}>CHANNELS</Text>
@@ -447,6 +464,128 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
   const activeRows = rows.filter((r) => !r.archived);
   const archivedRows = rows.filter((r) => r.archived);
 
+  // --- whatsapp-shell (flag-on) rendering ---------------------------------
+  // WHATSAPP-DESIGN-SYSTEM.md §3.2/§8: channel rows become `WaRow`s (glyph
+  // circle avatar, name, subtitle, badge/chevron) inside a `WaInsetGroup`.
+  // Same `rows`/`activeRows`/`archivedRows`/`pendingInvites` data as the
+  // flag-off render below — only the visual shell differs. Every
+  // handler/onPress is passed through unchanged.
+  if (whatsappShell) {
+    const renderWaRow = (row: Row) => {
+      const dimmed = !row.enabled;
+      const tappable = !!row.onPress;
+      return (
+        <WaRow
+          key={row.key}
+          avatar={
+            <View style={[styles.waGlyphCircle, { backgroundColor: row.iconBg }]}>
+              <Ionicons name={row.icon} size={20} color={row.iconColor} />
+            </View>
+          }
+          title={row.name}
+          // Pin state has no dedicated slot in WaRow's fixed anatomy
+          // (§3.1 has no "pinned" affordance beyond the muted bell-slash);
+          // fold it into the subtitle rather than dropping the signal.
+          subtitle={row.pinned ? `📌 ${row.subtitle}` : row.subtitle}
+          unreadCount={row.enabled ? row.unreadCount : undefined}
+          showChevron={tappable}
+          onPress={row.onPress}
+          disabled={!tappable}
+          accent={primaryColor}
+          height={60}
+          style={dimmed ? styles.waDimmedRow : undefined}
+        />
+      );
+    };
+
+    return (
+      <View style={styles.waContainer}>
+        {activeRows.length > 0 && (
+          <WaInsetGroup header="Channels">
+            {activeRows.map((row) => renderWaRow(row))}
+          </WaInsetGroup>
+        )}
+
+        {/* "See all channels" — W17 channel directory. §1.3: plain
+            accent-colored action row, no icon, no chevron. */}
+        <View style={styles.waActionSection}>
+          <WaInsetGroup separatorInset={0}>
+            <WaCell
+              variant="action"
+              title="See all channels"
+              onPress={() => router.push(`/inbox/${groupId}/channels` as any)}
+              accent={primaryColor}
+            />
+          </WaInsetGroup>
+        </View>
+
+        {/* Archived/disabled channels — a single disclosure `WaCell` that
+            reveals a second `WaInsetGroup` of the same `WaRow` anatomy.
+            WaCell's chevron is fixed (always chevron-forward, no up/down
+            disclosure state); the count in `value` communicates state
+            instead. */}
+        {archivedRows.length > 0 && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup separatorInset={0}>
+              <WaCell
+                icon="archive-outline"
+                title="Archived"
+                value={`${archivedRows.length} channel${archivedRows.length !== 1 ? "s" : ""}`}
+                onPress={() => setArchivedExpanded((v) => !v)}
+              />
+            </WaInsetGroup>
+            {archivedExpanded && (
+              <View style={styles.waNestedGroup}>
+                <WaInsetGroup separatorInset={16 + 40 + 12}>
+                  {archivedRows.map((row) => renderWaRow(row))}
+                </WaInsetGroup>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Create Channel — leaders only, same accent action-row treatment
+            as "See all channels". */}
+        {isLeader && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup separatorInset={0}>
+              <WaCell
+                variant="action"
+                title="Create Channel"
+                onPress={handleCreateChannel}
+                accent={primaryColor}
+              />
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {/* Shared channel requests — pending invites from other groups.
+            Each row navigates to the channel's info screen (accept/decline
+            happens there), same as flag-off. */}
+        {isLeader && pendingInvites && pendingInvites.length > 0 && (
+          <View style={styles.waActionSection}>
+            <WaInsetGroup header="Shared channel requests">
+              {pendingInvites.map((invite) => (
+                <WaCell
+                  key={invite.channelId}
+                  icon="link"
+                  iconColor="#8B5CF6"
+                  title={`#${invite.channelName}`}
+                  description={`From ${invite.primaryGroupName} · invited by ${invite.invitedByName}`}
+                  onPress={() =>
+                    navigateToChannelInfo(invite.channelSlug, invite.channelId)
+                  }
+                />
+              ))}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isLeader && <ChannelJoinRequestsBanner groupId={groupId} />}
+      </View>
+    );
+  }
+
   const renderRow = (row: Row, idx: number) => {
     const isFirst = idx === 0;
     const dimmed = !row.enabled;
@@ -525,24 +664,9 @@ export function ChannelsSection({ groupId, userRole, onChannelPress }: ChannelsS
         </View>
       )}
 
-      {/* See all channels — W17 channel directory (Your channels + Channels
-          you can join). Flag-gated: whatsapp-shell off means this row (and
-          the route it links to) simply doesn't render/exist for the user. */}
-      {whatsappShell && (
-        <TouchableOpacity
-          style={[styles.seeAllRow, { backgroundColor: colors.surfaceSecondary }]}
-          onPress={() => router.push(`/inbox/${groupId}/channels` as any)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.iconContainer, { backgroundColor: colors.textTertiary + "15" }]}>
-            <Ionicons name="grid-outline" size={20} color={colors.textSecondary} />
-          </View>
-          <Text style={[styles.rowName, { color: colors.text }]}>
-            See all channels
-          </Text>
-          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-        </TouchableOpacity>
-      )}
+      {/* "See all channels" (W17 channel directory) only ever rendered when
+          whatsapp-shell is on, and that path now returns early above (its
+          own WaCell-styled row) — this flag-off branch never mounts. */}
 
       {/* Archived/disabled channels fold into one collapsible group so they
           don't clutter the active list. Leaders only — members never receive
@@ -668,6 +792,26 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 8,
   },
+  // --- whatsapp-shell (flag-on) -------------------------------------------
+  waContainer: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waActionSection: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waNestedGroup: {
+    marginTop: 8,
+  },
+  waGlyphCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waDimmedRow: {
+    opacity: 0.55,
+  },
   header: {
     fontSize: 11,
     fontWeight: "600",
@@ -738,16 +882,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#fff",
-  },
-  seeAllRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 12,
-    minHeight: 48,
   },
   createCard: {
     flexDirection: "row",

@@ -77,6 +77,7 @@ import {
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   useQuery,
@@ -96,6 +97,7 @@ import {
   WaCell,
   WaRow,
   WA_GROUP_SPACING,
+  WA_GROUP_MARGIN,
   WA_AVATAR_PROFILE,
 } from "@components/wa";
 
@@ -165,8 +167,14 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode. Only feeds whatsappShell-gated JSX below (see the
+  // per-usage comments); flag-off branches keep raw `primaryColor` unchanged
+  // (see MessageItem/MessageInput/ConvexChatRoomScreen/InviteKitScreen for
+  // the same split pattern in other dual-flag files).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const channel = useQuery(
     api.functions.messaging.channels.getChannelBySlug,
@@ -1044,8 +1052,41 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
 
         {/* Pending shared-channel invitation — this group was invited to the
             channel but hasn't accepted. Show a focused accept/decline prompt
-            and hide the normal management surfaces until the leader responds. */}
-        {isPendingShareInvite && (
+            and hide the normal management surfaces until the leader responds.
+            whatsapp-shell on: §1.3/§1.4 inset-grouped anatomy — the
+            description moves into the card's `footer` slot and Accept/
+            Decline become an accent `action` row and a red `destructive`
+            row (§3.2 row variants). Both variants are plain text only (no
+            accessory slot for a spinner), so the in-flight state swaps the
+            row's own label instead of overlaying an `ActivityIndicator`. */}
+        {isPendingShareInvite && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header="Shared channel invitation"
+              footer={
+                primaryGroupName
+                  ? `${primaryGroupName} invited your group to join this channel.`
+                  : "Your group has been invited to join this channel."
+              }
+              separatorInset={0}
+            >
+              <WaCell
+                variant="action"
+                title={pendingResponding === "accept" ? "Accepting…" : "Accept"}
+                onPress={handleAcceptInvite}
+                disabled={pendingResponding !== null}
+                accent={waAccent}
+              />
+              <WaCell
+                variant="destructive"
+                title={pendingResponding === "decline" ? "Declining…" : "Decline"}
+                onPress={handleDeclineInvite}
+                disabled={pendingResponding !== null}
+              />
+            </WaInsetGroup>
+          </View>
+        )}
+        {isPendingShareInvite && !whatsappShell && (
           <View
             style={[
               styles.sectionGroup,
@@ -1119,7 +1160,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   toggleValue={isChannelMuted}
                   onToggleChange={handleToggleMuted}
                   disabled={muteToggling}
-                  accent={primaryColor}
+                  accent={waAccent}
                 />
               )}
             </WaInsetGroup>
@@ -1148,8 +1189,80 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
 
         {/* Pending join requests — leader-only, custom channels with
             approval-required mode. Shown above Members so leaders see
-            pending work first. */}
-        {isLeader && (pendingRequests?.length ?? 0) > 0 && (
+            pending work first. whatsapp-shell on: §3.2 inset-grouped —
+            each request is a `WaRow` (avatar/title/subtitle) whose
+            `rightAccessory` escape hatch holds the same Decline/Approve
+            pill-button pair as flag-off (WaRow has no built-in two-button
+            accessory, and the buttons' own handlers/in-flight state are
+            unchanged). */}
+        {isLeader && (pendingRequests?.length ?? 0) > 0 && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header={`Requests · ${pendingRequests!.length}`}
+              separatorInset={16 + 40 + 12}
+            >
+              {pendingRequests!.map((req: any) => {
+                const inFlight = requestInFlight === (req._id as string);
+                const requesterName = req.displayName || "Someone";
+                return (
+                  <WaRow
+                    key={req._id}
+                    avatar={{ imageUrl: req.profilePhoto, label: requesterName, size: 40 }}
+                    title={requesterName}
+                    subtitle="Wants to join"
+                    height={64}
+                    rightAccessory={
+                      <View style={styles.requestActions}>
+                        <Pressable
+                          onPress={() => handleDeclineRequest(req._id)}
+                          disabled={inFlight}
+                          style={({ pressed }) => [
+                            styles.requestActionBtn,
+                            {
+                              backgroundColor: pressed
+                                ? colors.selectedBackground
+                                : colors.surface,
+                              opacity: inFlight ? 0.5 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[styles.requestActionLabel, { color: colors.destructive }]}
+                          >
+                            Decline
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => handleApproveRequest(req._id)}
+                          disabled={inFlight}
+                          style={({ pressed }) => [
+                            styles.requestActionBtn,
+                            {
+                              backgroundColor: pressed
+                                ? waAccent + "CC"
+                                : waAccent,
+                              opacity: inFlight ? 0.6 : 1,
+                            },
+                          ]}
+                        >
+                          {inFlight ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Text style={[styles.requestActionLabel, { color: "#fff" }]}>
+                              Approve
+                            </Text>
+                          )}
+                        </Pressable>
+                      </View>
+                    }
+                  />
+                );
+              })}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isLeader && (pendingRequests?.length ?? 0) > 0 && !whatsappShell && (
           <>
             <SectionHeader
               colors={colors}
@@ -1250,7 +1363,9 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             membership={crossTeamMembership}
             colors={colors}
             primaryColor={primaryColor}
+            waAccent={waAccent}
             canManage={isLeader}
+            whatsappShell={whatsappShell}
             onAdd={() => setAddPermanentVisible(true)}
             onRemove={(userId, name) =>
               setPendingRemovePermanent({ userId, name })
@@ -1379,8 +1494,142 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             and quick actions. Mirrors the unmatched panel in PCO sync
             settings (image 5 in the original spec). Only renders when the
             backend returns unmatched data — leader access is enforced server
-            side via `getAutoChannelConfigByChannel`. */}
-        {isPco && isLeader && unmatchedPeople.length > 0 && (
+            side via `getAutoChannelConfigByChannel`. whatsapp-shell on:
+            §3.2 inset-grouped shell (header/footer, `bg.card` rows,
+            hairline separators) — the helper box becomes the card's
+            `footer` text; each row's internal content (warning glyph, name,
+            team/role/contact lines, reason, action buttons) has no
+            single-slot kit equivalent (WaCell/WaRow are one title + one
+            subtitle), so it stays the same bespoke layout as flag-off,
+            just placed inside the `WaInsetGroup` shell instead of a
+            hand-styled card. */}
+        {isPco && isLeader && unmatchedPeople.length > 0 && whatsappShell && (
+          <View style={styles.waSection}>
+            <WaInsetGroup
+              header={`Not in channel · ${unmatchedPeople.length}`}
+              footer="PCO matches Togather users by phone number. Make sure each person's phone in PCO matches their Togather account."
+              separatorInset={0}
+            >
+              {unmatchedPeople.map((person) => {
+                const inFlight = unmatchedActionInFlight === person.pcoPersonId;
+                const canAddToGroup = person.reason === "not_in_group";
+                const canSmsInvite = !!person.pcoPhone;
+                return (
+                  <View key={person.pcoPersonId} style={styles.unmatchedRow}>
+                    <View style={styles.unmatchedHeaderRow}>
+                      <View style={styles.unmatchedAvatarWarn}>
+                        <Ionicons name="warning" size={20} color="#B25000" />
+                      </View>
+                      <View style={styles.unmatchedTextWrap}>
+                        <Text
+                          style={[styles.memberRowName, { color: colors.text }]}
+                          numberOfLines={1}
+                        >
+                          {person.pcoName}
+                        </Text>
+                        {(person.teamName || person.position) && (
+                          <Text
+                            style={[styles.unmatchedSubLabel, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {[person.teamName, person.position]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </Text>
+                        )}
+                        {person.pcoPhone ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`📱 ${person.pcoPhone}`}
+                          </Text>
+                        ) : null}
+                        {person.pcoEmail ? (
+                          <Text
+                            style={[styles.unmatchedContactLine, { color: colors.textSecondary }]}
+                            numberOfLines={1}
+                          >
+                            {`✉️ ${person.pcoEmail}`}
+                          </Text>
+                        ) : null}
+                        <Text
+                          style={[styles.unmatchedReasonText, { color: "#B25000" }]}
+                          numberOfLines={2}
+                        >
+                          {getDebugReasonText(person.reason, person)}
+                        </Text>
+                      </View>
+                    </View>
+                    {(canAddToGroup || canSmsInvite) && (
+                      <View style={styles.unmatchedActionsRow}>
+                        {canAddToGroup && (
+                          <Pressable
+                            onPress={() => handleAddUnmatchedToGroup(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? waAccent + "CC"
+                                  : waAccent,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            {inFlight ? (
+                              <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                              <>
+                                <Ionicons name="person-add" size={14} color="#fff" />
+                                <Text style={styles.unmatchedActionLabelLight}>
+                                  Add to group
+                                </Text>
+                              </>
+                            )}
+                          </Pressable>
+                        )}
+                        {canSmsInvite && (
+                          <Pressable
+                            onPress={() => handleInviteUnmatchedBySMS(person)}
+                            disabled={inFlight}
+                            style={({ pressed }) => [
+                              styles.unmatchedActionBtn,
+                              {
+                                backgroundColor: pressed
+                                  ? colors.selectedBackground
+                                  : colors.surface,
+                                borderWidth: StyleSheet.hairlineWidth,
+                                borderColor: colors.border,
+                                opacity: inFlight ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name="chatbubble-ellipses-outline"
+                              size={14}
+                              color={colors.text}
+                            />
+                            <Text
+                              style={[
+                                styles.unmatchedActionLabel,
+                                { color: colors.text },
+                              ]}
+                            >
+                              Invite via SMS
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {isPco && isLeader && unmatchedPeople.length > 0 && !whatsappShell && (
           <>
             <SectionHeader
               colors={colors}
@@ -1695,7 +1944,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   toggleValue={isChannelDiscoverable}
                   onToggleChange={handleToggleDiscoverable}
                   disabled={discoverableToggling}
-                  accent={primaryColor}
+                  accent={waAccent}
                 />
               )}
 
@@ -2452,12 +2701,23 @@ function SectionHeader({
  *   - "Permanent" — manually pinned members ("Added manually"), each with a
  *     remove action; a header [+ Add] opens the people picker.
  * A person who is both pinned AND role-matched appears in both sections.
+ *
+ * whatsapp-shell on: §3.2 inset-grouped — both sections become
+ * `WaInsetGroup`s of `WaRow`s (avatar/title/subtitle, trailing sync glyph
+ * or remove button via `rightAccessory`). `WaInsetGroup`'s `header` is a
+ * plain string with no trailing element slot, so the "PERMANENT" + [+ Add]
+ * header stays the same bespoke row as flag-off, restyled to the kit's
+ * §2 header type scale (13pt uppercase, `WA_GROUP_MARGIN` leading padding)
+ * instead of the flag-off `sectionHeader` style — matching the precedent in
+ * `GroupInfoScreen`'s `SettingsToggleRow` for slots the kit doesn't cover.
  */
 function CrossTeamMembersSections({
   membership,
   colors,
   primaryColor,
+  waAccent,
   canManage,
+  whatsappShell,
   onAdd,
   onRemove,
   onOpenProfile,
@@ -2465,13 +2725,91 @@ function CrossTeamMembersSections({
   membership: CrossTeamChannelMembership | undefined;
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  waAccent: string;
   canManage: boolean;
+  whatsappShell: boolean;
   onAdd: () => void;
   onRemove: (userId: Id<"users">, name: string) => void;
   onOpenProfile: (userId: Id<"users">) => void;
 }) {
   const syncedRoleMembers = membership?.syncedRoleMembers ?? [];
   const permanentMembers = membership?.permanentMembers ?? [];
+
+  if (whatsappShell) {
+    return (
+      <>
+        {syncedRoleMembers.length > 0 && (
+          <View style={styles.waSection}>
+            <WaInsetGroup header="Synced by role" separatorInset={16 + 40 + 12}>
+              {syncedRoleMembers.map((m) => (
+                <WaRow
+                  key={`${m.userId}:${m.roleId}`}
+                  avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                  title={m.name}
+                  subtitle={`${m.teamName} · ${m.roleName}`}
+                  onPress={() => onOpenProfile(m.userId)}
+                  rightAccessory={
+                    <Ionicons name="sync" size={16} color={colors.textTertiary} />
+                  }
+                />
+              ))}
+            </WaInsetGroup>
+          </View>
+        )}
+
+        {(permanentMembers.length > 0 || canManage) && (
+          <View style={styles.waSection}>
+            <View style={styles.waPermanentHeaderRow}>
+              <Text style={[styles.waPermanentHeaderLabel, { color: colors.textSecondary }]}>
+                PERMANENT
+              </Text>
+              {canManage && (
+                <TouchableOpacity
+                  onPress={onAdd}
+                  style={styles.waPermanentAddButton}
+                  hitSlop={8}
+                >
+                  <Ionicons name="add" size={18} color={waAccent} />
+                  <Text style={[styles.waPermanentAddLabel, { color: waAccent }]}>
+                    Add
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {permanentMembers.length > 0 ? (
+              <WaInsetGroup separatorInset={16 + 40 + 12}>
+                {permanentMembers.map((m) => (
+                  <WaRow
+                    key={m.userId}
+                    avatar={{ imageUrl: m.avatarUrl, label: m.name, size: 40 }}
+                    title={m.name}
+                    subtitle="Added manually"
+                    onPress={() => onOpenProfile(m.userId)}
+                    rightAccessory={
+                      canManage ? (
+                        <TouchableOpacity
+                          onPress={() => onRemove(m.userId, m.name)}
+                          style={[styles.waRemoveButton, { backgroundColor: colors.surfaceGrouped }]}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="remove" size={18} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </WaInsetGroup>
+            ) : (
+              <Text style={[styles.waPermanentEmptyText, { color: colors.textTertiary }]}>
+                No permanent members yet. Add people who should always be in this
+                channel.
+              </Text>
+            )}
+          </View>
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -2735,6 +3073,42 @@ const styles = StyleSheet.create({
   },
   waSection: {
     marginTop: WA_GROUP_SPACING,
+  },
+  // "PERMANENT" header + [+ Add] — WaInsetGroup's `header` has no trailing
+  // element slot, so this stays a bespoke row (§2 header type scale: 13pt
+  // uppercase, WA_GROUP_MARGIN leading padding) rather than a WaSectionLabel.
+  waPermanentHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: WA_GROUP_MARGIN,
+    marginBottom: 8,
+  },
+  waPermanentHeaderLabel: {
+    fontSize: 13,
+    fontWeight: "400",
+    letterSpacing: 0.5,
+  },
+  waPermanentAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  waPermanentAddLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  waRemoveButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  waPermanentEmptyText: {
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 4,
+    fontSize: 13,
   },
   sharedPill: {
     flexDirection: "row",

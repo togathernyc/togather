@@ -61,6 +61,8 @@ import {
   WA_BUBBLE_MAX_WIDTH_PCT,
   WA_BUBBLE_PADDING_V,
   WA_BUBBLE_PADDING_H,
+  WA_BUBBLE_RUN_GAP,
+  WA_BUBBLE_GROUPED_GAP,
 } from '@components/wa/metrics';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
 
@@ -184,6 +186,18 @@ interface MessageItemProps {
    * user jumps to this message from inbox search so it stands out on arrival.
    */
   isHighlighted?: boolean;
+  /**
+   * WHATSAPP-DESIGN-SYSTEM.md §5 consecutive-message grouping — whether this
+   * message starts/ends a same-sender run (computed by MessageList: sender
+   * change, or a date separator/ghost boundary on that side). Read ONLY when
+   * `whatsappShellEnabled`; flag-off rendering never looks at these props.
+   * Undefined (no grouping info supplied) is treated as a standalone run —
+   * both first and last — which reproduces the pre-grouping flag-on look
+   * (sender name always shown, tail corner always squared).
+   */
+  isFirstInGroup?: boolean;
+  /** Mirrors `isFirstInGroup`, but for whether a same-sender message follows. */
+  isLastInGroup?: boolean;
 }
 
 /**
@@ -244,6 +258,8 @@ function MessageItemInner({
   onRetry,
   onAvatarPress,
   isHighlighted,
+  isFirstInGroup,
+  isLastInGroup,
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors, isDark } = useTheme();
@@ -1115,6 +1131,18 @@ function MessageItemInner({
         style={[
           styles.container,
           isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer,
+          // §5 consecutive-message grouping: tighten the vertical gap within a
+          // run (~2pt) vs. between different senders/runs (~9pt). Overrides
+          // the flag-off `marginVertical: 2` baseline in `styles.container`
+          // above — undefined props default to a standalone run (first in
+          // group), landing on the wider run-boundary gap. RN does not
+          // collapse vertical margins, so the whole gap lives on marginTop
+          // (owned by the lower bubble) and marginBottom is zeroed —
+          // otherwise adjacent rows' margins would sum to 4pt/18pt.
+          whatsappShellEnabled && {
+            marginTop: (isFirstInGroup ?? true) ? WA_BUBBLE_RUN_GAP : WA_BUBBLE_GROUPED_GAP,
+            marginBottom: 0,
+          },
           isOptimistic && (optimisticStatus === 'error' || optimisticStatus === 'queued') && { opacity: 0.7 },
           isHighlighted && styles.highlightedContainer,
           { backgroundColor: highlightBackground },
@@ -1169,8 +1197,11 @@ function MessageItemInner({
           {/* Sender name (only for others' messages). WhatsApp shell: 14pt
               semibold in a deterministic per-sender neutral color instead of
               the flag-off 11pt textSecondary line (§5, §1.3 — never the
-              brand accent). */}
-          {!isOwnMessage && (
+              brand accent). §5 grouping: shown only on the first bubble of a
+              run — `!whatsappShellEnabled ||` short-circuits so flag-off
+              never reads `isFirstInGroup`, and undefined defaults to shown
+              (standalone run), matching pre-grouping flag-on rendering. */}
+          {!isOwnMessage && (!whatsappShellEnabled || (isFirstInGroup ?? true)) && (
             <Text
               style={[
                 styles.senderName,
@@ -1197,13 +1228,16 @@ function MessageItemInner({
                   styles.messageBubble,
                   isOwnMessage ? styles.ownMessageBubble : styles.otherMessageBubble,
                   // §5 bubble geometry: 18pt radius, 4pt "tail corner" nearest
-                  // the sender's origin. No adjacent-message grouping props
-                  // exist on this message (MessageList doesn't pass run
-                  // position), so every bubble renders as if it were the
-                  // first-of-run — uniform per-message radii, not per-run.
+                  // the sender's origin, squared only on the first bubble of a
+                  // run — continuation bubbles get the full 18pt there (no
+                  // tail). Undefined `isFirstInGroup` defaults to true
+                  // (standalone run), reproducing the previous uniform
+                  // tail-corner rendering before MessageList wired grouping.
                   whatsappShellEnabled && styles.waMessageBubble,
                   whatsappShellEnabled &&
-                    (isOwnMessage ? styles.waOwnMessageBubble : styles.waOtherMessageBubble),
+                    (isOwnMessage
+                      ? ((isFirstInGroup ?? true) ? styles.waOwnMessageBubble : styles.waOwnMessageBubbleContinuation)
+                      : ((isFirstInGroup ?? true) ? styles.waOtherMessageBubble : styles.waOtherMessageBubbleContinuation)),
                   isImageOnlyMessage
                     ? styles.imageOnlyBubble
                     : {
@@ -1624,6 +1658,14 @@ const styles = StyleSheet.create({
   },
   waOtherMessageBubble: {
     borderBottomLeftRadius: WA_BUBBLE_TAIL_CORNER_RADIUS,
+  },
+  // §5 grouping: continuation bubbles (not first in their run) drop the tail
+  // and get the full radius on that corner instead of the squared one above.
+  waOwnMessageBubbleContinuation: {
+    borderBottomRightRadius: WA_BUBBLE_RADIUS,
+  },
+  waOtherMessageBubbleContinuation: {
+    borderBottomLeftRadius: WA_BUBBLE_RADIUS,
   },
   waBubbleTextContent: {
     paddingHorizontal: WA_BUBBLE_PADDING_H,

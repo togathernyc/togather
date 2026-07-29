@@ -5,17 +5,26 @@
  * kit concept (docs/plans/church-migration-ui-redesign/README.md §6, W11
  * step 4) into a standalone screen any member can reach from their profile
  * menu, rather than an admin-only wizard step. Gated behind the
- * whatsapp-shell flag end-to-end (see ProfileMenu.tsx).
+ * whatsapp-shell flag end-to-end (see ProfileMenu.tsx and
+ * `app/(user)/invite.tsx`'s defense-in-depth redirect) — because this screen
+ * only ever mounts flag-on, it's styled unconditionally to
+ * `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md` §3.2
+ * (inset-grouped) / §8's "Invite kit" checklist row using the
+ * `components/wa/*` kit: `bg.grouped` canvas, `WaInsetGroup`/`WaCell` cards,
+ * accent-colored action rows (§1.3 "action-sheet-style green text rows").
  *
- * Three sections:
- *  - Community: QR code + copy/share for the community's public URL
- *    (`DOMAIN_CONFIG.communityUrl`, the same subdomain entry point the app
- *    already routes through at sign-in — see `useCommunitySubdomain`).
- *  - Send in WhatsApp: a prewritten handoff message with copy/share, so an
- *    admin can paste it straight into their existing WhatsApp group.
- *  - Group links: short links for groups the caller leads, using the same
- *    `DOMAIN_CONFIG.groupShareUrl` helper as `GroupOptionsModal`'s
- *    "Share Group" action.
+ * Three sections, each its own `WaInsetGroup` card:
+ *  - Community: a QR code (on a pure-white tile — QR scanners need strong
+ *    light/dark contrast, so this is one of two spots in the app that
+ *    intentionally never themes to `bg.card`, see `QrCode.tsx`'s own
+ *    comment) + the public URL, with copy/share as accent action cells.
+ *  - Send in WhatsApp: the prewritten handoff message rendered as a
+ *    footer-style quoted block (§2 footer typography + §5 reply-quote-bar
+ *    visual language: left accent border, recessed tint), with copy/share
+ *    as accent action cells.
+ *  - Group links: short links for groups the caller leads, as `WaCell`s
+ *    with a trailing copy-icon accessory (`DOMAIN_CONFIG.groupShareUrl`,
+ *    same helper `GroupOptionsModal`'s "Share Group" action uses).
  */
 import React, { useMemo } from 'react';
 import {
@@ -24,6 +33,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  Pressable,
   Alert,
   Share,
   ActivityIndicator,
@@ -35,8 +45,16 @@ import * as Clipboard from 'expo-clipboard';
 import { DOMAIN_CONFIG } from '@togather/shared';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
-import { Card } from '@components/ui';
+import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { QrCode } from '@components/ui/QrCode';
+import { waAccentPalette } from '@utils/waPalette';
+import {
+  WaInsetGroup,
+  WaCell,
+  WA_GROUP_SPACING,
+  WA_CELL_PADDING,
+  WA_REPLY_QUOTE_BORDER_WIDTH,
+} from '@components/wa';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 
@@ -49,9 +67,19 @@ interface LeaderGroup {
 export function InviteKitScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  const { primaryColor } = useCommunityTheme();
   const { community } = useAuth();
   const communityId = community?.id as Id<'communities'> | undefined;
+
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode (this screen's own accent-dependent rendering, see
+  // restyle report's "accent consumption" finding for the *other* WA-shell
+  // surfaces that skip this step).
+  const accent = useMemo(
+    () => waAccentPalette(primaryColor, isDark).accent,
+    [primaryColor, isDark]
+  );
 
   const communityUrl =
     community?.subdomain ? DOMAIN_CONFIG.communityUrl(community.subdomain) : null;
@@ -97,10 +125,10 @@ export function InviteKitScreen() {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.backgroundSecondary },
+        { paddingTop: insets.top, backgroundColor: colors.backgroundGrouped },
       ]}
     >
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      <View style={[styles.header, { backgroundColor: colors.navBarBackground, borderBottomColor: colors.separator }]}>
         <TouchableOpacity
           onPress={() => router.back()}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -112,141 +140,141 @@ export function InviteKitScreen() {
         <View style={styles.backButton} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-          COMMUNITY
-        </Text>
-        <Card style={styles.card}>
-          {communityUrl ? (
-            <>
-              <View style={styles.qrWrap}>
-                <QrCode value={communityUrl} size={180} />
-              </View>
-              <Text style={[styles.urlText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {communityUrl}
-              </Text>
-              <View style={styles.buttonRow}>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
+      <ScrollView
+        style={{ backgroundColor: colors.backgroundGrouped }}
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.waSection}>
+          {/* separatorInset=0: none of this card's rows have a leading icon
+              column, so the default icon-aligned inset (§3.2's
+              WA_CELL_PADDING + WA_CELL_ICON_COLUMN) would misalign hairlines
+              against this card's flush-left text — same reasoning
+              GroupInfoScreen's icon-less cards use (see its "Settings"/
+              bottom-red-rows WaInsetGroups). */}
+          <WaInsetGroup header="Community" separatorInset={0}>
+            {communityUrl ? (
+              <>
+                {/* QR + URL caption are one visual unit — a single
+                    WaInsetGroup child so no hairline splits them; the
+                    separator (auto-inserted by WaInsetGroup) lands between
+                    this unit and "Copy link" instead. QR must stay on pure
+                    white regardless of theme/dark-mode — same contrast
+                    rationale as QrCode.tsx's own comment: a themed/dark tile
+                    could drop scanner contrast below what finder patterns
+                    need. */}
+                <View>
+                  <View style={styles.qrTile}>
+                    <QrCode value={communityUrl} size={180} />
+                  </View>
+                  <View style={styles.urlRow}>
+                    <Text style={[styles.urlText, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {communityUrl}
+                    </Text>
+                  </View>
+                </View>
+                <WaCell
+                  variant="action"
+                  title="Copy link"
+                  accent={accent}
                   onPress={() => handleCopy(communityUrl, 'Link')}
-                >
-                  <Ionicons name="copy-outline" size={18} color={colors.text} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.text }]}>
-                    Copy link
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
-                  onPress={() =>
-                    handleShare(`${communityName}\n${communityUrl}`, communityUrl)
-                  }
-                >
-                  <Ionicons name="share-outline" size={18} color={colors.text} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.text }]}>
-                    Share
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              This community doesn't have a public link set up yet.
-            </Text>
-          )}
-        </Card>
+                />
+                <WaCell
+                  variant="action"
+                  title="Share"
+                  accent={accent}
+                  onPress={() => handleShare(`${communityName}\n${communityUrl}`, communityUrl)}
+                />
+              </>
+            ) : (
+              <EmptyCellText>
+                This community doesn't have a public link set up yet.
+              </EmptyCellText>
+            )}
+          </WaInsetGroup>
+        </View>
 
-        <Text
-          style={[styles.sectionLabel, styles.sectionLabelSpaced, { color: colors.textSecondary }]}
-        >
-          SEND IN WHATSAPP
-        </Text>
-        <Card style={styles.card}>
-          {whatsappMessage ? (
-            <>
-              <Text style={[styles.messageText, { color: colors.text }]}>
-                {whatsappMessage}
-              </Text>
-              <View style={styles.buttonRow}>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
-                  onPress={() => handleCopy(whatsappMessage, 'Message')}
-                >
-                  <Ionicons name="copy-outline" size={18} color={colors.text} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.text }]}>
-                    Copy message
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.secondaryButton, { borderColor: colors.border }]}
-                  onPress={() => handleShare(whatsappMessage)}
-                >
-                  <Ionicons name="share-outline" size={18} color={colors.text} />
-                  <Text style={[styles.secondaryButtonText, { color: colors.text }]}>
-                    Share
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              This community doesn't have a public link set up yet.
-            </Text>
-          )}
-        </Card>
-
-        <Text
-          style={[styles.sectionLabel, styles.sectionLabelSpaced, { color: colors.textSecondary }]}
-        >
-          GROUP LINKS
-        </Text>
-        <Card style={styles.card}>
-          {isLoadingGroups ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color={colors.textSecondary} />
-            </View>
-          ) : leaderGroups.length === 0 ? (
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              You don't lead any groups with a shareable link yet.
-            </Text>
-          ) : (
-            leaderGroups.map((group, index) => {
-              const groupUrl = DOMAIN_CONFIG.groupShareUrl(group.shortId!);
-              return (
+        <View style={styles.waSection}>
+          <WaInsetGroup header="Send in WhatsApp" separatorInset={0}>
+            {whatsappMessage ? (
+              <>
                 <View
-                  key={group.id}
                   style={[
-                    styles.groupRow,
-                    index < leaderGroups.length - 1 && {
-                      borderBottomWidth: StyleSheet.hairlineWidth,
-                      borderBottomColor: colors.border,
+                    styles.quoteBlock,
+                    {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                      borderLeftColor: accent,
                     },
                   ]}
                 >
-                  <View style={styles.groupTextContainer}>
-                    <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>
-                      {group.name}
-                    </Text>
-                    <Text
-                      style={[styles.groupUrl, { color: colors.textSecondary }]}
-                      numberOfLines={1}
-                    >
-                      {groupUrl}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.copyIconButton}
-                    onPress={() => handleCopy(groupUrl, `${group.name} link`)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="copy-outline" size={20} color={colors.icon} />
-                  </TouchableOpacity>
+                  <Text style={[styles.quoteText, { color: colors.textTertiary }]}>
+                    {whatsappMessage}
+                  </Text>
                 </View>
-              );
-            })
-          )}
-        </Card>
+                <WaCell
+                  variant="action"
+                  title="Copy message"
+                  accent={accent}
+                  onPress={() => handleCopy(whatsappMessage, 'Message')}
+                />
+                <WaCell
+                  variant="action"
+                  title="Share"
+                  accent={accent}
+                  onPress={() => handleShare(whatsappMessage)}
+                />
+              </>
+            ) : (
+              <EmptyCellText>
+                This community doesn't have a public link set up yet.
+              </EmptyCellText>
+            )}
+          </WaInsetGroup>
+        </View>
+
+        <View style={styles.waSection}>
+          <WaInsetGroup header="Group links" separatorInset={0}>
+            {isLoadingGroups ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={colors.textSecondary} />
+              </View>
+            ) : leaderGroups.length === 0 ? (
+              <EmptyCellText>
+                You don't lead any groups with a shareable link yet.
+              </EmptyCellText>
+            ) : (
+              leaderGroups.map((group) => {
+                const groupUrl = DOMAIN_CONFIG.groupShareUrl(group.shortId!);
+                return (
+                  <WaCell
+                    key={group.id}
+                    title={group.name}
+                    description={groupUrl}
+                    trailingAccessory={
+                      <Pressable
+                        onPress={() => handleCopy(groupUrl, `${group.name} link`)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Copy ${group.name} link`}
+                      >
+                        <Ionicons name="copy-outline" size={20} color={colors.icon} />
+                      </Pressable>
+                    }
+                  />
+                );
+              })
+            )}
+          </WaInsetGroup>
+        </View>
       </ScrollView>
     </View>
+  );
+}
+
+/** Plain centered helper text sized to sit inside a `WaInsetGroup` card as its only row (no cell chrome needed for a one-off empty state). */
+function EmptyCellText({ children }: { children: string }) {
+  const { colors } = useTheme();
+  return (
+    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{children}</Text>
   );
 }
 
@@ -272,81 +300,50 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingBottom: 40,
   },
-  sectionLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-    marginTop: 16,
-    marginBottom: 8,
+  waSection: {
+    marginTop: WA_GROUP_SPACING,
   },
-  sectionLabelSpaced: {
-    marginTop: 28,
-  },
-  card: {
-    padding: 20,
-  },
-  qrWrap: {
+  qrTile: {
     alignItems: 'center',
-    marginBottom: 12,
+    justifyContent: 'center',
+    paddingVertical: 20,
+    // Intentionally hardcoded, not `colors.surfaceGrouped` — the QR tile
+    // must render on pure white in both light and dark mode (see file
+    // header + `QrCode.tsx`'s own comment on scanner contrast).
+    backgroundColor: '#FFFFFF',
+  },
+  urlRow: {
+    paddingHorizontal: WA_CELL_PADDING,
+    paddingTop: 12,
+    paddingBottom: 4,
   },
   urlText: {
     fontSize: 13,
     textAlign: 'center',
-    marginBottom: 16,
   },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 21,
-    marginBottom: 16,
+  quoteBlock: {
+    marginHorizontal: WA_CELL_PADDING,
+    marginTop: WA_CELL_PADDING,
+    marginBottom: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderLeftWidth: WA_REPLY_QUOTE_BORDER_WIDTH,
+    borderRadius: 6,
   },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  secondaryButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
+  quoteText: {
+    fontSize: 13,
+    lineHeight: 18,
   },
   emptyText: {
     fontSize: 14,
     textAlign: 'center',
-    paddingVertical: 8,
+    paddingVertical: 16,
+    paddingHorizontal: WA_CELL_PADDING,
   },
   loadingRow: {
     paddingVertical: 16,
     alignItems: 'center',
-  },
-  groupRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  groupTextContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  groupName: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  groupUrl: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  copyIconButton: {
-    padding: 4,
   },
 });

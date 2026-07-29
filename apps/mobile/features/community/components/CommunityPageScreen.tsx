@@ -57,6 +57,7 @@ import { formatTimeWithTimezone } from "@togather/shared";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { AppImage } from "@components/ui/AppImage";
@@ -218,9 +219,13 @@ function GroupsSection({
 export function CommunityPageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor, accentLight } = useCommunityTheme();
   const { user, community } = useAuth();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode (see MessageItem/MessageInput/ConvexChatRoomScreen/
+  // InviteKitScreen for the same pattern).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const communityId = community?.id as Id<"communities"> | undefined;
   const isAdmin = user?.is_admin === true;
@@ -368,7 +373,7 @@ export function CommunityPageScreen() {
             placeholder={{
               type: "initials",
               name: community?.name || "Community",
-              backgroundColor: primaryColor,
+              backgroundColor: waAccent,
             }}
           />
           <Text style={[styles.identityName, { color: colors.text }]} numberOfLines={2}>
@@ -387,13 +392,13 @@ export function CommunityPageScreen() {
           <WaQuickAction
             icon="person-add-outline"
             label="Invite"
-            accent={primaryColor}
+            accent={waAccent}
             onPress={() => router.push("/(user)/invite" as any)}
           />
           <WaQuickAction
             icon="search-outline"
             label="Search"
-            accent={primaryColor}
+            accent={waAccent}
             onPress={() => router.push("/(tabs)/search" as any)}
           />
         </View>
@@ -432,7 +437,7 @@ export function CommunityPageScreen() {
           <View style={styles.section}>
             <WaInsetGroup>
               <WaRow
-                avatar={<WaIconAvatar icon="megaphone" tint={primaryColor} background={accentLight} />}
+                avatar={<WaIconAvatar icon="megaphone" tint={waAccent} background={accentLight} />}
                 title="Announcements"
                 isUnread={(announcementChannel.unreadCount ?? 0) > 0}
                 subtitle={announcementPreview}
@@ -444,7 +449,7 @@ export function CommunityPageScreen() {
                 unreadCount={announcementChannel.unreadCount}
                 showMutedDot={announcementChannel.isMuted && !announcementChannel.unreadCount}
                 showChevron
-                accent={primaryColor}
+                accent={waAccent}
                 onPress={openAnnouncements}
               />
             </WaInsetGroup>
@@ -458,7 +463,7 @@ export function CommunityPageScreen() {
             isLoading={myGroups === undefined}
             emptyMessage="You haven't joined any groups yet."
             groups={yourGroupItems}
-            accent={primaryColor}
+            accent={waAccent}
             onPressGroup={goToGroup}
           />
         </View>
@@ -475,14 +480,14 @@ export function CommunityPageScreen() {
             isLoading={suggestedGroupsLoading}
             emptyMessage="No groups to join right now."
             groups={suggestedGroupItems}
-            accent={primaryColor}
+            accent={waAccent}
             onPressGroup={goToGroup}
           />
           <Pressable
             onPress={() => router.push("/(tabs)/search" as any)}
             style={({ pressed }) => [
               styles.addGroupPill,
-              { backgroundColor: primaryColor, opacity: pressed ? 0.85 : 1 },
+              { backgroundColor: waAccent, opacity: pressed ? 0.85 : 1 },
             ]}
           >
             <Ionicons name="add" size={20} color="#FFFFFF" />
@@ -502,7 +507,7 @@ export function CommunityPageScreen() {
                 return (
                   <WaRow
                     key={event.id}
-                    avatar={<WaIconAvatar icon="calendar" tint={primaryColor} background={accentLight} />}
+                    avatar={<WaIconAvatar icon="calendar" tint={waAccent} background={accentLight} />}
                     title={event.title || "Untitled Event"}
                     subtitle={`${dateLabel} · ${timeLabel}`}
                     showChevron

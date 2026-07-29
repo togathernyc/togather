@@ -220,7 +220,11 @@ export function WaRow({
       </View>
 
       {rightAccessory ? (
-        <View style={styles.rightColumn}>{rightAccessory}</View>
+        // Unlike the fixed-width timestamp/badge column below, the accessory
+        // slot sizes to its content — accessories (Join pills, button pairs)
+        // are wider than WA_RIGHT_COLUMN_WIDTH and would overflow the title
+        // otherwise; the text column's flex/minWidth absorbs the difference.
+        <View style={styles.rightAccessorySlot}>{rightAccessory}</View>
       ) : (
         <View style={styles.rightColumn}>
           {timestamp ? (
@@ -317,6 +321,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
     alignSelf: 'stretch',
     paddingTop: 2,
+    marginLeft: 8,
+  },
+  rightAccessorySlot: {
+    flexShrink: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
     marginLeft: 8,
   },
   rightColumnBottom: {
