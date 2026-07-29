@@ -65,6 +65,7 @@ import type { Id } from "@services/api/convex";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { useAuth } from "@providers/AuthProvider";
 import { useUserData } from "@features/profile/hooks/useUserData";
 import {
@@ -102,8 +103,12 @@ export function GroupInfoScreen() {
   const group_id = params.group_id;
   const router = useRouter();
   const { user } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode (see MessageItem/MessageInput/ConvexChatRoomScreen/
+  // InviteKitScreen for the same pattern).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const [showJoinSuccessModal, setShowJoinSuccessModal] = useState(false);
   const [showPendingLimitModal, setShowPendingLimitModal] = useState(false);
@@ -550,8 +555,8 @@ export function GroupInfoScreen() {
             separate invite-kit yet — see file-header deferral note). */}
         {!!group.shortId && (
           <View style={styles.iconActionRow}>
-            <IconAction icon="share-outline" label="Share" onPress={handleShareGroup} accent={primaryColor} />
-            <IconAction icon="person-add-outline" label="Invite" onPress={handleShareGroup} accent={primaryColor} />
+            <IconAction icon="share-outline" label="Share" onPress={handleShareGroup} accent={waAccent} />
+            <IconAction icon="person-add-outline" label="Invite" onPress={handleShareGroup} accent={waAccent} />
           </View>
         )}
 
@@ -567,7 +572,7 @@ export function GroupInfoScreen() {
               toggleValue={isMuted}
               onToggleChange={handleToggleMuted}
               disabled={isSavingMute}
-              accent={primaryColor}
+              accent={waAccent}
             />
           </WaInsetGroup>
         </View>
@@ -736,7 +741,7 @@ export function GroupInfoScreen() {
                 value={hiddenFromDiscovery}
                 onValueChange={handleToggleHiddenFromDiscovery}
                 disabled={isSavingHidden}
-                accent={primaryColor}
+                accent={waAccent}
               />
               <SettingsToggleRow
                 label="Join approval: leaders"
@@ -744,7 +749,7 @@ export function GroupInfoScreen() {
                 value={leadersApprove}
                 onValueChange={handleToggleLeadersApprove}
                 disabled={isSavingApproval}
-                accent={primaryColor}
+                accent={waAccent}
               />
             </WaInsetGroup>
           </View>

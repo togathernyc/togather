@@ -21,7 +21,7 @@
  * gate) — no new permission logic is introduced here. See the gate-by-gate
  * mapping in each row's inline comment.
  */
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,6 +30,7 @@ import Constants from "expo-constants";
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { Avatar } from "@components/ui";
@@ -101,8 +102,12 @@ export function YouScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, community, logout } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode (see MessageItem/MessageInput/ConvexChatRoomScreen/
+  // InviteKitScreen for the same pattern).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const userId = user?.id as Id<"users"> | undefined;
   const communityId = community?.id as Id<"communities"> | undefined;
@@ -162,7 +167,7 @@ export function YouScreen() {
             accessibilityLabel: "Edit profile",
           },
         ]}
-        accent={primaryColor}
+        accent={waAccent}
         style={{ paddingTop: insets.top }}
       />
 

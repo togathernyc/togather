@@ -77,6 +77,7 @@ import {
 import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   useQuery,
@@ -166,8 +167,14 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  // §1.2 dark-mode accent shift — never reuse the light-mode brand hex
+  // verbatim in dark mode. Only feeds whatsappShell-gated JSX below (see the
+  // per-usage comments); flag-off branches keep raw `primaryColor` unchanged
+  // (see MessageItem/MessageInput/ConvexChatRoomScreen/InviteKitScreen for
+  // the same split pattern in other dual-flag files).
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const channel = useQuery(
     api.functions.messaging.channels.getChannelBySlug,
@@ -1068,7 +1075,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                 title={pendingResponding === "accept" ? "Accepting…" : "Accept"}
                 onPress={handleAcceptInvite}
                 disabled={pendingResponding !== null}
-                accent={primaryColor}
+                accent={waAccent}
               />
               <WaCell
                 variant="destructive"
@@ -1153,7 +1160,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   toggleValue={isChannelMuted}
                   onToggleChange={handleToggleMuted}
                   disabled={muteToggling}
-                  accent={primaryColor}
+                  accent={waAccent}
                 />
               )}
             </WaInsetGroup>
@@ -1232,8 +1239,8 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                             styles.requestActionBtn,
                             {
                               backgroundColor: pressed
-                                ? primaryColor + "CC"
-                                : primaryColor,
+                                ? waAccent + "CC"
+                                : waAccent,
                               opacity: inFlight ? 0.6 : 1,
                             },
                           ]}
@@ -1356,6 +1363,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             membership={crossTeamMembership}
             colors={colors}
             primaryColor={primaryColor}
+            waAccent={waAccent}
             canManage={isLeader}
             whatsappShell={whatsappShell}
             onAdd={() => setAddPermanentVisible(true)}
@@ -1563,8 +1571,8 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                               styles.unmatchedActionBtn,
                               {
                                 backgroundColor: pressed
-                                  ? primaryColor + "CC"
-                                  : primaryColor,
+                                  ? waAccent + "CC"
+                                  : waAccent,
                                 opacity: inFlight ? 0.6 : 1,
                               },
                             ]}
@@ -1936,7 +1944,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                   toggleValue={isChannelDiscoverable}
                   onToggleChange={handleToggleDiscoverable}
                   disabled={discoverableToggling}
-                  accent={primaryColor}
+                  accent={waAccent}
                 />
               )}
 
@@ -2707,6 +2715,7 @@ function CrossTeamMembersSections({
   membership,
   colors,
   primaryColor,
+  waAccent,
   canManage,
   whatsappShell,
   onAdd,
@@ -2716,6 +2725,7 @@ function CrossTeamMembersSections({
   membership: CrossTeamChannelMembership | undefined;
   colors: ReturnType<typeof useTheme>["colors"];
   primaryColor: string;
+  waAccent: string;
   canManage: boolean;
   whatsappShell: boolean;
   onAdd: () => void;
@@ -2759,8 +2769,8 @@ function CrossTeamMembersSections({
                   style={styles.waPermanentAddButton}
                   hitSlop={8}
                 >
-                  <Ionicons name="add" size={18} color={primaryColor} />
-                  <Text style={[styles.waPermanentAddLabel, { color: primaryColor }]}>
+                  <Ionicons name="add" size={18} color={waAccent} />
+                  <Text style={[styles.waPermanentAddLabel, { color: waAccent }]}>
                     Add
                   </Text>
                 </TouchableOpacity>
