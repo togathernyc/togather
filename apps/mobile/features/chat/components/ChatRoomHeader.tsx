@@ -22,6 +22,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { WA_CHAT_CHROME_LIGHT, WA_CHAT_CHROME_DARK } from "../waChatChrome";
 import { Avatar } from "@components/ui/Avatar";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
@@ -48,7 +49,7 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
   onBack,
   onPressTitle,
 }: Props) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isOneOnOne = channelType === "dm";
   // WhatsApp-shell nav chrome (WHATSAPP-DESIGN-SYSTEM.md §4) — flag-gated;
@@ -84,9 +85,12 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
       style={[
         styles.header,
         { backgroundColor: colors.surface },
+        // §2.2 "translucent near-white bar over the wallpaper" — the chat room
+        // now paints a doodle wallpaper behind its whole chrome, so an opaque
+        // nav fill (and its hairline) would sit on top of it as a flat band.
         whatsappShellEnabled && [
           styles.waHeader,
-          { backgroundColor: colors.navBarBackground, borderBottomColor: colors.separator },
+          { backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT },
         ],
       ]}
     >
@@ -138,7 +142,11 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
             </Text>
             {subtitleLine ? (
               <Text
-                style={[styles.subtitleText, { color: colors.textSecondary }]}
+                style={[
+                  styles.subtitleText,
+                  whatsappShellEnabled && styles.waSubtitleText,
+                  { color: colors.textSecondary },
+                ]}
                 numberOfLines={1}
               >
                 {subtitleLine}
@@ -167,10 +175,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 12,
   },
-  // §4 nav chrome (flag-gated): navBarBackground fill + hairline bottom
-  // border instead of the flag-off borderless surface fill.
+  // §2.2 nav chrome (flag-gated): translucent fill over the chat wallpaper,
+  // no hairline — the wallpaper itself is the separation.
   waHeader: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 0,
+  },
+  /** §S7: sub-screen subtitles are 13pt (flag-off keeps 12). */
+  waSubtitleText: {
+    fontSize: 13,
   },
   backButton: {
     padding: 4,

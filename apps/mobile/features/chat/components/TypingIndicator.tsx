@@ -7,6 +7,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import type { Id } from '@services/api/convex';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
 
 interface TypingIndicatorProps {
   typingUsers: Array<{
@@ -17,6 +18,11 @@ interface TypingIndicatorProps {
 }
 
 export function TypingIndicator({ typingUsers }: TypingIndicatorProps) {
+  // §S4.1: flag-on the chat room paints a doodle wallpaper behind everything
+  // between the header and the composer, so this strip's hard-coded gray fill
+  // would read as a flat band across it. Flag-off keeps the gray.
+  const whatsappShellEnabled = useWhatsappShell();
+
   if (!typingUsers || typingUsers.length === 0) {
     return null;
   }
@@ -25,7 +31,7 @@ export function TypingIndicator({ typingUsers }: TypingIndicatorProps) {
   const verb = typingUsers.length === 1 ? 'is' : 'are';
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, whatsappShellEnabled && styles.waContainer]}>
       <ActivityIndicator size="small" color="#666" style={styles.spinner} />
       <Text style={styles.text}>
         {names} {verb} typing...
@@ -41,6 +47,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     backgroundColor: '#F5F5F5',
+  },
+  waContainer: {
+    backgroundColor: 'transparent',
   },
   spinner: {
     marginRight: 8,
