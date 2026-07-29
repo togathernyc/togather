@@ -726,6 +726,30 @@ describe("submitExpense", () => {
       }),
     ).rejects.toThrow(/amount/i);
   });
+
+  test("rejects submission on a frozen fund (security-review FIX 1c)", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId } = await seedExpenseFixture(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "frozen" });
+    });
+
+    await expect(
+      submitReimbursement(t, fundId, memberUserId, 5000),
+    ).rejects.toThrow(/active/i);
+  });
+
+  test("rejects submission on a closed fund", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId } = await seedExpenseFixture(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "closed" });
+    });
+
+    await expect(
+      submitReimbursement(t, fundId, memberUserId, 5000),
+    ).rejects.toThrow(/active/i);
+  });
 });
 
 // ============================================================================
@@ -862,6 +886,27 @@ describe("approveExpense", () => {
       }),
     ).rejects.toThrow();
   });
+
+  test("rejects approving on a fund frozen after submission (security-review FIX 1c)", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId, managerUserId } = await seedExpenseFixture(t);
+    // Submitted while the fund is still active...
+    const expenseId = await submitReimbursement(t, fundId, memberUserId, 5000);
+    // ...then the fund is frozen (e.g. its group archived) before approval.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "frozen" });
+    });
+
+    await expect(
+      t.mutation(api.functions.finance.expenses.approveExpense, {
+        token: await tokenFor(managerUserId),
+        expenseId,
+      }),
+    ).rejects.toThrow(/active/i);
+
+    const expense = await t.run(async (ctx) => ctx.db.get(expenseId));
+    expect(expense?.status).toBe("pending"); // never advanced
+  });
 });
 
 describe("denyExpense", () => {
@@ -902,6 +947,24 @@ describe("denyExpense", () => {
         reason: "Self-deny attempt",
       }),
     ).rejects.toThrow(/own expense/i);
+  });
+
+  test("denial is still allowed on a frozen fund (security-review FIX 1c: denials are never blocked)", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId, managerUserId } = await seedExpenseFixture(t);
+    const expenseId = await submitReimbursement(t, fundId, memberUserId, 5000);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "frozen" });
+    });
+
+    await t.mutation(api.functions.finance.expenses.denyExpense, {
+      token: await tokenFor(managerUserId),
+      expenseId,
+      reason: "Fund frozen but denial must still work",
+    });
+
+    const expense = await t.run(async (ctx) => ctx.db.get(expenseId));
+    expect(expense?.status).toBe("denied");
   });
 });
 
@@ -954,6 +1017,128 @@ describe("recordReimbursementPaid", () => {
         .collect(),
     );
     expect(paidEvents.filter((e) => e.action === "expense.paid")).toHaveLength(1);
+  });
+});
+
+// ============================================================================
+// expenses.ts — payReimbursement fund-status gate (security-review FIX 1a)
+// ============================================================================
+
+describe("payReimbursement — fund status gate", () => {
+  test("frozen fund blocks payout BEFORE any transfer; no ledger entry, audit blocked, expense stays approved", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const { fundId, memberUserId, managerUserId } = await seedExpenseFixture(t);
+      const expenseId = await submitReimbursement(t, fundId, memberUserId, 5000);
+
+      // approveExpense schedules payReimbursement via ctx.scheduler — timers
+      // stay frozen so that scheduled run never fires; we invoke
+      // payReimbursement ourselves below, after freezing the fund, so the
+      // test controls exactly when the payout attempt happens relative to
+      // the freeze (mirrors finance-onboarding.test.ts's fake-timer
+      // convention for the same class of hazard).
+      await t.mutation(api.functions.finance.expenses.approveExpense, {
+        token: await tokenFor(managerUserId),
+        expenseId,
+      });
+
+      // Fund gets frozen AFTER approval but BEFORE the payout runs (e.g. its
+      // group was archived in the gap).
+      await t.run(async (ctx) => {
+        await ctx.db.patch(fundId, { status: "frozen" });
+      });
+
+      await t.action(internal.functions.finance.expenses.payReimbursement, {
+        expenseId,
+      });
+
+      const expense = await t.run(async (ctx) => ctx.db.get(expenseId));
+      expect(expense?.status).toBe("approved"); // never advanced to "paid"
+      expect(expense?.increaseTransferId).toBeUndefined();
+
+      const ledgerEntries = await t.run(async (ctx) =>
+        ctx.db
+          .query("ledgerEntries")
+          .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+          .collect(),
+      );
+      expect(ledgerEntries.filter((e) => e.kind === "reimbursement")).toHaveLength(0);
+
+      const events = await t.run(async (ctx) =>
+        ctx.db
+          .query("financeAuditEvents")
+          .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+          .collect(),
+      );
+      expect(
+        events.some((e) => e.action === "expense.pay_blocked_fund_inactive"),
+      ).toBe(true);
+      // The blocked-fund breadcrumb must fire instead of (never alongside) a
+      // no-destination one — confirms the gate runs before that later check.
+      expect(
+        events.some((e) => e.action === "expense.pay_blocked_no_destination"),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ============================================================================
+// jobs.ts — listStuckReimbursements (security-review FIX 1b cron backstop)
+// ============================================================================
+
+describe("listStuckReimbursements", () => {
+  test("picks a 7h-old approved reimbursement with no transfer; ignores a fresh one and a paid one", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const { fundId, memberUserId, managerUserId } = await seedExpenseFixture(t);
+
+      // Stuck: approved, never paid, last touched 7 hours ago.
+      const stuckId = await submitReimbursement(t, fundId, memberUserId, 2000);
+      await t.mutation(api.functions.finance.expenses.approveExpense, {
+        token: await tokenFor(managerUserId),
+        expenseId: stuckId,
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(stuckId, { updatedAt: Date.now() - 7 * 60 * 60 * 1000 });
+      });
+
+      // Fresh: approved moments ago — must be ignored (under the 6h threshold).
+      const freshId = await submitReimbursement(t, fundId, memberUserId, 3000);
+      await t.mutation(api.functions.finance.expenses.approveExpense, {
+        token: await tokenFor(managerUserId),
+        expenseId: freshId,
+      });
+
+      // Old AND paid — must be ignored (already has an increaseTransferId).
+      const paidId = await submitReimbursement(t, fundId, memberUserId, 4000);
+      await t.mutation(api.functions.finance.expenses.approveExpense, {
+        token: await tokenFor(managerUserId),
+        expenseId: paidId,
+      });
+      await t.mutation(
+        internal.functions.finance.expenses.recordReimbursementPaid,
+        { expenseId: paidId, increaseTransferId: "transfer_already_paid" },
+      );
+      await t.run(async (ctx) => {
+        await ctx.db.patch(paidId, { updatedAt: Date.now() - 7 * 60 * 60 * 1000 });
+      });
+
+      const stuck = await t.mutation(
+        internal.functions.finance.jobs.listStuckReimbursements,
+        {},
+      );
+      const stuckIds = stuck.map((e: { _id: Id<"expenses"> }) => e._id);
+
+      expect(stuckIds).toContain(stuckId);
+      expect(stuckIds).not.toContain(freshId);
+      expect(stuckIds).not.toContain(paidId);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

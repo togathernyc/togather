@@ -207,6 +207,21 @@ interface StripeAccountUpdatedObject {
   };
 }
 
+/** The subset of a Stripe `charge.refunded` event's `data.object` we read. */
+interface StripeChargeObject {
+  id: string;
+  /** Expandable — a bare id string unless the webhook was configured to expand it. */
+  payment_intent?: string | { id: string } | null;
+  amount_refunded?: number;
+}
+
+/** The subset of a Stripe `charge.dispute.created` event's `data.object` we read. */
+interface StripeDisputeObject {
+  id: string;
+  payment_intent?: string | { id: string } | null;
+  amount?: number;
+}
+
 interface StripeFinanceEvent {
   type: string;
   /** Connected-account id, present on Connect-delivered events (payouts). */
@@ -230,6 +245,88 @@ export const getCommunityFinanceByStripeAccount = internalQuery({
         q.eq(q.field("stripeConnectedAccountId"), args.stripeConnectedAccountId),
       )
       .first();
+  },
+});
+
+// ============================================================================
+// Defense-in-depth: verify a donation-crediting Stripe event actually fired
+// on the community's OWN connected account before crediting anything.
+// `metadata.fundId` on a Connect event is otherwise trusted at face value —
+// it's data WE set when creating the PaymentIntent, but nothing stops a
+// malformed/adversarial event claiming a fundId that belongs to a different
+// community than the one the event's `account` field says it came from.
+// Cross-checking event.account against the fund's OWN
+// communityFinance.stripeConnectedAccountId closes that gap server-side.
+// ============================================================================
+
+/**
+ * `fundId` arrives as a plain string (Stripe metadata, or a Charge's
+ * `payment_intent` reference) — never a validated `v.id("funds")` — so it
+ * may be garbage or reference a fund that doesn't exist. `normalizeId`
+ * (mirrors the pattern in functions/prayers/reactions.ts) returns null
+ * instead of throwing for a malformed/foreign-table id, which is what lets
+ * this stay a query rather than needing a try/catch around `ctx.db.get`.
+ */
+export const getFundFinanceForWebhook = internalQuery({
+  args: { fundId: v.string() },
+  handler: async (ctx, args) => {
+    const fundId = ctx.db.normalizeId("funds", args.fundId);
+    if (!fundId) return null;
+    const fund = await ctx.db.get(fundId);
+    if (!fund) return null;
+    const communityFinance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
+      .first();
+    return { fund, communityFinance };
+  },
+});
+
+/**
+ * Same shape of lookup as `getFundFinanceForWebhook`, but keyed off a
+ * PaymentIntent id instead of a fundId — `charge.refunded` doesn't carry a
+ * trustworthy fundId of its own (see the file-level comment on
+ * `handleFinanceStripeEvent`'s "charge.refunded" case for why), so the
+ * account check for a refund resolves the fund via the donation it refunds.
+ */
+export const getDonationFundForWebhook = internalQuery({
+  args: { paymentIntentId: v.string() },
+  handler: async (ctx, args) => {
+    const donation = await ctx.db
+      .query("donations")
+      .withIndex("by_stripePaymentIntentId", (q) =>
+        q.eq("stripePaymentIntentId", args.paymentIntentId),
+      )
+      .first();
+    if (!donation) return null;
+    const fund = await ctx.db.get(donation.fundId);
+    if (!fund) return null;
+    const communityFinance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
+      .first();
+    return { fund, communityFinance };
+  },
+});
+
+/** Audit-only: writes "webhook.rejected_account_mismatch" for a rejected event. */
+export const logAccountMismatch = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    fundId: v.optional(v.id("funds")),
+    eventAccount: v.optional(v.string()),
+    expectedAccount: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      fundId: args.fundId,
+      action: "webhook.rejected_account_mismatch",
+      details: {
+        eventAccount: args.eventAccount ?? null,
+        expectedAccount: args.expectedAccount ?? null,
+      },
+    });
   },
 });
 
@@ -263,6 +360,39 @@ export async function handleFinanceStripeEvent(
       if (!metadata.fundId || !metadata.communityId) {
         return;
       }
+
+      // Defense-in-depth (ADR-032 §6): metadata.fundId is data WE set, but
+      // nothing about the webhook itself proves this event actually came
+      // from THIS fund's community's own connected account — resolve the
+      // fund's communityFinance server-side and require the event's
+      // Connect account to match before crediting anything.
+      const financeForFund = await ctx.runQuery(
+        internal.functions.finance.webhooks.getFundFinanceForWebhook,
+        { fundId: metadata.fundId },
+      );
+      if (!financeForFund?.fund) {
+        console.error(
+          `[finance] payment_intent.succeeded: fundId ${metadata.fundId} does not resolve to a real fund — ignoring`,
+        );
+        return;
+      }
+      const expectedAccount = financeForFund.communityFinance?.stripeConnectedAccountId;
+      if (!event.account || event.account !== expectedAccount) {
+        console.error(
+          `[finance] payment_intent.succeeded: account mismatch on fund ${financeForFund.fund._id} — event.account=${event.account ?? "missing"} expected=${expectedAccount ?? "none"}`,
+        );
+        await ctx.runMutation(
+          internal.functions.finance.webhooks.logAccountMismatch,
+          {
+            communityId: financeForFund.fund.communityId,
+            fundId: financeForFund.fund._id,
+            eventAccount: event.account,
+            expectedAccount,
+          },
+        );
+        return;
+      }
+
       await ctx.runMutation(
         internal.functions.finance.giving.recordDonationSucceeded,
         {
@@ -272,6 +402,87 @@ export async function handleFinanceStripeEvent(
           amountCents: intent.amount,
           feeCoverCents: Number(metadata.feeCoverCents ?? 0),
           communityId: metadata.communityId,
+        },
+      );
+      return;
+    }
+
+    case "charge.refunded": {
+      const charge = event.data.object as StripeChargeObject;
+      // Donation charges are always created FROM a donation PaymentIntent,
+      // so `payment_intent` is how we trace a refund back to its donation —
+      // we deliberately do NOT gate on `charge.metadata?.fundId` the way
+      // payment_intent.succeeded gates on PaymentIntent metadata: nothing in
+      // this codebase sets metadata directly on the Charge object (only on
+      // the PaymentIntent, in createDonationIntent), and relying on Stripe
+      // implicitly copying PaymentIntent metadata onto the Charge is an
+      // assumption this repo doesn't assert anywhere — silently dropping a
+      // real refund because that assumption turned out wrong would be
+      // exactly the bug this fix exists to close. recordDonationRefund (via
+      // getDonationFundForWebhook here, and its own lookup) already resolves
+      // the donation authoritatively by `payment_intent`, so a non-donation
+      // (e.g. billing) charge refund just misses both lookups and no-ops.
+      if (!charge.payment_intent) {
+        return;
+      }
+      const paymentIntentId =
+        typeof charge.payment_intent === "string"
+          ? charge.payment_intent
+          : charge.payment_intent.id;
+
+      const donationFinance = await ctx.runQuery(
+        internal.functions.finance.webhooks.getDonationFundForWebhook,
+        { paymentIntentId },
+      );
+      if (!donationFinance?.fund) {
+        return; // Not a donation charge — nothing for finance to do.
+      }
+      const expectedAccount = donationFinance.communityFinance?.stripeConnectedAccountId;
+      if (!event.account || event.account !== expectedAccount) {
+        console.error(
+          `[finance] charge.refunded: account mismatch on fund ${donationFinance.fund._id} — event.account=${event.account ?? "missing"} expected=${expectedAccount ?? "none"}`,
+        );
+        await ctx.runMutation(
+          internal.functions.finance.webhooks.logAccountMismatch,
+          {
+            communityId: donationFinance.fund.communityId,
+            fundId: donationFinance.fund._id,
+            eventAccount: event.account,
+            expectedAccount,
+          },
+        );
+        return;
+      }
+
+      await ctx.runMutation(
+        internal.functions.finance.giving.recordDonationRefund,
+        {
+          paymentIntentId,
+          chargeId: charge.id,
+          amountRefundedCents: charge.amount_refunded ?? 0,
+        },
+      );
+      return;
+    }
+
+    case "charge.dispute.created": {
+      // Audit-only for now — no ledger entry, no fund-status gate. ADR-032
+      // doesn't yet define a dispute-lifecycle state machine (provisional
+      // debit, win/loss reversal); any actual bank-side withdrawal Stripe
+      // performs will surface as ledger/bank drift and get caught by the
+      // existing nightly reconcile job until that lands (see giving.ts's
+      // recordDonationDisputed for the full rationale).
+      const dispute = event.data.object as StripeDisputeObject;
+      const paymentIntentId =
+        typeof dispute.payment_intent === "string"
+          ? dispute.payment_intent
+          : dispute.payment_intent?.id;
+      await ctx.runMutation(
+        internal.functions.finance.giving.recordDonationDisputed,
+        {
+          paymentIntentId,
+          disputeId: dispute.id,
+          amountCents: dispute.amount ?? 0,
         },
       );
       return;
@@ -300,6 +511,13 @@ export async function handleFinanceStripeEvent(
     }
 
     default:
-      return; // Not a group-giving event — billing's switch owns everything else.
+      // Not a group-giving event — billing's switch owns everything else.
+      // Within group-giving's own Stripe surface, still deliberately
+      // unhandled (not silently dropped, just not yet needed): other
+      // charge/dispute lifecycle events (charge.dispute.updated/.closed,
+      // charge.dispute.funds_withdrawn/.funds_reinstated), account.updated's
+      // sibling capability events, and anything else Connect can deliver
+      // that this fund/ledger model has no reaction to yet.
+      return;
   }
 }

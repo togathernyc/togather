@@ -605,6 +605,89 @@ describe("applyStripeAccountStatus", () => {
 });
 
 // ============================================================================
+// freezeFundForArchivedGroup (security-review FIX 4)
+// ============================================================================
+
+describe("freezeFundForArchivedGroup", () => {
+  async function insertFund(
+    t: ReturnType<typeof convexTest>,
+    communityId: Id<"communities">,
+    groupId: Id<"groups">,
+    status: "active" | "frozen" | "closed" = "active",
+  ): Promise<Id<"funds">> {
+    return await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      return await ctx.db.insert("funds", {
+        communityId,
+        groupId,
+        name: "Young Adults Fund",
+        type: "group",
+        status,
+        balanceCents: 1000,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+  }
+
+  test("freezes an active fund and audit-logs it", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedOnboardingFixture(t);
+    const fundId = await insertFund(t, communityId, groupId);
+
+    await t.mutation(
+      internal.functions.finance.onboarding.freezeFundForArchivedGroup,
+      { groupId },
+    );
+
+    const fund = await t.run((ctx) => ctx.db.get(fundId));
+    expect(fund?.status).toBe("frozen");
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    expect(auditEvents.filter((e) => e.action === "fund.frozen")).toHaveLength(1);
+  });
+
+  test("is idempotent: retrying an already-frozen fund is a no-op, no duplicate audit row", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId } = await seedOnboardingFixture(t);
+    const fundId = await insertFund(t, communityId, groupId, "frozen");
+
+    await t.mutation(
+      internal.functions.finance.onboarding.freezeFundForArchivedGroup,
+      { groupId },
+    );
+
+    const fund = await t.run((ctx) => ctx.db.get(fundId));
+    expect(fund?.status).toBe("frozen");
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    expect(auditEvents.filter((e) => e.action === "fund.frozen")).toHaveLength(0);
+  });
+
+  test("no-ops when the group has no fund yet (giving never enabled)", async () => {
+    const t = convexTest(schema, modules);
+    const { groupId } = await seedOnboardingFixture(t);
+
+    await expect(
+      t.mutation(
+        internal.functions.finance.onboarding.freezeFundForArchivedGroup,
+        { groupId },
+      ),
+    ).resolves.toBeNull();
+  });
+});
+
+// ============================================================================
 // applyIncreaseEntityStatus (functions/finance/webhooks.ts)
 // ============================================================================
 

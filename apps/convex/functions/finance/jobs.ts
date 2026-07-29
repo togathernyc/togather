@@ -559,6 +559,75 @@ export const retryStaleAllocations = internalAction({
 });
 
 // ============================================================================
+// Hourly stuck-reimbursement retry (defensive backstop — expenses.ts §payReimbursement)
+// ============================================================================
+
+const STUCK_REIMBURSEMENT_THRESHOLD_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+/**
+ * Approved reimbursements that never got an `increaseTransferId` after this
+ * long almost certainly mean the `payReimbursement` scheduler run that
+ * `approveExpense` fires never completed (a mid-flight crash, a transient
+ * Increase outage, etc.) — this is the backstop, not the primary path.
+ *
+ * Modeled as an internal mutation (rather than a query), even though it
+ * performs no writes, so `retryStuckReimbursements` can call it with the
+ * same `ctx.runMutation` plumbing the rest of this file's jobs use — mirrors
+ * `computePendingAllocationCents` above.
+ *
+ * No index on (kind, status, increaseTransferId) exists on `expenses` (only
+ * `by_fund_status`, `by_submitter`, `by_increaseTransferId`) — this is a
+ * full-table scan. Fine at today's expense volume; add a targeted index if
+ * this ever shows up in profiles.
+ */
+export const listStuckReimbursements = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<Doc<"expenses">[]> => {
+    const cutoff = now() - STUCK_REIMBURSEMENT_THRESHOLD_MS;
+    const rows = await ctx.db.query("expenses").collect();
+    return rows.filter(
+      (expense) =>
+        expense.kind === "reimbursement" &&
+        expense.status === "approved" &&
+        !expense.increaseTransferId &&
+        expense.updatedAt < cutoff,
+    );
+  },
+});
+
+/**
+ * Cron entry point: re-schedules `payReimbursement` for every reimbursement
+ * stuck "approved" with no transfer for more than
+ * `STUCK_REIMBURSEMENT_THRESHOLD_MS`.
+ *
+ * Safe to retry unconditionally: `payReimbursement`'s `createAchTransfer`
+ * call carries the idempotency key `reimb:{expenseId}` (see expenses.ts).
+ * If the earlier run actually initiated the transfer at Increase before
+ * crashing (e.g. before `recordReimbursementPaid` could record it), Increase
+ * returns the SAME transfer for the same idempotency key instead of moving
+ * money a second time — so a retry either completes a transfer that never
+ * happened, or collapses into a no-op replay of one that did. Either way,
+ * this can never double-pay a reimbursement.
+ */
+export const retryStuckReimbursements = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ retried: number }> => {
+    const stuck = await ctx.runMutation(
+      internal.functions.finance.jobs.listStuckReimbursements,
+      {},
+    );
+    for (const expense of stuck) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.expenses.payReimbursement,
+        { expenseId: expense._id },
+      );
+    }
+    return { retried: stuck.length };
+  },
+});
+
+// ============================================================================
 // Cron registration
 // ============================================================================
 
@@ -578,5 +647,11 @@ export function registerFinanceCrons(crons: Crons): void {
     "finance-allocation-retry",
     { minuteUTC: 45 },
     internal.functions.finance.jobs.retryStaleAllocations,
+  );
+
+  crons.hourly(
+    "finance-stuck-reimbursement-retry",
+    { minuteUTC: 20 },
+    internal.functions.finance.jobs.retryStuckReimbursements,
   );
 }

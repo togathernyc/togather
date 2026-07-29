@@ -333,6 +333,12 @@ export const createDonationIntent = action({
     fundId: v.id("funds"),
     coverFeesCents: v.optional(v.number()),
     amountCents: v.number(),
+    // Client-generated once per give-sheet session (e.g. a UUID minted when
+    // the sheet opens, reused across retries of the same tap). When present,
+    // it becomes part of a Stripe request-level idempotency key so a
+    // double-tap on "Give" (slow network, accidental double submit) resolves
+    // to the SAME PaymentIntent instead of charging the donor twice.
+    idempotencyNonce: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -377,7 +383,20 @@ export const createDonationIntent = action({
           feeCoverCents: String(feeCoverCents),
         },
       },
-      { stripeAccount: context.stripeConnectedAccountId },
+      {
+        stripeAccount: context.stripeConnectedAccountId,
+        // Stripe's own request-level idempotency key (not our ledger's
+        // idempotencyKey) — a retried/double-tapped request with the same
+        // key returns the ORIGINAL PaymentIntent instead of creating a
+        // second one, which is what actually prevents a double charge (the
+        // ledger's own dedupe only kicks in later, once the PaymentIntent
+        // has already succeeded).
+        ...(args.idempotencyNonce
+          ? {
+              idempotencyKey: `donation-intent:${args.fundId}:${args.idempotencyNonce}`,
+            }
+          : {}),
+      },
     );
 
     if (!paymentIntent.client_secret) {
@@ -484,6 +503,172 @@ export const recordDonationSucceeded = internalMutation({
     );
 
     return donationId;
+  },
+});
+
+// ============================================================================
+// recordDonationRefund — called by the Stripe webhook layer on charge.refunded
+// ============================================================================
+
+/**
+ * Records a (possibly partial) refund against a donation's charge.
+ *
+ * `amountRefundedCents` is Stripe's CUMULATIVE `amount_refunded` for the
+ * charge — Stripe redelivers `charge.refunded` with the running total on
+ * every refund step (first partial, then a later top-up to full), never a
+ * per-event delta. We recompute the delta ourselves by summing every prior
+ * "refund" ledger entry posted for this `chargeId` and subtracting: a
+ * repeat delivery of the SAME cumulative amount nets to a zero delta and is
+ * a pure no-op (replay-safe), while a NEW partial/full refund posts only
+ * the newly-refunded increment.
+ *
+ * Unknown `paymentIntentId` (shouldn't happen for a real donation charge,
+ * but Stripe webhooks can in principle reference anything) logs and
+ * returns rather than throwing — a throw would just retry forever against
+ * data that will never resolve.
+ *
+ * No fund-status gate here: `postLedgerEntry` already allows "refund" kind
+ * entries on a frozen fund (see lib/finance/ledger.ts's
+ * FROZEN_ALLOWED_KINDS) — a fund frozen mid-flight (e.g. its group just
+ * archived) must still be able to settle a refund already in progress at
+ * Stripe.
+ */
+export const recordDonationRefund = internalMutation({
+  args: {
+    paymentIntentId: v.string(),
+    chargeId: v.string(),
+    amountRefundedCents: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const donation = await ctx.db
+      .query("donations")
+      .withIndex("by_stripePaymentIntentId", (q) =>
+        q.eq("stripePaymentIntentId", args.paymentIntentId),
+      )
+      .first();
+    if (!donation) {
+      console.error(
+        `[finance] recordDonationRefund: no donation for paymentIntent ${args.paymentIntentId} (charge ${args.chargeId})`,
+      );
+      return;
+    }
+
+    const fund = await ctx.db.get(donation.fundId);
+    if (!fund) {
+      console.error(
+        `[finance] recordDonationRefund: fund ${donation.fundId} not found for donation ${donation._id}`,
+      );
+      return;
+    }
+
+    // No index on (fundId, kind, stripeObjectId) — by_fund is fine at these
+    // volumes (a single fund's ledger, filtered client-side), per the task's
+    // own note that this is acceptable.
+    const fundEntries = await ctx.db
+      .query("ledgerEntries")
+      .withIndex("by_fund", (q) => q.eq("fundId", fund._id))
+      .collect();
+    const alreadyRefundedCents = fundEntries
+      .filter((e) => e.kind === "refund" && e.stripeObjectId === args.chargeId)
+      .reduce((sum, e) => sum + e.amountCents, 0);
+
+    const deltaCents = args.amountRefundedCents - alreadyRefundedCents;
+    if (deltaCents <= 0) {
+      // Already fully applied (a redelivery of the same, or an
+      // out-of-order/smaller, cumulative amount) — nothing new to post.
+      return;
+    }
+
+    await postLedgerEntry(ctx, {
+      fundId: fund._id,
+      direction: "debit",
+      amountCents: deltaCents,
+      kind: "refund",
+      // The CUMULATIVE amount in the key (not just chargeId) means each
+      // refund STEP on this charge gets its own idempotency key: a repeat
+      // delivery of the same cumulative amount dedupes via postLedgerEntry's
+      // own idempotencyKey check, while a later step (partial -> full) is a
+      // distinct key and posts its own entry.
+      idempotencyKey: `refund:${args.chargeId}:${args.amountRefundedCents}`,
+      stripeObjectId: args.chargeId,
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "donation.refunded",
+      details: {
+        paymentIntentId: args.paymentIntentId,
+        chargeId: args.chargeId,
+        deltaCents,
+        cumulativeCents: args.amountRefundedCents,
+      },
+    });
+  },
+});
+
+// ============================================================================
+// recordDonationDisputed — called by the Stripe webhook layer on
+// charge.dispute.created
+// ============================================================================
+
+/**
+ * Audit-only for now: records a Stripe dispute (chargeback) filed against a
+ * donation charge. ADR-032 doesn't yet define a dispute-lifecycle state
+ * machine (provisional debit on dispute creation, reversal on win, final
+ * debit + fund-balance impact on loss) — that's real money potentially
+ * leaving a fund outside the normal ledger-entry flow, and needs its own
+ * design pass. Until it ships, a dispute is surfaced purely for visibility
+ * via `financeAuditEvents`; any actual withdrawal Stripe/Increase performs
+ * behind the scenes will show up as ledger/bank drift and get caught (and
+ * alarmed on) by the existing nightly reconcile job — see jobs.ts's
+ * `runNightlyReconcile`.
+ */
+export const recordDonationDisputed = internalMutation({
+  args: {
+    paymentIntentId: v.optional(v.string()),
+    disputeId: v.string(),
+    amountCents: v.number(),
+  },
+  handler: async (ctx, args) => {
+    if (!args.paymentIntentId) {
+      console.error(
+        `[finance] recordDonationDisputed: dispute ${args.disputeId} has no payment_intent`,
+      );
+      return;
+    }
+
+    const donation = await ctx.db
+      .query("donations")
+      .withIndex("by_stripePaymentIntentId", (q) =>
+        q.eq("stripePaymentIntentId", args.paymentIntentId!),
+      )
+      .first();
+    if (!donation) {
+      console.error(
+        `[finance] recordDonationDisputed: no donation for paymentIntent ${args.paymentIntentId} (dispute ${args.disputeId})`,
+      );
+      return;
+    }
+
+    const fund = await ctx.db.get(donation.fundId);
+    if (!fund) {
+      console.error(
+        `[finance] recordDonationDisputed: fund ${donation.fundId} not found for donation ${donation._id}`,
+      );
+      return;
+    }
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "donation.disputed",
+      details: {
+        paymentIntentId: args.paymentIntentId,
+        disputeId: args.disputeId,
+        amountCents: args.amountCents,
+      },
+    });
   },
 });
 

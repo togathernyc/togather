@@ -641,6 +641,37 @@ export const applyStripeAccountStatus = internalMutation({
 });
 
 // ============================================================================
+// freezeFundForArchivedGroup — ADR-032 §3 "Group archive" (the freeze half
+// only; the bank-side sweep — AccountTransfer the remainder to General,
+// close the Account, paired sweep ledger entries — is a deferred Phase-2
+// admin mutation, see ARCHITECTURE.md's "Known Seams & TODOs").
+// ============================================================================
+
+export const freezeFundForArchivedGroup = internalMutation({
+  args: { groupId: v.id("groups") },
+  handler: async (ctx, args) => {
+    const fund = await ctx.db
+      .query("funds")
+      .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+      .first();
+    if (!fund || fund.status !== "active") {
+      // No fund (giving was never enabled for this group), or it's already
+      // frozen/closed — idempotent no-op either way, safe for a scheduler
+      // retry or a re-archive of an already-archived group.
+      return;
+    }
+
+    await ctx.db.patch(fund._id, { status: "frozen", updatedAt: now() });
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "fund.frozen",
+      details: { reason: "group_archived" },
+    });
+  },
+});
+
+// ============================================================================
 // getStripeOnboardingLinkUrl — the "one redirect" of ADR-032 §2. Account
 // links expire within minutes, so the URL is minted on demand per tap, never
 // stored. Lives here (not the mobile client) so STRIPE_SECRET_KEY stays
@@ -669,10 +700,13 @@ export const getStripeOnboardingLinkUrl = action({
   },
   handler: async (ctx, args): Promise<{ url: string }> => {
     for (const url of [args.returnUrl, args.refreshUrl]) {
-      // Stripe requires https (or a mobile deep link) — reject anything that
-      // could smuggle in javascript: or data: URLs.
-      if (!/^(https:\/\/|[a-z][a-z0-9+.-]*:\/\/)/i.test(url) || /^(javascript|data):/i.test(url)) {
-        throw new Error("Invalid return/refresh URL");
+      // Strict https-only: Stripe's hosted onboarding requires https
+      // return/refresh URLs, and the app's own deep-linking uses https
+      // universal links — there is no legitimate non-https scheme here, so
+      // requiring https by construction also rejects javascript:/data:/etc.
+      // without needing a separate denylist to keep in sync.
+      if (!/^https:\/\//i.test(url)) {
+        throw new Error("Invalid return/refresh URL — must be https");
       }
     }
 

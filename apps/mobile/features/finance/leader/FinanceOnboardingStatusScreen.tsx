@@ -18,12 +18,13 @@ import { ToastManager } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
 import { FinanceOnboardingStatusView } from "./FinanceOnboardingStatusView";
 
-// Mirrors the deep-link scheme used for the Planning Center OAuth callback
-// (see features/integrations/hooks/usePlanningCenterAuth.ts) — the app's
-// registered scheme is "togather" (app.json `expo.scheme`). Stripe's hosted
-// onboarding just needs a URL to bounce back to; Convex reactivity (not the
-// redirect itself) is what refreshes this screen's status.
-const FINANCE_SETUP_DEEP_LINK = "togather://leader-tools/finance-setup";
+// An https universal link, NOT the custom "togather://" scheme: Stripe
+// requires https return/refresh URLs for hosted onboarding (the backend's
+// getStripeOnboardingLinkUrl enforces it too), and the app registers
+// applinks for togather.nyc (app.config.js associatedDomains) so this
+// re-opens the app when installed. Stripe just needs a URL to bounce back
+// to; Convex reactivity (not the redirect itself) refreshes this screen.
+const FINANCE_SETUP_DEEP_LINK = "https://togather.nyc/leader-tools/finance-setup";
 
 export function FinanceOnboardingStatusScreen() {
   const { colors } = useTheme();

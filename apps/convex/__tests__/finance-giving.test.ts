@@ -381,6 +381,21 @@ describe("getGivingContext", () => {
     });
     expect(notLive!.givingLive).toBe(false);
   });
+
+  test("givingLive is false once the fund is frozen, even with onboarding live (security-review FIX 4)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.fundId, { status: "frozen" });
+    });
+
+    const result = await t.query(api.functions.finance.giving.getGivingContext, {
+      token: await tokenFor(s.memberUserId),
+      groupId: s.groupId,
+    });
+    expect(result!.givingLive).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -488,6 +503,360 @@ describe("recordDonationSucceeded", () => {
     // returns null and sendDonationReceipt marks the receipt "failed"
     // without making any network call.
     expect(donation?.receiptEmailStatus).toBe("failed");
+  });
+});
+
+// ============================================================================
+// recordDonationRefund (security-review FIX 2)
+// ============================================================================
+
+describe("recordDonationRefund", () => {
+  test("full refund posts a debit once; replaying the same cumulative amount is a no-op", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_refund_full",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 5000,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+    const fundAfterDonation = await t.run((ctx) => ctx.db.get(s.fundId));
+
+    const chargeId = "ch_refund_full";
+    await t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+      paymentIntentId: "pi_refund_full",
+      chargeId,
+      amountRefundedCents: 5000,
+    });
+    // Stripe redelivers charge.refunded with the SAME cumulative amount —
+    // must be a pure no-op, not a second debit.
+    await t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+      paymentIntentId: "pi_refund_full",
+      chargeId,
+      amountRefundedCents: 5000,
+    });
+
+    const ledgerEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    const refundEntries = ledgerEntries.filter((e) => e.kind === "refund");
+    expect(refundEntries).toHaveLength(1);
+    expect(refundEntries[0].direction).toBe("debit");
+    expect(refundEntries[0].amountCents).toBe(5000);
+    expect(refundEntries[0].stripeObjectId).toBe(chargeId);
+
+    const fundAfterRefund = await t.run((ctx) => ctx.db.get(s.fundId));
+    expect(fundAfterRefund?.balanceCents).toBe(fundAfterDonation!.balanceCents - 5000);
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    expect(auditEvents.filter((e) => e.action === "donation.refunded")).toHaveLength(1);
+  });
+
+  test("partial refund then full refund posts two entries summing to the full amount", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_refund_partial",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 10_000,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+
+    const chargeId = "ch_refund_partial";
+    // First delivery: cumulative amount_refunded so far is 3000 (a partial refund).
+    await t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+      paymentIntentId: "pi_refund_partial",
+      chargeId,
+      amountRefundedCents: 3000,
+    });
+    // Later: a second refund brings the cumulative total to the full 10000.
+    await t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+      paymentIntentId: "pi_refund_partial",
+      chargeId,
+      amountRefundedCents: 10_000,
+    });
+
+    const ledgerEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    const refundEntries = ledgerEntries
+      .filter((e) => e.kind === "refund")
+      .sort((a, b) => a.amountCents - b.amountCents);
+    expect(refundEntries).toHaveLength(2);
+    expect(refundEntries[0].amountCents).toBe(3000);
+    expect(refundEntries[1].amountCents).toBe(7000);
+    expect(refundEntries.reduce((sum, e) => sum + e.amountCents, 0)).toBe(10_000);
+  });
+
+  test("refund on a frozen fund still posts — refunds are never blocked by fund status", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_refund_frozen",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 2000,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.fundId, { status: "frozen" });
+    });
+
+    await t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+      paymentIntentId: "pi_refund_frozen",
+      chargeId: "ch_refund_frozen",
+      amountRefundedCents: 2000,
+    });
+
+    const ledgerEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    expect(ledgerEntries.some((e) => e.kind === "refund")).toBe(true);
+  });
+
+  test("unknown paymentIntentId logs and returns without throwing", async () => {
+    const t = convexTest(schema, modules);
+    await seedGivingFixture(t);
+
+    await expect(
+      t.mutation(internal.functions.finance.giving.recordDonationRefund, {
+        paymentIntentId: "pi_does_not_exist",
+        chargeId: "ch_does_not_exist",
+        amountRefundedCents: 1000,
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+// ============================================================================
+// recordDonationDisputed (security-review FIX 2 — audit-only)
+// ============================================================================
+
+describe("recordDonationDisputed", () => {
+  test("audit-logs a dispute against a known donation; posts no ledger entry", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_dispute_1",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 4000,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+
+    await t.mutation(internal.functions.finance.giving.recordDonationDisputed, {
+      paymentIntentId: "pi_dispute_1",
+      disputeId: "dp_1",
+      amountCents: 4000,
+    });
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    expect(auditEvents.filter((e) => e.action === "donation.disputed")).toHaveLength(1);
+
+    const ledgerEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    // Only the original donation credit — no ledger entry for the dispute.
+    expect(ledgerEntries).toHaveLength(1);
+    expect(ledgerEntries[0].kind).toBe("donation");
+  });
+
+  test("unknown paymentIntentId logs and returns without throwing", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(internal.functions.finance.giving.recordDonationDisputed, {
+        paymentIntentId: "pi_missing",
+        disputeId: "dp_missing",
+        amountCents: 500,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  test("missing payment_intent on the dispute event logs and returns without throwing", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(internal.functions.finance.giving.recordDonationDisputed, {
+        disputeId: "dp_no_pi",
+        amountCents: 500,
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+// ============================================================================
+// Webhook account cross-check (security-review FIX 3 — functions/finance/webhooks.ts)
+//
+// `handleFinanceStripeEvent` itself is a plain exported function (not a
+// registered Convex function) that requires a live ActionCtx to invoke —
+// convex-test only synthesizes an ActionCtx for REGISTERED actions, so
+// (mirroring this repo's own documented convention, see the top-of-file
+// comment on finance-onboarding.test.ts re: handleIncreaseWebhookRequest /
+// handleFinanceStripeEvent not being exercised directly) these tests drive
+// its registered constituent pieces — getFundFinanceForWebhook,
+// getDonationFundForWebhook, logAccountMismatch — the same way the
+// dispatcher composes them, and assert the same externally-observable
+// outcomes the task specifies: a mismatch credits/refunds nothing and
+// writes "webhook.rejected_account_mismatch"; a match behaves as before.
+// ============================================================================
+
+describe("webhook account cross-check (functions/finance/webhooks.ts)", () => {
+  test("getFundFinanceForWebhook resolves a real fund's communityFinance; null for a garbage id", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    const resolved = await t.query(
+      internal.functions.finance.webhooks.getFundFinanceForWebhook,
+      { fundId: s.fundId },
+    );
+    expect(resolved?.fund?._id).toBe(s.fundId);
+    expect(resolved?.communityFinance?.stripeConnectedAccountId).toBe(
+      "acct_test123",
+    );
+
+    const garbage = await t.query(
+      internal.functions.finance.webhooks.getFundFinanceForWebhook,
+      { fundId: "not-a-real-id" },
+    );
+    expect(garbage).toBeNull();
+  });
+
+  test("mismatched event.account credits nothing and writes a rejection audit row; matching event.account credits as before", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    const financeForFund = await t.query(
+      internal.functions.finance.webhooks.getFundFinanceForWebhook,
+      { fundId: s.fundId },
+    );
+    const expectedAccount = financeForFund?.communityFinance?.stripeConnectedAccountId;
+    expect(expectedAccount).toBe("acct_test123");
+
+    // --- Mismatched account: the dispatcher's guard rejects BEFORE ever
+    // calling recordDonationSucceeded. ---
+    const spoofedAccount = "acct_attacker_controlled";
+    expect(spoofedAccount).not.toBe(expectedAccount);
+    await t.mutation(internal.functions.finance.webhooks.logAccountMismatch, {
+      communityId: s.communityId,
+      fundId: s.fundId,
+      eventAccount: spoofedAccount,
+      expectedAccount,
+    });
+
+    let donations = await t.run((ctx) =>
+      ctx.db
+        .query("donations")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    expect(donations).toHaveLength(0);
+
+    let auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    const mismatchEvents = auditEvents.filter(
+      (e) => e.action === "webhook.rejected_account_mismatch",
+    );
+    expect(mismatchEvents).toHaveLength(1);
+    expect(JSON.parse(mismatchEvents[0].detailsJson!)).toMatchObject({
+      eventAccount: spoofedAccount,
+      expectedAccount,
+    });
+
+    // --- Matching account: credited exactly as before. ---
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_matching_account",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 1500,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+
+    donations = await t.run((ctx) =>
+      ctx.db
+        .query("donations")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    expect(donations).toHaveLength(1);
+    expect(donations[0].amountCents).toBe(1500);
+
+    auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", s.fundId))
+        .collect(),
+    );
+    // Still exactly one rejection — the matching-account path didn't add another.
+    expect(
+      auditEvents.filter((e) => e.action === "webhook.rejected_account_mismatch"),
+    ).toHaveLength(1);
+  });
+
+  test("getDonationFundForWebhook resolves a donation's fund by paymentIntentId; null for unknown", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    await t.mutation(internal.functions.finance.giving.recordDonationSucceeded, {
+      paymentIntentId: "pi_for_refund_lookup",
+      fundId: s.fundId,
+      donorUserId: s.donorUserId,
+      amountCents: 1000,
+      feeCoverCents: 0,
+      communityId: s.communityId,
+    });
+
+    const resolved = await t.query(
+      internal.functions.finance.webhooks.getDonationFundForWebhook,
+      { paymentIntentId: "pi_for_refund_lookup" },
+    );
+    expect(resolved?.fund?._id).toBe(s.fundId);
+    expect(resolved?.communityFinance?.stripeConnectedAccountId).toBe(
+      "acct_test123",
+    );
+
+    const unknown = await t.query(
+      internal.functions.finance.webhooks.getDonationFundForWebhook,
+      { paymentIntentId: "pi_never_existed" },
+    );
+    expect(unknown).toBeNull();
   });
 });
 

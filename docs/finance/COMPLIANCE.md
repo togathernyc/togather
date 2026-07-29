@@ -76,15 +76,17 @@ Receipt includes:
 
 ## Financial Controls
 
-**No Self-Approval** — Expense approvers cannot approve their own submissions. Enforced in `approveExpense` (lib/finance/expensePolicy.ts).
+**No Self-Approval** — An expense's submitter can never approve it, regardless of role (including finance_admin and community admin). Enforced unconditionally in `canApprove()` (`lib/finance/expensePolicy.ts`), called from `approveExpense` (`functions/finance/expenses.ts`).
 
-**Two-Approver Threshold** — Expenses ≥ $200 (20,000 cents) require two distinct approvers. Implemented in `canApprove()` + `nextStatusOnApproval()` (lib/finance/expensePolicy.ts line checking `EXPENSE_APPROVAL_THRESHOLD_CENTS = 2000`). First approval → "approved" status; second approval → "approved_final" → ready for payout.
+**Two-Approver Threshold** — Expenses ≥ $200 (`SECOND_APPROVAL_THRESHOLD_CENTS = 20000` in `lib/finance/expensePolicy.ts`) require two *distinct* approvers, neither of whom is the submitter. Under the threshold one approval moves the expense `pending → approved`; at/above it, the first approval records `approverId` while status stays `pending`, and only a second, different approver (`secondApproverId`) moves it to `approved` and triggers payout scheduling. Implemented in `nextStatusOnApproval()`.
 
 **Last Finance Admin Guard** — `revokeFundRole` refuses to revoke the last active finance_admin on an active fund (`functions/finance/roles.ts`); community admins may override to hand a fund off during an offboard. Covered by `finance-expenses.test.ts`.
 
 **Monotonic Onboarding Status Machine** — Community finance status transitions are one-way (collecting → verifying → live; or → stripe_blocked / increase_blocked on failure). No going backward. Implemented in `applyStripeAccountStatus` + `applyIncreaseEntityStatus` (onboarding.ts, webhooks.ts) — status only advances on webhook updates or explicit admin resubmission of the form.
 
 **Nightly Reconcile + Drift Audit** — `runNightlyReconcileAllCommunities` compares ledger balance against bank balance (adjusted for donations in allocation pipeline). Drift logged as `financeAuditEvents` with `action: "reconcile.drift"` and details including ledger, bank, and pending amounts. Alerts are in `detailsJson` (OPEN ITEM: add monitoring/notification to alert ops team on drift).
+
+**Collusion / Sock-Puppet Residual Risk** — The two-approver threshold is a control on *distinct approvals*, not on *distinct trust*. It assumes the two approvers are independent humans acting in good faith. That assumption isn't structurally enforced: any active group leader can grant fund roles on their group's fund — including `manager` to a second account they also control — via `requireFundRoleOrGroupLeader`'s leader carve-out (ADR-032 §4), and community admins bypass fund-role checks entirely (`requireFundRole`'s admin override), so an admin can both submit and effectively steer approval on any fund. In other words, the threshold is trust-scoped to leader/admin integrity, not a cryptographic or organizational guarantee against a single bad actor operating two accounts. This is an accepted residual risk, not a bug to fix in this change — flagged here for the fraud/ops runbook (OPEN ITEM: define detection heuristics, e.g. approver pairs sharing a device/IP/payout destination, for ops to monitor).
 
 ## Open Items for Counsel & Underwriting
 

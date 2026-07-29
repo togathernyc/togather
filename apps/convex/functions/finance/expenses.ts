@@ -131,6 +131,15 @@ export const submitExpense = mutation({
       throw new Error("Reimbursements are only supported for group funds");
     }
 
+    // A frozen/closed fund (e.g. its group was just archived — see
+    // functions/finance/onboarding.ts's freezeFundForArchivedGroup) accepts
+    // no new spend activity, only settlement of what's already in flight.
+    if (fund.status !== "active") {
+      throw new Error(
+        "This fund isn't active — new expenses can't be submitted",
+      );
+    }
+
     const membership = await ctx.db
       .query("groupMembers")
       .withIndex("by_group_user", (q) =>
@@ -208,6 +217,13 @@ export const approveExpense = mutation({
     const fund = await ctx.db.get(expense.fundId);
     if (!fund) {
       throw new Error("Fund not found");
+    }
+
+    // A fund frozen/closed after submission (e.g. group archived mid-review)
+    // must not approve new spend — denyExpense stays available regardless,
+    // since a denial is never a new commitment of money.
+    if (fund.status !== "active") {
+      throw new Error("This fund isn't active — expenses can't be approved");
     }
 
     await requireFundRole(ctx, fund._id, userId, "manager");
@@ -333,6 +349,7 @@ export const logReimbursementPayOutcome = internalMutation({
     action: v.union(
       v.literal("expense.pay_skipped"),
       v.literal("expense.pay_blocked_no_destination"),
+      v.literal("expense.pay_blocked_fund_inactive"),
     ),
     details: v.optional(v.any()),
   },
@@ -433,6 +450,26 @@ export const payReimbursement = internalAction({
             kind: expense.kind,
             hasReceipt: !!expense.receiptKey,
           },
+        },
+      );
+      return;
+    }
+
+    // HARD GATE, checked BEFORE any call to Increase: a frozen/closed fund
+    // must never have money moved out of it via createAchTransfer. This
+    // used to be enforced only by postLedgerEntry's frozen-kind check inside
+    // recordReimbursementPaid — which runs AFTER the ACH transfer already
+    // executed, so a fund frozen between approval and payout (e.g. its
+    // group got archived) could still have money leave the bank account
+    // even though the ledger write would later fail/skip. Checking here
+    // stops the transfer from ever being initiated.
+    if (fund.status !== "active") {
+      await ctx.runMutation(
+        internal.functions.finance.expenses.logReimbursementPayOutcome,
+        {
+          expenseId: args.expenseId,
+          action: "expense.pay_blocked_fund_inactive",
+          details: { fundStatus: fund.status },
         },
       );
       return;
