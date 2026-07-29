@@ -49,6 +49,8 @@ import {
 } from '../utils/fileTypes';
 import { useTheme } from '@hooks/useTheme';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import { waAccentPalette } from '@utils/waPalette';
 import { VoiceRecorderBar } from './VoiceRecorderBar';
 import { AttachmentPanel } from './AttachmentPanel';
 import { useDraftStore } from '../../../stores/draftStore';
@@ -137,8 +139,12 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
 };
 
 export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false, placeholder }: MessageInputProps) {
-  const { colors: themeColors } = useTheme();
-  const { isKnicksMode } = useCommunityTheme();
+  const { colors: themeColors, isDark } = useTheme();
+  const { isKnicksMode, primaryColor } = useCommunityTheme();
+  // WhatsApp-shell composer anatomy (WHATSAPP-DESIGN-SYSTEM.md §5) —
+  // flag-gated; flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
+  const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
   const { getDraft, setDraft: saveDraft, clearDraft } = useDraftStore();
   const initialDraft = channelId ? getDraft(channelId) : '';
   const [text, setText] = useState(initialDraft);
@@ -1011,7 +1017,16 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
   });
 
   return (
-    <View style={[styles.container, { backgroundColor: themeColors.surface, borderTopColor: themeColors.border }]}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: themeColors.surface, borderTopColor: themeColors.border },
+        // §5 "flat bar on wallpaper" — the composer sits directly on the
+        // chat wallpaper with no dividing hairline above it (the pill input
+        // carries its own border instead).
+        whatsappShellEnabled && { backgroundColor: themeColors.chatWallpaper, borderTopWidth: 0 },
+      ]}
+    >
       {/* Mention Autocomplete */}
       {showMentionAutocomplete && (
         <View style={[styles.autocompleteContainer, { borderBottomColor: themeColors.border, backgroundColor: themeColors.surface }]}>
@@ -1195,6 +1210,89 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
             rotateAnim.setValue(0);
           }}
         />
+      ) : whatsappShellEnabled ? (
+      <>
+      {/* Input Row — WhatsApp-shell composer anatomy (§5): '+' (neutral,
+          opens the same attachment panel) → pill text field (surface fill,
+          hairline border) → camera + mic (neutral) that morph into a single
+          accent send circle once there's something to send. Every handler
+          below is the same one the flag-off row uses; only the icon
+          arrangement and colors differ. */}
+      <View style={styles.inputRow}>
+        {!recipientPending && (
+          <Pressable
+            style={styles.iconButton}
+            onPress={handleAttachmentPress}
+            disabled={uploading || isSending}
+          >
+            <Animated.View style={{ transform: [{ rotate: plusRotation }] }}>
+              <Ionicons name="add" size={26} color={uploading ? themeColors.textTertiary : themeColors.icon} />
+            </Animated.View>
+          </Pressable>
+        )}
+
+        <TextInput
+          ref={textInputRef}
+          style={[
+            styles.input,
+            isWeb ? styles.inputWeb : styles.inputNative,
+            { borderColor: themeColors.separator, backgroundColor: themeColors.surface, color: themeColors.text },
+          ]}
+          value={text}
+          onChangeText={handleTextChange}
+          onSelectionChange={handleSelectionChange}
+          onContentSizeChange={isWeb ? undefined : (event) => {
+            const contentHeight = event.nativeEvent.contentSize.height;
+            const maxContentHeight = LINE_HEIGHT * MAX_INPUT_LINES;
+            setNativeScrollEnabled(contentHeight >= maxContentHeight);
+          }}
+          placeholder={placeholder || "Message..."}
+          placeholderTextColor={themeColors.textTertiary}
+          multiline
+          scrollEnabled={isWeb ? true : nativeScrollEnabled}
+          maxLength={2000}
+          editable={!uploading}
+        />
+
+        {canSend ? (
+          <Pressable
+            style={[styles.sendButton, { backgroundColor: waAccent }]}
+            onPress={handleSend}
+            disabled={!canSend}
+          >
+            {isSending ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name={isKnicksMode ? 'basketball' : 'arrow-up'} size={20} color="#fff" />
+            )}
+          </Pressable>
+        ) : (
+          <>
+            {!recipientPending && (
+              <Pressable style={styles.iconButton} onPress={captureMedia} disabled={uploading || isSending}>
+                <Ionicons name="camera-outline" size={24} color={themeColors.icon} />
+              </Pressable>
+            )}
+            {!recipientPending && isVoiceRecordingSupported() && (
+              <Pressable
+                style={styles.iconButton}
+                onPress={() => setIsVoiceRecording(true)}
+                disabled={uploading || isSending}
+              >
+                <Ionicons name="mic-outline" size={24} color={themeColors.icon} />
+              </Pressable>
+            )}
+          </>
+        )}
+      </View>
+
+      {/* Inline Attachment Panel (below input row) */}
+      <AttachmentPanel
+        visible={showAttachmentMenu}
+        options={attachmentOptions}
+        onOptionPress={handleOptionPress}
+      />
+      </>
       ) : (
       <>
       {/* Input Row */}

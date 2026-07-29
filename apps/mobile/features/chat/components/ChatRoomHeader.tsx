@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { Avatar } from "@components/ui/Avatar";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
@@ -50,6 +51,9 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
   const { colors } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isOneOnOne = channelType === "dm";
+  // WhatsApp-shell nav chrome (WHATSAPP-DESIGN-SYSTEM.md §4) — flag-gated;
+  // flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
 
   const titleLine = useMemo(() => {
     if (isOneOnOne) {
@@ -64,13 +68,28 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
   }, [isOneOnOne, otherMembers, channelName]);
 
   const subtitleLine = useMemo(() => {
-    if (isOneOnOne) return null;
+    if (isOneOnOne) {
+      // §5 "subtitle 'tap here for info'-style secondary line" — the 1:1
+      // header has no member-count data to show (that's the group_dm case
+      // below), so flag-on shows the same static "tap for info" hint
+      // WhatsApp itself renders here rather than inventing per-user data.
+      return whatsappShellEnabled ? "Tap here for contact info" : null;
+    }
     const total = otherMembers.length + 1;
     return `${total} people`;
-  }, [isOneOnOne, otherMembers.length]);
+  }, [isOneOnOne, otherMembers.length, whatsappShellEnabled]);
 
   return (
-    <View style={[styles.header, { backgroundColor: colors.surface }]}>
+    <View
+      style={[
+        styles.header,
+        { backgroundColor: colors.surface },
+        whatsappShellEnabled && [
+          styles.waHeader,
+          { backgroundColor: colors.navBarBackground, borderBottomColor: colors.separator },
+        ],
+      ]}
+    >
       {!isDesktopWeb && (
         <TouchableOpacity onPress={onBack} style={styles.backButton} hitSlop={8}>
           <Ionicons name="chevron-back" size={28} color={colors.text} />
@@ -147,6 +166,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 12,
+  },
+  // §4 nav chrome (flag-gated): navBarBackground fill + hairline bottom
+  // border instead of the flag-off borderless surface fill.
+  waHeader: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backButton: {
     padding: 4,

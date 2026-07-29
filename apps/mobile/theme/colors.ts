@@ -62,6 +62,36 @@ export type ThemeColors = {
   landing: string;
   modalBackground: string;
   modalCloseBackground: string;
+
+  // --- WhatsApp-shell tokens (whatsapp-shell flag) ---------------------------
+  // Additive-only tokens for the `docs/plans/church-migration-ui-redesign/
+  // WHATSAPP-DESIGN-SYSTEM.md` §1 color system. Consumed by `components/wa/*`
+  // and `utils/waPalette.ts`. Every existing key above is unchanged by these —
+  // flag-off rendering never reads these tokens.
+  /** §1 `bg.grouped` — inset-grouped screen canvas (You tab, Community/Group/
+   *  Channel info, Settings). Distinct from `surface`/`surfaceSecondary`,
+   *  which the flag-off app uses for both full-bleed rows and grouped cards. */
+  backgroundGrouped: string;
+  /** §1 `bg.card` — inset-grouped card/cell fill sitting on `backgroundGrouped`. */
+  surfaceGrouped: string;
+  /** §1 `bg.navBar` — nav bar fill (opaque; a distinct semantic role from
+   *  `surface`/`surfaceGrouped` even where the value coincides). */
+  navBarBackground: string;
+  /** §1 `separator` — hairline dividers for full-bleed rows (§3.1) and
+   *  inset-grouped cards (§3.2). Distinct from the general-purpose
+   *  `border`/`borderLight` tokens above, which other (non-WA) UI uses. */
+  separator: string;
+  /** §1.5 — chat wallpaper base tone. The low-opacity tone-on-tone doodle
+   *  pattern renders on top of this at the surface-agent's discretion; this
+   *  token is the flat base color only, never brand-tinted. */
+  chatWallpaper: string;
+  /** §1.6 — incoming message bubble fill. The outgoing bubble is brand-derived
+   *  from the community's `primaryColor` (see `utils/waPalette.ts`), so it has
+   *  no static theme token here. */
+  bubbleIncoming: string;
+  /** §1 `mention.blue` — sender names, @mentions, and read receipt ticks.
+   *  Fixed neutral color, never brand-mapped (§1.3). */
+  mentionBlue: string;
 };
 
 export const lightColors: ThemeColors = {
@@ -119,6 +149,15 @@ export const lightColors: ThemeColors = {
   landing: '#1a1a1a',
   modalBackground: '#ffffff',
   modalCloseBackground: 'rgba(255, 255, 255, 0.9)',
+
+  // WhatsApp-shell tokens — see WHATSAPP-DESIGN-SYSTEM.md §1.1
+  backgroundGrouped: '#F2F2F2',
+  surfaceGrouped: '#FFFFFF',
+  navBarBackground: '#FFFFFF',
+  separator: '#E5E5E5',
+  chatWallpaper: '#ECE5DD',
+  bubbleIncoming: '#FFFFFF',
+  mentionBlue: '#0068C9',
 };
 
 export const darkColors: ThemeColors = {
@@ -176,6 +215,15 @@ export const darkColors: ThemeColors = {
   landing: '#0b141a',
   modalBackground: '#1f2c34',
   modalCloseBackground: 'rgba(31, 44, 52, 0.9)',
+
+  // WhatsApp-shell tokens — see WHATSAPP-DESIGN-SYSTEM.md §1.2
+  backgroundGrouped: '#000000',
+  surfaceGrouped: '#1F2C34',
+  navBarBackground: '#1F2C34',
+  separator: '#2A3942',
+  chatWallpaper: '#0B141A',
+  bubbleIncoming: '#1F2C34',
+  mentionBlue: '#53BDEB',
 };
 
 /**

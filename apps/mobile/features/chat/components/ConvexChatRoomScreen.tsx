@@ -31,6 +31,8 @@ import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { waAccentPalette } from "@utils/waPalette";
 import { parseStreamChannelId } from "@togather/shared";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
@@ -106,7 +108,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const { user } = useAuth();
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  // WhatsApp-shell chat-room chrome (WHATSAPP-DESIGN-SYSTEM.md §5) —
+  // flag-gated; flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
 
   // Mutations
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
@@ -1280,8 +1285,21 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 position above the list (not in the inverted FlatList) avoids
                 upending the chat scroll behavior. */}
             {isAdHocChannel && <ChatPrivacyCard />}
-            {/* Message List - handles its own loading state when channelId is null */}
-            <View style={styles.chatContainer}>
+            {/* Message List - handles its own loading state when channelId is null.
+                §5 "Wallpaper: full-bleed behind the message list" — flag-gated
+                background swap; flag-off keeps inheriting the screen's surface
+                color as before.
+                NOTE: day-pill/date-separator rendering (also §5) and the
+                bubble reply-quote bar (§5) both live entirely inside
+                MessageList.tsx, which is out of scope for this pass (touch
+                list is ConvexChatRoomScreen/MessageItem/MessageInput/
+                ChatRoomHeader only) — not implemented here; see PR notes. */}
+            <View
+              style={[
+                styles.chatContainer,
+                whatsappShellEnabled && { backgroundColor: colors.chatWallpaper },
+              ]}
+            >
               <MessageList
                 channelId={activeChannelId ?? null}
                 currentUserId={currentUserId}
@@ -1389,6 +1407,38 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   isAdHocChannel && channelData?.recipientPending === true
                 }
               />
+            ) : whatsappShellEnabled ? (
+              // §5 "Announcement footer note: centered, 13pt, text.secondary
+              // with the actionable noun in accent" — flag-on restyle of the
+              // same read-only affordance below (base styles reused, new
+              // wa* entries added; the flag-off branch is untouched).
+              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, { backgroundColor: colors.chatWallpaper }]}>
+                <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
+                  {isCommunityAdminGroupView ? (
+                    isRoleLoading ? (
+                      "Checking your access…"
+                    ) : (
+                      "You're viewing as a community admin. Join the group to post."
+                    )
+                  ) : isAnnouncementsChannel ? (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        leaders
+                      </Text>{" "}
+                      can post in Announcements. You can react to messages.
+                    </>
+                  ) : (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        admins
+                      </Text>{" "}
+                      can post in this channel. You can react to messages.
+                    </>
+                  )}
+                </Text>
+              </View>
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
                 <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
@@ -1535,6 +1585,15 @@ const styles = StyleSheet.create({
   readOnlyText: {
     fontSize: 14,
     textAlign: "center",
+  },
+  // --- WhatsApp-shell announcement footer note (flag-gated) -----------------
+  // Additive-only overrides layered on top of the flag-off styles above,
+  // which are never edited. See WHATSAPP-DESIGN-SYSTEM.md §5.
+  waReadOnlyBanner: {
+    borderTopWidth: 0,
+  },
+  waReadOnlyText: {
+    fontSize: 13,
   },
 });
 
