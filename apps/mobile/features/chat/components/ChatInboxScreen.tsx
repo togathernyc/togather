@@ -21,6 +21,7 @@ import {
   Linking,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import Animated, {
   useSharedValue,
@@ -61,11 +62,29 @@ import {
   WA_SEARCH_PILL_HEIGHT,
   WA_SEARCH_PILL_ICON_SIZE,
   WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
   WA_TAB_CONTENT_CLEARANCE,
+  WA_NAV_SCRIM_LIGHT,
+  WA_NAV_SCRIM_DARK,
   formatWaListTimestamp,
   waNeutralAvatarPalette,
   waTabBarStripHeight,
 } from "@components/wa";
+import { ResourceIcon } from "@components/ui/ResourceIcon";
+// Flag-on collapsing-header geometry — see that module's header comment for
+// why the flag-on header is an absolute overlay that animates no layout props.
+import {
+  WA_LARGE_TITLE_BLOCK_HEIGHT,
+  WA_SEARCH_BLOCK_HEIGHT,
+  WA_NAV_ZONE_HEIGHT,
+  WA_HEADER_COLLAPSIBLE,
+  WA_RESOURCE_CHIPS_BLOCK_HEIGHT,
+  WA_RESOURCE_CHIP_HEIGHT,
+  waHeaderExpandedHeight,
+  waCollapsibleStyle,
+  waNavScrimStyle,
+  waListContentPadding,
+} from "./waInboxHeaderGeometry";
 
 // Inbox event visibility is now driven server-side by
 // `INBOX_EVENT_HIDE_AFTER_MS` in apps/convex/functions/messaging/channels.ts
@@ -82,12 +101,8 @@ const MIN_SEARCH_LENGTH = 2;
 // scroll distance (px) over which the large title fades into the small centered
 // title and the search bar collapses away.
 const NAV_ROW_HEIGHT = 44;
-const SEARCH_BLOCK_HEIGHT = 64;
+const SEARCH_BLOCK_HEIGHT = WA_SEARCH_BLOCK_HEIGHT;
 const COLLAPSE_DISTANCE = NAV_ROW_HEIGHT + SEARCH_BLOCK_HEIGHT;
-// Flag-on only: 34pt heavy title + the gap under the floating-button row
-// (WA-VISUAL-DELTAS.md S1.2 — the title is a line of its own there, not an
-// overlay on the button row like the flag-off header).
-const WA_LARGE_TITLE_BLOCK_HEIGHT = 48;
 
 // --- WhatsApp-shell row anatomy (flag-gated) --------------------------------
 // Brings the remaining row kinds this screen renders directly (DM, event,
@@ -771,6 +786,70 @@ export function ChatInboxScreen({
     ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
     : null;
 
+  // Flag-on header geometry (see the note at the top of this file). In desktop
+  // `sidebarMode` the screen renders inside a pane rather than under the status
+  // bar, so there's no safe-area inset to clear.
+  const { height: windowHeight } = useWindowDimensions();
+  const waInsetTop = sidebarMode ? 0 : insets.top;
+
+  // B3: every inbox-flagged resource across every group, flattened into ONE
+  // chip row under the search pill. Previously each group rendered its
+  // resources as full 76pt chat-anatomy rows inside its own cluster, so a
+  // static "Giving" link looked like an unread conversation and the set was
+  // scattered down the list instead of reading as one strip of shortcuts.
+  const waResourceChips = useMemo(() => {
+    if (!whatsappShellEnabled) return [];
+    const seen = new Set<string>();
+    const chips: {
+      id: string;
+      groupId: string;
+      title: string;
+      icon?: string;
+      linkUrl?: string;
+    }[] = [];
+    for (const entry of inboxResources ?? []) {
+      for (const resource of entry.resources) {
+        if (seen.has(resource._id)) continue;
+        seen.add(resource._id);
+        chips.push({
+          id: resource._id,
+          groupId: entry.groupId,
+          title: resource.title,
+          icon: resource.icon,
+          linkUrl: resource.linkUrl,
+        });
+      }
+    }
+    return chips;
+  }, [whatsappShellEnabled, inboxResources]);
+  const waChipsHeight = waResourceChips.length > 0 ? WA_RESOURCE_CHIPS_BLOCK_HEIGHT : 0;
+
+  const openResourceChip = useCallback(
+    (chip: { groupId: string; id: string; linkUrl?: string }) => {
+      if (chip.linkUrl) {
+        Linking.openURL(chip.linkUrl).catch((err) => {
+          console.error("[ChatInboxScreen] Failed to open resource link:", err);
+        });
+        return;
+      }
+      router.push(`/(user)/group/${chip.groupId}/resource/${chip.id}` as any);
+    },
+    [router]
+  );
+
+  // B4: `useAuth()`'s community snapshot is built in AuthProvider from the
+  // profile query's `activeCommunity*` fields, which carry the name and the
+  // church-feature toggles but NOT the logo — so `community.logo` is always
+  // undefined for the signed-in community and the header circle always fell
+  // back to initials, even for communities that show their logo everywhere
+  // else. Read the logo from the community doc directly rather than widening
+  // the auth snapshot (which is cached to disk and consumed app-wide).
+  const communityDoc = useQuery(
+    api.functions.communities.getById,
+    whatsappShellEnabled && communityId ? { communityId } : "skip",
+  );
+  const communityLogo = communityDoc?.logo ?? community?.logo;
+
   // --- WhatsApp-style collapsing header -------------------------------------
   // The large title + search bar live *above* the list (not inside it) so the
   // single SearchBar instance stays mounted when the list swaps to search
@@ -828,18 +907,26 @@ export function ChatInboxScreen({
     return { opacity: interpolate(p, [0, 1], [0, 1]) };
   });
 
-  // Flag-on only: the large title gets its OWN line below the floating-button
-  // row (WA-VISUAL-DELTAS.md S1.2), so unlike the flag-off overlay it has real
-  // flow height that has to collapse away too.
-  const waLargeTitleBlockStyle = useAnimatedStyle(() => {
+  // Flag-on only. The large title, the search pill and the resource chips all
+  // live in ONE block below the floating-button row (WA-VISUAL-DELTAS.md S1.2)
+  // that slides up under that row and fades out. No layout props — see the
+  // geometry note at the top of this file for why that matters on device.
+  const waCollapseDistance = WA_HEADER_COLLAPSIBLE + waChipsHeight;
+  const waCollapsibleBlockStyle = useAnimatedStyle(() => {
     const p = collapseEnabled
       ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
       : 0;
-    return {
-      height: interpolate(p, [0, 1], [WA_LARGE_TITLE_BLOCK_HEIGHT, 0]),
-      opacity: interpolate(p, [0, 0.7], [1, 0], Extrapolation.CLAMP),
-      transform: [{ translateY: interpolate(p, [0, 1], [0, -8]) }],
-    };
+    return waCollapsibleStyle(p, waCollapseDistance);
+  });
+
+  // A3: the strip behind the floating buttons stays transparent at rest and
+  // fades to near-opaque once rows are scrolling underneath it, so the list
+  // never smears through the status bar. Static height; opacity only.
+  const waNavScrimAnimatedStyle = useAnimatedStyle(() => {
+    const p = collapseEnabled
+      ? interpolate(scrollY.value, [0, COLLAPSE_DISTANCE], [0, 1], Extrapolation.CLAMP)
+      : 0;
+    return waNavScrimStyle(p);
   });
 
   // Collapsing header for the populated inbox view. The large title and compose
@@ -851,11 +938,29 @@ export function ChatInboxScreen({
   // circular buttons over the content — the community switcher as a plain white
   // circle on the left (Togather's intentional divergence from WA's "⋯"), the
   // green compose "+" on the right, and nothing else — then "Chats" at 34pt
-  // heavy on its own line, then the 44pt search pill. No bar fill, no hairline.
+  // heavy on its own line, the 44pt search pill, and the resource chips.
+  //
+  // The whole thing is an ABSOLUTE overlay over the list (see the geometry note
+  // at the top of this file); `box-none` so only the buttons/pill/chips take
+  // touches and the rows scrolling underneath stay tappable.
   const renderWaCollapsingHeader = () => (
     <Animated.View
-      style={[styles.collapsingHeader, { paddingTop: headerPaddingTop - 8 }]}
+      pointerEvents="box-none"
+      style={[styles.waHeaderOverlay, { paddingTop: headerPaddingTop - 8 }]}
     >
+      <Animated.View
+        testID="wa-nav-scrim"
+        pointerEvents="none"
+        style={[
+          styles.waNavScrim,
+          {
+            height: waInsetTop + WA_NAV_ZONE_HEIGHT,
+            backgroundColor: isDark ? WA_NAV_SCRIM_DARK : WA_NAV_SCRIM_LIGHT,
+          },
+          waNavScrimAnimatedStyle,
+        ]}
+      />
+
       <View style={styles.waFloatingRow}>
         <View style={styles.waFloatingRowSide}>
           {showCommunityEntry && (
@@ -865,7 +970,7 @@ export function ChatInboxScreen({
             >
               <Avatar
                 name={community?.name}
-                imageUrl={community?.logo}
+                imageUrl={communityLogo}
                 size={WA_HEADER_CIRCLE_SIZE}
                 // Neutral initials fill when the community has no logo: the
                 // hashed default lands on brand green, and the compose "+" is
@@ -893,16 +998,52 @@ export function ChatInboxScreen({
         </View>
       </View>
 
-      <Animated.View style={[styles.waLargeTitleBlock, waLargeTitleBlockStyle]}>
-        <WaLargeTitle>{collapsingHeaderTitle}</WaLargeTitle>
-      </Animated.View>
+      <Animated.View
+        testID="wa-header-collapsible"
+        pointerEvents="box-none"
+        style={[styles.waCollapsibleBlock, waCollapsibleBlockStyle]}
+      >
+        <View style={styles.waLargeTitleBlock}>
+          <WaLargeTitle>{collapsingHeaderTitle}</WaLargeTitle>
+        </View>
 
-      <Animated.View style={[styles.searchWrap, searchStyle]}>
-        <WaChatSearchPill
-          onSearch={setSearchTerm}
-          onClear={() => setSearchTerm("")}
-          colors={colors}
-        />
+        <View style={styles.waSearchWrap}>
+          <WaChatSearchPill
+            onSearch={setSearchTerm}
+            onClear={() => setSearchTerm("")}
+            colors={colors}
+          />
+        </View>
+
+        {waResourceChips.length > 0 && (
+          <ScrollView
+            testID="wa-resource-chips"
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={styles.waChipsRow}
+            contentContainerStyle={styles.waChipsRowContent}
+          >
+            {waResourceChips.map((chip) => (
+              <Pressable
+                key={chip.id}
+                onPress={() => openResourceChip(chip)}
+                accessibilityRole="button"
+                accessibilityLabel={chip.title}
+                style={({ pressed }) => [
+                  styles.waChip,
+                  { backgroundColor: colors.surfaceSecondary },
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <ResourceIcon name={chip.icon} size={15} color={colors.textSecondary} />
+                <Text style={[styles.waChipLabel, { color: colors.text }]} numberOfLines={1}>
+                  {chip.title}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
       </Animated.View>
     </Animated.View>
   );
@@ -953,6 +1094,32 @@ export function ChatInboxScreen({
     </Animated.View>
   );
 
+  // Banners that ride directly above the first row: the serving-mode re-entry
+  // chip and the push-permission prompt. Rendered in flow flag-off, and as the
+  // list's `ListHeaderComponent` flag-on (where the header is an overlay and
+  // anything left in flow would be painted over by it).
+  const renderListBanners = () => (
+    <>
+      {showServingChip ? (
+        <Pressable
+          onPress={() => enterServingMode()}
+          style={[
+            styles.servingChip,
+            { backgroundColor: primaryColor + "14", borderColor: primaryColor },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Enter serving mode"
+        >
+          <Ionicons name="rocket-outline" size={18} color={primaryColor} />
+          <Text style={[styles.servingChipText, { color: primaryColor }]}>
+            Enter serving mode
+          </Text>
+        </Pressable>
+      ) : null}
+      <EnableNotificationsBanner />
+    </>
+  );
+
   // The same header is rendered above the list and the three empty/loading
   // states below; centralizing it here keeps the "+" button placement (and the
   // tap target that opens the new-chat picker) in one place. Hidden in the
@@ -977,7 +1144,13 @@ export function ChatInboxScreen({
               )}
             </View>
           </View>
-          <View style={styles.waLargeTitleBlock}>
+          {/* Same 8pt gap the populated header's collapsible block carries, so
+              the title sits at an identical y and doesn't jump when the inbox
+              finishes loading. This header stays in FLOW rather than becoming
+              an overlay: it animates nothing at all (no scroll to collapse
+              against), so the layout-prop race the populated header had to
+              route around simply doesn't exist here. */}
+          <View style={[styles.waCollapsibleBlock, styles.waLargeTitleBlock]}>
             <WaLargeTitle>Chats</WaLargeTitle>
           </View>
         </View>
@@ -1409,44 +1582,47 @@ export function ChatInboxScreen({
       <View style={[styles.container, { backgroundColor: colors.surface }, waStripPadding]}>
         {whatsappShellEnabled ? renderWaCollapsingHeader() : renderCollapsingHeader()}
         {isSearching ? (
-          <InboxSearchResults
-            query={trimmedSearch}
-            results={searchResults?.results}
-            truncated={searchResults?.truncated}
-          />
+          // Flag-on the header is an overlay, so results would start underneath
+          // it. Searching also pins the header expanded (`collapseEnabled`
+          // is false), so the offset is the full expanded height.
+          <View
+            style={[
+              styles.list,
+              whatsappShellEnabled && {
+                paddingTop: waHeaderExpandedHeight(waInsetTop, waChipsHeight),
+              },
+            ]}
+          >
+            <InboxSearchResults
+              query={trimmedSearch}
+              results={searchResults?.results}
+              truncated={searchResults?.truncated}
+            />
+          </View>
         ) : (
           <>
-            {showServingChip ? (
-              <Pressable
-                onPress={() => enterServingMode()}
-                style={[
-                  styles.servingChip,
-                  { backgroundColor: primaryColor + "14", borderColor: primaryColor },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Enter serving mode"
-              >
-                <Ionicons name="rocket-outline" size={18} color={primaryColor} />
-                <Text style={[styles.servingChipText, { color: primaryColor }]}>
-                  Enter serving mode
-                </Text>
-              </Pressable>
-            ) : null}
-            <EnableNotificationsBanner />
+            {/* Flag-off these sit above the list, between the in-flow header
+                and the rows. Flag-on the header floats over the list, so they
+                move INTO it as `ListHeaderComponent` — left here they'd be
+                painted over by the overlay. */}
+            {!whatsappShellEnabled && renderListBanners()}
             <Animated.FlatList
               data={listItemsWithDm}
               renderItem={renderItem}
               keyExtractor={keyExtractor}
+              ListHeaderComponent={whatsappShellEnabled ? renderListBanners() : undefined}
               contentContainerStyle={[
                 styles.listContainer,
-                // The flag-on tab bar is a floating island absolutely
-                // positioned over the content (S2), so it takes no layout
-                // space — pad the list so its last row still clears it. The
-                // safe-area strip below the island is reserved by the
-                // container (`waStripPadding`) instead.
-                whatsappShellEnabled && {
-                  paddingBottom: WA_TAB_CONTENT_CLEARANCE,
-                },
+                // Flag-on: reserve the floating header's height at the top
+                // (a plain style — no animated layout prop, see the geometry
+                // note at the top of this file) and the floating tab island's
+                // clearance at the bottom. The safe-area strip below the
+                // island is reserved by the container (`waStripPadding`).
+                waListContentPadding(whatsappShellEnabled, {
+                  insetTop: waInsetTop,
+                  chipsHeight: waChipsHeight,
+                  windowHeight,
+                }),
               ]}
               style={styles.list}
               onScroll={onListScroll}
@@ -2482,6 +2658,31 @@ const styles = StyleSheet.create({
   collapsingHeader: {
     paddingBottom: 8,
   },
+  // Flag-on ONLY. The header floats over the list rather than sitting above it
+  // in flow, so nothing about it can race a layout commit — see the geometry
+  // note at the top of this file. `zIndex` keeps it above the list on web,
+  // where stacking otherwise follows source order.
+  waHeaderOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 2,
+    paddingBottom: 8,
+  },
+  // A3: fills the nav zone (safe inset + button row) once content scrolls
+  // under it. STATIC height — only its opacity is animated.
+  waNavScrim: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  // Everything that scrolls away: title line, search pill, resource chips.
+  // The 8pt margin completes WA_NAV_ZONE_HEIGHT (8 + 44 button row + 8).
+  waCollapsibleBlock: {
+    marginTop: 8,
+  },
   // Nav row holding the compose button at the trailing edge. The large title is
   // overlaid on the left and the centered small title fades in on scroll; both
   // are absolutely positioned so they share this row instead of adding rows.
@@ -2713,6 +2914,36 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     paddingBottom: 4,
     overflow: "hidden",
+  },
+  // Flag-on search-pill wrapper. Unlike the shared `searchWrap` this has NO
+  // fixed height (12pt gap + 44pt pill = the 56pt it needs); the flag-off
+  // header still animates `searchWrap`'s height, which is exactly the pattern
+  // that broke on device and must not come back here.
+  waSearchWrap: {
+    paddingHorizontal: 16,
+  },
+  // B3: resource shortcuts as a horizontal strip of WhatsApp-style filter
+  // chips under the search pill, collapsing away with it.
+  waChipsRow: {
+    height: WA_RESOURCE_CHIP_HEIGHT,
+    marginTop: WA_RESOURCE_CHIPS_BLOCK_HEIGHT - WA_RESOURCE_CHIP_HEIGHT, // 10
+  },
+  waChipsRowContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+    alignItems: "center",
+  },
+  waChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: WA_RESOURCE_CHIP_HEIGHT,
+    borderRadius: WA_RESOURCE_CHIP_HEIGHT / 2,
+    paddingHorizontal: 14,
+  },
+  waChipLabel: {
+    fontSize: WA_TYPE_SUBTITLE,
+    fontWeight: "500",
   },
   // S6.5 search pill: fully rounded, `bg.grouped` fill, 44pt tall.
   waSearchPill: {
