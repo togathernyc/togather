@@ -118,7 +118,7 @@ const COLLAPSE_DISTANCE = NAV_ROW_HEIGHT + SEARCH_BLOCK_HEIGHT;
 // here, so this list and `GroupedInboxItem`'s cluster rows — which read as
 // one blended list — can't drift apart again. Only rendered when
 // `whatsappShellEnabled`; every flag-off row below is unchanged.
-const WA_ROW_AVATAR_SIZE = WA_LIST_AVATAR; // 58
+const WA_ROW_AVATAR_SIZE = WA_LIST_AVATAR; // 56
 const WA_ROW_SEPARATOR_INSET = WA_LIST_SEPARATOR_INSET; // 86
 
 /**
