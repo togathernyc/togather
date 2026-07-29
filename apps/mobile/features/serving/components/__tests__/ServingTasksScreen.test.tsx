@@ -1,5 +1,5 @@
 import React from "react";
-import { render } from "@testing-library/react-native";
+import { render, fireEvent } from "@testing-library/react-native";
 import { ServingTasksScreen } from "../ServingTasksScreen";
 import { useAuthenticatedQuery } from "@services/api/convex";
 
@@ -55,6 +55,14 @@ jest.mock("@hooks/useTheme", () => ({
 
 jest.mock("@hooks/useCommunityTheme", () => ({
   useCommunityTheme: () => ({ primaryColor: "#D9A441" }),
+}));
+
+// The screen is restyled behind `whatsapp-shell`. Default the suite to
+// flag-OFF so every pre-existing assertion keeps pinning today's rendering;
+// the flag-on describe below flips it per test.
+let mockWhatsappShell = false;
+jest.mock("@hooks/useWhatsappShell", () => ({
+  useWhatsappShell: () => mockWhatsappShell,
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -237,5 +245,153 @@ describe("ServingTasksScreen — plan sections", () => {
     const { getByText } = render(<ServingTasksScreen />);
 
     expect(getByText("Not currently serving on an event.")).toBeTruthy();
+  });
+});
+
+
+/**
+ * Flag-on restyle (WHATSAPP-DESIGN-SYSTEM.md §3.2/§7). These pin the SKIN,
+ * not the structure: the last test re-asserts every flag-off affordance and
+ * string with the flag ON, so a restyle can never quietly drop one.
+ */
+describe("ServingTasksScreen — whatsapp-shell skin", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockWhatsappShell = true;
+  });
+  afterEach(() => {
+    mockWhatsappShell = false;
+    jest.clearAllMocks();
+  });
+
+  /** Flattens a possibly-nested RN style prop into one object. */
+  const flatten = (style: unknown): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    const walk = (node: unknown) => {
+      if (!node) return;
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (typeof node === "object") Object.assign(out, node);
+    };
+    walk(style);
+    return out;
+  };
+
+  const mockCrew = () => {
+    mockQuery.mockImplementation((ref: string) => {
+      if (ref === REF.eligibility) return { plans: DEFAULT_PLANS };
+      if (ref === REF.mine) return EMPTY_MINE;
+      if (ref === REF.crew)
+        return [
+          {
+            userId: "u1",
+            name: "Amy Chen",
+            roleId: "r1",
+            roleName: "Greeter",
+            teamId: "team-1",
+            teamName: "Hospitality",
+            isCurrentUser: true,
+            status: "unconfirmed",
+            done: 0,
+            total: 2,
+            tasks: [],
+          },
+        ];
+      return [];
+    });
+  };
+
+  it("uses sentence-case segment labels, not ALL-CAPS (S3.5)", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Before")).toBeTruthy();
+    expect(queryByText("BEFORE")).toBeNull();
+    expect(queryByText("DURING")).toBeNull();
+    expect(queryByText("AFTER")).toBeNull();
+  });
+
+  it("keeps ALL-CAPS segment labels when the flag is off", () => {
+    mockWhatsappShell = false;
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("BEFORE")).toBeTruthy();
+    expect(queryByText("Before")).toBeNull();
+  });
+
+  it("drops the letter-spaced 12pt section-label treatment", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    const label = flatten(getByText("Before").props.style);
+    expect(label.fontSize).toBe(15);
+    expect(label.letterSpacing).toBe(0);
+    expect(label.fontWeight).toBe("400");
+  });
+
+  it("puts task titles on the 17pt row-title scale", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(flatten(getByText("Set up chairs").props.style).fontSize).toBe(17);
+  });
+
+  it("keeps the pre-redesign 15pt task title when the flag is off", () => {
+    mockWhatsappShell = false;
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(flatten(getByText("Set up chairs").props.style).fontSize).toBe(15);
+  });
+
+  it("renders the plan header on the 22pt header-block scale", () => {
+    mockQueries({ before: [templateTask()], during: [], after: [] });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    const title = flatten(getByText("Sunday Gathering").props.style);
+    expect(title.fontSize).toBe(22);
+    expect(title.fontWeight).toBe("700");
+  });
+
+  it("replaces the Crew 'You' / 'Unconfirmed' colored chips with subtitle text (§7)", () => {
+    mockCrew();
+    const { getByText, queryByText, getByLabelText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Crew"));
+
+    // The signals survive — as plain text on the row's subtitle line, which
+    // is what §7 prescribes instead of a colored pill.
+    expect(getByText("Greeter · You · Unconfirmed")).toBeTruthy();
+    // …and not as their own standalone chips.
+    expect(queryByText("You")).toBeNull();
+    expect(queryByText("Unconfirmed")).toBeNull();
+  });
+
+  it("keeps the colored chips when the flag is off", () => {
+    mockWhatsappShell = false;
+    mockCrew();
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Crew"));
+
+    expect(getByText("You")).toBeTruthy();
+    expect(getByText("Unconfirmed")).toBeTruthy();
+    expect(getByText("Greeter")).toBeTruthy();
+  });
+
+  it("keeps every affordance and string from the flag-off render", () => {
+    mockQueries({ before: [personalTask()], during: [], after: [] });
+    const { getByText, getAllByText } = render(<ServingTasksScreen />);
+
+    expect(getByText(NO_PRELOAD_MESSAGE)).toBeTruthy();
+    expect(getByText("Bring water bottle")).toBeTruthy();
+    expect(getAllByText("Add my own task")).toHaveLength(3);
+    expect(getByText("Mine")).toBeTruthy();
+    expect(getByText("Shared")).toBeTruthy();
+    expect(getByText("Crew")).toBeTruthy();
+    expect(getByText("All teams")).toBeTruthy();
   });
 });
