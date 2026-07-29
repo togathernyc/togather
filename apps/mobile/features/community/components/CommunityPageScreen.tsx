@@ -63,7 +63,7 @@ import { useAuth } from "@providers/AuthProvider";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { waAccentPalette } from "@utils/waPalette";
-import { useAuthenticatedQuery, api } from "@services/api/convex";
+import { useAuthenticatedQuery, useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useGroupSearchQuery } from "@features/groups/hooks/useGroups";
 import { useCommunityEvents } from "@features/events/hooks/useCommunityEvents";
@@ -296,6 +296,13 @@ export function CommunityPageScreen() {
   const waAccent = useMemo(() => waAccentPalette(primaryColor, isDark).accent, [primaryColor, isDark]);
 
   const communityId = community?.id as Id<"communities"> | undefined;
+  // AuthProvider's cached community snapshot never carries `logo` (see the
+  // identical note in ChatInboxScreen) — read it from the community doc.
+  const communityDoc = useQuery(
+    api.functions.communities.getById,
+    communityId ? { communityId } : "skip",
+  );
+  const communityLogo = communityDoc?.logo ?? community?.logo;
   const isAdmin = user?.is_admin === true;
   const prayerEnabled = community?.churchFeatures?.prayerEnabled === true;
   const userTimezone = user?.timezone || "America/New_York";
@@ -516,7 +523,7 @@ export function CommunityPageScreen() {
             screen, §5.6). */}
         <View style={styles.identityBlock}>
           <WaAvatar
-            imageUrl={community?.logo}
+            imageUrl={communityLogo}
             label={community?.name || "Community"}
             seed={communityId ?? community?.name ?? "community"}
             shape="squircle"

@@ -120,9 +120,11 @@ jest.mock("@services/api/convex", () => ({
       messaging: { channels: { getInboxChannels: "getInboxChannels" } },
       groups: { queries: { listForUser: "listForUser" } },
       admin: { settings: { getExploreDefaults: "getExploreDefaults" } },
+      communities: { getById: "getById" },
     },
   },
   useAuthenticatedQuery: jest.fn(),
+  useQuery: jest.fn(),
 }));
 
 jest.mock("@features/groups/hooks/useGroups", () => ({
