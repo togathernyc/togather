@@ -169,11 +169,17 @@ export function YouScreen() {
                 onPress={() => router.push("/(user)/my-prayers")}
               />
             ) : null}
-            <WaCell
-              icon="archive-outline"
-              title="Archived groups"
-              onPress={() => router.push("/(user)/settings/archived-groups")}
-            />
+            {/* Admin-gated like its only pre-existing entry point
+                (Settings QuickLinksSection) — the destination's query
+                silently skips for non-admins, so an ungated row would
+                land members on a screen that never loads. */}
+            {showAdminTools ? (
+              <WaCell
+                icon="archive-outline"
+                title="Archived groups"
+                onPress={() => router.push("/(user)/settings/archived-groups")}
+              />
+            ) : null}
           </WaInsetGroup>
         </View>
 
