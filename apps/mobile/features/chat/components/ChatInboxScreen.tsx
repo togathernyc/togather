@@ -174,6 +174,14 @@ function WaChatSearchPill({
   const [value, setValue] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Clear the pending debounce on unmount so a late onSearch can't fire
+  // after the user navigates away mid-typing.
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const handleChangeText = (text: string) => {
     setValue(text);
     if (debounceRef.current) clearTimeout(debounceRef.current);
