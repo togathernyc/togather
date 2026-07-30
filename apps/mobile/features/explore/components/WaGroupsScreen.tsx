@@ -35,7 +35,7 @@
  * decision stays in `GroupsScreen`, which owns the data and renders this on
  * the flag-on path.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -57,6 +57,9 @@ import {
   WaRow,
   WaSeparator,
   WaFloatingCta,
+  WaFloatingButton,
+  WA_HEADER_CIRCLE_SIZE,
+  WA_TYPE_FOOTNOTE,
   WA_LIST_SEPARATOR_INSET,
   WA_SEARCH_PILL_HEIGHT,
   WA_SEARCH_PILL_ICON_SIZE,
@@ -70,9 +73,16 @@ import {
   WA_FLOATING_CTA_CONTENT_CLEARANCE,
   waTabBarStripHeight,
 } from '@components/wa';
+import { useUserLocation } from '@features/location/hooks/useUserLocation';
 import { ExploreMap, MapBounds } from './ExploreMap';
 import { FloatingGroupCard } from './FloatingGroupCard';
 import type { FilterState, GroupTypeOption } from './FilterModal';
+import {
+  formatMiles,
+  isZipQuery,
+  partitionByDistance,
+  type LatLng,
+} from '../utils/nearbyGroups';
 
 /** D4: "34pt, fully rounded, gray fill, 15pt dark label" — WhatsApp's own
  *  All/Unread/Favorites/Groups chip row measures 32-34pt. */
@@ -124,6 +134,9 @@ function matchesQuery(group: ExploreGroup, query: string): boolean {
 interface WaGroupsSearchPillProps {
   value: string;
   onChange: (value: string) => void;
+  /** Compass affordance rendered to the right of the pill. */
+  nearbyActive: boolean;
+  onPressNearby: () => void;
 }
 
 /**
@@ -131,8 +144,19 @@ interface WaGroupsSearchPillProps {
  * header's nav-to-search pill, so it goes in via `searchSlot` — the wrapper
  * reproduces `WaScreenHeader`'s own pill margins so the two are
  * interchangeable.
+ *
+ * The compass circle beside it is "find groups near me" (owner request,
+ * 2026-07-29). It is a plain `WaFloatingButton` — a neutral white circle with
+ * a dark glyph — because the accent budget for this screen is spent on the
+ * "Add group" pill (S5.1). Active state reads from the filled glyph, never a
+ * green fill, exactly like the List/Map circles above it.
  */
-function WaGroupsSearchPill({ value, onChange }: WaGroupsSearchPillProps) {
+function WaGroupsSearchPill({
+  value,
+  onChange,
+  nearbyActive,
+  onPressNearby,
+}: WaGroupsSearchPillProps) {
   const { colors } = useTheme();
   return (
     <View style={styles.searchWrap}>
@@ -165,6 +189,13 @@ function WaGroupsSearchPill({ value, onChange }: WaGroupsSearchPillProps) {
           </Pressable>
         ) : null}
       </View>
+      <WaFloatingButton
+        icon={nearbyActive ? 'compass' : 'compass-outline'}
+        onPress={onPressNearby}
+        size={WA_HEADER_CIRCLE_SIZE}
+        accessibilityLabel="Find groups near me"
+        style={styles.nearbyButton}
+      />
     </View>
   );
 }
@@ -233,6 +264,8 @@ interface WaGroupSectionProps {
   title: string;
   groups: ExploreGroup[];
   onPressGroup: (group: ExploreGroup) => void;
+  /** Distance in miles per `groupKey`, appended to the subtitle when known. */
+  distances?: Map<string, number>;
 }
 
 /**
@@ -240,7 +273,7 @@ interface WaGroupSectionProps {
  * Deliberately not `WaSectionLabel` (15pt) — the landing-surface header is a
  * size up, matching the community landing's `LandingSectionHeader`.
  */
-function WaGroupSection({ title, groups, onPressGroup }: WaGroupSectionProps) {
+function WaGroupSection({ title, groups, onPressGroup, distances }: WaGroupSectionProps) {
   const { colors } = useTheme();
   if (groups.length === 0) return null;
   return (
@@ -248,6 +281,10 @@ function WaGroupSection({ title, groups, onPressGroup }: WaGroupSectionProps) {
       <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{title}</Text>
       {groups.map((group, index) => {
         const name = groupDisplayName(group);
+        const miles = distances?.get(groupKey(group));
+        const subtitle = [groupSubtitle(group), miles == null ? null : formatMiles(miles)]
+          .filter(Boolean)
+          .join(' · ');
         return (
           <React.Fragment key={groupKey(group)}>
             <WaRow
@@ -257,7 +294,7 @@ function WaGroupSection({ title, groups, onPressGroup }: WaGroupSectionProps) {
                 seed: groupKey(group),
               }}
               title={name}
-              subtitle={groupSubtitle(group)}
+              subtitle={subtitle || undefined}
               showChevron
               onPress={() => onPressGroup(group)}
               testID={`wa-group-row-${groupKey(group)}`}
@@ -334,11 +371,63 @@ export function WaGroupsScreen({
   const accent = useMemo(() => waAccentPalette(primaryColor, isDark), [primaryColor, isDark]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
 
+  // "Find groups near me" (owner request, 2026-07-29). Device location is view
+  // state, not community data, so unlike the queries/filters/geocoding it lives
+  // here rather than in `GroupsScreen` — putting it in the container would run
+  // the location hook on the flag-OFF path too. `useUserLocation` is the app's
+  // existing wrapper (permission prompt, 30-min AsyncStorage cache, and a
+  // zip→coords lookup off the offline `us-zips` table).
+  const {
+    coordinates,
+    error: locationError,
+    isLoading: isLocating,
+    requestDeviceLocation,
+    setLocationFromZip,
+  } = useUserLocation();
+  const [nearbyRequested, setNearbyRequested] = useState(false);
+
+  // A bare 5-digit zip in the search field means "groups near this zip", not
+  // "groups whose name contains 12345" — it is the always-available alternative
+  // when location permission is denied (or on a device that has none).
+  const zipQuery = isZipQuery(searchQuery) ? searchQuery.trim() : null;
+  useEffect(() => {
+    if (zipQuery) setLocationFromZip(zipQuery);
+  }, [zipQuery, setLocationFromZip]);
+
+  const handlePressNearby = useCallback(() => {
+    if (nearbyRequested) {
+      setNearbyRequested(false);
+      return;
+    }
+    setNearbyRequested(true);
+    void requestDeviceLocation();
+  }, [nearbyRequested, requestDeviceLocation]);
+
+  const origin: LatLng | null = nearbyRequested || zipQuery ? coordinates : null;
+
   const searchedGroups = useMemo(() => {
+    if (zipQuery) return groups;
     const query = searchQuery.trim().toLowerCase();
     if (!query) return groups;
     return groups.filter((group) => matchesQuery(group, query));
-  }, [groups, searchQuery]);
+  }, [groups, searchQuery, zipQuery]);
+
+  // The container geocodes addresses/zips and hands back the placeable subset
+  // with flat lat/lng attached; anything missing from it simply has no address
+  // on file. Keyed the same way the rows are, so ordering and labelling agree.
+  const coordsByKey = useMemo(() => {
+    const map = new Map<string, LatLng>();
+    groupsWithLocation.forEach((group) => {
+      const { latitude, longitude } = group as ExploreGroup & {
+        latitude?: number;
+        longitude?: number;
+      };
+      if (typeof latitude === 'number' && typeof longitude === 'number') {
+        map.set(groupKey(group), { latitude, longitude });
+      }
+    });
+    return map;
+  }, [groupsWithLocation]);
 
   const { memberGroups, joinableGroups } = useMemo(() => {
     const mine: ExploreGroup[] = [];
@@ -349,6 +438,37 @@ export function WaGroupsScreen({
     });
     return { memberGroups: mine, joinableGroups: joinable };
   }, [searchedGroups]);
+
+  // Nearest-first for the joinable directory only — "Groups you're in" is not
+  // a discovery list. Groups with no address are never dropped; they fall into
+  // the section below.
+  const nearby = useMemo(() => {
+    if (!origin) return null;
+    const { near, rest } = partitionByDistance(
+      joinableGroups,
+      (group) => coordsByKey.get(groupKey(group)) ?? null,
+      origin
+    );
+    return {
+      groups: near.map((entry) => entry.item),
+      distances: new Map(near.map((entry) => [groupKey(entry.item), entry.miles])),
+      rest,
+    };
+  }, [origin, joinableGroups, coordsByKey]);
+
+  // One quiet gray line, never an alert: the denial path has to point at the
+  // zip alternative, and "nothing is geocoded" has to say so rather than
+  // render an empty "Near you" header.
+  let nearbyHint: string | null = null;
+  if (nearbyRequested && locationError) {
+    nearbyHint = locationError;
+  } else if (nearbyRequested && !coordinates && isLocating) {
+    nearbyHint = 'Finding your location…';
+  } else if (zipQuery && !coordinates) {
+    nearbyHint = `We don't know the zip code ${zipQuery}. Try another one.`;
+  } else if (nearby && nearby.groups.length === 0 && joinableGroups.length > 0) {
+    nearbyHint = 'None of these groups have an address yet, so we can’t sort by distance.';
+  }
 
   const selectGroupType = useCallback(
     (groupType: string | number | null) => {
@@ -443,7 +563,12 @@ export function WaGroupsScreen({
       ]}
       searchSlot={
         hasCommunityContext && viewMode === 'list' ? (
-          <WaGroupsSearchPill value={searchQuery} onChange={onSearchChange} />
+          <WaGroupsSearchPill
+            value={searchQuery}
+            onChange={onSearchChange}
+            nearbyActive={Boolean(origin)}
+            onPressNearby={handlePressNearby}
+          />
         ) : (
           <View />
         )
@@ -503,6 +628,14 @@ export function WaGroupsScreen({
         selectedFill={accent.bubbleOutgoing}
         selectedInk={accent.accent}
       />
+      {nearbyHint ? (
+        <Text
+          style={[styles.nearbyHint, { color: colors.textSecondary }]}
+          testID="wa-groups-nearby-hint"
+        >
+          {nearbyHint}
+        </Text>
+      ) : null}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -530,11 +663,27 @@ export function WaGroupsScreen({
               groups={memberGroups}
               onPressGroup={openGroup}
             />
-            <WaGroupSection
-              title="Groups you can join"
-              groups={joinableGroups}
-              onPressGroup={openGroup}
-            />
+            {nearby ? (
+              <>
+                <WaGroupSection
+                  title="Near you"
+                  groups={nearby.groups}
+                  distances={nearby.distances}
+                  onPressGroup={openGroup}
+                />
+                <WaGroupSection
+                  title="More groups"
+                  groups={nearby.rest}
+                  onPressGroup={openGroup}
+                />
+              </>
+            ) : (
+              <WaGroupSection
+                title="Groups you can join"
+                groups={joinableGroups}
+                onPressGroup={openGroup}
+              />
+            )}
           </>
         )}
       </ScrollView>
@@ -558,15 +707,28 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     paddingHorizontal: WA_SEARCH_PILL_MARGIN,
     marginTop: WA_SEARCH_PILL_TOP_GAP,
   },
   searchPill: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     height: WA_SEARCH_PILL_HEIGHT,
     borderRadius: WA_SEARCH_PILL_HEIGHT / 2,
     paddingHorizontal: 14,
+  },
+  nearbyButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nearbyHint: {
+    fontSize: WA_TYPE_FOOTNOTE,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 10,
   },
   searchIcon: {
     marginRight: 8,

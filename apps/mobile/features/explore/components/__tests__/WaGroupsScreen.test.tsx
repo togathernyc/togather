@@ -11,7 +11,10 @@
  */
 import React from 'react';
 import { ScrollView, StyleSheet } from 'react-native';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { geocodeZipCode } from '@/features/groups/utils/geocodeLocation';
 import { WaGroupsScreen, type ExploreGroup } from '../WaGroupsScreen';
 import {
   WA_LIST_AVATAR,
@@ -55,6 +58,13 @@ jest.mock('@hooks/useTheme', () => ({
 
 jest.mock('@hooks/useCommunityTheme', () => ({
   useCommunityTheme: () => ({ primaryColor: '#1E8449', accentLight: 'rgba(30,132,73,0.1)' }),
+}));
+
+// Zip → coords is a local lookup (`us-zips`); stubbed so the near-me specs
+// assert the wiring rather than shipping the whole zip table into jest.
+jest.mock('@/features/groups/utils/geocodeLocation', () => ({
+  geocodeZipCode: jest.fn(() => null),
+  geocodeAddressAsync: jest.fn(async () => null),
 }));
 
 // Native map + its preview card: kept out of the test renderer, exactly as the
@@ -130,8 +140,12 @@ function flattenStyles(node: any, out: any[] = []): any[] {
   return out;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
+  // `useUserLocation` caches the last fix to AsyncStorage, and the mock is
+  // module-scoped — without this a granted spec leaks its coordinates into the
+  // permission-denied one.
+  await AsyncStorage.clear();
 });
 
 describe('WaGroupsScreen — chrome (S1/S6.5)', () => {
@@ -294,5 +308,168 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     fireEvent.press(getByLabelText('Map view'));
     expect(getByTestId('explore-map')).toBeTruthy();
     expect(getByTestId('floating-group-card')).toBeTruthy();
+  });
+});
+
+describe('WaGroupsScreen — find groups near me', () => {
+  const NYC = { latitude: 40.7128, longitude: -74.006 };
+  const PHILLY = { latitude: 39.9526, longitude: -75.1652 };
+
+  /** Joinable, geocoded ~0 mi from the mocked device position. */
+  const CLOSE: ExploreGroup & { latitude: number; longitude: number } = {
+    _id: 'group-close',
+    id: 'group-close',
+    name: 'Corner Bible Study',
+    group_type_name: 'Small Group',
+    member_count: 4,
+    is_member: false,
+    preview: null,
+    latitude: 40.72,
+    longitude: -74.0,
+  };
+
+  /** Joinable, geocoded ~80 mi away. */
+  const FAR: ExploreGroup & { latitude: number; longitude: number } = {
+    _id: 'group-far',
+    id: 'group-far',
+    name: 'Philly Prayer',
+    group_type_name: 'Small Group',
+    member_count: 9,
+    is_member: false,
+    preview: null,
+    latitude: PHILLY.latitude,
+    longitude: PHILLY.longitude,
+  };
+
+  /** Joinable, but no address on file — must never be dropped. */
+  const UNPLACED: ExploreGroup = {
+    _id: 'group-unplaced',
+    id: 'group-unplaced',
+    name: 'Online Only',
+    group_type_name: 'Teams',
+    member_count: 3,
+    is_member: false,
+    preview: null,
+  };
+
+  function renderNearby(
+    overrides: Partial<React.ComponentProps<typeof WaGroupsScreen>> = {}
+  ) {
+    return renderScreen({
+      groups: [WORSHIP, FAR, UNPLACED, CLOSE],
+      groupsWithLocation: [FAR, CLOSE],
+      ...overrides,
+    });
+  }
+
+  const grantLocation = () => {
+    (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+      status: 'granted',
+    });
+    (Location.getCurrentPositionAsync as jest.Mock).mockResolvedValue({ coords: NYC });
+  };
+
+  const denyLocation = () => {
+    (Location.requestForegroundPermissionsAsync as jest.Mock).mockResolvedValue({
+      status: 'denied',
+    });
+  };
+
+  beforeEach(() => {
+    denyLocation();
+    (geocodeZipCode as jest.Mock).mockImplementation((zip: string) =>
+      zip === '19104' ? PHILLY : null
+    );
+  });
+
+  it('renders a neutral compass circle beside the search pill', () => {
+    const { getByLabelText, getByTestId, getByText } = renderNearby();
+    expect(getByTestId('wa-groups-search')).toBeTruthy();
+    expect(getByLabelText('Find groups near me')).toBeTruthy();
+    // Outline glyph at rest; the accent budget stays on the CTA.
+    expect(getByText('compass-outline')).toBeTruthy();
+  });
+
+  it('sorts joinable groups nearest-first once location is granted', async () => {
+    grantLocation();
+    const { getByLabelText, getByText, queryByText } = renderNearby();
+
+    expect(queryByText('Near you')).toBeNull();
+    fireEvent.press(getByLabelText('Find groups near me'));
+
+    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
+
+    // Nearest first, each row labelled with its distance…
+    expect(getByText(/^Small Group · 4 members · 0(\.\d)? mi$/)).toBeTruthy();
+    expect(getByText(/^Small Group · 9 members · 8\d mi$/)).toBeTruthy();
+
+    // …un-geocoded joinable groups drop below instead of disappearing…
+    expect(getByText('More groups')).toBeTruthy();
+    expect(getByText('Online Only')).toBeTruthy();
+    // …and "Groups you're in" is untouched (it is not a discovery list).
+    expect(getByText("Groups you're in")).toBeTruthy();
+    expect(queryByText('Groups you can join')).toBeNull();
+  });
+
+  it('keeps the compass neutral — the CTA stays the only accent element', async () => {
+    grantLocation();
+    const { getByLabelText, getByText, toJSON } = renderNearby();
+    fireEvent.press(getByLabelText('Find groups near me'));
+    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    const accentFilled = flattenStyles(toJSON()).filter((s) => s.backgroundColor === ACCENT);
+    expect(accentFilled).toHaveLength(1);
+  });
+
+  it('falls back to a quiet zip hint when permission is denied', async () => {
+    denyLocation();
+    const { getByLabelText, getByTestId, queryByText } = renderNearby();
+    fireEvent.press(getByLabelText('Find groups near me'));
+
+    await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
+    expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/zip code/i);
+    // No ordering happened, so the plain directory section stays.
+    expect(queryByText('Near you')).toBeNull();
+  });
+
+  it('treats a bare 5-digit zip in the search field as a location query', async () => {
+    const { getByText, queryByText } = renderNearby({ searchQuery: '19104' });
+
+    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    expect(geocodeZipCode).toHaveBeenCalledWith('19104');
+    // Nearest to Philadelphia is the Philly group, not the NYC one — and the
+    // zip is NOT applied as a name filter, so nothing is filtered away.
+    expect(getByText(/^Small Group · 9 members · 0(\.\d)? mi$/)).toBeTruthy();
+    expect(getByText('Corner Bible Study')).toBeTruthy();
+    expect(queryByText('Groups you can join')).toBeNull();
+  });
+
+  it('says so plainly when an unknown zip is typed', async () => {
+    const { getByTestId, queryByText } = renderNearby({ searchQuery: '00000' });
+    await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
+    expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/00000/);
+    expect(queryByText('Near you')).toBeNull();
+  });
+
+  it('says so plainly when nothing in the directory has an address', async () => {
+    grantLocation();
+    const { getByLabelText, getByTestId } = renderScreen({
+      groups: [WORSHIP, UNPLACED],
+      groupsWithLocation: [],
+    });
+    fireEvent.press(getByLabelText('Find groups near me'));
+    await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
+    expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/address/i);
+  });
+
+  it('toggles back off, restoring the plain directory section', async () => {
+    grantLocation();
+    const { getByLabelText, getByText, queryByText } = renderNearby();
+    fireEvent.press(getByLabelText('Find groups near me'));
+    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Find groups near me'));
+    expect(queryByText('Near you')).toBeNull();
+    expect(getByText('Groups you can join')).toBeTruthy();
   });
 });
