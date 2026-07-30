@@ -1,7 +1,13 @@
 import {
+  buildGuestSlots,
   computeCheckInSummary,
+  filterGoingUsers,
+  filterWalkIns,
+  guestSlotLabel,
   indexAttendanceByUser,
   isCheckedIn,
+  nameMatchesQuery,
+  partitionGuests,
   resolveAttendanceEntry,
   ATTENDANCE_PRESENT,
   ATTENDANCE_ABSENT,
@@ -15,6 +21,15 @@ const going = (id: string): GoingUser => ({
   firstName: "F",
   lastName: id,
 });
+
+const present = (...userIds: string[]) =>
+  indexAttendanceByUser(
+    userIds.map((userId) => ({
+      userId,
+      status: ATTENDANCE_PRESENT,
+      recordedAt: 1,
+    }))
+  );
 
 describe("indexAttendanceByUser", () => {
   it("keeps the most recently recorded status per user", () => {
@@ -90,6 +105,154 @@ describe("computeCheckInSummary — live count", () => {
     expect(summary.checkedIn).toBe(3);
     expect(summary.total).toBe(3);
     expect(summary.fraction).toBe(1);
+  });
+});
+
+describe("partitionGuests — plus-ones vs. unattached walk-ins", () => {
+  it("nests guests under the member who brought them", () => {
+    const guests: WalkInLike[] = [
+      { _id: "g1", hostUserId: "u1", recordedAt: 20 },
+      { _id: "g2", hostUserId: "u1", recordedAt: 10 },
+      { _id: "g3", firstName: "Solo" },
+    ];
+    const { guestsByHost, walkIns } = partitionGuests([going("u1")], guests);
+    // Sorted by recordedAt so a slot never jumps position as names fill in.
+    expect(guestsByHost.get("u1")?.map((g) => g._id)).toEqual(["g2", "g1"]);
+    expect(walkIns.map((g) => g._id)).toEqual(["g3"]);
+  });
+
+  it("keeps a guest visible as a walk-in when their host is no longer Going", () => {
+    const guests: WalkInLike[] = [{ _id: "g1", hostUserId: "gone" }];
+    const { guestsByHost, walkIns } = partitionGuests([going("u1")], guests);
+    expect(guestsByHost.size).toBe(0);
+    expect(walkIns.map((g) => g._id)).toEqual(["g1"]);
+  });
+});
+
+describe("buildGuestSlots", () => {
+  it("offers one slot per declared plus-one, filled in order", () => {
+    const slots = buildGuestSlots(2, [{ _id: "g1", firstName: "Ada" }]);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ position: 1, partySize: 2 });
+    expect(slots[0].guest?._id).toBe("g1");
+    expect(slots[1].guest).toBeUndefined();
+  });
+
+  it("grows past the declared count when more people actually turn up", () => {
+    const slots = buildGuestSlots(1, [{ _id: "g1" }, { _id: "g2" }]);
+    expect(slots).toHaveLength(2);
+    expect(slots.every((s) => s.partySize === 2)).toBe(true);
+  });
+
+  it("has no slots when no guests were declared or added", () => {
+    expect(buildGuestSlots(0, [])).toEqual([]);
+    expect(buildGuestSlots(undefined, [])).toEqual([]);
+    expect(buildGuestSlots(-3, [])).toEqual([]);
+  });
+});
+
+describe("guestSlotLabel", () => {
+  it("uses the guest's name once it has been captured", () => {
+    const [slot] = buildGuestSlots(1, [
+      { _id: "g1", firstName: "Ada", lastName: "Lovelace" },
+    ]);
+    expect(guestSlotLabel(slot)).toBe("Ada Lovelace");
+  });
+
+  it("falls back to the position while the guest is unnamed", () => {
+    const slots = buildGuestSlots(2, []);
+    expect(guestSlotLabel(slots[0])).toBe("Guest 1 of 2");
+    expect(guestSlotLabel(slots[1])).toBe("Guest 2 of 2");
+    expect(guestSlotLabel(buildGuestSlots(1, [])[0])).toBe("Guest");
+  });
+});
+
+describe("search", () => {
+  it("matches on first, last, or full name, case-insensitively", () => {
+    expect(nameMatchesQuery("bri", "Brittany", "Smigielski")).toBe(true);
+    expect(nameMatchesQuery("SMIG", "Brittany", "Smigielski")).toBe(true);
+    expect(nameMatchesQuery("brittany smig", "Brittany", "Smigielski")).toBe(
+      true
+    );
+    expect(nameMatchesQuery("kevin", "Brittany", "Smigielski")).toBe(false);
+  });
+
+  it("matches everyone on an empty or whitespace query", () => {
+    expect(nameMatchesQuery("", "Amy", "Perez")).toBe(true);
+    expect(nameMatchesQuery("   ", "Amy", "Perez")).toBe(true);
+  });
+
+  it("filters the Going roster by name", () => {
+    const users: GoingUser[] = [
+      { id: "u1", firstName: "Amy", lastName: "Perez" },
+      { id: "u2", firstName: "Kevin", lastName: "Myers" },
+    ];
+    expect(filterGoingUsers(users, new Map(), "myer").map((u) => u.id)).toEqual(
+      ["u2"]
+    );
+    expect(filterGoingUsers(users, new Map(), "")).toHaveLength(2);
+  });
+
+  it("surfaces the host when a guest's name matches", () => {
+    const users: GoingUser[] = [
+      { id: "u1", firstName: "Amy", lastName: "Perez" },
+    ];
+    const guestsByHost = new Map<string, WalkInLike[]>([
+      ["u1", [{ _id: "g1", firstName: "Ada" }]],
+    ]);
+    expect(filterGoingUsers(users, guestsByHost, "ada").map((u) => u.id)).toEqual(
+      ["u1"]
+    );
+  });
+
+  it("filters walk-ins by name", () => {
+    const walkIns: WalkInLike[] = [
+      { _id: "g1", firstName: "Ada" },
+      { _id: "g2", firstName: "Ben" },
+    ];
+    expect(filterWalkIns(walkIns, "be").map((g) => g._id)).toEqual(["g2"]);
+  });
+});
+
+describe("computeCheckInSummary — plus-ones", () => {
+  it("counts declared plus-ones toward the expected headcount", () => {
+    const users: GoingUser[] = [
+      { id: "u1", guestCount: 2 },
+      { id: "u2", guestCount: 0 },
+    ];
+    // Nobody tapped in yet: 2 members + 2 declared guests are all expected.
+    const summary = computeCheckInSummary(users, new Map(), []);
+    expect(summary).toEqual({ checkedIn: 0, total: 4, fraction: 0 });
+  });
+
+  it("counts a checked-in guest toward the count without changing the total", () => {
+    const users: GoingUser[] = [{ id: "u1", guestCount: 2 }];
+    const summary = computeCheckInSummary(users, present("u1"), [
+      { _id: "g1", hostUserId: "u1" },
+    ]);
+    // Member + 1 of 2 guests in; total stays 3 (member + 2 declared).
+    expect(summary.checkedIn).toBe(2);
+    expect(summary.total).toBe(3);
+  });
+
+  it("grows the total when a member brings more guests than declared", () => {
+    const users: GoingUser[] = [{ id: "u1", guestCount: 1 }];
+    const summary = computeCheckInSummary(users, present("u1"), [
+      { _id: "g1", hostUserId: "u1" },
+      { _id: "g2", hostUserId: "u1" },
+    ]);
+    expect(summary.checkedIn).toBe(3);
+    expect(summary.total).toBe(3);
+    expect(summary.fraction).toBe(1);
+  });
+
+  it("still counts a guest whose host is no longer on the Going roster", () => {
+    const summary = computeCheckInSummary([going("u1")], new Map(), [
+      { _id: "g1", hostUserId: "someone-who-left" },
+    ]);
+    // Falls back to a walk-in: checked in, and part of the total.
+    expect(summary.checkedIn).toBe(1);
+    expect(summary.total).toBe(2);
   });
 });
 

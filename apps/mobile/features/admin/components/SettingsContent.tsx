@@ -430,7 +430,7 @@ export function SettingsContent() {
           {groupGivingEnabled ? (
           <TouchableOpacity
             style={[styles.quickLinkItem, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => router.push("/(user)/leader-tools/finance-setup")}
+            onPress={() => router.push("/finance-setup")}
           >
             <View style={[styles.quickLinkIcon, { backgroundColor: colors.surface }]}>
               <Ionicons name="wallet-outline" size={20} color={themePrimaryColor} />

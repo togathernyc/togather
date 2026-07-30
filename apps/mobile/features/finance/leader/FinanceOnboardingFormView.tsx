@@ -4,7 +4,14 @@
  * no Convex — see FinanceOnboardingFormScreen.tsx for the data wrapper.
  */
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -74,7 +81,15 @@ export function FinanceOnboardingFormView({
   });
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       <View style={[styles.section, { backgroundColor: colors.surface }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Church details</Text>
         <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
@@ -191,14 +206,19 @@ export function FinanceOnboardingFormView({
       >
         Submit
       </Button>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  scrollContent: {
     padding: 16,
+    // Room so the last inputs/submit clear the keyboard comfortably.
+    paddingBottom: 48,
   },
   section: {
     borderRadius: 12,

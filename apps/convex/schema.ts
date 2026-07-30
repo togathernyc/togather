@@ -981,6 +981,10 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.optional(v.id("users")), // Optional: if guest is linked to a user
     recordedById: v.optional(v.id("users")),
+    // The member who brought this guest — the plus-ones they declared on their
+    // "Going" RSVP (`meetingRsvps.guestCount`). Set when a leader checks a guest
+    // in under someone on the check-in roster; absent for unattached walk-ins.
+    hostUserId: v.optional(v.id("users")),
 
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
@@ -3765,6 +3769,11 @@ export default defineSchema({
       v.literal("stripe_blocked"),
       v.literal("increase_blocked"),
     ),
+    // Human-readable reason when provisionProviders itself failed (a provider
+    // API error before any webhook exists to explain it) — surfaced on the
+    // onboarding checklist so admins aren't stuck staring at "In progress".
+    // Cleared on resubmit/retry.
+    provisioningError: v.optional(v.string()),
     // Appears on the donor's card/bank statement. Optional — Stripe defaults
     // it from the connected account if the community hasn't set one.
     statementDescriptor: v.optional(v.string()),
