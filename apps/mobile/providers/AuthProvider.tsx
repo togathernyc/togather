@@ -25,6 +25,7 @@ import { useServingTasksCache } from "../stores/servingTasksCache";
 import { useServingTaskQueue } from "../stores/servingTaskQueue";
 import { useServingPlansCache } from "../stores/servingPlansCache";
 import { useGridColumnWidths } from "../stores/gridColumnWidths";
+import { useInboxGroupCollapse } from "../stores/inboxGroupCollapse";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
 
@@ -658,6 +659,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "serving-task-queue",
       "serving-plans-cache",
       "grid-column-widths",
+      "inbox-group-collapse",
     ];
 
     await Promise.all(
@@ -679,6 +681,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingTaskQueue.getState().clear();
     useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
 
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
@@ -859,6 +862,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         "serving-task-queue",
         "serving-plans-cache",
         "grid-column-widths",
+        "inbox-group-collapse",
       ].map((key) =>
         AsyncStorage.removeItem(key).catch((err) =>
           console.warn(`Failed to remove ${key}:`, err)
@@ -875,6 +879,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingTaskQueue.getState().clear();
     useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
 
     setCommunityState(null);
     return refreshed;
