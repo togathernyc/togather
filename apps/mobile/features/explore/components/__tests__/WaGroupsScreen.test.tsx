@@ -361,14 +361,69 @@ describe('WaGroupsScreen — find groups near me', () => {
     preview: null,
   };
 
+  /**
+   * Member groups, geocoded. The owner is in nearly every group in their
+   * community, so "Groups you're in" is the section that has to sort — it was
+   * why zip search read as a no-op (owner directive, 2026-07-30).
+   */
+  const MY_CLOSE: ExploreGroup & { latitude: number; longitude: number } = {
+    _id: 'group-my-close',
+    id: 'group-my-close',
+    name: 'Tuesday Table',
+    group_type_name: 'Small Group',
+    member_count: 6,
+    is_member: true,
+    preview: null,
+    latitude: 40.72,
+    longitude: -74.0,
+  };
+
+  const MY_FAR: ExploreGroup & { latitude: number; longitude: number } = {
+    _id: 'group-my-far',
+    id: 'group-my-far',
+    name: 'Fishtown Fellowship',
+    group_type_name: 'Small Group',
+    member_count: 7,
+    is_member: true,
+    preview: null,
+    latitude: PHILLY.latitude,
+    longitude: PHILLY.longitude,
+  };
+
+  /**
+   * Deliberately shuffled so a passing order assertion can only come from the
+   * sort, never from the incoming order. WORSHIP and UNPLACED have no address
+   * and must trail inside their own section rather than vanish.
+   */
   function renderNearby(
     overrides: Partial<React.ComponentProps<typeof WaGroupsScreen>> = {}
   ) {
     return renderScreen({
-      groups: [WORSHIP, FAR, UNPLACED, CLOSE],
-      groupsWithLocation: [FAR, CLOSE],
+      groups: [WORSHIP, MY_FAR, FAR, UNPLACED, CLOSE, MY_CLOSE],
+      groupsWithLocation: [MY_FAR, FAR, CLOSE, MY_CLOSE],
       ...overrides,
     });
+  }
+
+  /**
+   * Rendered row ids, top to bottom — the only way to prove a sort happened.
+   * Walks the JSON tree rather than leaning on a query matcher so the assertion
+   * is about document order, not query order.
+   */
+  function rowOrder(tree: any): string[] {
+    const ids: string[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      const testID = node.props?.testID;
+      if (typeof testID === 'string' && testID.startsWith('wa-group-row-')) {
+        const id = testID.slice('wa-group-row-'.length);
+        if (!ids.includes(id)) ids.push(id);
+      }
+      if (Array.isArray(node.children)) node.children.forEach(walk);
+    };
+    walk(tree);
+    return ids;
   }
 
   const grantLocation = () => {
@@ -399,65 +454,103 @@ describe('WaGroupsScreen — find groups near me', () => {
     expect(getByText('compass-outline')).toBeTruthy();
   });
 
-  it('sorts joinable groups nearest-first once location is granted', async () => {
+  it('leaves both sections in their incoming order, undecorated, with no origin', () => {
+    const { toJSON, getByText, queryAllByText } = renderNearby();
+    expect(getByText("Groups you're in")).toBeTruthy();
+    expect(getByText('Groups you can join')).toBeTruthy();
+    expect(rowOrder(toJSON())).toEqual([
+      'group-worship',
+      'group-my-far',
+      'group-my-close',
+      'group-far',
+      'group-unplaced',
+      'group-close',
+    ]);
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
+  });
+
+  it('sorts BOTH sections nearest-first and labels every geocoded row', async () => {
     grantLocation();
-    const { getByLabelText, getByText, queryByText } = renderNearby();
+    const { getByLabelText, getByText, toJSON } = renderNearby();
 
-    expect(queryByText('Near you')).toBeNull();
     fireEvent.press(getByLabelText('Find groups near me'));
-
-    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    await waitFor(() =>
+      expect(getByText(/^Small Group · 6 members · 0(\.\d)? mi$/)).toBeTruthy()
+    );
     expect(Location.requestForegroundPermissionsAsync).toHaveBeenCalled();
 
-    // Nearest first, each row labelled with its distance…
+    // The membership sections stay — the sort is a sort, not a regrouping.
+    expect(getByText("Groups you're in")).toBeTruthy();
+    expect(getByText('Groups you can join')).toBeTruthy();
+
+    // Nearest first inside EACH section, un-geocoded rows trailing their own
+    // section instead of disappearing.
+    expect(rowOrder(toJSON())).toEqual([
+      'group-my-close', // 0 mi   ┐ Groups you're in
+      'group-my-far', //  ~80 mi  │
+      'group-worship', // no address ┘
+      'group-close', //   0 mi   ┐ Groups you can join
+      'group-far', //     ~80 mi │
+      'group-unplaced', // no address ┘
+    ]);
+
+    // …and every geocoded row carries its distance in the 15pt subtitle,
+    // members included (this is the part that made zip look like a no-op).
+    expect(getByText(/^Small Group · 7 members · 8\d mi$/)).toBeTruthy();
     expect(getByText(/^Small Group · 4 members · 0(\.\d)? mi$/)).toBeTruthy();
     expect(getByText(/^Small Group · 9 members · 8\d mi$/)).toBeTruthy();
-
-    // …un-geocoded joinable groups drop below instead of disappearing…
-    expect(getByText('More groups')).toBeTruthy();
-    expect(getByText('Online Only')).toBeTruthy();
-    // …and "Groups you're in" is untouched (it is not a discovery list).
-    expect(getByText("Groups you're in")).toBeTruthy();
-    expect(queryByText('Groups you can join')).toBeNull();
+    // Un-geocoded rows keep their plain subtitle.
+    expect(getByText('Teams · 1 member')).toBeTruthy();
+    expect(getByText('Teams · 3 members')).toBeTruthy();
   });
 
   it('keeps the compass neutral — the CTA stays the only accent element', async () => {
     grantLocation();
-    const { getByLabelText, getByText, toJSON } = renderNearby();
+    const { getByLabelText, queryAllByText, toJSON } = renderNearby();
     fireEvent.press(getByLabelText('Find groups near me'));
-    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    await waitFor(() => expect(queryAllByText(/\d+(\.\d)? mi$/).length).toBeGreaterThan(0));
     const accentFilled = flattenStyles(toJSON()).filter((s) => s.backgroundColor === ACCENT);
     expect(accentFilled).toHaveLength(1);
   });
 
   it('falls back to a quiet zip hint when permission is denied', async () => {
     denyLocation();
-    const { getByLabelText, getByTestId, queryByText } = renderNearby();
+    const { getByLabelText, getByTestId, queryAllByText } = renderNearby();
     fireEvent.press(getByLabelText('Find groups near me'));
 
     await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
     expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/zip code/i);
-    // No ordering happened, so the plain directory section stays.
-    expect(queryByText('Near you')).toBeNull();
+    // No ordering happened, so no row claims a distance.
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
   });
 
   it('treats a bare 5-digit zip in the search field as a location query', async () => {
-    const { getByText, queryByText } = renderNearby({ searchQuery: '19104' });
+    const { getByText, toJSON } = renderNearby({ searchQuery: '19104' });
 
-    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    await waitFor(() =>
+      expect(getByText(/^Small Group · 7 members · 0(\.\d)? mi$/)).toBeTruthy()
+    );
     expect(geocodeZipCode).toHaveBeenCalledWith('19104');
-    // Nearest to Philadelphia is the Philly group, not the NYC one — and the
-    // zip is NOT applied as a name filter, so nothing is filtered away.
+    // Origin flips to Philadelphia, so the Philly groups lead BOTH sections —
+    // and the zip is NOT applied as a name filter, so nothing is filtered away.
+    expect(rowOrder(toJSON())).toEqual([
+      'group-my-far',
+      'group-my-close',
+      'group-worship',
+      'group-far',
+      'group-close',
+      'group-unplaced',
+    ]);
     expect(getByText(/^Small Group · 9 members · 0(\.\d)? mi$/)).toBeTruthy();
     expect(getByText('Corner Bible Study')).toBeTruthy();
-    expect(queryByText('Groups you can join')).toBeNull();
+    expect(getByText('Groups you can join')).toBeTruthy();
   });
 
   it('says so plainly when an unknown zip is typed', async () => {
-    const { getByTestId, queryByText } = renderNearby({ searchQuery: '00000' });
+    const { getByTestId, queryAllByText } = renderNearby({ searchQuery: '00000' });
     await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
     expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/00000/);
-    expect(queryByText('Near you')).toBeNull();
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
   });
 
   it('never sorts around stale coordinates after the current lookup fails', async () => {
@@ -469,9 +562,17 @@ describe('WaGroupsScreen — find groups near me', () => {
     // …then type an UNKNOWN zip. The cached coords are restored by the hook,
     // but the CURRENT lookup failed — nearby mode must not activate around
     // the stale point while the failure hint is showing.
-    const { getByTestId, queryByText } = renderNearby({ searchQuery: '00000' });
+    const { getByTestId, toJSON, queryAllByText } = renderNearby({ searchQuery: '00000' });
     await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
-    expect(queryByText('Near you')).toBeNull();
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
+    expect(rowOrder(toJSON())).toEqual([
+      'group-worship',
+      'group-my-far',
+      'group-my-close',
+      'group-far',
+      'group-unplaced',
+      'group-close',
+    ]);
   });
 
   it('never sorts around a previous zip fix after location permission is denied', async () => {
@@ -480,11 +581,11 @@ describe('WaGroupsScreen — find groups near me', () => {
       JSON.stringify({ latitude: 39.9526, longitude: -75.1652, timestamp: Date.now() })
     );
     denyLocation();
-    const { getByLabelText, getByTestId, queryByText } = renderNearby();
+    const { getByLabelText, getByTestId, queryAllByText } = renderNearby();
     fireEvent.press(getByLabelText('Find groups near me'));
     await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
     expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/zip code/i);
-    expect(queryByText('Near you')).toBeNull();
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
   });
 
   it('says so plainly when nothing in the directory has an address', async () => {
@@ -514,21 +615,33 @@ describe('WaGroupsScreen — find groups near me', () => {
   it('keeps zip search working with the flag off', async () => {
     mockDeviceLocationFlag.enabled = false;
     try {
-      const { getByText } = renderNearby({ searchQuery: '19104' });
-      await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+      const { queryAllByText } = renderNearby({ searchQuery: '19104' });
+      await waitFor(() =>
+        expect(queryAllByText(/\d+(\.\d)? mi$/).length).toBeGreaterThan(0)
+      );
     } finally {
       mockDeviceLocationFlag.enabled = true;
     }
   });
 
-  it('toggles back off, restoring the plain directory section', async () => {
+  it('toggles back off, restoring the undecorated directory order', async () => {
     grantLocation();
-    const { getByLabelText, getByText, queryByText } = renderNearby();
+    const { getByLabelText, getByText, queryAllByText, toJSON } = renderNearby();
     fireEvent.press(getByLabelText('Find groups near me'));
-    await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    await waitFor(() =>
+      expect(queryAllByText(/\d+(\.\d)? mi$/).length).toBeGreaterThan(0)
+    );
 
     fireEvent.press(getByLabelText('Find groups near me'));
-    expect(queryByText('Near you')).toBeNull();
+    expect(queryAllByText(/\d+(\.\d)? mi$/)).toHaveLength(0);
     expect(getByText('Groups you can join')).toBeTruthy();
+    expect(rowOrder(toJSON())).toEqual([
+      'group-worship',
+      'group-my-far',
+      'group-my-close',
+      'group-far',
+      'group-unplaced',
+      'group-close',
+    ]);
   });
 });

@@ -1,7 +1,7 @@
 import {
   haversineMiles,
   formatMiles,
-  partitionByDistance,
+  sortByDistance,
   isZipQuery,
 } from '../nearbyGroups';
 
@@ -44,11 +44,11 @@ describe('formatMiles', () => {
   });
 });
 
-describe('partitionByDistance', () => {
+describe('sortByDistance', () => {
   type G = { id: string; coords?: { latitude: number; longitude: number } };
   const coordsOf = (g: G) => g.coords ?? null;
 
-  it('orders located items nearest-first and keeps the rest in place', () => {
+  it('orders located items nearest-first with the un-placed ones trailing', () => {
     const items: G[] = [
       { id: 'la', coords: LA },
       { id: 'nowhere-a' },
@@ -57,20 +57,41 @@ describe('partitionByDistance', () => {
       { id: 'nyc', coords: NYC },
     ];
 
-    const { near, rest } = partitionByDistance(items, coordsOf, NYC);
+    const ranked = sortByDistance(items, coordsOf, NYC);
 
-    expect(near.map((n) => n.item.id)).toEqual(['nyc', 'philly', 'la']);
-    expect(near[0].miles).toBe(0);
-    expect(near[1].miles).toBeLessThan(near[2].miles);
-    // Un-placed items are never dropped, and keep their incoming order.
-    expect(rest.map((g) => g.id)).toEqual(['nowhere-a', 'nowhere-b']);
+    // Every item survives — the un-geocoded ones are never dropped, never
+    // interleaved, and keep their incoming order.
+    expect(ranked.map((r) => r.item.id)).toEqual([
+      'nyc',
+      'philly',
+      'la',
+      'nowhere-a',
+      'nowhere-b',
+    ]);
+    expect(ranked[0].miles).toBe(0);
+    expect(ranked[1].miles!).toBeLessThan(ranked[2].miles!);
+    expect(ranked[3].miles).toBeNull();
+    expect(ranked[4].miles).toBeNull();
   });
 
-  it('returns everything as "rest" when nothing is geocoded', () => {
+  it('marks everything as un-placed when nothing is geocoded', () => {
     const items: G[] = [{ id: 'a' }, { id: 'b' }];
-    const { near, rest } = partitionByDistance(items, coordsOf, NYC);
-    expect(near).toEqual([]);
-    expect(rest).toHaveLength(2);
+    const ranked = sortByDistance(items, coordsOf, NYC);
+    expect(ranked.map((r) => r.item.id)).toEqual(['a', 'b']);
+    expect(ranked.every((r) => r.miles === null)).toBe(true);
+  });
+
+  it('is stable for equal distances', () => {
+    const items: G[] = [
+      { id: 'tie-a', coords: PHILLY },
+      { id: 'tie-b', coords: PHILLY },
+      { id: 'tie-c', coords: PHILLY },
+    ];
+    expect(sortByDistance(items, coordsOf, NYC).map((r) => r.item.id)).toEqual([
+      'tie-a',
+      'tie-b',
+      'tie-c',
+    ]);
   });
 
   it('does not mutate the input array', () => {
@@ -78,7 +99,7 @@ describe('partitionByDistance', () => {
       { id: 'la', coords: LA },
       { id: 'nyc', coords: NYC },
     ];
-    partitionByDistance(items, coordsOf, NYC);
+    sortByDistance(items, coordsOf, NYC);
     expect(items.map((g) => g.id)).toEqual(['la', 'nyc']);
   });
 });
