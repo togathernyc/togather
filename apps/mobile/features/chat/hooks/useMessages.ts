@@ -49,13 +49,19 @@ const ANCHOR_MAX_PAGES = 25;
  * @param anchorMessageId - When set, older pages are auto-loaded (using the
  *   existing backward pagination) until this message is in the list, so the
  *   caller can scroll to it. Used for "jump to message" from inbox search.
+ * @param waReplies - WhatsApp-shell reply rendering. When true the timeline
+ *   also contains each message's LONE reply (as a real bubble carrying its
+ *   parent's quote) and decorates messages whose thread has collapsed. Pass
+ *   `useWhatsappShell()`; flag-off callers omit it and the arg never reaches
+ *   the query, keeping behaviour byte-identical.
  * @returns Messages array, pagination functions, and loading state
  */
 export function useMessages(
   channelId: Id<"chatChannels"> | null,
   limit: number = 20,
   viewingGroupId?: Id<"groups"> | null,
-  anchorMessageId?: Id<"chatMessages"> | null
+  anchorMessageId?: Id<"chatMessages"> | null,
+  waReplies?: boolean
 ): UseMessagesResult {
   const token = useStoredAuthToken();
   const { getChannelMessages, setChannelMessages, clearChannel } = useMessageCache();
@@ -119,6 +125,7 @@ export function useMessages(
           limit,
           cursor,
           ...(viewingGroupId ? { viewingGroupId } : {}),
+          ...(waReplies ? { waReplies: true } : {}),
         }
   );
 

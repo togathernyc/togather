@@ -53,6 +53,15 @@ jest.mock('@hooks/useTheme', () => ({
   }),
 }));
 
+// The compass is additionally gated on the nearby-device-location Convex
+// flag (hidden until the native build with the iOS permission string ships).
+// Default ON here so the near-me suite exercises the full affordance; the
+// flag-off specs override per-test.
+const mockDeviceLocationFlag = { enabled: true, loaded: true };
+jest.mock('@hooks/useConvexFeatureFlag', () => ({
+  useConvexFeatureFlag: () => mockDeviceLocationFlag,
+}));
+
 jest.mock('@hooks/useCommunityTheme', () => ({
   useCommunityTheme: () => ({ primaryColor: '#1E8449', accentLight: 'rgba(30,132,73,0.1)' }),
 }));

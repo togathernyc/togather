@@ -201,7 +201,13 @@ export default {
         NSPhotoLibraryAddUsageDescription:
           "Togather saves photos to your library when you choose to download images shared by other members in group chats or event cover photos.",
         NSMicrophoneUsageDescription:
-          "Togather uses your microphone to record voice messages to share in group chat conversations."
+          "Togather uses your microphone to record voice messages to share in group chat conversations.",
+        // Foreground-only, and always user-initiated: the Groups tab's compass
+        // button sorts the group directory by distance from you. Declining is
+        // fully supported — a zip code typed into the search field does the
+        // same thing. Nothing here is stored on our servers or shared.
+        NSLocationWhenInUseUsageDescription:
+          "Togather uses your location only when you tap “Find groups near me”, to sort the group directory by how close each group meets to you. You can enter a zip code instead."
       }
     },
     android: {
