@@ -56,6 +56,15 @@ jest.mock('@hooks/useTheme', () => ({
   }),
 }));
 
+// The compass is additionally gated on the nearby-device-location Convex
+// flag (hidden until the native build with the iOS permission string ships).
+// Default ON here so the near-me suite exercises the full affordance; the
+// flag-off specs override per-test.
+const mockDeviceLocationFlag = { enabled: true, loaded: true };
+jest.mock('@hooks/useConvexFeatureFlag', () => ({
+  useConvexFeatureFlag: () => mockDeviceLocationFlag,
+}));
+
 jest.mock('@hooks/useCommunityTheme', () => ({
   useCommunityTheme: () => ({ primaryColor: '#1E8449', accentLight: 'rgba(30,132,73,0.1)' }),
 }));
@@ -487,6 +496,29 @@ describe('WaGroupsScreen — find groups near me', () => {
     fireEvent.press(getByLabelText('Find groups near me'));
     await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
     expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/address/i);
+  });
+
+  it('hides the compass and advertises zip search while the device-location flag is off', () => {
+    mockDeviceLocationFlag.enabled = false;
+    try {
+      const { queryByLabelText, getByTestId } = renderScreen();
+      expect(queryByLabelText('Find groups near me')).toBeNull();
+      expect(getByTestId('wa-groups-search').props.placeholder).toBe(
+        'Search groups or zip code'
+      );
+    } finally {
+      mockDeviceLocationFlag.enabled = true;
+    }
+  });
+
+  it('keeps zip search working with the flag off', async () => {
+    mockDeviceLocationFlag.enabled = false;
+    try {
+      const { getByText } = renderNearby({ searchQuery: '19104' });
+      await waitFor(() => expect(getByText('Near you')).toBeTruthy());
+    } finally {
+      mockDeviceLocationFlag.enabled = true;
+    }
   });
 
   it('toggles back off, restoring the plain directory section', async () => {
