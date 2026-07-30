@@ -537,9 +537,42 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     Otherwise the message they just sent appears to vanish: both replies leave
     the timeline and are replaced by a pill on a parent that may be scrolled far
     away. Only that one send — a first reply stays put, and sends from inside
-    the thread screen never navigate.
-  - Threads are exactly **one level deep** — the thread screen always sends with
-    `parentMessageId` = the thread root — so there is no reply-to-a-reply case.
+    the thread screen never navigate. The tap that collapses a thread is often
+    on the inline REPLY, not on the parent, so the timeline reports both as ways
+    into the same thread and the navigation opens the root.
+  - Threads are exactly **one level deep**, and `sendMessage` is what guarantees
+    it: a chosen parent is walked up to its thread ROOT before the row is
+    written, so replying to a reply JOINS that thread instead of forking a new
+    one off it. Originally this leaned on the thread screen always sending
+    `parentMessageId` = the root and assumed the timeline therefore had no
+    reply-to-a-reply case — it did (tap reply on an inline reply), and the
+    result was the defect this rule now prevents: every reply became the lone
+    reply of a brand-new parent, so a chain of quote bubbles rendered inline
+    forever and no thread ever activated.
+  - **The quote follows the tapped message; the thread follows the root.** That
+    is WhatsApp's behaviour and the two diverge whenever you reply to a reply,
+    so the row carries `quotedMessageId` (the tapped message) alongside
+    `parentMessageId` (the root). The quote bar reads it and falls back to
+    `parentMessageId`.
+  - Rows written before rooting can be chained arbitrarily deep. The read path
+    folds them in — admission, the pill's count and the thread screen all resolve
+    the root with a bounded walk, and a reply carrying its own send counter is
+    descended into — so old chains collapse correctly with **no data migration**.
+    That walk **traverses hidden rows without showing them**: a deleted or
+    blocked reply in the middle of a chain is the only route to the live replies
+    under it, so filtering it out of the walk deleted them from the timeline too.
+    Blocking hides that person's messages, never everyone else's.
+  - **A thread only collapses when its root is visible to this reader.** The pill
+    lives on the root's bubble, so a deleted or blocked root has nowhere to put
+    one — collapsing there would take the whole conversation off screen with no
+    way back in. Those replies stay inline, quoting a parent that reads as
+    deleted.
+  - **Whatever id opens the thread screen, the PAGE is the root.** The pill and
+    the ghost always pass a root; inbox search passes a hit's immediate parent,
+    which on an old chain is itself a reply. `getThreadReplies` returns the
+    `rootMessageId` it resolved to and the screen adopts it for its header, its
+    composer and its notification bell — otherwise the tapped reply appears both
+    as the header and inside the reply list.
   - This replaces the floating "ghost" pointer (a bubble-less echo of the
     original message at the thread's `lastActivityAt`), which existed only
     because the timeline hid every reply. Kept for flag-off.

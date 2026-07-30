@@ -178,6 +178,48 @@ describe('MessageItem — flag-on replies', () => {
     expect(collapsed.queryByTestId('wa-thread-summary-pill')).not.toBeNull();
     expect(collapsed.queryByTestId('legacy-thread-replies')).toBeNull();
   });
+
+  test('the collapsed thread shows its count and repliers, not just a pill', () => {
+    // The owner's report was "it completely hides the thread": the replies left
+    // the timeline and nothing took their place. A pill that renders but says
+    // nothing is the same failure, so assert what it actually reads.
+    const { getByTestId, getAllByTestId } = render(
+      <MessageItem
+        message={{ ...reply, _id: 'msg-parent' as any, threadReplyCount: 2 }}
+        currentUserId={CURRENT_USER}
+        threadSummary={{
+          replyCount: 2,
+          lastReplyAt: Date.now() - 5 * 60_000,
+          repliers: [
+            { userId: 'user-2' as any, name: 'Dara Peters' },
+            { userId: 'user-3' as any, name: 'Tunde Bello' },
+          ],
+        }}
+      />,
+    );
+    expect(getByTestId('wa-thread-summary-count').props.children).toBe('2 replies');
+    expect(getByTestId('wa-thread-summary-time').props.children).toBe('5m ago');
+    expect(getAllByTestId('wa-thread-summary-avatar')).toHaveLength(2);
+  });
+
+  test('a media parent still gets the pill — the bubble shape does not gate it', () => {
+    // The thread that triggered the report hung off a video, so pin that the
+    // affordance is not tangled up in the media/edge-to-edge bubble branches.
+    const { queryByTestId } = render(
+      <MessageItem
+        message={{
+          ...reply,
+          _id: 'msg-parent' as any,
+          content: '',
+          threadReplyCount: 2,
+          attachments: [{ type: 'video', url: 'https://cdn.test/a.mp4' }],
+        }}
+        currentUserId={CURRENT_USER}
+        threadSummary={summary}
+      />,
+    );
+    expect(queryByTestId('wa-thread-summary-pill')).not.toBeNull();
+  });
 });
 
 describe('MessageItem — flag-off twin', () => {

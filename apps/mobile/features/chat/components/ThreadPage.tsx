@@ -84,9 +84,31 @@ export function ThreadPage({
   const setThreadSubscriptionMutation = useMutation(
     api.functions.messaging.threadSubscriptions.setThreadSubscription,
   );
+  // Thread replies. Resolved FIRST because its response also tells us which
+  // message the thread really is (see `rootMessageId`) — everything else on
+  // this page keys off that, not off whatever id the caller navigated with.
+  const {
+    replies,
+    isLoading: repliesLoading,
+    rootMessageId,
+  } = useThreadReplies(messageId);
+  /**
+   * The canonical id for this page.
+   *
+   * `messageId` is only a POINTER into the conversation. The pill and the
+   * ghost always point at a root, but inbox search opens a hit's immediate
+   * parent, which can itself be a reply — and then the header rendered that
+   * reply while the folded reply list rendered it again. Adopting the resolved
+   * root makes the header, the subscription and the composer agree, whichever
+   * door the user came through. Falls back to `messageId` until the query
+   * resolves, which is also the steady state for the pill/ghost entry points
+   * where the two are the same message.
+   */
+  const threadRootId = rootMessageId ?? messageId;
+
   const threadSubscription = useQuery(
     api.functions.messaging.threadSubscriptions.getThreadSubscription,
-    token ? { token, threadId: messageId } : "skip",
+    token ? { token, threadId: threadRootId } : "skip",
   );
   // The query's return type widens `state` to `string` over the wire; the
   // backend constrains it to the ThreadNotificationState union.
@@ -109,12 +131,12 @@ export function ThreadPage({
           ? "none"
           : "default";
     try {
-      await setThreadSubscriptionMutation({ token, threadId: messageId, state: next });
+      await setThreadSubscriptionMutation({ token, threadId: threadRootId, state: next });
     } catch (error) {
       console.error("[ThreadPage] Failed to update thread notifications:", error);
       Alert.alert("Error", "Failed to update notification settings.");
     }
-  }, [token, notificationState, messageId, isDm, setThreadSubscriptionMutation]);
+  }, [token, notificationState, threadRootId, isDm, setThreadSubscriptionMutation]);
 
   // Message actions overlay state
   const [overlayVisible, setOverlayVisible] = useState(false);
@@ -125,11 +147,10 @@ export function ThreadPage({
   const [selectedMessageSenderPhoto, setSelectedMessageSenderPhoto] = useState<string | undefined>();
   const [selectedMessageAttachments, setSelectedMessageAttachments] = useState<Array<{ type: string; url: string }> | undefined>();
 
-  // Fetch parent message
-  const { message: parentMessage, isLoading: parentLoading } = useParentMessage(messageId);
-
-  // Fetch thread replies
-  const { replies, isLoading: repliesLoading } = useThreadReplies(messageId);
+  // The message at the top of the page — the thread's root, not the pointer
+  // we were navigated with.
+  const { message: parentMessage, isLoading: parentLoading } =
+    useParentMessage(threadRootId);
 
   // Track reply count to auto-scroll on new replies
   const lastReplyCountRef = useRef(replies.length);

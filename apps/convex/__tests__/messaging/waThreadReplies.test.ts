@@ -978,6 +978,541 @@ describe("getMessages waReplies — the pill count stays bounded and honest", ()
   });
 });
 
+describe("sendMessage — a reply joins its thread, it does not fork one", () => {
+  // `sendMessage` schedules `onMessageSent`. Left running, its transaction is
+  // still open when the next `convexTest()` calls `setConvexGlobal`, which
+  // throws "test began while previous transaction was still open" — and
+  // `global.Convex` outlives the file, so the throw can land on a completely
+  // unrelated test file later in the same worker. Every send here is therefore
+  // drained the way the rest of the messaging suite drains one.
+  //
+  // Deliberately NOT `vi.useFakeTimers()` + `finishAllScheduledFunctions`:
+  // fake timers are installed process-wide and share the same worker-global
+  // lifetime, so a file that installs them owns a second way to strand another
+  // file's scheduled work. `onMessageSent` is a plain `runAfter(0, …)`, which
+  // real timers run on their own.
+  async function send(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    accessToken: string,
+    content: string,
+    parentMessageId?: Id<"chatMessages">,
+  ): Promise<Id<"chatMessages">> {
+    const id = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content,
+      ...(parentMessageId ? { parentMessageId } : {}),
+    });
+    await t.finishInProgressScheduledFunctions();
+    return id;
+  }
+
+  /** Send through the real mutation, so rooting is exercised end to end. */
+  function sender(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    accessToken: string,
+  ) {
+    return (content: string, parentMessageId?: Id<"chatMessages">) =>
+      send(t, channelId, accessToken, content, parentMessageId);
+  }
+
+  test("replying to a reply files under the root and quotes the tapped message", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const firstId = await send("I've got them", rootId);
+    // The tap that used to fork: reply to the reply, not to the root.
+    const secondId = await send("How many?", firstId);
+
+    const second = await t.run((ctx) => ctx.db.get(secondId));
+    expect(second?.parentMessageId).toBe(rootId);
+    expect(second?.quotedMessageId).toBe(firstId);
+
+    // The thread's bookkeeping lands on the root, never on the middle reply.
+    const root = await t.run((ctx) => ctx.db.get(rootId));
+    const first = await t.run((ctx) => ctx.db.get(firstId));
+    expect(root?.threadReplyCount).toBe(2);
+    expect(first?.threadReplyCount).toBeUndefined();
+
+    // Owner's scenario: reply, then someone replies to THAT — both collapse
+    // under the root behind one "2 replies" pill.
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(2);
+  });
+
+  test("the quote still shows the tapped message, not the root", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const firstId = await send("I've got them", rootId);
+    await send("How many?", firstId);
+    // Delete one so the survivor is re-admitted to the timeline and we can
+    // read the quote it renders.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(firstId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const reply = page.messages.find((m: any) => m.content === "How many?") as any;
+    // Filed under the root, but quoting the reply the sender tapped — which,
+    // now deleted, reads as WhatsApp's deleted-quote rather than the root's text.
+    expect(reply.parentMessageId).toBe(rootId);
+    expect(reply.replyQuote).toMatchObject({
+      parentMessageId: firstId,
+      parentDeleted: true,
+    });
+  });
+
+  test("a first reply is unchanged — no quote target, parent is the root", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const replyId = await send("I've got them", rootId);
+
+    const reply = await t.run((ctx) => ctx.db.get(replyId));
+    expect(reply?.parentMessageId).toBe(rootId);
+    expect(reply?.quotedMessageId).toBeUndefined();
+  });
+
+  test("rooting never crosses into another channel", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, groupId, userId, accessToken } = await seed(t);
+    const otherChannelId = await seedSecondChannel(t, groupId, userId);
+
+    // A chained row from before the same-channel check: the middle reply lives
+    // in this channel but points at a parent in another one.
+    const foreignRootId = await insertMessage(t, {
+      channelId: otherChannelId,
+      senderId: userId,
+      content: "elsewhere",
+      createdAt: T0,
+    });
+    const strandedId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "stranded",
+      createdAt: T0 + 1000,
+      parentMessageId: foreignRootId,
+    });
+
+    const replyId = await send(
+      t,
+      channelId,
+      accessToken,
+      "replying to the stranded one",
+      strandedId,
+    );
+
+    // The walk stops at the stranded reply rather than rooting the thread on a
+    // message in a channel this reply's readers may not be able to see.
+    const reply = await t.run((ctx) => ctx.db.get(replyId));
+    expect(reply?.parentMessageId).toBe(strandedId);
+    expect(reply?.quotedMessageId).toBeUndefined();
+  });
+});
+
+describe("getMessages waReplies — chains written before rooting", () => {
+  /** Build `V ← r1 ← r2 ← …` the way the pre-rooting client wrote it. */
+  async function chain(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    senderId: Id<"users">,
+    depth: number,
+  ) {
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId,
+      content: "root",
+      createdAt: T0,
+    });
+    const links: Id<"chatMessages">[] = [];
+    let parentMessageId = rootId;
+    for (let i = 0; i < depth; i++) {
+      parentMessageId = await insertMessage(t, {
+        channelId,
+        senderId,
+        content: `reply ${i + 1}`,
+        createdAt: T0 + 1000 * (i + 1),
+        parentMessageId,
+      });
+      links.push(parentMessageId);
+    }
+    return { rootId, links };
+  }
+
+  test("a two-deep chain collapses under the root with a 2-reply pill", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId } = await chain(t, channelId, userId, 2);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const summary = (page.messages[0] as any).threadSummary;
+    expect(summary.replyCount).toBe(2);
+    expect(summary.lastReplyAt).toBe(T0 + 2000);
+  });
+
+  test("a one-deep chain is still a lone inline reply", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 1);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, links[0]]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+
+  test("the bounded walk folds a chain deeper than the model ever allows", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId } = await chain(t, channelId, userId, 5);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(5);
+  });
+
+  test("two replies under an inline reply collapse under the root, not into thin air", async () => {
+    // The defect this pins: the summary is only ever computed for rows without
+    // a `parentMessageId`, so a chained reply that accumulated two replies of
+    // its own had them vanish from the timeline with no pill anywhere to open.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const inlineId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 1",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    for (const [i, content] of ["reply 2", "reply 3"].entries()) {
+      await insertMessage(t, {
+        channelId,
+        senderId: userId,
+        content,
+        createdAt: T0 + 2000 + i * 1000,
+        parentMessageId: inlineId,
+      });
+    }
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(3);
+  });
+
+  test("the thread a chained pill opens holds everything the pill counted", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 3);
+
+    const thread = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: rootId,
+    });
+    expect(thread.messages.map((m: any) => m._id)).toEqual(links);
+    expect(thread.rootMessageId).toBe(rootId);
+
+    // Opening the thread from a link in the middle of the chain lands on the
+    // same conversation, not a fragment of it — and reports which message the
+    // thread actually is, so the page can header the root rather than showing
+    // the tapped reply twice (see ThreadPage.rooting.test.tsx).
+    const fromMiddle = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: links[1],
+    });
+    expect(fromMiddle.messages.map((m: any) => m._id)).toEqual(links);
+    expect(fromMiddle.rootMessageId).toBe(rootId);
+  });
+
+  test("inbox search opening a reply's parent resolves to the thread, not the reply", async () => {
+    // `InboxSearchResults` navigates with the hit's IMMEDIATE parent. Post-
+    // rooting that is normally the root already; on a pre-rooting chain it is
+    // a reply, and the page needs to be told which message the thread is.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 2);
+
+    const opened = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      // The search hit is `links[1]`; its stored parent is `links[0]`.
+      parentMessageId: links[0],
+    });
+    expect(opened.rootMessageId).toBe(rootId);
+    expect(opened.messages.map((m: any) => m._id)).toEqual(links);
+  });
+});
+
+describe("getMessages waReplies — a hidden link never swallows what hangs off it", () => {
+  /**
+   * `root ← middle ← leaf`, with `middle` hidden the way a real one gets
+   * hidden: sent live (so the root's send counter is bumped), then deleted or
+   * blocked after the fact.
+   */
+  async function chainWithHiddenMiddle(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    viewerId: Id<"users">,
+    middleSenderId: Id<"users">,
+    leaves: number,
+  ) {
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: viewerId,
+      content: "root",
+      createdAt: T0,
+    });
+    const middleId = await insertMessage(t, {
+      channelId,
+      senderId: middleSenderId,
+      content: "middle",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    const leafIds: Id<"chatMessages">[] = [];
+    for (let i = 0; i < leaves; i++) {
+      leafIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: viewerId,
+          content: `leaf ${i + 1}`,
+          createdAt: T0 + 2000 + i * 1000,
+          parentMessageId: middleId,
+        }),
+      );
+    }
+    return { rootId, middleId, leafIds };
+  }
+
+  test("a live reply under a DELETED reply is still found and still rendered", async () => {
+    // The traversal bug this pins: the scan filtered deleted rows out before
+    // they could be descended into, so the leaf was never discovered — and
+    // since the leaf still roots at the same message, it resolved to a thread
+    // reporting zero replies and dropped out of the timeline altogether.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      1,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    // The leaf is the thread's only VISIBLE reply, so it renders inline —
+    // quoting a parent that reads as deleted, which is what WhatsApp shows.
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, leafIds[0]]);
+    const leaf = page.messages[1] as any;
+    expect(leaf.replyQuote).toMatchObject({
+      parentMessageId: middleId,
+      parentDeleted: true,
+    });
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+
+  test("live replies under a deleted reply are counted into the root's thread", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      2,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const summary = (page.messages[0] as any).threadSummary;
+    // Two live leaves; the deleted middle is traversed but never counted.
+    expect(summary.replyCount).toBe(2);
+    expect(summary.lastReplyAt).toBe(T0 + 3000);
+  });
+
+  test("a BLOCKED author's reply hides itself, not the replies under it", async () => {
+    // Blocking is about not seeing that person's messages. It was never meant
+    // to erase everyone else's, so their subtree surfaces the same way a
+    // deleted link's does.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      otherUserId,
+      1,
+    );
+    await block(t, userId, otherUserId);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, leafIds[0]]);
+    // The blocked author's own bubble is gone; the quote of it is stripped the
+    // same way a deleted parent's is.
+    expect(page.messages.map((m: any) => m._id)).not.toContain(middleId);
+  });
+
+  test("a deleted ROOT keeps its replies in the timeline instead of collapsing them", async () => {
+    // Collapsing needs a visible parent to hang the pill on. A deleted root is
+    // filtered out of the timeline, so a pill there would render nowhere and
+    // the conversation would simply vanish.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const replyIds: Id<"chatMessages">[] = [];
+    for (const [i, content] of ["reply 1", "reply 2"].entries()) {
+      replyIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: userId,
+          content,
+          createdAt: T0 + 1000 + i * 1000,
+          parentMessageId: rootId,
+        }),
+      );
+    }
+    await t.run(async (ctx) => {
+      await ctx.db.patch(rootId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual(replyIds);
+    for (const message of page.messages as any[]) {
+      expect(message.replyQuote).toMatchObject({
+        parentMessageId: rootId,
+        parentDeleted: true,
+      });
+    }
+  });
+
+  test("a blocked ROOT does the same — nothing collapses onto a bubble you can't see", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: otherUserId,
+      senderName: "Dara Peters",
+      content: "root",
+      createdAt: T0,
+    });
+    const replyIds: Id<"chatMessages">[] = [];
+    for (const [i, content] of ["reply 1", "reply 2"].entries()) {
+      replyIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: userId,
+          content,
+          createdAt: T0 + 1000 + i * 1000,
+          parentMessageId: rootId,
+        }),
+      );
+    }
+    await block(t, userId, otherUserId);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual(replyIds);
+  });
+
+  test("the thread screen folds in what hangs under a deleted link too", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      2,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const thread = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: rootId,
+    });
+    // Exactly what the pill counted — the deleted link itself stays out.
+    expect(thread.messages.map((m: any) => m._id)).toEqual(leafIds);
+  });
+});
+
 describe("getMessages waReplies — flag-off is unchanged", () => {
   test("omitting waReplies keeps replies out and adds no decoration", async () => {
     const t = convexTest(schema, modules);
@@ -1007,6 +1542,48 @@ describe("getMessages waReplies — flag-off is unchanged", () => {
     expect(parent.threadSummary).toBeUndefined();
     expect(parent.replyQuote).toBeUndefined();
     // The old model's own signals are untouched for the flag-off ghost.
+    expect(parent.threadReplyCount).toBe(1);
+    expect(parent.lastActivityAt).toBe(T0 + 1000);
+  });
+
+  test("a chained reply is still just a hidden reply — no rooting, no decoration", async () => {
+    // Rooting is a flag-ON read rule. Flag-off filters every reply out before
+    // it can matter, so a chain leaves the ghost timeline byte-identical.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const firstId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 1",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 2",
+      createdAt: T0 + 2000,
+      parentMessageId: firstId,
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const parent = page.messages[0] as any;
+    expect(parent.threadSummary).toBeUndefined();
+    expect(parent.replyQuote).toBeUndefined();
+    // The ghost pointer still reads the chain exactly as it did before: the
+    // root's own send counter and last-activity bump, untouched by rooting.
     expect(parent.threadReplyCount).toBe(1);
     expect(parent.lastActivityAt).toBe(T0 + 1000);
   });
