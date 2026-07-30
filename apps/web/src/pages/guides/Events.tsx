@@ -123,10 +123,12 @@ export function Events() {
           </Step>
           <Step n={6}>
             <strong>Check-in at the door.</strong> On the day, open the event
-            from leader tools and tap <Term>Check in</Term> to run down the
-            <Term>Going</Term> list, tapping each person as they arrive. Added
-            names count as <Term>Present</Term> in your attendance numbers, and
-            walk-ins without an account can be added by name. See{" "}
+            and tap <Term>Check in</Term> to run down the <Term>Going</Term>{" "}
+            list, tapping each person as they arrive. Added names count as{" "}
+            <Term>Present</Term> in your attendance numbers, and walk-ins
+            without an account can be added by name. Once the event has wrapped,
+            that same button becomes <Term>Take attendance</Term> and opens the
+            full attendance editor for after-the-fact corrections. See{" "}
             <em>Check in: take attendance at the door</em> below.
           </Step>
         </Steps>
@@ -174,11 +176,13 @@ export function Events() {
         <P>
           When it's time to gather, you don't want to hunt through a
           group-by-group attendance grid — you want the door list for{" "}
-          <em>this</em> event. Open the event from{" "}
-          <Term>Leader tools → [group] → Events → [event]</Term> and tap{" "}
-          <Term>Check in</Term>. You'll see everyone who RSVP'd{" "}
+          <em>this</em> event. Open the event and tap <Term>Check in</Term>{" "}
+          (the button sits with the other manager actions and only shows for
+          people who can manage the event). You'll see everyone who RSVP'd{" "}
           <Term>Going</Term>, each with a tap-to-check circle and a live{" "}
-          <Term>N / M checked in</Term> count at the top.
+          <Term>N / M checked in</Term> count at the top. After the event has
+          passed, the same button reads <Term>Take attendance</Term> and opens
+          the full attendance editor instead.
         </P>
 
         <Steps>

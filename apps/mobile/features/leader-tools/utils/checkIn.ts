@@ -9,6 +9,48 @@
 export const ATTENDANCE_PRESENT = 1;
 export const ATTENDANCE_ABSENT = 0;
 
+/**
+ * The event-page attendance entry point is one slot whose label and destination
+ * depend on where we are in the event's lifecycle. Check-in and attendance
+ * write the SAME record (`meetingAttendances.status === 1`); the only real
+ * difference is timing — tapping people in as they arrive vs. reconciling the
+ * roster afterward — so a single slot serves both.
+ *
+ * `isRsvpClosed` (now > scheduledAt + PAST_EVENT_BUFFER_MS) is the app's
+ * existing "this event is over" signal; before it we show live check-in, after
+ * it the post-event attendance editor.
+ */
+export interface AttendanceEntry {
+  label: "Check in" | "Take attendance";
+  /** Expo-router path for `router.push`. */
+  href: string;
+}
+
+export function resolveAttendanceEntry(params: {
+  isRsvpClosed: boolean;
+  groupId: string;
+  meetingId: string;
+  /** ISO scheduledAt string, as carried on the event page. */
+  scheduledAt: string;
+}): AttendanceEntry {
+  const encodedDate = encodeURIComponent(params.scheduledAt);
+  if (!params.isRsvpClosed) {
+    // Live check-in. Route matches the `id-<meetingId>|<date>` encoding the
+    // check-in screen parses (see EventDetails.handleEdit / checkin.tsx).
+    return {
+      label: "Check in",
+      href: `/(user)/leader-tools/${params.groupId}/events/id-${params.meetingId}|${encodedDate}/checkin`,
+    };
+  }
+  // Post-event: the batch attendance editor (unchanged from the prior CTA).
+  return {
+    label: "Take attendance",
+    href: `/(user)/leader-tools/${params.groupId}/attendance/edit?eventDate=${encodedDate}&meetingId=${encodeURIComponent(
+      params.meetingId
+    )}`,
+  };
+}
+
 /** A person who RSVPed "Going" (subset of the RSVP roster user shape). */
 export interface GoingUser {
   id: string;

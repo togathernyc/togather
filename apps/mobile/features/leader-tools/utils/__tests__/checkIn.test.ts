@@ -2,6 +2,7 @@ import {
   computeCheckInSummary,
   indexAttendanceByUser,
   isCheckedIn,
+  resolveAttendanceEntry,
   ATTENDANCE_PRESENT,
   ATTENDANCE_ABSENT,
   type GoingUser,
@@ -89,5 +90,35 @@ describe("computeCheckInSummary — live count", () => {
     expect(summary.checkedIn).toBe(3);
     expect(summary.total).toBe(3);
     expect(summary.fraction).toBe(1);
+  });
+});
+
+describe("resolveAttendanceEntry", () => {
+  const base = {
+    groupId: "g1",
+    meetingId: "m1",
+    scheduledAt: "2026-07-31T00:31:00.000Z",
+  };
+
+  it("is live check-in before the grace window closes", () => {
+    const entry = resolveAttendanceEntry({ ...base, isRsvpClosed: false });
+    expect(entry.label).toBe("Check in");
+    // Routes to the check-in screen with the id-<meetingId>|<date> encoding
+    // the screen parses.
+    expect(entry.href).toBe(
+      `/(user)/leader-tools/g1/events/id-m1|${encodeURIComponent(
+        base.scheduledAt
+      )}/checkin`
+    );
+  });
+
+  it("becomes the attendance editor after the grace window closes", () => {
+    const entry = resolveAttendanceEntry({ ...base, isRsvpClosed: true });
+    expect(entry.label).toBe("Take attendance");
+    expect(entry.href).toBe(
+      `/(user)/leader-tools/g1/attendance/edit?eventDate=${encodeURIComponent(
+        base.scheduledAt
+      )}&meetingId=${encodeURIComponent(base.meetingId)}`
+    );
   });
 });

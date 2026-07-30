@@ -90,6 +90,7 @@ import * as Clipboard from "expo-clipboard";
 import { EventBlastSheet } from "@/features/leader-tools/components/EventBlastSheet";
 import { InviteGroupMembersSheet } from "@/features/leader-tools/components/InviteGroupMembersSheet";
 import { EventInvitesLog } from "@/features/leader-tools/components/EventInvitesLog";
+import { resolveAttendanceEntry } from "@/features/leader-tools/utils/checkIn";
 import { EventActivity } from "./EventActivity";
 
 /**
@@ -599,6 +600,20 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   const isRsvpClosed = eventDate
     ? eventDate.getTime() < Date.now() - PAST_EVENT_BUFFER_MS
     : false;
+
+  // One manager-only attendance slot whose label + destination follow the
+  // event's lifecycle: "Check in" (live) before the grace window closes,
+  // "Take attendance" (batch editor) after. Both write the same record.
+  const attendanceEntry =
+    eventData.id && eventData.groupId && eventData.scheduledAt
+      ? resolveAttendanceEntry({
+          isRsvpClosed,
+          groupId: eventData.groupId,
+          meetingId: eventData.id as string,
+          scheduledAt: eventData.scheduledAt,
+        })
+      : null;
+
   const maxGuestsPerRsvp =
     ((eventData as any)?.maxGuestsPerRsvp as number | undefined) ??
     DEFAULT_MAX_GUESTS_PER_RSVP;
@@ -1030,21 +1045,21 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
               />
             )}
 
-          {/* Leader: jump into the attendance recorder for past events */}
-          {isLeader && isPastEvent && eventData.id && eventData.groupId && eventData.scheduledAt && (
+          {/* Manager: time-aware attendance entry point. Before the grace
+              window closes it's live "Check in" against the Going list;
+              afterward it becomes "Take attendance" and opens the post-event
+              attendance editor. Gated by canEdit (leader / host / community
+              admin) to match the check-in screen's own server gate. */}
+          {canEdit && attendanceEntry && (
             <TouchableOpacity
               style={[styles.messageAttendeesButton, { backgroundColor: colors.surfaceSecondary }]}
               onPress={() => {
-                const encodedDate = encodeURIComponent(eventData.scheduledAt!);
-                const meetingIdParam = encodeURIComponent(eventData.id as string);
-                router.push(
-                  `/(user)/leader-tools/${eventData.groupId}/attendance/edit?eventDate=${encodedDate}&meetingId=${meetingIdParam}`
-                );
+                router.push(attendanceEntry.href);
               }}
             >
               <Ionicons name="checkmark-done-outline" size={20} color={DEFAULT_PRIMARY_COLOR} />
               <Text style={[styles.messageAttendeesText, { color: DEFAULT_PRIMARY_COLOR }]}>
-                Record Attendance
+                {attendanceEntry.label}
               </Text>
             </TouchableOpacity>
           )}
