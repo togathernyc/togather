@@ -226,8 +226,23 @@ The group giving feature (ADR-032) enables communities to accept donations via S
 | `INCREASE_API_KEY` | Increase API key for Entity/Account/Transfer operations (required for production and staging; omit for dev-only testing) | Fund provisioning fails; allocation/payout jobs blocked |
 | `INCREASE_WEBHOOK_SECRET` | Webhook signing secret for Increase account/entity status updates (required to process bank account creation/activation) | Webhook events are accepted but unverified; status machine never transitions to "live" |
 | `INCREASE_API_BASE_URL` | Override for Increase API base URL — set to `https://sandbox.increase.com` for sandbox/staging, omit for production (defaults to `https://api.increase.com`) | Defaults to production API |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret (`whsec_`) of the SECOND Stripe event destination, scoped "Events from: Connected accounts" | Connected-account events (donations, account verification, payouts, refunds) are rejected as unsigned; onboarding never completes |
 
-**Note on Stripe integration**: The `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` used for billing (subscriptions) are shared with the group-giving donation flow — no separate Stripe secrets are needed. The `/stripe-webhook` endpoint now dispatches to both billing (`charge.refunded`, `invoice.*`) and finance (`payment_intent.succeeded`) handlers. The webhook URL remains `https://<convex-deployment>.convex.site/stripe-webhook`.
+**Note on Stripe integration**: `STRIPE_SECRET_KEY` is shared with billing — no separate API key is needed. Webhooks need **two Stripe event destinations pointing at the same URL** (`https://<convex-deployment>.convex.site/stripe-webhook`), because Stripe scopes a destination at creation:
+
+1. **Events from: Your account** (billing — the pre-existing destination): `checkout.session.completed`, `customer.subscription.updated/deleted`, `invoice.payment_failed`. Its signing secret is `STRIPE_WEBHOOK_SECRET`.
+2. **Events from: Connected accounts** (group giving): `account.updated`, `payment_intent.succeeded`, `payout.paid`, `charge.refunded`, `charge.dispute.created`. Its signing secret is `STRIPE_CONNECT_WEBHOOK_SECRET`.
+
+The endpoint verifies an incoming signature against either secret (`apps/convex/http.ts`).
+
+**Revoking `STRIPE_CONNECT_WEBHOOK_SECRET`**: the sync script deliberately skips
+absent keys (so a transient 1Password failure never wipes a live value), which
+means deleting the item from 1Password does NOT clear the value already in
+Convex. To actually revoke a compromised/retired connect signing secret, either
+**rotate it** (roll the secret on the Stripe destination, put the new value in
+1Password, re-sync — the old value is overwritten) or **remove it explicitly**
+with `npx convex env remove STRIPE_CONNECT_WEBHOOK_SECRET` on each deployment.
+Deleting the Stripe destination alone is not sufficient if the secret leaked.
 
 **Sandbox setup for dev/staging**:
 1. Create Increase sandbox API keys at https://dashboard.increase.com/settings/api (requires account)
