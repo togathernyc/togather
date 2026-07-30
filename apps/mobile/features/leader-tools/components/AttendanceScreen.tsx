@@ -13,7 +13,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AttendanceDetails } from "./AttendanceDetails";
 import { EventsList } from "./EventsList";
 import { useQuery, api, Id } from "@services/api/convex";
-import { useAttendanceReport } from "../hooks/useAttendanceReport";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
@@ -44,19 +43,8 @@ export function AttendanceScreen() {
     queryEventDate || null
   );
 
-  // Only fetch attendance report when an event is selected
-  const { data: attendanceReport } = useAttendanceReport(
-    group_id || "",
-    {
-      meetingId: selectedMeetingId || undefined,
-      eventDate: selectedMeetingId ? undefined : selectedEventDate || undefined,
-    },
-    !!group_id && (!!selectedMeetingId || !!selectedEventDate)
-  );
-  const report = attendanceReport;
-  // Check if attendance has been submitted by checking if there are any attendance records
-  const hasAttendanceSubmitted =
-    !!report?.attendances && report.attendances.length > 0;
+  // The attendance report itself is fetched by <AttendanceDetails /> below —
+  // this screen only picks the event, so it subscribes to nothing extra.
 
   const handleBack = () => {
     if (router.canGoBack()) {

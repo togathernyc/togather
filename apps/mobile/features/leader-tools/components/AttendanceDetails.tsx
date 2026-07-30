@@ -71,11 +71,14 @@ export function AttendanceDetails({
 
   // Fetch attendance report (for view mode or to pre-populate edit mode)
   // Prefer meetingId over eventDate for direct lookup (more efficient and unambiguous)
-  const { data: attendanceReport, isLoading: isLoadingReport } =
-    useAttendanceReport(groupId, {
-      meetingId: meetingId,
-      eventDate: meetingId ? undefined : eventDate,
-    });
+  const {
+    data: attendanceReport,
+    isLoading: isLoadingReport,
+    isPermissionDenied,
+  } = useAttendanceReport(groupId, {
+    meetingId: meetingId,
+    eventDate: meetingId ? undefined : eventDate,
+  });
 
   // Fetch group members (for edit mode when there's no attendance report)
   // loadAllMembers: true ensures all members are loaded for attendance tracking (Issue #272)
@@ -189,6 +192,23 @@ export function AttendanceDetails({
     }
   };
 
+  // Attendance is host/leader/admin-only server-side. Say so instead of
+  // rendering an empty roster (or letting the query throw and crash the
+  // screen) when the viewer can't manage this event.
+  if (isPermissionDenied) {
+    return (
+      <View style={styles.restrictedContainer}>
+        <Text style={[styles.restrictedTitle, { color: colors.text }]}>
+          You don&apos;t have access to this attendance
+        </Text>
+        <Text style={[styles.restrictedText, { color: colors.textSecondary }]}>
+          Only the event&apos;s hosts, group leaders, or community admins can
+          view attendance for this event.
+        </Text>
+      </View>
+    );
+  }
+
   if (isLoadingReport || (editMode && isLoadingMembers)) {
     return (
       <View style={styles.loadingContainer}>
@@ -292,6 +312,22 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
+  },
+  restrictedContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  restrictedTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  restrictedText: {
+    fontSize: 15,
+    textAlign: "center",
   },
   headerActions: {
     flexDirection: "row",

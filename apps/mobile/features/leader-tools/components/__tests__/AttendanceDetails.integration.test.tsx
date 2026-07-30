@@ -26,6 +26,8 @@ jest.mock("@services/api/convex", () => ({
         attendance: {
           listAttendance: "api.functions.meetings.attendance.listAttendance",
           listGuests: "api.functions.meetings.attendance.listGuests",
+          canManageAttendance:
+            "api.functions.meetings.attendance.canManageAttendance",
         },
       },
       groupMembers: {
@@ -381,6 +383,11 @@ describe("AttendanceDetails Integration Tests", () => {
         return undefined;
       }
 
+      // Attendance reads are manager-gated; default to an allowed viewer.
+      if (func === "api.functions.meetings.attendance.canManageAttendance") {
+        return true;
+      }
+
       // Return data based on which function is being called
       if (func === "api.functions.meetings.attendance.listAttendance") {
         return mockAttendanceData;
@@ -451,6 +458,45 @@ describe("AttendanceDetails Integration Tests", () => {
       </QueryClientProvider>
     );
   };
+
+  describe("Permission gating", () => {
+    /** Make the manager check resolve false, as it does for a plain member. */
+    const denyPermission = () => {
+      mockUseQuery.mockImplementation((func: any, args: any) => {
+        if (args === "skip") return undefined;
+        if (func === "api.functions.meetings.attendance.canManageAttendance") {
+          return false;
+        }
+        if (func === "api.functions.groupMembers.list") {
+          return mockGroupMembersData;
+        }
+        // listAttendance / listGuests must never be subscribed here — they
+        // throw server-side and convex/react would crash the screen.
+        return undefined;
+      });
+    };
+
+    it("shows a restricted message instead of the roster for non-managers", async () => {
+      denyPermission();
+      renderComponent();
+
+      await waitFor(() => {
+        expect(
+          screen.getByText("You don't have access to this attendance")
+        ).toBeTruthy();
+      });
+
+      const subscribedFunctions = mockUseQuery.mock.calls
+        .filter(([, args]) => args !== "skip")
+        .map(([func]) => func);
+      expect(subscribedFunctions).not.toContain(
+        "api.functions.meetings.attendance.listAttendance"
+      );
+      expect(subscribedFunctions).not.toContain(
+        "api.functions.meetings.attendance.listGuests"
+      );
+    });
+  });
 
   describe("Date Picker Functionality", () => {
     it("opens date picker modal when date button is pressed in edit mode", async () => {
