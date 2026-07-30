@@ -1,5 +1,6 @@
 import type { NotificationDefinition } from './types';
 import { escapeHtml } from './emailTemplates';
+import { truncatePreview, PUSH_PREVIEW_MAX } from '../text';
 
 // ============================================================================
 // Data Types
@@ -332,7 +333,11 @@ function getChannelLabel(data: MessageData): string {
 }
 
 function formatChatPushBody(data: MessageData): string {
-  return `${data.groupName}: ${getChannelLabel(data)}\n${data.messagePreview}`;
+  // `messagePreview` carries the (nearly) full message body so the mention
+  // email can show all of it; the push has far less room, so re-truncate here
+  // to the push cap, ending in "…" when we cut so it never looks mid-word.
+  const pushPreview = truncatePreview(data.messagePreview, PUSH_PREVIEW_MAX);
+  return `${data.groupName}: ${getChannelLabel(data)}\n${pushPreview}`;
 }
 
 /**

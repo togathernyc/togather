@@ -29,6 +29,7 @@ import { canAccessEventChannel } from "./eventChat";
 import { isCommunityAdminForChannel } from "./helpers";
 import { resolveChannelCommunityId } from "../../lib/messaging/communityScope";
 import { getUsersWithNotificationsDisabled } from "../../lib/notifications/enabledStatus";
+import { truncatePreview, LIST_PREVIEW_MAX } from "../../lib/text";
 
 /**
  * Decorate a list of message rows with `senderNotificationsDisabled` so chat
@@ -141,7 +142,6 @@ async function canAccessMeetingChat(
 // Constants
 // ============================================================================
 
-const MAX_PREVIEW_LENGTH = 100;
 const DEFAULT_PAGE_SIZE = 50;
 
 // Message type for preview generation (minimal interface for preview logic)
@@ -178,7 +178,7 @@ export function generateMessagePreview(message: MessageForPreview): string {
 
     if (imageCount > 0 && content.trim()) {
       // Has both images and text - show text
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return truncatePreview(content, LIST_PREVIEW_MAX, false);
     } else if (imageCount > 0) {
       // Only images
       return imageCount === 1 ? "Sent a photo" : `Sent ${imageCount} photos`;
@@ -192,25 +192,25 @@ export function generateMessagePreview(message: MessageForPreview): string {
       // Documents and other files
       return fileCount === 1 ? "Sent a file" : `Sent ${fileCount} files`;
     } else {
-      return content.slice(0, MAX_PREVIEW_LENGTH);
+      return truncatePreview(content, LIST_PREVIEW_MAX, false);
     }
   } else if (DOMAIN_CONFIG.eventLinkRegexSingle().test(content)) {
     // Event link shared
     return content.trim() === content.match(DOMAIN_CONFIG.eventLinkRegexSingle())?.[0]
       ? "Shared an event"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncatePreview(content, LIST_PREVIEW_MAX, false);
   } else if (DOMAIN_CONFIG.toolLinkRegexSingle().test(content)) {
     // Tool link shared (Run Sheet, Resource)
     return content.trim() === content.match(DOMAIN_CONFIG.toolLinkRegexSingle())?.[0]
       ? "Shared a tool"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncatePreview(content, LIST_PREVIEW_MAX, false);
   } else if (DOMAIN_CONFIG.groupLinkRegexSingle().test(content)) {
     // Group link shared
     return content.trim() === content.match(DOMAIN_CONFIG.groupLinkRegexSingle())?.[0]
       ? "Shared a group"
-      : content.slice(0, MAX_PREVIEW_LENGTH);
+      : truncatePreview(content, LIST_PREVIEW_MAX, false);
   } else {
-    return content.slice(0, MAX_PREVIEW_LENGTH);
+    return truncatePreview(content, LIST_PREVIEW_MAX, false);
   }
 }
 
@@ -1550,7 +1550,7 @@ export const sendSystemMessage = internalMutation({
     // Update channel metadata
     await ctx.db.patch(args.channelId, {
       lastMessageAt: now,
-      lastMessagePreview: args.content.substring(0, MAX_PREVIEW_LENGTH),
+      lastMessagePreview: truncatePreview(args.content, LIST_PREVIEW_MAX, false),
       updatedAt: now,
     });
 

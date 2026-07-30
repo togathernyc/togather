@@ -2188,7 +2188,7 @@ function EventInboxRowItem({ row, isActive, whatsappShellEnabled }: EventInboxRo
             { color: isPast ? colors.textTertiary : colors.textSecondary },
             hasUnread && !isPast && { fontWeight: "600", color: colors.text },
           ]}
-          numberOfLines={1}
+          numberOfLines={2}
         >
           {messagePreview}
         </Text>
@@ -2418,7 +2418,7 @@ function DirectMessageRow({ row, primaryColor, colors, whatsappShellEnabled }: D
           )}
         </View>
         <Text
-          numberOfLines={1}
+          numberOfLines={2}
           style={[styles.dmRowPreview, { color: colors.textSecondary }]}
         >
           {previewWithSender}
