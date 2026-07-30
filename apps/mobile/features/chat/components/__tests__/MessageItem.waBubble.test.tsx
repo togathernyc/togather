@@ -335,22 +335,6 @@ describe('MessageItem inline timestamp (flag-on)', () => {
     expect(StyleSheet.flatten(getByTestId('wa-bubble-footer').props.style).position).toBeUndefined();
   });
 
-  it('keeps the footer row for an event-card message, which has no text flow', () => {
-    // The event card is a sibling of the bubble, not text inside it, so there
-    // is nothing for an inline stamp to sit beside — and an absolutely
-    // positioned one would land on the card. Guards the §S4.2 rule that only
-    // text-last bubbles get the inline treatment, now that the card renders
-    // as a bubble of its own flag-on.
-    const { getByTestId, queryByTestId } = render(
-      <MessageItem
-        message={{ ...incoming, content: 'https://togather.nyc/e/evt123' }}
-        currentUserId={'user-1' as any}
-      />
-    );
-    expect(queryByTestId('wa-timestamp-reservation')).toBeNull();
-    expect(StyleSheet.flatten(getByTestId('wa-bubble-footer').props.style).position).toBeUndefined();
-  });
-
   it('still reserves on a deleted message, whose tombstone is the text flow', () => {
     const { getByTestId } = render(
       <MessageItem

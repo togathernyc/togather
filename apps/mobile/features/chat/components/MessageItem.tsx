@@ -887,6 +887,52 @@ function MessageItemInner({
     (isFirstInGroup ?? true) &&
     !isImageOnlyMessage;
 
+  /**
+   * §7: flag-on, a message whose *entire* content is a single event link has
+   * nothing left to put in a bubble — `displayText` is empty once the link is
+   * stripped — yet the bubble still rendered, so the thread showed a stub
+   * metadata-only bubble (sender name, timestamp, tail, no body) stacked
+   * above the card's own bubble. The card IS the bubble here, exactly like
+   * the poll/task/bug cards `isSpecialCardMessage` already suppresses it for.
+   *
+   * Deliberately a *separate* value rather than another clause on
+   * `isSpecialCardMessage`: that one also gates flag-off rendering, which
+   * must stay byte-identical. `whatsappShellEnabled` leads the conjunction so
+   * this is always false flag-off.
+   *
+   * Narrow on purpose — anything else in the message still needs a real
+   * bubble to live in: text beside the link, a reply quote, attachments, the
+   * SMS-blast badge, another card type, or a second event card (two card
+   * bubbles with one name line above them would be ambiguous about which
+   * bubble the name belongs to).
+   */
+  const isEventCardOnlyMessage =
+    whatsappShellEnabled &&
+    !isSpecialCardMessage &&
+    !hasTextContent &&
+    eventShortIds.length === 1 &&
+    toolShortIds.length === 0 &&
+    channelInviteShortIds.length === 0 &&
+    availabilityTokens.length === 0 &&
+    !showReplyQuote &&
+    !message.blastId &&
+    validImageAttachments.length === 0 &&
+    documentAttachments.length === 0 &&
+    audioAttachments.length === 0 &&
+    videoAttachments.length === 0;
+
+  /**
+   * Card content skips the bubble, and with it the §S4.2 in-bubble sender
+   * name, so the name goes back on a line above the card. The event card
+   * follows §5 grouping the way real bubbles do (name only on the first of a
+   * run); the older special cards keep their pre-existing always-on line.
+   */
+  const showAboveContentSenderName =
+    !isOwnMessage &&
+    (!whatsappShellEnabled ||
+      isSpecialCardMessage ||
+      (isEventCardOnlyMessage && (isFirstInGroup ?? true)));
+
   // --- §5 "Bubble timestamp + ticks placement": WhatsApp's inline timestamp --
   //
   // WhatsApp does not give the timestamp a row of its own. It reserves an
@@ -1355,14 +1401,15 @@ function MessageItemInner({
           {/* Sender name above the content: flag-off always; flag-on only for
               card-style messages, whose content skips the bubble (and with it
               the in-bubble name from §S4.2). */}
-          {!isOwnMessage && (!whatsappShellEnabled || isSpecialCardMessage) && (
+          {showAboveContentSenderName && (
             <Text style={[styles.senderName, { color: themeColors.textSecondary }]}>
               {message.senderName || 'Unknown'}
             </Text>
           )}
 
-          {/* Message bubble (hidden for special card messages) */}
-          {!isSpecialCardMessage && (
+          {/* Message bubble (hidden for special card messages, and flag-on for
+              an event-link-only message whose card is already the bubble) */}
+          {!isSpecialCardMessage && !isEventCardOnlyMessage && (
             <View ref={bubbleRef} style={styles.bubbleWrapper}>
               <View
                 style={[
@@ -1580,6 +1627,31 @@ function MessageItemInner({
 
           {/* Event cards for meeting links */}
           {renderEventCards()}
+
+          {/* The §5 out-of-flow inline stamp needs a text run to sit beside,
+              and the suppressed bubble took the footer row with it — so the
+              card-as-bubble case falls back to a timestamp row *under* the
+              card, the same fallback media bubbles use. It sits over the
+              wallpaper rather than a bubble tint, so it takes the theme's
+              tertiary ink both ways instead of the on-tint rgba. */}
+          {isEventCardOnlyMessage && (
+            <View testID="wa-card-footer" style={styles.messageFooter}>
+              <Text
+                style={[
+                  styles.timestamp,
+                  styles.waTimestamp,
+                  { color: themeColors.textTertiary },
+                ]}
+              >
+                {formatMessageTime(message.createdAt)}
+              </Text>
+              {message.editedAt && !message.isDeleted && (
+                <Text style={[styles.editedBadge, { color: themeColors.textTertiary }]}>
+                  (edited)
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Tool cards for run sheet/resource links */}
           {renderToolCards()}
