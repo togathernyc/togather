@@ -28,10 +28,13 @@ Authorization: Bearer tgk_xxxxxxxxxxxxxxxx
 ## Endpoint
 
 ```
-GET https://<your-deployment>.convex.site/api/v1/attendance
+GET https://api.togather.nyc/api/v1/attendance
 ```
 
-The exact base URL for a community is shown on the API Keys screen in the app.
+`https://api.togather.nyc` is the canonical base URL for the production API.
+The underlying deployment URL (`https://<deployment>.convex.site`) continues to
+work — existing integrations don't need to change. The base URL for a community
+is also shown on the API Keys screen in the app.
 
 ### Query parameters (all optional)
 
@@ -59,7 +62,7 @@ was exhausted (possible with selective `status`/`groupType` filters). Narrow the
 
 ```bash
 curl -H "Authorization: Bearer $TOGATHER_API_KEY" \
-  "https://<deployment>.convex.site/api/v1/attendance?groupType=dinner-parties&since=2026-01-01"
+  "https://api.togather.nyc/api/v1/attendance?groupType=dinner-parties&since=2026-01-01"
 ```
 
 ### Response
@@ -101,7 +104,7 @@ Field notes:
 ## Summary endpoint (rolled up)
 
 ```
-GET https://<deployment>.convex.site/api/v1/attendance/summary
+GET https://api.togather.nyc/api/v1/attendance/summary
 ```
 
 A lighter companion to `/api/v1/attendance`: returns one row per group **per
