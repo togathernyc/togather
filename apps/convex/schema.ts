@@ -981,6 +981,10 @@ export default defineSchema({
     meetingId: v.id("meetings"),
     userId: v.optional(v.id("users")), // Optional: if guest is linked to a user
     recordedById: v.optional(v.id("users")),
+    // The member who brought this guest — the plus-ones they declared on their
+    // "Going" RSVP (`meetingRsvps.guestCount`). Set when a leader checks a guest
+    // in under someone on the check-in roster; absent for unattached walk-ins.
+    hostUserId: v.optional(v.id("users")),
 
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),

@@ -431,3 +431,121 @@ describe("event check-in — walk-ins", () => {
     expect(guestId).toBeDefined();
   });
 });
+
+describe("event check-in — a member's guests (plus-ones)", () => {
+  test("the Going roster exposes the plus-ones each member declared", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    // Gina updates her RSVP to bring two people.
+    await t.run(async (ctx) => {
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", meetingId).eq("userId", goingUserId)
+        )
+        .first();
+      await ctx.db.patch(rsvp!._id, { guestCount: 2 });
+    });
+
+    const roster = await t.query(api.functions.meetingRsvps.goingRoster, {
+      token: leaderToken,
+      meetingId,
+    });
+    expect(roster).toHaveLength(1);
+    expect(roster[0].guestCount).toBe(2);
+  });
+
+  test("a guest checked in under a member is linked to that member", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const guestId = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests).toHaveLength(1);
+    expect(guests[0]._id).toBe(guestId);
+    // Checked in first, named later — the row is valid with no name at all.
+    expect(guests[0].hostUserId).toBe(goingUserId);
+    expect(guests[0].firstName).toBeUndefined();
+  });
+
+  test("a guest's name can be filled in after they are checked in", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const guestId = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+
+    await t.mutation(api.functions.meetings.attendance.updateGuest, {
+      token: leaderToken,
+      guestId,
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests[0]).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      hostUserId: goingUserId,
+    });
+  });
+
+  test("undoing a guest check-in removes only that guest", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const first = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+    await t.mutation(api.functions.meetings.attendance.addGuest, {
+      token: leaderToken,
+      meetingId,
+      hostUserId: goingUserId,
+      firstName: "Stays",
+    });
+
+    await t.mutation(api.functions.meetings.attendance.removeGuest, {
+      token: leaderToken,
+      guestId: first,
+    });
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests).toHaveLength(1);
+    expect(guests[0].firstName).toBe("Stays");
+  });
+
+  test("a non-manager cannot check in someone else's guest", async () => {
+    const t = convexTest(schema, modules);
+    const { memberToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    await expect(
+      t.mutation(api.functions.meetings.attendance.addGuest, {
+        token: memberToken,
+        meetingId,
+        hostUserId: goingUserId,
+      })
+    ).rejects.toThrow(/Only the event creator, group leaders, or community admins/);
+  });
+});

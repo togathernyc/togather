@@ -180,6 +180,11 @@ export const markAttendance = mutation({
 
 /**
  * Add guest to a meeting
+ *
+ * Covers both walk-ins (nobody's plus-one) and a member's guests — pass
+ * `hostUserId` for the latter so the check-in screen can nest them under the
+ * member who brought them. A guest row is one attending person either way, so
+ * headcount stats need no special-casing.
  */
 export const addGuest = mutation({
   args: {
@@ -189,6 +194,7 @@ export const addGuest = mutation({
     lastName: v.optional(v.string()),
     phoneNumber: v.optional(v.string()),
     notes: v.optional(v.string()),
+    hostUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     const recordedById = await requireAuth(ctx, args.token);
@@ -215,6 +221,7 @@ export const addGuest = mutation({
       lastName: args.lastName,
       phoneNumber: args.phoneNumber,
       notes: args.notes,
+      hostUserId: args.hostUserId,
       recordedById,
       recordedAt: timestamp,
     });
