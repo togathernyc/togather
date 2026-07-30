@@ -697,6 +697,20 @@ function MessageItemInner({
               isMyMessage={isOwnMessage}
               embedded
               prefetchedData={prefetchedEvent}
+              // §7: flag-on the card dresses as *this* message's bubble —
+              // same fill as the text bubble beside it — so it reads as a
+              // rich link preview rather than a separate attachment panel.
+              // Passed only when the flag is on; absent === legacy card.
+              wa={
+                whatsappShellEnabled
+                  ? {
+                      accent: waPalette.accent,
+                      bubbleFill: isOwnMessage
+                        ? waPalette.bubbleOutgoing
+                        : themeColors.bubbleIncoming,
+                    }
+                  : undefined
+              }
             />
           );
         })}
