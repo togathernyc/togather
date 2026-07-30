@@ -70,31 +70,11 @@ import {
   WA_BUBBLE_BODY_LINE_HEIGHT,
   WA_BUBBLE_SENDER_SIZE,
   WA_BUBBLE_TIMESTAMP_SIZE,
+  waSenderColor,
 } from '../waChatChrome';
+import { ReplyQuoteBlock, type ReplyQuote } from './ReplyQuoteBlock';
+import { ThreadSummaryPill, type ThreadSummary } from './ThreadSummaryPill';
 import type { ChannelPrefetchState } from '../context/ChatPrefetchContext';
-
-/**
- * WHATSAPP-DESIGN-SYSTEM.md §5 / §1.3: sender name colors in group chats are
- * a fixed neutral rotating palette, deterministically hashed per sender —
- * never the community brand accent. Hashes `senderId` the same
- * char-sum-mod-length way `getBadgeColors`/`getGroupTypeColorScheme` do
- * elsewhere in the chat feature, so the color is stable per sender across
- * renders (not random) without needing a lookup table keyed by user id.
- */
-const WA_SENDER_HUES: Array<{ light: string; dark: string }> = [
-  { light: '#0668C9', dark: '#53BDEB' }, // blue
-  { light: '#4B8F29', dark: '#8BC34A' }, // olive/green
-  { light: '#C77900', dark: '#FFB74D' }, // orange
-  { light: '#00897B', dark: '#4DB6AC' }, // teal
-  { light: '#8E24AA', dark: '#BA68C8' }, // purple
-  { light: '#D81B60', dark: '#F06292' }, // pink
-];
-
-function waSenderColor(senderId: string, isDarkMode: boolean): string {
-  const hash = senderId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const hue = WA_SENDER_HUES[hash % WA_SENDER_HUES.length];
-  return isDarkMode ? hue.dark : hue.light;
-}
 
 // §5 "Bubble timestamp + ticks placement": on outgoing bubbles the timestamp
 // renders on top of the tinted bubble fill, not a themed surface, so it uses
@@ -213,6 +193,22 @@ interface MessageItemProps {
   isFirstInGroup?: boolean;
   /** Mirrors `isFirstInGroup`, but for whether a same-sender message follows. */
   isLastInGroup?: boolean;
+  /**
+   * WHATSAPP-DESIGN-SYSTEM.md §5 reply-quote bar. Present (flag-on only) when
+   * this message is a reply that the timeline admitted — i.e. it is its
+   * parent's ONLY live reply. Renders the quoted parent INSIDE this bubble,
+   * above its own text. Supplied by `getMessages`' `replyQuote` decoration.
+   */
+  replyQuote?: ReplyQuote;
+  /** Tap the quote → scroll the list to the quoted message and flash it. */
+  onQuotePress?: (parentMessageId: Id<"chatMessages">) => void;
+  /**
+   * The collapsed-thread pill's data (flag-on only). Present when this message
+   * has TWO OR MORE live replies, which is exactly when its replies stop
+   * rendering inline and become a thread. `getMessages` decides that — a bare
+   * `threadReplyCount` is not enough, since it counts deleted replies too.
+   */
+  threadSummary?: ThreadSummary;
 }
 
 /**
@@ -275,6 +271,9 @@ function MessageItemInner({
   isHighlighted,
   isFirstInGroup,
   isLastInGroup,
+  replyQuote,
+  onQuotePress,
+  threadSummary,
 }: MessageItemProps) {
   const router = useRouter();
   const { colors: themeColors, isDark } = useTheme();
@@ -837,14 +836,23 @@ function MessageItemInner({
     };
   }, [message.attachments]);
 
+  // §5 reply-quote bar: only ever rendered flag-on, and only when the timeline
+  // admitted this reply as its parent's sole live reply.
+  const showReplyQuote = whatsappShellEnabled && !!replyQuote;
+
   // An image-only message (images, no text or other attachments) renders edge-to-edge
   // like iMessage: no bubble background, padding, footer, or tail around the image, so
   // the blue/gray bubble color never shows as a border. Reply/reactions are unaffected —
   // their handlers live on the outer Pressable and the reactions row outside the bubble.
   // Blast messages keep their bubble so the "Also sent via SMS" badge stays readable.
+  //
+  // A photo REPLY keeps its bubble: the quote bar needs the bubble fill behind
+  // it, and WhatsApp draws exactly that — a small framed photo under a quote,
+  // not an edge-to-edge one.
   const isImageOnlyMessage =
     validImageAttachments.length > 0 &&
     !hasTextContent &&
+    !showReplyQuote &&
     !message.blastId &&
     documentAttachments.length === 0 &&
     audioAttachments.length === 0 &&
@@ -1094,8 +1102,21 @@ function MessageItemInner({
     );
   };
 
-  // Render thread replies indicator
+  // Render the thread affordance under the bubble.
+  //
+  // Flag-on this is the ONE "more in the conversation" pill, and it appears
+  // only for a genuinely collapsed thread — `threadSummary` is present exactly
+  // when the message has two or more live replies. A single reply gets no pill
+  // at all: it's already a bubble in the timeline, quoting this message.
+  //
+  // Flag-off keeps the old Slack-style indicator, driven straight off
+  // `threadReplyCount` and its own per-pill query.
   const renderThreadReplies = () => {
+    if (whatsappShellEnabled) {
+      if (!threadSummary) return null;
+      return <ThreadSummaryPill summary={threadSummary} onPress={handleThreadPress} />;
+    }
+
     const replyCount = message.threadReplyCount;
     if (!replyCount || replyCount === 0) {
       return null;
@@ -1374,12 +1395,35 @@ function MessageItemInner({
                     {message.senderName || 'Unknown'}
                   </Text>
                 )}
+                {/* §5 reply-quote bar — above the reply's own content, below
+                    the sender name (WhatsApp's order: who is speaking, then
+                    what they're answering, then what they said). It sits in
+                    normal flow, so the inline-timestamp reservation at the end
+                    of the body text is unaffected. */}
+                {showReplyQuote && (
+                  <View
+                    style={[
+                      styles.waReplyQuoteWrapper,
+                      showInBubbleSenderName && styles.waReplyQuoteUnderName,
+                    ]}
+                  >
+                    <ReplyQuoteBlock
+                      quote={replyQuote!}
+                      isOwnBubble={isOwnMessage}
+                      onPress={onQuotePress}
+                    />
+                  </View>
+                )}
                 {hasTextContent && (
                   <View
                     style={[
                       styles.bubbleTextContent,
                       whatsappShellEnabled && styles.waBubbleTextContent,
-                      showInBubbleSenderName && styles.waBubbleTextContentUnderName,
+                      // Whatever sits above the body inside the bubble (sender
+                      // name, reply quote, or both) has already spent the
+                      // bubble's top padding.
+                      (showInBubbleSenderName || showReplyQuote) &&
+                        styles.waBubbleTextContentUnderName,
                       // With the footer lifted out of layout, the text block
                       // owns the bubble's bottom padding.
                       useInlineTimestamp && styles.waBubbleTextContentInline,
@@ -1841,6 +1885,15 @@ const styles = StyleSheet.create({
   /** Text block directly under an in-bubble sender name — the name already
    *  paid the bubble's top padding. */
   waBubbleTextContentUnderName: {
+    paddingTop: 0,
+  },
+  // §5 reply-quote bar: flush inside the bubble's own horizontal padding, and
+  // it owns the bubble's top padding when it's the bubble's first child.
+  waReplyQuoteWrapper: {
+    paddingHorizontal: WA_BUBBLE_PADDING_H,
+    paddingTop: WA_BUBBLE_PADDING_V,
+  },
+  waReplyQuoteUnderName: {
     paddingTop: 0,
   },
   // §S4.2 "16px body".

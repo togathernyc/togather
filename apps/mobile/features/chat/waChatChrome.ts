@@ -54,6 +54,56 @@ export const WA_BUBBLE_SENDER_SIZE = 15;
 export const WA_BUBBLE_TIMESTAMP_SIZE = 11;
 
 /**
+ * WHATSAPP-DESIGN-SYSTEM.md §5 / §1.3: sender name colors in group chats are a
+ * fixed neutral rotating palette, deterministically hashed per sender — never
+ * the community brand accent. Hashes `senderId` the same char-sum-mod-length
+ * way `getBadgeColors`/`getGroupTypeColorScheme` do elsewhere in the chat
+ * feature, so the color is stable per sender across renders (not random)
+ * without needing a lookup table keyed by user id.
+ *
+ * Lives here rather than inside `MessageItem` because the §5 reply-quote bar
+ * has to color its accent strip and its parent-name line with the *quoted*
+ * sender's hue — the same hue their own bubbles use, so the quote visually
+ * points back at them.
+ */
+export const WA_SENDER_HUES: Array<{ light: string; dark: string }> = [
+  { light: '#0668C9', dark: '#53BDEB' }, // blue
+  { light: '#4B8F29', dark: '#8BC34A' }, // olive/green
+  { light: '#C77900', dark: '#FFB74D' }, // orange
+  { light: '#00897B', dark: '#4DB6AC' }, // teal
+  { light: '#8E24AA', dark: '#BA68C8' }, // purple
+  { light: '#D81B60', dark: '#F06292' }, // pink
+];
+
+export function waSenderColor(senderId: string, isDarkMode: boolean): string {
+  const hash = senderId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const hue = WA_SENDER_HUES[hash % WA_SENDER_HUES.length];
+  return isDarkMode ? hue.dark : hue.light;
+}
+
+/**
+ * §5 reply-quote bar fill: "a slightly recessed/tinted sub-region (~6% black or
+ * ~6% white mix)". An alpha mix rather than a solid token on purpose — the same
+ * value has to read as recessed on the WHITE incoming bubble and on the MINT
+ * outgoing one, which no single opaque color does.
+ */
+export const WA_REPLY_QUOTE_FILL_LIGHT = 'rgba(0, 0, 0, 0.06)';
+export const WA_REPLY_QUOTE_FILL_DARK = 'rgba(255, 255, 255, 0.09)';
+
+/**
+ * Snippet ink inside the quote bar. Like the in-bubble timestamp, this sits on
+ * a tinted bubble fill rather than a themed surface on outgoing messages, so it
+ * uses a black/white-alpha overlay instead of a theme token.
+ */
+export const WA_REPLY_QUOTE_SNIPPET_LIGHT = 'rgba(0, 0, 0, 0.55)';
+export const WA_REPLY_QUOTE_SNIPPET_DARK = 'rgba(255, 255, 255, 0.65)';
+
+/** §5 quote-bar type: parent name and snippet are both 13pt. */
+export const WA_REPLY_QUOTE_TEXT_SIZE = 13;
+/** Corner radius of the quote sub-region, inside the bubble's own 12. */
+export const WA_REPLY_QUOTE_RADIUS = 6;
+
+/**
  * §S4.6 composer field: fully-rounded. The 44 here was an iOS
  * minimum-tap-target number, not a measurement — the calibrated pixel pass
  * (2026-07-29) put WhatsApp's empty field at 32pt, and the extra 12 was a big

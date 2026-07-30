@@ -357,8 +357,12 @@ export const WA_DAY_PILL_PADDING_V = 2;
 export const WA_DAY_PILL_PADDING_H = 14;
 /** Fraction a reaction chip overlaps its bubble's bottom-outer corner. */
 export const WA_REACTION_CHIP_OVERLAP_PCT = 0.4;
-/** Reply-quote bar left-border strip width. */
-export const WA_REPLY_QUOTE_BORDER_WIDTH = 3;
+/**
+ * Reply-quote bar leading accent strip width. 4, not the spec prose's ~3 — at 3
+ * the strip read as a hairline rule rather than WhatsApp's clearly-colored bar
+ * (owner's direction on the replies round, 2026-07-29).
+ */
+export const WA_REPLY_QUOTE_BORDER_WIDTH = 4;
 /** Reply-quote thumbnail size. */
 export const WA_REPLY_QUOTE_THUMB_SIZE = 28;
 /** Composer pill input minimum height (grows with content). */

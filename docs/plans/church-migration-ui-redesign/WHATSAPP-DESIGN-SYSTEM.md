@@ -483,12 +483,47 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
   6-hue neutral rotating palette** deterministically hashed per sender —
   **not the brand accent**, per §1.3. 1:1 chats never show a sender name.
 - **Reply-quote bar:** sits atop the bubble it's attached to, inside the same
-  bubble shape (not a separate element) — a ~3pt colored left-border strip
+  bubble shape (not a separate element) — a **4pt** colored left-border strip
   (matching the quoted sender's assigned neutral color) + the quoted sender's name
   (same neutral color, 13pt semibold) + truncated original text (13pt, `text.secondary`,
   1 line max, ellipsis) + optional thumbnail (28×28pt) if the quoted message had
   media, all in a slightly recessed/tinted sub-region (~6% black or ~6% white mix)
-  above the reply's own text.
+  above the reply's own text. **Corrected from an originally-specced ~3pt
+  strip** — at 3 it read as a hairline rule rather than a colored bar
+  (`ReplyQuoteBlock.tsx`, `WA_REPLY_QUOTE_BORDER_WIDTH`). A caption-less media
+  parent shows a glyph + noun ("Photo"/"Video"/"Voice message"/"Document") in
+  place of text; a deleted parent shows "Original message was deleted". Tapping
+  the bar scrolls to the quoted message and flashes it.
+- **Replies vs. threads (activation).** WhatsApp has no threads, so this is the
+  one place Togather has to extend the language rather than copy it. The rule:
+  - **A message's FIRST reply is not a thread.** It renders as an ordinary
+    bubble at its own place in the timeline, with the reply-quote bar above its
+    text. No pill, no separate row, nothing else.
+  - **The moment a second live reply exists, the conversation collapses.** Every
+    reply to that parent leaves the timeline and one summary pill appears
+    directly under the parent bubble: up to 3 overlapping replier mini-avatars
+    (most recent first), "N replies", the last reply's relative time, a chevron,
+    and a small unread dot when a reply landed after you last read the channel.
+    Neutral solid `bg.card` fill so it reads as chrome on the wallpaper; the
+    count in `accent`. Tapping it opens the thread screen.
+  - "Live" means **visible to this reader**: non-deleted, in this channel, and
+    not from someone they've blocked. It's evaluated per-read, so the transition
+    runs **both ways** — delete or block one of two repliers and the survivor
+    comes back inline. The parent's stored `threadReplyCount` is a monotonic
+    send counter (blind to deletes, blocks, and cross-channel rows) and must
+    never be used for this decision, nor for the pill's count.
+  - The pill's count is exact up to 50 and reads **"50+ replies"** past that —
+    an honest bound rather than an unbounded read or a stored counter.
+  - **The send that causes the collapse navigates its sender into the thread.**
+    Otherwise the message they just sent appears to vanish: both replies leave
+    the timeline and are replaced by a pill on a parent that may be scrolled far
+    away. Only that one send — a first reply stays put, and sends from inside
+    the thread screen never navigate.
+  - Threads are exactly **one level deep** — the thread screen always sends with
+    `parentMessageId` = the thread root — so there is no reply-to-a-reply case.
+  - This replaces the floating "ghost" pointer (a bubble-less echo of the
+    original message at the thread's `lastActivityAt`), which existed only
+    because the timeline hid every reply. Kept for flag-off.
 - **Reaction chips:** small pill(s) anchored to the bottom-outer corner of a
   bubble, overlapping it by ~40%, white/`bg.card` fill with a thin border, 1px
   shadow, emoji ~13pt + count ~12pt if >1, tap to see who reacted.

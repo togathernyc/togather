@@ -1048,6 +1048,47 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     setReplyToLocal(null);
   }, []);
 
+  // Parents that currently show exactly one reply inline — the threads a next
+  // reply collapses. Reported by MessageList (flag-on only) and held in a ref
+  // because nothing renders from it; it's only read at send time.
+  const collapsibleThreadsRef = useRef<Set<string>>(new Set());
+  const handleCollapsibleThreadsChange = useCallback((parentIds: Set<string>) => {
+    collapsibleThreadsRef.current = parentIds;
+  }, []);
+
+  /**
+   * Follow a reply that just turned its parent into a thread.
+   *
+   * On the send that tips a parent from one visible reply to two, BOTH replies
+   * leave the timeline and are replaced by a summary pill on the parent — which
+   * may be scrolled far up. Without this, the message you just sent appears to
+   * vanish. So on exactly that send, open the thread the message actually
+   * landed in.
+   *
+   * Deliberately conservative: it fires only when the parent was known to have
+   * an inline reply loaded right now. A first reply (nothing inline yet) stays
+   * put, an already-collapsed thread can't be replied to from the timeline, and
+   * an unknown/unloaded parent does nothing.
+   */
+  const handleReplySent = useCallback(
+    (parentMessageId: Id<"chatMessages">) => {
+      if (!whatsappShellEnabled) return;
+      if (!collapsibleThreadsRef.current.has(String(parentMessageId))) return;
+      // Same parallel group/DM routes MessageItem's thread pill uses.
+      if (resolvedGroupId) {
+        router.push({
+          pathname: `/inbox/${resolvedGroupId}/thread/${parentMessageId}` as any,
+          params: { channelName: activeSlug || "general" },
+        });
+      } else if (activeChannelId) {
+        router.push({
+          pathname: `/inbox/dm/${activeChannelId}/thread/${parentMessageId}` as any,
+        });
+      }
+    },
+    [whatsappShellEnabled, resolvedGroupId, activeChannelId, activeSlug, router],
+  );
+
   // Dismiss keyboard when tapping outside input
   const dismissKeyboard = useCallback(() => {
     Keyboard.dismiss();
@@ -1330,6 +1371,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 optimisticMessages={optimisticMessages}
                 onRetryMessage={retryMessage}
                 onDismissMessage={dismissMessage}
+                onCollapsibleThreadsChange={handleCollapsibleThreadsChange}
                 onAvatarPress={(userId) => {
                   // Short-circuit on self — self-profile lives on a
                   // different route; the MessageItem already filters
@@ -1413,6 +1455,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                     : null
                 }
                 onCancelReply={handleCancelReply}
+                onReplySent={handleReplySent}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
                 placeholder={activeChannelHint}
