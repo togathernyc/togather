@@ -204,6 +204,17 @@ Intentional Togather surface — but chrome must obey the system:
 3. Rows: S6 metrics; chevrons centered.
 4. "+ Create Event" green pill ✓ correct pattern.
 5. Tab bar → S2.
+6. **The List/Map switch is the header's floating circle pair, not chips**
+   (owner directive, 2026-07-30: "why are the events and group pages looking so
+   different when they essentially have the same elements"). An interim pass had
+   rendered it as an in-flow 34pt chip strip under the large title, which put
+   Events and Groups on two different anatomies for the identical control.
+   **Chip rows are for FILTERS; a view toggle is chrome.** Both tabs now render
+   `WaScreenHeader` with the same neutral List/Map circles top-right over the
+   34pt large title; Events simply leaves the search slot empty (it has no
+   search feature — Groups keeps its pill + type chips). The greeting block is a
+   real Events feature and stays, sitting quietly under the title on the 17/15
+   row scale.
 
 ### 8. Groups tab (divergence screen, added 2026-07-29 per owner directive)
 

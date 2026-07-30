@@ -20,7 +20,8 @@ import {
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SUBTITLE,
   WA_TYPE_FOOTNOTE,
-  WA_TAB_ACTIVE_PILL_LIGHT,
+  WA_HEADER_CIRCLE_SIZE,
+  WA_LARGE_TITLE_SIZE,
   WA_TAB_ISLAND_HEIGHT,
   WA_FLOATING_CTA_HEIGHT,
   WA_FLOATING_CTA_CONTENT_CLEARANCE,
@@ -256,35 +257,50 @@ describe('EventsScreen — WhatsApp parity (flag-on) vs legacy (flag-off)', () =
     expect(screen.queryByText('12 going')).toBeNull();
   });
 
-  it('D4: the List/Map switch is a neutral chip pair (34pt, gray fill), never a green circle', () => {
+  it('S1.1: the List/Map switch is the floating neutral circle pair — no in-flow chips', () => {
     render(<EventsScreen />);
 
-    const strip = screen.getByTestId('wa-events-view-chips');
-    expect(strip).toBeTruthy();
+    // Owner directive 2026-07-30: chip rows are for FILTERS; the view toggle is
+    // chrome, so it takes the same header circles the Groups tab draws.
+    expect(screen.queryByTestId('wa-events-view-chips')).toBeNull();
 
-    const listChip = screen.getByLabelText('List view');
-    const mapChip = screen.getByLabelText('Map view');
-    const listStyle = StyleSheet.flatten(listChip.props.style);
-    const mapStyle = StyleSheet.flatten(mapChip.props.style);
+    const circles = flattenAll(screen.toJSON()).filter(
+      (s) =>
+        s.width === WA_HEADER_CIRCLE_SIZE &&
+        s.height === WA_HEADER_CIRCLE_SIZE &&
+        s.borderRadius === WA_HEADER_CIRCLE_SIZE / 2
+    );
+    expect(circles).toHaveLength(2);
+    // Neutral white, never a green fill — the active view reads from its glyph.
+    expect(circles.every((s) => s.backgroundColor !== ACCENT)).toBe(true);
 
-    expect(listStyle.height).toBe(34);
-    expect(listStyle.borderRadius).toBe(17);
-    // Selected = a step-darker neutral pill; unselected = light gray. Neither is accent.
-    expect(listStyle.backgroundColor).toBe(WA_TAB_ACTIVE_PILL_LIGHT);
-    expect(mapStyle.backgroundColor).not.toBe(ACCENT);
-    expect(listStyle.backgroundColor).not.toBe(ACCENT);
-
-    // Still switches views, and the strip survives into map mode so the user
+    // Still switches views, and the circles survive into map mode so the user
     // can switch back.
-    fireEvent.press(mapChip);
+    fireEvent.press(screen.getByLabelText('Map view'));
     expect(screen.getByTestId('events-map-view')).toBeTruthy();
-    expect(screen.getByTestId('wa-events-view-chips')).toBeTruthy();
+    expect(screen.getByLabelText('List view')).toBeTruthy();
 
     screen.unmount();
     (useWhatsappShell as jest.Mock).mockReturnValue(false);
     render(<EventsScreen />);
     expect(screen.queryByTestId('wa-events-view-chips')).toBeNull();
     expect(screen.getByLabelText('List view')).toBeTruthy(); // legacy floating toggle
+  });
+
+  it('shares the Groups tab’s header anatomy: 34pt large title over the circle pair', () => {
+    render(<EventsScreen />);
+
+    const title = styleOf('Events');
+    expect(title.fontSize).toBe(WA_LARGE_TITLE_SIZE);
+    // The greeting sits quietly UNDER the title on the 17/15 row scale, so the
+    // title is the only large type on the screen.
+    expect(styleOf('Hey Ada').fontSize).toBeLessThan(WA_LARGE_TITLE_SIZE);
+
+    screen.unmount();
+    (useWhatsappShell as jest.Mock).mockReturnValue(false);
+    render(<EventsScreen />);
+    // Flag-off has no large title at all — the legacy screen is header-less.
+    expect(screen.queryByText('Events')).toBeNull();
   });
 
   it('keeps the greeting, restyled as a quiet left-aligned block with accent only on the action link', () => {
