@@ -1103,7 +1103,7 @@ function GroupedInboxItemInner({
               <Text style={[styles.subChannelName, { color: colors.text }, hasUnread && styles.subChannelNameUnread]}>{channel.name}</Text>
               <Text
                 style={[styles.subChannelPreview, { color: colors.textSecondary }, hasUnread && { fontWeight: "500", color: colors.text }]}
-                numberOfLines={1}
+                numberOfLines={2}
               >
                 {getMessagePreview(channel)}
               </Text>

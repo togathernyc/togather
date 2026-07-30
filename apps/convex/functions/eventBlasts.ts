@@ -14,6 +14,7 @@ import { resolveChannelCommunityId } from "../lib/messaging/communityScope";
 import { canEditMeeting } from "../lib/meetingPermissions";
 import { NOTIFIED_RSVP_OPTION_IDS, isAttendingRsvpOption } from "../lib/meetingConfig";
 import { now, getMediaUrl } from "../lib/utils";
+import { truncatePreview, LIST_PREVIEW_MAX } from "../lib/text";
 import { DOMAIN_CONFIG } from "@togather/shared/config";
 
 // ============================================================================
@@ -424,7 +425,7 @@ export const recordBlast = internalMutation({
 
     await ctx.db.patch(channelId, {
       lastMessageAt: ts,
-      lastMessagePreview: args.message.slice(0, 100),
+      lastMessagePreview: truncatePreview(args.message, LIST_PREVIEW_MAX, false),
       lastMessageSenderId: args.sentById,
       lastMessageSenderName: senderName,
       updatedAt: ts,

@@ -57,7 +57,12 @@ export function truncatePreview(
   max: number,
   ellipsis = true,
 ): string {
-  const graphemes = toGraphemes(text);
+  // A grapheme is ≥1 UTF-16 code unit, so `max * 8` code units always yields
+  // ≥ `max` graphemes (generous headroom for ZWJ sequences). Slicing to that
+  // bound first means we never segment a multi-megabyte body just to keep a
+  // couple hundred graphemes — the visible result is identical.
+  const bound = max * 8;
+  const graphemes = toGraphemes(text.length > bound ? text.slice(0, bound) : text);
   if (graphemes.length <= max) return text;
   const keep = ellipsis ? Math.max(0, max - 1) : Math.max(0, max);
   return graphemes.slice(0, keep).join("") + (ellipsis ? "…" : "");
