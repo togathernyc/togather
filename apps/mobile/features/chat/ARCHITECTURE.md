@@ -76,6 +76,14 @@ features/chat/
 ### Real-time Updates
 Convex provides real-time subscriptions via `useQuery`. Messages update automatically when new messages arrive.
 
+Switching channels (the chat room's channel tab strip) restarts that
+subscription, so `useMessages` reports no data for a beat. Flag-on
+(`useWhatsappShell`), `hooks/useChannelSwitchBuffer.ts` keeps the list painted
+across the gap — a revisited channel repaints from its own buffered last page,
+a first visit holds the outgoing channel's rows until the new page lands — so
+the message area never tears down to a blank surface. It is session-scoped
+memory owned by `MessageList`, deliberately *not* offline support (ADR-028).
+
 ### Role-Based Access
 - **All members**: Access to main channel
 - **Leaders/Admins only**: Access to leaders channel
