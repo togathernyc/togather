@@ -155,10 +155,13 @@ contrast.
 `scripts/generate-chat-wallpaper.mjs`**, not WhatsApp's own copyrighted doodle sheet
 — deliberately not reused. `ChatWallpaper.tsx` (`apps/mobile/features/chat/components/`)
 renders it as an absolutely-positioned, non-interactive layer: a base fill from the
-theme's `chatWallpaper` token, with a light/dark PNG tile (`chat-wallpaper-light.png` /
-`-dark.png`) repeated over it (`resizeMode="repeat"`). It's dropped once behind the
-whole chat-room screen (header, tab strip, message list, composer) rather than
-per-section, and only renders behind the flag-on chat surface.
+theme's `chatWallpaper` token, with a light/dark 256pt tile laid out as an explicit
+grid of `<Image>`s over it. The tiles are **inlined as base64 data URIs** in the
+generated `features/chat/chatWallpaperTiles.ts`, not `require()`d from `assets/` —
+as bundled PNGs they were expo-updates assets newer than the installed binary and
+never resolved on device over OTA (owner report, 2026-07-30). It's dropped once
+behind the whole chat-room screen (header, tab strip, message list, composer)
+rather than per-section, and only renders behind the flag-on chat surface.
 
 Togather mapping: default wallpaper stays this neutral cream/dark tone — **do not
 tint the wallpaper with `primaryColor`.** The WhatsApp "Chat theme" screen (§6) lets
