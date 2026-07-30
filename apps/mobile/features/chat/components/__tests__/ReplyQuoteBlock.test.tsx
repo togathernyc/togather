@@ -155,6 +155,21 @@ describe('ReplyQuoteBlock fallbacks', () => {
     expect(resolveQuoteSnippet({ parentMessageId: 'p' as any }).text).toBe('Message');
   });
 
+  test('a video parent with NO thumbnail still renders cleanly — glyph + noun, no image', () => {
+    // Videos only carry a poster if one was captured at upload, so this is the
+    // common case, not an edge case.
+    const { getByTestId, queryByTestId } = render(
+      <ReplyQuoteBlock
+        quote={{ ...baseQuote, parentContent: '', parentAttachmentType: 'video' }}
+        isOwnBubble={false}
+      />,
+    );
+    expect(getByTestId('wa-reply-quote-snippet').props.children).toBe('Video');
+    expect(queryByTestId('app-image')).toBeNull();
+    // The bar and name still render — the block never collapses to a strip.
+    expect(getByTestId('wa-reply-quote-name').props.children).toBe('Dara Peters');
+  });
+
   test('a media parent with a thumbnail renders it; a deleted one does not', () => {
     const withThumb = render(
       <ReplyQuoteBlock

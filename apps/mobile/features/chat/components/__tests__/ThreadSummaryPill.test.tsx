@@ -29,7 +29,7 @@ const summary = {
 describe('ThreadSummaryPill', () => {
   test('shows count, last-reply time and a chevron', () => {
     const { getByTestId } = render(<ThreadSummaryPill summary={summary} />);
-    expect(getByTestId('wa-thread-summary-count').props.children.join('')).toBe(
+    expect(getByTestId('wa-thread-summary-count').props.children).toBe(
       '3 replies',
     );
     expect(getByTestId('wa-thread-summary-time').props.children).toBe('5m ago');
@@ -41,8 +41,21 @@ describe('ThreadSummaryPill', () => {
     const { getByTestId } = render(
       <ThreadSummaryPill summary={{ ...summary, replyCount: 1 }} />,
     );
-    expect(getByTestId('wa-thread-summary-count').props.children.join('')).toBe(
+    expect(getByTestId('wa-thread-summary-count').props.children).toBe(
       '1 reply',
+    );
+  });
+
+  test('a capped count reads "50+ replies", never a bare number', () => {
+    // Past the backend's bounded count the number is a floor, so the pill must
+    // not claim an exact figure it never read.
+    const { getByTestId } = render(
+      <ThreadSummaryPill
+        summary={{ ...summary, replyCount: 50, replyCountCapped: true }}
+      />,
+    );
+    expect(getByTestId('wa-thread-summary-count').props.children).toBe(
+      '50+ replies',
     );
   });
 

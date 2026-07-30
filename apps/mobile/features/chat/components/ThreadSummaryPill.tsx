@@ -33,6 +33,12 @@ import { WA_BUBBLE_SHADOW, WA_REPLY_QUOTE_TEXT_SIZE } from '../waChatChrome';
 /** `threadSummary`, as decorated by `getMessages({ waReplies: true })`. */
 export interface ThreadSummary {
   replyCount: number;
+  /**
+   * The thread is deeper than the backend's bounded count (see
+   * `WA_THREAD_COUNT_CAP`), so `replyCount` is a floor — render it as "50+"
+   * rather than claiming an exact number we did not read.
+   */
+  replyCountCapped?: boolean;
   lastReplyAt: number;
   /** A reply landed after this viewer last read the channel (approximate). */
   hasUnread?: boolean;
@@ -77,15 +83,19 @@ export function ThreadSummaryPill({ summary, onPress }: ThreadSummaryPillProps) 
   if (summary.replyCount <= 0) return null;
 
   const avatars = summary.repliers.slice(0, 3);
+  // "50+ replies" — always plural, since the cap is only ever hit well past 1.
+  const countLabel = summary.replyCountCapped
+    ? `${summary.replyCount}+ replies`
+    : `${summary.replyCount} ${summary.replyCount === 1 ? 'reply' : 'replies'}`;
 
   return (
     <Pressable
       testID="wa-thread-summary-pill"
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`${summary.replyCount} ${
-        summary.replyCount === 1 ? 'reply' : 'replies'
-      }, last ${formatLastReply(summary.lastReplyAt)}. Open thread.`}
+      accessibilityLabel={`${countLabel}, last ${formatLastReply(
+        summary.lastReplyAt,
+      )}. Open thread.`}
       style={({ pressed }) => [
         styles.container,
         WA_BUBBLE_SHADOW,
@@ -127,7 +137,7 @@ export function ThreadSummaryPill({ summary, onPress }: ThreadSummaryPillProps) 
       )}
 
       <Text testID="wa-thread-summary-count" style={[styles.count, { color: colors.link }]}>
-        {summary.replyCount} {summary.replyCount === 1 ? 'reply' : 'replies'}
+        {countLabel}
       </Text>
       <Text style={[styles.separator, { color: colors.textTertiary }]}>·</Text>
       <Text testID="wa-thread-summary-time" style={[styles.time, { color: colors.textSecondary }]}>

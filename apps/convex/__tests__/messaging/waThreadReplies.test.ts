@@ -127,7 +127,54 @@ async function seed(t: ReturnType<typeof convexTest>): Promise<TestData> {
   });
 
   const { accessToken } = await generateTokens(userId);
-  return { userId, otherUserId, channelId, accessToken };
+  return { userId, otherUserId, groupId, channelId, accessToken };
+}
+
+/** A second channel in the same group, for the cross-channel leak tests. */
+async function seedSecondChannel(
+  t: ReturnType<typeof convexTest>,
+  groupId: Id<"groups">,
+  userId: Id<"users">,
+): Promise<Id<"chatChannels">> {
+  const now = Date.now();
+  const channelId = await t.run((ctx) =>
+    ctx.db.insert("chatChannels", {
+      groupId,
+      channelType: "custom",
+      name: "Logistics",
+      slug: "logistics",
+      createdById: userId,
+      createdAt: now,
+      updatedAt: now,
+      isArchived: false,
+      memberCount: 1,
+    }),
+  );
+  await t.run(async (ctx) => {
+    await ctx.db.insert("chatChannelMembers", {
+      channelId,
+      userId,
+      role: "admin",
+      joinedAt: now,
+      isMuted: false,
+    });
+  });
+  return channelId;
+}
+
+/** Make `blockerId` block `blockedId`, as the block mutation would. */
+async function block(
+  t: ReturnType<typeof convexTest>,
+  blockerId: Id<"users">,
+  blockedId: Id<"users">,
+) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("chatUserBlocks", {
+      blockerId,
+      blockedId,
+      createdAt: Date.now(),
+    });
+  });
 }
 
 /** Insert a message directly so tests control `createdAt` ordering exactly. */
@@ -141,7 +188,7 @@ async function insertMessage(
     parentMessageId?: Id<"chatMessages">;
     isDeleted?: boolean;
     senderName?: string;
-    attachments?: Array<{ type: string; url: string }>;
+    attachments?: Array<{ type: string; url: string; thumbnailUrl?: string }>;
   },
 ): Promise<Id<"chatMessages">> {
   const id = await t.run((ctx) =>
@@ -501,6 +548,433 @@ describe("getMessages waReplies — activation rule", () => {
       waReplies: true,
     });
     expect((page.messages[0] as any).threadSummary.hasUnread).toBe(true);
+  });
+});
+
+describe("getMessages waReplies — a thread never crosses channels", () => {
+  test("sendMessage refuses a parent that lives in another channel", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, groupId, userId, accessToken } = await seed(t);
+    const otherChannelId = await seedSecondChannel(t, groupId, userId);
+
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "secret in #general",
+      createdAt: T0,
+    });
+
+    await expect(
+      t.mutation(api.functions.messaging.messages.sendMessage, {
+        token: accessToken,
+        channelId: otherChannelId,
+        content: "leak me",
+        parentMessageId: parentId,
+      }),
+    ).rejects.toThrow(/another channel/i);
+  });
+
+  test("a pre-existing cross-channel reply quotes as deleted, leaking nothing", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, groupId, userId, otherUserId, accessToken } = await seed(t);
+    const otherChannelId = await seedSecondChannel(t, groupId, userId);
+
+    // Written directly, as a row predating the sendMessage guard would be.
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: otherUserId,
+      senderName: "Dara Peters",
+      content: "confidential from #general",
+      createdAt: T0,
+    });
+    const replyId = await insertMessage(t, {
+      channelId: otherChannelId,
+      senderId: userId,
+      content: "leaked?",
+      createdAt: T0 + 1000,
+      parentMessageId: parentId,
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId: otherChannelId,
+      waReplies: true,
+    });
+
+    const reply = page.messages.find((m: any) => m._id === replyId) as any;
+    expect(reply.replyQuote.parentDeleted).toBe(true);
+    // The whole point: no author, no text from the other channel.
+    expect(reply.replyQuote.parentContent).toBe("");
+    expect(reply.replyQuote.parentSenderId).toBeUndefined();
+    expect(reply.replyQuote.parentSenderName).toBeUndefined();
+  });
+
+  test("a cross-channel reply never counts toward the parent's own thread", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, groupId, userId, accessToken } = await seed(t);
+    const otherChannelId = await seedSecondChannel(t, groupId, userId);
+
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Who is bringing the chairs?",
+      createdAt: T0,
+    });
+    const sameChannelReplyId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "I've got them",
+      createdAt: T0 + 1000,
+      parentMessageId: parentId,
+    });
+    // A stray reply from the OTHER channel would otherwise tip this thread to
+    // two and collapse the legitimate reply out of #general.
+    await insertMessage(t, {
+      channelId: otherChannelId,
+      senderId: userId,
+      content: "stray",
+      createdAt: T0 + 2000,
+      parentMessageId: parentId,
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([
+      parentId,
+      sameChannelReplyId,
+    ]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+});
+
+describe("getMessages waReplies — blocked authors are invisible in threads too", () => {
+  test("a blocked author is excluded from the summary count and avatars", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+
+    const blockedId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Blocked",
+        lastName: "Person",
+        phone: "+15555559999",
+        phoneVerified: true,
+        createdAt: T0,
+        updatedAt: T0,
+      }),
+    );
+    await block(t, userId, blockedId);
+
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Who is bringing the chairs?",
+      createdAt: T0,
+    });
+    for (const [i, sender] of [otherUserId, otherUserId, blockedId].entries()) {
+      await insertMessage(t, {
+        channelId,
+        senderId: sender,
+        senderName: sender === blockedId ? "Blocked Person" : "Dara Peters",
+        content: `r${i}`,
+        createdAt: T0 + 1000 * (i + 1),
+        parentMessageId: parentId,
+      });
+    }
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const summary = (page.messages[0] as any).threadSummary;
+
+    // 3 replies were sent; you can see 2 of them.
+    expect(summary.replyCount).toBe(2);
+    expect(summary.repliers.map((r: any) => r.userId)).toEqual([otherUserId]);
+    // The blocked reply was the newest — the last-reply time must not be theirs.
+    expect(summary.lastReplyAt).toBe(T0 + 2000);
+  });
+
+  test("a lone reply from a blocked author renders neither a row nor a pill", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const blockedId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Blocked",
+        lastName: "Person",
+        phone: "+15555559999",
+        phoneVerified: true,
+        createdAt: T0,
+        updatedAt: T0,
+      }),
+    );
+    await block(t, userId, blockedId);
+
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Who is bringing the chairs?",
+      createdAt: T0,
+    });
+    await insertMessage(t, {
+      channelId,
+      senderId: blockedId,
+      senderName: "Blocked Person",
+      content: "you can't see this",
+      createdAt: T0 + 1000,
+      parentMessageId: parentId,
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    // Exactly the disappearance their ordinary messages get.
+    expect(page.messages.map((m: any) => m._id)).toEqual([parentId]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+
+  test("blocking one of two repliers drops the thread back to an inline reply", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "Who is bringing the chairs?",
+      createdAt: T0,
+    });
+    const visibleReplyId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "I've got them",
+      createdAt: T0 + 1000,
+      parentMessageId: parentId,
+    });
+    await insertMessage(t, {
+      channelId,
+      senderId: otherUserId,
+      senderName: "Dara Peters",
+      content: "me too",
+      createdAt: T0 + 2000,
+      parentMessageId: parentId,
+    });
+
+    // Before blocking: a collapsed thread.
+    let page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(2);
+
+    await block(t, userId, otherUserId);
+
+    // After: one visible reply, so it comes back inline and the pill goes away.
+    page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([
+      parentId,
+      visibleReplyId,
+    ]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+});
+
+describe("getMessages waReplies — quoted media thumbnails", () => {
+  async function quoteFor(
+    attachments: Array<{ type: string; url: string; thumbnailUrl?: string }>,
+  ) {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "",
+      createdAt: T0,
+      attachments,
+    });
+    await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "nice",
+      createdAt: T0 + 1000,
+      parentMessageId: parentId,
+    });
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    return (page.messages.find((m: any) => m.parentMessageId) as any).replyQuote;
+  }
+
+  test("an image parent carries a resolved thumbnail URL", async () => {
+    const quote = await quoteFor([
+      { type: "image", url: "https://cdn.test/chairs.jpg" },
+    ]);
+    expect(quote.parentAttachmentType).toBe("image");
+    expect(quote.parentThumbnailUrl).toBe("https://cdn.test/chairs.jpg");
+  });
+
+  test("a video parent carries its capture thumbnail when it has one", async () => {
+    const quote = await quoteFor([
+      {
+        type: "video",
+        url: "https://cdn.test/setup.mp4",
+        thumbnailUrl: "https://cdn.test/setup-poster.jpg",
+      },
+    ]);
+    expect(quote.parentAttachmentType).toBe("video");
+    // Never the video file itself — that would try to paint an mp4 into a 28pt box.
+    expect(quote.parentThumbnailUrl).toBe("https://cdn.test/setup-poster.jpg");
+  });
+
+  test("a video parent with no capture thumbnail carries none (glyph-only quote)", async () => {
+    const quote = await quoteFor([
+      { type: "video", url: "https://cdn.test/setup.mp4" },
+    ]);
+    expect(quote.parentAttachmentType).toBe("video");
+    expect(quote.parentThumbnailUrl).toBeUndefined();
+  });
+
+  test("audio and document parents carry no thumbnail", async () => {
+    expect(
+      (await quoteFor([{ type: "audio", url: "https://cdn.test/vm.m4a" }]))
+        .parentThumbnailUrl,
+    ).toBeUndefined();
+    expect(
+      (await quoteFor([{ type: "document", url: "https://cdn.test/plan.pdf" }]))
+        .parentThumbnailUrl,
+    ).toBeUndefined();
+  });
+});
+
+describe("getMessages waReplies — the pill count stays bounded and honest", () => {
+  /** Add `count` live replies to `parentId`, then optionally delete some. */
+  async function addReplies(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    senderId: Id<"users">,
+    parentId: Id<"chatMessages">,
+    count: number,
+  ) {
+    const ids: Id<"chatMessages">[] = [];
+    for (let i = 0; i < count; i++) {
+      ids.push(
+        await insertMessage(t, {
+          channelId,
+          senderId,
+          content: `r${i}`,
+          createdAt: T0 + 1000 * (i + 1),
+          parentMessageId: parentId,
+        }),
+      );
+    }
+    return ids;
+  }
+
+  test("a thread deeper than the probe still counts exactly, up to the cap", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "long one",
+      createdAt: T0,
+    });
+    await addReplies(t, channelId, userId, parentId, 23);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const summary = (page.messages[0] as any).threadSummary;
+    expect(summary.replyCount).toBe(23);
+    expect(summary.replyCountCapped).toBe(false);
+  });
+
+  test("past the cap the pill reports the cap and flags it", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "very long one",
+      createdAt: T0,
+    });
+    await addReplies(t, channelId, userId, parentId, 55);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const summary = (page.messages[0] as any).threadSummary;
+    expect(summary.replyCount).toBe(50);
+    expect(summary.replyCountCapped).toBe(true);
+  });
+
+  test("deleted replies never inflate a deep thread's count", async () => {
+    // The regression this fix exists for: past the probe the count used to fall
+    // back to the monotonic `threadReplyCount`, which counts deleted sends.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "long one",
+      createdAt: T0,
+    });
+    const ids = await addReplies(t, channelId, userId, parentId, 20);
+    await t.run(async (ctx) => {
+      for (const id of ids.slice(0, 8)) {
+        await ctx.db.patch(id, { isDeleted: true });
+      }
+    });
+
+    const parentDoc = await t.run((ctx) => ctx.db.get(parentId));
+    expect(parentDoc?.threadReplyCount).toBe(20); // never decremented
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const summary = (page.messages[0] as any).threadSummary;
+    expect(summary.replyCount).toBe(12);
+    expect(summary.replyCountCapped).toBe(false);
+  });
+
+  test("the activation rule is unaffected by the counting change", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const parentId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "one only",
+      createdAt: T0,
+    });
+    const [replyId] = await addReplies(t, channelId, userId, parentId, 1);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([parentId, replyId]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
   });
 });
 
