@@ -52,7 +52,7 @@ import { Avatar } from "@components/ui/Avatar";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
-import { useCachedServingPlans } from "@features/serving/hooks/useCachedServingPlans";
+import { useServingPlans } from "@features/serving/hooks/useServingPlans";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   WaAvatar,
@@ -389,9 +389,21 @@ export function ChatInboxScreen({
           startsAt: number;
           endsAt: number;
         }>;
+        /** Future plans openable early to prepare — see `useServingPlans`. */
+        upcomingPlans: Array<{
+          planId: string;
+          groupId: string;
+          title: string;
+          startsAt: number;
+          endsAt: number;
+        }>;
       }
     | undefined;
-  const eligiblePlans = useCachedServingPlans(servingEligibility?.plans);
+  // Today's eligible plans — or, when the user opened an upcoming plan early
+  // from My Schedule, just that ONE plan. The serving inbox is filtered
+  // server-side by these ids, so a preview must never widen to every upcoming
+  // plan's channels.
+  const eligiblePlans = useServingPlans(servingEligibility);
   const eligiblePlanIds = useMemo(
     () => eligiblePlans.map((p) => p.planId as Id<"eventPlans">),
     [eligiblePlans],

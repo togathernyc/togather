@@ -60,7 +60,7 @@ import {
   WA_WEIGHT_SEMIBOLD,
 } from "@components/wa";
 import { useEventModeStore } from "@/stores/eventModeStore";
-import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
+import { useServingPlans } from "../hooks/useServingPlans";
 import { useConnectionStatus } from "@providers/ConnectionProvider";
 import { useServingTasksCache } from "@/stores/servingTasksCache";
 import {
@@ -226,6 +226,7 @@ export function ServingTasksScreen() {
   // three flag sources, two of them Convex queries.
   const wa = useWhatsappShell();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const previewPlanId = useEventModeStore((s) => s.previewPlanId);
 
   // Every plan the user is serving today (soonest-first). One section each.
   // Cached for offline via `useCachedServingPlans` so the tab still renders its
@@ -233,8 +234,12 @@ export function ServingTasksScreen() {
   const eligibility = useAuthenticatedQuery(
     api.functions.scheduling.serving.getServingEligibility,
     isServingMode ? {} : "skip",
-  ) as { plans: EligiblePlan[] } | null | undefined;
-  const plans = useCachedServingPlans(eligibility?.plans);
+  ) as
+    | { plans: EligiblePlan[]; upcomingPlans: EligiblePlan[] }
+    | null
+    | undefined;
+  // Today's plans, or the single upcoming plan opened early for preview.
+  const plans = useServingPlans(eligibility);
 
   // --- Global offline flush loop ---------------------------------------------
   // Replays queued (offline) completions when back online. The queue is GLOBAL
@@ -341,7 +346,9 @@ export function ServingTasksScreen() {
         <Text
           style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
         >
-          Not currently serving on an event.
+          {previewPlanId
+            ? "This event isn't available to preview anymore."
+            : "Not currently serving on an event."}
         </Text>
       </View>
     );

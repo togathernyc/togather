@@ -12,8 +12,9 @@
  * (e.g. `useEventModeStore((s) => s.isServingMode)`); `getState()` is kept for
  * non-hook callers.
  *
- * Serving state is persisted to `localStorage` (guarded, SSR-safe) so it
- * survives a refresh like the native AsyncStorage-persisted store.
+ * Serving state — the on/off flag and the early-opened `previewPlanId` — is
+ * persisted to `localStorage` (guarded, SSR-safe) so it survives a refresh like
+ * the native AsyncStorage-persisted store.
  */
 import { useSyncExternalStore } from 'react';
 
@@ -32,10 +33,18 @@ interface EventModeState {
    * Mirrors the native flag so serving-mode-aware screens don't gate forever.
    */
   hasHydrated: boolean;
+  /**
+   * The upcoming plan the user opened EARLY (from My Schedule), or null when
+   * serving normally. While set, the serving surfaces scope to this ONE plan.
+   * Mirrors the native store.
+   */
+  previewPlanId: string | null;
   /** No-op on web (state is already hydrated); present for API parity. */
   setHasHydrated: (value: boolean) => void;
-  /** Enter serving mode. */
+  /** Enter serving mode for today's eligible plans (clears any preview). */
   enter: () => void;
+  /** Enter serving mode scoped to a single upcoming plan, opened early. */
+  enterPreview: (planId: string) => void;
   /** Exit serving mode. */
   exit: () => void;
 }
@@ -46,19 +55,22 @@ function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;
 }
 
-function loadPersisted(): { isServingMode: boolean } {
-  if (!hasStorage()) return { isServingMode: false };
+function loadPersisted(): { isServingMode: boolean; previewPlanId: string | null } {
+  const empty = { isServingMode: false, previewPlanId: null };
+  if (!hasStorage()) return empty;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { isServingMode: false };
+    if (!raw) return empty;
     const parsed = JSON.parse(raw) as {
       isServingMode?: boolean;
+      previewPlanId?: string | null;
     };
     return {
       isServingMode: !!parsed.isServingMode,
+      previewPlanId: parsed.previewPlanId ?? null,
     };
   } catch {
-    return { isServingMode: false };
+    return empty;
   }
 }
 
@@ -69,6 +81,7 @@ function persist(): void {
       STORAGE_KEY,
       JSON.stringify({
         isServingMode: state.isServingMode,
+        previewPlanId: state.previewPlanId,
       })
     );
   } catch {
@@ -94,11 +107,20 @@ const state: EventModeState = {
   isServingMode: persisted.isServingMode,
   autoEnterBlocked: false,
   hasHydrated: true,
+  previewPlanId: persisted.previewPlanId,
   setHasHydrated: () => {
     // No-op: web hydrates synchronously in loadPersisted().
   },
   enter: () => {
     state.isServingMode = true;
+    state.previewPlanId = null;
+    snapshot = makeSnapshot();
+    persist();
+    emit();
+  },
+  enterPreview: (planId: string) => {
+    state.isServingMode = true;
+    state.previewPlanId = planId;
     snapshot = makeSnapshot();
     persist();
     emit();
@@ -106,6 +128,7 @@ const state: EventModeState = {
   exit: () => {
     state.isServingMode = false;
     state.autoEnterBlocked = true;
+    state.previewPlanId = null;
     snapshot = makeSnapshot();
     persist();
     emit();
@@ -117,8 +140,10 @@ function makeSnapshot(): EventModeState {
     isServingMode: state.isServingMode,
     autoEnterBlocked: state.autoEnterBlocked,
     hasHydrated: state.hasHydrated,
+    previewPlanId: state.previewPlanId,
     setHasHydrated: state.setHasHydrated,
     enter: state.enter,
+    enterPreview: state.enterPreview,
     exit: state.exit,
   };
 }
