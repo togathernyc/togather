@@ -50,6 +50,8 @@ export interface WaHeaderButton {
   /** The one filled-accent circle among the row (the Chats compose `+`, per S5.1). */
   accent?: boolean;
   accessibilityLabel?: string;
+  /** For toggle-style circles (List/Map): forwarded as accessibilityState.selected. */
+  selected?: boolean;
 }
 
 export interface WaScreenHeaderProps {
@@ -91,6 +93,7 @@ export function WaScreenHeader({
       variant={button.accent ? 'accent' : 'plain'}
       accent={accent}
       accessibilityLabel={button.accessibilityLabel}
+      selected={button.selected}
     />
   ));
 

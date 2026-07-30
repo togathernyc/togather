@@ -29,7 +29,9 @@
  *     `WaFloatingCta`, so it is geometrically identical to the Events tab's
  *     "Create Event" and clears the floating tab island by construction.
  *   - S5.2 "find groups near me": a neutral compass circle beside the search
- *     pill, plus zip search in the pill itself. See `handlePressNearby`.
+ *     pill, plus zip search in the pill itself. An active origin sorts BOTH
+ *     membership sections nearest-first and labels every geocoded row with its
+ *     distance. See `handlePressNearby` and the `nearby` memo.
  *
  * The map is not dropped — it moves behind the Map circle in the header
  * (the Events tab's List/Map pattern), where it still renders the existing
@@ -87,7 +89,7 @@ import type { FilterState, GroupTypeOption } from './FilterModal';
 import {
   formatMiles,
   isZipQuery,
-  partitionByDistance,
+  sortByDistance,
   type LatLng,
 } from '../utils/nearbyGroups';
 
@@ -469,26 +471,41 @@ export function WaGroupsScreen({
     return { memberGroups: mine, joinableGroups: joinable };
   }, [searchedGroups]);
 
-  // Nearest-first for the joinable directory only — "Groups you're in" is not
-  // a discovery list. Groups with no address are never dropped; they fall into
-  // the section below.
+  /**
+   * Owner directive (2026-07-30): "when typing in a zipcode it does not update
+   * the list sorted by distance and display the distance on the group card, it
+   * should."
+   *
+   * An active origin now sorts BOTH sections nearest-first and labels every
+   * geocoded row with its distance — not just the joinable half. The owner is a
+   * member of nearly every group in their community, so re-sectioning only the
+   * discovery list made zip search look like a no-op. The membership sections
+   * stay ("Groups you're in" / "Groups you can join"): they are the mental model
+   * of the screen, and "the list sorted by distance" is a sort, not a regrouping,
+   * so the old "Near you" / "More groups" split is gone.
+   *
+   * Rows without coordinates are never dropped — they trail the located ones
+   * inside their own section and simply carry no distance.
+   */
   const nearby = useMemo(() => {
     if (!origin) return null;
-    const { near, rest } = partitionByDistance(
-      joinableGroups,
-      (group) => coordsByKey.get(groupKey(group)) ?? null,
-      origin
-    );
+    const coordsOf = (group: ExploreGroup) => coordsByKey.get(groupKey(group)) ?? null;
+    const rankedMembers = sortByDistance(memberGroups, coordsOf, origin);
+    const rankedJoinable = sortByDistance(joinableGroups, coordsOf, origin);
+    const distances = new Map<string, number>();
+    [...rankedMembers, ...rankedJoinable].forEach((entry) => {
+      if (entry.miles !== null) distances.set(groupKey(entry.item), entry.miles);
+    });
     return {
-      groups: near.map((entry) => entry.item),
-      distances: new Map(near.map((entry) => [groupKey(entry.item), entry.miles])),
-      rest,
+      memberGroups: rankedMembers.map((entry) => entry.item),
+      joinableGroups: rankedJoinable.map((entry) => entry.item),
+      distances,
     };
-  }, [origin, joinableGroups, coordsByKey]);
+  }, [origin, memberGroups, joinableGroups, coordsByKey]);
 
   // One quiet gray line, never an alert: the denial path has to point at the
-  // zip alternative, and "nothing is geocoded" has to say so rather than
-  // render an empty "Near you" header.
+  // zip alternative, and "nothing is geocoded" has to say so rather than leave
+  // the user staring at an unchanged list.
   let nearbyHint: string | null = null;
   if (nearbyRequested && locationError) {
     nearbyHint = locationError;
@@ -496,7 +513,7 @@ export function WaGroupsScreen({
     nearbyHint = 'Finding your location…';
   } else if (zipQuery && !coordinates) {
     nearbyHint = `We don't know the zip code ${zipQuery}. Try another one.`;
-  } else if (nearby && nearby.groups.length === 0 && joinableGroups.length > 0) {
+  } else if (nearby && nearby.distances.size === 0 && searchedGroups.length > 0) {
     nearbyHint = 'None of these groups have an address yet, so we can’t sort by distance.';
   }
 
@@ -584,11 +601,13 @@ export function WaGroupsScreen({
           icon: viewMode === 'list' ? 'list' : 'list-outline',
           onPress: () => setViewMode('list'),
           accessibilityLabel: 'List view',
+          selected: viewMode === 'list',
         },
         {
           icon: viewMode === 'map' ? 'map' : 'map-outline',
           onPress: () => setViewMode('map'),
           accessibilityLabel: 'Map view',
+          selected: viewMode === 'map',
         },
       ]}
       searchSlot={
@@ -691,30 +710,16 @@ export function WaGroupsScreen({
           <>
             <WaGroupSection
               title="Groups you're in"
-              groups={memberGroups}
+              groups={nearby?.memberGroups ?? memberGroups}
+              distances={nearby?.distances}
               onPressGroup={openGroup}
             />
-            {nearby ? (
-              <>
-                <WaGroupSection
-                  title="Near you"
-                  groups={nearby.groups}
-                  distances={nearby.distances}
-                  onPressGroup={openGroup}
-                />
-                <WaGroupSection
-                  title="More groups"
-                  groups={nearby.rest}
-                  onPressGroup={openGroup}
-                />
-              </>
-            ) : (
-              <WaGroupSection
-                title="Groups you can join"
-                groups={joinableGroups}
-                onPressGroup={openGroup}
-              />
-            )}
+            <WaGroupSection
+              title="Groups you can join"
+              groups={nearby?.joinableGroups ?? joinableGroups}
+              distances={nearby?.distances}
+              onPressGroup={openGroup}
+            />
           </>
         )}
       </ScrollView>

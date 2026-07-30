@@ -11,12 +11,12 @@ if (typeof URL !== 'undefined' && !URL.canParse) {
 }
 
 import React, { useMemo, useEffect, useState } from "react";
-import { Platform, View, ActivityIndicator, StyleSheet } from "react-native";
-import { Stack, useSegments } from "expo-router";
+import { Platform, View, ActivityIndicator } from "react-native";
+import { Stack } from "expo-router";
 import * as Font from "expo-font";
 import { Ionicons } from "@expo/vector-icons";
 import { StatusBar } from "expo-status-bar";
-import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 // Note: KeyboardProvider from react-native-keyboard-controller was causing conflicts
 // with Stream Chat's overlay system during interactive keyboard dismiss
@@ -34,7 +34,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ErrorBoundary } from "@components/ErrorBoundary";
 import { TestFlightBanner } from "@components/ui/TestFlightBanner";
 import { DemoBanner } from "@components/ui/DemoBanner";
-import { StatusBar as BottomStatusBar, useStatusBarVisible, STATUS_BAR_CONTENT_HEIGHT } from "@components/ui/StatusBar";
+import { StatusBarAwareContainer } from "@components/ui/StatusBarAwareContainer";
 import { ConnectionProvider } from "@providers/ConnectionProvider";
 import { NativeUpdateModal } from "@components/ui/NativeUpdateModal";
 import { OTAUpdateModal } from "@components/ui/OTAUpdateModal";
@@ -190,38 +190,6 @@ function ThemedStack() {
       <Stack.Screen name="onboarding" />
       <Stack.Screen name="billing/[communityId]" />
     </Stack>
-  );
-}
-
-/**
- * Container that adds bottom safe area padding + extra space for the
- * status bar banner when it's visible. This keeps ALL screens (tabs,
- * chat, modals) above the banner without per-screen fixes.
- */
-function StatusBarAwareContainer({ children }: { children: React.ReactNode }) {
-  const insets = useSafeAreaInsets();
-  const isStatusBarVisible = useStatusBarVisible();
-  const segments = useSegments();
-  const { colors } = useTheme();
-
-  // Landing page needs edge-to-edge design with dark background
-  const segmentArray = segments as string[];
-  const isLandingPage = segmentArray.includes("landing") || (segmentArray[0] === "(auth)" && segmentArray[1] === "landing");
-
-  // Keep padding consistent to prevent jank
-  const bottomPadding = insets.bottom + (isStatusBarVisible ? STATUS_BAR_CONTENT_HEIGHT : 0);
-
-  return (
-    <>
-      {/* Background layer for landing page - matches image bottom fade */}
-      {isLandingPage && (
-        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.landing }]} />
-      )}
-      <View style={{ flex: 1, backgroundColor: isLandingPage ? "transparent" : colors.background, paddingBottom: bottomPadding }}>
-        {children}
-      </View>
-      <BottomStatusBar />
-    </>
   );
 }
 

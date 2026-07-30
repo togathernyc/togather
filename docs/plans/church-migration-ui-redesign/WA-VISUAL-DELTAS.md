@@ -204,6 +204,17 @@ Intentional Togather surface — but chrome must obey the system:
 3. Rows: S6 metrics; chevrons centered.
 4. "+ Create Event" green pill ✓ correct pattern.
 5. Tab bar → S2.
+6. **The List/Map switch is the header's floating circle pair, not chips**
+   (owner directive, 2026-07-30: "why are the events and group pages looking so
+   different when they essentially have the same elements"). An interim pass had
+   rendered it as an in-flow 34pt chip strip under the large title, which put
+   Events and Groups on two different anatomies for the identical control.
+   **Chip rows are for FILTERS; a view toggle is chrome.** Both tabs now render
+   `WaScreenHeader` with the same neutral List/Map circles top-right over the
+   34pt large title; Events simply leaves the search slot empty (it has no
+   search feature — Groups keeps its pill + type chips). The greeting block is a
+   real Events feature and stays, sitting quietly under the title on the 17/15
+   row scale.
 
 ### 8. Groups tab (divergence screen, added 2026-07-29 per owner directive)
 
@@ -238,16 +249,29 @@ directory:
    compass circle to the right of the search pill — a plain `WaFloatingButton`,
    because the screen's accent budget is spent on the CTA, so the active state
    reads from the filled glyph like the List/Map pair. Tapping it asks for
-   foreground location (`useUserLocation`) and re-sections the *joinable*
-   directory into "Near you" (geocoded, nearest first, distance appended to the
-   15pt subtitle) over "More groups" (no address on file — never dropped).
-   "Groups you're in" is not re-ordered; it is not a discovery list. A bare
-   5-digit zip typed into the search pill is treated as a location query rather
-   than a name filter, so zip search is the always-available alternative and
-   not merely the permission-denied fallback. Ordering is a local haversine
-   over coordinates the container already geocodes client-side — there is no
-   server geocode path in this repo and this feature does not add one. Edge
-   states are one quiet gray line, never an alert.
+   foreground location (`useUserLocation`). A bare 5-digit zip typed into the
+   search pill is treated as a location query rather than a name filter, so zip
+   search is the always-available alternative and not merely the
+   permission-denied fallback. Ordering is a local haversine over coordinates
+   the container already geocodes client-side — there is no server geocode path
+   in this repo and this feature does not add one. Edge states are one quiet
+   gray line, never an alert.
+
+   **An active origin sorts the WHOLE list, both sections** (owner directive,
+   2026-07-30: "when typing in a zipcode it does not update the list sorted by
+   distance and display the distance on the group card, it should"). The first
+   pass re-sectioned only the *joinable* half into "Near you" / "More groups"
+   and left "Groups you're in" alone as "not a discovery list" — but the owner
+   is a member of nearly every group in their community, so zip search looked
+   like a no-op. Now both **membership sections stay** ("Groups you're in" /
+   "Groups you can join") and each is sorted nearest-first internally, with
+   every geocoded row's distance appended to its 15pt subtitle ("Team · 6
+   members · 2.3 mi"). It is a sort, not a regrouping — which is also the
+   owner's own phrasing. Rows with no address are never dropped and never
+   interleaved: they trail the located rows inside their own section, carrying
+   no distance. `sortByDistance` in `utils/nearbyGroups.ts` is the whole rule;
+   distances are looked up by group id, so rows absent from the geocoded subset
+   are quietly skipped.
 
 ### S5.3 One floating CTA geometry (added 2026-07-29 per owner directive)
 

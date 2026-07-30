@@ -13,10 +13,8 @@ import {
   Text,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
   Platform,
   Keyboard,
-  Pressable,
   Share,
   ActionSheetIOS,
   InteractionManager,
@@ -42,7 +40,7 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
 import { ChatRoomHeader } from "./ChatRoomHeader";
 import { ChatPrivacyCard } from "./ChatPrivacyCard";
-import { ChatWallpaper } from "./ChatWallpaper";
+import { ChatRoomSurface } from "./ChatRoomSurface";
 import { ChatNavigation, type ChannelTab } from "./ChatNavigation";
 import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
@@ -1237,31 +1235,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[
-        styles.container,
-        { paddingTop: insets.top, backgroundColor: colors.surface },
-        // §S4.1: the wallpaper layer below fills the Pressable (which starts
-        // under `paddingTop`), so the status-bar strip takes the wallpaper's
-        // base color to avoid a white band above a cream thread.
-        whatsappShellEnabled && { backgroundColor: colors.chatWallpaper },
-      ]}
-      behavior="padding"
-      keyboardVerticalOffset={0}
+    <ChatRoomSurface
+      whatsappShellEnabled={whatsappShellEnabled}
+      onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}
     >
-      <Pressable
-        style={[
-          styles.container,
-          { backgroundColor: colors.surface },
-          whatsappShellEnabled && styles.waTransparent,
-        ]}
-        onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}
-      >
-        {/* §S4.1 "applied to the whole thread area and under the translucent
-            nav/composer" — one non-interactive layer behind every child, so
-            the header, tab strip, list and composer all sit on the same
-            wallpaper instead of each painting its own background. */}
-        {whatsappShellEnabled && <ChatWallpaper />}
         {isAdHocChannel && adHocChannelType ? (
           <ChatRoomHeader
             channelType={adHocChannelType}
@@ -1586,8 +1563,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
             setSyncResults(null);
           }}
         />
-      </Pressable>
-    </KeyboardAvoidingView>
+    </ChatRoomSurface>
   );
 };
 

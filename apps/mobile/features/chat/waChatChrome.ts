@@ -32,6 +32,49 @@ export const WA_CHAT_CHROME_DARK = 'rgba(17, 27, 33, 0.8)';
 export const WA_COMPOSER_BAR_LIGHT = 'rgba(241, 236, 229, 0.5)';
 export const WA_COMPOSER_BAR_DARK = 'rgba(17, 27, 33, 0.75)';
 
+/**
+ * Flattens one of the translucent chrome fills above onto the wallpaper, so
+ * the same tone can be painted where the wallpaper layer *isn't* underneath.
+ *
+ * The safe-area strips need this. The status-bar strip is `paddingTop` on the
+ * chat screen's root and the home-indicator strip is `paddingBottom` on the
+ * app's root container (`components/ui/StatusBarAwareContainer`) — padding
+ * sits outside the children's box, so `ChatWallpaper`'s absolute fill stops
+ * short of both. Whatever paints those two bands has to be OPAQUE: a
+ * translucent chrome fill there would composite over the root white / near-
+ * black background instead of over the wallpaper, which is exactly the bug
+ * (owner's device: a white band under the composer in light mode, and a
+ * near-black band at both edges in dark mode, 2026-07-30).
+ */
+function flattenOverWallpaper(overlay: string, wallpaperHex: string): string {
+  const [r, g, b, alpha] = overlay
+    .replace(/[^0-9.,]/g, '')
+    .split(',')
+    .map(Number);
+  const base = parseInt(wallpaperHex.replace('#', ''), 16);
+  const channels = [r, g, b].map((channel, i) => {
+    const baseChannel = (base >> (16 - i * 8)) & 0xff;
+    return Math.round(channel * alpha + baseChannel * (1 - alpha));
+  });
+  return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+/** The nav header / tab strip's rendered tone, as a solid color. */
+export function waChatChromeOpaque(wallpaperHex: string, isDarkMode: boolean): string {
+  return flattenOverWallpaper(
+    isDarkMode ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+    wallpaperHex
+  );
+}
+
+/** The composer bar's rendered tone, as a solid color. */
+export function waComposerBarOpaque(wallpaperHex: string, isDarkMode: boolean): string {
+  return flattenOverWallpaper(
+    isDarkMode ? WA_COMPOSER_BAR_DARK : WA_COMPOSER_BAR_LIGHT,
+    wallpaperHex
+  );
+}
+
 /** §2.3 neutral channel tab strip: white active pill on a light-gray track. */
 export const WA_TAB_TRACK_LIGHT = 'rgba(0, 0, 0, 0.05)';
 export const WA_TAB_TRACK_DARK = 'rgba(255, 255, 255, 0.08)';
@@ -114,3 +157,46 @@ export const WA_REPLY_QUOTE_RADIUS = 6;
 export const WA_COMPOSER_FIELD_HEIGHT = 32;
 /** Fully-rounded: always half the field height. */
 export const WA_COMPOSER_FIELD_RADIUS = WA_COMPOSER_FIELD_HEIGHT / 2;
+
+/* ---------------------------------------------------------------------------
+ * §7 in-thread structured cards (event card)
+ *
+ * §7 is explicit that a Togather-only element in the thread must be a
+ * *bubble*, not "a separate attachment card component with its own
+ * shadow/border language" — so the event card borrows WhatsApp's rich
+ * link-preview anatomy: a compact 16:9 banner across the bubble top, body copy
+ * on the bubble's own fill, and an RSVP pill row docked at the bottom edge.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * §7 "a thumbnail if present": WhatsApp's rich link preview crops its image to
+ * a wide banner, never a full-bleed square poster — the bubble has to stay
+ * message-sized, not poster-sized.
+ */
+export const WA_CARD_COVER_ASPECT = 16 / 9;
+
+/** Inner gutter of the card body — tighter than a screen's 16, like a bubble's. */
+export const WA_CARD_PADDING = 10;
+
+/** §7 RSVP pill row: chips-row anatomy, 32pt tall and fully rounded. */
+export const WA_CARD_PILL_HEIGHT = 32;
+export const WA_CARD_PILL_RADIUS = WA_CARD_PILL_HEIGHT / 2;
+
+/**
+ * Unselected RSVP pill fill. Same black/white-alpha reasoning as the §5
+ * reply-quote fill: the pill sits on the WHITE incoming bubble *and* on the
+ * MINT outgoing one, and no opaque token reads as "recessed" on both.
+ */
+export const WA_CARD_PILL_FILL_LIGHT = 'rgba(0, 0, 0, 0.06)';
+export const WA_CARD_PILL_FILL_DARK = 'rgba(255, 255, 255, 0.09)';
+
+/**
+ * §1.6 selected-chip treatment: a *pale accent tint* with accent ink, never an
+ * accent-filled chip (a solid brand fill on a chip reads as loud as the banned
+ * pastel taxonomy chips of §7). Expressed as an alpha wash of the accent so it
+ * darkens whichever bubble fill it lands on rather than fighting it.
+ */
+export const WA_CARD_PILL_SELECTED_ALPHA = 0.18;
+
+/** §1.6 "bubbles have a ~1px soft drop shadow" — the card is a bubble (§7). */
+export const WA_CARD_SHADOW_WEB = '0px 1px 1px rgba(0, 0, 0, 0.13)';

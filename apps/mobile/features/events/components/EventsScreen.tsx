@@ -37,15 +37,13 @@ import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { AppImage } from '@components/ui';
 import {
   WaRow,
-  WaLargeTitle,
+  WaScreenHeader,
   WaSeparator,
   WaFloatingCta,
   WA_LIST_SEPARATOR_INSET,
   WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
   WA_FLOATING_CTA_CONTENT_CLEARANCE,
-  WA_TAB_ACTIVE_PILL_LIGHT,
-  WA_TAB_ACTIVE_PILL_DARK,
   WA_TYPE_SECTION_HEADER,
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SUBTITLE,
@@ -67,14 +65,6 @@ import type { CommunityEvent } from '../hooks/useCommunityEvents';
 import type { Id } from '@services/api/convex';
 
 type ViewMode = 'list' | 'map';
-
-/**
- * Flag-on List/Map chip height — WhatsApp's filter-chip band (WA-VISUAL-DELTAS
- * D4: "34pt, fully rounded, gray fill, 15pt dark label"), matching the Chats
- * list's resource-chip strip. Kept local rather than imported from
- * `features/chat` so the two surfaces don't couple.
- */
-const WA_VIEW_CHIP_HEIGHT = 34;
 
 /**
  * Adapter: maps a SingleEventCard (backend shape with Convex ids) into the
@@ -421,7 +411,7 @@ export function EventsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { community, user } = useAuth();
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const hasCommunityContext = !!community?.id;
   const whatsappShellEnabled = useWhatsappShell();
@@ -535,75 +525,54 @@ export function EventsScreen() {
   };
 
   /**
-   * Flag-on List/Map switch — WhatsApp's filter-chip anatomy (D4 "Resources
-   * leave the list": 34pt fully-rounded chips, light gray fill, 15pt dark
-   * label), the same strip the Chats list carries under its search pill. It
-   * replaces the pre-pass pair of floating header circles: this is a *view
-   * filter*, not a nav action, and the chips make the current view legible at
-   * rest instead of hiding it in a glyph's fill variant. Selection is a step-
-   * darker neutral pill (the tab bar's active-pill treatment) — never green
-   * (S5.1: the Create Event pill is this screen's only accent).
+   * Flag-on chrome — the SAME anatomy the Groups tab carries (owner directive,
+   * 2026-07-30: "why are the events and group pages looking so different when
+   * they essentially have the same elements"): `WaScreenHeader`'s floating
+   * neutral circle pair top-right over the 34pt large title.
+   *
+   * An earlier pass had rendered this switch as an in-flow chip strip. That
+   * broke the one rule the two divergence tabs share: **chip rows are for
+   * FILTERS, the view toggle is chrome** — so Groups showed circles and Events
+   * showed chips for the identical control. Both circles are neutral white with
+   * black line glyphs; the active view reads from its glyph switching to the
+   * filled variant, never from a green fill (S1.1/S5.1 — the Create Event pill
+   * is this screen's only accent). Events has no search feature, so the header's
+   * search slot stays empty; that is the only anatomical difference from Groups.
    *
    * Rendered outside the list/map branch so the user can always switch back.
    */
-  const renderWaViewChips = () => {
-    if (!hasCommunityContext) return null;
-    const chips: Array<{ mode: ViewMode; label: string; icon: 'list' | 'map' }> = [
-      { mode: 'list', label: 'List', icon: 'list' },
-      { mode: 'map', label: 'Map', icon: 'map' },
-    ];
-    return (
-      <View style={styles.waChipsRow} testID="wa-events-view-chips">
-        {chips.map((chip) => {
-          const active = viewMode === chip.mode;
-          return (
-            <TouchableOpacity
-              key={chip.mode}
-              style={[
-                styles.waChip,
-                {
-                  backgroundColor: active
-                    ? isDark
-                      ? WA_TAB_ACTIVE_PILL_DARK
-                      : WA_TAB_ACTIVE_PILL_LIGHT
-                    : colors.surfaceSecondary,
-                },
-              ]}
-              onPress={() => setViewMode(chip.mode)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={`${chip.label} view`}
-            >
-              <Ionicons
-                name={active ? chip.icon : (`${chip.icon}-outline` as const)}
-                size={15}
-                color={active ? colors.text : colors.textSecondary}
-              />
-              <Text
-                style={[
-                  styles.waChipLabel,
-                  {
-                    color: active ? colors.text : colors.textSecondary,
-                    fontWeight: active ? WA_WEIGHT_SEMIBOLD : '500',
-                  },
-                ]}
-              >
-                {chip.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    );
-  };
+  const renderWaHeader = () => (
+    <WaScreenHeader
+      title="Events"
+      accent={primaryColor}
+      trailingButtons={
+        hasCommunityContext
+          ? [
+              {
+                icon: viewMode === 'list' ? 'list' : 'list-outline',
+                onPress: () => setViewMode('list'),
+                accessibilityLabel: 'List view',
+                selected: viewMode === 'list',
+              },
+              {
+                icon: viewMode === 'map' ? 'map' : 'map-outline',
+                onPress: () => setViewMode('map'),
+                accessibilityLabel: 'Map view',
+                selected: viewMode === 'map',
+              },
+            ]
+          : []
+      }
+      style={{ paddingTop: insets.top }}
+    />
+  );
 
   // Floating controls — no static header. The List/Map toggle floats
   // over the top-left; the Create Event CTA floats over the bottom
   // center (above the tab bar). Content scrolls beneath them.
   //
-  // Flag-on: the List/Map toggle becomes the neutral chip strip under the
-  // large title (`renderWaViewChips`), so it's skipped here — and the CTA
+  // Flag-on: the List/Map toggle becomes the header's neutral circle pair
+  // (`renderWaHeader`), so it's skipped here — and the CTA
   // becomes the shared `WaFloatingCta`, the kit's one floating-CTA geometry
   // (the owner asked for Events and Groups to stop drawing their own, and the
   // component's own clearance maths keeps it off the tab island).
@@ -650,8 +619,8 @@ export function EventsScreen() {
   // scroll content only clears the status bar, and the toggle visually
   // overlaps the empty area next to the first section header.
   const contentTopPadding = insets.top + 8;
-  // Flag-on: the large title + chip strip render in flow above the list, so the
-  // scroll content only needs a small gap below them — reusing
+  // Flag-on: the floating-circle header + large title render in flow above the
+  // list, so the scroll content only needs a small gap below them — reusing
   // `contentTopPadding` here would double the header's own top inset.
   const mainContentTopPadding = whatsappShellEnabled ? 8 : contentTopPadding;
 
@@ -691,9 +660,7 @@ export function EventsScreen() {
     const myEvents = myRsvpedEventsData?.events ?? [];
     return (
       <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
-        {whatsappShellEnabled && (
-          <WaLargeTitle style={{ paddingTop: insets.top + 8 }}>Events</WaLargeTitle>
-        )}
+        {whatsappShellEnabled && renderWaHeader()}
         {isLoadingMyRsvps ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -849,16 +816,12 @@ export function EventsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: pageBackground }, waStripPadding]}>
-      {whatsappShellEnabled && (
-        // S1/S7 chrome, in flow (this screen doesn't scroll content under a
-        // floating nav zone — see metrics.ts's note on the nav scrim): 34pt
-        // heavy large title, then the neutral List/Map chip strip. The map view
-        // itself is untouched below; only its entry point is restyled.
-        <>
-          <WaLargeTitle style={{ paddingTop: insets.top + 8 }}>Events</WaLargeTitle>
-          {renderWaViewChips()}
-        </>
-      )}
+      {/* S1/S7 chrome, in flow (this screen doesn't scroll content under a
+          floating nav zone — see metrics.ts's note on the nav scrim): the
+          neutral List/Map circle pair over a 34pt heavy large title, identical
+          to Groups. The map view itself is untouched below; only its entry
+          point is restyled. */}
+      {whatsappShellEnabled && renderWaHeader()}
       {viewMode === 'map' ? (
         <EventsMapView enabled={viewMode === 'map'} />
       ) : (
@@ -1132,24 +1095,6 @@ const styles = StyleSheet.create({
   },
   waRowTrailingText: {
     fontSize: WA_TYPE_FOOTNOTE,
-  },
-  // WA filter-chip strip (D4): 34pt fully-rounded, light gray fill, 15pt label.
-  waChipsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: WA_GROUP_MARGIN,
-    paddingTop: 12,
-  },
-  waChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: WA_VIEW_CHIP_HEIGHT,
-    borderRadius: WA_VIEW_CHIP_HEIGHT / 2,
-    paddingHorizontal: 14,
-  },
-  waChipLabel: {
-    fontSize: WA_TYPE_SUBTITLE,
   },
   waGreeting: {
     paddingHorizontal: WA_GROUP_MARGIN,
