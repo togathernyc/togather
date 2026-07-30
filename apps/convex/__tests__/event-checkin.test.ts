@@ -221,6 +221,50 @@ describe("event check-in — permissions", () => {
       })
     ).rejects.toThrow();
   });
+
+  test("a non-manager cannot remove a walk-in", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, memberToken, meetingId } =
+      await seedCheckInFixture(t);
+
+    // A manager adds a walk-in...
+    const guestId = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, firstName: "Walk" }
+    );
+
+    // ...and a plain member cannot remove it.
+    await expect(
+      t.mutation(api.functions.meetings.attendance.removeGuest, {
+        token: memberToken,
+        guestId,
+      })
+    ).rejects.toThrow();
+  });
+
+  test("a non-manager cannot read the attendance list", async () => {
+    const t = convexTest(schema, modules);
+    const { memberToken, meetingId } = await seedCheckInFixture(t);
+
+    await expect(
+      t.query(api.functions.meetings.attendance.listAttendance, {
+        token: memberToken,
+        meetingId,
+      })
+    ).rejects.toThrow();
+  });
+
+  test("a non-manager cannot read the walk-in list", async () => {
+    const t = convexTest(schema, modules);
+    const { memberToken, meetingId } = await seedCheckInFixture(t);
+
+    await expect(
+      t.query(api.functions.meetings.attendance.listGuests, {
+        token: memberToken,
+        meetingId,
+      })
+    ).rejects.toThrow();
+  });
 });
 
 describe("event check-in — check in / undo", () => {
@@ -239,7 +283,7 @@ describe("event check-in — check in / undo", () => {
 
     let attendance = await t.query(
       api.functions.meetings.attendance.listAttendance,
-      { meetingId }
+      { token: leaderToken, meetingId }
     );
     const present = attendance.filter((a) => a.status === 1);
     expect(present).toHaveLength(1);
@@ -255,7 +299,7 @@ describe("event check-in — check in / undo", () => {
 
     attendance = await t.query(
       api.functions.meetings.attendance.listAttendance,
-      { meetingId }
+      { token: leaderToken, meetingId }
     );
     expect(attendance).toHaveLength(1); // still one record, flipped
     expect(attendance.filter((a) => a.status === 1)).toHaveLength(0);
@@ -359,7 +403,7 @@ describe("event check-in — walk-ins", () => {
 
     let guests = await t.query(
       api.functions.meetings.attendance.listGuests,
-      { meetingId }
+      { token: leaderToken, meetingId }
     );
     expect(guests).toHaveLength(1);
     expect(guests[0].firstName).toBe("Walk");
@@ -370,6 +414,7 @@ describe("event check-in — walk-ins", () => {
     });
 
     guests = await t.query(api.functions.meetings.attendance.listGuests, {
+      token: leaderToken,
       meetingId,
     });
     expect(guests).toHaveLength(0);

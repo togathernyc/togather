@@ -18,10 +18,28 @@ import { canEditMeeting } from "../../lib/meetingPermissions";
 
 /**
  * Get attendance for a meeting
+ *
+ * Attendance joins the full user doc (name, email, phone) and is only for the
+ * people managing the event, so it is gated by `canEditMeeting` — the same rule
+ * the mutations and the check-in roster enforce. Without this gate any
+ * authenticated client could read a meeting's attendee PII by meetingId.
  */
 export const listAttendance = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view attendance"
+      );
+    }
+
     const attendance = await ctx.db
       .query("meetingAttendances")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
@@ -205,10 +223,28 @@ export const addGuest = mutation({
 
 /**
  * List guests for a meeting
+ *
+ * Guest rows carry walk-in PII (`phoneNumber`, `notes`), so this read is gated
+ * by `canEditMeeting` — the same rule that guards adding/removing guests.
+ * Without the gate any authenticated client could read a meeting's walk-in
+ * phone numbers by meetingId.
  */
 export const listGuests = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view guests"
+      );
+    }
+
     return await ctx.db
       .query("meetingGuests")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))

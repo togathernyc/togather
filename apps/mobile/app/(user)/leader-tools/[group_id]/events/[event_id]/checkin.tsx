@@ -76,31 +76,44 @@ function CheckInPage() {
   );
   const isLoadingPermission = canManage === undefined && !!meetingId && !!token;
 
+  // Only fetch roster / attendance / guest data once permission resolves to
+  // `true`. All three queries throw server-side for non-managers
+  // (`canEditMeeting`), and convex/react surfaces a query error by throwing
+  // during render — which would crash the screen instead of showing the
+  // Restricted Access modal (e.g. on a direct deep link, or a client/server
+  // permission mismatch). Skipping until `canManage === true` keeps the
+  // graceful-degradation path alive while the server stays the source of truth.
+  const canFetch = !!meetingId && !!token && canManage === true;
+
   // Going roster. Uses the manager-gated `goingRoster` (not `meetingRsvps.list`,
   // which caps non-RSVPed callers at a 10-person preview) so every "Going"
   // attendee can be checked in and the N/M count is complete — a manager
   // running an event often hasn't RSVPed to it themselves.
   const goingRoster = useQuery(
     api.functions.meetingRsvps.goingRoster,
-    meetingId && token
-      ? { meetingId: meetingId as Id<"meetings">, token }
+    canFetch
+      ? { meetingId: meetingId as Id<"meetings">, token: token as string }
       : "skip"
   );
-  const isLoadingRsvp = goingRoster === undefined && !!meetingId && !!token;
+  const isLoadingRsvp = canFetch && goingRoster === undefined;
 
-  // Who is currently marked Present.
+  // Who is currently marked Present. Manager-gated server-side, so pass token.
   const attendance = useQuery(
     api.functions.meetings.attendance.listAttendance,
-    meetingId ? { meetingId: meetingId as Id<"meetings"> } : "skip"
+    canFetch
+      ? { meetingId: meetingId as Id<"meetings">, token: token as string }
+      : "skip"
   );
-  const isLoadingAttendance = attendance === undefined && !!meetingId;
+  const isLoadingAttendance = canFetch && attendance === undefined;
 
-  // Walk-ins (guest records without an account).
+  // Walk-ins (guest records without an account). Manager-gated, pass token.
   const guests = useQuery(
     api.functions.meetings.attendance.listGuests,
-    meetingId ? { meetingId: meetingId as Id<"meetings"> } : "skip"
+    canFetch
+      ? { meetingId: meetingId as Id<"meetings">, token: token as string }
+      : "skip"
   );
-  const isLoadingGuests = guests === undefined && !!meetingId;
+  const isLoadingGuests = canFetch && guests === undefined;
 
   const markAttendance = useAuthenticatedMutation(
     api.functions.meetings.attendance.markAttendance
