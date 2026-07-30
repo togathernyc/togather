@@ -506,10 +506,19 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     and a small unread dot when a reply landed after you last read the channel.
     Neutral solid `bg.card` fill so it reads as chrome on the wallpaper; the
     count in `accent`. Tapping it opens the thread screen.
-  - "Live" means non-deleted, and it's evaluated per-read, so the transition
-    runs **both ways**: delete one of two replies and the survivor comes back
-    inline. The parent's stored `threadReplyCount` is a monotonic send counter
-    and must never be used to make this decision.
+  - "Live" means **visible to this reader**: non-deleted, in this channel, and
+    not from someone they've blocked. It's evaluated per-read, so the transition
+    runs **both ways** — delete or block one of two repliers and the survivor
+    comes back inline. The parent's stored `threadReplyCount` is a monotonic
+    send counter (blind to deletes, blocks, and cross-channel rows) and must
+    never be used for this decision, nor for the pill's count.
+  - The pill's count is exact up to 50 and reads **"50+ replies"** past that —
+    an honest bound rather than an unbounded read or a stored counter.
+  - **The send that causes the collapse navigates its sender into the thread.**
+    Otherwise the message they just sent appears to vanish: both replies leave
+    the timeline and are replaced by a pill on a parent that may be scrolled far
+    away. Only that one send — a first reply stays put, and sends from inside
+    the thread screen never navigate.
   - Threads are exactly **one level deep** — the thread screen always sends with
     `parentMessageId` = the thread root — so there is no reply-to-a-reply case.
   - This replaces the floating "ghost" pointer (a bubble-less echo of the

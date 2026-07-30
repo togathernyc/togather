@@ -205,6 +205,61 @@ describe('MessageList flag-on — replies in the timeline', () => {
     });
   });
 
+  it('reports the parent as collapsible while its lone reply is inline', () => {
+    // This is the signal the chat room follows to navigate the sender into the
+    // thread on the send that collapses it.
+    const onCollapsibleThreadsChange = jest.fn();
+    setMessages([parent, loneReply]);
+    render(
+      <MessageList
+        channelId={'ch-1' as any}
+        currentUserId={'user-1' as any}
+        onCollapsibleThreadsChange={onCollapsibleThreadsChange}
+      />,
+    );
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(
+      new Set(['msg-parent']),
+    );
+  });
+
+  it('reports nothing collapsible for a parent with no reply yet', () => {
+    const onCollapsibleThreadsChange = jest.fn();
+    setMessages([parent]);
+    render(
+      <MessageList
+        channelId={'ch-1' as any}
+        currentUserId={'user-1' as any}
+        onCollapsibleThreadsChange={onCollapsibleThreadsChange}
+      />,
+    );
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
+  });
+
+  it('reports nothing collapsible once the thread has already collapsed', () => {
+    // Already a thread — a further reply changes nothing about the timeline, so
+    // there is nothing to follow the sender into.
+    const onCollapsibleThreadsChange = jest.fn();
+    setMessages([
+      {
+        ...parent,
+        threadReplyCount: 2,
+        threadSummary: {
+          replyCount: 2,
+          lastReplyAt: T0 + 2000,
+          repliers: [{ userId: 'user-1', name: 'Ada Nwosu' }],
+        },
+      },
+    ]);
+    render(
+      <MessageList
+        channelId={'ch-1' as any}
+        currentUserId={'user-1' as any}
+        onCollapsibleThreadsChange={onCollapsibleThreadsChange}
+      />,
+    );
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
+  });
+
   it('renders a reply whose parent is not in the loaded window', () => {
     // Pagination: the parent is hundreds of messages up. The quote still has
     // everything it needs, because the reply carries it — this is the job the
@@ -244,5 +299,18 @@ describe('MessageList flag-off — the ghost model is untouched', () => {
     setMessages([parent]);
     const { queryByTestId } = renderList();
     expect(queryByTestId('ghost-msg-parent')).toBeNull();
+  });
+
+  it('never reports a collapsible thread — there are no inline replies at all', () => {
+    const onCollapsibleThreadsChange = jest.fn();
+    setMessages([{ ...parent, threadReplyCount: 1, lastActivityAt: T0 + 1000 }]);
+    render(
+      <MessageList
+        channelId={'ch-1' as any}
+        currentUserId={'user-1' as any}
+        onCollapsibleThreadsChange={onCollapsibleThreadsChange}
+      />,
+    );
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
   });
 });

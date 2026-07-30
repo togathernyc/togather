@@ -135,6 +135,18 @@ interface MessageListProps {
    * highlight on it.
    */
   highlightMessageId?: Id<"chatMessages"> | null;
+  /**
+   * Flag-on only. The parents that currently show exactly one reply inline in
+   * the timeline — i.e. the threads that a NEXT reply would collapse.
+   *
+   * The server admits a reply only while it is its parent's sole visible reply,
+   * so every admitted reply's parent is by definition such a thread; that also
+   * makes this correct for blocked/cross-channel siblings for free, since those
+   * were never admitted. The chat room uses it to follow the sender into the
+   * thread on the send that causes the collapse, instead of letting their
+   * message appear to vanish into a pill on a parent that may be scrolled away.
+   */
+  onCollapsibleThreadsChange?: (parentIds: Set<string>) => void;
 }
 
 // Helper to format date as "Today", "Yesterday", or "Jan 15"
@@ -210,6 +222,7 @@ export function MessageList({
   onDismissMessage,
   onAvatarPress,
   highlightMessageId,
+  onCollapsibleThreadsChange,
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
@@ -444,6 +457,26 @@ export function MessageList({
     // Reverse for inverted list (newest first)
     return items.reverse();
   }, [messages, optimisticMessages, whatsappShellEnabled]);
+
+  // Report the threads a next reply would collapse (see the prop's JSDoc).
+  // Flag-off this is always empty — there are no inline replies to begin with.
+  const collapsibleThreadKey = useMemo(() => {
+    if (!whatsappShellEnabled) return '';
+    return messages
+      .filter((m) => m.parentMessageId)
+      .map((m) => String(m.parentMessageId))
+      .sort()
+      .join(',');
+  }, [messages, whatsappShellEnabled]);
+
+  useEffect(() => {
+    if (!onCollapsibleThreadsChange) return;
+    onCollapsibleThreadsChange(
+      new Set(collapsibleThreadKey ? collapsibleThreadKey.split(',') : []),
+    );
+    // Keyed on the joined id string so an unchanged set doesn't re-notify on
+    // every unrelated message arriving.
+  }, [collapsibleThreadKey, onCollapsibleThreadsChange]);
 
   // Scroll to and highlight a target message — from inbox search
   // (`highlightMessageId` prop), from tapping a bubble's reply quote, or from
