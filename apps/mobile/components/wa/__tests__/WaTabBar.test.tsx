@@ -11,7 +11,13 @@ import React from 'react';
 import { Text } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { WaTabBar } from '../WaTabBar';
-import { WA_TAB_INK_LIGHT } from '../metrics';
+import {
+  WA_TAB_INK_LIGHT,
+  WA_TAB_ISLAND_HEIGHT,
+  WA_TAB_CONTENT_CLEARANCE,
+  waTabBarBottomOffset,
+  waTabBarStripHeight,
+} from '../metrics';
 
 type FakeRoute = {
   key: string;
@@ -93,5 +99,32 @@ describe('WaTabBar', () => {
     const withBadge = routes.map((r) => (r.name === 'chat' ? { ...r, badge: '7' } : r));
     const { getByText } = render(<WaTabBar {...buildProps(withBadge, 0)} />);
     expect(getByText('7')).toBeTruthy();
+  });
+});
+
+/**
+ * The band a flag-on screen reserves as page background under the island.
+ *
+ * This is the regression the owner reported twice (2026-07-29, 2026-07-30):
+ * the island is inset 20pt from each screen edge and 64pt tall, so reserving
+ * only the strip BELOW it left list rows rendering beside and under the island
+ * — "the bottom of these pages is still not a uniform color". The band has to
+ * cover the island's FULL height, not just the gap under it.
+ */
+describe('waTabBarStripHeight — the island band', () => {
+  it.each([0, 20, 34, 59])('covers the whole island at inset %p', (inset) => {
+    const islandTop = waTabBarBottomOffset(inset) + WA_TAB_ISLAND_HEIGHT;
+    expect(waTabBarStripHeight(inset)).toBeGreaterThanOrEqual(islandTop);
+  });
+
+  it('is the island top plus a breathing gap — 80 at inset 0, 86 at inset 34', () => {
+    expect(waTabBarStripHeight(0)).toBe(80);
+    expect(waTabBarStripHeight(34)).toBe(86);
+  });
+
+  it('keeps scroll clearance to breathing room — the band already clears the island', () => {
+    // Regression guard: when the clearance also had to cover the island it was
+    // 76, which double-counted the island once the band grew to include it.
+    expect(WA_TAB_CONTENT_CLEARANCE).toBeLessThan(WA_TAB_ISLAND_HEIGHT);
   });
 });

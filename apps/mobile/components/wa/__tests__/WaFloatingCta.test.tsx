@@ -81,7 +81,7 @@ describe('WaFloatingCta', () => {
   });
 
   it.each([0, 20, 34, 59])(
-    'floats clear of the tab island at bottom inset %p',
+    'floats clear of the tab island BAND at bottom inset %p',
     (inset) => {
       const { getByTestId } = render(
         <WaFloatingCta
@@ -94,8 +94,10 @@ describe('WaFloatingCta', () => {
       // The wrapper's `bottom` is measured from the screen edge (Yoga ignores
       // parent padding for absolute children).
       const wrap = flatten(getByTestId('cta-wrap').props.style);
+      // The pill sits a gap above the page-colored band, not just above the
+      // island — otherwise it lands inside the band and breaks its uniformity.
+      expect(wrap.bottom).toBe(waTabBarStripHeight(inset) + WA_FLOATING_CTA_GAP);
       const islandTop = waTabBarBottomOffset(inset) + WA_TAB_ISLAND_HEIGHT;
-      expect(wrap.bottom).toBe(islandTop + WA_FLOATING_CTA_GAP);
       expect(wrap.bottom as number).toBeGreaterThan(islandTop);
       expect(wrap.position).toBe('absolute');
     }
@@ -104,11 +106,12 @@ describe('WaFloatingCta', () => {
 
 describe('WA_FLOATING_CTA_CONTENT_CLEARANCE', () => {
   it.each([0, 20, 34, 59])(
-    'lets the last scroll row clear both the island and the pill at inset %p',
+    'lets the last scroll row clear the pill floating above the band at inset %p',
     (inset) => {
-      // A flag-on screen reserves `waTabBarStripHeight` on the container that
-      // paints the page background, so scroll content ends that far above the
-      // screen edge. Its bottom padding then has to reach past the pill's top.
+      // A flag-on screen reserves the island BAND (`waTabBarStripHeight`) on
+      // the container that paints the page background, so scroll content ends
+      // that far above the screen edge — the band already clears the island.
+      // The content's bottom padding only has to reach past the pill's top.
       const contentBottomEdge = waTabBarStripHeight(inset);
       const lastRowBottom = contentBottomEdge + WA_FLOATING_CTA_CONTENT_CLEARANCE;
       const ctaTop = waFloatingCtaBottomOffset(inset) + WA_FLOATING_CTA_HEIGHT;
