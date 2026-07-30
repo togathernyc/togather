@@ -1251,16 +1251,36 @@ describe("getMessages waReplies — chains written before rooting", () => {
       parentMessageId: rootId,
     });
     expect(thread.messages.map((m: any) => m._id)).toEqual(links);
+    expect(thread.rootMessageId).toBe(rootId);
 
     // Opening the thread from a link in the middle of the chain lands on the
-    // same conversation, not a fragment of it.
+    // same conversation, not a fragment of it — and reports which message the
+    // thread actually is, so the page can header the root rather than showing
+    // the tapped reply twice (see ThreadPage.rooting.test.tsx).
     const fromMiddle = await t.query(api.functions.messaging.messages.getThreadReplies, {
       token: accessToken,
       parentMessageId: links[1],
     });
     expect(fromMiddle.messages.map((m: any) => m._id)).toEqual(links);
+    expect(fromMiddle.rootMessageId).toBe(rootId);
   });
 
+  test("inbox search opening a reply's parent resolves to the thread, not the reply", async () => {
+    // `InboxSearchResults` navigates with the hit's IMMEDIATE parent. Post-
+    // rooting that is normally the root already; on a pre-rooting chain it is
+    // a reply, and the page needs to be told which message the thread is.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 2);
+
+    const opened = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      // The search hit is `links[1]`; its stored parent is `links[0]`.
+      parentMessageId: links[0],
+    });
+    expect(opened.rootMessageId).toBe(rootId);
+    expect(opened.messages.map((m: any) => m._id)).toEqual(links);
+  });
 });
 
 describe("getMessages waReplies — a hidden link never swallows what hangs off it", () => {

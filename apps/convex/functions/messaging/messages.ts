@@ -1224,6 +1224,14 @@ export const getThreadReplies = query({
       messages: decorated,
       hasMore,
       cursor,
+      /**
+       * The thread this request actually resolved to. Entry points can hand us
+       * any message in the conversation (inbox search opens a hit's immediate
+       * parent, which may itself be a reply), so the caller adopts this as the
+       * page's identity — otherwise the tapped reply renders once as the page
+       * header and again inside the folded reply list.
+       */
+      rootMessageId: rootId,
     };
   },
 });
