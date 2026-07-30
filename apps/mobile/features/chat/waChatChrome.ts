@@ -32,6 +32,49 @@ export const WA_CHAT_CHROME_DARK = 'rgba(17, 27, 33, 0.8)';
 export const WA_COMPOSER_BAR_LIGHT = 'rgba(241, 236, 229, 0.5)';
 export const WA_COMPOSER_BAR_DARK = 'rgba(17, 27, 33, 0.75)';
 
+/**
+ * Flattens one of the translucent chrome fills above onto the wallpaper, so
+ * the same tone can be painted where the wallpaper layer *isn't* underneath.
+ *
+ * The safe-area strips need this. The status-bar strip is `paddingTop` on the
+ * chat screen's root and the home-indicator strip is `paddingBottom` on the
+ * app's root container (`components/ui/StatusBarAwareContainer`) — padding
+ * sits outside the children's box, so `ChatWallpaper`'s absolute fill stops
+ * short of both. Whatever paints those two bands has to be OPAQUE: a
+ * translucent chrome fill there would composite over the root white / near-
+ * black background instead of over the wallpaper, which is exactly the bug
+ * (owner's device: a white band under the composer in light mode, and a
+ * near-black band at both edges in dark mode, 2026-07-30).
+ */
+function flattenOverWallpaper(overlay: string, wallpaperHex: string): string {
+  const [r, g, b, alpha] = overlay
+    .replace(/[^0-9.,]/g, '')
+    .split(',')
+    .map(Number);
+  const base = parseInt(wallpaperHex.replace('#', ''), 16);
+  const channels = [r, g, b].map((channel, i) => {
+    const baseChannel = (base >> (16 - i * 8)) & 0xff;
+    return Math.round(channel * alpha + baseChannel * (1 - alpha));
+  });
+  return `#${channels.map((c) => c.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+/** The nav header / tab strip's rendered tone, as a solid color. */
+export function waChatChromeOpaque(wallpaperHex: string, isDarkMode: boolean): string {
+  return flattenOverWallpaper(
+    isDarkMode ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT,
+    wallpaperHex
+  );
+}
+
+/** The composer bar's rendered tone, as a solid color. */
+export function waComposerBarOpaque(wallpaperHex: string, isDarkMode: boolean): string {
+  return flattenOverWallpaper(
+    isDarkMode ? WA_COMPOSER_BAR_DARK : WA_COMPOSER_BAR_LIGHT,
+    wallpaperHex
+  );
+}
+
 /** §2.3 neutral channel tab strip: white active pill on a light-gray track. */
 export const WA_TAB_TRACK_LIGHT = 'rgba(0, 0, 0, 0.05)';
 export const WA_TAB_TRACK_DARK = 'rgba(255, 255, 255, 0.08)';
