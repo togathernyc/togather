@@ -10,6 +10,7 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -45,6 +46,25 @@ import {
 } from "@/features/leader-tools/utils/checkIn";
 
 const CHECKED_IN_COLOR = "#10B981"; // green-500
+
+/** Widest the content grows to before it stops stretching and centres. */
+const MAX_CONTENT_WIDTH = 1280;
+/** Gutter between roster columns; halved as padding on each column. */
+const COLUMN_GUTTER = 12;
+
+/**
+ * How many roster columns fit the current window.
+ *
+ * Phones (and any narrow window) always get 1, so native rendering is exactly
+ * as it was. Wider windows — the app also runs on the web — get 2 or 3, since a
+ * door list is far more useful when you can see more of it at once than when
+ * one phone-width column is stretched across a desktop.
+ */
+function rosterColumns(width: number): number {
+  if (width >= 1400) return 3;
+  if (width >= 900) return 2;
+  return 1;
+}
 
 function formatCheckInTime(recordedAt?: number): string {
   if (!recordedAt) return "Checked in";
@@ -152,6 +172,22 @@ function CheckInPage() {
   const [showAddWalkIn, setShowAddWalkIn] = useState(false);
   const [namingGuest, setNamingGuest] = useState<NamingGuest | null>(null);
   const [search, setSearch] = useState("");
+
+  const { width } = useWindowDimensions();
+  const columns = rosterColumns(width);
+  const isWide = columns > 1;
+  // Column sizing for the wrapping roster grid. RN has no `calc()`, so the
+  // gutter is padding inside each column, cancelled by a negative margin on the
+  // row — the standard flexbox gutter trick.
+  const columnStyle = isWide
+    ? {
+        width: `${100 / columns}%` as const,
+        paddingHorizontal: COLUMN_GUTTER / 2,
+      }
+    : null;
+  const gridStyle = isWide
+    ? { ...styles.grid, marginHorizontal: -COLUMN_GUTTER / 2 }
+    : null;
 
   const goingUsers: GoingUser[] = useMemo(
     () => goingRoster ?? [],
@@ -345,10 +381,15 @@ function CheckInPage() {
         ) : (
           <>
             {/* Fixed controls. Summary, walk-ins and search stay put so they
-                stay reachable partway down a long roster. */}
-            <View style={styles.controls}>
+                stay reachable partway down a long roster. On a wide window they
+                sit on one row rather than eating three rows of height. */}
+            <View style={[styles.controls, isWide && styles.controlsRow]}>
               <View
-                style={[styles.summaryCard, { backgroundColor: colors.surface }]}
+                style={[
+                  styles.summaryCard,
+                  { backgroundColor: colors.surface },
+                  isWide && styles.summaryCardWide,
+                ]}
               >
                 <Text style={[styles.summaryCount, { color: colors.text }]}>
                   {summary.checkedIn} / {summary.total} checked in
@@ -375,6 +416,7 @@ function CheckInPage() {
                 style={[
                   styles.addWalkInButton,
                   { borderColor: DEFAULT_PRIMARY_COLOR },
+                  isWide && styles.addWalkInButtonWide,
                 ]}
                 onPress={() => setShowAddWalkIn(true)}
               >
@@ -390,7 +432,7 @@ function CheckInPage() {
                 placeholder="Search by name"
                 value={search}
                 onChangeText={setSearch}
-                style={styles.searchBar}
+                style={[styles.searchBar, isWide && styles.searchBarWide]}
               />
             </View>
 
@@ -407,6 +449,7 @@ function CheckInPage() {
                   >
                     Going ({visibleGoing.length})
                   </Text>
+                  <View style={gridStyle}>
                   {visibleGoing.map((user) => {
                     const checkedIn = isCheckedIn(user.id, attendanceByUser);
                     const pending = pendingUserIds.has(user.id);
@@ -414,7 +457,10 @@ function CheckInPage() {
                     const hostedGuests = guestsByHost.get(user.id) ?? [];
                     const slots = buildGuestSlots(user.guestCount, hostedGuests);
                     return (
-                      <View key={user.id} style={styles.personBlock}>
+                      <View
+                        key={user.id}
+                        style={[styles.personBlock, columnStyle]}
+                      >
                         <TouchableOpacity
                           style={[
                             styles.userRow,
@@ -536,6 +582,7 @@ function CheckInPage() {
                       </View>
                     );
                   })}
+                  </View>
                 </View>
               )}
 
@@ -547,40 +594,57 @@ function CheckInPage() {
                   >
                     Walk-ins ({visibleWalkIns.length})
                   </Text>
-                  {visibleWalkIns.map((guest) => (
-                    <View
-                      key={guest._id}
-                      style={[styles.userRow, { backgroundColor: colors.surface }]}
-                    >
-                      <Avatar
-                        name={fullName(guest.firstName, guest.lastName)}
-                        size={48}
-                      />
-                      <View style={styles.userInfo}>
-                        <Text style={[styles.userName, { color: colors.text }]}>
-                          {fullName(guest.firstName, guest.lastName) || "Guest"}
-                        </Text>
-                        <Text style={[styles.userSub, { color: CHECKED_IN_COLOR }]}>
-                          {formatCheckInTime(guest.recordedAt)}
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => handleRemoveGuest(guest._id)}
-                        style={styles.checkControl}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove walk-in ${fullName(
-                          guest.firstName,
-                          guest.lastName
-                        )}`}
+                  <View style={gridStyle}>
+                    {visibleWalkIns.map((guest) => (
+                      <View
+                        key={guest._id}
+                        style={[styles.personBlock, columnStyle]}
                       >
-                        <Ionicons
-                          name="trash-outline"
-                          size={22}
-                          color={colors.iconSecondary}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
+                        <View
+                          style={[
+                            styles.userRow,
+                            { backgroundColor: colors.surface },
+                          ]}
+                        >
+                          <Avatar
+                            name={fullName(guest.firstName, guest.lastName)}
+                            size={48}
+                          />
+                          <View style={styles.userInfo}>
+                            <Text
+                              style={[styles.userName, { color: colors.text }]}
+                            >
+                              {fullName(guest.firstName, guest.lastName) ||
+                                "Guest"}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.userSub,
+                                { color: CHECKED_IN_COLOR },
+                              ]}
+                            >
+                              {formatCheckInTime(guest.recordedAt)}
+                            </Text>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => handleRemoveGuest(guest._id)}
+                            style={styles.checkControl}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove walk-in ${fullName(
+                              guest.firstName,
+                              guest.lastName
+                            )}`}
+                          >
+                            <Ionicons
+                              name="trash-outline"
+                              size={22}
+                              color={colors.iconSecondary}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
 
@@ -1078,18 +1142,40 @@ const styles = StyleSheet.create({
   controls: {
     paddingHorizontal: 16,
     paddingTop: 16,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
+  },
+  // Wide windows: summary, Add walk-in and search share one row.
+  controlsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
   content: {
     flex: 1,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: "center",
   },
   contentContainer: {
     paddingHorizontal: 16,
     paddingBottom: 24,
   },
+  // Wrapping roster grid; the negative margin cancels each column's gutter.
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  },
   summaryCard: {
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
+  },
+  summaryCardWide: {
+    flex: 2,
+    marginBottom: 0,
   },
   summaryCount: {
     fontSize: 20,
@@ -1107,6 +1193,10 @@ const styles = StyleSheet.create({
   },
   searchBar: {
     marginBottom: 12,
+  },
+  searchBarWide: {
+    flex: 3,
+    marginBottom: 0,
   },
   section: {
     marginBottom: 24,
@@ -1215,6 +1305,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 12,
     marginBottom: 12,
+  },
+  addWalkInButtonWide: {
+    flex: 1,
+    minWidth: 150,
+    marginBottom: 0,
   },
   addWalkInText: {
     fontSize: 16,
