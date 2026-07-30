@@ -140,28 +140,62 @@ export interface IncreaseEntity {
 export async function createEntity(
   input: CreateEntityInput,
 ): Promise<IncreaseEntity> {
+  const corporation: Record<string, unknown> = {
+    name: input.legalName,
+    website: input.website,
+    address: {
+      line1: input.address.addressLine1,
+      line2: input.address.addressLine2,
+      city: input.address.city,
+      state: input.address.state,
+      zip: input.address.zipCode,
+      country: "US",
+    },
+    legal_identifier: {
+      category: "us_employer_identification_number",
+      value: input.ein.replace(/-/g, ""),
+    },
+  };
+
+  if (getIncreaseBaseUrl().includes("sandbox")) {
+    // The exemption parameter is rejected until Increase's bank partner
+    // approves it for the program (verified live: sandbox 400s with
+    // "beneficial_ownership_exemption_reason: Unexpected parameter" and then
+    // requires beneficial_owners). Sandbox is test data by definition, so we
+    // submit an obviously-fake owner there to keep dev/staging flows working
+    // end-to-end. Production keeps the exemption — real owner PII must never
+    // be fabricated, and launch is gated on the exemption approval anyway
+    // (docs/finance/COMPLIANCE.md).
+    corporation.beneficial_owners = [
+      {
+        individual: {
+          name: "Sandbox Test Owner",
+          date_of_birth: "1980-01-01",
+          address: {
+            line1: "123 Main Street",
+            city: "New York",
+            state: "NY",
+            zip: "10001",
+            country: "US",
+          },
+          identification: {
+            method: "social_security_number",
+            number: "078051120",
+          },
+        },
+        prongs: ["control"],
+      },
+    ];
+  } else {
+    corporation.beneficial_ownership_exemption_reason = "other";
+  }
+
   return await increaseRequest<IncreaseEntity>("/entities", {
     method: "POST",
     idempotencyKey: input.idempotencyKey,
     body: {
       structure: "corporation",
-      corporation: {
-        name: input.legalName,
-        website: input.website,
-        address: {
-          line1: input.address.addressLine1,
-          line2: input.address.addressLine2,
-          city: input.address.city,
-          state: input.address.state,
-          zip: input.address.zipCode,
-          country: "US",
-        },
-        legal_identifier: {
-          category: "us_employer_identification_number",
-          value: input.ein.replace(/-/g, ""),
-        },
-        beneficial_ownership_exemption_reason: "other",
-      },
+      corporation,
     },
   });
 }
@@ -300,7 +334,11 @@ export async function createAchTransfer(
       routing_number: input.routingNumber,
       account_number: input.accountNumber,
       individual_name: input.individualName,
-      individual_id: input.individualId,
+      // Increase enforces a 15-character max on individual_id (verified live:
+      // longer values 400). Callers pass Convex document ids (~32 chars) as a
+      // reconciliation breadcrumb, so truncate here at the client boundary —
+      // the full id lives in our own expense/audit records anyway.
+      individual_id: input.individualId?.slice(0, 15),
     },
   });
 }
