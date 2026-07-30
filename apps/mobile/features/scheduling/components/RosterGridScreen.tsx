@@ -13,6 +13,16 @@
  *    and unassigned — an inviting "av" tap-target that opens an *open-roles
  *    menu* for one-tap placement. This is the availability → roster bridge.
  *
+ * Both views share one team scope (`teamScope`, persisted across the tab
+ * switch): "mine" narrows to the teams a leader explicitly manages, isolating
+ * both the roles AND the people on them — a crew lead rostering one team
+ * isn't wading through every other team's roles and roster. The People view
+ * adds a "Needs availability" filter (people with no response recorded at
+ * all — "these are the 10 people I need to text") and a one-tap reach-out:
+ * press a name to text them (falling back to an in-app DM without a usable
+ * number), always individual — never a mass send. Composed, this is the
+ * workflow: scope to my teams -> filter to non-responders -> tap to text.
+ *
  * Scaffold: frozen header row + frozen first column + synced two-axis scroll,
  * measured body height, responsive widths.
  * Assignment is delegated entirely to AssignSheet — we never fork that logic.
@@ -34,6 +44,8 @@ import {
   TextInput,
   Alert,
   Share,
+  Linking,
+  Platform,
   useWindowDimensions,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -58,6 +70,11 @@ import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { formatRelativeTime } from "@features/notifications";
 import { assignmentStatusLabel } from "../utils/format";
+import {
+  memberInTeamScope,
+  memberNeedsAvailability,
+} from "../utils/rosterFilters";
+import { useStartDirectMessage } from "@features/chat/hooks/useStartDirectMessage";
 import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
 import { EventEditorPanel } from "./EventEditorPanel";
@@ -165,6 +182,8 @@ type RosterMember = {
   userId: Id<"users">;
   userName: string;
   isLeader: boolean;
+  /** Their phone, if on file — powers the one-tap "text them" reach-out. */
+  phone: string | null;
   availableCount: number;
   /** Upcoming serving assignments across every group the member belongs to. */
   servingTotal: number;
@@ -431,12 +450,19 @@ export function RosterGridScreen() {
   // --- View + filter state ---
   const [mode, setMode] = useState<ViewMode>("roles");
   // Team scope: a single isolated team, or null for "All teams" (#477 FR-2).
-  // Picking a team shows only its roles; "All teams" shows everything. Gates
-  // the Roles view only — People rows stay ungated.
+  // Picking a team narrows both views — roles to that team's, and People to
+  // members who hold a role assignment on it (see `memberInTeamScope`) — and
+  // survives switching between Roles and People (it's the same state, read
+  // by both; there's nothing tab-local to reset).
   const [teamScope, setTeamScope] = useState<TeamScope>("all");
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
   const [availableOnly, setAvailableOnly] = useState(false);
+  // "Needs availability" — the inverse of "Available only": isolates people
+  // with NO response recorded on any visible date, combined with the team
+  // scope above so it's a leader's own no-response list, not the whole
+  // roster's. ("These are the 10 people I need to text.")
+  const [needsAvailabilityOnly, setNeedsAvailabilityOnly] = useState(false);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 300);
 
@@ -668,6 +694,45 @@ export function RosterGridScreen() {
     [assignRole, singleTimeLabel, surfaceError],
   );
 
+  // --- People-view one-tap reach-out ("press their name to text them") ---
+  // Individual click-through ONLY — never a mass send (a bulk send would go
+  // from the Together Twilio number rather than the leader's own phone, and
+  // people are less likely to reply). Prefers texting from the leader's own
+  // number; falls back to an in-app DM when there's no usable phone on file.
+  const { messageUser } = useStartDirectMessage();
+  const handleReachOut = useCallback(
+    async (member: RosterMember) => {
+      const dialable = (member.phone ?? "").replace(/[^\d+]/g, "");
+      if (dialable) {
+        const firstName = member.userName.trim().split(/\s+/)[0] || member.userName;
+        const body = `Hi ${firstName}, could you fill out your availability for the upcoming serving schedule?`;
+        // sms: separator differs by platform — `?` on Android, `&` on iOS.
+        // See ChannelInfoScreen's `handleInviteUnmatchedBySMS` for the same
+        // handling.
+        const separator = Platform.OS === "ios" ? "&" : "?";
+        const url = `sms:${dialable}${separator}body=${encodeURIComponent(body)}`;
+        try {
+          const can = await Linking.canOpenURL(url);
+          if (can) {
+            await Linking.openURL(url);
+            return;
+          }
+        } catch {
+          // Fall through to the DM fallback below.
+        }
+      }
+      // No usable phone — fall back to an in-app DM rather than a dead end.
+      // `messageUser` already surfaces its own toast on failure (missing
+      // profile photo, no shared community, etc.) — same fire-and-forget
+      // pattern as ServingTeamScreen's "Message in Togather" action.
+      await messageUser({
+        otherUserId: member.userId,
+        displayName: member.userName,
+      });
+    },
+    [messageUser],
+  );
+
   // --- Derived filters ---
   const events = data?.events ?? [];
   const roleCells = data?.roleCells ?? {};
@@ -757,8 +822,13 @@ export function RosterGridScreen() {
 
   /**
    * The teams the grid should show, or `null` for "every team". Everything
-   * downstream — role rows, the publish picker's defaults — reads this rather
-   * than the raw scope, so the three scope kinds can't drift apart.
+   * downstream — role rows, People rows (below), open-role menus, the publish
+   * picker's defaults — reads this rather than the raw scope, so the scope
+   * kinds can't drift apart between the two views and it PERSISTS across a
+   * Roles/People tab switch (same state, just finally honoured by both).
+   * `null` also covers the fallback a leader/community admin who manages no
+   * team here already gets (`myTeams.length === 0` below) — they're never
+   * locked out of anyone.
    */
   const visibleTeamIds = useMemo((): Set<string> | null => {
     if (teamScope === "all") return null;
@@ -773,6 +843,17 @@ export function RosterGridScreen() {
   /** The single isolated team, when the scope is one specific team. */
   const isolatedTeamId =
     teamScope !== "mine" && teamScope !== "all" ? teamScope : null;
+
+  /**
+   * roleId -> teamId, so a member's role assignments (People view) and the
+   * open-roles menu (role placement) can be scoped by team without a second
+   * backend round-trip — both derive purely from `data.roles`, already in
+   * the rosterMatrix payload.
+   */
+  const roleTeamMap = useMemo(
+    () => new Map(data?.roles.map((r) => [r.roleId as string, r.teamId as string]) ?? []),
+    [data],
+  );
 
   const teamScopeLabel = useMemo(() => {
     if (teamScope === "all") return "All teams";
@@ -852,13 +933,17 @@ export function RosterGridScreen() {
     return out;
   }, [data, visibleRoles, visibleTeamIds, isolatedTeamId, openOnly]);
 
-  /** Members after team* + search + open/available filters. (*teams don't gate people rows.) */
+  /** Members after team scope + search + open/available/needs-availability filters. */
   const visibleMembers = useMemo(() => {
     if (!data) return [];
     const q = debouncedSearch.trim().toLowerCase();
+    const eventIds = events.map((ev) => ev._id as string);
     return data.members.filter((m) => {
+      if (!memberInTeamScope(m.cells, visibleTeamIds, roleTeamMap)) return false;
       if (q && !m.userName.toLowerCase().includes(q)) return false;
       if (availableOnly && m.availableCount === 0) return false;
+      if (needsAvailabilityOnly && !memberNeedsAvailability(m.cells, eventIds))
+        return false;
       if (filterMemberSet && !filterMemberSet.has(m.userId as string))
         return false;
       if (openOnly) {
@@ -871,18 +956,42 @@ export function RosterGridScreen() {
       }
       return true;
     });
-  }, [data, events, debouncedSearch, availableOnly, openOnly, filterMemberSet]);
+  }, [
+    data,
+    events,
+    debouncedSearch,
+    availableOnly,
+    needsAvailabilityOnly,
+    openOnly,
+    filterMemberSet,
+    visibleTeamIds,
+    roleTeamMap,
+  ]);
 
-  /** Open roles for an event, computed client-side (the placement menu). */
+  /**
+   * Open roles for an event, computed client-side (the "Place <name>" menu
+   * and the People-view "Add role" path). Scoped to `visibleTeamIds` by
+   * default — consistent with the current team scope — unless `allTeams` is
+   * set, which the menu itself uses to widen back when scoping would
+   * otherwise leave someone with nothing to pick (a leader/admin who manages
+   * no team here already gets `visibleTeamIds === null`, so they're never
+   * narrowed in the first place).
+   */
   const openRolesForEvent = useCallback(
-    (event: RosterEvent): RosterRole[] => {
+    (event: RosterEvent, opts?: { allTeams?: boolean }): RosterRole[] => {
       if (!data) return [];
       return data.roles.filter((r) => {
+        if (
+          !opts?.allTeams &&
+          visibleTeamIds &&
+          !visibleTeamIds.has(r.teamId as string)
+        )
+          return false;
         const c = roleCells[`${r.roleId}:${event._id}`];
         return c && c.open > 0;
       });
     },
-    [data, roleCells],
+    [data, roleCells, visibleTeamIds],
   );
 
   // -------------------------------------------------------------------------
@@ -1387,9 +1496,12 @@ export function RosterGridScreen() {
   // below are shared so the two layouts can never drift.
   // -------------------------------------------------------------------------
 
-  // Team scope — single-select dropdown (#477 FR-2). Gates the Roles view only.
+  // Team scope — single-select dropdown (#477 FR-2). Shown in both views —
+  // it narrows Roles to a team's roles AND People to that team's people (see
+  // `memberInTeamScope`) — and the choice persists across the tab switch,
+  // since it's the same state either view reads.
   const teamChip =
-    mode === "roles" && data.teams.length > 0 ? (
+    data.teams.length > 0 ? (
       <Chip
         icon="people-outline"
         label={teamScopeLabel}
@@ -1417,6 +1529,21 @@ export function RosterGridScreen() {
         label="Available only"
         active={availableOnly}
         onPress={() => setAvailableOnly((v) => !v)}
+        colors={colors}
+      />
+    ) : null;
+
+  // The inverse of "Available only": isolates people with no response
+  // recorded at all — "these are the 10 people I need to text" — combined
+  // with the team scope above so it's scoped to HIS people, not the whole
+  // roster.
+  const needsAvailabilityOnlyChip =
+    mode === "people" ? (
+      <Chip
+        icon={needsAvailabilityOnly ? "checkbox" : "square-outline"}
+        label="Needs availability"
+        active={needsAvailabilityOnly}
+        onPress={() => setNeedsAvailabilityOnly((v) => !v)}
         colors={colors}
       />
     ) : null;
@@ -1463,6 +1590,7 @@ export function RosterGridScreen() {
         {teamChip}
         {openOnlyChip}
         {availableOnlyChip}
+        {needsAvailabilityOnlyChip}
         {groupScopeChip}
       </View>
       {renderSearchBox()}
@@ -1477,6 +1605,7 @@ export function RosterGridScreen() {
       {groupScopeChip}
       {openOnlyChip}
       {availableOnlyChip}
+      {needsAvailabilityOnlyChip}
       {mode === "people" && <View style={styles.toolbarSearch}>{renderSearchBox()}</View>}
       <View style={styles.toolbarSpacer} />
     </View>
@@ -1992,9 +2121,13 @@ export function RosterGridScreen() {
         const servingLabel = m.doubleBooked
           ? `Double-booked — ${m.userName} is serving on two events on the same day across groups. ${m.servingTotal} upcoming serving assignment${m.servingTotal === 1 ? "" : "s"}.`
           : `${m.servingTotal} upcoming serving assignment${m.servingTotal === 1 ? "" : "s"}.`;
+        // One-tap reach-out: press their name to text them (falls back to a
+        // DM when there's no usable phone on file). Individual only — never
+        // a mass send.
         return (
-          <View
+          <Pressable
             key={m.userId}
+            onPress={() => handleReachOut(m)}
             style={[
               styles.nameCell,
               {
@@ -2004,6 +2137,9 @@ export function RosterGridScreen() {
                 borderBottomColor: colors.border,
               },
             ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Text ${m.userName}`}
+            {...webTitle(`Text ${m.userName}`)}
           >
             <View style={styles.nameTextWrap}>
               <View style={styles.nameInline}>
@@ -2028,7 +2164,12 @@ export function RosterGridScreen() {
                 </Text>
               </View>
             </View>
-          </View>
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={15}
+              color={colors.textTertiary}
+            />
+          </Pressable>
         );
       })}
     </ScrollView>
@@ -2411,7 +2552,9 @@ export function RosterGridScreen() {
           member={openRolesModal.member}
           event={openRolesModal.event}
           note={openRolesModal.note}
-          roles={openRolesForEvent(openRolesModal.event)}
+          scopedRoles={openRolesForEvent(openRolesModal.event)}
+          allRoles={openRolesForEvent(openRolesModal.event, { allTeams: true })}
+          isScoped={visibleTeamIds !== null}
           roleCells={roleCells}
           colors={colors}
           onPick={(role) =>
@@ -3169,11 +3312,22 @@ function MemberCellPopover({
   );
 }
 
+/**
+ * "Place <name>" / "Add role" menu — the roles open on this date. Scoped to
+ * the current team scope (#477 / people-tab team scope) by default, so a
+ * leader only sees the roles on teams they manage. A leader/community admin
+ * who manages no team here already sees everything (`isScoped` is false in
+ * that case — `visibleTeamIds` is null), so scoping never locks them out.
+ * When scoping WOULD leave someone with nothing to pick, this offers a
+ * one-tap way back to the full list rather than a dead end.
+ */
 function OpenRolesMenu({
   member,
   event,
   note,
-  roles,
+  scopedRoles,
+  allRoles,
+  isScoped,
   roleCells,
   colors,
   onPick,
@@ -3182,12 +3336,20 @@ function OpenRolesMenu({
   member: RosterMember;
   event: RosterEvent;
   note?: string;
-  roles: RosterRole[];
+  scopedRoles: RosterRole[];
+  allRoles: RosterRole[];
+  isScoped: boolean;
   roleCells: Record<string, RoleCell>;
   colors: Colors;
   onPick: (role: RosterRole) => void;
   onClose: () => void;
 }) {
+  // Widen to every team's open roles once the leader asks — sticky for the
+  // life of this menu instance (closing and reopening re-applies the scope).
+  const [widened, setWidened] = useState(false);
+  const roles = widened || !isScoped ? allRoles : scopedRoles;
+  const scopeHidSomething = isScoped && scopedRoles.length < allRoles.length;
+
   return (
     <ModalShell
       title={`Place ${member.userName}`}
@@ -3227,6 +3389,23 @@ function OpenRolesMenu({
             );
           })}
         </ScrollView>
+      )}
+      {/* Never a dead end: if the current team scope hid open roles on OTHER
+          teams, offer a one-tap way back to the full list — both when it
+          emptied the menu and when it merely narrowed it. */}
+      {!widened && scopeHidSomething && (
+        <Pressable
+          onPress={() => setWidened(true)}
+          style={[styles.addBtn, { borderColor: colors.link }]}
+          accessibilityRole="button"
+        >
+          <Ionicons name="apps-outline" size={16} color={colors.link} />
+          <Text style={[styles.addBtnText, { color: colors.link }]}>
+            {scopedRoles.length === 0
+              ? "Show roles on every team"
+              : "Show roles on every team, not just mine"}
+          </Text>
+        </Pressable>
       )}
     </ModalShell>
   );
@@ -3428,7 +3607,7 @@ function GroupFilterMenu({
 
 /**
  * Team scope picker (#477 FR-2) — a single-select menu that isolates one
- * team's roles in the Roles view. "All teams" clears the scope.
+ * team's roles AND people. "All teams" clears the scope.
  */
 function TeamFilterMenu({
   teams,
@@ -3448,7 +3627,7 @@ function TeamFilterMenu({
   return (
     <ModalShell
       title="Teams"
-      subtitle="Show roles for…"
+      subtitle="Show roles + people for…"
       colors={colors}
       onClose={onClose}
     >
