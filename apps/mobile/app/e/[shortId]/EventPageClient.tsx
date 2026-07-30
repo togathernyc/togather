@@ -604,8 +604,14 @@ export default function EventPageClient({ initialEventData }: EventPageClientPro
   // One manager-only attendance slot whose label + destination follow the
   // event's lifecycle: "Check in" (live) before the grace window closes,
   // "Take attendance" (batch editor) after. Both write the same record.
+  // Suppressed for cancelled events — there is no attendance to take for an
+  // event that didn't happen, and the check-in/attendance mutations don't
+  // themselves reject cancelled meetings.
   const attendanceEntry =
-    eventData.id && eventData.groupId && eventData.scheduledAt
+    eventData.status !== 'cancelled' &&
+    eventData.id &&
+    eventData.groupId &&
+    eventData.scheduledAt
       ? resolveAttendanceEntry({
           isRsvpClosed,
           groupId: eventData.groupId,
