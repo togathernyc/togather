@@ -127,6 +127,19 @@ jobs:
         working-directory: apps/mobile
         run: npx check-react-consistency --pkg package.json --lockfile ../../pnpm-lock.yaml --config native-deps.json
 
+      # Gate #4 — the one that catches #629. The step above only compares React
+      # VERSIONS, and both react-native instances in this lockfile are keyed
+      # (react@19.1.0), so it passes on a split graph. This one checks that every
+      # shared native package resolves the SAME react-native/expo instance
+      # apps/mobile does; two copies in one bundle split the Fabric registry and
+      # blank native video + GIFs. See ADR-013's postmortem addendum.
+      #
+      # Temporary local script: @supa-media/native-safety@1.1.0 predates this
+      # gate. Fold it into the step above once the framework release lands.
+      - name: Check native instance (one react-native/expo in the native graph)
+        working-directory: apps/mobile
+        run: node scripts/check-native-instance.js --pkg package.json --lockfile ../../pnpm-lock.yaml --importer apps/mobile --config native-deps.json
+
       - name: Check navigator screen registrations
         working-directory: apps/mobile
         run: |

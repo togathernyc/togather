@@ -4193,7 +4193,7 @@ packages:
     dependencies:
       chalk: 4.1.2
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   /@expo/env@2.0.8:
     resolution: {integrity: sha512-5VQD6GT8HIMRaSaB5JFtOXuvfDVU80YtZIuUT/GDhUF782usIXY13Tn3IdDz1Tm/lqA9qnRZQ1BF4t7LlvdJPA==}
@@ -4265,7 +4265,7 @@ packages:
       debug: 4.4.3
       dotenv: 16.4.7
       dotenv-expand: 11.0.7
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
       getenv: 2.0.0
       glob: 13.0.0
       hermes-parser: 0.29.1
@@ -4365,7 +4365,7 @@ packages:
       '@expo/json-file': 10.0.8
       '@react-native/normalize-colors': 0.81.5
       debug: 4.4.3
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
       resolve-from: 5.0.0
       semver: 7.7.3
       xml2js: 0.6.0
@@ -9947,10 +9947,10 @@ packages:
       react-native: '*'
     dependencies:
       '@expo/image-utils': 0.8.8
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
       expo-constants: 18.0.13(expo@54.0.33)(react-native@0.81.5)
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -10046,8 +10046,8 @@ packages:
     dependencies:
       '@expo/config': 12.0.13
       '@expo/env': 2.0.8
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -10099,8 +10099,8 @@ packages:
       expo: '*'
       react-native: '*'
     dependencies:
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   /expo-font@14.0.11(expo@54.0.33)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-ga0q61ny4s/kr4k8JX9hVH69exVSIfcIc19+qZ7gt71Mqtm7xy2c6kwsPTCyhBW2Ro5yXTT8EaZOpuRi35rHbg==}
@@ -10109,10 +10109,10 @@ packages:
       react: '*'
       react-native: '*'
     dependencies:
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
       fontfaceobserver: 2.3.0
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   /expo-haptics@15.0.8(expo@54.0.33):
     resolution: {integrity: sha512-lftutojy8Qs8zaDzzjwM3gKHFZ8bOOEZDCkmh2Ddpe95Ra6kt2izeOfOfKuP/QEh0MZ1j9TfqippyHdRd1ZM9g==}
@@ -10157,7 +10157,7 @@ packages:
       expo: '*'
       react: '*'
     dependencies:
-      expo: 54.0.33(@babel/core@7.29.0)(react-native@0.81.5)(react@19.1.0)
+      expo: 54.0.33(@babel/core@7.29.0)(@expo/metro-runtime@6.1.2)(expo-router@6.0.23)(react-native-webview@13.16.1)(react-native@0.81.5)(react@19.1.0)
       react: 19.1.0
 
   /expo-linear-gradient@15.0.8(expo@54.0.33)(react-native@0.81.5)(react@19.1.0):
@@ -10253,7 +10253,7 @@ packages:
     dependencies:
       invariant: 2.2.4
       react: 19.1.0
-      react-native: 0.81.5(@babel/core@7.29.0)(react@19.1.0)
+      react-native: 0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)
 
   /expo-notifications@0.32.16(expo@54.0.33)(react-native@0.81.5)(react@19.1.0):
     resolution: {integrity: sha512-QQD/UA6v7LgvwIJ+tS7tSvqJZkdp0nCSj9MxsDk/jU1GttYdK49/5L2LvE/4U0H7sNBz1NZAyhDZozg8xgBLXw==}
