@@ -12,7 +12,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, vi, afterEach } from "vitest";
+import { expect, test, describe, vi, beforeEach, afterEach } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { api } from "../../_generated/api";
@@ -979,6 +979,30 @@ describe("getMessages waReplies — the pill count stays bounded and honest", ()
 });
 
 describe("sendMessage — a reply joins its thread, it does not fork one", () => {
+  // `sendMessage` schedules `onMessageSent`. Left running, it leaks into the
+  // next test as "test began while previous transaction was still open", so
+  // every send here is drained before the assertions.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  async function send(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    accessToken: string,
+    content: string,
+    parentMessageId?: Id<"chatMessages">,
+  ): Promise<Id<"chatMessages">> {
+    const id = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content,
+      ...(parentMessageId ? { parentMessageId } : {}),
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    return id;
+  }
+
   /** Send through the real mutation, so rooting is exercised end to end. */
   function sender(
     t: ReturnType<typeof convexTest>,
@@ -986,12 +1010,7 @@ describe("sendMessage — a reply joins its thread, it does not fork one", () =>
     accessToken: string,
   ) {
     return (content: string, parentMessageId?: Id<"chatMessages">) =>
-      t.mutation(api.functions.messaging.messages.sendMessage, {
-        token: accessToken,
-        channelId,
-        content,
-        ...(parentMessageId ? { parentMessageId } : {}),
-      });
+      send(t, channelId, accessToken, content, parentMessageId);
   }
 
   test("replying to a reply files under the root and quotes the tapped message", async () => {
@@ -1088,12 +1107,13 @@ describe("sendMessage — a reply joins its thread, it does not fork one", () =>
       parentMessageId: foreignRootId,
     });
 
-    const replyId = await t.mutation(api.functions.messaging.messages.sendMessage, {
-      token: accessToken,
+    const replyId = await send(
+      t,
       channelId,
-      content: "replying to the stranded one",
-      parentMessageId: strandedId,
-    });
+      accessToken,
+      "replying to the stranded one",
+      strandedId,
+    );
 
     // The walk stops at the stranded reply rather than rooting the thread on a
     // message in a channel this reply's readers may not be able to see.
