@@ -68,6 +68,12 @@ export function GiveScreen() {
 
   const handleBack = () => {
     if (step === "confirmation") {
+      // Editing the gift after a session was created starts a NEW submission
+      // — drop the stale session so "Reopen" can't relaunch the old amount.
+      // (The nonce was already rotated when that session was created, so the
+      // next Continue gets a fresh idempotency key; reusing the old key with
+      // different params would make Stripe reject the request.)
+      setCheckoutSession(null);
       setStep("amount");
       return;
     }
@@ -106,6 +112,11 @@ export function GiveScreen() {
         idempotencyNonce: idempotencyNonceRef.current,
       });
       setCheckoutSession(result);
+      // Rotate the nonce now that this submission has its session: a failed
+      // call keeps the old nonce (retry = same idempotency key = no double
+      // session), while the donor's NEXT gift — after Done/back — gets a
+      // fresh key instead of colliding with this one.
+      idempotencyNonceRef.current = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setStep("confirmation");
       await openCheckoutUrl(result.url);
     } catch (err) {

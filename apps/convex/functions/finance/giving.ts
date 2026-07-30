@@ -376,10 +376,16 @@ export const prepareDonationIntent = internalQuery({
       throw new Error("Giving isn't set up for this community yet");
     }
 
+    // The group's shortId powers the Checkout return URL: /g/<shortId> is
+    // environment-aware via DOMAIN_CONFIG AND already claimed by the Android
+    // App Link intent filters (app.config.js), unlike /groups/... paths.
+    const group = fund.groupId ? await ctx.db.get(fund.groupId) : null;
+
     return {
       userId,
       communityId: fund.communityId,
       groupId: fund.groupId,
+      groupShortId: group?.shortId,
       fundName: fund.name,
       stripeConnectedAccountId: communityFinance.stripeConnectedAccountId,
       feeCoverCents,
@@ -487,15 +493,31 @@ export const createDonationIntent = action({
 // ============================================================================
 
 /**
- * The https universal link the Checkout session redirects back to on
- * completion/cancellation — NOT the custom "togather://" scheme, mirroring
- * FinanceOnboardingStatusScreen's FINANCE_SETUP_DEEP_LINK: Stripe Checkout
- * requires https success/cancel URLs, and the app registers applinks for
- * togather.nyc (app.config.js associatedDomains) so this re-opens the app
- * when installed. Convex reactivity — not the redirect itself — is what
- * actually refreshes the fund screen once the donation lands.
+ * The https link the Checkout session redirects back to on completion/
+ * cancellation — NOT the custom "togather://" scheme (Stripe requires
+ * https). Built from DOMAIN_CONFIG so staging redirects stay on
+ * staging.togather.nyc, and preferring the /g/<shortId> share link because
+ * that path is claimed by BOTH the iOS associated domains and the Android
+ * App Link intent filters (app.config.js) — /groups/... paths are not
+ * Android-claimed, so they'd strand Android donors in the browser. Convex
+ * reactivity — not the redirect itself — refreshes the fund screen once
+ * the donation lands.
  */
-const GIVING_CHECKOUT_BASE_URL = "https://togather.nyc";
+function checkoutReturnUrl(
+  groupShortId: string | undefined,
+  groupId: string,
+): string {
+  if (groupShortId) {
+    return DOMAIN_CONFIG.groupShareUrl(groupShortId);
+  }
+  // Fallback for groups without a shortId: environment-correct, reopens the
+  // app on iOS; Android lands on web (acceptable degradation, logged so we
+  // can see if it ever actually happens).
+  console.warn(
+    `[finance] checkoutReturnUrl: group ${groupId} has no shortId — Android return degrades to browser`,
+  );
+  return `${DOMAIN_CONFIG.appUrl}/groups/${groupId}/fund`;
+}
 
 /**
  * Creates a Stripe Checkout Session (hosted page) on the community's
@@ -542,7 +564,7 @@ export const createDonationCheckoutSession = action({
     });
 
     const totalCents = args.amountCents + context.feeCoverCents;
-    const fundUrl = `${GIVING_CHECKOUT_BASE_URL}/groups/${context.groupId}/fund`;
+    const fundUrl = checkoutReturnUrl(context.groupShortId, context.groupId);
 
     // Created ON the community's connected account (`stripeAccount`) — same
     // direct-charge topology as createDonationIntent, per ADR-032 §1.
