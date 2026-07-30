@@ -9,11 +9,20 @@
  * `resizeMode="repeat"` — UIKit ignored that on device and stretched the sheet
  * into a flat smear (owner's recording, 2026-07-29). These tests pin the grid
  * so nobody "simplifies" it back to one stretched image.
+ *
+ * They also pin the tile SOURCE to an inline base64 data URI. As `require()`d
+ * PNGs the tiles were expo-updates assets newer than the installed binary and
+ * silently failed to resolve on device over OTA — flat cream again (owner
+ * report, 2026-07-30). Anyone moving them back into `assets/` reintroduces it.
  */
 import React from 'react';
 import { StyleSheet } from 'react-native';
 import { render } from '@testing-library/react-native';
 import { ChatWallpaper, WALLPAPER_TILE_SIZE } from '../ChatWallpaper';
+import {
+  WALLPAPER_TILE_DARK_URI,
+  WALLPAPER_TILE_LIGHT_URI,
+} from '../../chatWallpaperTiles';
 
 // 390x844 (iPhone 14/15 logical size) — the viewport every WA-parity capture
 // in docs/plans/church-migration-ui-redesign uses.
@@ -51,6 +60,26 @@ describe('ChatWallpaper', () => {
       expect(tile.props.resizeMode).toBeUndefined();
       expect(tile.props.source).toBeTruthy();
     }
+  });
+
+  it('draws the tile from an inlined data URI, never a bundled asset', () => {
+    const { getAllByTestId } = render(<ChatWallpaper />);
+    for (const tile of getAllByTestId('chat-wallpaper-tile')) {
+      // A `require()`d PNG resolves to a number (or an {uri: 'http…'} in
+      // dev) — either way it depends on an expo-updates asset that did not
+      // arrive on device. Only a self-contained data URI is acceptable here.
+      expect(tile.props.source).toEqual({ uri: WALLPAPER_TILE_LIGHT_URI });
+      expect(tile.props.source.uri.startsWith('data:image/png;base64,')).toBe(true);
+    }
+  });
+
+  it('ships both theme variants inline and they are different images', () => {
+    for (const uri of [WALLPAPER_TILE_LIGHT_URI, WALLPAPER_TILE_DARK_URI]) {
+      expect(uri.startsWith('data:image/png;base64,')).toBe(true);
+      // A truncated/empty generation would still "start with" the prefix.
+      expect(uri.length).toBeGreaterThan(5000);
+    }
+    expect(WALLPAPER_TILE_LIGHT_URI).not.toBe(WALLPAPER_TILE_DARK_URI);
   });
 
   it('never intercepts touches meant for the thread underneath', () => {
