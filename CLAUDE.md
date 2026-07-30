@@ -213,7 +213,28 @@ appear on a real device — so CI cannot catch them. Rules:
   legitimately uses). **Use a scoped `pnpm add -D <pkg> --filter mobile`** (or
   `--filter <workspace>`) instead of a bare `pnpm install` when adding a new
   dependency — it resolves surgically and doesn't disturb this dedup group.
-  Always run `check-react-consistency` after any dependency change to confirm.
+  Always run `check-react-consistency` **and**
+  `node scripts/check-native-instance.js` after any dependency change to confirm.
+- **A second React VERSION is not the only way to break the native graph — a
+  second react-native/expo INSTANCE does it too, and gate #1 can't see it.** The
+  lockfile permanently holds two peer-keyed `react-native` instances (apps/mobile's
+  `(@types/react@19.1.17)(react@19.1.0)` and the workspace root's plain
+  `(react@19.1.0)`). Both are `react@19.1.0`, so `check-react-consistency`
+  passes either way. What breaks native rendering is the Expo chain
+  (`expo-modules-core`, `expo-asset`, `expo-constants`, `expo-file-system`,
+  `expo-font`, …) pointing at the root instance instead of apps/mobile's: two
+  physical copies, two Fabric registries, video → download card and GIFs blank.
+  #629 shipped exactly this while bumping the **dev-assistant** — a package with
+  no relation to react-native. **CI enforces it now:** the `Check native
+  instance` step in `ci.yml` (`scripts/check-native-instance.js`, gate #4 of
+  native-safety's `check-react-consistency` upstream) fails the PR. Fix a split
+  by re-pointing the offending lockfile entries at apps/mobile's instance — never
+  with `pnpm.overrides`, which can collapse the keys while leaving two copies
+  installed.
+- **Date a native regression by the production OTA history, not `git log`.** #629
+  merged 2026-07-17 but only reached users with the 2026-07-27 production deploy,
+  so video "worked for two weeks" after the previous fix. Bisect deploys, not
+  commits.
 - **The `react: "19.1.0"` AND `react-dom: "19.1.0"` devDependency pins in
   `apps/convex/package.json` are load-bearing — do not remove either, and keep
   them the same exact version.** `apps/convex` ships no React code, but

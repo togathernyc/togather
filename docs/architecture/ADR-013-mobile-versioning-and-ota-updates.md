@@ -428,6 +428,97 @@ device, so debug on one by bisecting OTA bundles:
    precisely what made a *deterministic* bug (#619) look intermittent — you
    can't attribute a pass/fail when two things changed at once.
 
+### Postmortem addendum: it happened again via #629 (2026-07-30)
+
+Same symptom (video → download card, animated GIFs blank, static images fine),
+same *class* (a re-keyed Expo native-module graph), but a **variant the
+#619 guard cannot see** — which is why it shipped despite green CI.
+
+**What the lockfile looks like.** `pnpm-lock.yaml` holds, and always has, two
+peer-keyed instances of `react-native` (and of `expo`):
+
+```
+react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0)  <- apps/mobile's
+react-native@0.81.5(@babel/core@7.29.0)(react@19.1.0)                        <- the workspace root's
+```
+
+The workspace root's own `package.json` declares `expo`, `react-native` and
+`react`, which is what creates the second family. That is harmless **as long as
+the Expo native chain points at the same instance the app imports.**
+
+**What #629 did.** "chore: migrate dev-assistant onto
+`@supa-media/dev-assistant@2.0.0`" (2026-07-17) re-resolved the workspace and
+flipped nine Expo blocks onto the *other* instance — 13 dependency references:
+
+`expo-modules-core`, `expo-asset`, `expo-constants`, `expo-file-system`,
+`expo-font`, `expo-keep-awake`, `@expo/devtools`, `@expo/metro-config`,
+`@expo/prebuild-config`.
+
+Nothing in that PR touches react-native. Its lockfile diff was +129/−130 of pure
+resolution churn — exactly the hazard already written down above: *a bare
+workspace-root `pnpm install` can non-deterministically re-key
+expo/expo-modules-core/react-native*. It had only ever been prose; now it's
+enforced (see below).
+
+**Mechanism.** Two physical `react-native` copies in one bundle means two Fabric
+view/module registries. `expo-modules-core` registers views into its copy's
+registry while the app's components look them up in the other, so
+`requireNativeViewManager('ExpoVideo','VideoView')` returns `undefined` →
+`ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
+undefined)` → `VideoErrorBoundary` swaps in the download card. The same split
+registry breaks the animated-`Image` path, so bundled RSVP GIFs go blank, while
+static images — which need no native view — keep working. Verified on disk:
+
+```
+main:   apps/mobile       react-native -> …_@types+react@19.1.17_react@19.1.0
+        expo-modules-core react-native -> …@7.29.0_react@19.1.0        ❌ different
+fixed:  both                           -> …_@types+react@19.1.17_react@19.1.0   ✅ same
+```
+
+**Why the two-week delay in noticing.** The bad lockfile landed 2026-07-17, but
+production takes JS only on a manual deploy, and the next production OTA was
+2026-07-27. So video/GIFs worked from #620 (07-15) through 07-27 and broke with
+that deploy — the regression is in the *deploy*, not the day the commit merged.
+When dating a regression, use the production OTA history, not `git log`.
+
+**Why every existing guard passed.** `check-react-consistency` gate #1 asks "is
+a second React **version** keyed onto native packages?" Both instances here are
+keyed `(react@19.1.0)`, so the version set is a clean `{pinned}` and it passes on
+the broken lockfile — confirmed by running it against both trees. Gate #2
+(denylist) is irrelevant: no new library was added. `check-fingerprint` ignores
+`pnpm-lock.yaml` by design. Jest mocks native modules; the Metro bundle builds;
+web never touches Fabric.
+
+**The guard that closes it.** Gate #4, *single native instance*: every **shared**
+native package (exactly one copy in the lockfile) must resolve the same
+`react-native`/`expo` instance `apps/mobile` resolves.
+
+- Runs in `ci.yml`'s `test-mobile` job as `Check native instance`.
+- Only *shared* packages are checked. A multi-copy package has one copy per
+  instance family and each correctly points at its own family's runtime (the
+  root's own `expo`, its `@react-native/virtualized-lists`, a build-time second
+  `@expo/cli`). Flagging those would fire on a healthy graph — including on the
+  known-good pre-regression baseline — and a gate that fires on a healthy graph
+  is a gate someone switches off.
+- Fails closed: a missing importers block, an importer not in the lockfile, or an
+  importer with no react-native/expo are all errors, never skips.
+- Validated in three directions against real lockfiles: passes the #620
+  known-good baseline, passes the fix, and fails `main` naming exactly the 13
+  references.
+- Canonical implementation is upstream in `@supa-media/native-safety` as gate #4
+  of `check-react-consistency`. `apps/mobile/scripts/check-native-instance.js` is
+  a marked temporary copy because this repo is on 1.1.0; delete it and fold the
+  flag onto the existing `npx check-react-consistency` step once the release
+  lands (the path #628 took after #619 added its script locally).
+
+**The rule this adds.** A dependency change in *any* workspace can re-key the
+mobile native graph. After **any** lockfile change — even one in `apps/web` or
+`apps/convex` with no relation to react-native — the native-instance gate must
+pass. Prefer scoped `pnpm add <pkg> --filter <workspace>` over a bare
+workspace-root `pnpm install`, and never "resolve" a split graph with
+`pnpm.overrides`: an override can collapse the lockfile keys while leaving two
+physical copies installed.
+
 ## References
 
 - [Expo Updates Documentation](https://docs.expo.dev/versions/latest/sdk/updates/)
