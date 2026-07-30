@@ -3765,6 +3765,11 @@ export default defineSchema({
       v.literal("stripe_blocked"),
       v.literal("increase_blocked"),
     ),
+    // Human-readable reason when provisionProviders itself failed (a provider
+    // API error before any webhook exists to explain it) — surfaced on the
+    // onboarding checklist so admins aren't stuck staring at "In progress".
+    // Cleared on resubmit/retry.
+    provisioningError: v.optional(v.string()),
     // Appears on the donor's card/bank statement. Optional — Stripe defaults
     // it from the connected account if the community hasn't set one.
     statementDescriptor: v.optional(v.string()),

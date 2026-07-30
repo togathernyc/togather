@@ -1,17 +1,22 @@
 import React from "react";
-import { render, screen } from "@testing-library/react-native";
+import { render, screen, fireEvent } from "@testing-library/react-native";
 import { FinanceOnboardingStatusView } from "../FinanceOnboardingStatusView";
 
 const baseProps = {
   isLoading: false,
   formSubmitted: true,
+  providersReady: true,
   paymentsVerified: false,
   bankAccountsReady: false,
   onboardingStatus: "verifying" as const,
   blockedReason: null,
+  provisioningError: null,
+  linkError: null,
   isLoadingLink: false,
+  isRetrying: false,
   onStartForm: jest.fn(),
   onContinueIdentityVerification: jest.fn(),
+  onRetryProvisioning: jest.fn(),
 };
 
 describe("FinanceOnboardingStatusView", () => {
@@ -60,5 +65,48 @@ describe("FinanceOnboardingStatusView", () => {
 
     expect(screen.getByText("Get started")).toBeTruthy();
     expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows a setting-up state (not the identity CTA) while providers are provisioning", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="collecting"
+      />
+    );
+
+    expect(screen.getByText("Setting up your accounts…")).toBeTruthy();
+    expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows the provisioning error and a retry CTA when provisioning failed", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="stripe_blocked"
+        provisioningError="Stripe API error: platform profile incomplete"
+      />
+    );
+
+    expect(
+      screen.getByText("Stripe API error: platform profile incomplete")
+    ).toBeTruthy();
+    fireEvent.press(screen.getByText("Try again"));
+    expect(baseProps.onRetryProvisioning).toHaveBeenCalled();
+    expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows the link error inline under the identity CTA", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        linkError="Failed to open identity verification"
+      />
+    );
+
+    expect(screen.getByText("Continue identity verification")).toBeTruthy();
+    expect(screen.getByText("Failed to open identity verification")).toBeTruthy();
   });
 });

@@ -6,7 +6,7 @@
  * Convex reactivity to auto-refresh this as webhooks land.
  */
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { Badge, Button, Skeleton } from "@components/ui";
@@ -25,37 +25,58 @@ interface ChecklistItem {
 export interface FinanceOnboardingStatusViewProps {
   isLoading: boolean;
   formSubmitted: boolean;
+  /** True once provisionProviders has created the Stripe connected account —
+   * before that, "Continue identity verification" can't work (there's no
+   * account to link to), so the view shows a setting-up state instead. */
+  providersReady: boolean;
   paymentsVerified: boolean;
   bankAccountsReady: boolean;
   onboardingStatus: OnboardingStatus;
   blockedReason?: string | null;
+  /** Human-readable provider error when provisioning itself failed —
+   * distinguishes "our setup call broke, retry it" from a webhook-driven
+   * blocked state (which the hosted Stripe flow resolves). */
+  provisioningError?: string | null;
+  /** Error from the last "Continue identity verification" attempt — shown
+   * inline (toasts don't render on web). */
+  linkError?: string | null;
   isLoadingLink: boolean;
+  isRetrying: boolean;
   onStartForm: () => void;
   onContinueIdentityVerification: () => void;
+  onRetryProvisioning: () => void;
 }
 
 export function FinanceOnboardingStatusView({
   isLoading,
   formSubmitted,
+  providersReady,
   paymentsVerified,
   bankAccountsReady,
   onboardingStatus,
   blockedReason,
+  provisioningError,
+  linkError,
   isLoadingLink,
+  isRetrying,
   onStartForm,
   onContinueIdentityVerification,
+  onRetryProvisioning,
 }: FinanceOnboardingStatusViewProps) {
   const { colors } = useTheme();
 
   if (isLoading) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={[styles.container, styles.loadingContainer, { backgroundColor: colors.surfaceSecondary }]}>
         <Skeleton width="100%" height={72} />
         <Skeleton width="100%" height={72} style={{ marginTop: 12 }} />
         <Skeleton width="100%" height={72} style={{ marginTop: 12 }} />
       </View>
     );
   }
+
+  const provisioningFailed = !!provisioningError;
+  const provisioning = formSubmitted && !providersReady && !provisioningFailed;
 
   const identityState: ChecklistItemState = paymentsVerified
     ? "done"
@@ -80,21 +101,24 @@ export function FinanceOnboardingStatusView({
       title: "Identity verification",
       description: "Stripe verifies your representative's identity",
       state: identityState,
-      blockedReason: identityState === "blocked" ? blockedReason : null,
+      blockedReason: identityState === "blocked" ? (provisioningError ?? blockedReason) : null,
     },
     {
       key: "bank",
       title: "Bank accounts",
       description: "Receiving and general accounts for your community",
       state: bankState,
-      blockedReason: bankState === "blocked" ? blockedReason : null,
+      blockedReason: bankState === "blocked" ? (provisioningError ?? blockedReason) : null,
     },
   ];
 
   const isLive = onboardingStatus === "live";
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}
+      contentContainerStyle={styles.content}
+    >
       {isLive && (
         <View style={[styles.liveBanner, { backgroundColor: colors.success + "20", borderColor: colors.success }]}>
           <Ionicons name="checkmark-circle" size={20} color={colors.success} />
@@ -125,17 +149,49 @@ export function FinanceOnboardingStatusView({
         <Button variant="primary" onPress={onStartForm} style={styles.actionButton}>
           Get started
         </Button>
+      ) : provisioningFailed && !providersReady ? (
+        <>
+          <Button
+            variant="primary"
+            onPress={onRetryProvisioning}
+            loading={isRetrying}
+            style={styles.actionButton}
+          >
+            Try again
+          </Button>
+          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+            Something went wrong creating your accounts. Retrying is safe — no
+            duplicates will be created.
+          </Text>
+        </>
+      ) : provisioning ? (
+        // Deliberately NOT a loading Button — the shared Button hides its
+        // label while `loading`, and this state's whole job is the label.
+        <>
+          <Button variant="primary" disabled style={styles.actionButton} onPress={() => {}}>
+            Setting up your accounts…
+          </Button>
+          <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+            We're creating your payment and banking accounts. This usually
+            takes a few seconds — this screen updates automatically.
+          </Text>
+        </>
       ) : !paymentsVerified ? (
-        <Button
-          variant="primary"
-          onPress={onContinueIdentityVerification}
-          loading={isLoadingLink}
-          style={styles.actionButton}
-        >
-          Continue identity verification
-        </Button>
+        <>
+          <Button
+            variant="primary"
+            onPress={onContinueIdentityVerification}
+            loading={isLoadingLink}
+            style={styles.actionButton}
+          >
+            Continue identity verification
+          </Button>
+          {linkError ? (
+            <Text style={[styles.linkError, { color: colors.error }]}>{linkError}</Text>
+          ) : null}
+        </>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -164,7 +220,13 @@ function StateBadge({ state }: { state: ChecklistItemState }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
     padding: 16,
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 32,
   },
   liveBanner: {
     flexDirection: "row",
@@ -207,5 +269,17 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     marginTop: 20,
+  },
+  helperText: {
+    fontSize: 13,
+    marginTop: 10,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+  linkError: {
+    fontSize: 13,
+    marginTop: 10,
+    textAlign: "center",
+    fontWeight: "500",
   },
 });
