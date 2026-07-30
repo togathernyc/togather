@@ -533,6 +533,140 @@ describe("getServingEligibility", () => {
     expect(res.autoEnter).toBe(false);
   });
 
+  it("lists a future non-declined plan under upcomingPlans without making it eligible", async () => {
+    // Opening a plan early to prepare is a separate affordance from serving:
+    // the same-day `plans` array (and everything auto-enter keys off) must be
+    // untouched by a future assignment.
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const nextWeek = Date.now() + 7 * DAY;
+    const plan = await insertPlan(t, world, "Next Sunday", nextWeek);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: nextWeek,
+      status: "unconfirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.plans).toEqual([]);
+    expect(res.eligible).toBe(false);
+    expect(res.autoEnter).toBe(false);
+    expect(res.upcomingPlans.map((p) => p.planId)).toEqual([plan as string]);
+    expect(res.upcomingPlans[0].title).toBe("Next Sunday");
+  });
+
+  it("orders upcomingPlans soonest-first and leaves same-day plans out of it", async () => {
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const nextWeek = today + 7 * DAY;
+    const nextMonth = today + 30 * DAY;
+
+    const planToday = await insertPlan(t, world, "Today", today);
+    const planMonth = await insertPlan(t, world, "Next Month", nextMonth);
+    const planWeek = await insertPlan(t, world, "Next Week", nextWeek);
+    for (const [plan, when] of [
+      [planToday, today],
+      [planMonth, nextMonth],
+      [planWeek, nextWeek],
+    ] as const) {
+      await insertAssignment(t, world, {
+        planId: plan,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+        eventDate: when,
+        status: "confirmed",
+      });
+    }
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    // Same-day eligibility is unaffected by the future plans.
+    expect(res.plans.map((p) => p.title)).toEqual(["Today"]);
+    expect(res.autoEnter).toBe(true);
+    expect(res.upcomingPlans.map((p) => p.title)).toEqual([
+      "Next Week",
+      "Next Month",
+    ]);
+  });
+
+  it("excludes a declined future plan from upcomingPlans", async () => {
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const nextWeek = Date.now() + 7 * DAY;
+    const plan = await insertPlan(t, world, "Next Sunday", nextWeek);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: nextWeek,
+      status: "declined",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.upcomingPlans).toEqual([]);
+  });
+
+  it("excludes a past plan from upcomingPlans", async () => {
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const lastWeek = Date.now() - 7 * DAY;
+    const plan = await insertPlan(t, world, "Last Sunday", lastWeek);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: lastWeek,
+      status: "confirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.plans).toEqual([]);
+    expect(res.upcomingPlans).toEqual([]);
+  });
+
+  it("excludes a future plan whose group the caller has left", async () => {
+    // Same staleness rule as eligibility: a soft-deleted membership can outlive
+    // an unanswered assignment, and a former member must not be able to open the
+    // event early either.
+    const { t, world } = await setup();
+    const formerId = await insertFormerGroupMember(t, world);
+    const formerTok = (await generateTokens(formerId)).accessToken;
+    const nextWeek = Date.now() + 7 * DAY;
+    const plan = await insertPlan(t, world, "Next Sunday", nextWeek);
+    await insertAssignment(t, world, {
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: formerId,
+      eventDate: nextWeek,
+      status: "confirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: formerTok },
+    );
+    expect(res.upcomingPlans).toEqual([]);
+  });
+
   it("does not make a declined volunteer eligible", async () => {
     const { t, world } = await setup();
     const meTok = (await generateTokens(world.channelMemberId)).accessToken;
