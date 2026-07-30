@@ -159,9 +159,18 @@ export function FinanceOnboardingStatusView({
           >
             Try again
           </Button>
+          {/* Escape hatch when the failure is the DATA (a provider rejecting
+              a field): "Try again" resubmits the same stored details, so a
+              deterministic rejection needs the form. Reuses onStartForm —
+              the intake screen prefills nothing but startOnboarding upserts,
+              so resubmitting corrected details is the recovery path. */}
+          <Button variant="secondary" onPress={onStartForm} style={styles.editButton}>
+            Edit church details
+          </Button>
           <Text style={[styles.helperText, { color: colors.textSecondary }]}>
             Something went wrong creating your accounts. Retrying is safe — no
-            duplicates will be created.
+            duplicates will be created. If the error points at your church
+            details, edit and resubmit them instead.
           </Text>
           {linkError ? (
             <Text style={[styles.linkError, { color: colors.error }]}>{linkError}</Text>
@@ -272,6 +281,9 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     marginTop: 20,
+  },
+  editButton: {
+    marginTop: 10,
   },
   helperText: {
     fontSize: 13,

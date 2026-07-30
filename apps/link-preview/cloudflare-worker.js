@@ -209,7 +209,7 @@ const KNOWN_APP_ROUTES = new Set([
   // (landing)
   "demo", "get-started", "nearme", "our-story", "support",
   // root
-  "inbox", "ui-test", "planning-center",
+  "inbox", "ui-test", "planning-center", "finance-setup",
   // contributor dev dashboard (the dashboard lives at /dev in the app)
   "dev",
   // onboarding & billing (browser-only, served by Expo web app)

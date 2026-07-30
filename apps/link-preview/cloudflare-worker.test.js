@@ -637,6 +637,32 @@ test("known app route (e.g. /admin) is not treated as a community slug", async (
   }
 });
 
+test("/finance-setup passes through to the app instead of redirecting to /c/finance-setup", async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    calls.push(url);
+    return new Response("app content", { status: 200, headers: { "Content-Type": "text/html" } });
+  };
+
+  try {
+    const req = new Request("https://togather.nyc/finance-setup", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+
+    const res = await worker.fetch(req, { CONVEX_SITE_URL: "https://example.convex.site" });
+
+    // Regression: before finance-setup was in KNOWN_APP_ROUTES, a hard
+    // navigation 302ed to /c/finance-setup and 404ed ("community not found").
+    assert.equal(res.status, 200);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].startsWith(APP_ORIGIN_URL));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("bot on an invalid short-id format passes through instead of matching a preview route", async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
