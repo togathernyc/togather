@@ -31,6 +31,8 @@ import { useLeaveGroup } from "@features/groups/hooks/useLeaveGroup";
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { waAccentPalette } from "@utils/waPalette";
 import { parseStreamChannelId } from "@togather/shared";
 import { DOMAIN_CONFIG } from "@togather/shared";
 import type { Id } from "@services/api/convex";
@@ -40,6 +42,7 @@ import { useQuery, api, useStoredAuthToken } from "@services/api/convex";
 import { ChatHeader, ChatHeaderPlaceholder } from "./ChatHeader";
 import { ChatRoomHeader } from "./ChatRoomHeader";
 import { ChatPrivacyCard } from "./ChatPrivacyCard";
+import { ChatWallpaper } from "./ChatWallpaper";
 import { ChatNavigation, type ChannelTab } from "./ChatNavigation";
 import { ChatMenuModal } from "./ChatMenuModal";
 import { ExternalChatModal } from "./ExternalChatModal";
@@ -106,7 +109,10 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const { user } = useAuth();
   const token = useStoredAuthToken();
   const { primaryColor } = useCommunityTheme();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  // WhatsApp-shell chat-room chrome (WHATSAPP-DESIGN-SYSTEM.md §5) —
+  // flag-gated; flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
 
   // Mutations
   const flagMessageMutation = useMutation(api.functions.messaging.flagging.flagMessage);
@@ -1042,6 +1048,47 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     setReplyToLocal(null);
   }, []);
 
+  // Parents that currently show exactly one reply inline — the threads a next
+  // reply collapses. Reported by MessageList (flag-on only) and held in a ref
+  // because nothing renders from it; it's only read at send time.
+  const collapsibleThreadsRef = useRef<Set<string>>(new Set());
+  const handleCollapsibleThreadsChange = useCallback((parentIds: Set<string>) => {
+    collapsibleThreadsRef.current = parentIds;
+  }, []);
+
+  /**
+   * Follow a reply that just turned its parent into a thread.
+   *
+   * On the send that tips a parent from one visible reply to two, BOTH replies
+   * leave the timeline and are replaced by a summary pill on the parent — which
+   * may be scrolled far up. Without this, the message you just sent appears to
+   * vanish. So on exactly that send, open the thread the message actually
+   * landed in.
+   *
+   * Deliberately conservative: it fires only when the parent was known to have
+   * an inline reply loaded right now. A first reply (nothing inline yet) stays
+   * put, an already-collapsed thread can't be replied to from the timeline, and
+   * an unknown/unloaded parent does nothing.
+   */
+  const handleReplySent = useCallback(
+    (parentMessageId: Id<"chatMessages">) => {
+      if (!whatsappShellEnabled) return;
+      if (!collapsibleThreadsRef.current.has(String(parentMessageId))) return;
+      // Same parallel group/DM routes MessageItem's thread pill uses.
+      if (resolvedGroupId) {
+        router.push({
+          pathname: `/inbox/${resolvedGroupId}/thread/${parentMessageId}` as any,
+          params: { channelName: activeSlug || "general" },
+        });
+      } else if (activeChannelId) {
+        router.push({
+          pathname: `/inbox/dm/${activeChannelId}/thread/${parentMessageId}` as any,
+        });
+      }
+    },
+    [whatsappShellEnabled, resolvedGroupId, activeChannelId, activeSlug, router],
+  );
+
   // Dismiss keyboard when tapping outside input
   const dismissKeyboard = useCallback(() => {
     Keyboard.dismiss();
@@ -1191,11 +1238,30 @@ const ConvexChatRoomScreenInner: React.FC = () => {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}
+      style={[
+        styles.container,
+        { paddingTop: insets.top, backgroundColor: colors.surface },
+        // §S4.1: the wallpaper layer below fills the Pressable (which starts
+        // under `paddingTop`), so the status-bar strip takes the wallpaper's
+        // base color to avoid a white band above a cream thread.
+        whatsappShellEnabled && { backgroundColor: colors.chatWallpaper },
+      ]}
       behavior="padding"
       keyboardVerticalOffset={0}
     >
-      <Pressable style={[styles.container, { backgroundColor: colors.surface }]} onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}>
+      <Pressable
+        style={[
+          styles.container,
+          { backgroundColor: colors.surface },
+          whatsappShellEnabled && styles.waTransparent,
+        ]}
+        onPress={Platform.OS === 'web' ? undefined : dismissKeyboard}
+      >
+        {/* §S4.1 "applied to the whole thread area and under the translucent
+            nav/composer" — one non-interactive layer behind every child, so
+            the header, tab strip, list and composer all sit on the same
+            wallpaper instead of each painting its own background. */}
+        {whatsappShellEnabled && <ChatWallpaper />}
         {isAdHocChannel && adHocChannelType ? (
           <ChatRoomHeader
             channelType={adHocChannelType}
@@ -1280,8 +1346,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 position above the list (not in the inverted FlatList) avoids
                 upending the chat scroll behavior. */}
             {isAdHocChannel && <ChatPrivacyCard />}
-            {/* Message List - handles its own loading state when channelId is null */}
-            <View style={styles.chatContainer}>
+            {/* Message List - handles its own loading state when channelId is null.
+                §S4.1: the wallpaper is painted once at screen level above, so
+                this wrapper (and MessageList itself) must stay transparent —
+                painting `chatWallpaper` here again would flatten the doodle
+                pattern back out. Flag-off keeps inheriting the screen's
+                surface color as before. */}
+            <View
+              style={[
+                styles.chatContainer,
+                whatsappShellEnabled && styles.waTransparent,
+              ]}
+            >
               <MessageList
                 channelId={activeChannelId ?? null}
                 currentUserId={currentUserId}
@@ -1295,6 +1371,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                 optimisticMessages={optimisticMessages}
                 onRetryMessage={retryMessage}
                 onDismissMessage={dismissMessage}
+                onCollapsibleThreadsChange={handleCollapsibleThreadsChange}
                 onAvatarPress={(userId) => {
                   // Short-circuit on self — self-profile lives on a
                   // different route; the MessageItem already filters
@@ -1378,6 +1455,7 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                     : null
                 }
                 onCancelReply={handleCancelReply}
+                onReplySent={handleReplySent}
                 externalSendMessage={sendMessage}
                 externalIsSending={isSending}
                 placeholder={activeChannelHint}
@@ -1389,6 +1467,38 @@ const ConvexChatRoomScreenInner: React.FC = () => {
                   isAdHocChannel && channelData?.recipientPending === true
                 }
               />
+            ) : whatsappShellEnabled ? (
+              // §5 "Announcement footer note: centered, 13pt, text.secondary
+              // with the actionable noun in accent" — flag-on restyle of the
+              // same read-only affordance below (base styles reused, new
+              // wa* entries added; the flag-off branch is untouched).
+              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, styles.waTransparent]}>
+                <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
+                  {isCommunityAdminGroupView ? (
+                    isRoleLoading ? (
+                      "Checking your access…"
+                    ) : (
+                      "You're viewing as a community admin. Join the group to post."
+                    )
+                  ) : isAnnouncementsChannel ? (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        leaders
+                      </Text>{" "}
+                      can post in Announcements. You can react to messages.
+                    </>
+                  ) : (
+                    <>
+                      Only{" "}
+                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                        admins
+                      </Text>{" "}
+                      can post in this channel. You can react to messages.
+                    </>
+                  )}
+                </Text>
+              </View>
             ) : (
               <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
                 <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
@@ -1535,6 +1645,21 @@ const styles = StyleSheet.create({
   readOnlyText: {
     fontSize: 14,
     textAlign: "center",
+  },
+  // --- WhatsApp-shell announcement footer note (flag-gated) -----------------
+  // Additive-only overrides layered on top of the flag-off styles above,
+  // which are never edited. See WHATSAPP-DESIGN-SYSTEM.md §5.
+  waReadOnlyBanner: {
+    borderTopWidth: 0,
+  },
+  waReadOnlyText: {
+    fontSize: 13,
+  },
+  // §S4.1 — every flag-on layer between the wallpaper and the content must be
+  // see-through, or the pattern gets painted over (the "white on white"
+  // bug this pass fixes).
+  waTransparent: {
+    backgroundColor: "transparent",
   },
 });
 

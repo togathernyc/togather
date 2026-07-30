@@ -154,7 +154,7 @@ export function MusicianRehearsalScreen() {
 
           {songs.length === 0 ? (
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              No songs on this run sheet yet. Check back once the worship leader
+              No songs on this run sheet yet. Check back once the team leader
               has added them.
             </Text>
           ) : (

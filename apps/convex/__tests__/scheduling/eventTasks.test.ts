@@ -1219,3 +1219,150 @@ describe("serving eligibility", () => {
     expect(result.activePlan).toBeNull();
   });
 });
+
+/** Assign a user to the world's Drums role WITHOUT confirming (stays unconfirmed). */
+async function assignOnly(
+  t: ReturnType<typeof convexTest>,
+  world: Awaited<ReturnType<typeof buildSchedulingWorld>>,
+  leaderToken: string,
+  planId: Id<"eventPlans">,
+  userId: Id<"users">,
+) {
+  const { assignmentId } = await t.mutation(
+    api.functions.scheduling.assignments.assignRole,
+    { token: leaderToken, planId, teamId: world.teamId, roleId: world.roleId, userId },
+  );
+  return assignmentId;
+}
+
+describe("unconfirmed volunteers reach serving-mode tasks/crew", () => {
+  it("shows an unconfirmed volunteer their assigned role's tasks in Mine", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Member is assigned to Drums but has NOT accepted yet.
+    await assignOnly(t, world, leaderToken, planId, world.channelMemberId);
+
+    await t.mutation(api.functions.scheduling.eventTasks.createTask, {
+      token: leaderToken,
+      planId,
+      teamIds: [world.teamId],
+      roleIds: [world.roleId],
+      segment: "before",
+      title: "Set up drums",
+      howToType: "none",
+    });
+
+    const mine = await t.query(
+      api.functions.scheduling.eventTasks.getMyServingTasks,
+      { token: memberToken, planId },
+    );
+    // They can now enter serving mode, so they see the role's tasks even while
+    // still unconfirmed.
+    expect(mine.before.map((x) => x.title)).toContain("Set up drums");
+  });
+
+  it("includes unconfirmed teammates in the crew, tagged as unconfirmed", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const memberToken = (await generateTokens(world.channelMemberId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Caller (member) is confirmed; a teammate (moderator) is only unconfirmed;
+    // a third (admin) declined and must not appear.
+    await assignAndConfirm(t, world, leaderToken, planId, world.channelMemberId);
+    await assignOnly(t, world, leaderToken, planId, world.channelModeratorId);
+    const declinedId = await assignOnly(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelAdminId,
+    );
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: (await generateTokens(world.channelAdminId)).accessToken,
+      assignmentId: declinedId,
+      status: "declined",
+    });
+
+    const crew = await t.query(
+      api.functions.scheduling.eventTasks.getCrewTasks,
+      { token: memberToken, planId },
+    );
+
+    const me = crew.find((c) => c.isCurrentUser)!;
+    expect(me.status).toBe("confirmed");
+    const mod = crew.find((c) => c.userId === world.channelModeratorId)!;
+    expect(mod).toBeDefined();
+    expect(mod.status).toBe("unconfirmed");
+    // The declined admin is excluded entirely.
+    expect(crew.some((c) => c.userId === world.channelAdminId)).toBe(false);
+  });
+
+  it("lets an unconfirmed teammate toggle a shared team task, but not a declined one", async () => {
+    // The shared-task auth gate moved from confirmed-only to non-declined, so an
+    // unconfirmed volunteer (who now serves) may flip a team-wide shared task,
+    // while a declined member still cannot. The existing reject test uses an
+    // UNassigned user, which rejects regardless — this pins the assigned-declined
+    // boundary specifically.
+    const { t, world } = await setupSchedulingWorld();
+    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
+    const { planId } = await createEvent(t, world, leaderToken);
+
+    // Moderator is only unconfirmed; admin is assigned then declines.
+    await assignOnly(t, world, leaderToken, planId, world.channelModeratorId);
+    const declinedId = await assignOnly(
+      t,
+      world,
+      leaderToken,
+      planId,
+      world.channelAdminId,
+    );
+    await t.mutation(api.functions.scheduling.assignments.respondToAssignment, {
+      token: (await generateTokens(world.channelAdminId)).accessToken,
+      assignmentId: declinedId,
+      status: "declined",
+    });
+
+    // A team-level (roleIds: []) shared task on the world's team.
+    const { taskId } = await t.mutation(
+      api.functions.scheduling.eventTasks.createTask,
+      {
+        token: leaderToken,
+        planId,
+        teamIds: [world.teamId],
+        roleIds: [],
+        segment: "before",
+        title: "Set the stage",
+        howToType: "none",
+      },
+    );
+
+    // Unconfirmed teammate can flip it.
+    await t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+      token: (await generateTokens(world.channelModeratorId)).accessToken,
+      planId,
+      taskId,
+      completed: true,
+    });
+    const shared = await t.run(async (ctx) =>
+      ctx.db
+        .query("sharedTaskCompletions")
+        .withIndex("by_task", (q) => q.eq("taskId", taskId))
+        .collect(),
+    );
+    expect(shared).toHaveLength(1);
+
+    // Declined teammate is rejected.
+    await expect(
+      t.mutation(api.functions.scheduling.eventTasks.toggleSharedTeamTask, {
+        token: (await generateTokens(world.channelAdminId)).accessToken,
+        planId,
+        taskId,
+        completed: false,
+      }),
+    ).rejects.toThrow();
+  });
+});

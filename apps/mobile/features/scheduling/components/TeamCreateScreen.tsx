@@ -10,7 +10,7 @@
  *
  * Backend: scheduling.teams.createServingTeam.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -32,6 +32,8 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
+import { useAuth } from "@providers/AuthProvider";
 
 export function TeamCreateScreen() {
   const { colors } = useTheme();
@@ -50,6 +52,22 @@ export function TeamCreateScreen() {
   const [withChannel, setWithChannel] = useState(true);
   const [creating, setCreating] = useState(false);
 
+  // Managers are an explicit, visible choice rather than something the backend
+  // infers. The creator is pre-filled because they usually do run the team they
+  // just made — but they can drop themselves here, which matters for a campus
+  // leader spinning up all of a location's teams for other people to run.
+  const { user } = useAuth();
+  const creatorId = user?.id as Id<"users"> | undefined;
+  const [managerIds, setManagerIds] = useState<Id<"users">[]>([]);
+  const [managerSeeded, setManagerSeeded] = useState(false);
+  useEffect(() => {
+    if (!managerSeeded && creatorId) {
+      setManagerIds([creatorId]);
+      setManagerSeeded(true);
+    }
+  }, [creatorId, managerSeeded]);
+  const creatorIsManager = creatorId !== undefined && managerIds.includes(creatorId);
+
   const canCreate = name.trim().length > 0 && !creating;
 
   const handleBack = useCallback(() => {
@@ -65,6 +83,7 @@ export function TeamCreateScreen() {
         name: name.trim(),
         description: description.trim() || undefined,
         withChannel,
+        managerUserIds: managerIds,
       });
       // Replace this screen with the new team's detail screen so backing out
       // returns to the Teams list, not the create form.
@@ -72,7 +91,13 @@ export function TeamCreateScreen() {
         `/rostering/${groupId}/team/${result.teamId}` as never,
       );
     } catch (e: any) {
-      Alert.alert("Couldn't create team", e?.message ?? "Please try again.");
+      // ConvexError carries its text on `.data`; `.message` in production is
+      // the opaque "[CONVEX M(...)] Server Error" string, which rendered a
+      // plain "you're out of channels" message as an apparent server crash.
+      Alert.alert(
+        "Couldn't create team",
+        errorMessage(e, "Please try again."),
+      );
       setCreating(false);
     }
   }, [
@@ -82,6 +107,7 @@ export function TeamCreateScreen() {
     name,
     description,
     withChannel,
+    managerIds,
     router,
   ]);
 
@@ -125,7 +151,7 @@ export function TeamCreateScreen() {
         <TextInput
           value={name}
           onChangeText={setName}
-          placeholder="e.g. Worship, Hospitality, Communion Prep"
+          placeholder="e.g. Music, Hospitality, Setup Crew"
           placeholderTextColor={colors.inputPlaceholder}
           maxLength={50}
           autoFocus
@@ -182,6 +208,30 @@ export function TeamCreateScreen() {
             {withChannel
               ? "The team gets a chat channel in the inbox to coordinate."
               : "No chat channel — this team is for rostering only. You can add one later."}
+          </Text>
+        </View>
+
+        <View
+          style={[styles.channelCard, { backgroundColor: colors.surfaceSecondary }]}
+        >
+          <View style={styles.channelTop}>
+            <Ionicons name="shield-outline" size={20} color={colors.text} />
+            <Text style={[styles.channelTitle, { color: colors.text }]}>
+              I&apos;ll manage this team
+            </Text>
+            <Switch
+              value={creatorIsManager}
+              disabled={creatorId === undefined}
+              onValueChange={(next) => {
+                if (!creatorId) return;
+                setManagerIds(next ? [creatorId] : []);
+              }}
+            />
+          </View>
+          <Text style={[styles.channelHint, { color: colors.textTertiary }]}>
+            {creatorIsManager
+              ? "You'll send this team's serving requests. Turn this off if someone else will run it — you can add them after creating."
+              : "Only group leaders and admins can send this team's requests for now. Add managers on the team's page."}
           </Text>
         </View>
 

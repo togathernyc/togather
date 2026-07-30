@@ -153,7 +153,7 @@ export function GoLiveScreen() {
               </Text>
               <Text style={[styles.message, { color: colors.textSecondary }]}>
                 Demo mode is off and the seeded demo members have been removed.
-                Time to invite your congregation.
+                Time to invite your community.
               </Text>
             </View>
           ) : (
@@ -192,7 +192,7 @@ export function GoLiveScreen() {
                 Going live keeps everything you've set up — your name, branding,
                 groups, and the teammates you've invited — and removes the {" "}
                 seeded demo members and their conversations, so you start clean
-                with your real congregation.
+                with your real community.
               </Text>
 
               {/* Pricing headline */}
@@ -228,7 +228,7 @@ export function GoLiveScreen() {
                 )}
                 {billing?.billableActiveUsers === 1 && (
                   <Text style={[styles.hint, { color: colors.textTertiary }]}>
-                    Go live for just $1 today, then invite your congregation —
+                    Go live for just $1 today, then invite your community —
                     your bill grows only as they start using it.
                   </Text>
                 )}
@@ -242,8 +242,8 @@ export function GoLiveScreen() {
                   Estimate your bill
                 </Text>
                 <Text style={[styles.cardBody, { color: colors.textSecondary }]}>
-                  We've generally seen around a third of a congregation active
-                  in a given month — though it depends on how often your church
+                  We've generally seen around a third of a community active
+                  in a given month — though it depends on how often your community
                   uses the app. Pick your size to estimate:
                 </Text>
                 <View style={styles.chipRow}>
@@ -283,7 +283,7 @@ export function GoLiveScreen() {
                 </View>
                 <Text style={[styles.hint, { color: colors.textTertiary }]}>
                   A realistic estimate — your actual number depends on how your
-                  church uses the app.
+                  community uses the app.
                 </Text>
               </View>
 

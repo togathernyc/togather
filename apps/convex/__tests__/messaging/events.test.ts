@@ -222,8 +222,9 @@ describe("onMessageSent Event", () => {
     vi.runAllTimers();
     await t.finishInProgressScheduledFunctions();
 
-    // Verify muted member doesn't get unread count incremented
-    // (notifications are sent via centralized system, not queue)
+    // Mute suppresses notification delivery only — unread bookkeeping keeps
+    // running so messages received while muted don't look already-read after
+    // unmuting (see PR #636 review).
     const user2ReadState = await t.run(async (ctx) => {
       return await ctx.db
         .query("chatReadState")
@@ -233,8 +234,7 @@ describe("onMessageSent Event", () => {
         .first();
     });
 
-    // Muted members don't get unread counts incremented
-    expect(user2ReadState?.unreadCount || 0).toBe(0);
+    expect(user2ReadState?.unreadCount || 0).toBe(1);
   });
 
   test("should handle mentions in messages", async () => {

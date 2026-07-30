@@ -43,6 +43,11 @@ jest.mock("@services/api/convex", () => ({
           listEvents: "api.functions.scheduling.events.listEvents",
         },
       },
+      finance: {
+        giving: {
+          getGivingContext: "api.functions.finance.giving.getGivingContext",
+        },
+      },
     },
   },
 }));

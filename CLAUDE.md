@@ -80,12 +80,16 @@ the step-by-step. In short:
 - **Don't push 1Password → Convex/Expo directly** — every deploy re-syncs all
   secrets and would hit 1Password rate limits. GitHub is the buffer.
 - To add a new secret: (1) add the item to 1Password vault `Togather` with
-  `staging`/`production` fields; (2) add `<KEY>` to the allowlist array in
-  `ee/scripts/sync-1password-to-github.sh` (a key not listed is never synced);
-  (3) **only if a Convex function needs it**, also add it to `SECRET_KEYS` in
-  `ee/scripts/sync-secrets-to-convex.sh` — CI-only tokens stop at GitHub;
-  (4) run `gh workflow run sync-secrets.yml -f environment=both` to push it to
-  GitHub; deploys forward it onward.
+  `staging`/`production` fields; (2) add `<KEY>` to the `required` or
+  `optional` list in `ee/secrets-allowlist.json` (a key not listed is never
+  synced — see the Supa Framework section below for what `required` vs
+  `optional` means, including that `optional` gets **pruned** from GitHub when
+  absent from 1Password); (3) **only if a Convex function needs it**, also add
+  it to `SECRET_KEYS` in `ee/scripts/sync-secrets-to-convex.sh` — CI-only
+  tokens stop at GitHub; (4) run
+  `gh workflow run sync-secrets.yml -f environment=both` to push it to GitHub
+  (the shared `supa-sync-1password-to-github` bin, via the reusable
+  `sync-secrets.yml@v1` workflow); deploys forward it onward.
 
 ### Agent Backend Selection (Maintainer CI Agents Only)
 
@@ -193,10 +197,45 @@ appear on a real device — so CI cannot catch them. Rules:
   blank**. A `pnpm.overrides` React pin does NOT save you (MUI/react-datepicker
   broke it even pinned). Web-only UI must be **dependency-free** (a native
   `<input>`) — do not reach for a component library.
-- **CI guard:** `apps/mobile/scripts/check-react-consistency.js` fails a PR if a
-  second React is keyed onto any native package, or if a denylisted lib enters
-  `apps/mobile`. Do not weaken or remove it. If a `<second React>` shows up,
-  find and remove the offending dependency — do not paper over it with an override.
+- **CI guard:** `check-react-consistency` (from `@supa-media/native-safety`, run
+  via `npx check-react-consistency --pkg package.json --lockfile
+  ../../pnpm-lock.yaml --config native-deps.json` in `apps/mobile`'s CI job)
+  fails a PR if a second React is keyed onto any native package, or if a
+  denylisted lib enters `apps/mobile`. Do not weaken or remove it. If a
+  `<second React>` shows up, find and remove the offending dependency — do not
+  paper over it with an override.
+- **`pnpm install` can itself trigger a false second-React** even when adding a
+  totally unrelated devDependency with no relation to React/Expo — pnpm's peer
+  dedup for the expo/react-native chain is order-sensitive, and a full
+  workspace-root `pnpm install` re-resolution can non-deterministically re-key
+  `expo`/`expo-modules-core`/`react-native` etc. onto a second React version
+  that already exists elsewhere in the graph (e.g. the one `react-native-web`
+  legitimately uses). **Use a scoped `pnpm add -D <pkg> --filter mobile`** (or
+  `--filter <workspace>`) instead of a bare `pnpm install` when adding a new
+  dependency — it resolves surgically and doesn't disturb this dedup group.
+  Always run `check-react-consistency` after any dependency change to confirm.
+- **The `react: "19.1.0"` AND `react-dom: "19.1.0"` devDependency pins in
+  `apps/convex/package.json` are load-bearing — do not remove either, and keep
+  them the same exact version.** `apps/convex` ships no React code, but
+  without the react pin, `@react-email/components`' react range pulls
+  `react@19.2.4` and pnpm keys a SECOND peer-keyed `convex` instance onto it;
+  the `@supa-media/dev-assistant` re-exports then resolve against the wrong
+  `convex` copy and Convex's type machinery silently drops every re-exported
+  function from the generated `api`/`internal` types (the mount smoke test
+  `__tests__/devAssistant-mount.test.ts` is the CI backstop for this). The
+  react-dom pin exists because the react pin alone re-keys the react-email
+  tree onto react@19.1.0 while react-dom — if left undeclared — is
+  auto-installed as a transitive peer at the latest in-range version, and
+  react-dom/server hard-errors at render time on any react/react-dom version
+  skew (React 19's `ensureCorrectIsomorphicReactVersion` — present in 19.1.0's
+  server builds too). That skew shipped once: verification emails (the one
+  backend path that executes react-dom, via `@react-email/render` in
+  `functions/auth/emailOtp.ts`) threw in production while all of CI stayed
+  green. Backstop: `__tests__/email-render.test.ts` renders the real template
+  through the real react-dom, so a skew fails CI. (A static lockfile gate for
+  `react-dom@X(react@Y)` pairs lands in `@supa-media/native-safety` 1.2.0;
+  this repo is on 1.1.0 — until that's released and bumped, the render test
+  is the only guard.)
 - **Native Fabric view crashes cascade.** When an Expo native *view* crashes
   (e.g. `ViewManagerAdapter_ExpoVideo_VideoView … must be a function (received
   undefined)`), it corrupts the Fabric view registry and **breaks other native
@@ -287,6 +326,14 @@ What to update when a guide is affected:
 
 If you're unsure whether a change is "user-facing enough" to need a guide
 update, it probably is — err on the side of updating.
+
+### Link Previews / OG Metadata
+
+**Adding a static marketing page:** Add an entry to `apps/web/src/routes.tsx` with `path`, `element` (JSX component like `<EventsGuide />`), `title`, `description`, and optional `image` and `emoji`. The build script automatically generates OG metadata and images at compile time (satori + resvg for branded cards). Routes are **the only way to add a page** — the router is generated from the registry. For a **new top-level path** (not nested under an existing prefix like `/guides/`), you must also add it to `LANDING_PAGE_PATHS` or `LANDING_PAGE_PREFIXES` in `apps/link-preview/cloudflare-worker.js`, or the Cloudflare worker will misroute it; paths under already-listed prefixes (like `/guides/`) need no worker change.
+
+**Adding a dynamic shareable app route:** Implement a resolver case in `apps/convex/functions/linkPreviewMeta.ts` (typed, unit-tested) to assemble preview metadata (title, description, image fallback chains, timezone formatting, etc.), then add a row to `PREVIEW_ROUTES` in `apps/link-preview/cloudflare-worker.js` to route the pattern. The worker fetches the metadata endpoint and renders the shared HTML template — **no per-type logic in the worker itself.**
+
+See ADR-009 for full architecture.
 
 ## File and Project Hygiene
 
@@ -386,6 +433,32 @@ Example workflow:
 
 - **Types**: Convex generates types from schema (`apps/convex/_generated/`)
 - **API Client**: `@services/api/convex` - Convex React client
+
+## Supa Framework
+
+This repo consumes packages and reusable workflows from **Supa-Media/supa-framework**
+(local checkout: `~/Code/supa-framework`).
+
+- Consumed today: `@supa-media/native-safety` (check-react-consistency CI guard),
+  the shared 1Password sync (`supa-sync-1password-to-github` via the reusable
+  `sync-secrets.yml@v1` workflow), and `@supa-media/dev-assistant` (the ADR-029
+  contribution pipeline — schema, pipeline core, and Convex functions; Togather
+  supplies only the app-specific seams in `apps/convex/functions/devAssistant/`).
+  More adoption is planned (see the framework repo).
+- Private registry: installing `@supa-media/*` needs a `GITHUB_TOKEN` with
+  `read:packages` (see `.npmrc`; CI passes `secrets.GITHUB_TOKEN`). EAS remote
+  native builds (`eas build`, no `--local`) run their own `pnpm install` on
+  Expo's infra, which never sees `secrets.GITHUB_TOKEN` — those workflows
+  instead forward the durable `GH_PACKAGES_TOKEN` secret via `eas env:create
+  --name GITHUB_TOKEN`. See `docs/secrets.md`'s "GitHub Packages auth for
+  native builds" section.
+- **Upstream-first rule:** if a change touches behavior that comes from the
+  framework (a package, bin, or reusable workflow), do NOT patch or fork it
+  here first. Ask: is the change generic? If yes → change it in
+  supa-framework (PR there → release → `pnpm update "@supa-media/*"` here).
+  Only implement locally when the need is genuinely Togather-specific — and
+  leave a comment explaining why it diverges.
+- Updating: `pnpm update "@supa-media/*"`; reusable workflows are pinned `@v1`.
 
 ## Key Patterns
 

@@ -12,6 +12,9 @@
 
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
+import { registerDevAssistantCrons } from "@supa-media/dev-assistant";
+import { registerFinanceCrons } from "./functions/finance/jobs";
+import "./functions/devAssistant/config"; // side-effect: sets config first
 
 const crons = cronJobs();
 
@@ -300,12 +303,16 @@ crons.monthly(
 // bug to MERGED when its PR has merged on GitHub, so manual merges reflect on
 // the Contribute dashboard even when the webhook isn't delivering. Idempotent;
 // no-ops when the GitHub integration is unconfigured. See ADR-029 Phase 3.
+//
+// Registered by @supa-media/dev-assistant — same cron name
+// ("dev-assistant-pr-merge-reconcile"), same */15 cadence, same target action
+// (functions/devAssistant/actions:reconcileMergedPrs) as the previous
+// hand-written registration.
+registerDevAssistantCrons(crons); // reads functionsPath from the config holder
 
-crons.cron(
-  "dev-assistant-pr-merge-reconcile",
-  "*/15 * * * *",
-  internal.functions.devAssistant.actions.reconcileMergedPrs,
-  {}
-);
+// Group giving (ADR-032): nightly ledger-vs-bank reconcile + hourly
+// stale-allocation retry backstop (the primary allocation trigger is the
+// Stripe payout.paid webhook).
+registerFinanceCrons(crons);
 
 export default crons;

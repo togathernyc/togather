@@ -37,6 +37,7 @@ import {
   useAuthenticatedMutation,
   api,
 } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 import type { Id } from "@services/api/convex";
 import { DEFAULT_ROLE_COLOR } from "../utils/format";
 import { TeamChannelToggle } from "./TeamChannelToggle";
@@ -128,10 +129,7 @@ export function NeededRolesModal({
       setNewTeamName("");
       setNewTeamWithChannel(true);
     } catch (e: any) {
-      Alert.alert(
-        "Couldn't create team",
-        e?.data?.message ?? e?.message ?? "Please try again.",
-      );
+      Alert.alert("Couldn't create team", errorMessage(e, "Please try again."));
     } finally {
       setCreatingTeam(false);
     }

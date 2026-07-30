@@ -35,6 +35,13 @@ let mockListGroupChannelsResult: any = [
 ];
 
 // Mock Convex hooks - useQuery will be replaced per test via mockImplementation
+// Flag off = the behavior this suite asserts; the real hook reaches a Convex
+// query the partial api mock below doesn't provide.
+jest.mock('@hooks/useWhatsappShell', () => ({
+  useWhatsappShell: () => false,
+  useWhatsappShellState: () => ({ enabled: false, loaded: true }),
+}));
+
 jest.mock('@services/api/convex', () => ({
   useQuery: jest.fn(),
   useMutation: jest.fn(() => jest.fn()),

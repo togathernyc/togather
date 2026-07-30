@@ -37,6 +37,11 @@ const MAX_GROUP_DM_RENAME_LENGTH = 60;
 /** Cap on member-search result list length. */
 const DEFAULT_SEARCH_LIMIT = 30;
 const MAX_SEARCH_LIMIT = 50;
+/** Cap on the at-rest member directory (`listCommunityMembersForNewChat`). */
+const DEFAULT_DIRECTORY_LIMIT = 100;
+const MAX_DIRECTORY_LIMIT = 200;
+/** Membership rows scanned before sorting the directory alphabetically. */
+const MAX_DIRECTORY_SCAN = 2000;
 /** Max new pending DM requests a user can initiate per 24h. */
 const NEW_REQUEST_LIMIT = 5;
 const NEW_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -1244,6 +1249,98 @@ export const searchUsersInSharedCommunities = query({
       profilePhoto: getMediaUrl(c.user.profilePhoto) ?? null,
       sharedCommunityNames: communityName ? [communityName] : [],
       notificationsDisabled: notifsDisabled.has(c.user._id),
+    }));
+  },
+});
+
+/**
+ * Alphabetical directory of the people the caller could start a chat with in
+ * one community — the "browse" counterpart to
+ * `searchUsersInSharedCommunities`, which stays search-term-only.
+ *
+ * Powers the New-chat sheet's at-rest list: WhatsApp shows your contacts
+ * immediately, before you type anything (WA-VISUAL-DELTAS.md §6.3), and the
+ * search query above deliberately returns `[]` for an empty term. Rather than
+ * change that endpoint's contract for its existing caller, browse gets its own
+ * query with its own cap.
+ *
+ * Same visibility rules as the search: caller must be an active member of the
+ * community, the caller themselves is excluded, and anyone blocked in either
+ * direction is dropped. Sorted last-name-then-first-name so it reads as a
+ * directory rather than an insertion-order dump.
+ */
+export const listCommunityMembersForNewChat = query({
+  args: {
+    token: v.string(),
+    communityId: v.id("communities"),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      userId: v.id("users"),
+      displayName: v.string(),
+      profilePhoto: v.union(v.string(), v.null()),
+      sharedCommunityNames: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const limit = Math.min(
+      Math.max(args.limit ?? DEFAULT_DIRECTORY_LIMIT, 1),
+      MAX_DIRECTORY_LIMIT,
+    );
+
+    // Caller must themselves be an active member of this community.
+    const callerIn = await isCommunityMember(ctx, callerId, args.communityId);
+    if (!callerIn) return [];
+
+    const community = await ctx.db.get(args.communityId);
+    const communityName = community?.name ?? "";
+
+    // Blocks are read as two whole-list queries rather than a per-candidate
+    // `isBlockedEitherDirection` call — the directory scans far more members
+    // than the search does, and block lists are tiny by comparison.
+    const [blocksByCaller, blocksOfCaller] = await Promise.all([
+      ctx.db
+        .query("chatUserBlocks")
+        .withIndex("by_blocker", (q) => q.eq("blockerId", callerId))
+        .collect(),
+      ctx.db
+        .query("chatUserBlocks")
+        .withIndex("by_blocked", (q) => q.eq("blockedId", callerId))
+        .collect(),
+    ]);
+    const blockedIds = new Set<Id<"users">>([
+      ...blocksByCaller.map((b) => b.blockedId),
+      ...blocksOfCaller.map((b) => b.blockerId),
+    ]);
+
+    const memberships = await ctx.db
+      .query("userCommunities")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .filter((q) => q.neq(q.field("status"), 3))
+      .take(MAX_DIRECTORY_SCAN);
+
+    const candidates = (
+      await Promise.all(
+        memberships
+          .filter((m) => m.userId !== callerId && !blockedIds.has(m.userId))
+          .map((m) => ctx.db.get(m.userId)),
+      )
+    ).filter((u): u is NonNullable<typeof u> => u !== null);
+
+    candidates.sort((a, b) => {
+      const aName = `${a.lastName ?? ""} ${a.firstName ?? ""}`.trim().toLowerCase();
+      const bName = `${b.lastName ?? ""} ${b.firstName ?? ""}`.trim().toLowerCase();
+      return aName.localeCompare(bName);
+    });
+
+    return candidates.slice(0, limit).map((user) => ({
+      userId: user._id,
+      displayName: getDisplayName(user.firstName, user.lastName),
+      profilePhoto: getMediaUrl(user.profilePhoto) ?? null,
+      sharedCommunityNames: communityName ? [communityName] : [],
     }));
   },
 });

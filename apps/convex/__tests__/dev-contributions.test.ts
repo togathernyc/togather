@@ -1799,8 +1799,10 @@ describe("in-app merge (mergeNow)", () => {
       { token: maintainerId, id },
     );
     const last = thread[thread.length - 1]?.body ?? "";
-    // Plain language, never GitHub's raw "returned 405 (…)" text.
-    expect(last).toMatch(/conflicts with `main`/);
+    // Plain language, never GitHub's raw "returned 405 (…)" text. The
+    // package generalized this off the app-specific "main" literal (a
+    // consumer's base branch isn't always "main") to "the base branch".
+    expect(last).toMatch(/conflicts with the base branch/);
     expect(last).not.toMatch(/returned 405/);
   });
 
@@ -2030,7 +2032,9 @@ describe("in-app merge (mergeNow)", () => {
       { token: maintainerId, id },
     );
     const last = thread[thread.length - 1]?.body ?? "";
-    expect(last).toMatch(/conflicts with `main`/);
+    // The package generalized this off the app-specific "main" literal (a
+    // consumer's base branch isn't always "main") to "the base branch".
+    expect(last).toMatch(/conflicts with the base branch/);
     expect(last).not.toMatch(/returned 405/);
   });
 
@@ -4138,7 +4142,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
 
     expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Auto-merged ✓ — all gates passed (review approved, within severity cap)",
       "Merged — deploying to staging…",
     ]);
     // GitHub confirmed the merge, so the action applies MERGED itself via
@@ -4157,7 +4161,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Auto-merged ✓ — all gates passed (review approved, within severity cap)",
       "Merged — deploying to staging…",
     ]);
   });
@@ -4179,7 +4183,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Auto-merged ✓ — all gates passed (review approved, within severity cap)",
       "Merged — deploying to staging…",
     ]);
     const bug = await t.run(async (ctx) => ctx.db.get(id));
@@ -4215,7 +4219,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
       merge_method: "merge",
     });
     expect(await threadBodies(t, maintainerId, id)).toEqual([
-      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Auto-merged ✓ — all gates passed (review approved, within severity cap)",
       "Merged — deploying to staging…",
     ]);
   });
@@ -4300,7 +4304,7 @@ describe("policy auto-merge (ADR-029 Phase 3)", () => {
     expect(await threadBodies(t, maintainerId, id)).toEqual([
       "Code review passed ✓",
       "Ready to merge",
-      "Auto-merged ✓ — all gates passed (low risk, review approved)",
+      "Auto-merged ✓ — all gates passed (review approved, within severity cap)",
       "Merged — deploying to staging…",
     ]);
     const bug = await t.run(async (ctx) => ctx.db.get(id));

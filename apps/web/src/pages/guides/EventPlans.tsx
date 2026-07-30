@@ -146,6 +146,16 @@ export function EventPlans() {
           based on the team's name.
         </P>
 
+        <P>
+          Each team can also have its own <Term>managers</Term>. A manager sends
+          that team's serving requests and fills its roster — without being a
+          group leader, and without ever reaching another team. Open a team and
+          use <Term>Add manager</Term> to pick from the group's members; only
+          group leaders and community admins can change the list. Leaders and
+          admins keep full access to every team either way, so adding managers
+          only ever hands out access, never takes it away.
+        </P>
+
         <Figure caption="A serving team and its roles, defined once on the Teams tab.">
           <TeamSetupMock />
         </Figure>
@@ -178,7 +188,7 @@ export function EventPlans() {
           Building a plan doesn't tell anyone yet — <strong>publishing</strong>{" "}
           is the moment volunteers hear from you. When a leader taps{" "}
           <Term>Publish &amp; send requests</Term> at the bottom of the plan
-          editor, everyone rostered into that plan gets both a push notification{" "}
+          editor, the volunteers you pick get both a push notification{" "}
           <em>and</em> a text letting them know they're on the schedule to serve
           for that day, and asking them to confirm or decline. Togather then
           chases the stragglers 4 days out, and the day before sends everyone
@@ -187,9 +197,24 @@ export function EventPlans() {
           for those who already confirmed.
         </P>
 
+        <P>
+          A plan is a single date shared by every team at the campus, so when
+          more than one team is waiting on a reply, publishing asks{" "}
+          <Term>which teams</Term> to send to first. Each team is listed with
+          how many people are awaiting a reply, and teams you manage are ticked
+          for you — so the worship lead sending their own requests doesn't text
+          the production roster too. Tick another team to include it as well.
+        </P>
+
+        <P>
+          The 4-day and 1-day reminders follow whoever was actually asked, so a
+          team you haven't published yet stays quiet until you send its
+          requests.
+        </P>
+
         <Callout tone="tip" title="Publishing is what notifies people">
           <p>
-            On publish, every rostered volunteer gets a push{" "}
+            On publish, every volunteer on the teams you selected gets a push{" "}
             <strong>and</strong> an SMS: you're on the schedule to serve for this
             day — please confirm or decline.
           </p>

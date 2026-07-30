@@ -53,6 +53,7 @@ import {
   useAuthenticatedAction,
   api,
 } from "@services/api/convex";
+import { errorMessage } from "@/utils/error-handling";
 import type { Id } from "@services/api/convex";
 import { confirmAsync, notify } from "@/utils/platformAlert";
 import { formatRelativeTime } from "@features/notifications";
@@ -100,6 +101,8 @@ type RosterEvent = {
   status: "draft" | "published";
   /** Unconfirmed assignments for the plan — who publish will notify. */
   pendingCount: number;
+  /** The same count per serving team, keyed by team id — the publish picker. */
+  pendingByTeam: Record<string, number>;
 };
 
 type RosterTeam = {
@@ -107,7 +110,21 @@ type RosterTeam = {
   teamName: string;
   hasChannel: boolean;
   channelMemberCount: number;
+  /** Whether the viewer is an explicit manager of this team (ADR-025). */
+  isManagedByMe: boolean;
 };
+
+/**
+ * Which teams the grid is showing.
+ *
+ *  - `mine` — only teams the viewer manages. The default whenever they manage
+ *    any team here, so a crew lead isn't wading through every team at the
+ *    campus on every visit.
+ *  - `all` — every team, the historical behaviour and the fallback for a
+ *    leader who manages none.
+ *  - a team id — a single isolated team.
+ */
+type TeamScope = "mine" | "all" | string;
 
 type RosterRole = {
   roleId: Id<"teamRoles">;
@@ -416,7 +433,7 @@ export function RosterGridScreen() {
   // Team scope: a single isolated team, or null for "All teams" (#477 FR-2).
   // Picking a team shows only its roles; "All teams" shows everything. Gates
   // the Roles view only — People rows stay ungated.
-  const [isolatedTeamId, setIsolatedTeamId] = useState<string | null>(null);
+  const [teamScope, setTeamScope] = useState<TeamScope>("all");
   const [teamMenuOpen, setTeamMenuOpen] = useState(false);
   const [openOnly, setOpenOnly] = useState(false);
   const [availableOnly, setAvailableOnly] = useState(false);
@@ -525,6 +542,8 @@ export function RosterGridScreen() {
   // Publish chooser (#477 FR-3): which date(s) to publish & send requests.
   const [publishMenuOpen, setPublishMenuOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  /** The plan whose team picker is open, if any (ADR-025 scoped publish). */
+  const [publishTarget, setPublishTarget] = useState<RosterEvent | null>(null);
 
   // ⋯ overflow (Teams / Cross-team / Collect availability / Include past) and
   // the in-flight states for its async actions + the "＋ Add date" column.
@@ -610,8 +629,7 @@ export function RosterGridScreen() {
   );
 
   const surfaceError = useCallback((title: string, e: unknown) => {
-    const err = e as { data?: { message?: string }; message?: string };
-    Alert.alert(title, err?.data?.message ?? err?.message ?? "Something went wrong");
+    Alert.alert(title, errorMessage(e, "Something went wrong"));
   }, []);
 
   const handleUnassign = useCallback(
@@ -702,27 +720,77 @@ export function RosterGridScreen() {
     return Math.max(MIN_CELL_W, Math.floor(avail / events.length));
   }, [isWide, bodyW, events.length, NAME_W, MIN_CELL_W]);
 
-  // Clear a stale isolated team once it's no longer in the loaded team list
-  // (e.g. its roles were removed). Keeps the dropdown label honest.
-  useEffect(() => {
-    if (
-      isolatedTeamId &&
-      data &&
-      !data.teams.some((t) => (t.teamId as string) === isolatedTeamId)
-    ) {
-      setIsolatedTeamId(null);
-    }
-  }, [data, isolatedTeamId]);
+  /** Teams the viewer explicitly manages (ADR-025), in display order. */
+  const myTeams = useMemo(
+    () => (data?.teams ?? []).filter((t) => t.isManagedByMe),
+    [data],
+  );
 
-  const isolatedTeamName = isolatedTeamId
-    ? data?.teams.find((t) => (t.teamId as string) === isolatedTeamId)?.teamName
-    : undefined;
+  // Open scoped to the viewer's own teams the first time this group's roster
+  // loads with any. A leader who manages none keeps the historical all-teams
+  // view. Only fires once per group so an explicit widen isn't undone by a
+  // later refetch.
+  const scopeInitializedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data || scopeInitializedRef.current === groupId) return;
+    scopeInitializedRef.current = groupId;
+    if (myTeams.length > 0) setTeamScope("mine");
+  }, [data, groupId, myTeams.length]);
+
+  // Fall back to "all" when the scope no longer resolves to anything — an
+  // isolated team whose roles were removed, or the viewer losing their last
+  // managed team. Keeps the dropdown label honest.
+  useEffect(() => {
+    if (!data) return;
+    if (teamScope === "mine" && myTeams.length === 0) {
+      setTeamScope("all");
+      return;
+    }
+    if (
+      teamScope !== "mine" &&
+      teamScope !== "all" &&
+      !data.teams.some((t) => (t.teamId as string) === teamScope)
+    ) {
+      setTeamScope("all");
+    }
+  }, [data, teamScope, myTeams.length]);
+
+  /**
+   * The teams the grid should show, or `null` for "every team". Everything
+   * downstream — role rows, the publish picker's defaults — reads this rather
+   * than the raw scope, so the three scope kinds can't drift apart.
+   */
+  const visibleTeamIds = useMemo((): Set<string> | null => {
+    if (teamScope === "all") return null;
+    if (teamScope === "mine") {
+      return myTeams.length > 0
+        ? new Set(myTeams.map((t) => t.teamId as string))
+        : null;
+    }
+    return new Set([teamScope]);
+  }, [teamScope, myTeams]);
+
+  /** The single isolated team, when the scope is one specific team. */
+  const isolatedTeamId =
+    teamScope !== "mine" && teamScope !== "all" ? teamScope : null;
+
+  const teamScopeLabel = useMemo(() => {
+    if (teamScope === "all") return "All teams";
+    if (teamScope === "mine") {
+      return myTeams.length === 1 ? myTeams[0].teamName : "My teams";
+    }
+    return (
+      data?.teams.find((t) => (t.teamId as string) === teamScope)?.teamName ??
+      "All teams"
+    );
+  }, [teamScope, myTeams, data]);
 
   /** Roles after team + "open only" filters; grouped headers are derived on render. */
   const visibleRoles = useMemo(() => {
     if (!data) return [];
     return data.roles.filter((r) => {
-      if (isolatedTeamId && (r.teamId as string) !== isolatedTeamId) return false;
+      if (visibleTeamIds && !visibleTeamIds.has(r.teamId as string))
+        return false;
       if (openOnly) {
         // Keep only roles with at least one open slot across visible events.
         const hasOpen = events.some((ev) => {
@@ -733,7 +801,7 @@ export function RosterGridScreen() {
       }
       return true;
     });
-  }, [data, events, roleCells, isolatedTeamId, openOnly]);
+  }, [data, events, roleCells, visibleTeamIds, openOnly]);
 
   /**
    * Build the frozen-column rows from `data.teams` — the authoritative team
@@ -756,8 +824,8 @@ export function RosterGridScreen() {
     const out: RoleRow[] = [];
     for (const team of data.teams) {
       const tid = team.teamId as string;
-      // When a team is isolated, render only that team's section.
-      if (isolatedTeamId && tid !== isolatedTeamId) continue;
+      // Render only the teams the current scope covers.
+      if (visibleTeamIds && !visibleTeamIds.has(tid)) continue;
       // With "Open only" active, hide teams that have no visible roles so the
       // filter still reads as a coverage view — but always show an isolated
       // team and any team that has visible roles.
@@ -778,11 +846,11 @@ export function RosterGridScreen() {
         channelMemberCount: team.channelMemberCount,
       });
     }
-    // Trailing "＋ Add team". When a team is isolated, hide it so the rows stay
-    // scoped to that team.
-    if (!isolatedTeamId) out.push({ kind: "addTeam" });
+    // Trailing "＋ Add team". Hidden whenever the grid is narrowed, so the rows
+    // stay scoped to what the filter promises.
+    if (!visibleTeamIds) out.push({ kind: "addTeam" });
     return out;
-  }, [data, visibleRoles, isolatedTeamId, openOnly]);
+  }, [data, visibleRoles, visibleTeamIds, isolatedTeamId, openOnly]);
 
   /** Members after team* + search + open/available filters. (*teams don't gate people rows.) */
   const visibleMembers = useMemo(() => {
@@ -818,16 +886,53 @@ export function RosterGridScreen() {
   );
 
   // -------------------------------------------------------------------------
-  // Publish (#477 FR-3)
+  // Publish (#477 FR-3, team-scoped per ADR-025)
   //
   // `publishEvent` notifies only *unconfirmed* assignments (confirmed people
   // are never re-pinged). We surface `event.pendingCount` straight from
   // `rosterMatrix`, which counts unconfirmed assignments off `by_plan` — the
   // exact population `markPublished` notifies. Summing `roleCells` here would
   // undercount assignments orphaned by a removed needed role (no cell exists).
+  //
+  // An event plan is a date column shared by every team at the campus, so an
+  // unscoped publish texts all of them. `pendingByTeam` lets the picker show
+  // exactly who each checkbox will notify before anything is sent.
   // -------------------------------------------------------------------------
   const requestCountForEvent = useCallback(
-    (event: RosterEvent): number => event.pendingCount,
+    (event: RosterEvent, teamIds?: string[] | null): number => {
+      if (!teamIds) return event.pendingCount;
+      return teamIds.reduce(
+        (sum, tid) => sum + (event.pendingByTeam[tid] ?? 0),
+        0,
+      );
+    },
+    [],
+  );
+
+  /**
+   * Teams with someone awaiting a reply on this date — the picker's rows.
+   * A team with nothing pending would be a checkbox that sends zero requests,
+   * so it's left out rather than shown as a no-op.
+   */
+  const publishTeamsForEvent = useCallback(
+    (event: RosterEvent): RosterTeam[] =>
+      (data?.teams ?? []).filter(
+        (t) => (event.pendingByTeam[t.teamId as string] ?? 0) > 0,
+      ),
+    [data],
+  );
+
+  /**
+   * Which teams a publish should pre-select. Teams the viewer manages, or —
+   * when they manage none here (a plain group leader) — everything, which is
+   * the historical behaviour.
+   */
+  const defaultPublishSelection = useCallback(
+    (candidates: RosterTeam[]): Set<string> => {
+      const mine = candidates.filter((t) => t.isManagedByMe);
+      const chosen = mine.length > 0 ? mine : candidates;
+      return new Set(chosen.map((t) => t.teamId as string));
+    },
     [],
   );
 
@@ -837,25 +942,19 @@ export function RosterGridScreen() {
     [events],
   );
 
-  /** Publish a single plan, with a confirm listing its request count. */
-  const publishOne = useCallback(
-    async (event: RosterEvent) => {
-      const count = requestCountForEvent(event);
-      const dateLabel = `${weekday(event.eventDate)} ${monthDay(event.eventDate)}`;
+  /**
+   * Send one plan's requests for a chosen set of teams. `teamIds` of `null`
+   * means every team (the historical unscoped publish).
+   */
+  const runPublish = useCallback(
+    async (event: RosterEvent, teamIds: string[] | null) => {
       const already = event.status === "published";
-      const ok = await confirmAsync({
-        title: already ? "Re-send requests?" : "Publish & send requests?",
-        message:
-          `${dateLabel} — ${count} request${count === 1 ? "" : "s"} will be sent.` +
-          (count > 0
-            ? "\n\nConfirmed people won't be re-notified."
-            : "\n\nNo one is awaiting a response on this date yet."),
-        confirmText: already ? "Re-send" : "Send",
-      });
-      if (!ok) return;
       setPublishing(true);
       try {
-        const result = await publishEvent({ planId: event._id });
+        const result = await publishEvent({
+          planId: event._id,
+          ...(teamIds ? { teamIds: teamIds as Id<"teams">[] } : {}),
+        });
         notify(
           already ? "Requests re-sent" : "Published",
           result.requestCount > 0
@@ -868,21 +967,68 @@ export function RosterGridScreen() {
         setPublishing(false);
       }
     },
-    [requestCountForEvent, publishEvent, surfaceError],
+    [publishEvent, surfaceError],
   );
 
-  /** Publish every draft plan, with a confirm listing each date + its count. */
+  /**
+   * Publish a single plan. With more than one team awaiting replies, open the
+   * team picker so the sender sees exactly who they're about to text; with one
+   * (or none), there's nothing to choose, so a plain confirm is enough.
+   */
+  const publishOne = useCallback(
+    async (event: RosterEvent) => {
+      const candidates = publishTeamsForEvent(event);
+      if (candidates.length > 1) {
+        setPublishTarget(event);
+        return;
+      }
+
+      const teamIds =
+        candidates.length === 1 ? [candidates[0].teamId as string] : null;
+      const count = requestCountForEvent(event, teamIds);
+      const dateLabel = `${weekday(event.eventDate)} ${monthDay(event.eventDate)}`;
+      const already = event.status === "published";
+      const who =
+        candidates.length === 1 ? ` for ${candidates[0].teamName}` : "";
+      const ok = await confirmAsync({
+        title: already ? "Re-send requests?" : "Publish & send requests?",
+        message:
+          `${dateLabel}${who} — ${count} request${count === 1 ? "" : "s"} will be sent.` +
+          (count > 0
+            ? "\n\nConfirmed people won't be re-notified."
+            : "\n\nNo one is awaiting a response on this date yet."),
+        confirmText: already ? "Re-send" : "Send",
+      });
+      if (!ok) return;
+      await runPublish(event, teamIds);
+    },
+    [publishTeamsForEvent, requestCountForEvent, runPublish],
+  );
+
+  /**
+   * Publish every draft plan at once. Scoped to the teams the sender manages
+   * when they manage any — a bulk send is the least reviewable path, so it
+   * must not be the one that quietly reaches every team. The confirm names the
+   * teams so the scope is never a surprise.
+   */
   const publishAllDrafts = useCallback(async () => {
     if (draftEvents.length === 0) return;
+
+    const mine = (data?.teams ?? []).filter((t) => t.isManagedByMe);
+    const teamIds = mine.length > 0 ? mine.map((t) => t.teamId as string) : null;
+    const scopeLine = teamIds
+      ? `\n\nOnly your teams (${mine.map((t) => t.teamName).join(", ")}) will be notified.`
+      : "";
+
     const lines = draftEvents
       .map((e) => {
-        const count = requestCountForEvent(e);
+        const count = requestCountForEvent(e, teamIds);
         return `• ${weekday(e.eventDate)} ${monthDay(e.eventDate)} — ${count} request${count === 1 ? "" : "s"}`;
       })
       .join("\n");
     const ok = await confirmAsync({
       title: "Publish all draft dates?",
-      message: `These dates will notify volunteers:\n${lines}\n\nConfirmed people won't be re-notified.`,
+      message: `These dates will notify volunteers:\n${lines}${scopeLine}\n\nConfirmed people won't be re-notified.`,
       confirmText: "Send",
     });
     if (!ok) return;
@@ -890,7 +1036,10 @@ export function RosterGridScreen() {
     try {
       let total = 0;
       for (const e of draftEvents) {
-        const result = await publishEvent({ planId: e._id });
+        const result = await publishEvent({
+          planId: e._id,
+          ...(teamIds ? { teamIds: teamIds as Id<"teams">[] } : {}),
+        });
         total += result.requestCount;
       }
       notify(
@@ -904,7 +1053,7 @@ export function RosterGridScreen() {
     } finally {
       setPublishing(false);
     }
-  }, [draftEvents, requestCountForEvent, publishEvent, surfaceError]);
+  }, [draftEvents, data, requestCountForEvent, publishEvent, surfaceError]);
 
   /**
    * Entry point for the Publish action. With a single date in the grid, skip
@@ -1243,9 +1392,9 @@ export function RosterGridScreen() {
     mode === "roles" && data.teams.length > 0 ? (
       <Chip
         icon="people-outline"
-        label={isolatedTeamName ?? "All teams"}
+        label={teamScopeLabel}
         trailingIcon="chevron-down"
-        active={isolatedTeamId !== null}
+        active={teamScope !== "all"}
         onPress={() => setTeamMenuOpen(true)}
         colors={colors}
       />
@@ -2322,13 +2471,32 @@ export function RosterGridScreen() {
       {teamMenuOpen && (
         <TeamFilterMenu
           teams={data.teams}
-          selectedId={isolatedTeamId}
+          myTeamCount={myTeams.length}
+          selectedScope={teamScope}
           colors={colors}
-          onPick={(id) => {
-            setIsolatedTeamId(id);
+          onPick={(scope) => {
+            setTeamScope(scope);
             setTeamMenuOpen(false);
           }}
           onClose={() => setTeamMenuOpen(false)}
+        />
+      )}
+
+      {publishTarget && (
+        <PublishTeamPicker
+          event={publishTarget}
+          teams={publishTeamsForEvent(publishTarget)}
+          initialSelection={defaultPublishSelection(
+            publishTeamsForEvent(publishTarget),
+          )}
+          publishing={publishing}
+          colors={colors}
+          onConfirm={async (teamIds) => {
+            const target = publishTarget;
+            setPublishTarget(null);
+            await runPublish(target, teamIds);
+          }}
+          onClose={() => setPublishTarget(null)}
         />
       )}
 
@@ -3065,6 +3233,143 @@ function OpenRolesMenu({
 }
 
 /**
+ * Publish picker — choose which serving teams a date's requests go to.
+ *
+ * An event plan is a date column shared by every team at the campus, so
+ * publishing it used to text every team's pending volunteers at once: a crew
+ * lead sending their own team's requests also reached the whole production
+ * roster. This is the surface that makes the fan-out visible and deliberate
+ * before anything is sent.
+ *
+ * Teams the sender doesn't manage start unchecked and are labelled, so
+ * reaching another team is always an opt-in, never a default.
+ */
+function PublishTeamPicker({
+  event,
+  teams,
+  initialSelection,
+  publishing,
+  colors,
+  onConfirm,
+  onClose,
+}: {
+  event: RosterEvent;
+  teams: RosterTeam[];
+  initialSelection: Set<string>;
+  publishing: boolean;
+  colors: Colors;
+  onConfirm: (teamIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(initialSelection);
+
+  const toggle = useCallback((teamId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) next.delete(teamId);
+      else next.add(teamId);
+      return next;
+    });
+  }, []);
+
+  const total = useMemo(
+    () =>
+      [...selected].reduce(
+        (sum, tid) => sum + (event.pendingByTeam[tid] ?? 0),
+        0,
+      ),
+    [selected, event],
+  );
+
+  const already = event.status === "published";
+  const dateLabel = `${weekday(event.eventDate)} ${monthDay(event.eventDate)}`;
+
+  return (
+    <ModalShell
+      title={already ? "Re-send requests?" : "Publish & send requests?"}
+      subtitle={`${dateLabel} · ${event.pendingCount} awaiting a reply`}
+      colors={colors}
+      onClose={onClose}
+    >
+      <ScrollView style={styles.popoverList}>
+        {teams.map((t) => {
+          const tid = t.teamId as string;
+          const count = event.pendingByTeam[tid] ?? 0;
+          const isSelected = selected.has(tid);
+          return (
+            <Pressable
+              key={tid}
+              onPress={() => toggle(tid)}
+              style={[styles.menuRow, { borderBottomColor: colors.border }]}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: isSelected }}
+              accessibilityLabel={`${t.teamName}, ${count} pending`}
+            >
+              <Ionicons
+                name={isSelected ? "checkbox" : "square-outline"}
+                size={20}
+                color={isSelected ? colors.link : colors.textTertiary}
+              />
+              <View style={[styles.menuRowText, styles.publishRowText]}>
+                <Text
+                  style={[styles.occupantName, { color: colors.text }]}
+                  numberOfLines={1}
+                >
+                  {t.teamName}
+                </Text>
+                {!t.isManagedByMe && (
+                  <Text
+                    style={[
+                      styles.menuRowSub,
+                      { color: colors.textTertiary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Not a team you manage
+                  </Text>
+                )}
+              </View>
+              <Text
+                style={[styles.menuRowCount, { color: colors.textSecondary }]}
+              >
+                {count} pending
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <Text style={[styles.publishFootnote, { color: colors.textTertiary }]}>
+        Confirmed people won&apos;t be re-notified.
+      </Text>
+
+      <TouchableOpacity
+        style={[
+          styles.publishConfirmButton,
+          {
+            backgroundColor:
+              total > 0 && !publishing ? colors.buttonPrimary : colors.border,
+          },
+        ]}
+        disabled={total === 0 || publishing}
+        onPress={() => onConfirm([...selected])}
+        accessibilityRole="button"
+      >
+        {publishing ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Text style={styles.publishConfirmText}>
+            {total === 0
+              ? "Pick a team"
+              : `Send ${total} request${total === 1 ? "" : "s"}`}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </ModalShell>
+  );
+}
+
+/**
  * "Also in group" picker — narrows the People view to members who also belong
  * to one of the leader's other groups. "Everyone" clears the filter.
  */
@@ -3127,15 +3432,17 @@ function GroupFilterMenu({
  */
 function TeamFilterMenu({
   teams,
-  selectedId,
+  myTeamCount,
+  selectedScope,
   colors,
   onPick,
   onClose,
 }: {
   teams: RosterTeam[];
-  selectedId: string | null;
+  myTeamCount: number;
+  selectedScope: TeamScope;
   colors: Colors;
-  onPick: (id: string | null) => void;
+  onPick: (scope: TeamScope) => void;
   onClose: () => void;
 }) {
   return (
@@ -3146,15 +3453,36 @@ function TeamFilterMenu({
       onClose={onClose}
     >
       <ScrollView style={styles.popoverList}>
+        {/* Only offered when the viewer actually manages something here —
+            otherwise it would be an option that changes nothing. */}
+        {myTeamCount > 0 && (
+          <Pressable
+            onPress={() => onPick("mine")}
+            style={[styles.menuRow, { borderBottomColor: colors.border }]}
+            accessibilityRole="button"
+          >
+            <View style={styles.menuRowText}>
+              <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
+                My teams
+              </Text>
+              <Text style={[styles.menuRowSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                {myTeamCount} team{myTeamCount === 1 ? "" : "s"} you manage
+              </Text>
+            </View>
+            {selectedScope === "mine" && (
+              <Ionicons name="checkmark" size={20} color={colors.link} />
+            )}
+          </Pressable>
+        )}
         <Pressable
-          onPress={() => onPick(null)}
+          onPress={() => onPick("all")}
           style={[styles.menuRow, { borderBottomColor: colors.border }]}
           accessibilityRole="button"
         >
           <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
             All teams
           </Text>
-          {selectedId === null && (
+          {selectedScope === "all" && (
             <Ionicons name="checkmark" size={20} color={colors.link} />
           )}
         </Pressable>
@@ -3168,7 +3496,7 @@ function TeamFilterMenu({
             <Text style={[styles.occupantName, { color: colors.text }]} numberOfLines={1}>
               {t.teamName}
             </Text>
-            {selectedId === (t.teamId as string) && (
+            {selectedScope === (t.teamId as string) && (
               <Ionicons name="checkmark" size={20} color={colors.link} />
             )}
           </Pressable>
@@ -4316,6 +4644,22 @@ const styles = StyleSheet.create({
   menuRowText: { flex: 1, minWidth: 0 },
   menuRowSub: { fontSize: 11, marginTop: 1 },
   menuRowCount: { fontSize: 13, fontWeight: "600" },
+  // Publish team picker
+  publishRowText: { marginLeft: 10 },
+  publishFootnote: {
+    fontSize: 12,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  publishConfirmButton: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  publishConfirmText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   stepper: { flexDirection: "row", alignItems: "center", gap: 12 },
   stepperBtn: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
   stepperValue: {

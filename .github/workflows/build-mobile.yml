@@ -49,6 +49,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Load secrets
         uses: ./.github/actions/load-secrets
@@ -73,6 +75,11 @@ jobs:
           eas env:create --name EXPO_PUBLIC_SENTRY_DSN --value "$EXPO_PUBLIC_SENTRY_DSN" --environment "$EAS_ENV" --visibility sensitive --force --non-interactive || true
           eas env:create --name GOOGLE_MAPS_API_KEY --value "$GOOGLE_MAPS_API_KEY" --environment "$EAS_ENV" --visibility sensitive --force --non-interactive || true
           eas env:create --name EXPO_PUBLIC_KLIPY_API_KEY --value "$EXPO_PUBLIC_KLIPY_API_KEY" --environment "$EAS_ENV" --visibility plaintext --force --non-interactive || true
+          # GitHub Packages auth for @supa-media/* (see .npmrc). EAS builds run
+          # remotely on Expo's own infra, which does its own `pnpm install` and
+          # has no access to this job's ephemeral secrets.GITHUB_TOKEN — forward
+          # a durable PAT instead. See docs/secrets.md's "EAS Environment Sync".
+          eas env:create --name GITHUB_TOKEN --value "$GH_PACKAGES_TOKEN" --environment "$EAS_ENV" --visibility sensitive --force --non-interactive || true
           echo "✓ Synced secrets to EAS ($EAS_ENV environment)"
 
       - name: Get version

@@ -7,6 +7,16 @@
  * config modals BotsScreen does so behavior is identical.
  *
  * Hidden for non-leaders. Hidden if the bots query returns no entries.
+ *
+ * whatsapp-shell (flag-on): restyled to
+ * `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md` §3.2 —
+ * a `WaInsetGroup` of `WaCell`s (`variant="toggle"`), the bot's emoji as the
+ * `iconNode`, and (for bots with config UI) the row's own `onPress` opening
+ * Configure — replacing the flag-off card's separate "Configure" link
+ * (`WaCell` has one description slot, no secondary tap target inside a row;
+ * see the flag-on branch below). This component is also rendered unmodified
+ * inside `GroupDetailScreen` (flag off), so every render is gated on
+ * `useWhatsappShell()`; flag-off is byte-identical to before this pass.
  */
 import React, { useState } from "react";
 import {
@@ -25,9 +35,11 @@ import {
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import { BotConfigModal } from "@features/leader-tools/components/BotConfigModal";
 import { TaskReminderConfigModal } from "@features/leader-tools/components/TaskReminderConfigModal";
 import { CommunicationBotConfigModal } from "@features/leader-tools/components/CommunicationBotConfigModal";
+import { WaInsetGroup, WaCell, WA_GROUP_SPACING } from "@components/wa";
 
 interface Props {
   groupId: string;
@@ -48,6 +60,7 @@ type Bot = {
 export function GroupBotsSection({ groupId, isLeader }: Props) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const whatsappShell = useWhatsappShell();
 
   const [selectedBot, setSelectedBot] = useState<Bot | null>(null);
   const [configModalVisible, setConfigModalVisible] = useState(false);
@@ -123,6 +136,62 @@ export function GroupBotsSection({ groupId, isLeader }: Props) {
       config,
     });
   };
+
+  if (whatsappShell) {
+    return (
+      <View style={styles.waSection}>
+        <WaInsetGroup header="Bots">
+          {bots.map((bot) => {
+            const hasConfigure = !!(bot.hasConfig || bot.customConfigUI);
+            return (
+              <WaCell
+                key={bot.id}
+                iconNode={<Text style={styles.waBotGlyph}>{bot.icon}</Text>}
+                title={bot.name}
+                description={bot.description}
+                variant="toggle"
+                toggleValue={bot.enabled}
+                onToggleChange={(value) => handleToggle(bot, value)}
+                accent={primaryColor}
+                // Configure via row press — WaCell has one description slot
+                // and no secondary tap target inside a toggle row, so the
+                // flag-off card's separate "Configure" link becomes "tap the
+                // row" here; the trailing Switch keeps its own touch target.
+                onPress={hasConfigure ? () => handleOpenConfig(bot) : undefined}
+              />
+            );
+          })}
+        </WaInsetGroup>
+
+        {selectedBot &&
+          selectedBot.id !== "task-reminder" &&
+          selectedBot.id !== "communication" && (
+            <BotConfigModal
+              visible={configModalVisible}
+              onClose={handleCloseConfig}
+              groupId={groupId}
+              botId={selectedBot.id}
+              botName={selectedBot.name}
+              botIcon={selectedBot.icon}
+            />
+          )}
+
+        <TaskReminderConfigModal
+          visible={taskReminderModalVisible}
+          onClose={handleCloseConfig}
+          groupId={groupId}
+        />
+
+        <CommunicationBotConfigModal
+          visible={communicationBotModalVisible}
+          onClose={handleCloseConfig}
+          groupId={groupId as Id<"groups">}
+          initialConfig={communicationBotConfig?.config as any}
+          onSave={handleSaveCommunicationBotConfig}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.section}>
@@ -210,6 +279,14 @@ export function GroupBotsSection({ groupId, isLeader }: Props) {
 }
 
 const styles = StyleSheet.create({
+  // --- whatsapp-shell (flag-on) -------------------------------------------
+  waSection: {
+    marginTop: WA_GROUP_SPACING,
+  },
+  waBotGlyph: {
+    fontSize: 20,
+    lineHeight: 24,
+  },
   section: {
     marginTop: 24,
     paddingHorizontal: 16,

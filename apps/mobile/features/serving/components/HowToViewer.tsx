@@ -28,6 +28,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import {
+  WA_GROUP_RADIUS,
+  WA_NAV_TITLE_SIZE,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_WEIGHT_SEMIBOLD,
+} from "@components/wa";
 import { Markdown } from "@components/ui/Markdown";
 import { AppImage } from "@components/ui/AppImage";
 import { getMediaUrl } from "@/utils/media";
@@ -67,6 +75,8 @@ export function HowToViewer({
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const insets = useSafeAreaInsets();
+  // Flag-on restyle only (WHATSAPP-DESIGN-SYSTEM.md §7).
+  const wa = useWhatsappShell();
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -76,12 +86,18 @@ export function HowToViewer({
           { paddingTop: insets.top, backgroundColor: colors.background },
         ]}
       >
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <View
+          style={[
+            styles.header,
+            wa && waStyles.header,
+            { borderBottomColor: colors.border },
+          ]}
+        >
           <TouchableOpacity onPress={onClose} hitSlop={12} style={styles.headerBtn}>
             <Ionicons name="close" size={26} color={colors.text} />
           </TouchableOpacity>
           <Text
-            style={[styles.headerTitle, { color: colors.text }]}
+            style={[styles.headerTitle, wa && waStyles.headerTitle, { color: colors.text }]}
             numberOfLines={1}
           >
             {content?.title || "How-To"}
@@ -102,6 +118,7 @@ export function HowToViewer({
               content={content}
               colors={colors}
               primaryColor={primaryColor}
+              wa={wa}
             />
           ) : null}
         </ScrollView>
@@ -116,10 +133,12 @@ function HowToBody({
   content,
   colors,
   primaryColor,
+  wa,
 }: {
   content: HowToViewerContent;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   switch (content.howToType) {
     case "doc":
@@ -129,27 +148,36 @@ function HowToBody({
           source={content.howToDoc}
           colors={colors}
           primaryColor={primaryColor}
+          wa={wa}
         />
       ) : (
-        <EmptyState colors={colors} label="No details yet." />
+        <EmptyState colors={colors} label="No details yet." wa={wa} />
       );
 
     case "link": {
       const url = content.howToUrl?.trim();
-      if (!url) return <EmptyState colors={colors} label="No link." />;
+      if (!url) return <EmptyState colors={colors} label="No link." wa={wa} />;
       return (
         <View style={styles.linkWrap}>
-          <Text style={[styles.linkUrl, { color: colors.textSecondary }]}>
+          <Text
+            style={[styles.linkUrl, wa && waStyles.linkUrl, { color: colors.textSecondary }]}
+          >
             {url}
           </Text>
           <Pressable
             onPress={() => void Linking.openURL(url).catch(() => {})}
-            style={[styles.primaryButton, { backgroundColor: primaryColor }]}
+            style={[
+              styles.primaryButton,
+              wa && waStyles.primaryButton,
+              { backgroundColor: primaryColor },
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Open link"
           >
             <Ionicons name="open-outline" size={18} color="#fff" />
-            <Text style={styles.primaryButtonText}>Open link</Text>
+            <Text style={[styles.primaryButtonText, wa && waStyles.primaryButtonText]}>
+              Open link
+            </Text>
           </Pressable>
         </View>
       );
@@ -157,7 +185,7 @@ function HowToBody({
 
     case "media": {
       const path = content.howToMediaPath?.trim();
-      if (!path) return <EmptyState colors={colors} label="No attachment." />;
+      if (!path) return <EmptyState colors={colors} label="No attachment." wa={wa} />;
       if (VIDEO_EXT_RE.test(path)) {
         return (
           <Pressable
@@ -165,7 +193,11 @@ function HowToBody({
               const url = getMediaUrl(path);
               if (url) void Linking.openURL(url).catch(() => {});
             }}
-            style={[styles.videoTile, { borderColor: colors.border }]}
+            style={[
+              styles.videoTile,
+              wa && waStyles.videoTile,
+              { borderColor: colors.border, backgroundColor: wa ? colors.surface : undefined },
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Play video"
           >
@@ -174,7 +206,13 @@ function HowToBody({
             >
               <Ionicons name="play" size={26} color="#fff" />
             </View>
-            <Text style={[styles.videoLabel, { color: colors.textSecondary }]}>
+            <Text
+              style={[
+                styles.videoLabel,
+                wa && waStyles.videoLabel,
+                { color: colors.textSecondary },
+              ]}
+            >
               Play video
             </Text>
           </Pressable>
@@ -183,14 +221,14 @@ function HowToBody({
       return (
         <AppImage
           source={path}
-          style={styles.image}
+          style={[styles.image, wa && waStyles.image]}
           resizeMode="contain"
         />
       );
     }
 
     default:
-      return <EmptyState colors={colors} label="No details." />;
+      return <EmptyState colors={colors} label="No details." wa={wa} />;
   }
 }
 
@@ -260,11 +298,13 @@ function InteractiveDoc({
   source,
   colors,
   primaryColor,
+  wa,
 }: {
   taskId: string;
   source: string;
   colors: ThemeColors;
   primaryColor: string;
+  wa: boolean;
 }) {
   const segments = useMemo(() => parseDoc(source), [source]);
   const hasItems = segments.some((s) => s.kind === "item");
@@ -353,6 +393,7 @@ function InteractiveDoc({
             <View
               style={[
                 styles.checkbox,
+                wa && waStyles.checkbox,
                 checked
                   ? { backgroundColor: primaryColor, borderColor: primaryColor }
                   : { borderColor: colors.border },
@@ -362,7 +403,9 @@ function InteractiveDoc({
                 <Ionicons name="checkmark" size={16} color="#fff" />
               ) : null}
             </View>
-            <Text style={[styles.checkLabel, { color: colors.text }]}>
+            <Text
+              style={[styles.checkLabel, wa && waStyles.checkLabel, { color: colors.text }]}
+            >
               {segment.label}
             </Text>
           </TouchableOpacity>
@@ -375,12 +418,16 @@ function InteractiveDoc({
 function EmptyState({
   colors,
   label,
+  wa,
 }: {
   colors: ThemeColors;
   label: string;
+  wa: boolean;
 }) {
   return (
-    <Text style={[styles.empty, { color: colors.textTertiary }]}>{label}</Text>
+    <Text style={[styles.empty, wa && waStyles.empty, { color: colors.textTertiary }]}>
+      {label}
+    </Text>
   );
 }
 
@@ -448,4 +495,35 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
   },
   videoLabel: { fontSize: 15, fontWeight: "600" },
+});
+
+/**
+ * `whatsapp-shell` (flag-on) overrides, applied as
+ * `[styles.x, wa && waStyles.x]` so flag-off is byte-identical.
+ *
+ * §4: the sheet loses its opaque header bar and hairline — the 17pt semibold
+ * title floats over the content. The "Open link" button becomes a proper pill
+ * (§6 allows exactly one primary accent pill per surface, which this is), the
+ * bordered video tile becomes a flat 24pt-radius filled card (§7: no bordered
+ * feature cards), and the italic empty text and 16pt checklist labels move
+ * onto the S7 scale.
+ */
+const waStyles = StyleSheet.create({
+  header: { borderBottomWidth: 0, paddingVertical: 12 },
+  headerTitle: { fontSize: WA_NAV_TITLE_SIZE, fontWeight: WA_WEIGHT_SEMIBOLD },
+  empty: { fontSize: WA_TYPE_SUBTITLE, fontStyle: "normal" },
+
+  // Interactive checklist
+  checkbox: { borderRadius: 12 },
+  checkLabel: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 23 },
+
+  // Link
+  linkUrl: { fontSize: WA_TYPE_SUBTITLE },
+  primaryButton: { borderRadius: 999, paddingHorizontal: 22 },
+  primaryButtonText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
+
+  // Media
+  image: { borderRadius: 18 },
+  videoTile: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0 },
+  videoLabel: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 });

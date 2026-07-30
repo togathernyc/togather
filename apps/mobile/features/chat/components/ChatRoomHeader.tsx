@@ -21,6 +21,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { WA_CHAT_CHROME_LIGHT, WA_CHAT_CHROME_DARK } from "../waChatChrome";
 import { Avatar } from "@components/ui/Avatar";
 import { useIsDesktopWeb } from "../../../hooks/useIsDesktopWeb";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
@@ -47,9 +49,12 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
   onBack,
   onPressTitle,
 }: Props) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const isDesktopWeb = useIsDesktopWeb();
   const isOneOnOne = channelType === "dm";
+  // WhatsApp-shell nav chrome (WHATSAPP-DESIGN-SYSTEM.md §4) — flag-gated;
+  // flag-off rendering below is untouched.
+  const whatsappShellEnabled = useWhatsappShell();
 
   const titleLine = useMemo(() => {
     if (isOneOnOne) {
@@ -64,13 +69,31 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
   }, [isOneOnOne, otherMembers, channelName]);
 
   const subtitleLine = useMemo(() => {
-    if (isOneOnOne) return null;
+    if (isOneOnOne) {
+      // §5 "subtitle 'tap here for info'-style secondary line" — the 1:1
+      // header has no member-count data to show (that's the group_dm case
+      // below), so flag-on shows the same static "tap for info" hint
+      // WhatsApp itself renders here rather than inventing per-user data.
+      return whatsappShellEnabled ? "Tap here for contact info" : null;
+    }
     const total = otherMembers.length + 1;
     return `${total} people`;
-  }, [isOneOnOne, otherMembers.length]);
+  }, [isOneOnOne, otherMembers.length, whatsappShellEnabled]);
 
   return (
-    <View style={[styles.header, { backgroundColor: colors.surface }]}>
+    <View
+      style={[
+        styles.header,
+        { backgroundColor: colors.surface },
+        // §2.2 "translucent near-white bar over the wallpaper" — the chat room
+        // now paints a doodle wallpaper behind its whole chrome, so an opaque
+        // nav fill (and its hairline) would sit on top of it as a flat band.
+        whatsappShellEnabled && [
+          styles.waHeader,
+          { backgroundColor: isDark ? WA_CHAT_CHROME_DARK : WA_CHAT_CHROME_LIGHT },
+        ],
+      ]}
+    >
       {!isDesktopWeb && (
         <TouchableOpacity onPress={onBack} style={styles.backButton} hitSlop={8}>
           <Ionicons name="chevron-back" size={28} color={colors.text} />
@@ -119,7 +142,11 @@ export const ChatRoomHeader = memo(function ChatRoomHeader({
             </Text>
             {subtitleLine ? (
               <Text
-                style={[styles.subtitleText, { color: colors.textSecondary }]}
+                style={[
+                  styles.subtitleText,
+                  whatsappShellEnabled && styles.waSubtitleText,
+                  { color: colors.textSecondary },
+                ]}
                 numberOfLines={1}
               >
                 {subtitleLine}
@@ -147,6 +174,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 8,
     paddingVertical: 12,
+  },
+  // §2.2 nav chrome (flag-gated): translucent fill over the chat wallpaper,
+  // no hairline — the wallpaper itself is the separation.
+  //
+  // The paddings match `ChatHeader`'s flag-on override: WA's nav row is 44pt,
+  // and 8/4 around the 44pt title hit area lands ours at ~50 instead of the
+  // ~68 the shared `paddingVertical: 12` gave (calibrated pixel pass,
+  // 2026-07-29). Flag-off keeps `paddingVertical: 12`.
+  waHeader: {
+    borderBottomWidth: 0,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  /** §S7: sub-screen subtitles are 13pt (flag-off keeps 12). */
+  waSubtitleText: {
+    fontSize: 13,
   },
   backButton: {
     padding: 4,

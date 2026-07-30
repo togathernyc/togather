@@ -8,6 +8,7 @@ import { useTheme } from '@hooks/useTheme';
 import { useAuthenticatedQuery, api } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useDevAccess } from '@features/contribute/hooks/useDevAccess';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
 
 export function ProfileMenu() {
   const router = useRouter();
@@ -29,6 +30,10 @@ export function ProfileMenu() {
   // Contributor dev dashboard (ADR-029) — hidden unless the dev-assistant
   // maintainer check admits this user.
   const { hasAccess: hasDevAccess } = useDevAccess();
+  // Invite Kit (W11 invite-kit concept, adapted as a member/admin screen) —
+  // gated behind the whatsapp-shell flag so this row (and the route it
+  // opens) is a no-op for everyone until the flag is on.
+  const whatsappShell = useWhatsappShell();
 
   const handleSwitchCommunity = async () => {
     try {
@@ -97,6 +102,20 @@ export function ProfileMenu() {
             <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
           )}
         </TouchableOpacity>
+
+        {whatsappShell ? (
+          <TouchableOpacity
+            style={[styles.menuItem, { borderBottomColor: colors.border }]}
+            onPress={() => router.push('/(user)/invite')}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.menuIconContainer, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="person-add-outline" size={20} color={colors.text} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.text }]}>Invite your community</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.iconSecondary} />
+          </TouchableOpacity>
+        ) : null}
 
         <TouchableOpacity
           style={[styles.menuItem, { borderBottomColor: colors.border }]}

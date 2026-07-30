@@ -1,0 +1,211 @@
+/**
+ * FinanceOnboardingStatusView — the community admin's onboarding checklist
+ * (ADR-032 §2 step 4: Church details / Identity verification / Bank
+ * accounts). Plain props only, no Convex — see
+ * FinanceOnboardingStatusScreen.tsx for the data wrapper, which relies on
+ * Convex reactivity to auto-refresh this as webhooks land.
+ */
+import React from "react";
+import { View, Text, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useTheme } from "@hooks/useTheme";
+import { Badge, Button, Skeleton } from "@components/ui";
+import type { OnboardingStatus } from "./types";
+
+export type ChecklistItemState = "done" | "in_progress" | "blocked";
+
+interface ChecklistItem {
+  key: string;
+  title: string;
+  description: string;
+  state: ChecklistItemState;
+  blockedReason?: string | null;
+}
+
+export interface FinanceOnboardingStatusViewProps {
+  isLoading: boolean;
+  formSubmitted: boolean;
+  paymentsVerified: boolean;
+  bankAccountsReady: boolean;
+  onboardingStatus: OnboardingStatus;
+  blockedReason?: string | null;
+  isLoadingLink: boolean;
+  onStartForm: () => void;
+  onContinueIdentityVerification: () => void;
+}
+
+export function FinanceOnboardingStatusView({
+  isLoading,
+  formSubmitted,
+  paymentsVerified,
+  bankAccountsReady,
+  onboardingStatus,
+  blockedReason,
+  isLoadingLink,
+  onStartForm,
+  onContinueIdentityVerification,
+}: FinanceOnboardingStatusViewProps) {
+  const { colors } = useTheme();
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+        <Skeleton width="100%" height={72} />
+        <Skeleton width="100%" height={72} style={{ marginTop: 12 }} />
+        <Skeleton width="100%" height={72} style={{ marginTop: 12 }} />
+      </View>
+    );
+  }
+
+  const identityState: ChecklistItemState = paymentsVerified
+    ? "done"
+    : onboardingStatus === "stripe_blocked"
+      ? "blocked"
+      : "in_progress";
+  const bankState: ChecklistItemState = bankAccountsReady
+    ? "done"
+    : onboardingStatus === "increase_blocked"
+      ? "blocked"
+      : "in_progress";
+
+  const items: ChecklistItem[] = [
+    {
+      key: "details",
+      title: "Church details",
+      description: "Legal name, EIN, and address",
+      state: formSubmitted ? "done" : "in_progress",
+    },
+    {
+      key: "identity",
+      title: "Identity verification",
+      description: "Stripe verifies your representative's identity",
+      state: identityState,
+      blockedReason: identityState === "blocked" ? blockedReason : null,
+    },
+    {
+      key: "bank",
+      title: "Bank accounts",
+      description: "Receiving and general accounts for your community",
+      state: bankState,
+      blockedReason: bankState === "blocked" ? blockedReason : null,
+    },
+  ];
+
+  const isLive = onboardingStatus === "live";
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      {isLive && (
+        <View style={[styles.liveBanner, { backgroundColor: colors.success + "20", borderColor: colors.success }]}>
+          <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+          <Text style={[styles.liveBannerText, { color: colors.success }]}>Giving is live for your community!</Text>
+        </View>
+      )}
+
+      <View style={styles.list}>
+        {items.map((item) => (
+          <View
+            key={item.key}
+            style={[styles.item, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            testID={`onboarding-item-${item.key}`}
+          >
+            <View style={styles.itemHeader}>
+              <Text style={[styles.itemTitle, { color: colors.text }]}>{item.title}</Text>
+              <StateBadge state={item.state} />
+            </View>
+            <Text style={[styles.itemDescription, { color: colors.textSecondary }]}>{item.description}</Text>
+            {item.blockedReason ? (
+              <Text style={[styles.blockedReason, { color: colors.error }]}>{item.blockedReason}</Text>
+            ) : null}
+          </View>
+        ))}
+      </View>
+
+      {!formSubmitted ? (
+        <Button variant="primary" onPress={onStartForm} style={styles.actionButton}>
+          Get started
+        </Button>
+      ) : !paymentsVerified ? (
+        <Button
+          variant="primary"
+          onPress={onContinueIdentityVerification}
+          loading={isLoadingLink}
+          style={styles.actionButton}
+        >
+          Continue identity verification
+        </Button>
+      ) : null}
+    </View>
+  );
+}
+
+function StateBadge({ state }: { state: ChecklistItemState }) {
+  if (state === "done") {
+    return (
+      <Badge variant="success" size="small">
+        Done
+      </Badge>
+    );
+  }
+  if (state === "blocked") {
+    return (
+      <Badge variant="danger" size="small">
+        Blocked
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" size="small">
+      In progress
+    </Badge>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 16,
+  },
+  liveBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 16,
+  },
+  liveBannerText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  list: {
+    gap: 12,
+  },
+  item: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+  },
+  itemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  itemTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  itemDescription: {
+    fontSize: 13,
+    marginTop: 4,
+  },
+  blockedReason: {
+    fontSize: 13,
+    marginTop: 8,
+    fontWeight: "500",
+  },
+  actionButton: {
+    marginTop: 20,
+  },
+});

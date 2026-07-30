@@ -19,6 +19,8 @@ import {
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
+import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { WA_TAB_CONTENT_CLEARANCE } from "@components/wa";
 import type { Id } from "@services/api/convex";
 
 export type MessageSearchResult = {
@@ -91,6 +93,7 @@ export function InboxSearchResults({
 }: InboxSearchResultsProps) {
   const router = useRouter();
   const { colors } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
 
   const openResult = useCallback(
     (result: MessageSearchResult) => {
@@ -171,7 +174,13 @@ export function InboxSearchResults({
       data={results}
       keyExtractor={(item) => item.messageId}
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={[
+        styles.listContent,
+        // Flag-on, the tab bar is a floating island over the content (S2);
+        // the screen container reserves only the strip below it, so the
+        // list itself must clear the island like the inbox FlatList does.
+        whatsappShellEnabled && { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
+      ]}
       ListFooterComponent={
         truncated ? (
           <Text style={[styles.truncatedFooter, { color: colors.textSecondary }]}>

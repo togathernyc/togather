@@ -12,11 +12,17 @@
 
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { verifySlackSignature } from "./functions/slackServiceBot/slack";
 import { hashApiKey } from "./lib/apiKeys";
-import { putR2Object } from "./lib/r2";
+import { resolveLinkPreviewMeta } from "./functions/linkPreviewMeta";
+import { registerRoutes } from "@supa-media/dev-assistant";
+import "./functions/devAssistant/config"; // side-effect: sets config first
+import {
+  handleFinanceStripeEvent,
+  handleIncreaseWebhookRequest,
+} from "./functions/finance/webhooks";
 
 const http = httpRouter();
 
@@ -140,303 +146,58 @@ async function verifyStripeSignature(
 }
 
 // ============================================================================
-// Link Preview Endpoints (for Cloudflare Worker)
+// Link Preview Meta Endpoint (for Cloudflare Worker)
 // ============================================================================
 
 /**
- * GET /link-preview/event?shortId=<shortId>
+ * GET /link-preview/meta?url=<urlencoded full original request URL>
  *
- * Returns event data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /e/[shortId] URLs.
+ * Single typed endpoint that returns standardized preview metadata (title,
+ * description, image, canonical url, siteName) for any shareable app path
+ * (/e/:shortId, /g/:shortId, /t/:shortId, /ch/:shortId, /nearme, /:slug).
+ * Replaces the old per-type /link-preview/{event,group,tool,community,channel}
+ * endpoints — all title/description/image-fallback/date-formatting assembly
+ * now lives in functions/linkPreviewMeta.ts instead of the Cloudflare Worker.
  *
- * Response shape matches what the Cloudflare Worker expects:
- * - id, shortId, title, scheduledAt, status
- * - coverImage, coverImageFallback
- * - groupName, groupImage, groupImageFallback
- * - communityName, communityLogo
- * - locationOverride, note
+ * Response shape: { title, description, image, url, siteName, imageAlt? }
+ * on 200; { error } on 404 (unknown entity or unrecognized path).
+ *
+ * @see ADR-009 for the full link-preview architecture.
  */
 http.route({
-  path: "/link-preview/event",
+  path: "/link-preview/meta",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
+    // `searchParams.get` already URL-decodes once; the worker single-encodes
+    // the target URL, so decoding again here would mangle reserved chars
+    // (e.g. `%26` -> `&`) that are legitimately part of the target's query string.
+    const targetUrl = url.searchParams.get("url");
 
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
+    if (!targetUrl) {
+      return jsonResponse({ error: "Missing url parameter" }, 400);
+    }
+
+    // Validate it's a well-formed URL before handing it to the resolver.
+    try {
+      new URL(targetUrl);
+    } catch {
+      return jsonResponse({ error: "Invalid url encoding" }, 400);
     }
 
     try {
-      const result = await ctx.runQuery(
-        api.functions.meetings.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Event not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        title: result.title,
-        scheduledAt: result.scheduledAt,
-        status: result.status,
-        coverImage: result.coverImage,
-        coverImageFallback: result.coverImage, // Same as coverImage
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        groupImageFallback: result.groupImage, // Same as groupImage
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        timezone: result.timezone,
-        locationOverride: result.locationOverride,
-        note: result.note,
-      });
+      const result = await resolveLinkPreviewMeta(ctx, targetUrl);
+      return jsonResponse(result.body, result.status);
     } catch (error) {
-      console.error("Error fetching event for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch event" }, 500);
+      console.error("Error resolving link preview meta:", error);
+      return jsonResponse({ error: "Failed to fetch preview" }, 500);
     }
   }),
 });
 
-// Handle CORS preflight for /link-preview/event
+// Handle CORS preflight for /link-preview/meta
 http.route({
-  path: "/link-preview/event",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/group?shortId=<shortId>
- *
- * Returns group data needed for social sharing previews.
- * Used by the Cloudflare Worker when bots request /g/<shortId> URLs.
- *
- * Response shape:
- * - id, shortId, name, description
- * - preview (group image)
- * - memberCount
- * - communityName, communityLogo
- * - city, state (location)
- * - groupTypeName
- */
-http.route({
-  path: "/link-preview/group",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groups.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Group not found" }, 404);
-      }
-
-      // Transform to match the expected shape for API routes
-      // Include fallback fields (same as primary since we don't store separate versions)
-      return jsonResponse({
-        id: result.id,
-        shortId: result.shortId,
-        name: result.name,
-        description: result.description,
-        preview: result.preview,
-        previewFallback: result.preview, // Same as preview
-        memberCount: result.memberCount,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        communityLogoFallback: result.communityLogo, // Same as communityLogo
-        city: result.city,
-        state: result.state,
-        groupTypeName: result.groupTypeName,
-        isPublic: result.isPublic,
-      });
-    } catch (error) {
-      console.error("Error fetching group for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch group" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/group
-http.route({
-  path: "/link-preview/group",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/tool?shortId=<shortId>
- *
- * Returns tool data for link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /t/[shortId] URLs.
- *
- * Response shape:
- * - shortId, toolType, groupId, groupName
- * - groupImage, communityName, communityLogo
- * - resourceTitle?, resourceIcon?, resourceImage? (for resource tools)
- */
-http.route({
-  path: "/link-preview/tool",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.toolShortLinks.index.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Tool not found" }, 404);
-      }
-
-      return jsonResponse(result);
-    } catch (error) {
-      console.error("Error fetching tool for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch tool" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/tool
-http.route({
-  path: "/link-preview/tool",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/community?communitySubdomain=<subdomain>&groupTypeSlug=<slug>
- *
- * Returns community and optional group type data for "near me" link previews.
- * Used by the Cloudflare Worker when bots request /nearme URLs.
- *
- * Response shape:
- * {
- *   community: { id, name, subdomain, logo, logoFallback },
- *   groupType: { id, name, slug, description } | null
- * }
- */
-http.route({
-  path: "/link-preview/community",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const communitySubdomain = url.searchParams.get("communitySubdomain");
-    const groupTypeSlug = url.searchParams.get("groupTypeSlug") || undefined;
-
-    if (!communitySubdomain) {
-      return jsonResponse(
-        { error: "Missing communitySubdomain parameter" },
-        400
-      );
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.groupSearch.publicLinkPreview,
-        { communitySubdomain, groupTypeSlug }
-      );
-
-      // Add logoFallback field (null for Convex, but worker expects it)
-      return jsonResponse({
-        community: {
-          ...result.community,
-          logoFallback: null,
-        },
-        groupType: result.groupType,
-      });
-    } catch (error) {
-      console.error("Error fetching community for link preview:", error);
-
-      // Check if it's a "not found" error
-      if (error instanceof Error && error.message.includes("not found")) {
-        return jsonResponse({ error: "Community not found" }, 404);
-      }
-
-      return jsonResponse({ error: "Failed to fetch community" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/community
-http.route({
-  path: "/link-preview/community",
-  method: "OPTIONS",
-  handler: httpAction(async () => handleCorsOptions()),
-});
-
-/**
- * GET /link-preview/channel?shortId=<shortId>
- *
- * Returns channel data for invite link preview generation (OG tags).
- * Used by the Cloudflare Worker when bots request /ch/[shortId] URLs.
- *
- * Response shape:
- * - channelName, groupName, groupImage, memberCount
- * - communityName, communityLogo
- * - joinMode
- */
-http.route({
-  path: "/link-preview/channel",
-  method: "GET",
-  handler: httpAction(async (ctx, request) => {
-    const url = new URL(request.url);
-    const shortId = url.searchParams.get("shortId");
-
-    if (!shortId) {
-      return jsonResponse({ error: "Missing shortId parameter" }, 400);
-    }
-
-    try {
-      const result = await ctx.runQuery(
-        api.functions.messaging.channelInvites.getByShortId,
-        { shortId }
-      );
-
-      if (!result) {
-        return jsonResponse({ error: "Channel not found" }, 404);
-      }
-
-      return jsonResponse({
-        channelName: result.channelName,
-        channelDescription: result.channelDescription,
-        groupName: result.groupName,
-        groupImage: result.groupImage,
-        communityName: result.communityName,
-        communityLogo: result.communityLogo,
-        memberCount: result.memberCount,
-        joinMode: result.joinMode,
-      });
-    } catch (error) {
-      console.error("Error fetching channel for link preview:", error);
-      return jsonResponse({ error: "Failed to fetch channel" }, 500);
-    }
-  }),
-});
-
-// Handle CORS preflight for /link-preview/channel
-http.route({
-  path: "/link-preview/channel",
+  path: "/link-preview/meta",
   method: "OPTIONS",
   handler: httpAction(async () => handleCorsOptions()),
 });
@@ -726,9 +487,10 @@ http.route({
           break;
         }
         default:
-          console.log(
-            `[StripeWebhook] Unhandled event type: ${event.type}`
-          );
+          // Group-giving events (account.updated, payment_intent.succeeded,
+          // payout.paid) are dispatched by the finance layer; it no-ops on
+          // anything it doesn't own (ADR-032 §6).
+          await handleFinanceStripeEvent(ctx, event);
       }
 
       return new Response(JSON.stringify({ received: true }), {
@@ -739,6 +501,21 @@ http.route({
       console.error("[StripeWebhook] Error processing event:", error);
       return new Response("Webhook processing failed", { status: 500 });
     }
+  }),
+});
+
+/**
+ * POST /increase-webhook
+ *
+ * Increase (banking) event receiver for group giving (ADR-032 §6). Signature
+ * verification, event parsing, and category dispatch all live in
+ * functions/finance/webhooks.ts — this route is pure mounting.
+ */
+http.route({
+  path: "/increase-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handleIncreaseWebhookRequest(ctx, request);
   }),
 });
 
@@ -985,566 +762,15 @@ http.route({
   }),
 });
 
-/**
- * Verify a dev-assistant routine callback signature.
- *
- * The routine signs the raw request body with HMAC-SHA256 using
- * DEV_ASSISTANT_CALLBACK_SECRET and sends the hex digest in the
- * `x-togather-signature` header. We recompute and constant-time compare.
- */
-async function verifyDevAssistantSignature(
-  payload: string,
-  signature: string,
-  secret: string
-): Promise<boolean> {
-  try {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const signatureBytes = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      encoder.encode(payload)
-    );
-    const computedSig = Array.from(new Uint8Array(signatureBytes))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    return timingSafeEqual(signature, computedSig);
-  } catch {
-    return false;
-  }
-}
-
-const DEV_ASSISTANT_CALLBACK_STATUSES = [
-  // Spec-drafting mode (ADR-029): the routine delivers `spec` (+ `riskLevel`)
-  // and moves a dashboard contribution DRAFT -> IN_REVIEW.
-  "IN_REVIEW",
-  "IN_PROGRESS",
-  "CODE_REVIEW",
-  "READY_TO_MERGE",
-  "MERGED",
-  "REJECTED",
-];
-
-const DEV_ASSISTANT_RISK_LEVELS = ["low", "medium", "high"];
-
-const DEV_ASSISTANT_SCOPES = ["buildable", "split", "design_needed"];
-
-const DEV_ASSISTANT_REVIEW_VERDICTS = ["approved", "changes_requested"];
-
-/**
- * POST /dev-assistant/callback
- *
- * Inbound callback from the Claude Code Routine handling a dev-assistant bug.
- * Verifies the HMAC signature, then hands off to handleRoutineCallback (which
- * applies the transition + posts a bot message into the thread). Returns 200
- * fast — chat fanout and idempotency are handled downstream.
- *
- * Body: { bugId, routineRunId, status, prUrl?, screenshots?: string[],
- *         message?, spec?, riskLevel?, aiTitle?, area?, scope?,
- *         verifyOnStaging?, reviewVerdict?, reviewSummary? }
- *
- * Review-mode runs report `reviewVerdict` ("approved" | "changes_requested")
- * plus a short `reviewSummary` against status CODE_REVIEW; an approved
- * verdict advances the bug to READY_TO_MERGE downstream.
- */
-http.route({
-  path: "/dev-assistant/callback",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const body = await request.text();
-    const signature = request.headers.get("x-togather-signature");
-    if (!signature) {
-      return new Response("Missing x-togather-signature header", { status: 401 });
-    }
-
-    const secret = process.env.DEV_ASSISTANT_CALLBACK_SECRET;
-    if (!secret) {
-      console.error("[DevAssistant] DEV_ASSISTANT_CALLBACK_SECRET not configured");
-      return new Response("Callback not configured", { status: 500 });
-    }
-
-    const isValid = await verifyDevAssistantSignature(body, signature, secret);
-    if (!isValid) {
-      console.error("[DevAssistant] Invalid callback signature");
-      return new Response("Invalid signature", { status: 401 });
-    }
-
-    let payload: {
-      bugId?: string;
-      routineRunId?: string;
-      status?: string;
-      prUrl?: string;
-      screenshots?: string[];
-      message?: string;
-      spec?: string;
-      riskLevel?: string;
-      aiTitle?: string;
-      area?: string;
-      scope?: string;
-      splitSlices?: unknown;
-      verifyOnStaging?: boolean;
-      reviewVerdict?: string;
-      reviewSummary?: string;
-    };
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return new Response("Invalid JSON", { status: 400 });
-    }
-
-    const {
-      bugId,
-      routineRunId,
-      status,
-      prUrl,
-      screenshots,
-      message,
-      spec,
-      riskLevel,
-      aiTitle,
-      area,
-      scope,
-      splitSlices,
-      verifyOnStaging,
-      reviewVerdict,
-      reviewSummary,
-    } = payload;
-    if (!bugId || !routineRunId || !status) {
-      return new Response("Missing bugId, routineRunId, or status", { status: 400 });
-    }
-    if (!DEV_ASSISTANT_CALLBACK_STATUSES.includes(status)) {
-      return new Response(`Unsupported status: ${status}`, { status: 400 });
-    }
-    if (spec !== undefined && typeof spec !== "string") {
-      return new Response("Invalid spec: must be a string", { status: 400 });
-    }
-    if (riskLevel !== undefined && !DEV_ASSISTANT_RISK_LEVELS.includes(riskLevel)) {
-      return new Response(`Unsupported riskLevel: ${riskLevel}`, { status: 400 });
-    }
-    if (aiTitle !== undefined && typeof aiTitle !== "string") {
-      return new Response("Invalid aiTitle: must be a string", { status: 400 });
-    }
-    if (area !== undefined && typeof area !== "string") {
-      return new Response("Invalid area: must be a string", { status: 400 });
-    }
-    if (scope !== undefined && !DEV_ASSISTANT_SCOPES.includes(scope)) {
-      return new Response(`Unsupported scope: ${scope}`, { status: 400 });
-    }
-    let validatedSplitSlices:
-      | { title: string; prompt: string }[]
-      | undefined;
-    if (splitSlices !== undefined) {
-      if (
-        !Array.isArray(splitSlices) ||
-        !splitSlices.every(
-          (s) =>
-            s &&
-            typeof s === "object" &&
-            typeof (s as { title?: unknown }).title === "string" &&
-            typeof (s as { prompt?: unknown }).prompt === "string",
-        )
-      ) {
-        return new Response(
-          "Invalid splitSlices: must be an array of { title, prompt } strings",
-          { status: 400 },
-        );
-      }
-      validatedSplitSlices = (
-        splitSlices as { title: string; prompt: string }[]
-      ).map((s) => ({ title: s.title, prompt: s.prompt }));
-    }
-    if (verifyOnStaging !== undefined && typeof verifyOnStaging !== "boolean") {
-      return new Response("Invalid verifyOnStaging: must be a boolean", {
-        status: 400,
-      });
-    }
-    if (
-      reviewVerdict !== undefined &&
-      !DEV_ASSISTANT_REVIEW_VERDICTS.includes(reviewVerdict)
-    ) {
-      return new Response(`Unsupported reviewVerdict: ${reviewVerdict}`, {
-        status: 400,
-      });
-    }
-    if (reviewSummary !== undefined && typeof reviewSummary !== "string") {
-      return new Response("Invalid reviewSummary: must be a string", {
-        status: 400,
-      });
-    }
-    // Screenshots must be fetchable http(s) URLs — a `data:` URI is dropped by
-    // getMediaUrl and would render blank. Routines publish images via
-    // POST /dev-assistant/upload and send back the returned URL.
-    if (
-      screenshots !== undefined &&
-      (!Array.isArray(screenshots) ||
-        !screenshots.every(
-          (s) => typeof s === "string" && /^https?:\/\//.test(s)
-        ))
-    ) {
-      return new Response(
-        "Invalid screenshots: must be an array of http(s) URLs",
-        { status: 400 }
-      );
-    }
-
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.devAssistant.actions.handleRoutineCallback,
-      {
-        bugId: bugId as Id<"devBugs">,
-        routineRunId,
-        status: status as
-          | "IN_REVIEW"
-          | "IN_PROGRESS"
-          | "CODE_REVIEW"
-          | "READY_TO_MERGE"
-          | "MERGED"
-          | "REJECTED",
-        prUrl,
-        screenshots,
-        message,
-        spec,
-        riskLevel: riskLevel as "low" | "medium" | "high" | undefined,
-        aiTitle,
-        area,
-        scope: scope as "buildable" | "split" | "design_needed" | undefined,
-        splitSlices: validatedSplitSlices,
-        verifyOnStaging,
-        reviewVerdict: reviewVerdict as
-          | "approved"
-          | "changes_requested"
-          | undefined,
-        reviewSummary,
-      }
-    );
-
-    return new Response(JSON.stringify({ received: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }),
-});
-
-/** Image content types a routine may upload for before/after mocks. */
-const DEV_ASSISTANT_UPLOAD_CONTENT_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-];
-
-/** Max decoded upload size (5 MB) — mock screenshots are far smaller. */
-const DEV_ASSISTANT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
-
-/**
- * POST /dev-assistant/upload
- *
- * Lets a headless Claude Code Routine publish a generated image (e.g. a
- * before/after mock) to R2 and get back a fetchable https URL to drop into the
- * `screenshots` array of its callback. A routine has no user auth token and no
- * image host, and `getMediaUrl` rejects `data:` URIs — so without this the
- * dashboard could only ever show inline ASCII/markdown mocks.
- *
- * Auth reuses the callback's HMAC scheme: `x-togather-signature` =
- * HMAC-SHA256(DEV_ASSISTANT_CALLBACK_SECRET, rawBody). No new secret.
- *
- * Body: { dataBase64: string, contentType?: string, fileName?: string }
- * Returns: { url: string } — a public `${R2_PUBLIC_URL}/<key>` URL.
- */
-http.route({
-  path: "/dev-assistant/upload",
-  method: "POST",
-  handler: httpAction(async (_ctx, request) => {
-    const body = await request.text();
-    const signature = request.headers.get("x-togather-signature");
-    if (!signature) {
-      return new Response("Missing x-togather-signature header", { status: 401 });
-    }
-
-    const secret = process.env.DEV_ASSISTANT_CALLBACK_SECRET;
-    if (!secret) {
-      console.error("[DevAssistant] DEV_ASSISTANT_CALLBACK_SECRET not configured");
-      return new Response("Upload not configured", { status: 500 });
-    }
-
-    const isValid = await verifyDevAssistantSignature(body, signature, secret);
-    if (!isValid) {
-      console.error("[DevAssistant] Invalid upload signature");
-      return new Response("Invalid signature", { status: 401 });
-    }
-
-    let payload: {
-      dataBase64?: string;
-      contentType?: string;
-      fileName?: string;
-    };
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return new Response("Invalid JSON", { status: 400 });
-    }
-
-    const contentType = payload.contentType ?? "image/png";
-    if (!DEV_ASSISTANT_UPLOAD_CONTENT_TYPES.includes(contentType)) {
-      return new Response(`Unsupported contentType: ${contentType}`, {
-        status: 400,
-      });
-    }
-    if (typeof payload.dataBase64 !== "string" || payload.dataBase64.length === 0) {
-      return new Response("Missing dataBase64", { status: 400 });
-    }
-
-    const publicBase = process.env.R2_PUBLIC_URL;
-    if (!publicBase) {
-      console.error("[DevAssistant] R2_PUBLIC_URL not configured");
-      return new Response("Storage not configured", { status: 500 });
-    }
-
-    // Tolerate a full `data:<type>;base64,<data>` URI by taking the tail.
-    const base64 = payload.dataBase64.includes(",")
-      ? payload.dataBase64.slice(payload.dataBase64.indexOf(",") + 1)
-      : payload.dataBase64;
-
-    let buffer: ArrayBuffer;
-    try {
-      const binary = atob(base64);
-      buffer = new ArrayBuffer(binary.length);
-      const view = new Uint8Array(buffer);
-      for (let i = 0; i < binary.length; i++) {
-        view[i] = binary.charCodeAt(i);
-      }
-    } catch {
-      return new Response("Invalid base64", { status: 400 });
-    }
-    if (buffer.byteLength === 0) {
-      return new Response("Empty image", { status: 400 });
-    }
-    if (buffer.byteLength > DEV_ASSISTANT_UPLOAD_MAX_BYTES) {
-      return new Response("Image too large", { status: 413 });
-    }
-
-    const { key } = await putR2Object({
-      folder: "dev-assistant",
-      fileName: payload.fileName ?? "mock.png",
-      contentType,
-      body: buffer,
-    });
-
-    return new Response(
-      JSON.stringify({ url: `${publicBase}/${key}` }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
-  }),
-});
-
 // ============================================================================
-// GitHub Webhook (ADR-029 Phase 2)
+// Dev-Assistant (@supa-media/dev-assistant)
 // ============================================================================
-
-/**
- * Verify a GitHub webhook signature (`X-Hub-Signature-256`) using the Web
- * Crypto API — same HMAC-SHA256 + constant-time-compare pattern as the Stripe
- * handler. GitHub sends `sha256=<hex digest of the raw body>`.
- */
-async function verifyGithubSignature(
-  payload: string,
-  signature: string,
-  secret: string
-): Promise<boolean> {
-  try {
-    const prefix = "sha256=";
-    if (!signature.startsWith(prefix)) return false;
-    const provided = signature.slice(prefix.length).toLowerCase();
-
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const signatureBytes = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      encoder.encode(payload)
-    );
-    const computedSig = Array.from(new Uint8Array(signatureBytes))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-
-    return timingSafeEqual(provided, computedSig);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * POST /github/webhook
- *
- * Inbound GitHub webhook for the contributor dev dashboard (ADR-029 Phase 2).
- * Replaces polling: a merged PR flips the correlated devBug to MERGED (+
- * shippedAt, thread message, push) even when the merge happened directly on
- * GitHub; a PR closed without merging flags the item for a maintainer.
- *
- * Two events do work: a closed `pull_request` (a merge flips the correlated
- * devBug to MERGED and starts staging deploy observation) and a `workflow_run`
- * (the staging/production deploy actually finishing → the dashboard shows
- * deploying → live, or a failure telling the contributor to contact the lead
- * maintainer). Everything else (ping, other events/actions) returns 200
- * "ignored" fast.
- *
- * NOTE: the repo webhook must subscribe to BOTH "Pull requests" and "Workflow
- * runs" events — a webhook sending only pull_request never delivers the deploy
- * observation, so the dashboard would sit at "deploying…" until the reconcile
- * cron backstop or a manual check.
- *
- * PR correlation happens in the scheduled internalMutation
- * (handleGithubPrClosed): primarily by the Routine's `claude/devbug-<bugId>`
- * head-branch convention, falling back to matching html_url against stored
- * prUrl. workflow_run correlation (handleWorkflowRunEvent) is by the merge
- * commit SHA for staging, and global-by-state for production. Responds 200
- * immediately after scheduling (async-schedule-then-200, like Slack).
- */
-http.route({
-  path: "/github/webhook",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const body = await request.text();
-
-    // Falls back to the dev-assistant callback secret so a single shared
-    // secret can serve both inbound channels; set GH_WEBHOOK_SECRET to
-    // split them without a code change. (Named GH_*, not GITHUB_*, because
-    // GitHub reserves the GITHUB_ secret-name prefix, so a GITHUB_-prefixed
-    // secret can't sync through 1Password -> GitHub -> Convex.)
-    const secret =
-      process.env.GH_WEBHOOK_SECRET ??
-      process.env.DEV_ASSISTANT_CALLBACK_SECRET;
-    if (!secret) {
-      console.error("[GithubWebhook] GH_WEBHOOK_SECRET not configured");
-      return new Response("GitHub webhook not configured", { status: 503 });
-    }
-
-    const signature = request.headers.get("x-hub-signature-256");
-    if (!signature) {
-      return new Response("Missing x-hub-signature-256 header", {
-        status: 401,
-      });
-    }
-    const isValid = await verifyGithubSignature(body, signature, secret);
-    if (!isValid) {
-      console.error("[GithubWebhook] Invalid signature");
-      return new Response("Invalid signature", { status: 401 });
-    }
-
-    // Two event types do work: a closed `pull_request` (merge → MERGED) and a
-    // `workflow_run` (deploy observation, ADR-029 follow-up). Everything else
-    // (ping, other events/actions) acks immediately.
-    const event = request.headers.get("x-github-event");
-    if (event !== "pull_request" && event !== "workflow_run") {
-      return new Response("ignored", { status: 200 });
-    }
-
-    let payload: {
-      action?: string;
-      pull_request?: {
-        merged?: boolean;
-        merge_commit_sha?: string;
-        html_url?: string;
-        head?: { ref?: string };
-      };
-      workflow_run?: {
-        name?: string;
-        status?: string;
-        conclusion?: string | null;
-        head_sha?: string;
-        head_branch?: string;
-        run_started_at?: string;
-      };
-    };
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      return new Response("Invalid JSON", { status: 400 });
-    }
-
-    // ---- workflow_run: staging/production deploy observation ----
-    if (event === "workflow_run") {
-      const run = payload.workflow_run;
-      if (
-        !payload.action ||
-        !run ||
-        typeof run.name !== "string" ||
-        typeof run.head_sha !== "string"
-      ) {
-        // Malformed (or a workflow_run without the fields we need) — ack and
-        // ignore rather than error.
-        return new Response("ignored", { status: 200 });
-      }
-      await ctx.scheduler.runAfter(
-        0,
-        internal.functions.devAssistant.bugs.handleWorkflowRunEvent,
-        {
-          action: payload.action,
-          name: run.name,
-          status: typeof run.status === "string" ? run.status : undefined,
-          // GitHub sends `conclusion: null` until the run completes.
-          conclusion:
-            typeof run.conclusion === "string" ? run.conclusion : undefined,
-          headSha: run.head_sha,
-          headBranch:
-            typeof run.head_branch === "string" ? run.head_branch : undefined,
-          // ISO timestamp → ms; bounds which pending-prod bugs a production run
-          // settles (a run only covers work requested before it started).
-          runStartedAt:
-            typeof run.run_started_at === "string" &&
-            !Number.isNaN(Date.parse(run.run_started_at))
-              ? Date.parse(run.run_started_at)
-              : undefined,
-        }
-      );
-      return new Response(JSON.stringify({ received: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-    // ---- pull_request: only closed PRs matter ----
-    if (payload.action !== "closed") {
-      return new Response("ignored", { status: 200 });
-    }
-
-    const pr = payload.pull_request;
-    const branchRef = pr?.head?.ref;
-    if (!pr || typeof pr.merged !== "boolean" || typeof branchRef !== "string") {
-      return new Response("Invalid pull_request payload", { status: 400 });
-    }
-
-    await ctx.scheduler.runAfter(
-      0,
-      internal.functions.devAssistant.bugs.handleGithubPrClosed,
-      {
-        branchRef,
-        prUrl: typeof pr.html_url === "string" ? pr.html_url : undefined,
-        merged: pr.merged,
-        // The squash-merge commit correlates the staging deploy observation.
-        mergeCommitSha:
-          typeof pr.merge_commit_sha === "string"
-            ? pr.merge_commit_sha
-            : undefined,
-      }
-    );
-
-    return new Response(JSON.stringify({ received: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }),
-});
+// The dev-assistant contribution pipeline HTTP surface —
+// POST /dev-assistant/callback (signed Routine callback, x-togather-signature),
+// POST /dev-assistant/upload (Routine image upload -> R2), and
+// POST /github/webhook (pull_request + workflow_run) — is registered by the
+// package. Same routes, same HMAC scheme (x-togather-signature /
+// x-hub-signature-256), same wire format and env vars as before.
+registerRoutes(http);
 
 export default http;

@@ -31,7 +31,21 @@ import { api, useAuthenticatedQuery } from '@services/api/convex';
 import type { Id } from '@services/api/convex';
 import { useAuth } from '@providers/AuthProvider';
 import { useTheme } from '@hooks/useTheme';
+import { useWhatsappShell } from '@hooks/useWhatsappShell';
+import {
+  WaRow,
+  WaSeparator,
+  WA_LIST_SEPARATOR_INSET,
+  WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
+  WA_TYPE_FOOTNOTE,
+  WA_WEIGHT_BOLD,
+  WA_WEIGHT_SEMIBOLD,
+} from '@components/wa';
 import { EventCard } from './EventCard';
+import { WaEventThumbnail } from './WaEventThumbnail';
+import { formatWaEventWhen } from '../utils/waEventWhen';
 import type { CommunityEvent } from '../hooks/useCommunityEvents';
 
 const isWeb = Platform.OS === 'web';
@@ -88,6 +102,7 @@ export function CommunityWideEventSheet({
   const router = useRouter();
   const { user } = useAuth();
   const { colors } = useTheme();
+  const whatsappShellEnabled = useWhatsappShell();
   const bottomSheetRef = useRef<BottomSheet>(null);
 
   // Single snap point: sheet opens at 90% and can't be dragged higher.
@@ -128,19 +143,40 @@ export function CommunityWideEventSheet({
     [router, onDismiss]
   );
 
-  // Header with parent title + scheduledAt
+  // Header with parent title + scheduledAt. Flag-on it's the §5.1 header block
+  // (22pt bold name over a 15pt gray line) with no hairline — WhatsApp's sheets
+  // separate their header with space, not a rule.
   const header = parent ? (
-    <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
-      <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={2}>
+    <View
+      style={
+        whatsappShellEnabled
+          ? styles.waHeader
+          : [styles.header, { borderBottomColor: colors.borderLight }]
+      }
+    >
+      <Text
+        style={[
+          whatsappShellEnabled ? styles.waHeaderTitle : styles.headerTitle,
+          { color: colors.text },
+        ]}
+        numberOfLines={2}
+      >
         {parent.title}
       </Text>
-      <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-        {(() => {
-          const zoned = toZonedTime(new Date(parent.scheduledAt), userTimezone);
-          const date = format(zoned, 'EEE, MMM d', { timeZone: userTimezone });
-          const time = formatTimeWithTimezone(new Date(parent.scheduledAt), userTimezone);
-          return `${date} · ${time}`;
-        })()}
+      <Text
+        style={[
+          whatsappShellEnabled ? styles.waHeaderSubtitle : styles.headerSubtitle,
+          { color: colors.textSecondary },
+        ]}
+      >
+        {whatsappShellEnabled
+          ? formatWaEventWhen(parent.scheduledAt, userTimezone)
+          : (() => {
+              const zoned = toZonedTime(new Date(parent.scheduledAt), userTimezone);
+              const date = format(zoned, 'EEE, MMM d', { timeZone: userTimezone });
+              const time = formatTimeWithTimezone(new Date(parent.scheduledAt), userTimezone);
+              return `${date} · ${time}`;
+            })()}
       </Text>
     </View>
   ) : null;
@@ -153,12 +189,70 @@ export function CommunityWideEventSheet({
           <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       ) : children.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="calendar-outline" size={32} color={colors.textSecondary} />
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No locations available.
-          </Text>
-        </View>
+        whatsappShellEnabled ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="calendar-outline" size={64} color={colors.textTertiary} />
+            <Text style={[styles.waEmptyTitle, { color: colors.text }]}>
+              No locations available
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="calendar-outline" size={32} color={colors.textSecondary} />
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              No locations available.
+            </Text>
+          </View>
+        )
+      ) : whatsappShellEnabled ? (
+        // Same S6 row anatomy the Events tab list uses — tapping a
+        // community-wide row shouldn't drop the user back into shadowed cards
+        // with colored chips (§7).
+        children.map((child: any, index: number) => {
+          const adapted = toCommunityEvent(child);
+          const goingCount = adapted.hideRsvpCount
+            ? 0
+            : adapted.rsvpSummary?.totalGoing ?? 0;
+          return (
+            <React.Fragment key={String(child.id)}>
+              <WaRow
+                avatar={
+                  adapted.coverImage || adapted.group.image
+                    ? {
+                        imageUrl: adapted.coverImage || adapted.group.image,
+                        label: adapted.group.name,
+                        seed: String(adapted.group.id),
+                        shape: 'squircle',
+                      }
+                    : <WaEventThumbnail />
+                }
+                title={adapted.group.name}
+                subtitle={[
+                  formatWaEventWhen(adapted.scheduledAt, userTimezone),
+                  adapted.locationOverride,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                testID="wa-cwe-child-row"
+                onPress={() => handleChildPress(adapted.shortId)}
+                showChevron={goingCount === 0}
+                rightAccessory={
+                  goingCount > 0 ? (
+                    <View style={styles.waRowTrailing}>
+                      <Text style={[styles.waRowTrailingText, { color: colors.textTertiary }]}>
+                        {goingCount} going
+                      </Text>
+                      <Ionicons name="chevron-forward" size={13} color={colors.textTertiary} />
+                    </View>
+                  ) : undefined
+                }
+              />
+              {index < children.length - 1 ? (
+                <WaSeparator inset={WA_LIST_SEPARATOR_INSET} />
+              ) : null}
+            </React.Fragment>
+          );
+        })
       ) : (
         children.map((child: any) => {
           const adapted = toCommunityEvent(child);
@@ -193,7 +287,9 @@ export function CommunityWideEventSheet({
             </TouchableOpacity>
           </View>
           <View style={styles.webScrollWrapper}>
-            <View style={styles.listContent}>{body}</View>
+            <View style={whatsappShellEnabled ? styles.waListContent : styles.listContent}>
+              {body}
+            </View>
           </View>
         </View>
       </View>
@@ -211,7 +307,9 @@ export function CommunityWideEventSheet({
       handleIndicatorStyle={[styles.handleIndicator, { backgroundColor: colors.border }]}
       backgroundStyle={[styles.sheetBackground, { backgroundColor: colors.surface }]}
     >
-      <BottomSheetScrollView contentContainerStyle={styles.listContent}>
+      <BottomSheetScrollView
+        contentContainerStyle={whatsappShellEnabled ? styles.waListContent : styles.listContent}
+      >
         {body}
       </BottomSheetScrollView>
     </BottomSheet>
@@ -231,6 +329,36 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
     gap: 12,
+  },
+  // Flag-on the children are full-bleed WaRows (WaRow owns the 16pt leading
+  // inset), so the card-era gutter and inter-card gap both go.
+  waListContent: {
+    paddingTop: 8,
+    paddingBottom: 40,
+  },
+  waHeader: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  waHeaderTitle: {
+    fontSize: WA_TYPE_HEADER_BLOCK,
+    fontWeight: WA_WEIGHT_BOLD,
+    marginBottom: 4,
+  },
+  waHeaderSubtitle: {
+    fontSize: WA_TYPE_SUBTITLE,
+  },
+  waEmptyTitle: {
+    fontSize: WA_TYPE_ROW_TITLE,
+    fontWeight: WA_WEIGHT_SEMIBOLD,
+  },
+  waRowTrailing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  waRowTrailingText: {
+    fontSize: WA_TYPE_FOOTNOTE,
   },
   header: {
     paddingBottom: 12,

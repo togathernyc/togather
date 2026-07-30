@@ -53,9 +53,24 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
       "Enables @Togather dev-assistant bot + bug pipeline (staff only).",
   },
   {
+    key: "nearby-device-location",
+    description:
+      "Shows the compass (use-my-location) button on the Groups tab. Keep OFF until a native build that includes the iOS location-permission string is live — the current binary would mis-prompt. Zip-code search works regardless of this flag.",
+  },
+  {
     key: "knicks-mode",
     description:
       "Themes the whole app in New York Knicks orange & blue, overriding every community's brand colors. Applies to all users across all communities. Off: communities use their own brand colors.",
+  },
+  {
+    key: "whatsapp-shell-on",
+    description:
+      "Force-enables the WhatsApp-style shell (Chats-first tabs, community page, group info page, channel directory, mute) for ALL users system-wide — no PostHog needed. Use for staging or before PostHog targeting is set up; whatsapp-shell-kill still wins if both are on.",
+  },
+  {
+    key: "whatsapp-shell-kill",
+    description:
+      "Kill switch: forces the WhatsApp-style shell off everywhere, overriding both the whatsapp-shell PostHog flag and whatsapp-shell-on. Off: the other two decide.",
   },
 ];
 
