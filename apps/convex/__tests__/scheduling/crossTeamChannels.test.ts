@@ -909,6 +909,21 @@ describe("cross-team channel — serving-mode inbox (getInboxChannels)", () => {
     expect(entry?.group._id).toBe(groupBId);
   });
 
+  it("returns an empty serving inbox for an empty plan list, not the full inbox", async () => {
+    // The client passes `servingPlanIds` whenever it is in serving mode; with
+    // no resolvable plan (e.g. a preview plan that vanished) the list is empty
+    // and must stay scoped — falling back to the unfiltered inbox would spill
+    // every channel into the serving surface.
+    const { t, groupBRosteredId } = await setupCrossGroupServingScenario();
+    const token = (await generateTokens(groupBRosteredId)).accessToken;
+
+    const inbox = await t.query(
+      api.functions.messaging.channels.getInboxChannels,
+      { token, servingPlanIds: [] },
+    );
+    expect(inbox).toEqual([]);
+  });
+
   it("keeps the home group out of the serving inbox even when it also holds a fresh event channel", async () => {
     // The reported phantom: the volunteer had ALSO RSVP'd to an event in the
     // channel's home campus, so that group was injected into the inbox carrying

@@ -1504,8 +1504,11 @@ export const getInboxChannels = query({
      * `resolveServingChannelIds`) and returned FLAT — every allowed channel is
      * its own primary inbox item, with no nested sub-channel grouping. Used by
      * the mobile inbox while in serving mode, which spans EVERY plan the user is
-     * serving today; the client groups the flat rows into a section per owning
-     * group. A channel shared by two plans appears once (the set is a union).
+     * serving today (or the single plan they opened early to prepare); the
+     * client groups the flat rows into a section per owning group. A channel
+     * shared by two plans appears once (the set is a union). An EMPTY array
+     * still means serving mode — it yields an empty serving inbox rather than
+     * falling back to the full one.
      */
     servingPlanIds: v.optional(v.array(v.id("eventPlans"))),
   },
@@ -1515,9 +1518,11 @@ export const getInboxChannels = query({
 
     // In serving mode, resolve the allowed channel-id set up front, unioned
     // across every plan the user is serving today. `null` means "no filtering"
-    // (normal inbox); a Set means "restrict + flatten".
+    // (normal inbox); a Set means "restrict + flatten". The arg's PRESENCE is
+    // what selects serving mode — passing an empty list must not spill the
+    // whole inbox into the serving surface.
     let servingChannelIds: Set<string> | null = null;
-    if (args.servingPlanIds && args.servingPlanIds.length > 0) {
+    if (args.servingPlanIds) {
       servingChannelIds = new Set<string>();
       for (const planId of args.servingPlanIds) {
         const ids = await resolveServingChannelIds(ctx, planId);
