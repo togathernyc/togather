@@ -25,15 +25,23 @@ import {
 import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { Avatar } from "@components/ui/Avatar";
 import { CustomModal } from "@components/ui/Modal";
+import { SearchBar } from "@components/ui/SearchBar";
 import { ToastManager } from "@components/ui/Toast";
 import { useTheme } from "@hooks/useTheme";
 import {
   ATTENDANCE_PRESENT,
   ATTENDANCE_ABSENT,
+  buildGuestSlots,
   computeCheckInSummary,
+  filterGoingUsers,
+  filterWalkIns,
+  fullName,
+  guestSlotLabel,
   indexAttendanceByUser,
   isCheckedIn,
+  partitionGuests,
   type GoingUser,
+  type GuestSlot,
 } from "@/features/leader-tools/utils/checkIn";
 
 const CHECKED_IN_COLOR = "#10B981"; // green-500
@@ -45,6 +53,13 @@ function formatCheckInTime(recordedAt?: number): string {
     minute: "2-digit",
   });
   return `Checked in · ${time}`;
+}
+
+/** The guest currently being named, identified by its persisted row. */
+interface NamingGuest {
+  guestId: string;
+  firstName: string;
+  lastName: string;
 }
 
 function CheckInPage() {
@@ -106,7 +121,8 @@ function CheckInPage() {
   );
   const isLoadingAttendance = canFetch && attendance === undefined;
 
-  // Walk-ins (guest records without an account). Manager-gated, pass token.
+  // Guest rows: members' plus-ones (hostUserId set) and unattached walk-ins.
+  // Manager-gated, pass token.
   const guests = useQuery(
     api.functions.meetings.attendance.listGuests,
     canFetch
@@ -121,13 +137,21 @@ function CheckInPage() {
   const addGuest = useAuthenticatedMutation(
     api.functions.meetings.attendance.addGuest
   );
+  const updateGuest = useAuthenticatedMutation(
+    api.functions.meetings.attendance.updateGuest
+  );
   const removeGuest = useAuthenticatedMutation(
     api.functions.meetings.attendance.removeGuest
   );
 
   const [pendingUserIds, setPendingUserIds] = useState<Set<string>>(new Set());
+  const [pendingGuestKeys, setPendingGuestKeys] = useState<Set<string>>(
+    new Set()
+  );
   const [showRestrictedModal, setShowRestrictedModal] = useState(false);
   const [showAddWalkIn, setShowAddWalkIn] = useState(false);
+  const [namingGuest, setNamingGuest] = useState<NamingGuest | null>(null);
+  const [search, setSearch] = useState("");
 
   const goingUsers: GoingUser[] = useMemo(
     () => goingRoster ?? [],
@@ -139,11 +163,25 @@ function CheckInPage() {
     [attendance]
   );
 
-  const walkIns = useMemo(() => guests ?? [], [guests]);
+  const { guestsByHost, walkIns } = useMemo(
+    () => partitionGuests(goingUsers, guests ?? []),
+    [goingUsers, guests]
+  );
 
+  // The summary counts the whole event, not the current search — a filtered
+  // "3 / 4 checked in" would be misleading while someone is typing.
   const summary = useMemo(
-    () => computeCheckInSummary(goingUsers, attendanceByUser, walkIns),
-    [goingUsers, attendanceByUser, walkIns]
+    () => computeCheckInSummary(goingUsers, attendanceByUser, guests ?? []),
+    [goingUsers, attendanceByUser, guests]
+  );
+
+  const visibleGoing = useMemo(
+    () => filterGoingUsers(goingUsers, guestsByHost, search),
+    [goingUsers, guestsByHost, search]
+  );
+  const visibleWalkIns = useMemo(
+    () => filterWalkIns(walkIns, search),
+    [walkIns, search]
   );
 
   const isLoading =
@@ -163,6 +201,20 @@ function CheckInPage() {
       router.back();
     } else {
       router.push(`/(user)/leader-tools/${group_id}/events/${eventIdParam}`);
+    }
+  };
+
+  const withGuestPending = async (key: string, action: () => Promise<void>) => {
+    if (pendingGuestKeys.has(key)) return;
+    setPendingGuestKeys((prev) => new Set(prev).add(key));
+    try {
+      await action();
+    } finally {
+      setPendingGuestKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   };
 
@@ -189,6 +241,53 @@ function CheckInPage() {
     }
   };
 
+  /**
+   * Check a member's guest in. The guest row is created immediately (so the
+   * count moves on the first tap even if the leader never types a name), then
+   * the name sheet opens — names are the point of the feature, but a busy line
+   * can dismiss it and add the name later.
+   */
+  const handleCheckInGuest = async (user: GoingUser, slot: GuestSlot) => {
+    if (!meetingId) return;
+    await withGuestPending(`${user.id}:${slot.position}`, async () => {
+      try {
+        const guestId = await addGuest({
+          meetingId: meetingId as Id<"meetings">,
+          hostUserId: user.id as Id<"users">,
+        });
+        setNamingGuest({
+          guestId: guestId as unknown as string,
+          firstName: "",
+          lastName: "",
+        });
+      } catch (err) {
+        ToastManager.error(
+          err instanceof Error ? err.message : "Couldn't check in guest"
+        );
+      }
+    });
+  };
+
+  const handleRemoveGuest = async (guestId: string) => {
+    await withGuestPending(guestId, async () => {
+      try {
+        await removeGuest({ guestId: guestId as Id<"meetingGuests"> });
+      } catch (err) {
+        ToastManager.error(
+          err instanceof Error ? err.message : "Couldn't remove guest"
+        );
+      }
+    });
+  };
+
+  const handleSaveGuestName = async (guest: NamingGuest) => {
+    await updateGuest({
+      guestId: guest.guestId as Id<"meetingGuests">,
+      firstName: guest.firstName.trim(),
+      lastName: guest.lastName.trim(),
+    });
+  };
+
   const handleAddWalkIn = async (guest: {
     firstName: string;
     lastName?: string;
@@ -203,17 +302,12 @@ function CheckInPage() {
     });
   };
 
-  const handleRemoveWalkIn = async (guestId: string) => {
-    try {
-      await removeGuest({ guestId: guestId as Id<"meetingGuests"> });
-    } catch (err) {
-      ToastManager.error(
-        err instanceof Error ? err.message : "Couldn't remove walk-in"
-      );
-    }
-  };
-
   const rosterIsEmpty = goingUsers.length === 0 && walkIns.length === 0;
+  const searchFoundNothing =
+    !rosterIsEmpty &&
+    search.trim().length > 0 &&
+    visibleGoing.length === 0 &&
+    visibleWalkIns.length === 0;
 
   return (
     <UserRoute>
@@ -249,203 +343,281 @@ function CheckInPage() {
           // Restricted — modal (below) explains and sends them back.
           <View style={styles.loadingContainer} />
         ) : (
-          <ScrollView
-            style={styles.content}
-            contentContainerStyle={styles.contentContainer}
-          >
-            {/* Summary card */}
-            <View
-              style={[styles.summaryCard, { backgroundColor: colors.surface }]}
-            >
-              <Text style={[styles.summaryCount, { color: colors.text }]}>
-                {summary.checkedIn} / {summary.total} checked in
-              </Text>
+          <>
+            {/* Fixed controls. Summary, walk-ins and search stay put so they
+                stay reachable partway down a long roster. */}
+            <View style={styles.controls}>
               <View
-                style={[
-                  styles.progressTrack,
-                  { backgroundColor: colors.backgroundSecondary },
-                ]}
+                style={[styles.summaryCard, { backgroundColor: colors.surface }]}
               >
+                <Text style={[styles.summaryCount, { color: colors.text }]}>
+                  {summary.checkedIn} / {summary.total} checked in
+                </Text>
                 <View
                   style={[
-                    styles.progressFill,
-                    {
-                      backgroundColor: CHECKED_IN_COLOR,
-                      width: `${Math.round(summary.fraction * 100)}%`,
-                    },
+                    styles.progressTrack,
+                    { backgroundColor: colors.backgroundSecondary },
                   ]}
-                />
+                >
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        backgroundColor: CHECKED_IN_COLOR,
+                        width: `${Math.round(summary.fraction * 100)}%`,
+                      },
+                    ]}
+                  />
+                </View>
               </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.addWalkInButton,
+                  { borderColor: DEFAULT_PRIMARY_COLOR },
+                ]}
+                onPress={() => setShowAddWalkIn(true)}
+              >
+                <Ionicons name="add" size={20} color={DEFAULT_PRIMARY_COLOR} />
+                <Text
+                  style={[styles.addWalkInText, { color: DEFAULT_PRIMARY_COLOR }]}
+                >
+                  Add walk-in
+                </Text>
+              </TouchableOpacity>
+
+              <SearchBar
+                placeholder="Search by name"
+                value={search}
+                onChangeText={setSearch}
+                style={styles.searchBar}
+              />
             </View>
 
-            {/* Going section */}
-            {goingUsers.length > 0 && (
-              <View style={styles.section}>
-                <Text
-                  style={[styles.sectionTitle, { color: colors.textSecondary }]}
-                >
-                  Going ({goingUsers.length})
-                </Text>
-                {goingUsers.map((user) => {
-                  const checkedIn = isCheckedIn(user.id, attendanceByUser);
-                  const pending = pendingUserIds.has(user.id);
-                  const record = attendanceByUser.get(user.id);
-                  return (
-                    <TouchableOpacity
-                      key={user.id}
-                      style={[
-                        styles.userRow,
-                        { backgroundColor: colors.surface },
-                      ]}
-                      onPress={() => handleToggle(user)}
-                      disabled={pending}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: checkedIn }}
-                      accessibilityLabel={`Check in ${user.firstName ?? ""} ${
-                        user.lastName ?? ""
-                      }`.trim()}
+            <ScrollView
+              style={styles.content}
+              contentContainerStyle={styles.contentContainer}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Going section */}
+              {visibleGoing.length > 0 && (
+                <View style={styles.section}>
+                  <Text
+                    style={[styles.sectionTitle, { color: colors.textSecondary }]}
+                  >
+                    Going ({visibleGoing.length})
+                  </Text>
+                  {visibleGoing.map((user) => {
+                    const checkedIn = isCheckedIn(user.id, attendanceByUser);
+                    const pending = pendingUserIds.has(user.id);
+                    const record = attendanceByUser.get(user.id);
+                    const hostedGuests = guestsByHost.get(user.id) ?? [];
+                    const slots = buildGuestSlots(user.guestCount, hostedGuests);
+                    return (
+                      <View key={user.id} style={styles.personBlock}>
+                        <TouchableOpacity
+                          style={[
+                            styles.userRow,
+                            { backgroundColor: colors.surface },
+                          ]}
+                          onPress={() => handleToggle(user)}
+                          disabled={pending}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: checkedIn }}
+                          accessibilityLabel={`Check in ${fullName(
+                            user.firstName,
+                            user.lastName
+                          )}`}
+                        >
+                          <Avatar
+                            name={fullName(user.firstName, user.lastName)}
+                            imageUrl={user.profileImage}
+                            size={48}
+                          />
+                          <View style={styles.userInfo}>
+                            <Text style={[styles.userName, { color: colors.text }]}>
+                              {user.firstName} {user.lastName}
+                            </Text>
+                            <Text
+                              style={[
+                                styles.userSub,
+                                {
+                                  color: checkedIn
+                                    ? CHECKED_IN_COLOR
+                                    : colors.textSecondary,
+                                },
+                              ]}
+                            >
+                              {checkedIn
+                                ? formatCheckInTime(record?.recordedAt)
+                                : "Tap to check in"}
+                            </Text>
+                          </View>
+                          {pending ? (
+                            <ActivityIndicator
+                              size="small"
+                              color={CHECKED_IN_COLOR}
+                              style={styles.checkControl}
+                            />
+                          ) : checkedIn ? (
+                            <Ionicons
+                              name="checkmark-circle"
+                              size={30}
+                              color={CHECKED_IN_COLOR}
+                              style={styles.checkControl}
+                            />
+                          ) : (
+                            <Ionicons
+                              name="ellipse-outline"
+                              size={30}
+                              color={colors.iconSecondary}
+                              style={styles.checkControl}
+                            />
+                          )}
+                        </TouchableOpacity>
+
+                        {/* Their guests */}
+                        {slots.map((slot) => (
+                          <GuestSlotRow
+                            key={slot.guest?._id ?? `empty-${slot.position}`}
+                            slot={slot}
+                            hostName={fullName(user.firstName, user.lastName)}
+                            pending={pendingGuestKeys.has(
+                              slot.guest?._id ?? `${user.id}:${slot.position}`
+                            )}
+                            onCheckIn={() => handleCheckInGuest(user, slot)}
+                            onRemove={() =>
+                              slot.guest && handleRemoveGuest(slot.guest._id)
+                            }
+                            onEditName={() =>
+                              slot.guest &&
+                              setNamingGuest({
+                                guestId: slot.guest._id,
+                                firstName: slot.guest.firstName ?? "",
+                                lastName: slot.guest.lastName ?? "",
+                              })
+                            }
+                          />
+                        ))}
+
+                        {/* An undeclared extra: someone brought a friend they
+                            didn't RSVP for. Only offered once the member is in,
+                            to keep the unchecked roster clean. */}
+                        {checkedIn && (
+                          <TouchableOpacity
+                            style={styles.addGuestLink}
+                            onPress={() =>
+                              handleCheckInGuest(user, {
+                                position: slots.length + 1,
+                                partySize: slots.length + 1,
+                              })
+                            }
+                            accessibilityRole="button"
+                            accessibilityLabel={`Add a guest for ${fullName(
+                              user.firstName,
+                              user.lastName
+                            )}`}
+                          >
+                            <Ionicons
+                              name="add"
+                              size={16}
+                              color={DEFAULT_PRIMARY_COLOR}
+                            />
+                            <Text
+                              style={[
+                                styles.addGuestLinkText,
+                                { color: DEFAULT_PRIMARY_COLOR },
+                              ]}
+                            >
+                              Add guest
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Walk-ins section */}
+              {visibleWalkIns.length > 0 && (
+                <View style={styles.section}>
+                  <Text
+                    style={[styles.sectionTitle, { color: colors.textSecondary }]}
+                  >
+                    Walk-ins ({visibleWalkIns.length})
+                  </Text>
+                  {visibleWalkIns.map((guest) => (
+                    <View
+                      key={guest._id}
+                      style={[styles.userRow, { backgroundColor: colors.surface }]}
                     >
                       <Avatar
-                        name={`${user.firstName ?? ""} ${user.lastName ?? ""}`}
-                        imageUrl={user.profileImage}
+                        name={fullName(guest.firstName, guest.lastName)}
                         size={48}
                       />
                       <View style={styles.userInfo}>
-                        <Text
-                          style={[styles.userName, { color: colors.text }]}
-                        >
-                          {user.firstName} {user.lastName}
+                        <Text style={[styles.userName, { color: colors.text }]}>
+                          {fullName(guest.firstName, guest.lastName) || "Guest"}
                         </Text>
-                        <Text
-                          style={[
-                            styles.userSub,
-                            {
-                              color: checkedIn
-                                ? CHECKED_IN_COLOR
-                                : colors.textSecondary,
-                            },
-                          ]}
-                        >
-                          {checkedIn
-                            ? formatCheckInTime(record?.recordedAt)
-                            : "Tap to check in"}
+                        <Text style={[styles.userSub, { color: CHECKED_IN_COLOR }]}>
+                          {formatCheckInTime(guest.recordedAt)}
                         </Text>
                       </View>
-                      {pending ? (
-                        <ActivityIndicator
-                          size="small"
-                          color={CHECKED_IN_COLOR}
-                          style={styles.checkControl}
-                        />
-                      ) : checkedIn ? (
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={30}
-                          color={CHECKED_IN_COLOR}
-                          style={styles.checkControl}
-                        />
-                      ) : (
-                        <Ionicons
-                          name="ellipse-outline"
-                          size={30}
-                          color={colors.iconSecondary}
-                          style={styles.checkControl}
-                        />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-
-            {/* Walk-ins section */}
-            {walkIns.length > 0 && (
-              <View style={styles.section}>
-                <Text
-                  style={[styles.sectionTitle, { color: colors.textSecondary }]}
-                >
-                  Walk-ins ({walkIns.length})
-                </Text>
-                {walkIns.map((guest) => (
-                  <View
-                    key={guest._id}
-                    style={[styles.userRow, { backgroundColor: colors.surface }]}
-                  >
-                    <Avatar
-                      name={`${guest.firstName ?? ""} ${guest.lastName ?? ""}`}
-                      size={48}
-                    />
-                    <View style={styles.userInfo}>
-                      <Text style={[styles.userName, { color: colors.text }]}>
-                        {guest.firstName} {guest.lastName}
-                      </Text>
-                      <Text
-                        style={[styles.userSub, { color: CHECKED_IN_COLOR }]}
+                      <TouchableOpacity
+                        onPress={() => handleRemoveGuest(guest._id)}
+                        style={styles.checkControl}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove walk-in ${fullName(
+                          guest.firstName,
+                          guest.lastName
+                        )}`}
                       >
-                        {formatCheckInTime(guest.recordedAt)}
-                      </Text>
+                        <Ionicons
+                          name="trash-outline"
+                          size={22}
+                          color={colors.iconSecondary}
+                        />
+                      </TouchableOpacity>
                     </View>
-                    <TouchableOpacity
-                      onPress={() => handleRemoveWalkIn(guest._id)}
-                      style={styles.checkControl}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remove walk-in ${
-                        guest.firstName ?? ""
-                      }`.trim()}
-                    >
-                      <Ionicons
-                        name="trash-outline"
-                        size={22}
-                        color={colors.iconSecondary}
-                      />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            )}
+                  ))}
+                </View>
+              )}
 
-            {/* Empty state — RSVP disabled or nobody going yet */}
-            {rosterIsEmpty && (
-              <View style={styles.emptyState}>
-                <Ionicons
-                  name="people-outline"
-                  size={48}
-                  color={colors.iconSecondary}
-                />
-                <Text
-                  style={[
-                    styles.emptyStateText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  No one has RSVPed yet. Add walk-ins to take a headcount.
-                </Text>
-              </View>
-            )}
+              {/* No search hits */}
+              {searchFoundNothing && (
+                <View style={styles.emptyState}>
+                  <Ionicons
+                    name="search-outline"
+                    size={48}
+                    color={colors.iconSecondary}
+                  />
+                  <Text
+                    style={[styles.emptyStateText, { color: colors.textSecondary }]}
+                  >
+                    No one matches "{search.trim()}". They may be a walk-in — add
+                    them above.
+                  </Text>
+                </View>
+              )}
 
-            {/* Add walk-in */}
-            <TouchableOpacity
-              style={[
-                styles.addWalkInButton,
-                { borderColor: DEFAULT_PRIMARY_COLOR },
-              ]}
-              onPress={() => setShowAddWalkIn(true)}
-            >
-              <Ionicons
-                name="add"
-                size={20}
-                color={DEFAULT_PRIMARY_COLOR}
-              />
-              <Text
-                style={[
-                  styles.addWalkInText,
-                  { color: DEFAULT_PRIMARY_COLOR },
-                ]}
-              >
-                Add walk-in
-              </Text>
-            </TouchableOpacity>
-          </ScrollView>
+              {/* Empty state — RSVP disabled or nobody going yet */}
+              {rosterIsEmpty && (
+                <View style={styles.emptyState}>
+                  <Ionicons
+                    name="people-outline"
+                    size={48}
+                    color={colors.iconSecondary}
+                  />
+                  <Text
+                    style={[styles.emptyStateText, { color: colors.textSecondary }]}
+                  >
+                    No one has RSVPed yet. Add walk-ins to take a headcount.
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+          </>
         )}
 
         {/* Add walk-in modal */}
@@ -453,6 +625,13 @@ function CheckInPage() {
           visible={showAddWalkIn}
           onClose={() => setShowAddWalkIn(false)}
           onAdd={handleAddWalkIn}
+        />
+
+        {/* Name a member's guest */}
+        <GuestNameModal
+          guest={namingGuest}
+          onClose={() => setNamingGuest(null)}
+          onSave={handleSaveGuestName}
         />
 
         {/* Restricted access modal */}
@@ -486,6 +665,222 @@ function CheckInPage() {
         </CustomModal>
       </View>
     </UserRoute>
+  );
+}
+
+/**
+ * One plus-one under a member: an empty slot to tap in, or a checked-in guest
+ * whose name can still be filled in. The name area and the check control are
+ * separate targets so editing a name never toggles the guest back out.
+ */
+function GuestSlotRow({
+  slot,
+  hostName,
+  pending,
+  onCheckIn,
+  onRemove,
+  onEditName,
+}: {
+  slot: GuestSlot;
+  hostName: string;
+  pending: boolean;
+  onCheckIn: () => void;
+  onRemove: () => void;
+  onEditName: () => void;
+}) {
+  const { colors } = useTheme();
+  const checkedIn = !!slot.guest;
+  const named = !!fullName(slot.guest?.firstName, slot.guest?.lastName);
+
+  return (
+    <View style={styles.guestRowWrapper}>
+      <View style={[styles.guestConnector, { backgroundColor: colors.border }]} />
+      <View style={[styles.guestRow, { backgroundColor: colors.surface }]}>
+        <TouchableOpacity
+          style={styles.guestLabel}
+          onPress={checkedIn ? onEditName : onCheckIn}
+          disabled={pending}
+          accessibilityRole="button"
+          accessibilityLabel={
+            checkedIn
+              ? `Edit name for ${guestSlotLabel(slot)}, guest of ${hostName}`
+              : `Check in ${guestSlotLabel(slot)} of ${hostName}`
+          }
+        >
+          <Ionicons
+            name="person-outline"
+            size={18}
+            color={colors.iconSecondary}
+          />
+          <View style={styles.guestText}>
+            <Text style={[styles.guestName, { color: colors.text }]}>
+              {guestSlotLabel(slot)}
+            </Text>
+            <Text
+              style={[
+                styles.guestSub,
+                {
+                  color: checkedIn ? CHECKED_IN_COLOR : colors.textSecondary,
+                },
+              ]}
+            >
+              {checkedIn
+                ? named
+                  ? formatCheckInTime(slot.guest?.recordedAt)
+                  : "Checked in · tap to add name"
+                : "Tap to check in"}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {pending ? (
+          <ActivityIndicator
+            size="small"
+            color={CHECKED_IN_COLOR}
+            style={styles.checkControl}
+          />
+        ) : (
+          <TouchableOpacity
+            onPress={checkedIn ? onRemove : onCheckIn}
+            style={styles.checkControl}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: checkedIn }}
+            accessibilityLabel={
+              checkedIn
+                ? `Undo check-in for ${guestSlotLabel(slot)}`
+                : `Check in ${guestSlotLabel(slot)}`
+            }
+          >
+            <Ionicons
+              name={checkedIn ? "checkmark-circle" : "ellipse-outline"}
+              size={26}
+              color={checkedIn ? CHECKED_IN_COLOR : colors.iconSecondary}
+            />
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Name (or rename) a guest who has already been checked in. Both fields are
+ * optional — dismissing leaves the guest checked in but unnamed, which is the
+ * right trade when there's a queue at the door.
+ */
+function GuestNameModal({
+  guest,
+  onClose,
+  onSave,
+}: {
+  guest: NamingGuest | null;
+  onClose: () => void;
+  onSave: (guest: NamingGuest) => Promise<void>;
+}) {
+  const { colors } = useTheme();
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  // Re-seed the fields whenever a different guest is opened.
+  React.useEffect(() => {
+    setFirstName(guest?.firstName ?? "");
+    setLastName(guest?.lastName ?? "");
+    setSubmitting(false);
+  }, [guest]);
+
+  const handleSave = async () => {
+    if (!guest || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSave({ ...guest, firstName, lastName });
+      onClose();
+    } catch (err) {
+      setSubmitting(false);
+      ToastManager.error(
+        err instanceof Error ? err.message : "Couldn't save guest name"
+      );
+    }
+  };
+
+  return (
+    <Modal
+      visible={!!guest}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        style={styles.modalRoot}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sheetTitle, { color: colors.text }]}>
+            Guest name
+          </Text>
+          <Text style={[styles.sheetSubtitle, { color: colors.textSecondary }]}>
+            They're already checked in — add a name if you have it.
+          </Text>
+
+          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+            First name
+          </Text>
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: colors.border, color: colors.text },
+            ]}
+            value={firstName}
+            onChangeText={setFirstName}
+            placeholder="First name"
+            placeholderTextColor={colors.textTertiary}
+            autoFocus
+          />
+
+          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
+            Last name (optional)
+          </Text>
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: colors.border, color: colors.text },
+            ]}
+            value={lastName}
+            onChangeText={setLastName}
+            placeholder="Last name"
+            placeholderTextColor={colors.textTertiary}
+            onSubmitEditing={handleSave}
+          />
+
+          <TouchableOpacity
+            style={[
+              styles.sheetButton,
+              { backgroundColor: colors.buttonPrimary },
+            ]}
+            onPress={handleSave}
+            disabled={submitting}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color={colors.textInverse} />
+            ) : (
+              <Text
+                style={[styles.sheetButtonText, { color: colors.textInverse }]}
+              >
+                Save name
+              </Text>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.sheetCancel} onPress={onClose}>
+            <Text style={{ color: colors.textSecondary }}>Skip for now</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -680,16 +1075,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  controls: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
   content: {
     flex: 1,
   },
   contentContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
   },
   summaryCard: {
     borderRadius: 12,
     padding: 16,
-    marginBottom: 24,
+    marginBottom: 12,
   },
   summaryCount: {
     fontSize: 20,
@@ -705,6 +1105,9 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
   },
+  searchBar: {
+    marginBottom: 12,
+  },
   section: {
     marginBottom: 24,
   },
@@ -714,12 +1117,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     textTransform: "uppercase",
   },
+  personBlock: {
+    marginBottom: 8,
+  },
   userRow: {
     flexDirection: "row",
     alignItems: "center",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 8,
   },
   userInfo: {
     flex: 1,
@@ -735,9 +1140,59 @@ const styles = StyleSheet.create({
   },
   checkControl: {
     marginLeft: 12,
-    minWidth: 30,
+    minWidth: 44,
+    minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
+  },
+  // Guest slots, indented under the member who brought them.
+  guestRowWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 4,
+    paddingLeft: 24,
+  },
+  guestConnector: {
+    width: 12,
+    height: 1,
+  },
+  guestRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  guestLabel: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 4,
+  },
+  guestText: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  guestName: {
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  guestSub: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  addGuestLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 6,
+    paddingLeft: 36,
+    paddingVertical: 6,
+  },
+  addGuestLinkText: {
+    fontSize: 14,
+    fontWeight: "600",
   },
   emptyState: {
     alignItems: "center",
@@ -758,8 +1213,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: "dashed",
     borderRadius: 12,
-    paddingVertical: 14,
-    marginTop: 4,
+    paddingVertical: 12,
+    marginBottom: 12,
   },
   addWalkInText: {
     fontSize: 16,
@@ -801,7 +1256,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#fff",
   },
-  // Add walk-in sheet
+  // Bottom sheets
   modalRoot: {
     flex: 1,
     justifyContent: "flex-end",
@@ -819,6 +1274,11 @@ const styles = StyleSheet.create({
   sheetTitle: {
     fontSize: 20,
     fontWeight: "700",
+    marginBottom: 16,
+  },
+  sheetSubtitle: {
+    fontSize: 14,
+    marginTop: -12,
     marginBottom: 16,
   },
   inputLabel: {
