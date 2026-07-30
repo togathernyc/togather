@@ -3944,6 +3944,25 @@ export default defineSchema({
     .index("by_increaseTransferId", ["increaseTransferId"]),
 
   /**
+   * One row per Stripe payout that has had an allocation pass run against
+   * it. Payout-LEVEL replay protection: a redelivered `payout.paid` webhook
+   * must not run a second allocation pass, because the first pass already
+   * marked its donations "allocated" — a second planAllocations would grab
+   * the NEXT pending donations and move money that payout never contained
+   * (Codex review, PR #653). Per-donation idempotency keys can't catch that;
+   * this table does. Insert-if-absent via claimPayout (functions/finance/
+   * jobs.ts) is transactional under Convex OCC.
+   */
+  processedStripePayouts: defineTable({
+    communityId: v.id("communities"),
+    stripePayoutId: v.string(),
+    payoutCents: v.number(),
+    processedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_payout", ["stripePayoutId"])
+    .index("by_community", ["communityId"]),
+
+  /**
    * Immutable audit trail for every non-ledger finance action (ADR-032 §4).
    * Money movement is already fully audited by append-only ledgerEntries;
    * this table covers the control plane: role grants/revocations, card

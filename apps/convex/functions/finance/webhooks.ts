@@ -330,6 +330,31 @@ export const logAccountMismatch = internalMutation({
   },
 });
 
+/**
+ * The base gift is what the donor chose to give; the PaymentIntent's amount
+ * is base + voluntary fee cover (createDonationIntent charges the sum).
+ * Splits the charged total back into the two parts recordDonationSucceeded
+ * expects. Malformed metadata (non-integer, negative, or cover >= total)
+ * normalizes to "no cover" so the ledger records exactly what Stripe
+ * charged, never more.
+ */
+export function splitDonationAmounts(
+  intentAmountCents: number,
+  rawFeeCoverCents: number,
+): { baseCents: number; feeCoverCents: number } {
+  if (
+    !Number.isInteger(rawFeeCoverCents) ||
+    rawFeeCoverCents < 0 ||
+    rawFeeCoverCents >= intentAmountCents
+  ) {
+    return { baseCents: intentAmountCents, feeCoverCents: 0 };
+  }
+  return {
+    baseCents: intentAmountCents - rawFeeCoverCents,
+    feeCoverCents: rawFeeCoverCents,
+  };
+}
+
 export async function handleFinanceStripeEvent(
   ctx: ActionCtx,
   event: StripeFinanceEvent,
@@ -393,14 +418,23 @@ export async function handleFinanceStripeEvent(
         return;
       }
 
+      // intent.amount is the TOTAL Stripe charged (base gift + fee cover,
+      // set by createDonationIntent). recordDonationSucceeded's contract
+      // takes the BASE gift and adds feeCoverCents itself when crediting
+      // the ledger — passing the total would double-count the fee cover
+      // (Codex review, PR #653).
+      const { baseCents, feeCoverCents } = splitDonationAmounts(
+        intent.amount,
+        Number(metadata.feeCoverCents ?? 0),
+      );
       await ctx.runMutation(
         internal.functions.finance.giving.recordDonationSucceeded,
         {
           paymentIntentId: intent.id,
           fundId: metadata.fundId,
           donorUserId: metadata.donorUserId || undefined,
-          amountCents: intent.amount,
-          feeCoverCents: Number(metadata.feeCoverCents ?? 0),
+          amountCents: baseCents,
+          feeCoverCents,
           communityId: metadata.communityId,
         },
       );

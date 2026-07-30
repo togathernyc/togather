@@ -195,6 +195,38 @@ export const recordAllocation = internalMutation({
  * Increase returns the same transfer for the same idempotency key instead
  * of moving the money twice.
  */
+/**
+ * Insert-if-absent claim on a Stripe payout id. Returns false when this
+ * payout has already had an allocation pass — a redelivered `payout.paid`
+ * webhook must NOT plan a second batch, because the first pass marked its
+ * donations "allocated" and a re-plan would grab the NEXT pending donations
+ * (money this payout never contained). Convex OCC makes the read+insert
+ * transactional, so two concurrent deliveries can't both claim it.
+ */
+export const claimPayout = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    stripePayoutId: v.string(),
+    payoutCents: v.number(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const existing = await ctx.db
+      .query("processedStripePayouts")
+      .withIndex("by_payout", (q) => q.eq("stripePayoutId", args.stripePayoutId))
+      .first();
+    if (existing) {
+      return false;
+    }
+    await ctx.db.insert("processedStripePayouts", {
+      communityId: args.communityId,
+      stripePayoutId: args.stripePayoutId,
+      payoutCents: args.payoutCents,
+      processedAt: now(),
+    });
+    return true;
+  },
+});
+
 export const runAllocation = internalAction({
   args: {
     communityId: v.id("communities"),
@@ -202,6 +234,21 @@ export const runAllocation = internalAction({
     payoutCents: v.number(),
   },
   handler: async (ctx, args) => {
+    const claimed = await ctx.runMutation(
+      internal.functions.finance.jobs.claimPayout,
+      {
+        communityId: args.communityId,
+        stripePayoutId: args.stripePayoutId,
+        payoutCents: args.payoutCents,
+      },
+    );
+    if (!claimed) {
+      console.log(
+        `[finance] runAllocation: payout ${args.stripePayoutId} already processed — replay ignored`,
+      );
+      return { allocated: 0 };
+    }
+
     const { plan } = await ctx.runMutation(
       internal.functions.finance.jobs.planAllocations,
       {
@@ -525,10 +572,14 @@ export const getCommunitiesWithStalePendingDonations = internalQuery({
 });
 
 /**
- * Cron entry point: for every community with pending donations older than
- * three days, runs an allocation pass covering all of them. `stripePayoutId`
- * is synthetic (`retry:...`) since this isn't triggered by a real Stripe
- * payout — it exists purely for the audit trail.
+ * Cron entry point: ALERT-ONLY. Donations still pending after three days
+ * mean a payout is delayed, held, or its webhook was missed — situations
+ * where fabricating a synthetic payout amount and moving money against the
+ * receiving Account would be wrong (the funds may simply not be there, or
+ * belong to a different payout; Codex review, PR #653). This backstop only
+ * surfaces the condition — an audit event per community for ops to
+ * investigate. Recovery is the real payout webhook arriving, or a manual
+ * runAllocation with the actual Stripe payout id and amount.
  */
 export const retryStaleAllocations = internalAction({
   args: {},
@@ -543,18 +594,37 @@ export const retryStaleAllocations = internalAction({
         internal.functions.finance.jobs.computePendingAllocationCents,
         { communityId },
       );
-      const payoutCents = pending.reduce(
+      const stalePendingCents = pending.reduce(
         (sum: number, p: PendingAllocation) => sum + p.pendingCents,
         0,
       );
-      if (payoutCents <= 0) continue;
+      if (stalePendingCents <= 0) continue;
 
-      await ctx.runAction(internal.functions.finance.jobs.runAllocation, {
-        communityId,
-        payoutCents,
-        stripePayoutId: `retry:${communityId}:${now()}`,
-      });
+      console.error(
+        `[finance] allocation stale: community ${communityId} has ${stalePendingCents} cents of donations pending allocation for >3 days`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.jobs.recordStaleAllocationAlert,
+        { communityId, stalePendingCents },
+      );
     }
+  },
+});
+
+export const recordStaleAllocationAlert = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    stalePendingCents: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      action: "allocation.stale_pending",
+      details: {
+        stalePendingCents: args.stalePendingCents,
+        thresholdDays: 3,
+      },
+    });
   },
 });
 

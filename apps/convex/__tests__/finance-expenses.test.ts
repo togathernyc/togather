@@ -1197,3 +1197,38 @@ describe("listExpenses / listMyExpenses", () => {
     expect(rows[0].amountCents).toBe(5000);
   });
 });
+
+describe("requireFundRole after a role upgrade (revoked-row shadowing fix)", () => {
+  test("re-granted user passes checks even though a revoked row exists", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedExpenseFixture(t);
+
+    // Grant cardholder, then UPGRADE to manager: grantFundRole revokes the
+    // first row and inserts a new active one, leaving BOTH rows under
+    // by_user_fund.
+    const leaderToken = await tokenFor(s.leaderUserId);
+    await t.mutation(api.functions.finance.roles.grantFundRole, {
+      token: leaderToken,
+      fundId: s.fundId,
+      userId: s.memberUserId,
+      role: "cardholder",
+    });
+    await t.mutation(api.functions.finance.roles.grantFundRole, {
+      token: leaderToken,
+      fundId: s.fundId,
+      userId: s.memberUserId,
+      role: "manager",
+    });
+
+    // The upgraded user must now pass a manager-gated call — before the fix,
+    // requireFundRole's .first() could pick the revoked cardholder row and
+    // wrongly deny them.
+    const upgradedToken = await tokenFor(s.memberUserId);
+    const pending = await t.query(api.functions.finance.expenses.listExpenses, {
+      token: upgradedToken,
+      fundId: s.fundId,
+      status: "pending",
+    });
+    expect(Array.isArray(pending)).toBe(true);
+  });
+});

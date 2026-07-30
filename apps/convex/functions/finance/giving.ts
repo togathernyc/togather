@@ -127,12 +127,16 @@ async function viewerIsFundManagerPlus(
   if (await isCommunityAdmin(ctx, fund.communityId, userId)) {
     return true;
   }
-  const roleDoc = await ctx.db
+  // Collect + filter (not .first()): a re-granted user has a revoked row
+  // plus an active one, and .first() could return the revoked grant.
+  const roleRows = await ctx.db
     .query("fundRoles")
     .withIndex("by_user_fund", (q: any) =>
       q.eq("userId", userId).eq("fundId", fund._id),
     )
-    .first();
+    .collect();
+  const roleDoc =
+    roleRows.find((r: Doc<"fundRoles">) => r.revokedAt === undefined) ?? null;
   return hasFundRole(roleDoc, "manager");
 }
 
@@ -438,6 +442,10 @@ export const createDonationIntent = action({
  * second `donations` row (which `postLedgerEntry`'s dedupe wouldn't catch,
  * since it only guards the ledger table).
  */
+// CONTRACT: `amountCents` is the BASE gift (what the donor chose), NOT the
+// total Stripe charged. The ledger credit below adds `feeCoverCents` on top,
+// so callers passing the charged total would double-count the cover — the
+// webhook layer splits the intent amount via splitDonationAmounts() first.
 export const recordDonationSucceeded = internalMutation({
   args: {
     paymentIntentId: v.string(),

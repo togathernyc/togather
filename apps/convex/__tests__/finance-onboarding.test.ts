@@ -867,3 +867,61 @@ describe("verifyIncreaseWebhookSignature", () => {
     expect(valid).toBe(false);
   });
 });
+
+describe("enableGroupGiving on a frozen fund (unarchive lifecycle)", () => {
+  test("reactivates the frozen fund of an un-archived group", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOnboardingFixture(t);
+    const { accessToken: token } = await generateTokens(s.adminUserId);
+
+    // Enable once, freeze (as the archive cascade does), then re-enable on
+    // the (now un-archived) group: same fund comes back active.
+    const { fundId } = await t.mutation(
+      api.functions.finance.onboarding.enableGroupGiving,
+      { token, communityId: s.communityId, groupId: s.groupId },
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "frozen" as const });
+    });
+
+    const again = await t.mutation(
+      api.functions.finance.onboarding.enableGroupGiving,
+      { token, communityId: s.communityId, groupId: s.groupId },
+    );
+    expect(again.fundId).toBe(fundId);
+    expect(again.created).toBe(false);
+
+    const fund = await t.run(async (ctx) => ctx.db.get(fundId));
+    expect(fund?.status).toBe("active");
+
+    const audits = await t.run(async (ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    expect(audits.some((a) => a.action === "fund.reactivated")).toBe(true);
+  });
+
+  test("closed funds are not silently reopened", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOnboardingFixture(t);
+    const { accessToken: token } = await generateTokens(s.adminUserId);
+
+    const { fundId } = await t.mutation(
+      api.functions.finance.onboarding.enableGroupGiving,
+      { token, communityId: s.communityId, groupId: s.groupId },
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fundId, { status: "closed" as const });
+    });
+
+    await expect(
+      t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
+        token,
+        communityId: s.communityId,
+        groupId: s.groupId,
+      }),
+    ).rejects.toThrow(/closed/i);
+  });
+});

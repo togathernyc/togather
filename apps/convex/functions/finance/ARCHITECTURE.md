@@ -110,6 +110,17 @@ Four finance test files in `apps/convex/__tests__/`:
 
 ## Known Seams & TODOs
 
+- **Allocation matches GROSS donation amounts against a NET payout.** A Stripe
+  payout is net of processing fees, while `planAllocations` sums gross
+  donation totals — so a payout will under-cover its own donations by roughly
+  the fee amount, leaving a tail of donations pending (surfaced by the
+  `allocation.stale_pending` alert; no money moves incorrectly because the
+  stale backstop is alert-only and payout replays are blocked by
+  `processedStripePayouts`). Before Phase-2 go-live, allocation must switch to
+  balance-transaction-based per-charge NET amounts (`stripe.balanceTransactions`
+  for the payout) instead of gross donation totals. Tracked from the Codex
+  review on PR #653.
+
 **Member payout destination stub** (expenses.ts `getPayoutDestination`) — Phase 2 follow-up. Currently returns `null` (every expense blocks at "no destination found"). Awaiting linking flow to ship; structure is in place (`payReimbursement` action + `recordReimbursementPaid` mutation + Increase ACH client calls). Replace the stub with a real lookup once the UI for members to link their bank account lands.
 
 **Card-charge expenses** (expenses.ts module comment) — Phase 3. Expense schema includes `kind: "card_charge"`, but today's implementation only handles reimbursements. Card charges are created by the card-transaction webhook; approval/payout flows are structured but stubbed (see the card_capture kind in ledger).

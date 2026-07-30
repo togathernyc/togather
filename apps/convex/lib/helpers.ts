@@ -293,12 +293,18 @@ export async function requireFundRole(
     return;
   }
 
-  const roleDoc = await ctx.db
+  // Collect + filter rather than .first(): grantFundRole's upsert keeps the
+  // old row (with revokedAt set) and inserts a new active one, so .first()
+  // could return the revoked grant and wrongly deny a re-granted user.
+  const roleRows = await ctx.db
     .query("fundRoles")
     .withIndex("by_user_fund", (q: any) =>
       q.eq("userId", userId).eq("fundId", fundId),
     )
-    .first();
+    .collect();
+  const roleDoc =
+    roleRows.find((r: { revokedAt?: number }) => r.revokedAt === undefined) ??
+    null;
 
   if (!hasFundRole(roleDoc, minRole)) {
     throw new Error(

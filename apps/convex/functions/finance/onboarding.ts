@@ -441,6 +441,30 @@ export const enableGroupGiving = mutation({
       // Unreachable — we either found it above or just inserted+read it back.
       throw new Error("enableGroupGiving: failed to load the group's fund");
     }
+
+    // A frozen fund on an UN-archived group is the unarchive case: archiving
+    // froze it (freezeFundForArchivedGroup), the group came back, and this
+    // toggle is how an admin turns giving back on. Reactivate the same fund
+    // (its history and balance are still valid — nothing was swept in
+    // Phase 1/2). Closed funds stay closed: their balance was swept, so a
+    // re-enable should mint a fresh fund — not supported until the sweep
+    // mutation exists (Phase 2 admin tooling), so reject with a clear error.
+    if (fund.status === "frozen" && !group.isArchived) {
+      await ctx.db.patch(fund._id, { status: "active", updatedAt: now() });
+      await logFinanceAudit(ctx, {
+        communityId: args.communityId,
+        fundId: fund._id,
+        actorUserId: userId,
+        action: "fund.reactivated",
+        details: { reason: "group_unarchived" },
+      });
+      fund = await ctx.db.get(fund._id);
+      if (!fund) throw new Error("enableGroupGiving: fund vanished mid-update");
+    } else if (fund.status === "closed") {
+      throw new Error(
+        "This group's fund was closed and its balance swept — re-opening it needs the Phase-2 fund tooling",
+      );
+    }
     const fundId = fund._id;
 
     // Grant finance_admin to every currently-active leader who doesn't

@@ -185,3 +185,46 @@ describe("group-giving feature flag (default off)", () => {
     expect(context?.fundId).toBe(s.fundId);
   });
 });
+
+// ============================================================================
+// Codex review fixes (PR #653) — regression coverage
+// ============================================================================
+
+import { splitDonationAmounts } from "../functions/finance/webhooks";
+import { internal } from "../_generated/api";
+
+describe("splitDonationAmounts (fee-cover double-count fix)", () => {
+  test("splits charged total back into base gift + cover", () => {
+    expect(splitDonationAmounts(10320, 320)).toEqual({
+      baseCents: 10000,
+      feeCoverCents: 320,
+    });
+  });
+
+  test("malformed cover normalizes to zero, never inflating the gift", () => {
+    expect(splitDonationAmounts(5000, -1)).toEqual({ baseCents: 5000, feeCoverCents: 0 });
+    expect(splitDonationAmounts(5000, 5000)).toEqual({ baseCents: 5000, feeCoverCents: 0 });
+    expect(splitDonationAmounts(5000, 12.5)).toEqual({ baseCents: 5000, feeCoverCents: 0 });
+    expect(splitDonationAmounts(5000, Number.NaN)).toEqual({ baseCents: 5000, feeCoverCents: 0 });
+  });
+});
+
+describe("claimPayout (payout.paid replay protection)", () => {
+  test("second claim of the same stripePayoutId returns false", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedWithoutFlag(t);
+
+    const first = await t.mutation(internal.functions.finance.jobs.claimPayout, {
+      communityId: s.communityId,
+      stripePayoutId: "po_replay_test",
+      payoutCents: 12345,
+    });
+    const second = await t.mutation(internal.functions.finance.jobs.claimPayout, {
+      communityId: s.communityId,
+      stripePayoutId: "po_replay_test",
+      payoutCents: 12345,
+    });
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
+});
