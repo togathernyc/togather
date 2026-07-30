@@ -176,6 +176,35 @@ describe('MessageList flag-on — replies in the timeline', () => {
     expect(passedTo(getByTestId('item-msg-parent')).threadCount).toBe(2);
   });
 
+  it('quotes an in-flight optimistic reply from the loaded parent', () => {
+    setMessages([parent]);
+    const { getByTestId } = render(
+      <MessageList
+        channelId={'ch-1' as any}
+        currentUserId={'user-1' as any}
+        optimisticMessages={[
+          {
+            _id: 'optimistic-1',
+            channelId: 'ch-1' as any,
+            senderId: 'user-1' as any,
+            content: "I've got them",
+            contentType: 'text',
+            parentMessageId: 'msg-parent' as any,
+            createdAt: T0 + 1000,
+            isDeleted: false,
+            senderName: 'Ada Nwosu',
+            _optimistic: true,
+            _status: 'sending',
+          },
+        ]}
+      />,
+    );
+    // No quote-less flash while the send is in flight.
+    expect(passedTo(getByTestId('item-optimistic-1'))).toMatchObject({
+      quotedParent: 'msg-parent',
+    });
+  });
+
   it('renders a reply whose parent is not in the loaded window', () => {
     // Pagination: the parent is hundreds of messages up. The quote still has
     // everything it needs, because the reply carries it — this is the job the

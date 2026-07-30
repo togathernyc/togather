@@ -387,9 +387,31 @@ export function MessageList({
         const prevMsg = index === 0 ? lastTimelineMsg : pendingOptimistic[index - 1];
         const isFirstInGroup = !prevMsg || optMsg.senderId !== prevMsg.senderId;
 
+        // Flag-on: an in-flight reply gets its quote NOW, synthesized from the
+        // parent already in the loaded page, instead of rendering quote-less
+        // for a round-trip and then popping one in. You had to see a message to
+        // tap reply on it, so the parent is essentially always loaded; when it
+        // genuinely isn't, the quote just arrives with the server echo.
+        let optimisticQuote: ReplyQuote | undefined;
+        if (whatsappShellEnabled && optMsg.parentMessageId) {
+          const parent = messages.find((m) => m._id === optMsg.parentMessageId);
+          if (parent) {
+            optimisticQuote = {
+              parentMessageId: parent._id,
+              parentDeleted: parent.isDeleted,
+              parentSenderId: parent.senderId,
+              parentSenderName: parent.senderName,
+              parentContent: parent.content ?? '',
+              parentAttachmentType: parent.attachments?.[0]?.type,
+            };
+          }
+        }
+
         items.push({
           type: 'message',
-          data: optMsg as any,
+          data: (optimisticQuote
+            ? { ...optMsg, replyQuote: optimisticQuote }
+            : optMsg) as any,
           isFirstInGroup,
           isLastInGroup: false,
           isOptimistic: true,
