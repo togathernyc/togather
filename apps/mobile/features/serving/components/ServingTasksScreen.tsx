@@ -20,6 +20,13 @@
  *
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
+ *
+ * A fifth pill, "Edit", appears only for a leader/community admin
+ * (`canAuthorPlanTasks` — mirrors the backend's `isGroupScheduler` gate on
+ * `createTask`/`updateTask`/`deleteTask`): `AuthorSection` lets them switch
+ * between the campus's roles and add/edit/delete THAT role's shared tasks
+ * in place, without leaving serving mode for the rostering grid. See the
+ * "Author" section comment below for the offline decision (online-only).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -41,6 +48,7 @@ import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
+import { useAuth } from "@providers/AuthProvider";
 import { ProgressBar } from "@components/ui/ProgressBar";
 import {
   WA_CELL_MIN_HEIGHT,
@@ -69,6 +77,12 @@ import {
   type ServingTaskKind,
 } from "@/stores/servingTaskQueue";
 import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
+import {
+  buildRoleCatalog,
+  canAuthorPlanTasks,
+  tasksForRole,
+  type RoleCatalogEntry,
+} from "../utils/taskAuthoring";
 
 type Segment = "before" | "during" | "after";
 
@@ -116,8 +130,12 @@ type MyServingTasks = {
 // Section switcher
 // ----------------------------------------------------------------------------
 
-/** The four views of the serving Tasks page. */
-type Section = "mine" | "shared" | "crew" | "allTeams";
+/**
+ * The views of the serving Tasks page. `author` is a fifth, leader-only view
+ * (added to the pill row only when `canAuthorPlanTasks` says so) that lets a
+ * leader add/edit/delete a role's shared tasks in place — see `AuthorSection`.
+ */
+type Section = "mine" | "shared" | "crew" | "allTeams" | "author";
 
 const SECTIONS: Array<{ key: Section; label: string }> = [
   { key: "mine", label: "Mine" },
@@ -125,6 +143,12 @@ const SECTIONS: Array<{ key: Section; label: string }> = [
   { key: "crew", label: "Crew" },
   { key: "allTeams", label: "All teams" },
 ];
+
+/** Appended to `SECTIONS` only for a leader/community admin — see `AuthorSection`. */
+const AUTHOR_SECTION: { key: Section; label: string } = {
+  key: "author",
+  label: "Edit",
+};
 
 /** A whole-team task (from `getSharedTeamTasks`). Completion is team-wide. A
  *  team-level task may span multiple teams (still one shared checkbox). */
@@ -380,7 +404,23 @@ export function ServingTasksScreen() {
 function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean }) {
   const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
+  const { user } = useAuth();
   const planId = plan.planId as Id<"eventPlans">;
+  const groupId = plan.groupId as Id<"groups">;
+
+  // Leader gate for the "Edit" surface — same source (and same check) the
+  // desktop grid uses to decide edit rights (`EventTasksScreen`'s `isLeader`),
+  // mirroring the backend's actual `createTask`/`updateTask`/`deleteTask` gate
+  // (`isGroupScheduler`: active group leader, or community admin) so the
+  // affordance only shows to users the backend will actually accept.
+  const groupData = useAuthenticatedQuery(
+    api.functions.groups.queries.getById,
+    { groupId },
+  ) as { userRole?: string } | null | undefined;
+  const canAuthor = canAuthorPlanTasks(
+    groupData?.userRole,
+    user?.is_admin === true,
+  );
 
   const tasks = useAuthenticatedQuery(
     api.functions.scheduling.eventTasks.getMyServingTasks,
@@ -711,7 +751,13 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
     shared: effShared && effShared.length > 0 ? String(effShared.length) : null,
     crew: effCrew && effCrew.length > 0 ? String(effCrew.length) : null,
     allTeams: effAllTeams && effAllTeams.length > 0 ? String(effAllTeams.length) : null,
+    author: null,
   };
+
+  // The "Edit" pill is leader-only — appended rather than always present, so
+  // a plain volunteer sees no authoring affordance at all (backend would
+  // reject their writes anyway; this keeps the UI honest about that).
+  const sections = canAuthor ? [...SECTIONS, AUTHOR_SECTION] : SECTIONS;
 
   return (
     <View style={styles.planSection}>
@@ -730,6 +776,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
 
         <SectionPills
           section={section}
+          sections={sections}
           counts={sectionCounts}
           onChange={setSection}
           colors={colors}
@@ -944,6 +991,17 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
             onToggleExpand={(id) =>
               setExpandedTeamId((cur) => (cur === id ? null : id))
             }
+            colors={colors}
+            primaryColor={primaryColor}
+            wa={wa}
+          />
+        )}
+
+        {section === "author" && canAuthor && (
+          <AuthorSection
+            planId={planId}
+            groupId={groupId}
+            isEffectivelyOffline={isEffectivelyOffline}
             colors={colors}
             primaryColor={primaryColor}
             wa={wa}
@@ -1391,6 +1449,7 @@ function AddTaskForm({
 
 function SectionPills({
   section,
+  sections,
   counts,
   onChange,
   colors,
@@ -1398,6 +1457,8 @@ function SectionPills({
   wa,
 }: {
   section: Section;
+  /** Which pills to show — the leader-only "Edit" pill is appended by the caller. */
+  sections: Array<{ key: Section; label: string }>;
   counts: Record<Section, string | null>;
   onChange: (s: Section) => void;
   colors: ThemeColors;
@@ -1411,7 +1472,7 @@ function SectionPills({
       style={styles.pillsScroll}
       contentContainerStyle={styles.pillsRow}
     >
-      {SECTIONS.map(({ key, label }) => {
+      {sections.map(({ key, label }) => {
         const active = key === section;
         const count = counts[key];
         return (
@@ -2100,6 +2161,572 @@ function TeamRow({
 }
 
 // ============================================================================
+// Author (leader-only): add/edit/delete a role's shared tasks, in place.
+//
+// Lets a leader add a task "real quick" to a role — or fix one that's wrong
+// for today — without leaving serving mode for the rostering grid (the WHY:
+// "you wouldn't need your laptop to do this... it's a little bit of friction
+// to add a task"). A role switcher lets them view the list AS a given role
+// sees it and author against that role, reusing the same `listPlanTasks` /
+// `createTask` / `updateTask` / `deleteTask` the desktop grid uses — no new
+// backend surface. Gated by `canAuthorPlanTasks` (mirrors the mutations' own
+// `isGroupScheduler` check) one level up, in `ServingTasksPlanSection`.
+//
+// OFFLINE: deliberately online-only. Unlike task *completion* (idempotent,
+// explicit desired-state booleans — see `servingTaskQueue.ts`), `createTask`
+// has no dedupe key, so replaying a queued create after reconnect would
+// create a DUPLICATE shared task every teammate in that role would see —
+// worse than the write simply failing. These are the plan's shared,
+// authoritative tasks (ADR-028's "when offline is NOT worth it": data
+// requiring server validation to be safe), so the add/edit/delete controls
+// are hidden (not merely disabled) while offline, with a banner explaining
+// why, rather than accepting input that silently gets dropped.
+// ============================================================================
+
+/** The slice of a `listPlanTasks` row this section reads. */
+type AuthorTask = {
+  _id: string;
+  roleIds: string[];
+  segment: Segment;
+  title: string;
+  sortOrder: number;
+};
+
+function AuthorSection({
+  planId,
+  groupId,
+  isEffectivelyOffline,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  planId: Id<"eventPlans">;
+  groupId: Id<"groups">;
+  isEffectivelyOffline: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  const teams = useAuthenticatedQuery(api.functions.scheduling.teams.listTeams, {
+    groupId,
+  }) as Array<{ _id: Id<"teams">; name: string }> | undefined;
+
+  const planTasks = useAuthenticatedQuery(
+    api.functions.scheduling.eventTasks.listPlanTasks,
+    { planId },
+  ) as AuthorTask[] | undefined;
+
+  const createTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.createTask,
+  );
+  const updateTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.updateTask,
+  );
+  const deleteTask = useAuthenticatedMutation(
+    api.functions.scheduling.eventTasks.deleteTask,
+  );
+
+  // Role catalog: one `listRoles` call per team, mirroring the desktop grid's
+  // `RoleLoader` pattern (EventTasksScreen.tsx) rather than a bespoke join
+  // query — "reuse whatever role list the plan already exposes."
+  const [rolesByTeam, setRolesByTeam] = useState<
+    Record<string, Array<{ _id: string; name: string }>>
+  >({});
+  const setRolesForTeam = useCallback(
+    (teamId: string, roles: Array<{ _id: string; name: string }>) => {
+      setRolesByTeam((prev) => ({ ...prev, [teamId]: roles }));
+    },
+    [],
+  );
+  const roleCatalog = useMemo(
+    () => buildRoleCatalog(teams ?? [], rolesByTeam),
+    [teams, rolesByTeam],
+  );
+
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedRoleId && roleCatalog.length > 0) {
+      setSelectedRoleId(roleCatalog[0].roleId);
+    }
+  }, [selectedRoleId, roleCatalog]);
+  const selectedRole: RoleCatalogEntry | undefined = roleCatalog.find(
+    (r) => r.roleId === selectedRoleId,
+  );
+
+  const bySegment = useMemo(
+    () => tasksForRole(planTasks ?? [], selectedRoleId),
+    [planTasks, selectedRoleId],
+  );
+
+  const [addingSegment, setAddingSegment] = useState<Segment | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+
+  if (teams === undefined || planTasks === undefined) {
+    // A brand-new (never-resolved) query stays undefined while offline (see
+    // ADR-028) — show the offline notice instead of spinning forever.
+    if (isEffectivelyOffline) {
+      return <AuthorOfflineNotice colors={colors} wa={wa} />;
+    }
+    return <SectionLoading colors={colors} />;
+  }
+
+  return (
+    <View style={styles.sectionBody}>
+      {/* Always mounted once `teams` resolves — regardless of whether the
+          catalog is empty YET — so each team's roles can load in and fill it.
+          (Rendering these only inside the "catalog non-empty" branch below
+          would be a chicken-and-egg deadlock: nothing would ever load.) */}
+      {teams.map((team) => (
+        <RoleLoader key={team._id} teamId={team._id} onLoaded={setRolesForTeam} />
+      ))}
+
+      {roleCatalog.length === 0 ? (
+        <SectionEmpty
+          icon="person-outline"
+          title="No roles yet"
+          subtitle="Add a role to one of this campus's teams to start authoring tasks."
+          colors={colors}
+          wa={wa}
+        />
+      ) : (
+        <AuthorRoleAndSegments
+          roleCatalog={roleCatalog}
+          selectedRoleId={selectedRoleId}
+          selectedRole={selectedRole}
+          onSelectRole={setSelectedRoleId}
+          bySegment={bySegment}
+          planId={planId}
+          isEffectivelyOffline={isEffectivelyOffline}
+          addingSegment={addingSegment}
+          setAddingSegment={setAddingSegment}
+          editingTaskId={editingTaskId}
+          setEditingTaskId={setEditingTaskId}
+          createTask={createTask}
+          updateTask={updateTask}
+          deleteTask={deleteTask}
+          colors={colors}
+          primaryColor={primaryColor}
+          wa={wa}
+        />
+      )}
+    </View>
+  );
+}
+
+/**
+ * The role switcher + Before/During/After segments — split out from
+ * `AuthorSection` purely so that component's early-return ladder (loading /
+ * offline / empty-catalog) stays simple; this is the "catalog non-empty"
+ * render, unchanged in behavior from being inline.
+ */
+function AuthorRoleAndSegments({
+  roleCatalog,
+  selectedRoleId,
+  selectedRole,
+  onSelectRole,
+  bySegment,
+  planId,
+  isEffectivelyOffline,
+  addingSegment,
+  setAddingSegment,
+  editingTaskId,
+  setEditingTaskId,
+  createTask,
+  updateTask,
+  deleteTask,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  roleCatalog: RoleCatalogEntry[];
+  selectedRoleId: string | null;
+  selectedRole: RoleCatalogEntry | undefined;
+  onSelectRole: (roleId: string) => void;
+  bySegment: Record<Segment, AuthorTask[]>;
+  planId: Id<"eventPlans">;
+  isEffectivelyOffline: boolean;
+  addingSegment: Segment | null;
+  setAddingSegment: (s: Segment | null) => void;
+  editingTaskId: string | null;
+  setEditingTaskId: (id: string | null) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  createTask: (args: any) => Promise<unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  updateTask: (args: any) => Promise<unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  deleteTask: (args: any) => Promise<unknown>;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  return (
+    <>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.pillsScroll}
+        contentContainerStyle={styles.pillsRow}
+      >
+        {roleCatalog.map((role) => {
+          const active = role.roleId === selectedRoleId;
+          return (
+            <Pressable
+              key={role.roleId}
+              onPress={() => onSelectRole(role.roleId)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks`}
+              style={[
+                styles.pill,
+                wa && waStyles.pill,
+                active
+                  ? { backgroundColor: primaryColor, borderColor: primaryColor }
+                  : { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.pillText,
+                  wa && waStyles.pillText,
+                  { color: active ? "#fff" : colors.textSecondary },
+                ]}
+              >
+                {role.teamName} · {role.roleName}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {selectedRole ? (
+        <Text
+          style={[
+            styles.authorHint,
+            wa && waStyles.authorHint,
+            { color: colors.textTertiary },
+          ]}
+        >
+          Editing what {selectedRole.roleName} sees — changes are visible to everyone in that role.
+        </Text>
+      ) : null}
+
+      {isEffectivelyOffline ? <AuthorOfflineNotice colors={colors} wa={wa} /> : null}
+
+      {SEGMENTS.map(({ key, label }) => {
+        const segTasks = bySegment[key];
+        return (
+          <View key={key} style={[styles.segment, wa && waStyles.segment]}>
+            <Text
+              style={[
+                styles.segmentTitle,
+                wa && waStyles.segmentTitle,
+                { color: colors.textSecondary },
+              ]}
+            >
+              {wa ? label : label.toUpperCase()}
+            </Text>
+            <View
+              style={[
+                styles.card,
+                wa && waStyles.card,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              {segTasks.length === 0 ? (
+                <Text
+                  style={[
+                    styles.cardEmpty,
+                    wa && waStyles.cardEmpty,
+                    { color: colors.textTertiary },
+                  ]}
+                >
+                  No tasks yet for this role.
+                </Text>
+              ) : (
+                segTasks.map((task, i) => (
+                  <AuthorTaskRow
+                    key={task._id}
+                    title={task.title}
+                    first={i === 0}
+                    editable={!isEffectivelyOffline}
+                    editing={editingTaskId === task._id}
+                    colors={colors}
+                    primaryColor={primaryColor}
+                    wa={wa}
+                    onStartEdit={() => setEditingTaskId(task._id)}
+                    onCancelEdit={() => setEditingTaskId(null)}
+                    onSave={async (title) => {
+                      try {
+                        await updateTask({
+                          taskId: task._id as Id<"eventTasks">,
+                          title,
+                        });
+                        setEditingTaskId(null);
+                      } catch (err) {
+                        notify(
+                          "Couldn't save task",
+                          String((err as Error)?.message ?? err),
+                        );
+                      }
+                    }}
+                    onDelete={async () => {
+                      try {
+                        await deleteTask({ taskId: task._id as Id<"eventTasks"> });
+                        setEditingTaskId(null);
+                      } catch (err) {
+                        notify(
+                          "Couldn't delete task",
+                          String((err as Error)?.message ?? err),
+                        );
+                      }
+                    }}
+                  />
+                ))
+              )}
+            </View>
+
+            {isEffectivelyOffline ? null : addingSegment === key ? (
+              <AuthorAddTaskForm
+                colors={colors}
+                primaryColor={primaryColor}
+                wa={wa}
+                onCancel={() => setAddingSegment(null)}
+                onSubmit={async (title) => {
+                  if (!selectedRole) return;
+                  try {
+                    await createTask({
+                      planId,
+                      teamIds: [selectedRole.teamId as Id<"teams">],
+                      roleIds: [selectedRole.roleId as Id<"teamRoles">],
+                      segment: key,
+                      title,
+                      howToType: "none",
+                    });
+                    setAddingSegment(null);
+                  } catch (err) {
+                    notify("Couldn't add task", String((err as Error)?.message ?? err));
+                  }
+                }}
+              />
+            ) : (
+              <Pressable
+                onPress={() => setAddingSegment(key)}
+                style={styles.addButton}
+                accessibilityRole="button"
+                accessibilityLabel={`Add a ${label} task for ${selectedRole?.roleName ?? "this role"}`}
+              >
+                <Ionicons name="add" size={17} color={primaryColor} />
+                <Text
+                  style={[
+                    styles.addButtonText,
+                    wa && waStyles.addButtonText,
+                    { color: primaryColor },
+                  ]}
+                >
+                  Add task
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
+    </>
+  );
+}
+
+/** Loads one team's roles and reports them up — mirrors `EventTasksScreen`'s
+ *  `RoleLoader`, rendered once per team so the role switcher fills in without
+ *  a bespoke join query. */
+function RoleLoader({
+  teamId,
+  onLoaded,
+}: {
+  teamId: Id<"teams">;
+  onLoaded: (teamId: string, roles: Array<{ _id: string; name: string }>) => void;
+}) {
+  const roles = useAuthenticatedQuery(api.functions.scheduling.roles.listRoles, {
+    teamId,
+  }) as Array<{ _id: Id<"teamRoles">; name: string }> | undefined;
+
+  useEffect(() => {
+    if (roles) {
+      onLoaded(
+        teamId as string,
+        roles.map((r) => ({ _id: r._id as string, name: r.name })),
+      );
+    }
+  }, [roles, teamId, onLoaded]);
+
+  return null;
+}
+
+/** One task row in the Edit surface: title, tap-to-edit (title only) when
+ *  online; read-only when offline (see the OFFLINE note above). */
+function AuthorTaskRow({
+  title,
+  first,
+  editable,
+  editing,
+  colors,
+  primaryColor,
+  wa,
+  onStartEdit,
+  onCancelEdit,
+  onSave,
+  onDelete,
+}: {
+  title: string;
+  first: boolean;
+  editable: boolean;
+  editing: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: (title: string) => void;
+  onDelete: () => void;
+}) {
+  const [editTitle, setEditTitle] = useState(title);
+
+  return (
+    <View
+      style={[
+        styles.taskRow,
+        wa && waStyles.taskRow,
+        !first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+      ]}
+    >
+      <Pressable
+        style={styles.taskBody}
+        onPress={editable ? onStartEdit : undefined}
+        disabled={!editable}
+        accessibilityRole={editable ? "button" : undefined}
+        accessibilityLabel={editable ? `Edit ${title}` : title}
+      >
+        <Text style={[styles.taskTitle, wa && waStyles.taskTitle, { color: colors.text }]}>
+          {title}
+        </Text>
+      </Pressable>
+
+      {editing && editable ? (
+        <View style={[styles.taskDetail, wa && waStyles.taskDetail, { paddingLeft: 0 }]}>
+          <View style={styles.editForm}>
+            <TextInput
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder="Task title"
+              placeholderTextColor={colors.textTertiary}
+              autoFocus
+              style={[
+                styles.input,
+                wa && waStyles.input,
+                { color: colors.text, borderColor: colors.border },
+              ]}
+            />
+            <View style={styles.editActions}>
+              <Pressable onPress={onCancelEdit} style={styles.textButton}>
+                <Text style={{ color: colors.textSecondary }}>Cancel</Text>
+              </Pressable>
+              <Pressable onPress={onDelete} style={styles.textButton}>
+                <Text style={{ color: colors.error ?? "#c00" }}>Delete</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onSave(editTitle.trim() || title)}
+                style={styles.textButton}
+              >
+                <Text style={{ color: primaryColor, fontWeight: "600" }}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Inline "add a task" form for the Edit surface — title only (no how-to
+ *  authoring: friction removal, not deepening what a task IS — see the work
+ *  order's non-goals). */
+function AuthorAddTaskForm({
+  colors,
+  primaryColor,
+  wa,
+  onCancel,
+  onSubmit,
+}: {
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+  onCancel: () => void;
+  onSubmit: (title: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const canSubmit = title.trim().length > 0;
+
+  return (
+    <View style={[styles.addForm, wa && waStyles.addForm, { borderColor: colors.border }]}>
+      <TextInput
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Task title"
+        placeholderTextColor={colors.textTertiary}
+        autoFocus
+        style={[
+          styles.input,
+          wa && waStyles.input,
+          { color: colors.text, borderColor: colors.border },
+        ]}
+      />
+      <View style={styles.editActions}>
+        <Pressable onPress={onCancel} style={styles.textButton}>
+          <Text style={{ color: colors.textSecondary }}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          disabled={!canSubmit}
+          onPress={() => onSubmit(title.trim())}
+          style={styles.textButton}
+        >
+          <Text
+            style={{
+              color: canSubmit ? primaryColor : colors.textTertiary,
+              fontWeight: "600",
+            }}
+          >
+            Add
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** Explains why the Edit surface's write controls are hidden — authoring is
+ *  deliberately online-only (see the OFFLINE note above), not silently
+ *  dropped or queued. */
+function AuthorOfflineNotice({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
+  return (
+    <View
+      style={[
+        styles.noticeCard,
+        wa && waStyles.noticeCard,
+        { backgroundColor: colors.surface, borderColor: colors.border, marginHorizontal: 16 },
+      ]}
+    >
+      <Ionicons name="cloud-offline-outline" size={20} color={colors.textSecondary} />
+      <View style={styles.noticeBody}>
+        <Text style={[styles.noticeMessage, wa && waStyles.noticeMessage, { color: colors.text }]}>
+          You're offline
+        </Text>
+        <Text style={[styles.noticeHint, wa && waStyles.noticeHint, { color: colors.textTertiary }]}>
+          Adding or changing shared tasks needs a connection. Reconnect to make changes.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ============================================================================
 // Shared bits for the read-only sections
 // ============================================================================
 
@@ -2349,6 +2976,14 @@ const styles = StyleSheet.create({
   noticeMessage: { fontSize: 14, lineHeight: 20, fontWeight: "500" },
   noticeHint: { fontSize: 13, lineHeight: 18, marginTop: 4 },
 
+  // Author (leader "Edit" surface) role-switcher caption
+  authorHint: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+
   // Task rows
   taskRow: { paddingHorizontal: 14, paddingVertical: 12 },
   taskRowMain: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
@@ -2549,6 +3184,7 @@ const waStyles = StyleSheet.create({
   noticeCard: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: WA_CELL_PADDING },
   noticeMessage: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 22, fontWeight: WA_WEIGHT_REGULAR },
   noticeHint: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18 },
+  authorHint: { fontSize: WA_TYPE_FOOTNOTE, marginHorizontal: WA_GROUP_MARGIN },
 
   // Task rows (§3.2 cell anatomy)
   taskRow: {
