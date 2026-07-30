@@ -474,6 +474,9 @@ export const rosterMatrix = query({
           userId: m.userId,
           userName: userName(uid, u),
           isLeader: isLeaderRole(m.role),
+          // Their phone, if on file — powers the People view's one-tap
+          // "text them" reach-out (falls back to DM when absent).
+          phone: u?.phone ?? null,
           availableCount,
           servingTotal,
           doubleBooked,

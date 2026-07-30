@@ -351,6 +351,47 @@ describe("rosterMatrix", () => {
       }),
     ).rejects.toThrow(ConvexError);
   });
+
+  // Powers the People view's one-tap "text them" reach-out — falls back to
+  // DM (client-side) when there's no usable number.
+  it("surfaces each member's phone for the one-tap reach-out (null when absent)", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // channelMemberId is seeded with a phone (fixtures.ts); add a group
+    // member with none on file to prove the fallback.
+    const noPhoneUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        firstName: "Noah",
+        lastName: "Nophone",
+        isActive: true,
+        roles: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: world.groupId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+      return userId;
+    });
+
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+
+    const withPhone = m.members.find(
+      (mm) => mm.userId === world.channelMemberId,
+    );
+    expect(withPhone?.phone).toBe("+12025550003");
+
+    const withoutPhone = m.members.find((mm) => mm.userId === noPhoneUserId);
+    expect(withoutPhone?.phone).toBeNull();
+  });
 });
 
 describe("roster group filter", () => {
