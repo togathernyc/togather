@@ -235,6 +235,15 @@ The group giving feature (ADR-032) enables communities to accept donations via S
 
 The endpoint verifies an incoming signature against either secret (`apps/convex/http.ts`).
 
+**Revoking `STRIPE_CONNECT_WEBHOOK_SECRET`**: the sync script deliberately skips
+absent keys (so a transient 1Password failure never wipes a live value), which
+means deleting the item from 1Password does NOT clear the value already in
+Convex. To actually revoke a compromised/retired connect signing secret, either
+**rotate it** (roll the secret on the Stripe destination, put the new value in
+1Password, re-sync — the old value is overwritten) or **remove it explicitly**
+with `npx convex env remove STRIPE_CONNECT_WEBHOOK_SECRET` on each deployment.
+Deleting the Stripe destination alone is not sufficient if the secret leaked.
+
 **Sandbox setup for dev/staging**:
 1. Create Increase sandbox API keys at https://dashboard.increase.com/settings/api (requires account)
 2. Add to 1Password vault `Togather` with `staging` field only: `INCREASE_API_KEY` (e.g., `key_sandbox_...`)
