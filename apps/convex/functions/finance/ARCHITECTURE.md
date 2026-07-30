@@ -110,6 +110,14 @@ Four finance test files in `apps/convex/__tests__/`:
 
 ## Known Seams & TODOs
 
+- **Community withdrawals + solvency warnings are Phase-2 requirements** —
+  see ADR-032 "Phase 2 requirements": withdrawals draw from the General
+  fund's Account only, capped at settled (not ledger) balance; explicit
+  group-fund sweeps require double confirmation + notification to the fund's
+  finance admins and managers; payout-destination drift (church re-pointing Stripe payouts
+  away from the managed Increase account via the Express Dashboard) must be
+  detected and surfaced.
+
 - **Allocation matches GROSS donation amounts against a NET payout.** A Stripe
   payout is net of processing fees, while `planAllocations` sums gross
   donation totals — so a payout will under-cover its own donations by roughly
