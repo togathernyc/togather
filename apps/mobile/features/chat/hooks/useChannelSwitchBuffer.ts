@@ -34,7 +34,7 @@
  * only spans the sub-second window between two live subscriptions.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Id } from '@services/api/convex';
 
 /**
@@ -42,6 +42,15 @@ import type { Id } from '@services/api/convex';
  * tabs; this is a guard against unbounded growth, not a tuning knob.
  */
 const MAX_BUFFERED_CHANNELS = 8;
+
+/**
+ * Longest we'll show a *different* channel's list. A switch normally
+ * resolves in well under a second; if the socket is down the query never
+ * resolves at all, and holding forever would strand the user staring at
+ * (and unable to scroll) the channel they just left. Past this we fall back
+ * to the plain loading/empty branches.
+ */
+const MAX_CROSS_CHANNEL_HOLD_MS = 2500;
 
 interface ChannelSwitchBufferInput<T> {
   /** Gate. When false the hook is a pass-through (flag-off parity). */
@@ -76,6 +85,9 @@ export function useChannelSwitchBuffer<T>({
     messages: T[];
   }>({ channelId: null, messages: [] });
 
+  // Channel whose cross-channel hold has timed out (see the constant).
+  const [holdExpiredFor, setHoldExpiredFor] = useState<string | null>(null);
+
   const hasMessages = messages.length > 0;
 
   useEffect(() => {
@@ -104,33 +116,52 @@ export function useChannelSwitchBuffer<T>({
     }
   }, [enabled, channelId, messages, hasMessages, isLoading]);
 
-  if (!enabled) {
-    return { messages, channelId, isSwitching: false };
+  // Pass-through: live data, a confirmed-empty channel, or flag-off.
+  let resolved: ChannelSwitchBufferResult<T> = {
+    messages,
+    channelId,
+    isSwitching: false,
+  };
+
+  if (enabled && !hasMessages && isLoading && channelId) {
+    const buffered = perChannelRef.current.get(channelId);
+    const previous = lastRenderedRef.current;
+
+    if (buffered && buffered.length > 0) {
+      // This channel's own content — fully interactive, not a switch.
+      resolved = { messages: buffered, channelId, isSwitching: false };
+    } else if (
+      holdExpiredFor !== channelId &&
+      previous.channelId &&
+      previous.channelId !== channelId &&
+      previous.messages.length > 0
+    ) {
+      resolved = {
+        messages: previous.messages,
+        channelId: previous.channelId,
+        isSwitching: true,
+      };
+    }
   }
 
-  // Live data (or a confirmed-empty channel) always wins over the buffer.
-  if (hasMessages || !isLoading || !channelId) {
-    return { messages, channelId, isSwitching: false };
-  }
+  // Bound how long a cross-channel hold can last. Only armed while actually
+  // holding, and torn down the moment the real page arrives.
+  useEffect(() => {
+    if (!resolved.isSwitching || !channelId) return;
+    const timer = setTimeout(
+      () => setHoldExpiredFor(channelId),
+      MAX_CROSS_CHANNEL_HOLD_MS
+    );
+    return () => clearTimeout(timer);
+  }, [resolved.isSwitching, channelId]);
 
-  const buffered = perChannelRef.current.get(channelId);
-  if (buffered && buffered.length > 0) {
-    // Same channel's own content — fully interactive, not a switch.
-    return { messages: buffered, channelId, isSwitching: false };
-  }
+  // Re-arm once this channel finally has content, so a later switch back
+  // isn't permanently disqualified by one bad network moment.
+  useEffect(() => {
+    if (hasMessages && holdExpiredFor === channelId) {
+      setHoldExpiredFor(null);
+    }
+  }, [hasMessages, holdExpiredFor, channelId]);
 
-  const previous = lastRenderedRef.current;
-  if (
-    previous.channelId &&
-    previous.channelId !== channelId &&
-    previous.messages.length > 0
-  ) {
-    return {
-      messages: previous.messages,
-      channelId: previous.channelId,
-      isSwitching: true,
-    };
-  }
-
-  return { messages, channelId, isSwitching: false };
+  return resolved;
 }

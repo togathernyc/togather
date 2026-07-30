@@ -9,7 +9,7 @@
  * bare surface. Flag-off must keep today's blank loading branch exactly.
  */
 import React from 'react';
-import { render } from '@testing-library/react-native';
+import { act, render } from '@testing-library/react-native';
 
 let mockShellEnabled = false;
 let mockMessagesResult: any = {
@@ -174,6 +174,29 @@ describe('MessageList channel switching', () => {
       );
       expect(queryByTestId('row-h1')).toBeTruthy();
       expect(queryByTestId('row-opt-1')).toBeTruthy();
+    });
+
+    it('stops holding the other channel if the new one never resolves', () => {
+      jest.useFakeTimers();
+      try {
+        mockMessagesResult = loaded(GENERAL);
+        const { rerender, queryByTestId } = renderList('ch-general');
+
+        mockMessagesResult = loading();
+        rerender(
+          <MessageList channelId={'ch-helpers' as any} currentUserId={'user-1' as any} />
+        );
+        expect(queryByTestId('row-g1')).toBeTruthy();
+
+        // Socket never comes back — don't strand the user on a channel they
+        // left, with taps and scrolling disabled.
+        act(() => {
+          jest.advanceTimersByTime(3000);
+        });
+        expect(queryByTestId('row-g1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('still shows the blank loading branch on a first-ever load', () => {
