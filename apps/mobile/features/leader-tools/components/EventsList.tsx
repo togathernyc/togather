@@ -12,8 +12,41 @@ import { AppImage } from "@components/ui/AppImage";
 import { useQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { format } from "date-fns";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
+import { WaSectionLabel } from "@components/wa/WaSectionLabel";
+import {
+  WA_GROUP_MARGIN,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_ACTION_CARD_RADIUS,
+} from "@components/wa/metrics";
+
+/**
+ * Event-card metrics. The horizontal picker centers the selected card, so the
+ * scroll math and the card styles have to agree on one width — keep these the
+ * single source for both.
+ */
+const CARD_WIDTH = 132;
+const CARD_GAP = 12;
+const CARD_IMAGE_HEIGHT = 76;
+const CARD_RADIUS = WA_ACTION_CARD_RADIUS;
+
+/**
+ * Horizontal scroll offset that centers the card at `index` in a viewport of
+ * `viewportWidth`. Clamped at 0 so the first cards don't scroll past the strip's
+ * leading edge. Exported for test — the arithmetic has to track the card
+ * metrics above, and it silently mis-centers if it drifts.
+ */
+export function eventCardScrollOffset(
+  index: number,
+  viewportWidth: number
+): number {
+  const cardCenter =
+    WA_GROUP_MARGIN + index * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2;
+  return Math.max(0, cardCenter - viewportWidth / 2);
+}
 
 interface EventsListProps {
   groupId: string;
@@ -184,20 +217,8 @@ export function EventsList({
         return;
       }
 
-      // Calculate card width (minWidth 120 + padding 16*2 = 152, plus gap 12)
-      const cardWidth = 152;
-      const gap = 12;
-      const initialPadding = 20;
-
-      // Calculate position to center the card in viewport
-      // Position = card center - viewport center
-      const cardCenter =
-        initialPadding + index * (cardWidth + gap) + cardWidth / 2;
-      const viewportCenter = viewportWidth / 2;
-      const scrollPosition = Math.max(0, cardCenter - viewportCenter);
-
       scrollViewRef.current.scrollTo({
-        x: scrollPosition,
+        x: eventCardScrollOffset(index, viewportWidth),
         animated: false,
       });
       hasScrolledToMostRecent.current = true;
@@ -264,7 +285,7 @@ export function EventsList({
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
+        <WaSectionLabel variant="header">Events</WaSectionLabel>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading events...</Text>
@@ -276,7 +297,7 @@ export function EventsList({
   if (sortedEvents.length === 0) {
     return (
       <View style={styles.container}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
+        <WaSectionLabel variant="header">Events</WaSectionLabel>
         <View style={styles.emptyState}>
           <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>No events scheduled</Text>
         </View>
@@ -286,7 +307,7 @@ export function EventsList({
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Events</Text>
+      <WaSectionLabel variant="header">Events</WaSectionLabel>
       <View onLayout={handleLayout} style={styles.scrollViewContainer}>
         <ScrollView
           ref={scrollViewRef}
@@ -320,9 +341,13 @@ interface EventCardProps {
 }
 
 // EventCard is now a pure presentational component - no API calls
-// Stats are passed from parent via the event prop (already fetched in bulk)
-function EventCard({ event, isSelected, onPress }: EventCardProps) {
-  const { colors } = useTheme();
+// Stats are passed from parent via the event prop (already fetched in bulk).
+// Exported so the `/ui-test/attendance` visual harness can render the picker
+// without a Convex backend.
+export function EventCard({ event, isSelected, onPress }: EventCardProps) {
+  const { colors, isDark } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const accent = waAccentPalette(primaryColor, isDark).accent;
   if (!event.date) {
     return null; // Skip rendering if date is missing
   }
@@ -346,63 +371,63 @@ function EventCard({ event, isSelected, onPress }: EventCardProps) {
 
   return (
     <TouchableOpacity
-      style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }, isSelected && [styles.cardSelected, { backgroundColor: colors.surfaceSecondary }]]}
+      style={[
+        styles.card,
+        { backgroundColor: colors.surfaceGrouped, borderColor: colors.separator },
+        // Colour only — changing borderWidth on a fixed-width card would shrink
+        // the content box and nudge the title as you select through the strip.
+        isSelected && { borderColor: accent },
+      ]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: isSelected }}
     >
       {/* Cover Image */}
       {event.coverImageUrl ? (
         <AppImage
           source={event.coverImageUrl}
-          style={[styles.cardImage, { backgroundColor: colors.surfaceSecondary }]}
+          style={[styles.cardImage, { backgroundColor: colors.backgroundGrouped }]}
           resizeMode="cover"
           optimizedWidth={400}
           placeholder={{ type: 'icon', icon: 'calendar' }}
         />
       ) : (
-        <View style={[styles.cardImagePlaceholder, { backgroundColor: colors.border }]}>
+        <View style={[styles.cardImagePlaceholder, { backgroundColor: colors.backgroundGrouped }]}>
           <Text style={[styles.cardImagePlaceholderText, { color: colors.textTertiary }]}>
-            {format(eventDate, "MMM")}
+            {format(eventDate, "MMM d")}
           </Text>
         </View>
       )}
 
-      {/* Event Title - Always shown */}
-      <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={2}>
-        {eventTitle}
-      </Text>
+      <View style={styles.cardBody}>
+        {/* Event Title - Always shown */}
+        <Text style={[styles.cardName, { color: colors.text }]} numberOfLines={2}>
+          {eventTitle}
+        </Text>
 
-      {/* Date - Always shown */}
-      <Text style={[styles.cardDate, { color: colors.textSecondary }]}>{formattedDate}</Text>
-
-      {/* Attendee Count (only show if > 0) */}
-      {event.isPast && event.attendanceCount > 0 && (
-        <View style={styles.cardStats}>
-          <Text style={[styles.cardStatsValue, { color: colors.text }]}>{event.attendanceCount}</Text>
-          <Text style={[styles.cardStatsLabel, { color: colors.textSecondary }]}>
-            {event.attendanceCount === 1 ? "person" : "people"}
-          </Text>
-        </View>
-      )}
+        {/* Date + headcount share one metadata line so the card stays short */}
+        <Text style={[styles.cardMeta, { color: colors.textTertiary }]} numberOfLines={1}>
+          {formattedDate}
+          {event.isPast && event.attendanceCount > 0
+            ? ` · ${event.attendanceCount}`
+            : ""}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    marginBottom: 12,
-    paddingHorizontal: 20,
+    marginBottom: WA_GROUP_SPACING,
   },
   scrollViewContainer: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    gap: 12,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: WA_SECTION_HEADER_GAP,
+    gap: CARD_GAP,
   },
   loadingContainer: {
     padding: 20,
@@ -419,61 +444,43 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 14,
   },
+  // WA cards are flat: hairline border on the grouped fill, no drop shadow.
   card: {
-    borderRadius: 12,
+    width: CARD_WIDTH,
+    borderRadius: CARD_RADIUS,
     overflow: "hidden",
-    minWidth: 140,
-    maxWidth: 160,
-    borderWidth: 1,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  cardSelected: {
-    borderColor: DEFAULT_PRIMARY_COLOR,
     borderWidth: 2,
   },
   cardImage: {
     width: "100%",
-    height: 100,
+    height: CARD_IMAGE_HEIGHT,
   },
   cardImagePlaceholder: {
     width: "100%",
-    height: 100,
+    height: CARD_IMAGE_HEIGHT,
     justifyContent: "center",
     alignItems: "center",
   },
   cardImagePlaceholderText: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: "600",
     textTransform: "uppercase",
   },
+  cardBody: {
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 10,
+  },
   cardName: {
     fontSize: 15,
+    lineHeight: 19,
     fontWeight: "600",
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 4,
+    // Two lines' worth of box on every card so the date line stays on one
+    // baseline across the strip, whether the title wraps or not.
+    height: 38,
   },
-  cardDate: {
+  cardMeta: {
     fontSize: 13,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-  },
-  cardStats: {
-    paddingHorizontal: 12,
-    paddingBottom: 12,
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 4,
-  },
-  cardStatsValue: {
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  cardStatsLabel: {
-    fontSize: 12,
+    marginTop: 2,
   },
 });

@@ -9,17 +9,32 @@ import {
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AttendanceDetails } from "./AttendanceDetails";
 import { EventsList } from "./EventsList";
 import { useQuery, api, Id } from "@services/api/convex";
-import { useAttendanceReport } from "../hooks/useAttendanceReport";
-import { DEFAULT_PRIMARY_COLOR } from "@utils/styles";
 import { DragHandle } from "@components/ui/DragHandle";
 import { useTheme } from "@hooks/useTheme";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
+import { WaSubScreenHeader } from "@components/wa/WaScreenHeader";
+import { WA_GROUP_MARGIN } from "@components/wa/metrics";
 
+/**
+ * AttendanceScreen — pick an event, then read its attendance.
+ *
+ * Styled to `docs/plans/church-migration-ui-redesign/WHATSAPP-DESIGN-SYSTEM.md`
+ * with the `components/wa/*` kit: a floating `WaSubScreenHeader` instead of an
+ * opaque nav bar (S1.1 — the old bar plus its safe-area padding ate the top
+ * third of the screen), a `backgroundGrouped` canvas, and the event picker /
+ * report rendered as inset-grouped cards. Unlike the flag-gated shell screens
+ * this one is styled unconditionally: it's a leaf screen reachable from both
+ * shells (group info and the chat menu), and the kit is theme-driven, so a
+ * second flag-off layout would only be duplicate code to maintain.
+ */
 export function AttendanceScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  const { primaryColor } = useCommunityTheme();
+  const waAccent = waAccentPalette(primaryColor, isDark).accent;
   // NOTE: group_id is expected to be a Convex Id<"groups"> passed from navigation.
   // The leader-tools routes should only receive Convex IDs, not legacy UUIDs.
   const { group_id, eventDate: queryEventDate } = useLocalSearchParams<{
@@ -27,7 +42,6 @@ export function AttendanceScreen() {
     eventDate?: string;
   }>();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   // Fetch group details (minimal - just for validation)
   const group = useQuery(
     api.functions.groups.index.getById,
@@ -44,19 +58,8 @@ export function AttendanceScreen() {
     queryEventDate || null
   );
 
-  // Only fetch attendance report when an event is selected
-  const { data: attendanceReport } = useAttendanceReport(
-    group_id || "",
-    {
-      meetingId: selectedMeetingId || undefined,
-      eventDate: selectedMeetingId ? undefined : selectedEventDate || undefined,
-    },
-    !!group_id && (!!selectedMeetingId || !!selectedEventDate)
-  );
-  const report = attendanceReport;
-  // Check if attendance has been submitted by checking if there are any attendance records
-  const hasAttendanceSubmitted =
-    !!report?.attendances && report.attendances.length > 0;
+  // The attendance report itself is fetched by <AttendanceDetails /> below —
+  // this screen only picks the event, so it subscribes to nothing extra.
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -92,7 +95,7 @@ export function AttendanceScreen() {
   if (isLoadingGroup) {
     return (
       <>
-        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+        <View style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}>
           <DragHandle />
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" />
@@ -106,7 +109,7 @@ export function AttendanceScreen() {
   if (groupError || !group) {
     return (
       <>
-        <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+        <View style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}>
           <DragHandle />
           <View style={styles.errorContainer}>
             <Text style={[styles.errorText, { color: colors.textSecondary }]}>Group not found</Text>
@@ -132,14 +135,19 @@ export function AttendanceScreen() {
   // Users can select any date to take attendance or modify RSVPs
   return (
     <>
-      <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
+      <View style={[styles.container, { backgroundColor: colors.backgroundGrouped }]}>
         <DragHandle />
-        <View style={[styles.header, { paddingTop: insets.top + 16, backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Ionicons name="arrow-back" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Attendance</Text>
-        </View>
+        {/* S1.1: floating circular back button + centered 17pt title, no bar
+            fill and no hairline. No safe-area padding here — this screen is
+            presented as a sheet whose drag handle already clears the status
+            bar, and adding `insets.top` on top of it is what left a ~200pt
+            band of empty chrome above the title (same as the check-in sheet). */}
+        <WaSubScreenHeader
+          title="Attendance"
+          onBack={handleBack}
+          accent={waAccent}
+          style={styles.header}
+        />
 
         <ScrollView
           style={styles.scrollView}
@@ -169,7 +177,14 @@ export function AttendanceScreen() {
               note={""} // Not in edit mode
             />
           ) : (
+            // Sits right under the picker rather than centered in the void —
+            // the prompt belongs next to the thing it's prompting about.
             <View style={styles.emptyState}>
+              <Ionicons
+                name="calendar-outline"
+                size={28}
+                color={colors.textTertiary}
+              />
               <Text style={[styles.emptyStateText, { color: colors.textSecondary }]}>
                 Select an event to view attendance
               </Text>
@@ -186,24 +201,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    borderBottomWidth: 1,
-  },
-  backButton: {
-    marginRight: 12,
-    padding: 4,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
+    paddingTop: 4,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingTop: 8,
+    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,
@@ -229,29 +234,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   emptyState: {
-    flex: 1,
-    justifyContent: "center",
     alignItems: "center",
-    padding: 20,
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontWeight: "600",
-    marginBottom: 8,
+    gap: 8,
+    paddingHorizontal: WA_GROUP_MARGIN,
+    paddingTop: 24,
   },
   emptyStateText: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: "center",
-    marginBottom: 24,
-  },
-  createEventButton: {
-    backgroundColor: DEFAULT_PRIMARY_COLOR,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  createEventButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
   },
 });

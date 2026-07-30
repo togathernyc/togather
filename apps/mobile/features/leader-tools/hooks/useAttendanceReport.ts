@@ -15,10 +15,28 @@ export function useAttendanceReport(
 
   const canFetch = !!groupId && !!options.meetingId && enabled && !!token;
 
+  // Resolve permission first. `listAttendance` / `listGuests` throw
+  // server-side for non-managers (`canEditMeeting`), and convex/react surfaces
+  // a query error by re-throwing during render — which crashes the whole
+  // Attendance screen with an opaque "Server Error" instead of showing a
+  // message. Not every caller of this screen is a manager: the chat toolbar
+  // exposes Attendance to plain members whenever a group sets
+  // `showToolbarToMembers`. Same gate the check-in screen uses
+  // (app/(user)/leader-tools/[group_id]/events/[event_id]/checkin.tsx); the
+  // server stays the source of truth.
+  const canManage = useQuery(
+    api.functions.meetings.attendance.canManageAttendance,
+    canFetch
+      ? { meetingId: options.meetingId as Id<"meetings">, token: token as string }
+      : "skip"
+  );
+  const isPermissionDenied = canFetch && canManage === false;
+  const canRead = canFetch && canManage === true;
+
   // Fetch attendance data using Convex
   const attendanceData = useQuery(
     api.functions.meetings.attendance.listAttendance,
-    canFetch
+    canRead
       ? { meetingId: options.meetingId as Id<"meetings">, token: token as string }
       : "skip"
   );
@@ -26,12 +44,20 @@ export function useAttendanceReport(
   // Fetch guests data using Convex
   const guestsData = useQuery(
     api.functions.meetings.attendance.listGuests,
-    canFetch
+    canRead
       ? { meetingId: options.meetingId as Id<"meetings">, token: token as string }
       : "skip"
   );
 
-  const isLoading = attendanceData === undefined || guestsData === undefined;
+  // Only "loading" while something is actually in flight. `canFetch` is false
+  // when there's no meetingId — the leader-tools entry point deep-links with
+  // `?eventDate=` alone (useGroupLeaderTools.ts), and reporting that as loading
+  // left the screen on a spinner that never resolved until the user tapped a
+  // card by hand.
+  const isLoading =
+    canFetch &&
+    !isPermissionDenied &&
+    (attendanceData === undefined || guestsData === undefined);
   const error = null; // Convex throws on error, handle with ErrorBoundary
 
   // Transform data for backward compatibility
@@ -113,5 +139,7 @@ export function useAttendanceReport(
     data,
     isLoading,
     error,
+    /** The caller may not view this meeting's attendance (host/leader/admin only). */
+    isPermissionDenied,
   };
 }
