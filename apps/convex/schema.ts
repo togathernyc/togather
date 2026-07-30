@@ -1904,8 +1904,18 @@ export default defineSchema({
         }),
       ),
     ),
-    // Threading
+    // Threading. A thread is exactly ONE level deep: `parentMessageId` always
+    // points at the thread's ROOT, never at another reply — `sendMessage` walks
+    // a chosen parent up before writing.
     parentMessageId: v.optional(v.id("chatMessages")),
+    /**
+     * The message the sender actually tapped "reply" on, when that was itself a
+     * reply. WhatsApp quotes the tapped message but files the new one under the
+     * same thread, so the quote target and the thread parent diverge; the quote
+     * bar reads this and falls back to `parentMessageId` (the overwhelmingly
+     * common case, where they are the same message).
+     */
+    quotedMessageId: v.optional(v.id("chatMessages")),
     threadReplyCount: v.optional(v.number()),
     // Timestamps
     createdAt: v.number(), // Unix timestamp ms

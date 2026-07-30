@@ -302,6 +302,18 @@ const WA_THREAD_PROBE = 10;
  */
 const WA_THREAD_COUNT_CAP = 50;
 
+/**
+ * How far any walk through the parent chain may run.
+ *
+ * A thread is ONE level deep by design — `sendMessage` roots a chosen parent
+ * before writing, so `parentMessageId` always names the thread's root. Rows
+ * written before that rule can be chained arbitrarily deep (reply → reply →
+ * reply), which is what this bound is for: it lets the read path fold those
+ * old chains into their root's thread without a data migration, and stops dead
+ * rather than looping if a chain is ever longer than that (or cyclic).
+ */
+const WA_THREAD_MAX_DEPTH = 8;
+
 /** A thread as this viewer sees it. */
 interface WaThreadProbe {
   /** Newest-first visible replies, at most `WA_THREAD_PROBE` of them. */
@@ -323,6 +335,52 @@ interface WaThreadScope {
   channelId: Id<"chatChannels">;
   blockedUserIds: Set<Id<"users">>;
   cache: Map<string, WaThreadProbe>;
+  /** Memo for `threadRootFor` — one walk per distinct parent per handler run. */
+  rootCache: Map<string, Id<"chatMessages">>;
+}
+
+/**
+ * Walk a chosen parent up to the ROOT of its thread.
+ *
+ * Tapping "reply" on a message that is itself a reply must not fork a second
+ * thread off the first: the new message joins the thread the tapped message
+ * already lives in. Threads are one level deep, so this is a single lookup for
+ * anything written since `sendMessage` started rooting; the loop (and
+ * `WA_THREAD_MAX_DEPTH`) is what folds the chains that predate it.
+ *
+ * The walk never leaves the channel. A parent pointing into another channel is
+ * only possible on rows predating `sendMessage`'s same-channel check, and
+ * rooting a thread onto a message the viewer may not be allowed to see would
+ * hand `buildReplyQuote` exactly the leak it refuses to serve.
+ */
+async function resolveThreadRoot(
+  ctx: QueryCtx | MutationCtx,
+  parentMessageId: Id<"chatMessages">,
+  channelId: Id<"chatChannels">,
+): Promise<Id<"chatMessages">> {
+  let rootId = parentMessageId;
+  let doc = await ctx.db.get(rootId);
+  for (let hop = 0; hop < WA_THREAD_MAX_DEPTH && doc?.parentMessageId; hop++) {
+    const nextId: Id<"chatMessages"> = doc.parentMessageId;
+    const next = await ctx.db.get(nextId);
+    if (!next || next.channelId !== channelId) break;
+    rootId = nextId;
+    doc = next;
+  }
+  return rootId;
+}
+
+/** `resolveThreadRoot`, memoized per handler run. */
+async function threadRootFor(
+  ctx: QueryCtx,
+  scope: WaThreadScope,
+  parentMessageId: Id<"chatMessages">,
+): Promise<Id<"chatMessages">> {
+  const cached = scope.rootCache.get(parentMessageId);
+  if (cached) return cached;
+  const rootId = await resolveThreadRoot(ctx, parentMessageId, scope.channelId);
+  scope.rootCache.set(parentMessageId, rootId);
+  return rootId;
 }
 
 /**
@@ -349,31 +407,86 @@ function waVisibleReplyFilter(scope: WaThreadScope) {
 }
 
 /**
- * Read a parent message's newest visible replies, memoized per handler run.
+ * Every reply belonging to a thread, bounded, in `order` of `createdAt`.
+ *
+ * Normally this is exactly one indexed read: the thread is flat, so the root's
+ * direct children ARE the thread. A child that carries its own send counter
+ * (`threadReplyCount`) can only be a chained row from before `sendMessage`
+ * rooted its parents, and those get descended into — folding the old chain into
+ * the root's thread at read time, no data migration needed. Both the depth and
+ * the total are bounded, and the counter check keeps the common case at the one
+ * read it has always been.
+ *
+ * @param filter Convex filter expression applied during the index scan, so
+ *   `take` still yields `take` *visible* rows (see `waVisibleReplyFilter`).
+ */
+async function collectThreadReplies(
+  ctx: QueryCtx,
+  filter: (q: any) => any,
+  rootId: Id<"chatMessages">,
+  take: number,
+  order: "asc" | "desc",
+): Promise<Doc<"chatMessages">[]> {
+  const collected: Doc<"chatMessages">[] = [];
+  const seen = new Set<string>([rootId]);
+  let frontier: Id<"chatMessages">[] = [rootId];
+
+  for (
+    let depth = 0;
+    depth < WA_THREAD_MAX_DEPTH && frontier.length > 0 && collected.length < take;
+    depth++
+  ) {
+    const next: Id<"chatMessages">[] = [];
+    for (const id of frontier) {
+      const rows = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", id))
+        .filter(filter)
+        .order(order)
+        .take(take);
+      for (const row of rows) {
+        if (seen.has(row._id)) continue;
+        seen.add(row._id);
+        collected.push(row);
+        if (row.threadReplyCount) next.push(row._id);
+      }
+    }
+    frontier = next;
+  }
+
+  collected.sort((a, b) =>
+    order === "desc" ? b.createdAt - a.createdAt : a.createdAt - b.createdAt,
+  );
+  return collected.slice(0, take);
+}
+
+/**
+ * Read a thread's newest visible replies, memoized per handler run.
  *
  * Called once per replied-to message in the page AND once per reply candidate
  * (to decide whether that reply is the thread's only one), so the cache is what
  * keeps this at one indexed read per *thread* rather than per row.
  *
- * Keyed on `parentMessageId` alone and never reads the parent doc, so it still
- * answers correctly for a reply whose parent was deleted.
+ * Keyed on the thread ROOT's id and never reads the root doc, so it still
+ * answers correctly for a reply whose root was deleted.
  */
 async function probeThread(
   ctx: QueryCtx,
   scope: WaThreadScope,
-  parentMessageId: Id<"chatMessages">,
+  rootId: Id<"chatMessages">,
 ): Promise<WaThreadProbe> {
-  const cached = scope.cache.get(parentMessageId);
+  const cached = scope.cache.get(rootId);
   if (cached) return cached;
 
   // One extra row tells us whether the thread runs deeper than the probe,
   // without a second query for the overwhelmingly common shallow case.
-  const rows = await ctx.db
-    .query("chatMessages")
-    .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", parentMessageId))
-    .filter(waVisibleReplyFilter(scope))
-    .order("desc")
-    .take(WA_THREAD_PROBE + 1);
+  const rows = await collectThreadReplies(
+    ctx,
+    waVisibleReplyFilter(scope),
+    rootId,
+    WA_THREAD_PROBE + 1,
+    "desc",
+  );
 
   const replies = rows.slice(0, WA_THREAD_PROBE);
   let probe: WaThreadProbe;
@@ -381,12 +494,13 @@ async function probeThread(
     probe = { replies, count: rows.length, countCapped: false };
   } else {
     // Deep thread: pay one bounded wider read for an exact count up to the cap.
-    const counted = await ctx.db
-      .query("chatMessages")
-      .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", parentMessageId))
-      .filter(waVisibleReplyFilter(scope))
-      .order("desc")
-      .take(WA_THREAD_COUNT_CAP + 1);
+    const counted = await collectThreadReplies(
+      ctx,
+      waVisibleReplyFilter(scope),
+      rootId,
+      WA_THREAD_COUNT_CAP + 1,
+      "desc",
+    );
     probe = {
       replies,
       count: Math.min(counted.length, WA_THREAD_COUNT_CAP),
@@ -394,7 +508,7 @@ async function probeThread(
     };
   }
 
-  scope.cache.set(parentMessageId, probe);
+  scope.cache.set(rootId, probe);
   return probe;
 }
 
@@ -661,6 +775,7 @@ export const getMessages = query({
       channelId: args.channelId,
       blockedUserIds,
       cache: new Map<string, WaThreadProbe>(),
+      rootCache: new Map<string, Id<"chatMessages">>(),
     };
     // Track all message IDs we've already processed across batches to avoid
     // duplicates when using lte on the same timestamp boundary.
@@ -716,11 +831,14 @@ export const getMessages = query({
           // is skipped — the same disappearance their ordinary messages get,
           // rather than a bubble the blocked-check below would have to catch a
           // step later.
-          const { replies: siblings } = await probeThread(
-            ctx,
-            threadScope,
-            m.parentMessageId,
-          );
+          //
+          // "Its parent's" means the thread's ROOT. `parentMessageId` already
+          // is the root for anything written since `sendMessage` started
+          // rooting; walking up covers the chained rows that predate it, so an
+          // old reply-of-a-reply is judged against the whole thread it really
+          // belongs to instead of forming a thread of one all by itself.
+          const rootId = await threadRootFor(ctx, threadScope, m.parentMessageId);
+          const { replies: siblings } = await probeThread(ctx, threadScope, rootId);
           if (siblings.length !== 1 || siblings[0]._id !== m._id) continue;
         }
         if (m.senderId && blockedUserIds.has(m.senderId)) continue;
@@ -837,7 +955,19 @@ export const getMessages = query({
 
     for (const m of decorated) {
       if (m.parentMessageId) {
-        const quote = await buildReplyQuote(ctx, m.parentMessageId, args.channelId);
+        // A reply in the timeline is, by the admission rule above, the SOLE
+        // visible reply of its thread — and its own replies (chained legacy
+        // rows) count into that same thread, which would have put the thread
+        // at two and kept this row out. So an admitted reply can never itself
+        // need a summary pill: every pill lives on a thread root.
+        //
+        // The quote follows the message the sender actually tapped, which is
+        // only different from the thread parent when they replied to a reply.
+        const quote = await buildReplyQuote(
+          ctx,
+          m.quotedMessageId ?? m.parentMessageId,
+          args.channelId,
+        );
         if (quote.parentSenderId) liveUserIds.add(quote.parentSenderId);
         plans.push({ row: m, kind: "reply", quote });
         continue;
@@ -982,12 +1112,23 @@ export const getThreadReplies = query({
       }
     }
 
-    const replies = await ctx.db
-      .query("chatMessages")
-      .withIndex("by_parentMessage", (q) => q.eq("parentMessageId", args.parentMessageId))
-      .filter((q) => q.eq(q.field("isDeleted"), false))
-      .order("asc")
-      .take(limit);
+    // Open the thread the requested message BELONGS to, not one rooted on it:
+    // a chained legacy reply (or a search result pointing at one) would
+    // otherwise open a thread containing a fragment of the conversation. The
+    // collection folds any chain under the root back in for the same reason —
+    // it is what the summary pill counted.
+    const rootId = await resolveThreadRoot(
+      ctx,
+      args.parentMessageId,
+      parentMessage.channelId,
+    );
+    const replies = await collectThreadReplies(
+      ctx,
+      (q) => q.eq(q.field("isDeleted"), false),
+      rootId,
+      limit,
+      "asc",
+    );
 
     const hasMore = replies.length === limit;
     const cursor = replies.length > 0 ? replies[replies.length - 1]._id : undefined;
@@ -1274,6 +1415,17 @@ export const sendMessage = mutation({
     // every reader of channel B, whether or not they can see channel A.
     // Reject at the source; `buildReplyQuote` also refuses to quote a
     // cross-channel parent, covering rows written before this check existed.
+    //
+    // Then ROOT the reply. `parentMessageId` names the message the sender
+    // tapped, which may itself be a reply — filing the new message under it
+    // would fork a second thread off the first, and since a fresh parent has
+    // exactly one reply, the pair renders inline forever and no thread ever
+    // activates. Threads are one level deep: the parent becomes the thread's
+    // root, and `quotedMessageId` remembers what was tapped so the quote bar
+    // still shows the message the sender was answering (WhatsApp's behaviour:
+    // quote the tapped message, file under the thread).
+    let threadParentId = args.parentMessageId;
+    let quotedMessageId: Id<"chatMessages"> | undefined;
     if (args.parentMessageId) {
       const parentMessage = await ctx.db.get(args.parentMessageId);
       if (!parentMessage) {
@@ -1282,6 +1434,9 @@ export const sendMessage = mutation({
       if (parentMessage.channelId !== channelId) {
         throw new ConvexError("Cannot reply to a message in another channel");
       }
+      threadParentId = await resolveThreadRoot(ctx, args.parentMessageId, channelId);
+      quotedMessageId =
+        threadParentId === args.parentMessageId ? undefined : args.parentMessageId;
     }
 
     // Determine content type
@@ -1300,7 +1455,8 @@ export const sendMessage = mutation({
       content: args.content,
       contentType,
       attachments: args.attachments,
-      parentMessageId: args.parentMessageId,
+      parentMessageId: threadParentId,
+      quotedMessageId,
       createdAt: now,
       isDeleted: false,
       senderName,
@@ -1308,7 +1464,7 @@ export const sendMessage = mutation({
       mentionedUserIds: args.mentionedUserIds,
       hideLinkPreview: args.hideLinkPreview,
       // Set lastActivityAt for top-level messages (used for thread bump ordering)
-      ...(!args.parentMessageId ? { lastActivityAt: now } : {}),
+      ...(!threadParentId ? { lastActivityAt: now } : {}),
     });
 
     // Update channel with last message info (for inbox preview)
@@ -1326,11 +1482,12 @@ export const sendMessage = mutation({
       updatedAt: now,
     });
 
-    // If this is a thread reply, update parent message
-    if (args.parentMessageId) {
-      const parentMessage = await ctx.db.get(args.parentMessageId);
+    // If this is a thread reply, update the thread's root (the message the
+    // pill and the ghost pointer both hang off).
+    if (threadParentId) {
+      const parentMessage = await ctx.db.get(threadParentId);
       if (parentMessage) {
-        await ctx.db.patch(args.parentMessageId, {
+        await ctx.db.patch(threadParentId, {
           threadReplyCount: (parentMessage.threadReplyCount || 0) + 1,
           lastActivityAt: now,
         });
