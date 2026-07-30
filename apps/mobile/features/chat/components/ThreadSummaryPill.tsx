@@ -100,6 +100,7 @@ export function ThreadSummaryPill({ summary, onPress }: ThreadSummaryPillProps) 
           {avatars.map((replier, index) => (
             <View
               key={replier.userId ?? index}
+              testID="wa-thread-summary-avatar"
               style={[
                 styles.avatarRing,
                 {
