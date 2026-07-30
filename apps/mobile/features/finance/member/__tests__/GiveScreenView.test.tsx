@@ -1,6 +1,6 @@
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react-native";
-import { GiveScreenView, maskClientSecret } from "../GiveScreenView";
+import { GiveScreenView } from "../GiveScreenView";
 import { estimateCoverFeesCents } from "../amount";
 import { formatCents } from "../../format";
 import type { GivingContext } from "../types";
@@ -91,12 +91,13 @@ const baseProps = {
   coverFees: false,
   submitting: false,
   error: null,
-  intent: null,
+  checkoutSession: null,
   onBack: noop,
   onSelectPreset: noop,
   onCustomAmountChange: noop,
   onToggleCoverFees: noop,
   onContinue: noop,
+  onReopenCheckout: noop,
 };
 
 describe("GiveScreenView", () => {
@@ -156,19 +157,52 @@ describe("GiveScreenView", () => {
     ).toBeTruthy();
   });
 
-  it("renders the stubbed confirmation panel with a masked client secret", () => {
+  it("shows the 'finish in the browser' confirmation panel with amount and fund after Checkout launches", () => {
     render(
       <GiveScreenView
         {...baseProps}
         step="confirmation"
         selectedPresetCents={5000}
-        intent={{ clientSecret: "pi_123abc_secret_xyz789", paymentIntentId: "pi_123abc" }}
+        checkoutSession={{ url: "https://checkout.stripe.com/c/pay/cs_test_123", sessionId: "cs_test_123" }}
       />,
     );
-    expect(screen.getByText("Payment intent created")).toBeTruthy();
+    expect(screen.getByText("Finish your gift in the browser")).toBeTruthy();
     expect(
-      screen.getByText(maskClientSecret("pi_123abc_secret_xyz789")),
+      screen.getByText(
+        "Complete your gift in the secure Stripe page that just opened. Once it's done, you can close that page and come back here.",
+      ),
     ).toBeTruthy();
     expect(screen.getByText(formatCents(5000))).toBeTruthy();
+    expect(screen.getByText("Young Adults — Manhattan")).toBeTruthy();
+  });
+
+  it("calls onReopenCheckout when 'Reopen payment page' is tapped", () => {
+    const onReopenCheckout = jest.fn();
+    render(
+      <GiveScreenView
+        {...baseProps}
+        step="confirmation"
+        selectedPresetCents={5000}
+        checkoutSession={{ url: "https://checkout.stripe.com/c/pay/cs_test_123", sessionId: "cs_test_123" }}
+        onReopenCheckout={onReopenCheckout}
+      />,
+    );
+    fireEvent.press(screen.getByLabelText("Reopen payment page"));
+    expect(onReopenCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it("calls onBack when 'Done' is tapped on the confirmation step", () => {
+    const onBack = jest.fn();
+    render(
+      <GiveScreenView
+        {...baseProps}
+        step="confirmation"
+        selectedPresetCents={5000}
+        checkoutSession={{ url: "https://checkout.stripe.com/c/pay/cs_test_123", sessionId: "cs_test_123" }}
+        onBack={onBack}
+      />,
+    );
+    fireEvent.press(screen.getByLabelText("Done"));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
