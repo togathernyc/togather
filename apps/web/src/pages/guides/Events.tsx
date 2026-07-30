@@ -224,6 +224,13 @@ export function Events() {
             Remove them with the trash icon.
           </Step>
           <Step n={5}>
+            <strong>Running check-in from a laptop.</strong> Check-in works in
+            the browser as well as the app. On a wide screen the roster splits
+            into two or three columns and the controls move onto one row, so a
+            big door list fits on screen instead of scrolling — handy when
+            someone's running the welcome desk from a laptop.
+          </Step>
+          <Step n={6}>
             <strong>It feeds your numbers.</strong> A check-in is the same{" "}
             <Term>Present</Term> record the app already uses, so attendance and
             member-health stats stay correct — you're not tracking it twice.
