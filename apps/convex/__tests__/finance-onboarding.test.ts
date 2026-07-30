@@ -27,7 +27,7 @@ import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
-import { isValidEin } from "../functions/finance/onboarding";
+import { isValidEin, fingerprintIntake } from "../functions/finance/onboarding";
 import { verifyIncreaseWebhookSignature } from "../lib/finance/increase";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -242,6 +242,37 @@ describe("isValidEin", () => {
     expect(isValidEin("12-345678")).toBe(false);
     expect(isValidEin("ab-cdefghi")).toBe(false);
     expect(isValidEin("")).toBe(false);
+  });
+});
+
+// ============================================================================
+// fingerprintIntake
+// ============================================================================
+
+describe("fingerprintIntake", () => {
+  const intake = {
+    legalName: "Demo Community Church",
+    ein: "00-0000000",
+    address: {
+      addressLine1: "123 Main Street",
+      city: "New York",
+      state: "NY",
+      zipCode: "10001",
+    },
+  };
+
+  test("is deterministic for identical intake data (safe retry, same idempotency keys)", () => {
+    expect(fingerprintIntake(intake)).toBe(fingerprintIntake({ ...intake }));
+  });
+
+  test("changes when any provider-visible field changes (corrected resubmission gets fresh keys)", () => {
+    const base = fingerprintIntake(intake);
+    expect(fingerprintIntake({ ...intake, legalName: "Other Church" })).not.toBe(base);
+    expect(fingerprintIntake({ ...intake, ein: "12-3456789" })).not.toBe(base);
+    expect(fingerprintIntake({ ...intake, website: "https://example.org" })).not.toBe(base);
+    expect(
+      fingerprintIntake({ ...intake, address: { ...intake.address, zipCode: "10002" } }),
+    ).not.toBe(base);
   });
 });
 
