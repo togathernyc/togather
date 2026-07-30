@@ -217,6 +217,25 @@ value can be used for both), then run
 `gh workflow run sync-secrets.yml -f environment=both -f dry-run=true` to
 confirm the plan, followed by a real (`dry-run=false`) run.
 
+### Group giving (Stripe Connect + Increase)
+
+The group giving feature (ADR-032) enables communities to accept donations via Stripe and manage funds through Increase banking APIs. The donation and expense flows are powered by two separate webhook streams:
+
+| Secret | Description | Degradation |
+|--------|-------------|-------------|
+| `INCREASE_API_KEY` | Increase API key for Entity/Account/Transfer operations (required for production and staging; omit for dev-only testing) | Fund provisioning fails; allocation/payout jobs blocked |
+| `INCREASE_WEBHOOK_SECRET` | Webhook signing secret for Increase account/entity status updates (required to process bank account creation/activation) | Webhook events are accepted but unverified; status machine never transitions to "live" |
+| `INCREASE_API_BASE_URL` | Override for Increase API base URL — set to `https://sandbox.increase.com` for sandbox/staging, omit for production (defaults to `https://api.increase.com`) | Defaults to production API |
+
+**Note on Stripe integration**: The `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` used for billing (subscriptions) are shared with the group-giving donation flow — no separate Stripe secrets are needed. The `/stripe-webhook` endpoint now dispatches to both billing (`charge.refunded`, `invoice.*`) and finance (`payment_intent.succeeded`) handlers. The webhook URL remains `https://<convex-deployment>.convex.site/stripe-webhook`.
+
+**Sandbox setup for dev/staging**:
+1. Create Increase sandbox API keys at https://dashboard.increase.com/settings/api (requires account)
+2. Add to 1Password vault `Togather` with `staging` field only: `INCREASE_API_KEY` (e.g., `key_sandbox_...`)
+3. Add `INCREASE_WEBHOOK_SECRET` (from the same dashboard: Webhooks > Create test webhook subscription, copy the secret)
+4. Add `INCREASE_API_BASE_URL` = `https://sandbox.increase.com` (only set for staging; omit for production)
+5. Set `INCREASE_API_KEY` to production key for prod environment (no base URL override)
+
 ### Adding a New EXPO_PUBLIC_* Variable
 
 When adding a new `EXPO_PUBLIC_*` environment variable:

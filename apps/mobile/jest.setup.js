@@ -308,6 +308,21 @@ jest.mock('expo-notifications', () => ({
   setNotificationHandler: jest.fn(),
 }));
 
+// Mock expo-location. It reaches straight for TurboModules at import time, so
+// any module that merely *imports* it (useUserLocation, geocodeLocation) blows
+// up in jest without this. Denies permission by default: tests that want the
+// granted path override this per-file.
+jest.mock('expo-location', () => ({
+  Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
+  requestForegroundPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'denied' })),
+  getForegroundPermissionsAsync: jest.fn(() => Promise.resolve({ status: 'denied' })),
+  getCurrentPositionAsync: jest.fn(() =>
+    Promise.resolve({ coords: { latitude: 0, longitude: 0 } })
+  ),
+  geocodeAsync: jest.fn(() => Promise.resolve([])),
+  reverseGeocodeAsync: jest.fn(() => Promise.resolve([])),
+}));
+
 // Mock react-native-safe-area-context
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),

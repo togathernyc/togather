@@ -29,11 +29,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { Id } from '@services/api/convex';
 import { useMessages } from '../hooks/useMessages';
+import { useChannelSwitchBuffer } from '../hooks/useChannelSwitchBuffer';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useWhatsappShell } from '@hooks/useWhatsappShell';
 import { MessageItem } from './MessageItem';
 import { GhostThreadPointer } from './GhostThreadPointer';
+import type { ReplyQuote } from './ReplyQuoteBlock';
+import type { ThreadSummary } from './ThreadSummaryPill';
 import { buildThreadAwareTimeline } from '../utils/threadTimeline';
 import { ReactionsProvider } from '../context/ReactionsContext';
 import { useChatPrefetch } from '../context/ChatPrefetchContext';
@@ -85,6 +88,13 @@ interface Message {
   availabilityRequestId?: Id<"availabilityRequests">;
   // Present only on messages mirrored from an event text blast (SMS + push).
   blastId?: Id<"eventBlasts">;
+  // --- WhatsApp-shell reply/thread decoration (flag-on `getMessages` only) ---
+  // The quoted-parent context for a reply the timeline admitted (its parent's
+  // only live reply), rendered as the §5 quote bar inside its own bubble.
+  replyQuote?: ReplyQuote;
+  // The collapsed-thread pill's data — present iff this message has two or more
+  // live replies, which is exactly when its replies leave the timeline.
+  threadSummary?: ThreadSummary;
 }
 
 interface MessageListProps {
@@ -126,6 +136,18 @@ interface MessageListProps {
    * highlight on it.
    */
   highlightMessageId?: Id<"chatMessages"> | null;
+  /**
+   * Flag-on only. The parents that currently show exactly one reply inline in
+   * the timeline — i.e. the threads that a NEXT reply would collapse.
+   *
+   * The server admits a reply only while it is its parent's sole visible reply,
+   * so every admitted reply's parent is by definition such a thread; that also
+   * makes this correct for blocked/cross-channel siblings for free, since those
+   * were never admitted. The chat room uses it to follow the sender into the
+   * thread on the send that causes the collapse, instead of letting their
+   * message appear to vanish into a pill on a parent that may be scrolled away.
+   */
+  onCollapsibleThreadsChange?: (parentIds: Set<string>) => void;
 }
 
 // Helper to format date as "Today", "Yesterday", or "Jan 15"
@@ -201,6 +223,7 @@ export function MessageList({
   onDismissMessage,
   onAvatarPress,
   highlightMessageId,
+  onCollapsibleThreadsChange,
 }: MessageListProps) {
   const { primaryColor } = useCommunityTheme();
   const { colors: themeColors } = useTheme();
@@ -212,12 +235,13 @@ export function MessageList({
   const listRef = useRef<FlatList<ListItem>>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
-  // Internal scroll-to-original target for tapping a "ghost" thread pointer.
+  // Internal "jump to this message" target: flag-off, set by tapping a ghost
+  // thread pointer's body; flag-on, by tapping a bubble's §5 reply-quote bar.
   // Kept separate from the `highlightMessageId` prop (inbox search) but funneled
   // through the same anchor/scroll/highlight machinery. The nonce lets tapping
-  // the same ghost re-scroll. The prop always wins when both are set.
-  const [ghostTarget, setGhostTarget] = useState<{ id: Id<"chatMessages">; nonce: number } | null>(null);
-  const effectiveHighlightId = highlightMessageId ?? ghostTarget?.id ?? null;
+  // the same target re-scroll. The prop always wins when both are set.
+  const [jumpTarget, setJumpTarget] = useState<{ id: Id<"chatMessages">; nonce: number } | null>(null);
+  const effectiveHighlightId = highlightMessageId ?? jumpTarget?.id ?? null;
 
   // Wait for navigation animation to complete before loading messages
   // This prevents choppy animations when entering the chat
@@ -241,14 +265,18 @@ export function MessageList({
   // Fetch messages with pagination (live query for updates)
   // Start immediately if we have prefetched data, otherwise wait for animation
   const shouldStartQuery = hasPrefetchedMessages || isAnimationComplete;
-  // Larger page size while jumping to a message (inbox search OR a ghost tap)
-  // so the anchor catch-up reaches older messages in fewer round-trips.
+  // Larger page size while jumping to a message (inbox search OR a quote/ghost
+  // tap) so the anchor catch-up reaches older messages in fewer round-trips.
   const pageSize = effectiveHighlightId ? 40 : 20;
   const { messages: liveMessages, loadMore, hasMore, isLoading: liveIsLoading, isStale } = useMessages(
     shouldStartQuery ? channelId : null,
     pageSize,
     groupId ?? null,
-    effectiveHighlightId
+    effectiveHighlightId,
+    // Flag-on, the timeline admits a message's lone reply as a real bubble and
+    // decorates collapsed threads. Flag-off omits the arg entirely, so the
+    // query behaves exactly as before.
+    whatsappShellEnabled
   );
 
   // Use prefetched messages while live query is loading
@@ -260,21 +288,54 @@ export function MessageList({
   // Only show loading if we have NO data (neither prefetched nor live)
   const isLoading = liveIsLoading && !hasPrefetchedMessages;
 
+  // Flag-on stale-while-switch: keep something painted while the new
+  // channel's subscription warms up, instead of tearing the FlatList down to
+  // a bare surface (the channel-tab-strip flicker). Flag-off this is a
+  // pass-through, so everything below sees exactly today's values.
+  const {
+    messages: displayMessages,
+    channelId: displayChannelId,
+    isSwitching,
+  } = useChannelSwitchBuffer({
+    enabled: whatsappShellEnabled,
+    channelId,
+    messages,
+    isLoading,
+  });
+
+  // While `isSwitching`, the painted list belongs to the *previous* channel
+  // but the composer already targets the new one — so the new channel's
+  // optimistic sends must not be appended onto it.
+  const displayOptimisticMessages = isSwitching ? undefined : optimisticMessages;
+
   // Extract message IDs for batch reactions loading
   const messageIds = useMemo<Id<"chatMessages">[]>(() => {
-    return messages.map((msg) => msg._id);
-  }, [messages]);
+    return displayMessages.map((msg) => msg._id);
+  }, [displayMessages]);
 
   // Transform messages into list items (with date separators and grouping info)
   // For inverted list, we reverse the order so newest messages come first
   const listItems = useMemo<ListItem[]>(() => {
     const items: ListItem[] = [];
 
-    // Build a thread-aware timeline: every real message stays at its createdAt
-    // slot, and each replied-to message additionally floats a "ghost" pointer
-    // (an echo of the original message) at its lastActivityAt slot. Date
-    // separators and sender grouping are derived while walking the timeline.
-    const timeline = buildThreadAwareTimeline(messages);
+    // Flag-OFF: build a thread-aware timeline — every real message stays at its
+    // createdAt slot, and each replied-to message additionally floats a "ghost"
+    // pointer (a bubble-less echo of the original) at its lastActivityAt slot.
+    // The ghost exists because flag-off `getMessages` hides EVERY reply, so
+    // without it a reply produced no visible trace at all.
+    //
+    // Flag-ON there are no ghosts. A lone reply is a real bubble in the
+    // timeline quoting its parent (§5 reply-quote bar), and a parent with a
+    // genuine conversation under it carries one collapsed summary pill — so
+    // nothing is missing that a floating echo needs to stand in for. See
+    // `renderThreadReplies` in MessageItem and `docs/plans/church-migration-ui-
+    // redesign/WHATSAPP-DESIGN-SYSTEM.md` §5.
+    //
+    // Both branches read `displayMessages` (the channel-switch buffer's
+    // output) — flag-off the buffer is a literal pass-through of `messages`.
+    const timeline = whatsappShellEnabled
+      ? displayMessages.map((message) => ({ kind: 'message' as const, message }))
+      : buildThreadAwareTimeline(displayMessages);
     let previousMsg: Message | undefined;
     let previousDateKey: string | undefined;
 
@@ -327,7 +388,7 @@ export function MessageList({
 
     // Append optimistic messages at the end (newest, after all server messages)
     // Skip optimistic messages that already have a matching real message (dedup)
-    if (optimisticMessages && optimisticMessages.length > 0) {
+    if (displayOptimisticMessages && displayOptimisticMessages.length > 0) {
       // Predecessor for grouping is the forward pass's final `previousMsg`,
       // not raw `messages[length-1]`: the constructed timeline may end with a
       // ghost or date separator (both reset `previousMsg` to undefined), and
@@ -338,10 +399,10 @@ export function MessageList({
       // Track which server messages have already been matched so that
       // identical content sent twice within the time window is handled
       // correctly (each server message only "consumes" one optimistic).
-      const recentServerMessages = messages.slice(-5);
+      const recentServerMessages = displayMessages.slice(-5);
       const matchedServerIds = new Set<string>();
 
-      const pendingOptimistic = optimisticMessages.filter((optMsg) => {
+      const pendingOptimistic = displayOptimisticMessages.filter((optMsg) => {
         // Only dedup messages that the server has confirmed ('sent')
         if (optMsg._status !== 'sent') return true;
         // Check if a matching real message exists (that hasn't already been matched)
@@ -363,9 +424,34 @@ export function MessageList({
         const prevMsg = index === 0 ? lastTimelineMsg : pendingOptimistic[index - 1];
         const isFirstInGroup = !prevMsg || optMsg.senderId !== prevMsg.senderId;
 
+        // Flag-on: an in-flight reply gets its quote NOW, synthesized from the
+        // parent already in the loaded page, instead of rendering quote-less
+        // for a round-trip and then popping one in. You had to see a message to
+        // tap reply on it, so the parent is essentially always loaded; when it
+        // genuinely isn't, the quote just arrives with the server echo.
+        let optimisticQuote: ReplyQuote | undefined;
+        if (whatsappShellEnabled && optMsg.parentMessageId) {
+          // "The loaded page" is displayMessages: on a buffered revisit the
+          // live query may still be empty while the buffer paints the page
+          // the user is actually replying from.
+          const parent = displayMessages.find((m) => m._id === optMsg.parentMessageId);
+          if (parent) {
+            optimisticQuote = {
+              parentMessageId: parent._id,
+              parentDeleted: parent.isDeleted,
+              parentSenderId: parent.senderId,
+              parentSenderName: parent.senderName,
+              parentContent: parent.content ?? '',
+              parentAttachmentType: parent.attachments?.[0]?.type,
+            };
+          }
+        }
+
         items.push({
           type: 'message',
-          data: optMsg as any,
+          data: (optimisticQuote
+            ? { ...optMsg, replyQuote: optimisticQuote }
+            : optMsg) as any,
           isFirstInGroup,
           isLastInGroup: false,
           isOptimistic: true,
@@ -397,23 +483,44 @@ export function MessageList({
 
     // Reverse for inverted list (newest first)
     return items.reverse();
-  }, [messages, optimisticMessages]);
+  }, [displayMessages, displayOptimisticMessages, whatsappShellEnabled]);
 
-  // Scroll to and highlight a target message — either from inbox search
-  // (`highlightMessageId` prop) or from tapping a ghost thread pointer
-  // (`ghostTarget`). The hook auto-loads older pages until the message is
-  // present; this runs once it appears in listItems. Tracked per-anchor (the
-  // ghost nonce makes re-tapping the same ghost re-scroll) so it fires once.
+  // Report the threads a next reply would collapse (see the prop's JSDoc).
+  // Flag-off this is always empty — there are no inline replies to begin with.
+  const collapsibleThreadKey = useMemo(() => {
+    if (!whatsappShellEnabled) return '';
+    return messages
+      .filter((m) => m.parentMessageId)
+      .map((m) => String(m.parentMessageId))
+      .sort()
+      .join(',');
+  }, [messages, whatsappShellEnabled]);
+
+  useEffect(() => {
+    if (!onCollapsibleThreadsChange) return;
+    onCollapsibleThreadsChange(
+      new Set(collapsibleThreadKey ? collapsibleThreadKey.split(',') : []),
+    );
+    // Keyed on the joined id string so an unchanged set doesn't re-notify on
+    // every unrelated message arriving.
+  }, [collapsibleThreadKey, onCollapsibleThreadsChange]);
+
+  // Scroll to and highlight a target message — from inbox search
+  // (`highlightMessageId` prop), from tapping a bubble's reply quote, or from
+  // tapping a ghost thread pointer (`jumpTarget`). The hook auto-loads older
+  // pages until the message is present; this runs once it appears in listItems.
+  // Tracked per-anchor (the nonce makes re-tapping the same target re-scroll)
+  // so it fires once.
   const scrolledAnchorRef = useRef<string | null>(null);
   useEffect(() => {
-    const anchorId = highlightMessageId ?? ghostTarget?.id ?? null;
+    const anchorId = highlightMessageId ?? jumpTarget?.id ?? null;
     if (!anchorId) {
       scrolledAnchorRef.current = null;
       return;
     }
     const anchorKey = highlightMessageId
       ? `hl:${highlightMessageId}`
-      : `ghost:${ghostTarget!.id}:${ghostTarget!.nonce}`;
+      : `jump:${jumpTarget!.id}:${jumpTarget!.nonce}`;
     if (scrolledAnchorRef.current === anchorKey) return;
     const targetIndex = listItems.findIndex(
       (it) => it.type === 'message' && it.data._id === anchorId
@@ -433,7 +540,7 @@ export function MessageList({
       }
     });
     return () => handle.cancel();
-  }, [highlightMessageId, ghostTarget, listItems]);
+  }, [highlightMessageId, jumpTarget, listItems]);
 
   // Tap a ghost's "N replies" pill → open the thread screen. Group channels and
   // DMs have parallel routes (mirrors MessageItem.handleThreadPress).
@@ -453,11 +560,12 @@ export function MessageList({
     [router, groupId, channelName]
   );
 
-  // Tap a ghost's body → scroll up to the real original message and highlight
-  // it. Funnels through the shared anchor machinery, which auto-loads older
-  // pages first if the original is above the currently loaded window.
-  const handleGhostScrollToOriginal = useCallback((parentId: Id<"chatMessages">) => {
-    setGhostTarget((prev) => ({ id: parentId, nonce: (prev?.nonce ?? 0) + 1 }));
+  // Tap a ghost's body (flag-off) or a bubble's reply quote (flag-on) → scroll
+  // up to the quoted message and highlight it. Funnels through the shared
+  // anchor machinery, which auto-loads older pages first if the target is above
+  // the currently loaded window.
+  const handleJumpToMessage = useCallback((parentId: Id<"chatMessages">) => {
+    setJumpTarget((prev) => ({ id: parentId, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
   // Handle scroll to detect if user is near bottom (for scroll-to-bottom button)
@@ -483,10 +591,35 @@ export function MessageList({
   // Handle load more (when scrolling up to older messages)
   // In inverted list, this is onEndReached (reaching the visual top)
   const handleLoadMore = useCallback(() => {
+    // While the painted list belongs to the previous channel, `loadMore`
+    // would page the *new* channel's history behind the user's back.
+    if (isSwitching) return;
     if (hasMore && !isLoading) {
       loadMore();
     }
-  }, [hasMore, isLoading, loadMore]);
+  }, [hasMore, isLoading, isSwitching, loadMore]);
+
+  // A newly-opened channel starts at the bottom (newest), matching today's
+  // behavior — which only happened as a side effect of the list unmounting
+  // during the blank flash. Now that the FlatList survives the switch it
+  // keeps its scroll offset, so reset it explicitly once the new channel's
+  // own content is on screen. Inverted list ⇒ offset 0 is the bottom.
+  // Skipped on first settle (mount, already at 0) and while an anchor jump
+  // owns the scroll (inbox search / ghost thread pointer).
+  const settledChannelRef = useRef<Id<"chatChannels"> | null | undefined>(undefined);
+  useEffect(() => {
+    if (!whatsappShellEnabled) return;
+    if (isSwitching || !displayChannelId) return;
+    const previousSettled = settledChannelRef.current;
+    settledChannelRef.current = displayChannelId;
+    if (previousSettled === undefined || previousSettled === displayChannelId) return;
+    if (effectiveHighlightId) return;
+    try {
+      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    } catch {
+      // List not measured yet — it mounts at offset 0 anyway.
+    }
+  }, [whatsappShellEnabled, displayChannelId, isSwitching, effectiveHighlightId]);
 
   // Handle scroll to bottom button press
   // In inverted list, scroll to index 0 to go to newest messages
@@ -533,7 +666,7 @@ export function MessageList({
             isDeleted={item.isDeleted}
             attachments={item.attachments}
             onOpenThread={() => handleGhostOpenThread(item.parentId, item.channelId)}
-            onScrollToOriginal={() => handleGhostScrollToOriginal(item.parentId)}
+            onScrollToOriginal={() => handleJumpToMessage(item.parentId)}
           />
         );
       }
@@ -590,10 +723,17 @@ export function MessageList({
           onRetry={item.isOptimistic && onRetryMessage ? () => onRetryMessage(String(message._id)) : undefined}
           onAvatarPress={onAvatarPress}
           isHighlighted={effectiveHighlightId != null && message._id === effectiveHighlightId}
+          // §5 reply/thread rendering. Both are only ever populated by the
+          // flag-on query, and MessageItem only reads them flag-on — so the
+          // flag-off tree here is unchanged even if a stale cached page were to
+          // still carry the fields.
+          replyQuote={message.replyQuote}
+          onQuotePress={handleJumpToMessage}
+          threadSummary={message.threadSummary}
         />
       );
     },
-    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, effectiveHighlightId, handleGhostOpenThread, handleGhostScrollToOriginal, whatsappShellEnabled, themeColors]
+    [currentUserId, groupId, channelName, prefetchState, onMessageReply, onMessageReact, onMessageDelete, onMessageLongPress, onMessageDoubleTap, onRetryMessage, onAvatarPress, effectiveHighlightId, handleGhostOpenThread, handleJumpToMessage, whatsappShellEnabled, themeColors]
   );
 
   // Key extractor
@@ -612,7 +752,7 @@ export function MessageList({
   const emptyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!isLoading && messages.length === 0) {
+    if (!isLoading && displayMessages.length === 0) {
       // Wait before showing empty state so subscription has time to deliver
       emptyTimerRef.current = setTimeout(() => setShowEmptyState(true), 500);
     } else {
@@ -625,7 +765,7 @@ export function MessageList({
     return () => {
       if (emptyTimerRef.current) clearTimeout(emptyTimerRef.current);
     };
-  }, [isLoading, messages.length]);
+  }, [isLoading, displayMessages.length]);
 
   // §S4.1: flag-on, the chat room paints a doodle wallpaper behind the whole
   // screen. Painting `surface` here covered it with white-on-white, which is
@@ -635,14 +775,14 @@ export function MessageList({
   const listBackground = whatsappShellEnabled ? 'transparent' : themeColors.surface;
 
   // Loading state or waiting for messages — show empty container
-  if (messages.length === 0 && !showEmptyState) {
+  if (displayMessages.length === 0 && !showEmptyState) {
     return (
       <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]} />
     );
   }
 
   // Empty state — only shown after delay confirms no messages
-  if (showEmptyState && messages.length === 0) {
+  if (showEmptyState && displayMessages.length === 0) {
     return (
       <View testID="message-list-empty" style={[styles.centerContainer, { backgroundColor: listBackground }]}>
         <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
@@ -653,8 +793,17 @@ export function MessageList({
   }
 
   return (
-    <ReactionsProvider messageIds={messageIds} channelId={channelId}>
-      <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]}>
+    // Reactions are subscribed for the channel the painted messages actually
+    // belong to, which lags `channelId` for the length of a switch.
+    <ReactionsProvider messageIds={messageIds} channelId={displayChannelId}>
+      <View
+        testID="message-list-container"
+        style={[styles.container, { backgroundColor: listBackground }]}
+        // Scenery from the outgoing channel must not take taps — a reply or
+        // reaction would target a message the composer is no longer pointed
+        // at. Sub-second window; `undefined` keeps flag-off byte-identical.
+        pointerEvents={isSwitching ? 'none' : undefined}
+      >
         <FlatList
           ref={listRef}
           data={listItems}
@@ -716,7 +865,7 @@ export function MessageList({
         />
 
         {/* Scroll to bottom button */}
-        {showScrollToBottom && (
+        {showScrollToBottom && !isSwitching && (
           <Pressable
             style={[styles.scrollToBottomButton, { backgroundColor: primaryColor }]}
             onPress={handleScrollToBottom}

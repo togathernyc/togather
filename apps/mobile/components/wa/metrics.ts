@@ -290,6 +290,49 @@ export function waTabBarStripHeight(bottomInset: number): number {
  */
 export const WA_TAB_CONTENT_CLEARANCE = WA_TAB_ISLAND_HEIGHT + 12;
 
+// --- S5.1 Floating screen CTA ------------------------------------------------
+//
+// The one accent-filled element a top-level screen is allowed (Events'
+// "Create Event", Groups' "Add group"). One geometry for all of them, rendered
+// by `WaFloatingCta`: a centered auto-width pill, never a full-bleed bar.
+
+/** CTA pill height — fully rounded at this height. */
+export const WA_FLOATING_CTA_HEIGHT = 50;
+/** Breathing gap the CTA keeps from the tab island (and content keeps from the CTA). */
+export const WA_FLOATING_CTA_GAP = 12;
+/** Leading glyph size inside the pill. */
+export const WA_FLOATING_CTA_ICON_SIZE = 22;
+/** Gap between the glyph and the label. */
+export const WA_FLOATING_CTA_LABEL_GAP = 6;
+/** Horizontal padding — the pill hugs its label rather than stretching edge to edge. */
+export const WA_FLOATING_CTA_PADDING_H = 22;
+
+/**
+ * How far the CTA's BOTTOM edge sits above the SCREEN's bottom edge: clear of
+ * the island (which itself ends `waTabBarBottomOffset` up) plus a gap.
+ *
+ * Measured from the screen bottom on purpose. Yoga positions an absolutely
+ * positioned child against its parent's *border* box, ignoring the parent's
+ * padding — so a `bottom: 0` CTA inside a container that reserves
+ * `waTabBarStripHeight` does NOT start above that strip the way CSS would, and
+ * the pill lands on top of the island (the owner's 2026-07-29 dark-mode
+ * screenshot). Setting `bottom` to this absolute value is padding-independent.
+ */
+export function waFloatingCtaBottomOffset(bottomInset: number): number {
+  return WA_TAB_ISLAND_HEIGHT + waTabBarBottomOffset(bottomInset) + WA_FLOATING_CTA_GAP;
+}
+
+/**
+ * Bottom padding for a scroll surface that sits under a `WaFloatingCta`, on a
+ * container that already reserves `waTabBarStripHeight`: the last row clears
+ * the island AND the pill floating above it.
+ *
+ * Inset-independent — the container's reserved strip and the CTA's own offset
+ * both move by exactly `waTabBarBottomOffset`, so they cancel.
+ */
+export const WA_FLOATING_CTA_CONTENT_CLEARANCE =
+  WA_TAB_CONTENT_CLEARANCE + WA_FLOATING_CTA_HEIGHT + WA_FLOATING_CTA_GAP; // 138
+
 // --- S7 Typography scale ------------------------------------------------------
 //
 // One scale for every flag-on surface (WA-VISUAL-DELTAS.md S7). Togather's
@@ -357,8 +400,12 @@ export const WA_DAY_PILL_PADDING_V = 2;
 export const WA_DAY_PILL_PADDING_H = 14;
 /** Fraction a reaction chip overlaps its bubble's bottom-outer corner. */
 export const WA_REACTION_CHIP_OVERLAP_PCT = 0.4;
-/** Reply-quote bar left-border strip width. */
-export const WA_REPLY_QUOTE_BORDER_WIDTH = 3;
+/**
+ * Reply-quote bar leading accent strip width. 4, not the spec prose's ~3 — at 3
+ * the strip read as a hairline rule rather than WhatsApp's clearly-colored bar
+ * (owner's direction on the replies round, 2026-07-29).
+ */
+export const WA_REPLY_QUOTE_BORDER_WIDTH = 4;
 /** Reply-quote thumbnail size. */
 export const WA_REPLY_QUOTE_THUMB_SIZE = 28;
 /** Composer pill input minimum height (grows with content). */

@@ -3723,4 +3723,266 @@ export default defineSchema({
   })
     .index("by_gridKey", ["gridKey"])
     .index("by_gridKey_user", ["gridKey", "userId"]),
+
+  // =============================================================================
+  // GROUP GIVING (ADR-032) — Stripe (acquiring) + Increase (banking) + our own
+  // append-only ledger for attribution/audit. See docs/architecture/decisions/
+  // ADR-032-group-giving.md for the full design. All money amounts are integer
+  // cents. Provider object ids (Stripe/Increase) are optional throughout: the
+  // ADR's onboarding status machine ("collecting" -> "verifying" -> "live")
+  // only accumulates them progressively as each provider's setup step
+  // completes, so a row can legitimately exist before they're known.
+  // =============================================================================
+
+  /**
+   * One row per community. Holds the church's legal/banking identity and the
+   * two provider ids it maps to (Stripe connected account for acquiring,
+   * Increase Entity for banking) plus the receiving Account Stripe pays out
+   * to. `onboardingStatus` is the monotonic status machine from ADR-032 §2;
+   * `stripe_blocked` / `increase_blocked` are side states surfaced as "needs
+   * attention" with the provider's remediation reason (not stored here — read
+   * live from the provider when displaying the checklist).
+   */
+  communityFinance: defineTable({
+    communityId: v.id("communities"),
+    stripeConnectedAccountId: v.optional(v.string()),
+    increaseEntityId: v.optional(v.string()),
+    increaseReceivingAccountId: v.optional(v.string()),
+    onboardingStatus: v.union(
+      v.literal("collecting"),
+      v.literal("verifying"),
+      v.literal("live"),
+      v.literal("stripe_blocked"),
+      v.literal("increase_blocked"),
+    ),
+    // Appears on the donor's card/bank statement. Optional — Stripe defaults
+    // it from the connected account if the community hasn't set one.
+    statementDescriptor: v.optional(v.string()),
+    legalName: v.string(),
+    ein: v.string(),
+    website: v.optional(v.string()),
+    address: v.object({
+      addressLine1: v.string(),
+      addressLine2: v.optional(v.string()),
+      city: v.string(),
+      state: v.string(),
+      zipCode: v.string(),
+    }),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  }).index("by_community", ["communityId"]),
+
+  /**
+   * A fund is Togather's own attribution unit: one per group with giving
+   * enabled, plus one "general" fund per community (the community-wide
+   * General Account). `increaseAccountId` is the Increase Account this fund
+   * is bound to — absent until Phase 2 (Increase live) provisions it.
+   * `balanceCents` is a cache derived from `ledgerEntries`, never the source
+   * of truth (see lib/finance/ledger.ts) — the bank balance is authoritative,
+   * per the ADR-032 invariant.
+   */
+  funds: defineTable({
+    communityId: v.id("communities"),
+    groupId: v.optional(v.id("groups")), // Absent for the community's "general" fund
+    name: v.string(),
+    type: v.union(v.literal("group"), v.literal("general")),
+    increaseAccountId: v.optional(v.string()),
+    status: v.union(
+      v.literal("active"),
+      v.literal("frozen"),
+      v.literal("closed"),
+    ),
+    balanceCents: v.number(),
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId"])
+    .index("by_group", ["groupId"]),
+
+  /**
+   * Append-only ledger — the single source of attribution/audit history.
+   * NEVER mutate or delete a row here; balances are always derived by
+   * summing entries (see lib/finance/ledger.ts's `deriveBalance` /
+   * `postLedgerEntry`), and `funds.balanceCents` is only ever a cache of
+   * that derivation. `communityId` is denormalized from the fund at write
+   * time so the nightly reconcile job and community-wide audit views can
+   * query `by_community` without fanning out over every fund first.
+   */
+  ledgerEntries: defineTable({
+    fundId: v.id("funds"),
+    communityId: v.id("communities"), // Denormalized from funds.communityId
+    direction: v.union(v.literal("credit"), v.literal("debit")),
+    amountCents: v.number(),
+    kind: v.union(
+      v.literal("donation"),
+      v.literal("allocation"),
+      v.literal("card_capture"),
+      v.literal("refund"),
+      v.literal("reimbursement"),
+      v.literal("transfer"),
+      v.literal("sweep"),
+      v.literal("fee"),
+    ),
+    stripeObjectId: v.optional(v.string()),
+    increaseObjectId: v.optional(v.string()),
+    // The other leg of a paired transfer/sweep entry (see postPairedTransfer).
+    counterpartFundId: v.optional(v.id("funds")),
+    // Dedupe key for every external write (webhook retries, scheduler
+    // retries). postLedgerEntry treats a repeat key as a no-op.
+    idempotencyKey: v.string(),
+    actorUserId: v.optional(v.id("users")), // Absent for system/webhook-driven entries
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId", "createdAt"])
+    .index("by_idempotencyKey", ["idempotencyKey"])
+    .index("by_community", ["communityId"]),
+
+  /**
+   * Finance permissions, scoped to a fund rather than a group (ADR-032 §4) —
+   * a trusted treasurer doesn't need to be a group leader, and a leader can't
+   * automatically move money. Ranked cardholder < manager < finance_admin
+   * (see FUND_ROLE_ORDER in lib/helpers.ts). `revokedAt` soft-deletes a grant
+   * without losing the audit trail of who granted/held it.
+   */
+  fundRoles: defineTable({
+    fundId: v.id("funds"),
+    userId: v.id("users"),
+    role: v.union(
+      v.literal("finance_admin"),
+      v.literal("manager"),
+      v.literal("cardholder"),
+    ),
+    grantedBy: v.id("users"),
+    grantedAt: v.number(), // Unix timestamp ms
+    revokedAt: v.optional(v.number()), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_user_fund", ["userId", "fundId"]),
+
+  /**
+   * One row per donation PaymentIntent. `allocationStatus` tracks the
+   * Stripe-bulk-payout -> Increase-AccountTransfer allocation job (ADR-032
+   * §3); "n/a" covers donations made before Increase went live for the
+   * community, which never need allocating out of a receiving Account.
+   */
+  donations: defineTable({
+    fundId: v.id("funds"),
+    donorUserId: v.optional(v.id("users")), // Absent for anonymous/guest gifts
+    amountCents: v.number(),
+    feeCoverCents: v.number(), // Donor's voluntary fee-cover add-on (never a mandatory surcharge — ADR-031)
+    stripePaymentIntentId: v.string(),
+    allocationStatus: v.union(
+      v.literal("pending"),
+      v.literal("allocated"),
+      v.literal("n/a"),
+    ),
+    recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
+    receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_stripePaymentIntentId", ["stripePaymentIntentId"])
+    .index("by_allocationStatus", ["allocationStatus"]),
+
+  /**
+   * An Increase virtual/physical card bound to a fund's Increase Account.
+   * The bank enforces segregation (a card can't overdraw its fund or touch
+   * another fund's balance), so there's no custom authorization decisioner
+   * here — this row is attribution + display (holder, limits, status).
+   */
+  cards: defineTable({
+    fundId: v.id("funds"),
+    holderUserId: v.id("users"),
+    increaseCardId: v.optional(v.string()),
+    // Mirrors Increase's own card status string (e.g. "active", "canceled",
+    // "frozen") rather than a locally-enumerated union, since we pass it
+    // through from the card-status webhook without reinterpreting it.
+    status: v.string(),
+    spendLimitCents: v.optional(v.number()),
+    controls: v.optional(v.any()), // Merchant-category / velocity controls, provider-shaped
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund", ["fundId"])
+    .index("by_holder", ["holderUserId"])
+    .index("by_increaseCardId", ["increaseCardId"]),
+
+  /**
+   * A card charge (from the card-transaction webhook) or a member-submitted
+   * reimbursement request. Approval guardrails (no self-approval, two-
+   * approver threshold, receipt-required policy) are enforced by the backend
+   * mutations that write `approverId` / `secondApproverId`, not by this
+   * schema — see ADR-032 §4.
+   */
+  expenses: defineTable({
+    fundId: v.id("funds"),
+    submitterId: v.id("users"),
+    amountCents: v.number(),
+    kind: v.union(v.literal("card_charge"), v.literal("reimbursement")),
+    // What the money was for, shown in the approvals queue ("pizza for
+    // outreach night"). Optional: card-charge expenses start with only the
+    // merchant name from the card webhook.
+    description: v.optional(v.string()),
+    // R2 object key. Optional because a card-charge expense is created by the
+    // transaction webhook before the cardholder attaches a receipt (the nudge
+    // flow); reimbursements always have one at submission.
+    receiptKey: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("approved"),
+      v.literal("denied"),
+      v.literal("paid"),
+    ),
+    approverId: v.optional(v.id("users")),
+    secondApproverId: v.optional(v.id("users")), // Set only when the two-approver threshold applies
+    increaseTransferId: v.optional(v.string()), // Set once the reimbursement ACH transfer is initiated
+    createdAt: v.number(), // Unix timestamp ms
+    updatedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_fund_status", ["fundId", "status"])
+    .index("by_submitter", ["submitterId"])
+    .index("by_increaseTransferId", ["increaseTransferId"]),
+
+  /**
+   * One row per Stripe payout that has had an allocation pass run against
+   * it. Payout-LEVEL replay protection: a redelivered `payout.paid` webhook
+   * must not run a second allocation pass, because the first pass already
+   * marked its donations "allocated" — a second planAllocations would grab
+   * the NEXT pending donations and move money that payout never contained
+   * (Codex review, PR #653). Per-donation idempotency keys can't catch that;
+   * this table does. Insert-if-absent via claimPayout (functions/finance/
+   * jobs.ts) is transactional under Convex OCC.
+   */
+  processedStripePayouts: defineTable({
+    communityId: v.id("communities"),
+    stripePayoutId: v.string(),
+    payoutCents: v.number(),
+    processedAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_payout", ["stripePayoutId"])
+    .index("by_community", ["communityId"]),
+
+  /**
+   * Immutable audit trail for every non-ledger finance action (ADR-032 §4).
+   * Money movement is already fully audited by append-only ledgerEntries;
+   * this table covers the control plane: role grants/revocations, card
+   * issue/freeze/limit changes, expense approvals/denials, onboarding status
+   * transitions, and fund freezes/closures. Rows are never patched or
+   * deleted. Write via logFinanceAudit() in lib/finance/audit.ts.
+   */
+  financeAuditEvents: defineTable({
+    communityId: v.id("communities"),
+    fundId: v.optional(v.id("funds")),
+    // Undefined actor = system action (webhook, cron), named in detailsJson.
+    actorUserId: v.optional(v.id("users")),
+    // Dot-namespaced, e.g. "role.granted", "card.frozen", "expense.approved",
+    // "onboarding.status_changed", "fund.swept".
+    action: v.string(),
+    // JSON-encoded context (before/after values, target user, amounts).
+    // Stored as a string so the shape can evolve without schema migrations.
+    detailsJson: v.optional(v.string()),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_community", ["communityId", "createdAt"])
+    .index("by_fund", ["fundId", "createdAt"]),
 });

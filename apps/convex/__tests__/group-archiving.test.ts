@@ -5,7 +5,7 @@
  * only visible/manageable by community admins.
  */
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import schema from "../schema";
 import { api } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -197,6 +197,85 @@ describe("Group archiving behavior", () => {
     expect(archived).toHaveLength(1);
     expect(archived[0]._id).toBe(ids.archivedGroupId as Id<"groups">);
     expect(archived[0].isArchived).toBe(true);
+  });
+});
+
+// ============================================================================
+// Group archive freezes the group's giving fund (security-review FIX 4,
+// ADR-032 §3 "Group archive" — freeze half only, see functions/finance/
+// ARCHITECTURE.md's "Known Seams & TODOs" for the deferred bank-side sweep)
+// ============================================================================
+
+describe("Group archiving freezes the group's giving fund", () => {
+  test("archiving a group with an active fund (via the real update mutation) freezes it", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const ids = await seed(t);
+      const { accessToken: adminToken } = await generateTokens(ids.adminId);
+
+      const fundId = await t.run(async (ctx) => {
+        const timestamp = Date.now();
+        return await ctx.db.insert("funds", {
+          communityId: ids.communityId,
+          groupId: ids.activeGroupId,
+          name: "Active Group Fund",
+          type: "group",
+          status: "active",
+          balanceCents: 500,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      });
+
+      // The real archive path — this is what actually cascades in
+      // production, not the direct internal-mutation call the finance test
+      // suite exercises separately.
+      await t.mutation(api.functions.groups.mutations.update, {
+        token: adminToken,
+        groupId: ids.activeGroupId,
+        isArchived: true,
+      });
+
+      // freezeFundForArchivedGroup is scheduled (ctx.scheduler.runAfter),
+      // not run inline — drain it the same way finance-onboarding.test.ts
+      // drains provisionProviders/provisionGroupFundAccount.
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const fund = await t.run((ctx) => ctx.db.get(fundId));
+      expect(fund?.status).toBe("frozen");
+
+      const auditEvents = await t.run((ctx) =>
+        ctx.db
+          .query("financeAuditEvents")
+          .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+          .collect(),
+      );
+      expect(auditEvents.some((e) => e.action === "fund.frozen")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("archiving a group with no fund is unaffected (no fund to freeze)", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const ids = await seed(t);
+      const { accessToken: adminToken } = await generateTokens(ids.adminId);
+
+      await t.mutation(api.functions.groups.mutations.update, {
+        token: adminToken,
+        groupId: ids.activeGroupId,
+        isArchived: true,
+      });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const group = await t.run((ctx) => ctx.db.get(ids.activeGroupId));
+      expect(group?.isArchived).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

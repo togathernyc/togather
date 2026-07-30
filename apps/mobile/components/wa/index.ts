@@ -47,6 +47,9 @@ export type {
 export { WaFloatingButton } from './WaFloatingButton';
 export type { WaFloatingButtonProps, WaFloatingButtonVariant } from './WaFloatingButton';
 
+export { WaFloatingCta } from './WaFloatingCta';
+export type { WaFloatingCtaProps } from './WaFloatingCta';
+
 export { WaLargeTitle } from './WaLargeTitle';
 export type { WaLargeTitleProps } from './WaLargeTitle';
 

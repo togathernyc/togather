@@ -74,6 +74,13 @@ interface MessageInputProps {
     senderName: string;
   } | null;
   onCancelReply?: () => void;
+  /**
+   * Fired after a reply is successfully handed to the send pipeline, with the
+   * parent it answered. The chat room uses it to follow a reply that just
+   * turned its parent's conversation into a thread; ThreadPage doesn't pass it,
+   * so sends from inside a thread never navigate anywhere.
+   */
+  onReplySent?: (parentMessageId: Id<"chatMessages">) => void;
   /** Hide the reply preview banner (useful for thread page where context is already clear) */
   hideReplyPreview?: boolean;
   /** External send function (from parent, with optimistic/offline support) */
@@ -147,7 +154,7 @@ const filterMembers = (members: ChannelMember[], searchText: string): ChannelMem
   );
 };
 
-export function MessageInput({ channelId, replyToMessage, onCancelReply, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false, placeholder }: MessageInputProps) {
+export function MessageInput({ channelId, replyToMessage, onCancelReply, onReplySent, hideReplyPreview, externalSendMessage, externalIsSending, recipientPending = false, placeholder }: MessageInputProps) {
   const { colors: themeColors, isDark } = useTheme();
   const { isKnicksMode, primaryColor } = useCommunityTheme();
   // WhatsApp-shell composer anatomy (WHATSAPP-DESIGN-SYSTEM.md §5) —
@@ -660,11 +667,12 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
         ],
         parentMessageId: replyToMessage?._id,
       });
-      if (replyToMessage && onCancelReply) {
-        onCancelReply();
+      if (replyToMessage) {
+        onCancelReply?.();
+        onReplySent?.(replyToMessage._id);
       }
     },
-    [channelId, uploadFile, sendMessage, replyToMessage, onCancelReply]
+    [channelId, uploadFile, sendMessage, replyToMessage, onCancelReply, onReplySent]
   );
 
   /**
@@ -858,8 +866,9 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
       }
 
       // Cancel reply
-      if (replyToMessage && onCancelReply) {
-        onCancelReply();
+      if (replyToMessage) {
+        onCancelReply?.();
+        onReplySent?.(replyToMessage._id);
       }
 
       // Re-focus input so keyboard stays open (like iMessage)
@@ -902,6 +911,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
     extractMentionedUserIds,
     replyToMessage,
     onCancelReply,
+    onReplySent,
     resetImageUpload,
     resetFileUpload,
     resetVideoUpload,
@@ -1309,6 +1319,7 @@ export function MessageInput({ channelId, replyToMessage, onCancelReply, hideRep
 
         {canSend ? (
           <Pressable
+            testID="wa-composer-send"
             style={[styles.sendButton, { backgroundColor: waAccent }]}
             onPress={handleSend}
             disabled={!canSend}
