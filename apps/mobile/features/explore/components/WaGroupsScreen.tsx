@@ -80,6 +80,7 @@ import {
   waTabBarStripHeight,
 } from '@components/wa';
 import { useUserLocation } from '@features/location/hooks/useUserLocation';
+import { useConvexFeatureFlag } from '@hooks/useConvexFeatureFlag';
 import { ExploreMap, MapBounds } from './ExploreMap';
 import { FloatingGroupCard } from './FloatingGroupCard';
 import type { FilterState, GroupTypeOption } from './FilterModal';
@@ -143,6 +144,15 @@ interface WaGroupsSearchPillProps {
   /** Compass affordance rendered to the right of the pill. */
   nearbyActive: boolean;
   onPressNearby: () => void;
+  /**
+   * Whether the device-location compass renders at all. Gated on the
+   * `nearby-device-location` Convex flag: the iOS permission string shipped
+   * in config but is inert until a NATIVE build carries it, and prompting
+   * from a binary without it mis-behaves. Zip search (typed into this pill)
+   * works regardless, so the placeholder advertises it while the compass is
+   * hidden.
+   */
+  showCompass: boolean;
 }
 
 /**
@@ -162,6 +172,7 @@ function WaGroupsSearchPill({
   onChange,
   nearbyActive,
   onPressNearby,
+  showCompass,
 }: WaGroupsSearchPillProps) {
   const { colors } = useTheme();
   return (
@@ -175,7 +186,7 @@ function WaGroupsSearchPill({
         />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
-          placeholder="Search groups"
+          placeholder={showCompass ? 'Search groups' : 'Search groups or zip code'}
           placeholderTextColor={colors.textTertiary}
           value={value}
           onChangeText={onChange}
@@ -195,12 +206,14 @@ function WaGroupsSearchPill({
           </Pressable>
         ) : null}
       </View>
-      <WaFloatingButton
-        icon={nearbyActive ? 'compass' : 'compass-outline'}
-        onPress={onPressNearby}
-        size={WA_HEADER_CIRCLE_SIZE}
-        accessibilityLabel="Find groups near me"
-      />
+      {showCompass ? (
+        <WaFloatingButton
+          icon={nearbyActive ? 'compass' : 'compass-outline'}
+          onPress={onPressNearby}
+          size={WA_HEADER_CIRCLE_SIZE}
+          accessibilityLabel="Find groups near me"
+        />
+      ) : null}
     </View>
   );
 }
@@ -390,6 +403,12 @@ export function WaGroupsScreen({
     setLocationFromZip,
   } = useUserLocation();
   const [nearbyRequested, setNearbyRequested] = useState(false);
+  // Owner directive (2026-07-30): the device-location compass stays hidden
+  // until the native build carrying the iOS permission string is live —
+  // flipped via /admin/features once it ships. Fails closed while loading.
+  const { enabled: deviceLocationEnabled } = useConvexFeatureFlag(
+    'nearby-device-location'
+  );
 
   // A bare 5-digit zip in the search field means "groups near this zip", not
   // "groups whose name contains 12345" — it is the always-available alternative
@@ -579,6 +598,7 @@ export function WaGroupsScreen({
             onChange={onSearchChange}
             nearbyActive={Boolean(origin)}
             onPressNearby={handlePressNearby}
+            showCompass={deviceLocationEnabled}
           />
         ) : (
           <View />
