@@ -45,38 +45,45 @@ export function formatMiles(miles: number): string {
   return `${miles < 10 ? Math.round(miles * 10) / 10 : Math.round(miles)} mi`;
 }
 
-export interface NearbyPartition<T> {
-  /** Items with a known location, nearest first, each with its distance. */
-  near: Array<{ item: T; miles: number }>;
-  /** Items we have no coordinates for — order preserved, shown below. */
-  rest: T[];
+export interface DistanceRanked<T> {
+  item: T;
+  /** null when the item has no coordinates on file — these sort last. */
+  miles: number | null;
 }
 
 /**
- * Split a list into "has coordinates, sorted by distance" and "everything
- * else". Only SOME groups are geocodable (a group with no address or zip
- * can't be placed), so the un-placed ones are never dropped — they keep their
- * incoming order under the nearby section.
+ * Order a whole list nearest-first, keeping every item.
+ *
+ * Only SOME groups are geocodable (a group with no address or zip can't be
+ * placed), so the un-placed ones are never dropped and never interleaved —
+ * they trail the located ones in their incoming order. Located items are
+ * ascending by distance and stable within a tie.
+ *
+ * Returns the distance alongside each item because the caller needs both the
+ * order AND the per-row "2.3 mi" label, and computing haversine twice for that
+ * would be silly.
  */
-export function partitionByDistance<T>(
+export function sortByDistance<T>(
   items: readonly T[],
   coordsOf: (item: T) => LatLng | null | undefined,
   origin: LatLng
-): NearbyPartition<T> {
-  const near: Array<{ item: T; miles: number }> = [];
-  const rest: T[] = [];
+): Array<DistanceRanked<T>> {
+  const located: Array<DistanceRanked<T>> = [];
+  const unplaced: Array<DistanceRanked<T>> = [];
 
   items.forEach((item) => {
     const coords = coordsOf(item);
     if (coords) {
-      near.push({ item, miles: haversineMiles(origin, coords) });
+      located.push({ item, miles: haversineMiles(origin, coords) });
     } else {
-      rest.push(item);
+      unplaced.push({ item, miles: null });
     }
   });
 
-  near.sort((a, b) => a.miles - b.miles);
-  return { near, rest };
+  // `Array.prototype.sort` is stable per spec (ES2019+), so equal distances
+  // keep their incoming order without an index tiebreak.
+  located.sort((a, b) => (a.miles as number) - (b.miles as number));
+  return [...located, ...unplaced];
 }
 
 /** True for a bare 5-digit US zip — the search field's "find near this zip" trigger. */
