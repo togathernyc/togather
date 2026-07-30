@@ -114,7 +114,7 @@ Four finance test files in `apps/convex/__tests__/`:
   see ADR-032 "Phase 2 requirements": withdrawals draw from the General
   fund's Account only, capped at settled (not ledger) balance; explicit
   group-fund sweeps require double confirmation + notification to the fund's
-  finance admins; payout-destination drift (church re-pointing Stripe payouts
+  finance admins and managers; payout-destination drift (church re-pointing Stripe payouts
   away from the managed Increase account via the Express Dashboard) must be
   detected and surfaced.
 

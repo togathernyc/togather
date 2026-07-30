@@ -280,9 +280,11 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
    Account (holds money still attributed to groups pre-allocation) or from
    group Accounts. Fully audit-logged.
 2. **Solvency warning on withdrawal.** The withdrawal UX must distinguish
-   the General fund's *ledger* balance from its *settled bank* balance
-   (donations in the Stripe→Increase pipeline inflate the former) and cap
-   the withdrawable amount at settled funds, explaining the difference.
+   the General fund's *ledger* balance from what the bank will actually
+   honor (donations in the Stripe→Increase pipeline inflate the former;
+   holds and unsettled outbound ACH inflate the settled balance) and cap
+   the withdrawable amount at **min(non-negative ledger balance, Increase
+   `availableBalanceCents`)**, explaining the difference.
 3. **Explicit, loud group sweeps.** Taking money a group fund holds requires
    an explicit per-fund transfer with: a double confirmation stating the
    fund's leaders/managers currently see that balance and will watch it
@@ -294,9 +296,12 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
    transparent rather than silent.
 4. **Payout-destination drift monitoring.** If a church changes its Stripe
    payout bank away from the managed Increase receiving Account (possible
-   via the Express Dashboard), detect it (`account.updated` external-account
-   changes), alert ops, and surface an in-app "group banking disconnected"
-   state — Phase 1 attribution keeps working; cards/allocation do not.
+   via the Express Dashboard), detect it by subscribing to the dedicated
+   Connect events `account.external_account.created` / `.updated` /
+   `.deleted` (`account.updated` alone does not observe every external-
+   account change), alert ops, and surface an in-app "group banking
+   disconnected" state — Phase 1 attribution keeps working;
+   cards/allocation do not.
 5. **Offboarding runbook.** A church leaving Togather gets its full balance
    ACH'd to its verified bank and its Increase accounts closed — tooling +
    terms-of-service clause, not a support ticket.
