@@ -137,17 +137,21 @@ interface MessageListProps {
    */
   highlightMessageId?: Id<"chatMessages"> | null;
   /**
-   * Flag-on only. The parents that currently show exactly one reply inline in
-   * the timeline — i.e. the threads that a NEXT reply would collapse.
+   * Flag-on only. Every message a reply to which would collapse a thread that
+   * currently shows exactly one reply inline.
    *
    * The server admits a reply only while it is its parent's sole visible reply,
    * so every admitted reply's parent is by definition such a thread; that also
    * makes this correct for blocked/cross-channel siblings for free, since those
-   * were never admitted. The chat room uses it to follow the sender into the
-   * thread on the send that causes the collapse, instead of letting their
-   * message appear to vanish into a pill on a parent that may be scrolled away.
+   * were never admitted. The inline reply ITSELF is reported alongside its
+   * parent, because replying to it roots to the same thread — that is the whole
+   * point of rooting, and it is the tap the owner actually makes. The chat room
+   * uses this to follow the sender into the thread on the send that causes the
+   * collapse, instead of letting their message appear to vanish into a pill on
+   * a parent that may be scrolled away — so each entry maps the message that
+   * can be replied to onto the ROOT whose thread the reply lands in.
    */
-  onCollapsibleThreadsChange?: (parentIds: Set<string>) => void;
+  onCollapsibleThreadsChange?: (rootByReplyTarget: Map<string, string>) => void;
 }
 
 // Helper to format date as "Today", "Yesterday", or "Jan 15"
@@ -485,24 +489,36 @@ export function MessageList({
     return items.reverse();
   }, [displayMessages, displayOptimisticMessages, whatsappShellEnabled]);
 
-  // Report the threads a next reply would collapse (see the prop's JSDoc).
+  // Report the threads a next reply would collapse (see the prop's JSDoc), as
+  // `replyTarget>threadRoot` pairs. Both the inline reply's parent (the root)
+  // and the reply itself are targets: the server roots a reply-to-a-reply at
+  // the same thread, so either tap collapses the same conversation.
   // Flag-off this is always empty — there are no inline replies to begin with.
   const collapsibleThreadKey = useMemo(() => {
     if (!whatsappShellEnabled) return '';
-    return messages
-      .filter((m) => m.parentMessageId)
-      .map((m) => String(m.parentMessageId))
-      .sort()
-      .join(',');
+    const pairs = new Set<string>();
+    for (const m of messages) {
+      if (!m.parentMessageId) continue;
+      const root = String(m.parentMessageId);
+      pairs.add(`${root}>${root}`);
+      pairs.add(`${String(m._id)}>${root}`);
+    }
+    return [...pairs].sort().join(',');
   }, [messages, whatsappShellEnabled]);
 
   useEffect(() => {
     if (!onCollapsibleThreadsChange) return;
     onCollapsibleThreadsChange(
-      new Set(collapsibleThreadKey ? collapsibleThreadKey.split(',') : []),
+      new Map(
+        collapsibleThreadKey
+          ? collapsibleThreadKey
+              .split(',')
+              .map((pair) => pair.split('>') as [string, string])
+          : [],
+      ),
     );
-    // Keyed on the joined id string so an unchanged set doesn't re-notify on
-    // every unrelated message arriving.
+    // Keyed on the joined pair string so an unchanged mapping doesn't re-notify
+    // on every unrelated message arriving.
   }, [collapsibleThreadKey, onCollapsibleThreadsChange]);
 
   // Scroll to and highlight a target message — from inbox search

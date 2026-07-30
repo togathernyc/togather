@@ -1046,13 +1046,18 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     setReplyToLocal(null);
   }, []);
 
-  // Parents that currently show exactly one reply inline — the threads a next
-  // reply collapses. Reported by MessageList (flag-on only) and held in a ref
-  // because nothing renders from it; it's only read at send time.
-  const collapsibleThreadsRef = useRef<Set<string>>(new Set());
-  const handleCollapsibleThreadsChange = useCallback((parentIds: Set<string>) => {
-    collapsibleThreadsRef.current = parentIds;
-  }, []);
+  // Threads that currently show exactly one reply inline — the ones a next
+  // reply collapses — keyed by every message you can tap "reply" on to land in
+  // them (the root, and the inline reply itself), mapped to the thread's root.
+  // Reported by MessageList (flag-on only) and held in a ref because nothing
+  // renders from it; it's only read at send time.
+  const collapsibleThreadsRef = useRef<Map<string, string>>(new Map());
+  const handleCollapsibleThreadsChange = useCallback(
+    (rootByReplyTarget: Map<string, string>) => {
+      collapsibleThreadsRef.current = rootByReplyTarget;
+    },
+    [],
+  );
 
   /**
    * Follow a reply that just turned its parent into a thread.
@@ -1063,24 +1068,29 @@ const ConvexChatRoomScreenInner: React.FC = () => {
    * vanish. So on exactly that send, open the thread the message actually
    * landed in.
    *
-   * Deliberately conservative: it fires only when the parent was known to have
+   * Deliberately conservative: it fires only when the thread was known to have
    * an inline reply loaded right now. A first reply (nothing inline yet) stays
    * put, an already-collapsed thread can't be replied to from the timeline, and
-   * an unknown/unloaded parent does nothing.
+   * an unknown/unloaded target does nothing.
+   *
+   * `replyTargetId` is the message the sender tapped, which is not necessarily
+   * the thread — replying to an inline reply roots at that reply's parent — so
+   * the lookup resolves the ROOT, and that is the thread we open.
    */
   const handleReplySent = useCallback(
-    (parentMessageId: Id<"chatMessages">) => {
+    (replyTargetId: Id<"chatMessages">) => {
       if (!whatsappShellEnabled) return;
-      if (!collapsibleThreadsRef.current.has(String(parentMessageId))) return;
+      const threadRootId = collapsibleThreadsRef.current.get(String(replyTargetId));
+      if (!threadRootId) return;
       // Same parallel group/DM routes MessageItem's thread pill uses.
       if (resolvedGroupId) {
         router.push({
-          pathname: `/inbox/${resolvedGroupId}/thread/${parentMessageId}` as any,
+          pathname: `/inbox/${resolvedGroupId}/thread/${threadRootId}` as any,
           params: { channelName: activeSlug || "general" },
         });
       } else if (activeChannelId) {
         router.push({
-          pathname: `/inbox/dm/${activeChannelId}/thread/${parentMessageId}` as any,
+          pathname: `/inbox/dm/${activeChannelId}/thread/${threadRootId}` as any,
         });
       }
     },
