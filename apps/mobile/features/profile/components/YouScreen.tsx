@@ -1,11 +1,22 @@
 /**
  * YouScreen — the `whatsapp-shell`-flag-on "You" tab.
  *
- * README.md "W9 — You": WhatsApp "You" hierarchy — profile card → Switch
- * community, Invite your church → My events/My schedule/My prayers/Archived
- * groups → Leader tools (role-gated) → Admin tools (role-gated) →
- * Notifications/Privacy/Help & feedback → Sign out. Absorbs today's
- * `ProfileMenu` catch-all drawer.
+ * README.md "W9 — You": WhatsApp "You" hierarchy — hero → Community (switch ·
+ * invite) → Personal (my events/schedule/prayers/archived groups) → Settings
+ * (Account · Appearance · Notifications · Privacy & blocked) → Leader tools
+ * (role-gated) → Admin (role-gated, one row per surface) → App (App info ·
+ * Help & feedback · Dev Dashboard) → Log out. Absorbs today's `ProfileMenu`
+ * catch-all drawer.
+ *
+ * Settings/Admin IA regroup: the two rows that used to be catch-alls are gone.
+ * "Notifications" opened the ENTIRE legacy `SettingsScreen` — a flat 10-section
+ * scroll mixing profile info, theme, time zone, four cards duplicated from this
+ * very screen, app info and account deletion — and "Admin tools" opened the
+ * whole segmented `AdminScreen`. Both are now split into one row per
+ * destination, pointing at thin flag-on-only `/(user)/you/*` routes that WRAP
+ * the same section/content components those screens render (see `YouSubScreen`).
+ * The legacy screens and their routes are untouched: flag-off users still reach
+ * them through `ProfileMenu`, and `/(tabs)/admin` stays live for deep links.
  *
  * WHATSAPP-DESIGN-SYSTEM.md §3.2 (inset-grouped lists) + §4 (nav chrome) +
  * §8 You-tab checklist, as recalibrated by WA-VISUAL-DELTAS.md §4: a
@@ -37,6 +48,7 @@ import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { Avatar } from "@components/ui";
 import { useDevAccess } from "@features/contribute/hooks/useDevAccess";
+import { useYouAdminAccess } from "../hooks/useYouAdminAccess";
 import {
   WaInsetGroup,
   WaCell,
@@ -130,11 +142,12 @@ export function YouScreen() {
     communityId ? { communityId } : "skip"
   );
 
-  // --- Admin tools gate — identical to the Admin tab's `href` gate in (tabs)/_layout.tsx. ---
+  // --- Admin gates — see useYouAdminAccess: the same facts AdminScreen uses to
+  //     decide which of its segmented tabs to show, one row per tab. Their OR is
+  //     the Admin tab's own `href` gate in (tabs)/_layout.tsx. ---
+  const { showCommunityAdmin, showStaffDashboard, showAdminGroup } = useYouAdminAccess();
   const isAdmin = user?.is_admin === true;
-  const isInternalUser = user?.is_staff === true || user?.is_superuser === true;
   const hasCommunity = !!community?.id;
-  const showAdminTools = (isAdmin && hasCommunity) || isInternalUser;
 
   // --- Dev dashboard gate — same hook ProfileMenu uses for its "Dev Dashboard" row. ---
   const { hasAccess: hasDevAccess } = useDevAccess();
@@ -254,6 +267,36 @@ export function YouScreen() {
           </WaInsetGroup>
         </View>
 
+        {/* Settings — one row per destination instead of the old single
+            "Notifications" row that opened the whole 10-section legacy
+            SettingsScreen. Account/Appearance/Notifications are new flag-on-only
+            routes wrapping the same section components that screen renders;
+            Privacy & blocked keeps its existing standalone route. */}
+        <View style={styles.group}>
+          <WaInsetGroup header="Settings">
+            <WaCell
+              icon="person-outline"
+              title="Account"
+              onPress={() => router.push("/(user)/you/account")}
+            />
+            <WaCell
+              icon="color-palette-outline"
+              title="Appearance"
+              onPress={() => router.push("/(user)/you/appearance")}
+            />
+            <WaCell
+              icon="notifications-outline"
+              title="Notifications"
+              onPress={() => router.push("/(user)/you/notifications")}
+            />
+            <WaCell
+              icon="lock-closed-outline"
+              title="Privacy & blocked"
+              onPress={() => router.push("/(user)/settings/blocked-users")}
+            />
+          </WaInsetGroup>
+        </View>
+
         {/* Leader tools — ProfileMenu's hasLeaderAccess === true gate; same
             Tasks/People routes + returnTo param ProfileMenu uses. */}
         {hasLeaderAccess === true ? (
@@ -277,34 +320,69 @@ export function YouScreen() {
           </View>
         ) : null}
 
-        {/* Admin tools — identical gate to the Admin tab (isAdmin && hasCommunity) || isInternalUser. */}
-        {showAdminTools ? (
+        {/* Admin — one row per AdminScreen segment instead of the old single
+            "Admin tools" row that pushed the whole segmented screen. Row gates
+            come from useYouAdminAccess, which derives them from exactly the
+            facts AdminScreen's own tab list uses: the four community-admin rows
+            need `isAdmin && hasCommunity`, the staff dashboard needs only the
+            internal-staff bit (so no-community / non-admin staff still get it,
+            just as Dashboard is their only AdminScreen tab). The legacy
+            /(tabs)/admin route stays live for deep links and flag-off. */}
+        {showAdminGroup ? (
           <View style={styles.group}>
-            <WaInsetGroup>
-              <WaCell
-                icon="shield-checkmark-outline"
-                title="Admin tools"
-                onPress={() => router.push("/(tabs)/admin")}
-              />
+            <WaInsetGroup header="Admin">
+              {/* Gated one row at a time rather than as a single fragment:
+                  WaInsetGroup counts a Fragment as ONE child, which would drop
+                  the hairlines between these rows. */}
+              {showCommunityAdmin ? (
+                <WaCell
+                  icon="enter-outline"
+                  title="Join requests"
+                  onPress={() => router.push("/(user)/you/admin/requests")}
+                />
+              ) : null}
+              {showCommunityAdmin ? (
+                <WaCell
+                  icon="people-outline"
+                  title="Members"
+                  onPress={() => router.push("/(user)/you/admin/members")}
+                />
+              ) : null}
+              {showCommunityAdmin ? (
+                <WaCell
+                  icon="stats-chart-outline"
+                  title="Attendance stats"
+                  onPress={() => router.push("/(user)/you/admin/stats")}
+                />
+              ) : null}
+              {showCommunityAdmin ? (
+                <WaCell
+                  icon="settings-outline"
+                  title="Community settings"
+                  onPress={() => router.push("/(user)/you/admin/community")}
+                />
+              ) : null}
+              {showStaffDashboard ? (
+                <WaCell
+                  icon="speedometer-outline"
+                  title="Staff dashboard"
+                  onPress={() => router.push("/(user)/you/admin/staff")}
+                />
+              ) : null}
             </WaInsetGroup>
           </View>
         ) : null}
 
-        {/* Notifications (→ Settings, which hosts NotificationPreferencesSection) ·
-            Privacy & blocked (→ settings/blocked-users) · Help & feedback (→ the
+        {/* App — App info (its own route wrapping AppInfoSection, which the
+            legacy SettingsScreen buried second-to-last) · Help & feedback (→ the
             existing /support landing route) · Dev Dashboard (ProfileMenu's
             hasDevAccess gate, kept as its own row per its existing maintainer gate). */}
         <View style={styles.group}>
-          <WaInsetGroup>
+          <WaInsetGroup header="App">
             <WaCell
-              icon="notifications-outline"
-              title="Notifications"
-              onPress={() => router.push("/(user)/settings")}
-            />
-            <WaCell
-              icon="lock-closed-outline"
-              title="Privacy & blocked"
-              onPress={() => router.push("/(user)/settings/blocked-users")}
+              icon="information-circle-outline"
+              title="App info"
+              onPress={() => router.push("/(user)/you/app-info")}
             />
             <WaCell
               icon="help-circle-outline"
