@@ -17,6 +17,12 @@ import {
   LIST_PREVIEW_MAX,
 } from "../lib/text";
 
+/** Count user-perceived characters (grapheme clusters), matching the helper. */
+const countGraphemes = (s: string): number =>
+  Array.from(
+    new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(s),
+  ).length;
+
 describe("truncatePreview", () => {
   test("returns short text unchanged, with no ellipsis", () => {
     expect(truncatePreview("Hello there", 100)).toBe("Hello there");
@@ -61,6 +67,33 @@ describe("truncatePreview", () => {
     // One shorter: the emoji is dropped entirely, not split.
     const shorter = truncatePreview(text, graphemeLen - 1, false);
     expect(shorter).toBe("Please keep me in prayers");
+  });
+
+  test("caps content made of wide (ZWJ emoji) graphemes", () => {
+    // 👨‍👩‍👧‍👦 is one grapheme cluster but 11 UTF-16 code units — wider than
+    // the fast-path `max * 8` prefix budget per grapheme, so the bounded prefix
+    // alone segments to fewer than `max` graphemes. The full body must still be
+    // truncated, not returned whole.
+    const family = "👨‍👩‍👧‍👦";
+    const body = family.repeat(300); // 300 graphemes / 3300 code units
+    const out = truncatePreview(body, PUSH_PREVIEW_MAX);
+    // Grapheme count — NOT code-point count ([...out]) — is what the cap bounds.
+    expect(countGraphemes(out)).toBeLessThanOrEqual(PUSH_PREVIEW_MAX);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out.length).toBeLessThan(body.length);
+  });
+
+  test("caps content made of stacked combining marks (Zalgo)", () => {
+    // A base char plus many combining marks is a single, arbitrarily long
+    // grapheme; a run of them exceeds `max` graphemes while each grapheme is far
+    // wider than 8 code units — the same fast-path escape hatch as ZWJ emoji.
+    const zalgo = "a" + "́".repeat(20); // 1 grapheme, 21 code units
+    const body = zalgo.repeat(300); // 300 graphemes
+    const out = truncatePreview(body, LIST_PREVIEW_MAX, false);
+    expect(out.endsWith("…")).toBe(false); // ellipsis=false for the list preview
+    expect(out.length).toBeLessThan(body.length);
+    // No lone surrogate and no leading combining mark left dangling at the cut.
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
   });
 
   test("surface caps are ordered email >= push == list", () => {

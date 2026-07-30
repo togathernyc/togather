@@ -57,13 +57,23 @@ export function truncatePreview(
   max: number,
   ellipsis = true,
 ): string {
-  // A grapheme is ≥1 UTF-16 code unit, so `max * 8` code units always yields
-  // ≥ `max` graphemes (generous headroom for ZWJ sequences). Slicing to that
-  // bound first means we never segment a multi-megabyte body just to keep a
-  // couple hundred graphemes — the visible result is identical.
+  // Fast path: segment only a bounded prefix so we don't run `Intl.Segmenter`
+  // over a multi-megabyte body just to keep a couple hundred graphemes. If that
+  // prefix alone already exceeds `max` graphemes, the truncation point lies
+  // within it, so slicing from these graphemes is exact.
   const bound = max * 8;
-  const graphemes = toGraphemes(text.length > bound ? text.slice(0, bound) : text);
-  if (graphemes.length <= max) return text;
+  const prefixed = text.length > bound;
+  let graphemes = toGraphemes(prefixed ? text.slice(0, bound) : text);
+  if (graphemes.length <= max) {
+    // The bounded prefix segmented to ≤ `max` graphemes. If we didn't pre-slice,
+    // the whole text really is within the cap. If we did, wide graphemes (ZWJ
+    // emoji, stacked combining marks) can hide more content past the window, so
+    // segment the full body to get the true count — otherwise a runaway message
+    // made of wide graphemes would slip through untruncated.
+    if (!prefixed) return text;
+    graphemes = toGraphemes(text);
+    if (graphemes.length <= max) return text;
+  }
   const keep = ellipsis ? Math.max(0, max - 1) : Math.max(0, max);
   return graphemes.slice(0, keep).join("") + (ellipsis ? "…" : "");
 }
