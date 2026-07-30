@@ -113,6 +113,9 @@ SECRET_KEYS=(
   "OPENAI_SECRET_KEY"
   "STRIPE_SECRET_KEY"
   "STRIPE_WEBHOOK_SECRET"
+  # Optional second signing secret for the "Events from: Connected accounts"
+  # Stripe event destination (group-giving webhooks) — skipped when unset.
+  "STRIPE_CONNECT_WEBHOOK_SECRET"
   "STRIPE_PRODUCT_ID"
   "INCREASE_API_KEY"
   "INCREASE_WEBHOOK_SECRET"

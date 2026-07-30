@@ -426,8 +426,22 @@ http.route({
       return new Response("Webhook not configured", { status: 500 });
     }
 
+    // Two Stripe event destinations share this endpoint, each with its own
+    // signing secret: the platform-account destination (billing events —
+    // STRIPE_WEBHOOK_SECRET) and the "Events from: Connected accounts"
+    // destination (group-giving events: account.updated,
+    // payment_intent.succeeded, payout.paid, charge.refunded,
+    // charge.dispute.created — STRIPE_CONNECT_WEBHOOK_SECRET). Stripe scopes
+    // a destination at creation, so listening to both requires two
+    // destinations; accept either signature here. Optional so pre-Connect
+    // deploys keep working unchanged.
+    const connectWebhookSecret = process.env.STRIPE_CONNECT_WEBHOOK_SECRET;
+
     // Verify signature using Web Crypto API
-    const isValid = await verifyStripeSignature(body, signature, webhookSecret);
+    const isValid =
+      (await verifyStripeSignature(body, signature, webhookSecret)) ||
+      (!!connectWebhookSecret &&
+        (await verifyStripeSignature(body, signature, connectWebhookSecret)));
     if (!isValid) {
       console.error("[StripeWebhook] Invalid signature");
       return new Response("Invalid signature", { status: 400 });
