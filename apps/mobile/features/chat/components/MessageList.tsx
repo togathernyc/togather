@@ -431,7 +431,10 @@ export function MessageList({
         // genuinely isn't, the quote just arrives with the server echo.
         let optimisticQuote: ReplyQuote | undefined;
         if (whatsappShellEnabled && optMsg.parentMessageId) {
-          const parent = messages.find((m) => m._id === optMsg.parentMessageId);
+          // "The loaded page" is displayMessages: on a buffered revisit the
+          // live query may still be empty while the buffer paints the page
+          // the user is actually replying from.
+          const parent = displayMessages.find((m) => m._id === optMsg.parentMessageId);
           if (parent) {
             optimisticQuote = {
               parentMessageId: parent._id,
