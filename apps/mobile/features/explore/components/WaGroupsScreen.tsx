@@ -56,6 +56,7 @@ import {
   WaScreenHeader,
   WaRow,
   WaSeparator,
+  WaFloatingCta,
   WA_LIST_SEPARATOR_INSET,
   WA_SEARCH_PILL_HEIGHT,
   WA_SEARCH_PILL_ICON_SIZE,
@@ -66,8 +67,7 @@ import {
   WA_TYPE_SUBTITLE,
   WA_TYPE_SECTION_HEADER,
   WA_WEIGHT_SEMIBOLD,
-  WA_FLOATING_SHADOW,
-  WA_TAB_CONTENT_CLEARANCE,
+  WA_FLOATING_CTA_CONTENT_CLEARANCE,
   waTabBarStripHeight,
 } from '@components/wa';
 import { ExploreMap, MapBounds } from './ExploreMap';
@@ -77,8 +77,6 @@ import type { FilterState, GroupTypeOption } from './FilterModal';
 /** D4: "34pt, fully rounded, gray fill, 15pt dark label" — WhatsApp's own
  *  All/Unread/Favorites/Groups chip row measures 32-34pt. */
 const CHIP_HEIGHT = 34;
-/** Matches the community landing's single green CTA pill (§5.5). */
-const CTA_PILL_HEIGHT = 50;
 /** Centered empty-state glyph, same size the flag-on Chats list uses. */
 const EMPTY_GLYPH_SIZE = 48;
 
@@ -541,23 +539,16 @@ export function WaGroupsScreen({
         )}
       </ScrollView>
 
-      {/* S5.1: the screen's single green element. */}
-      <View style={styles.ctaWrap} pointerEvents="box-none">
-        <Pressable
-          onPress={onAddGroup}
-          accessibilityRole="button"
-          accessibilityLabel="Add group"
-          testID="wa-groups-add"
-          style={({ pressed }) => [
-            styles.ctaPill,
-            WA_FLOATING_SHADOW,
-            { backgroundColor: accent.accent, opacity: pressed ? 0.85 : 1 },
-          ]}
-        >
-          <Ionicons name="add" size={22} color="#FFFFFF" />
-          <Text style={styles.ctaPillText}>Add group</Text>
-        </Pressable>
-      </View>
+      {/* S5.1: the screen's single green element — the shared kit geometry, so
+          it reads identically to the Events tab's "Create Event" pill. */}
+      <WaFloatingCta
+        label="Add group"
+        icon="add"
+        onPress={onAddGroup}
+        accent={accent.accent}
+        bottomInset={insets.bottom}
+        testID="wa-groups-add"
+      />
     </View>
   );
 }
@@ -616,7 +607,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: 8,
     // Clear the floating island AND the CTA pill sitting above it.
-    paddingBottom: WA_TAB_CONTENT_CLEARANCE + CTA_PILL_HEIGHT + 24,
+    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   section: {
     marginTop: 12,
@@ -652,26 +643,5 @@ const styles = StyleSheet.create({
     fontSize: WA_TYPE_SUBTITLE,
     marginTop: 6,
     textAlign: 'center',
-  },
-  ctaWrap: {
-    position: 'absolute',
-    left: WA_GROUP_MARGIN,
-    right: WA_GROUP_MARGIN,
-    bottom: 0,
-    paddingBottom: WA_TAB_CONTENT_CLEARANCE,
-    zIndex: 20,
-  },
-  ctaPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: CTA_PILL_HEIGHT,
-    borderRadius: CTA_PILL_HEIGHT / 2,
-  },
-  ctaPillText: {
-    fontSize: WA_TYPE_ROW_TITLE,
-    fontWeight: WA_WEIGHT_SEMIBOLD,
-    color: '#FFFFFF',
   },
 });

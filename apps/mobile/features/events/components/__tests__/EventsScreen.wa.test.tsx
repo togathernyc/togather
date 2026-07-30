@@ -21,9 +21,26 @@ import {
   WA_TYPE_SUBTITLE,
   WA_TYPE_FOOTNOTE,
   WA_TAB_ACTIVE_PILL_LIGHT,
+  WA_TAB_ISLAND_HEIGHT,
+  WA_FLOATING_CTA_HEIGHT,
+  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  waFloatingCtaBottomOffset,
+  waTabBarBottomOffset,
 } from '@components/wa';
 
 const ACCENT = '#25D366';
+
+/** Every flattened style object in the rendered tree, for metric assertions. */
+function flattenAll(node: any, out: any[] = []): any[] {
+  if (!node || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    node.forEach((child) => flattenAll(child, out));
+    return out;
+  }
+  if (node.props?.style) out.push(StyleSheet.flatten(node.props.style) ?? {});
+  if (Array.isArray(node.children)) node.children.forEach((c: any) => flattenAll(c, out));
+  return out;
+}
 
 jest.mock('@hooks/useWhatsappShell', () => ({
   useWhatsappShell: jest.fn(() => true),
@@ -327,6 +344,49 @@ describe('EventsScreen — WhatsApp parity (flag-on) vs legacy (flag-off)', () =
     expect(cta).toBeTruthy();
     fireEvent.press(cta);
     expect(mockPush).toHaveBeenCalledWith('/(user)/create-event');
+  });
+
+  it('flag-on the CTA is the shared kit pill, floating clear of the tab island', () => {
+    render(<EventsScreen />);
+    const pill = StyleSheet.flatten(screen.getByTestId('wa-events-create').props.style);
+    expect(pill.height).toBe(WA_FLOATING_CTA_HEIGHT);
+    expect(pill.borderRadius).toBe(WA_FLOATING_CTA_HEIGHT / 2);
+    expect(pill.backgroundColor).toBe(ACCENT);
+
+    const wrap = StyleSheet.flatten(
+      screen.getByTestId('wa-events-create-wrap').props.style
+    );
+    expect(wrap.bottom).toBe(waFloatingCtaBottomOffset(0));
+    expect(wrap.bottom).toBeGreaterThan(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
+
+    // …and it stays the screen's ONLY accent-filled surface.
+    const accentFilled = flattenAll(screen.toJSON()).filter(
+      (s) => s.backgroundColor === ACCENT
+    );
+    expect(accentFilled).toHaveLength(1);
+
+    // Flag-off keeps the legacy container (no kit pill at all).
+    screen.unmount();
+    (useWhatsappShell as jest.Mock).mockReturnValue(false);
+    render(<EventsScreen />);
+    expect(screen.queryByTestId('wa-events-create')).toBeNull();
+    expect(screen.getByText('Create Event')).toBeTruthy();
+  });
+
+  it('flag-on pads the list so the last row clears both the island and the CTA', () => {
+    render(<EventsScreen />);
+    const list = screen.UNSAFE_getAllByType(ScrollView)[0];
+    expect(
+      StyleSheet.flatten(list.props.contentContainerStyle).paddingBottom
+    ).toBe(WA_FLOATING_CTA_CONTENT_CLEARANCE);
+
+    screen.unmount();
+    (useWhatsappShell as jest.Mock).mockReturnValue(false);
+    render(<EventsScreen />);
+    const legacyList = screen.UNSAFE_getAllByType(ScrollView)[0];
+    expect(
+      StyleSheet.flatten(legacyList.props.contentContainerStyle).paddingBottom
+    ).toBe(120);
   });
 
   it('rows keep navigating to the event, and CWE rows keep opening the children sheet', () => {

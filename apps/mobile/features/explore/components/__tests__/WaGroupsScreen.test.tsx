@@ -10,10 +10,17 @@
  * The flag-off twin lives in `GroupsScreen.flag.test.tsx`.
  */
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 import { render, fireEvent } from '@testing-library/react-native';
 import { WaGroupsScreen, type ExploreGroup } from '../WaGroupsScreen';
-import { WA_LIST_AVATAR } from '@components/wa';
+import {
+  WA_LIST_AVATAR,
+  WA_FLOATING_CTA_HEIGHT,
+  WA_FLOATING_CTA_CONTENT_CLEARANCE,
+  WA_TAB_ISLAND_HEIGHT,
+  waFloatingCtaBottomOffset,
+  waTabBarBottomOffset,
+} from '@components/wa';
 
 const ACCENT = '#1E8449';
 
@@ -233,6 +240,31 @@ describe('WaGroupsScreen — CTA, empty states and the map (S5.1)', () => {
     expect(getByTestId('wa-groups-add')).toBeTruthy();
     const accentFilled = flattenStyles(toJSON()).filter((s) => s.backgroundColor === ACCENT);
     expect(accentFilled).toHaveLength(1);
+  });
+
+  it('uses the shared kit CTA geometry and floats clear of the tab island', () => {
+    const { getByTestId } = renderScreen();
+    const pill = StyleSheet.flatten(getByTestId('wa-groups-add').props.style);
+    expect(pill.height).toBe(WA_FLOATING_CTA_HEIGHT);
+    expect(pill.borderRadius).toBe(WA_FLOATING_CTA_HEIGHT / 2);
+    // Centered auto-width, not the full-width bar this screen used to draw.
+    expect(pill.width).toBeUndefined();
+    expect(pill.alignSelf).toBeUndefined();
+
+    const wrap = StyleSheet.flatten(getByTestId('wa-groups-add-wrap').props.style);
+    // The mocked safe-area inset is 0 here; the offset still has to clear the island.
+    expect(wrap.bottom).toBe(waFloatingCtaBottomOffset(0));
+    expect(wrap.bottom).toBeGreaterThan(waTabBarBottomOffset(0) + WA_TAB_ISLAND_HEIGHT);
+  });
+
+  it('pads the list so the last row clears both the island and the CTA', () => {
+    const { UNSAFE_getAllByType } = renderScreen();
+    const list = UNSAFE_getAllByType(ScrollView).find((sv: any) =>
+      Boolean(StyleSheet.flatten(sv.props.contentContainerStyle)?.paddingBottom)
+    );
+    expect(
+      StyleSheet.flatten(list!.props.contentContainerStyle).paddingBottom
+    ).toBe(WA_FLOATING_CTA_CONTENT_CLEARANCE);
   });
 
   it('forwards the Add group press to the create/request flow', () => {
