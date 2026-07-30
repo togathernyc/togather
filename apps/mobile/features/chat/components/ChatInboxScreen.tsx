@@ -46,6 +46,7 @@ import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { selectMainChannel } from "../utils/selectMainChannel";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
+import { useInboxGroupCollapse } from "../../../stores/inboxGroupCollapse";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
@@ -324,6 +325,12 @@ export function ChatInboxScreen({
   // scope above.
   const collapsingHeaderTitle = whatsappShellEnabled ? "Chats" : "Inbox";
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
+  // Collapse chevron on each group cluster (owner directive, 2026-07-30):
+  // deliberately a separate persisted store from useExpandedGroups above —
+  // see stores/inboxGroupCollapse.ts for why. Select the raw map (not the
+  // `isCollapsed` getter) so this component re-renders when it changes.
+  const collapsedGroupIds = useInboxGroupCollapse((s) => s.collapsedGroupIds);
+  const toggleGroupCollapsed = useInboxGroupCollapse((s) => s.toggleCollapsed);
   const { getInboxChannels, setInboxChannels } = useInboxCache();
   // Device network state. Drives the loading strategy: online we hold for a
   // complete first paint; with no network we fall back to cached channels.
@@ -755,6 +762,8 @@ export function ChatInboxScreen({
           userRole={item.item.userRole}
           isExpanded={isGroupExpanded(item.item.group._id)}
           onToggleExpand={() => toggleGroupExpanded(item.item.group._id)}
+          isCollapsed={Boolean(collapsedGroupIds[item.item.group._id])}
+          onToggleCollapse={() => toggleGroupCollapsed(item.item.group._id)}
           activeGroupId={sidebarMode ? activeGroupId : undefined}
           activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
           resources={resourcesByGroup.get(item.item.group._id)}
@@ -762,7 +771,7 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, isDark, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
+    [isGroupExpanded, toggleGroupExpanded, collapsedGroupIds, toggleGroupCollapsed, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, isDark, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
   );
 
   // Key extractor for FlatList
