@@ -631,9 +631,9 @@ export function EventsScreen() {
     ? colors.surface
     : colors.backgroundSecondary;
 
-  // Flag-on: reserve the strip below the floating island on the container that
-  // carries the page background, so the home-indicator gap paints page gray
-  // rather than showing whatever content scrolls past underneath.
+  // Flag-on: reserve the island's whole BAND on the container that carries the
+  // page background, so the bottom of the page is one uniform surface rather
+  // than rows showing beside the island and under it.
   const waStripPadding = whatsappShellEnabled
     ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
     : null;
@@ -1070,8 +1070,9 @@ const styles = StyleSheet.create({
   // --- WhatsApp-shell (flag-on) styles ------------------------------------
   waScrollContent: {
     paddingHorizontal: 0,
-    // Clear the floating island AND the Create Event pill above it — the
-    // flat 120 the flag-off layout uses leaves the last row under the pill.
+    // Clear the Create Event pill floating above the island band (the band
+    // itself is reserved by the container) — the flat 120 the flag-off layout
+    // uses doesn't line up with either.
     paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   // §3.2 "visibly more generous than the header-to-card gap" — the rhythm
@@ -1128,7 +1129,7 @@ const styles = StyleSheet.create({
   },
   waMyRsvpsContent: {
     paddingTop: 8,
-    // Clears the floating island AND the Create Event pill above it.
+    // Clears the Create Event pill floating above the island band.
     paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   sectionTitle: {

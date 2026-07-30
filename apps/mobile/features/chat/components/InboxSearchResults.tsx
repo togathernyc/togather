@@ -176,9 +176,9 @@ export function InboxSearchResults({
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={[
         styles.listContent,
-        // Flag-on, the tab bar is a floating island over the content (S2);
-        // the screen container reserves only the strip below it, so the
-        // list itself must clear the island like the inbox FlatList does.
+        // Flag-on, the tab bar is a floating island over the content (S2).
+        // The screen container reserves the island's whole band, so this list
+        // only needs breathing room above it — same as the inbox FlatList.
         whatsappShellEnabled && { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
       ]}
       ListFooterComponent={

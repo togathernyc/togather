@@ -627,9 +627,9 @@ export function WaGroupsScreen({
     />
   );
 
-  // Flag-on the tab bar is a floating island (S2), so the strip below it is
+  // Flag-on the tab bar is a floating island (S2), so its whole BAND is
   // reserved on the container that paints the page background — otherwise
-  // list content shows through the home-indicator gap.
+  // list rows show beside the island (in its 20pt side margins) and under it.
   const containerStyle = [
     styles.container,
     { backgroundColor: colors.surface, paddingBottom: waTabBarStripHeight(insets.bottom) },
@@ -800,7 +800,8 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingTop: 8,
-    // Clear the floating island AND the CTA pill sitting above it.
+    // Clear the CTA pill floating above the island band (the band itself is
+    // reserved by the container).
     paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   section: {

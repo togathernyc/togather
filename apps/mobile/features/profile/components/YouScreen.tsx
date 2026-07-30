@@ -167,9 +167,9 @@ export function YouScreen() {
       style={[
         styles.container,
         { backgroundColor: colors.backgroundGrouped },
-        // Reserve the strip below the floating island on the container that
-        // carries the page background, so the home-indicator gap paints page
-        // gray rather than showing whatever row scrolls past underneath.
+        // Reserve the island's whole BAND on the container that carries the
+        // page background, so the bottom of the page paints as one uniform
+        // page gray instead of cards showing beside and under the island.
         { paddingBottom: waTabBarStripHeight(insets.bottom) },
       ]}
     >
@@ -189,8 +189,8 @@ export function YouScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          // The tab bar is a floating island over the content (S2) — pad past
-          // it. The safe-area strip below it is reserved by the container.
+          // The container reserves the island's band (S2), so the scroll
+          // content only needs breathing room above it.
           { paddingBottom: WA_TAB_CONTENT_CLEARANCE },
         ]}
         showsVerticalScrollIndicator={false}

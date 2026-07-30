@@ -452,8 +452,8 @@ export function PrayerScreen() {
         { backgroundColor: colors.surfaceSecondary, paddingTop: insets.top + 12 },
         // Flag-on, the tab bar is a floating island over the content (S2).
         // The prayed rail is a fixed footer (not scroll content), so the
-        // container must reserve the safe-area strip AND the island height
-        // for the rail to stay fully reachable above it.
+        // container reserves the island's whole BAND plus the usual breathing
+        // room — the rail then sits just above a uniform page-colored band.
         wa && {
           paddingBottom: waTabBarStripHeight(insets.bottom) + WA_TAB_CONTENT_CLEARANCE,
         },

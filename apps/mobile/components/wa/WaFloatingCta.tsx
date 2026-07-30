@@ -19,14 +19,15 @@
  *     material card shadow §7 bans.
  *
  * **Clearance.** The pill positions its own bottom edge at
- * `waFloatingCtaBottomOffset(bottomInset)` above the SCREEN bottom, so it
- * always floats clear of the tab island. That is measured from the screen and
- * not from the parent's content box on purpose: Yoga lays an absolutely
+ * `waFloatingCtaBottomOffset(bottomInset)` above the SCREEN bottom — a gap
+ * above the page-colored island BAND (`waTabBarStripHeight`), so it never
+ * overlaps the island or muddies that band. That is measured from the screen
+ * and not from the parent's content box on purpose: Yoga lays an absolutely
  * positioned child out against its parent's border box and ignores the
  * parent's padding, so the old `bottom: 0` + `paddingBottom` pairing landed the
  * pill ON the island once the container reserved `waTabBarStripHeight` (the
  * owner's dark-mode screenshot). Scroll surfaces underneath must pad by
- * `WA_FLOATING_CTA_CONTENT_CLEARANCE` so the last row clears both.
+ * `WA_FLOATING_CTA_CONTENT_CLEARANCE` so the last row clears the pill.
  *
  * Presentational: reads `useTheme()` for nothing but consistency with the kit —
  * the accent hex is an explicit prop, so this never reaches for
