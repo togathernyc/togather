@@ -6,7 +6,15 @@ import { useTheme } from "@hooks/useTheme";
 import { WaInsetGroup } from "@components/wa/WaInsetGroup";
 import { WaCell } from "@components/wa/WaCell";
 import { WaRow } from "@components/wa/WaRow";
-import { WA_GROUP_SPACING, WA_CELL_PADDING } from "@components/wa/metrics";
+import {
+  WA_GROUP_SPACING,
+  WA_CELL_PADDING,
+  WA_ROW_LEADING_PADDING,
+  WA_ROW_AVATAR_GAP,
+} from "@components/wa/metrics";
+
+/** Avatar well of a 40pt `WaRow`, so hairlines start at the name (S3.4). */
+const ROW_SEPARATOR_INSET = WA_ROW_LEADING_PADDING + 40 + WA_ROW_AVATAR_GAP;
 
 interface AttendanceViewModeProps {
   isFutureEvent: boolean;
@@ -79,6 +87,10 @@ export function AttendanceViewMode({
   const totalAttended = report?.stats?.total_count ?? 0;
   const change = report?.stats?.prev_diff ?? 0;
 
+  // NOTE: `useAttendanceReport` hardcodes `note: ""` and `prev_diff: 0` today
+  // (the schema stores neither), so these two branches don't fire in the app
+  // yet — they render for any caller that does supply them, and are covered by
+  // AttendanceViewMode.test.tsx. Wire the hook up and they light up as-is.
   const note = report?.note;
   const submissionFooter = submittedDate
     ? `Submitted ${format(new Date(submittedDate), "MMM d, yyyy")}${
@@ -115,7 +127,7 @@ export function AttendanceViewMode({
       {/* Guests */}
       {guestList.length > 0 && (
         <View style={styles.section}>
-          <WaInsetGroup header="Guests" separatorInset={WA_CELL_PADDING + 40 + 12}>
+          <WaInsetGroup header="Guests" separatorInset={ROW_SEPARATOR_INSET}>
             {anonymousGuests.length > 0 && (
               <WaRow
                 avatar={{ label: "Guests", size: 40 }}
@@ -126,13 +138,25 @@ export function AttendanceViewMode({
               />
             )}
             {namedGuests.map((guest: any) => {
-              const name = `${guest.first_name} ${guest.last_name || ""}`.trim();
+              // Check-in can create a guest with no name at all (the naming
+              // sheet is dismissible), so both parts need a fallback — an
+              // unguarded template literal renders the string "undefined".
+              const name = [guest.first_name, guest.last_name]
+                .filter(Boolean)
+                .join(" ")
+                .trim();
+              // Phone and notes are separate facts; showing only the first
+              // would silently drop a walk-in's note.
+              const detail = [guest.phone_number, guest.notes]
+                .filter(Boolean)
+                .join(" · ");
               return (
                 <WaRow
                   key={guest.id}
                   avatar={{ label: name || "Guest", seed: guest.id, size: 40 }}
                   title={name || "Guest"}
-                  subtitle={guest.phone_number || guest.notes || undefined}
+                  subtitle={detail || undefined}
+                  subtitleLines={2}
                 />
               );
             })}
@@ -142,7 +166,7 @@ export function AttendanceViewMode({
 
       {/* Attended members */}
       <View style={styles.section}>
-        <WaInsetGroup header="Members" separatorInset={WA_CELL_PADDING + 40 + 12}>
+        <WaInsetGroup header="Members" separatorInset={ROW_SEPARATOR_INSET}>
           {attendedMembers.length > 0 ? (
             attendedMembers.map((member: any) => {
               const name = `${member.user?.first_name || member.first_name || ""} ${

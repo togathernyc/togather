@@ -68,6 +68,46 @@ describe("AttendanceViewMode", () => {
     expect(getByText("Rae Nolan")).toBeTruthy();
   });
 
+  it("handles a guest checked in without a name", () => {
+    // Check-in creates the guest row first and lets the leader name it later,
+    // so first_name/last_name can both be absent.
+    const { getByText, queryByText } = render(
+      <AttendanceViewMode
+        isFutureEvent={false}
+        report={{
+          ...report,
+          guests: [{ id: "g9", phone_number: "555-0101" }],
+          stats: { ...report.stats, guest_count: 1 },
+        }}
+      />
+    );
+
+    expect(getByText("Guest")).toBeTruthy();
+    expect(queryByText("undefined")).toBeNull();
+  });
+
+  it("keeps a guest's phone AND notes visible", () => {
+    const { getByText } = render(
+      <AttendanceViewMode
+        isFutureEvent={false}
+        report={{
+          ...report,
+          guests: [
+            {
+              id: "g8",
+              first_name: "Rae",
+              last_name: "Nolan",
+              phone_number: "555-0100",
+              notes: "First visit",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(getByText("555-0100 · First visit")).toBeTruthy();
+  });
+
   it("shows the note when there is one and no placeholder when there isn't", () => {
     const { getByText } = render(
       <AttendanceViewMode isFutureEvent={false} report={report} />
@@ -82,6 +122,31 @@ describe("AttendanceViewMode", () => {
     );
     // The old layout rendered a "No note" box that only ever said nothing.
     expect(queryByText("No note")).toBeNull();
+  });
+
+  it("stays a short card for an event nobody has recorded yet", () => {
+    const { getByText, queryByText } = render(
+      <AttendanceViewMode
+        isFutureEvent={false}
+        report={{
+          attendances: [],
+          guests: [],
+          stats: {
+            member_count: 0,
+            guest_count: 0,
+            total_count: 0,
+            prev_diff: 0,
+          },
+          note: null,
+        }}
+      />
+    );
+
+    expect(getByText("No members attended")).toBeTruthy();
+    // No guests card at all when there are none, and no change metric.
+    expect(queryByText("Anonymous guests")).toBeNull();
+    expect(queryByText("vs last")).toBeNull();
+    expect(queryByText("Submitted")).toBeNull();
   });
 
   it("credits the submission when one exists", () => {

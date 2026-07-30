@@ -96,6 +96,19 @@ describe("useAttendanceReport", () => {
     expect(result.current.data?.attendances).toEqual([]);
   });
 
+  test("is not 'loading' when there is nothing to fetch", () => {
+    mockQueries(true);
+
+    // The leader-tools entry point deep-links with `?eventDate=` and no
+    // meetingId; reporting that as loading pinned the screen on a spinner.
+    const { result } = renderHook(() =>
+      useAttendanceReport("group_1", { eventDate: "2026-07-19T00:00:00.000Z" })
+    );
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toBeUndefined();
+  });
+
   test("skips every query, including the permission check, when disabled", () => {
     mockQueries(true);
 

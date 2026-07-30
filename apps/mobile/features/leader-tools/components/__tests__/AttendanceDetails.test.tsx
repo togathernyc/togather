@@ -127,16 +127,20 @@ jest.mock("../AttendanceViewMode", () => ({
     
     return React.createElement(View, { testID: "attendance-view-mode" }, [
       React.createElement(Text, { key: "attendance-label" }, "Attendance"),
-      props.submittedDate && React.createElement(Text, { key: "submitted-date" }, `Submitted on ${props.submittedDate}`),
+      // Mirrors the real component's output (see AttendanceViewMode.test.tsx,
+      // which owns the rendering assertions): the submission credit is one
+      // footer line, an absent note renders NOTHING (no "No note" box), and
+      // the headline number is `total_count`.
+      props.submittedDate && React.createElement(Text, { key: "submitted-date" }, `Submitted ${props.submittedDate}`),
       props.submittedBy && React.createElement(Text, { key: "submitted-by" }, `By ${props.submittedBy.first_name} ${props.submittedBy.last_name}`),
-      React.createElement(View, { key: "note-container" }, [
-        props.report?.note ? React.createElement(Text, { key: "note" }, props.report.note) : React.createElement(Text, { key: "no-note" }, "No note"),
+      props.report?.note
+        ? React.createElement(Text, { key: "note" }, props.report.note)
+        : null,
+      React.createElement(View, { key: "stats-strip" }, [
+        React.createElement(Text, { key: "total-stat" }, String(props.report?.stats?.total_count ?? 0)),
+        React.createElement(Text, { key: "total-label" }, "Total"),
       ]),
-      React.createElement(View, { key: "stats-cards" }, [
-        React.createElement(Text, { key: "attended-stat" }, props.report?.stats?.present_users || 0),
-        React.createElement(Text, { key: "change-stat" }, props.report?.stats?.prev_diff || 0),
-      ]),
-      React.createElement(Text, { key: "attended-section-label" }, "Attended"),
+      React.createElement(Text, { key: "members-section-label" }, "Members"),
       attendedMembers.length > 0 ? attendedMembers.map((member: any) =>
         React.createElement(Text, { key: `member-${member.id}` }, `${member.first_name} ${member.last_name}`)
       ) : React.createElement(Text, { key: "no-attended" }, "No members attended"),
@@ -399,9 +403,9 @@ describe("AttendanceDetails", () => {
       expect(attendanceLabels.length).toBeGreaterThan(0);
     });
 
-    // Check for attended members - there might be multiple "Attended" texts (stat card and section label)
-    const attendedTexts = screen.getAllByText("Attended");
-    expect(attendedTexts.length).toBeGreaterThan(0);
+    // The roster section is headed "Members" (the old "Attended" stat tile and
+    // section label were merged into the summary strip).
+    expect(screen.getAllByText("Members").length).toBeGreaterThan(0);
     
     // Check for member names
     expect(screen.getByText("John Doe")).toBeTruthy();
@@ -412,7 +416,7 @@ describe("AttendanceDetails", () => {
 
     await waitFor(() => {
       // Check for submitted date text
-      expect(screen.getByText(/Submitted on/)).toBeTruthy();
+      expect(screen.getByText(/Submitted /)).toBeTruthy();
     });
   });
 
@@ -420,8 +424,8 @@ describe("AttendanceDetails", () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(screen.getByText("1")).toBeTruthy(); // present_users
-      expect(screen.getByText("0")).toBeTruthy(); // prev_diff
+      expect(screen.getByText("Total")).toBeTruthy();
+      expect(screen.getByText("1")).toBeTruthy(); // total_count
     });
   });
 
@@ -456,6 +460,19 @@ describe("AttendanceDetails", () => {
       // Nothing recorded yet, so the action row invites the first entry.
       expect(screen.getByText("Take attendance")).toBeTruthy();
     });
+  });
+
+  it("hides the action row for a future event", async () => {
+    // Attendance can't be taken before the event happens, so the accent action
+    // row is suppressed (the view mode shows a "wait until the day" card).
+    const futureDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    renderComponent({ editMode: false, eventDate: futureDate });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attendance-view-mode")).toBeTruthy();
+    });
+    expect(screen.queryByText("Take attendance")).toBeNull();
+    expect(screen.queryByText("Edit attendance")).toBeNull();
   });
 
   it("shows edit button even when attendance has been submitted", async () => {
@@ -697,27 +714,6 @@ describe("AttendanceDetails", () => {
 
     await waitFor(() => {
       expect(screen.getByText("No members found")).toBeTruthy();
-    }, { timeout: 3000 });
-  });
-
-  it("shows 'No note' when note is empty", async () => {
-    const emptyNoteReport = {
-      ...mockAttendanceReport.data,
-      note: "",
-    };
-
-    mockAdminApi.getLeaderAttendanceReport.mockResolvedValue({ data: emptyNoteReport });
-
-    mockUseAttendanceReport.mockReturnValue({
-      data: emptyNoteReport,
-      isLoading: false,
-      error: null,
-    } as any);
-
-    renderComponent({ editMode: false });
-
-    await waitFor(() => {
-      expect(screen.getByText("No note")).toBeTruthy();
     }, { timeout: 3000 });
   });
 

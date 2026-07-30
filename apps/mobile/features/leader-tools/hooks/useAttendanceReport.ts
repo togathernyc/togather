@@ -49,7 +49,13 @@ export function useAttendanceReport(
       : "skip"
   );
 
+  // Only "loading" while something is actually in flight. `canFetch` is false
+  // when there's no meetingId — the leader-tools entry point deep-links with
+  // `?eventDate=` alone (useGroupLeaderTools.ts), and reporting that as loading
+  // left the screen on a spinner that never resolved until the user tapped a
+  // card by hand.
   const isLoading =
+    canFetch &&
     !isPermissionDenied &&
     (attendanceData === undefined || guestsData === undefined);
   const error = null; // Convex throws on error, handle with ErrorBoundary

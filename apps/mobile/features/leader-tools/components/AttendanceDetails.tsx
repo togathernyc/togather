@@ -318,8 +318,13 @@ const styles = StyleSheet.create({
   container: {
     paddingTop: 4,
   },
+  // Edit mode keeps the old inset: AttendanceEditMode supplies no horizontal
+  // padding of its own, so its note input and member list would sit flush
+  // against the screen edges without it. Only view mode goes edge-to-edge,
+  // because its WaInsetGroups bring their own margins.
   containerEditMode: {
     flex: 1,
+    padding: 20,
   },
   loadingContainer: {
     flex: 1,
@@ -338,7 +343,7 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   restrictedTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "600",
     marginBottom: 8,
     textAlign: "center",

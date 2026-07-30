@@ -16,7 +16,12 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { waAccentPalette } from "@utils/waPalette";
 import { WaSectionLabel } from "@components/wa/WaSectionLabel";
-import { WA_GROUP_MARGIN } from "@components/wa/metrics";
+import {
+  WA_GROUP_MARGIN,
+  WA_GROUP_SPACING,
+  WA_SECTION_HEADER_GAP,
+  WA_ACTION_CARD_RADIUS,
+} from "@components/wa/metrics";
 
 /**
  * Event-card metrics. The horizontal picker centers the selected card, so the
@@ -26,7 +31,22 @@ import { WA_GROUP_MARGIN } from "@components/wa/metrics";
 const CARD_WIDTH = 132;
 const CARD_GAP = 12;
 const CARD_IMAGE_HEIGHT = 76;
-const CARD_RADIUS = 16;
+const CARD_RADIUS = WA_ACTION_CARD_RADIUS;
+
+/**
+ * Horizontal scroll offset that centers the card at `index` in a viewport of
+ * `viewportWidth`. Clamped at 0 so the first cards don't scroll past the strip's
+ * leading edge. Exported for test — the arithmetic has to track the card
+ * metrics above, and it silently mis-centers if it drifts.
+ */
+export function eventCardScrollOffset(
+  index: number,
+  viewportWidth: number
+): number {
+  const cardCenter =
+    WA_GROUP_MARGIN + index * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2;
+  return Math.max(0, cardCenter - viewportWidth / 2);
+}
 
 interface EventsListProps {
   groupId: string;
@@ -197,15 +217,8 @@ export function EventsList({
         return;
       }
 
-      // Calculate position to center the card in viewport
-      // Position = card center - viewport center
-      const cardCenter =
-        WA_GROUP_MARGIN + index * (CARD_WIDTH + CARD_GAP) + CARD_WIDTH / 2;
-      const viewportCenter = viewportWidth / 2;
-      const scrollPosition = Math.max(0, cardCenter - viewportCenter);
-
       scrollViewRef.current.scrollTo({
-        x: scrollPosition,
+        x: eventCardScrollOffset(index, viewportWidth),
         animated: false,
       });
       hasScrolledToMostRecent.current = true;
@@ -361,7 +374,9 @@ export function EventCard({ event, isSelected, onPress }: EventCardProps) {
       style={[
         styles.card,
         { backgroundColor: colors.surfaceGrouped, borderColor: colors.separator },
-        isSelected && { borderColor: accent, borderWidth: 2 },
+        // Colour only — changing borderWidth on a fixed-width card would shrink
+        // the content box and nudge the title as you select through the strip.
+        isSelected && { borderColor: accent },
       ]}
       onPress={onPress}
       accessibilityRole="button"
@@ -404,14 +419,14 @@ export function EventCard({ event, isSelected, onPress }: EventCardProps) {
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 20,
+    marginBottom: WA_GROUP_SPACING,
   },
   scrollViewContainer: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: WA_GROUP_MARGIN,
-    paddingTop: 8,
+    paddingTop: WA_SECTION_HEADER_GAP,
     gap: CARD_GAP,
   },
   loadingContainer: {
@@ -434,7 +449,7 @@ const styles = StyleSheet.create({
     width: CARD_WIDTH,
     borderRadius: CARD_RADIUS,
     overflow: "hidden",
-    borderWidth: 1,
+    borderWidth: 2,
   },
   cardImage: {
     width: "100%",
