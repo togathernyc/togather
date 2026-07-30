@@ -25,7 +25,11 @@
  *     full-bleed on white, no card edges.
  *   - §5.3 sections: ~20pt sentence-case gray headers ("Groups you're in" /
  *     "Groups you can join"), the community-landing pattern.
- *   - S5.1 one green thing: the bottom floating "Add group" pill.
+ *   - S5.1 one green thing: the bottom floating "Add group" pill — the shared
+ *     `WaFloatingCta`, so it is geometrically identical to the Events tab's
+ *     "Create Event" and clears the floating tab island by construction.
+ *   - S5.2 "find groups near me": a neutral compass circle beside the search
+ *     pill, plus zip search in the pill itself. See `handlePressNearby`.
  *
  * The map is not dropped — it moves behind the Map circle in the header
  * (the Events tab's List/Map pattern), where it still renders the existing
@@ -33,7 +37,9 @@
  *
  * Presentational + local view state only: every query, filter and geocoding
  * decision stays in `GroupsScreen`, which owns the data and renders this on
- * the flag-on path.
+ * the flag-on path. The one exception is device location, which is view state
+ * rather than community data — see the `useUserLocation` call below for why it
+ * cannot live in the container.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -194,7 +200,6 @@ function WaGroupsSearchPill({
         onPress={onPressNearby}
         size={WA_HEADER_CIRCLE_SIZE}
         accessibilityLabel="Find groups near me"
-        style={styles.nearbyButton}
       />
     </View>
   );
@@ -720,10 +725,6 @@ const styles = StyleSheet.create({
     height: WA_SEARCH_PILL_HEIGHT,
     borderRadius: WA_SEARCH_PILL_HEIGHT / 2,
     paddingHorizontal: 14,
-  },
-  nearbyButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   nearbyHint: {
     fontSize: WA_TYPE_FOOTNOTE,
