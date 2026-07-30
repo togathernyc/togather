@@ -1683,37 +1683,35 @@ export const getInboxChannels = query({
       // row without being a member of the channel's home group), so a same-group
       // channel the volunteer isn't a group member of never arrives via the
       // group-owned fetch above. When it's one of this plan's resolved serving
-      // channels, pull it into the candidate list so the serving flatten can
-      // surface it. This branch is gated on serving mode (`servingChannelIds`)
-      // so the normal inbox is left byte-for-byte unchanged — outside serving
-      // mode a cross-team channel still falls through to the isShared branch
-      // below exactly as before. The flatten still filters by servingChannelIds
-      // and this loop only ever sees channels the user has an active membership
-      // row for, so nothing leaks to a non-member.
+      // channels, keep it as a candidate so the serving flatten can surface it.
+      // This gate is serving-only (`servingChannelIds`), so the normal inbox is
+      // unchanged. The flatten still filters by servingChannelIds and this loop
+      // only ever sees channels the user has an active membership row for, so
+      // nothing leaks to a non-member.
+      let isServingCrossTeam = false;
       if (candidateChannel.channelType === "cross_team" && servingChannelIds) {
-        if (servingChannelIds.has(candidateChannel._id)) {
-          nonGroupChannelsToInclude.push(candidateChannel);
-        }
-        continue;
+        if (!servingChannelIds.has(candidateChannel._id)) continue;
+        isServingCrossTeam = true;
       }
 
-      if (!candidateChannel.isShared || !candidateChannel.sharedGroups) continue;
-
-      // Check if any of the user's valid groups appear in sharedGroups with "accepted" status
-      const hasAcceptedGroup = candidateChannel.sharedGroups.some(
-        (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
-      );
-      if (hasAcceptedGroup) {
-        const acceptedEntry = candidateChannel.sharedGroups.find(
-          (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
-        );
-        const roleInLinkedGroup = acceptedEntry
-          ? groupRoleMap.get(acceptedEntry.groupId)
-          : undefined;
+      // Shared channels (including serving cross-team ones): nest under the
+      // user's OWN group via `sharedGroups`. `resolveCrossTeamSharing` shares a
+      // cross-team channel into every campus group that contributes a source
+      // team precisely so a synced volunteer sees it under their own campus —
+      // serving mode must honour that too, or the channel's home group gets
+      // injected below as a section the user has no membership in.
+      const acceptedEntry = candidateChannel.isShared
+        ? candidateChannel.sharedGroups?.find(
+            (sg) => validGroupIds.has(sg.groupId) && sg.status === "accepted"
+          )
+        : undefined;
+      if (acceptedEntry) {
+        const roleInLinkedGroup = groupRoleMap.get(acceptedEntry.groupId);
         const leaderInLinkedGroup = isLeaderRole(roleInLinkedGroup);
-        const visibleInLinkedGroup = acceptedEntry
-          ? channelEffectiveEnabledForGroup(candidateChannel, acceptedEntry.groupId)
-          : channelIsLeaderEnabled(candidateChannel);
+        const visibleInLinkedGroup = channelEffectiveEnabledForGroup(
+          candidateChannel,
+          acceptedEntry.groupId
+        );
         if (
           (isCustomChannel(candidateChannel.channelType) ||
             candidateChannel.channelType === "pco_services") &&
@@ -1726,6 +1724,14 @@ export const getInboxChannels = query({
         allChannelIds.add(candidateChannel._id);
         // Also add to userChannelIds since we know user is a member
         userChannelIds.add(candidateChannel._id);
+        continue;
+      }
+
+      // No shared group the user belongs to: a serving cross-team channel still
+      // has to reach the serving inbox, so fall back to attaching it to its home
+      // group below.
+      if (isServingCrossTeam) {
+        nonGroupChannelsToInclude.push(candidateChannel);
       }
     }
 
@@ -1733,6 +1739,10 @@ export const getInboxChannels = query({
     // cross-team channels) even when the user isn't a member of the owning
     // group. We fetch the owning group (and its group type) on demand and add
     // it to validGroups so the normal grouping step picks the channel up.
+    // Groups added here are NOT memberships — the shared-channel dedup below
+    // must never let one of them claim a channel away from a group the user
+    // actually belongs to.
+    const injectedGroupIds = new Set<Id<"groups">>();
     for (const eventChannel of nonGroupChannelsToInclude) {
       if (!eventChannel.groupId) continue; // Skip ad-hoc channels (DM/group_dm)
       const ecGroupId = eventChannel.groupId;
@@ -1744,6 +1754,7 @@ export const getInboxChannels = query({
       if (!validGroupIds.has(owningGroup._id)) {
         validGroups.push(owningGroup);
         validGroupIds.add(owningGroup._id);
+        injectedGroupIds.add(owningGroup._id);
         // Non-group-members default to "member" userRole for grouping only.
         if (!groupRoleMap.has(owningGroup._id)) {
           groupRoleMap.set(owningGroup._id, "member");
@@ -2030,8 +2041,18 @@ export const getInboxChannels = query({
     // attached to the most-active group above; keep the first occurrence and
     // drop the channel from later groups. Unread counts are per-channel, so
     // collapsing the row collapses the duplicated badge too.
+    //
+    // Groups the user isn't a member of (injected above to carry an event /
+    // serving cross-team channel) claim LAST, whatever their activity: a
+    // cross-campus event channel with a fresh message would otherwise sort its
+    // home group to the top and let it claim a shared channel away from the
+    // user's own campus, leaving a section for a group they don't belong to.
+    const claimOrder = [
+      ...result.filter((entry) => !injectedGroupIds.has(entry.group._id)),
+      ...result.filter((entry) => injectedGroupIds.has(entry.group._id)),
+    ];
     const seenSharedChannelIds = new Set<Id<"chatChannels">>();
-    for (const groupEntry of result) {
+    for (const groupEntry of claimOrder) {
       groupEntry.channels = groupEntry.channels.filter((ch) => {
         if (!ch.isShared) return true;
         if (seenSharedChannelIds.has(ch._id)) return false;
