@@ -408,6 +408,159 @@ describe("getGivingContext", () => {
 });
 
 // ============================================================================
+// prepareDonationIntent — the shared validation seam behind BOTH
+// createDonationIntent (native-payment-sheet path) and
+// createDonationCheckoutSession (hosted-Checkout path). Exercised directly
+// here rather than via the live Stripe-calling actions, per repo convention
+// (see this file's header comment).
+// ============================================================================
+
+describe("prepareDonationIntent", () => {
+  test("throws when the group-giving flag is off", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await t.run(async (ctx) => {
+      const flag = await ctx.db
+        .query("featureFlags")
+        .withIndex("by_key", (q) => q.eq("key", "group-giving"))
+        .first();
+      await ctx.db.patch(flag!._id, { enabled: false });
+    });
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token: await tokenFor(s.donorUserId),
+        fundId: s.fundId,
+        amountCents: 1000,
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("throws when the fund isn't active", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.fundId, { status: "frozen" });
+    });
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token: await tokenFor(s.donorUserId),
+        fundId: s.fundId,
+        amountCents: 1000,
+      }),
+    ).rejects.toThrow("This fund isn't currently accepting gifts");
+  });
+
+  test("throws when the community's giving onboarding isn't live", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    await t.run(async (ctx) => {
+      const finance = await ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", s.communityId))
+        .first();
+      await ctx.db.patch(finance!._id, { onboardingStatus: "collecting" });
+    });
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token: await tokenFor(s.donorUserId),
+        fundId: s.fundId,
+        amountCents: 1000,
+      }),
+    ).rejects.toThrow("Giving isn't set up for this community yet");
+  });
+
+  test("rejects an amount below the minimum, above the maximum, or non-integer", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const token = await tokenFor(s.donorUserId);
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 50, // below MIN_DONATION_CENTS (100)
+      }),
+    ).rejects.toThrow("Donation amount must be between");
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 3_000_000, // above MAX_DONATION_CENTS (2_000_000)
+      }),
+    ).rejects.toThrow("Donation amount must be between");
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 1000.5,
+      }),
+    ).rejects.toThrow("Donation amount must be between");
+  });
+
+  test("rejects a negative or non-integer coverFeesCents", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const token = await tokenFor(s.donorUserId);
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token,
+        fundId: s.fundId,
+        amountCents: 1000,
+        coverFeesCents: -5,
+      }),
+    ).rejects.toThrow("Invalid fee-cover amount");
+  });
+
+  test("returns the connected-account context, fund name, and groupId for a valid request", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+
+    const result = await t.query(internal.functions.finance.giving.prepareDonationIntent, {
+      token: await tokenFor(s.donorUserId),
+      fundId: s.fundId,
+      amountCents: 1000,
+      coverFeesCents: 60,
+    });
+
+    expect(result).toEqual({
+      userId: s.donorUserId,
+      communityId: s.communityId,
+      groupId: s.groupId,
+      fundName: "Young Adults Fund",
+      stripeConnectedAccountId: "acct_test123",
+      feeCoverCents: 60,
+    });
+  });
+
+  test("rejects a user with no access to the fund's group, same as getFundOverview", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const outsiderId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Outsider",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token: await tokenFor(outsiderId),
+        fundId: s.fundId,
+        amountCents: 1000,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+// ============================================================================
 // recordDonationSucceeded
 // ============================================================================
 

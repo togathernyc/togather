@@ -53,7 +53,9 @@ export interface GivingContext {
   givingLive: boolean;
 }
 
-export interface DonationIntent {
-  clientSecret: string;
-  paymentIntentId: string;
+/** Return shape of `createDonationCheckoutSession` — the hosted Stripe
+ * Checkout page the give sheet launches (ADR-032 §3/§7 Phase 1). */
+export interface CheckoutSession {
+  url: string;
+  sessionId: string;
 }

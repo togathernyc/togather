@@ -2,22 +2,23 @@
  * GiveScreenView — presentational give sheet (ADR-032 §3/§7 Phase 1). Pure
  * props in, no Convex/router imports.
  *
- * PAYMENT STEP IS STUBBED: the "confirmation" step just proves a Stripe
- * PaymentIntent was created (masked client secret + amount). Wiring an
- * actual payment sheet ships with the Stripe payment-sheet decision — ADR-032
- * open question: native `@stripe/stripe-react-native` sheet (better Apple Pay
- * conversion, but a new native dependency that must be gated per ADR-013) vs.
- * a web-based Stripe Checkout (zero native-dep risk). Do NOT import
- * `@stripe/stripe-react-native` here until that's decided.
+ * Payment is collected on a hosted Stripe Checkout page (ADR-032 §3/§7 Phase
+ * 1 decision: zero native dependencies, ships via OTA, Apple Pay works in
+ * the browser sheet). The "confirmation" step here isn't a payment
+ * confirmation at all — it's a "finish in the browser" waypoint shown right
+ * after `GiveScreen` launches the Checkout URL, since the actual payment
+ * completes outside this screen (in the browser sheet, then via the
+ * `success_url`/`cancel_url` universal link back to the fund screen; Convex
+ * reactivity — not the redirect — is what updates the fund balance/activity).
  */
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "@hooks/useTheme";
 import { Button, Input, Switch, Skeleton, EmptyState } from "@components/ui";
 import { formatCents } from "../format";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
-import type { DonationIntent, GivingContext } from "./types";
+import type { CheckoutSession, GivingContext } from "./types";
 
 export type GiveStep = "amount" | "confirmation";
 
@@ -30,18 +31,13 @@ export interface GiveScreenViewProps {
   coverFees: boolean;
   submitting: boolean;
   error: string | null;
-  intent: DonationIntent | null;
+  checkoutSession: CheckoutSession | null;
   onBack: () => void;
   onSelectPreset: (cents: number) => void;
   onCustomAmountChange: (text: string) => void;
   onToggleCoverFees: (value: boolean) => void;
   onContinue: () => void;
-}
-
-/** "pi_3P...secret_1a2b" -> "pi_3P••••••••1a2b" — never render the full secret. */
-export function maskClientSecret(secret: string): string {
-  if (secret.length <= 12) return "•".repeat(secret.length);
-  return `${secret.slice(0, 6)}${"•".repeat(8)}${secret.slice(-4)}`;
+  onReopenCheckout: () => void;
 }
 
 export function GiveScreenView({
@@ -52,12 +48,13 @@ export function GiveScreenView({
   coverFees,
   submitting,
   error,
-  intent,
+  checkoutSession,
   onBack,
   onSelectPreset,
   onCustomAmountChange,
   onToggleCoverFees,
   onContinue,
+  onReopenCheckout,
 }: GiveScreenViewProps) {
   const { colors } = useTheme();
 
@@ -102,13 +99,13 @@ export function GiveScreenView({
       ) : step === "confirmation" ? (
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={[styles.confirmationPanel, { backgroundColor: colors.surfaceSecondary }]}>
-            <Ionicons name="checkmark-circle" size={40} color={colors.success} />
+            <Ionicons name="lock-closed" size={40} color={colors.success} />
             <Text style={[styles.confirmationTitle, { color: colors.text }]}>
-              Payment intent created
+              Finish your gift in the browser
             </Text>
             <Text style={[styles.confirmationSubtitle, { color: colors.textSecondary }]}>
-              STUBBED — the payment sheet that collects the card and confirms
-              this intent isn't wired up yet (see ADR-032 open questions).
+              Complete your gift in the secure Stripe page that just opened.
+              Once it's done, you can close that page and come back here.
             </Text>
             <View style={styles.confirmationRow}>
               <Text style={[styles.confirmationLabel, { color: colors.textSecondary }]}>
@@ -126,19 +123,17 @@ export function GiveScreenView({
                 {context.fundName}
               </Text>
             </View>
-            {!!intent && (
-              <View style={styles.confirmationRow}>
-                <Text style={[styles.confirmationLabel, { color: colors.textSecondary }]}>
-                  Client secret
-                </Text>
-                <Text
-                  style={[styles.confirmationValue, styles.mono, { color: colors.textTertiary }]}
-                >
-                  {maskClientSecret(intent.clientSecret)}
-                </Text>
-              </View>
-            )}
           </View>
+
+          <Button
+            onPress={onReopenCheckout}
+            disabled={!checkoutSession}
+            variant="secondary"
+          >
+            Reopen payment page
+          </Button>
+
+          <Button onPress={onBack}>Done</Button>
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -259,5 +254,4 @@ const styles = StyleSheet.create({
   },
   confirmationLabel: { fontSize: 14 },
   confirmationValue: { fontSize: 14, fontWeight: "600" },
-  mono: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }) },
 });
