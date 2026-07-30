@@ -3,13 +3,20 @@
  * §3, Phase 1 — "Donations + ledger + receipts").
  *
  * Money flow implemented here:
- *   1. `getGivingContext` / `createDonationIntent` power the give sheet —
- *      a Stripe PaymentIntent is created ON the community's connected
- *      account, tagged with `metadata.fundId`.
- *   2. The Stripe webhook layer (owned by another agent — NOT this file)
- *      calls `recordDonationSucceeded` on `payment_intent.succeeded`, which
- *      writes the `donations` row, posts the ledger credit, and schedules
- *      the receipt email.
+ *   1. `getGivingContext` powers the give sheet's amount-entry step;
+ *      `createDonationCheckoutSession` then creates a hosted Stripe Checkout
+ *      Session ON the community's connected account (ADR-032 §3/§7 Phase 1
+ *      decision — zero native dependencies, ships via OTA, Apple Pay works in
+ *      the browser sheet) for the donor to complete in-browser.
+ *      `createDonationIntent` is the not-yet-used native-payment-sheet
+ *      alternative kept for ADR-032's still-open question.
+ *   2. The Stripe webhook layer (functions/finance/webhooks.ts) calls
+ *      `recordDonationSucceeded` on `payment_intent.succeeded` — Checkout's
+ *      `payment_intent_data.metadata` lands on that PaymentIntent exactly
+ *      like `createDonationIntent`'s own metadata does, so this webhook path
+ *      is unchanged by which donation-creation action ran — which writes the
+ *      `donations` row, posts the ledger credit, and schedules the receipt
+ *      email.
  *   3. `getFundOverview` powers the member-facing transparency screen.
  *
  * Every query here first authorizes the caller, then (for `getFundOverview`)
@@ -290,19 +297,62 @@ export const getGivingContext = query({
 });
 
 // ============================================================================
-// createDonationIntent
+// prepareDonationIntent — shared validation seam for BOTH donation-creation
+// actions below (createDonationIntent's native-payment-sheet path and
+// createDonationCheckoutSession's hosted-Checkout path). Actions don't have
+// `ctx.db`, so all the auth/authorization/eligibility/amount checks that
+// need it live here — mirrors `verifyBillingAccess` in functions/ee/billing.ts.
 // ============================================================================
 
 /**
- * Internal query backing `createDonationIntent`. Actions don't have `ctx.db`,
- * so all the auth/authorization/eligibility checks that need it live here —
- * mirrors `verifyBillingAccess` in functions/ee/billing.ts.
+ * Validates the donor-chosen amount is within Stripe/our own bounds and
+ * normalizes `coverFeesCents` to a non-negative integer. Pure (no `ctx`) so
+ * it's trivial to unit test directly, but only called from
+ * `prepareDonationIntent` — the ONE place that gates every donation-creating
+ * action, per the ADR-032 rule that money-initiating actions share one
+ * validation path rather than duplicating checks per Stripe surface.
+ */
+function validateDonationAmount(
+  amountCents: number,
+  coverFeesCents: number | undefined,
+): { feeCoverCents: number } {
+  if (
+    !Number.isInteger(amountCents) ||
+    amountCents < MIN_DONATION_CENTS ||
+    amountCents > MAX_DONATION_CENTS
+  ) {
+    throw new Error(
+      `Donation amount must be between $${MIN_DONATION_CENTS / 100} and $${MAX_DONATION_CENTS / 100}`,
+    );
+  }
+  const feeCoverCents = coverFeesCents ?? 0;
+  if (!Number.isInteger(feeCoverCents) || feeCoverCents < 0) {
+    throw new Error("Invalid fee-cover amount");
+  }
+  return { feeCoverCents };
+}
+
+/**
+ * Shared validation for creating a donation on Stripe, however it's
+ * collected: flag gate, amount bounds, fund-active, community-live. Both
+ * `createDonationIntent` (native payment-sheet path) and
+ * `createDonationCheckoutSession` (hosted Checkout path) call this FIRST and
+ * build their respective Stripe object from its return value — this is the
+ * "refactor shared logic rather than duplicate" seam the two donation
+ * actions are built on.
  */
 export const prepareDonationIntent = internalQuery({
-  args: { token: v.string(), fundId: v.id("funds") },
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    amountCents: v.number(),
+    coverFeesCents: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requireGroupGivingEnabled(ctx); // Gate donation creation at the source.
+
+    const { feeCoverCents } = validateDonationAmount(args.amountCents, args.coverFeesCents);
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
@@ -329,10 +379,23 @@ export const prepareDonationIntent = internalQuery({
     return {
       userId,
       communityId: fund.communityId,
+      groupId: fund.groupId,
+      fundName: fund.name,
       stripeConnectedAccountId: communityFinance.stripeConnectedAccountId,
+      feeCoverCents,
     };
   },
 });
+
+// ============================================================================
+// createDonationIntent — the native payment-sheet path. NOT called by the
+// mobile client today (GiveScreen uses createDonationCheckoutSession's
+// hosted-Checkout flow per ADR-032's Phase-1 decision: zero native-dep risk,
+// ships via OTA, Apple Pay works in the browser sheet). Kept exported and
+// tested for ADR-032's still-open question of whether a later phase adopts
+// `@stripe/stripe-react-native`'s native payment sheet for better Apple Pay
+// conversion — see the ADR's "Open questions".
+// ============================================================================
 
 /**
  * Creates a Stripe PaymentIntent on the community's connected account for a
@@ -360,23 +423,14 @@ export const createDonationIntent = action({
     ctx,
     args,
   ): Promise<{ clientSecret: string; paymentIntentId: string }> => {
-    if (
-      !Number.isInteger(args.amountCents) ||
-      args.amountCents < MIN_DONATION_CENTS ||
-      args.amountCents > MAX_DONATION_CENTS
-    ) {
-      throw new Error(
-        `Donation amount must be between $${MIN_DONATION_CENTS / 100} and $${MAX_DONATION_CENTS / 100}`,
-      );
-    }
-    const feeCoverCents = args.coverFeesCents ?? 0;
-    if (!Number.isInteger(feeCoverCents) || feeCoverCents < 0) {
-      throw new Error("Invalid fee-cover amount");
-    }
-
     const context = await ctx.runQuery(
       internal.functions.finance.giving.prepareDonationIntent,
-      { token: args.token, fundId: args.fundId },
+      {
+        token: args.token,
+        fundId: args.fundId,
+        amountCents: args.amountCents,
+        coverFeesCents: args.coverFeesCents,
+      },
     );
 
     const Stripe = (await import("stripe")).default;
@@ -389,14 +443,14 @@ export const createDonationIntent = action({
     // per the acquiring topology in ADR-032 §1.
     const paymentIntent = await stripe.paymentIntents.create(
       {
-        amount: args.amountCents + feeCoverCents,
+        amount: args.amountCents + context.feeCoverCents,
         currency: "usd",
         automatic_payment_methods: { enabled: true },
         metadata: {
           fundId: args.fundId,
           donorUserId: context.userId,
           communityId: context.communityId,
-          feeCoverCents: String(feeCoverCents),
+          feeCoverCents: String(context.feeCoverCents),
         },
       },
       {
@@ -423,6 +477,121 @@ export const createDonationIntent = action({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
     };
+  },
+});
+
+// ============================================================================
+// createDonationCheckoutSession — the hosted Stripe Checkout path (ADR-032
+// §3/§6 Phase 1 decision: zero native dependencies, ships via OTA, Apple Pay
+// works in the browser sheet). This is what GiveScreen actually calls.
+// ============================================================================
+
+/**
+ * The https universal link the Checkout session redirects back to on
+ * completion/cancellation — NOT the custom "togather://" scheme, mirroring
+ * FinanceOnboardingStatusScreen's FINANCE_SETUP_DEEP_LINK: Stripe Checkout
+ * requires https success/cancel URLs, and the app registers applinks for
+ * togather.nyc (app.config.js associatedDomains) so this re-opens the app
+ * when installed. Convex reactivity — not the redirect itself — is what
+ * actually refreshes the fund screen once the donation lands.
+ */
+const GIVING_CHECKOUT_BASE_URL = "https://togather.nyc";
+
+/**
+ * Creates a Stripe Checkout Session (hosted page) on the community's
+ * connected account for a donation to `fundId`.
+ *
+ * CRITICAL: Checkout session-level `metadata` does NOT propagate to the
+ * PaymentIntent Checkout creates under the hood — only `payment_intent_data.
+ * metadata` does. The existing `payment_intent.succeeded` webhook path
+ * (functions/finance/webhooks.ts's `handleFinanceStripeEvent`, including the
+ * connected-account cross-check and `splitDonationAmounts`) reads metadata
+ * off the PaymentIntent event object, so it MUST land there, unchanged from
+ * what `createDonationIntent` sets directly.
+ */
+export const createDonationCheckoutSession = action({
+  args: {
+    token: v.string(),
+    fundId: v.id("funds"),
+    amountCents: v.number(),
+    coverFeesCents: v.optional(v.number()),
+    // Same contract as createDonationIntent's idempotencyNonce — see that
+    // action's doc comment.
+    idempotencyNonce: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ url: string; sessionId: string }> => {
+    const context = await ctx.runQuery(
+      internal.functions.finance.giving.prepareDonationIntent,
+      {
+        token: args.token,
+        fundId: args.fundId,
+        amountCents: args.amountCents,
+        coverFeesCents: args.coverFeesCents,
+      },
+    );
+    if (!context.groupId) {
+      // The success/cancel universal links land on a group's fund screen
+      // (`/groups/[group_id]/fund`) — a community-wide general fund has no
+      // such screen yet, so hosted Checkout isn't wired for it.
+      throw new Error("Checkout isn't available for this fund yet");
+    }
+
+    const Stripe = (await import("stripe")).default;
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+      apiVersion: "2026-02-25.clover",
+    });
+
+    const totalCents = args.amountCents + context.feeCoverCents;
+    const fundUrl = `${GIVING_CHECKOUT_BASE_URL}/groups/${context.groupId}/fund`;
+
+    // Created ON the community's connected account (`stripeAccount`) — same
+    // direct-charge topology as createDonationIntent, per ADR-032 §1.
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: "payment",
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              unit_amount: totalCents,
+              product_data: { name: `Gift to ${context.fundName}` },
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: `${fundUrl}?giving=success`,
+        cancel_url: `${fundUrl}?giving=cancelled`,
+        payment_intent_data: {
+          description: `Donation — ${context.fundName}`,
+          // Same shape recordDonationSucceeded/handleFinanceStripeEvent
+          // already expect from createDonationIntent's direct PaymentIntent
+          // metadata — see the file-level CRITICAL note above.
+          metadata: {
+            fundId: args.fundId,
+            donorUserId: context.userId,
+            communityId: context.communityId,
+            feeCoverCents: String(context.feeCoverCents),
+          },
+        },
+      },
+      {
+        stripeAccount: context.stripeConnectedAccountId,
+        // Mirrors createDonationIntent's own idempotency handling (FIX 5) —
+        // a double-tapped "Continue" resolves to the SAME Checkout Session
+        // instead of creating a second one.
+        ...(args.idempotencyNonce
+          ? {
+              idempotencyKey: `donation-checkout:${args.fundId}:${args.idempotencyNonce}`,
+            }
+          : {}),
+      },
+    );
+
+    if (!session.url) {
+      throw new Error("Stripe did not return a Checkout URL");
+    }
+
+    return { url: session.url, sessionId: session.id };
   },
 });
 
