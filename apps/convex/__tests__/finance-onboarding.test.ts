@@ -29,6 +29,7 @@ import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
 import { isValidEin, fingerprintIntake } from "../functions/finance/onboarding";
 import { verifyIncreaseWebhookSignature } from "../lib/finance/increase";
+import { choosePayoutDestination } from "../lib/finance/stripeConnect";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -242,6 +243,25 @@ describe("isValidEin", () => {
     expect(isValidEin("12-345678")).toBe(false);
     expect(isValidEin("ab-cdefghi")).toBe(false);
     expect(isValidEin("")).toBe(false);
+  });
+});
+
+// ============================================================================
+// choosePayoutDestination
+// ============================================================================
+
+describe("choosePayoutDestination", () => {
+  const minted = { routingNumber: "074920909", accountNumber: "9498589619" };
+
+  test("production attaches the real Increase receiving-account number", () => {
+    expect(choosePayoutDestination(false, minted)).toEqual(minted);
+  });
+
+  test("test mode attaches Stripe's documented test bank account (real numbers are rejected)", () => {
+    expect(choosePayoutDestination(true, minted)).toEqual({
+      routingNumber: "110000000",
+      accountNumber: "000123456789",
+    });
   });
 });
 
