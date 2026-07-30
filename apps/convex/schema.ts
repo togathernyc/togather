@@ -557,14 +557,6 @@ export default defineSchema({
         ),
       }),
     ),
-
-    // Reach Out channel configuration
-    reachOutConfig: v.optional(
-      v.object({
-        enabled: v.boolean(),
-        channelName: v.optional(v.string()), // Default: "Reach Out"
-      }),
-    ),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_community", ["communityId"])
@@ -1211,10 +1203,9 @@ export default defineSchema({
 
     groupMemberId: v.id("groupMembers"),
     createdById: v.id("users"),
-    type: v.string(), // 'note', 'call', 'text', 'snooze', 'followed_up', 'reach_out'
+    type: v.string(), // 'note', 'call', 'text', 'snooze', 'followed_up'
     content: v.optional(v.string()),
     snoozeUntil: v.optional(v.number()), // Unix timestamp ms
-    reachOutRequestId: v.optional(v.id("reachOutRequests")), // Link to reach-out request
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_legacyId", ["legacyId"])
@@ -1230,7 +1221,7 @@ export default defineSchema({
   // =============================================================================
   // TASKS
   // =============================================================================
-  // Canonical leader task system for reminders, reach-out intake, and manual work.
+  // Canonical leader task system for reminders, followups, and manual work.
   // Supports group-level ownership, person assignment, hierarchy, and source tracing.
 
   tasks: defineTable({
@@ -1241,7 +1232,7 @@ export default defineSchema({
     responsibilityType: v.string(), // "group" | "person"
     assignedToId: v.optional(v.id("users")),
     createdById: v.optional(v.id("users")), // optional for system-created tasks
-    sourceType: v.string(), // "manual" | "bot_task_reminder" | "reach_out" | "followup" | "workflow_template"
+    sourceType: v.string(), // "manual" | "bot_task_reminder" | "followup" | "workflow_template"
     sourceRef: v.optional(v.string()),
     sourceKey: v.optional(v.string()), // idempotency key for generated tasks
     targetType: v.string(), // "none" | "member" | "group" | "placeholder"
@@ -1676,7 +1667,7 @@ export default defineSchema({
    *   - Future: "elvanto", "ccb", etc.
    *
    * Invariant: exactly one of `groupId` or `communityId` is set.
-   *   - groupId set: traditional group-channel ("main" | "leaders" | "custom" | "pco_services" | "event" | "reach_out" | "announcements")
+   *   - groupId set: traditional group-channel ("main" | "leaders" | "custom" | "pco_services" | "event" | "announcements")
    *   - communityId set: ad-hoc channel ("dm" | "group_dm"), with `isAdHoc: true`
    * Enforced in mutations, not at the DB level (Convex has no constraints).
    */
@@ -1693,7 +1684,7 @@ export default defineSchema({
     /** For 1:1 DMs: deterministic key for dedup, sorted "userIdA::userIdB". */
     dmPairKey: v.optional(v.string()),
     slug: v.optional(v.string()), // URL-friendly, unique per group, immutable (optional for migration)
-    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "reach_out" | "announcements" | "cross_team"
+    channelType: v.string(), // "main" | "leaders" | "dm" | "group_dm" | "custom" | "pco_services" | "event" | "announcements" | "cross_team"
     name: v.string(),
     description: v.optional(v.string()),
     /**
@@ -1889,7 +1880,7 @@ export default defineSchema({
     communityId: v.optional(v.id("communities")),
     senderId: v.optional(v.id("users")), // Optional for bot/system messages
     content: v.string(), // Message text
-    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "reach_out_request" | "task_card" | "bug_card" | "poll" | "availability_request"
+    contentType: v.string(), // "text" | "image" | "file" | "system" | "bot" | "task_card" | "bug_card" | "poll" | "availability_request"
     attachments: v.optional(
       v.array(
         v.object({
@@ -1925,8 +1916,6 @@ export default defineSchema({
     lastActivityAt: v.optional(v.number()),
     // Link preview control
     hideLinkPreview: v.optional(v.boolean()),
-    // Reach Out request reference (for request cards in leaders channel)
-    reachOutRequestId: v.optional(v.id("reachOutRequests")),
     // Canonical task reference for task-aware chat cards
     taskId: v.optional(v.id("tasks")),
     // Dev-assistant bug reference for contentType === "bug_card"
@@ -2427,47 +2416,6 @@ export default defineSchema({
     attempts: v.number(),
     windowStart: v.number(), // Unix timestamp ms
   }).index("by_key", ["key"]),
-
-  // =============================================================================
-  // REACH OUT REQUESTS
-  // =============================================================================
-  // Tracks member requests submitted via the "Reach Out" channel.
-  // Leaders see these as interactive cards in their leaders channel.
-
-  reachOutRequests: defineTable({
-    groupId: v.id("groups"),
-    channelId: v.id("chatChannels"), // The reach_out channel
-    leadersChannelId: v.id("chatChannels"), // The leaders channel
-    submittedById: v.id("users"),
-    groupMemberId: v.id("groupMembers"), // For followup integration
-    content: v.string(),
-    status: v.string(), // "pending" | "assigned" | "contacted" | "resolved" | "revoked"
-    assignedToId: v.optional(v.id("users")),
-    assignedAt: v.optional(v.number()),
-    contactActions: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          type: v.string(), // "call" | "text" | "email"
-          performedById: v.id("users"),
-          performedAt: v.number(),
-          notes: v.optional(v.string()),
-        }),
-      ),
-    ),
-    resolvedById: v.optional(v.id("users")),
-    resolvedAt: v.optional(v.number()),
-    resolutionNotes: v.optional(v.string()),
-    leadersMessageId: v.optional(v.id("chatMessages")), // Card in leaders channel
-    taskId: v.optional(v.id("tasks")), // Linked canonical task (migration path)
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_group", ["groupId"])
-    .index("by_group_status", ["groupId", "status"])
-    .index("by_submittedBy", ["submittedById"])
-    .index("by_assignedTo", ["assignedToId"])
-    .index("by_groupMember", ["groupMemberId"]),
 
   // =============================================================================
   // COMMUNITY LANDING PAGES

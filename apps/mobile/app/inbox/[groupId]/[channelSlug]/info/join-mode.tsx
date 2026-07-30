@@ -8,7 +8,7 @@
  * the /members screen — leaders now reach this from a dedicated row in the
  * channel info Leader Controls card.
  *
- * Custom channels only: leaders/reach_out/main don't have an invite link,
+ * Custom channels only: leaders/main don't have an invite link,
  * and PCO channels are sync-driven. Backend will reject other types via
  * `updateJoinMode` even if we forget to gate at the UI.
  */

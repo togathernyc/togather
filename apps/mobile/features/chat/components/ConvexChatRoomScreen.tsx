@@ -51,7 +51,6 @@ import { TypingIndicator } from "./TypingIndicator";
 import { MessageActionsOverlay } from "./MessageActionsOverlay";
 import { ChannelMembersModal } from "@features/channels";
 import { SyncResultModal } from "./SyncResultModal";
-import { ReachOutScreen } from "./ReachOutScreen";
 
 // Hooks
 import { useConvexChannelFromGroup } from "../hooks/useConvexChannelFromGroup";
@@ -436,9 +435,8 @@ const ConvexChatRoomScreenInner: React.FC = () => {
     return effectiveGroupChannels
       .filter((channel: any) => {
         if (channel.isEnabled === false) return false;
-        // Admin viewers browse every readable channel. Skip reach_out — it's a
-        // leader workflow surface (ReachOutScreen), not a conversation to read.
-        if (isAdminViewer) return channel.channelType !== "reach_out";
+        // Admin viewers browse every readable channel.
+        if (isAdminViewer) return true;
         return channel.isMember;
       })
       .map((channel: any) => ({
@@ -480,12 +478,6 @@ const ConvexChatRoomScreenInner: React.FC = () => {
   const groupTypeIdSource = groupTypeIdParam || groupDetails?.groupTypeId || groupData?.groupTypeId;
   const groupTypeId = parseGroupTypeId(groupTypeIdSource);
   const isAnnouncementGroup = isAnnouncementGroupParam === "1" || groupDetails?.isAnnouncementGroup || false;
-
-  // Determine if the active channel is a reach_out channel
-  const isReachOutChannel = useMemo(() => {
-    const activeTab = channelTabs.find((t) => t.slug === activeSlug);
-    return activeTab?.channelType === "reach_out";
-  }, [channelTabs, activeSlug]);
 
   // Announcements channels: only group leaders may post. Everyone else falls
   // through to the read-only banner.
@@ -1309,187 +1301,177 @@ const ConvexChatRoomScreenInner: React.FC = () => {
           onClose={() => setExternalChatModalVisible(false)}
         />
 
-        {/* Reach Out Screen or Standard Chat */}
-        {isReachOutChannel && activeChannelId && resolvedGroupId ? (
-          <ReachOutScreen
-            channelId={activeChannelId}
-            groupId={resolvedGroupId}
+        {/* Privacy notice for ad-hoc DM/group_dm threads. Sits above the
+            message list as a subtle reminder that ad-hoc chats aren't
+            end-to-end encrypted and admins can request access. Sticky
+            position above the list (not in the inverted FlatList) avoids
+            upending the chat scroll behavior. */}
+        {isAdHocChannel && <ChatPrivacyCard />}
+        {/* Message List - handles its own loading state when channelId is null.
+            §S4.1: the wallpaper is painted once at screen level above, so
+            this wrapper (and MessageList itself) must stay transparent —
+            painting `chatWallpaper` here again would flatten the doodle
+            pattern back out. Flag-off keeps inheriting the screen's
+            surface color as before. */}
+        <View
+          style={[
+            styles.chatContainer,
+            whatsappShellEnabled && styles.waTransparent,
+          ]}
+        >
+          <MessageList
+            channelId={activeChannelId ?? null}
+            currentUserId={currentUserId}
+            groupId={resolvedGroupId ?? undefined}
+            channelName={activeSlug}
+            onMessageReply={handleMessageReply}
+            onMessageReact={handleMessageReact}
+            onMessageDelete={handleMessageDelete}
+            onMessageLongPress={handleLongPressMessage}
+            onMessageDoubleTap={handleDoubleTapMessage}
+            optimisticMessages={optimisticMessages}
+            onRetryMessage={retryMessage}
+            onDismissMessage={dismissMessage}
+            onCollapsibleThreadsChange={handleCollapsibleThreadsChange}
+            onAvatarPress={(userId) => {
+              // Short-circuit on self — self-profile lives on a
+              // different route; the MessageItem already filters
+              // own-avatar taps, but double-check here in case a
+              // refactor regresses that.
+              if (userId === currentUserId) return;
+              router.push(`/profile/${userId}` as any);
+            }}
+            highlightMessageId={
+              params.messageId
+                ? (params.messageId as Id<"chatMessages">)
+                : null
+            }
           />
-        ) : (
-          <>
-            {/* Privacy notice for ad-hoc DM/group_dm threads. Sits above the
-                message list as a subtle reminder that ad-hoc chats aren't
-                end-to-end encrypted and admins can request access. Sticky
-                position above the list (not in the inverted FlatList) avoids
-                upending the chat scroll behavior. */}
-            {isAdHocChannel && <ChatPrivacyCard />}
-            {/* Message List - handles its own loading state when channelId is null.
-                §S4.1: the wallpaper is painted once at screen level above, so
-                this wrapper (and MessageList itself) must stay transparent —
-                painting `chatWallpaper` here again would flatten the doodle
-                pattern back out. Flag-off keeps inheriting the screen's
-                surface color as before. */}
-            <View
+        </View>
+
+        {/* Typing Indicator */}
+        <TypingIndicator typingUsers={typingUsers} />
+
+        {/* Message Input — or banner. Banner branches in priority order:
+              1) ad-hoc channel + caller has no profile photo → photo
+                 banner. Profile photos are required to use ad-hoc chats
+                 (ditto backend; `sendMessage` rejects with
+                 PROFILE_PHOTO_REQUIRED when the photo is missing).
+              2) caller is still pending → request banner.
+              3) otherwise composer / read-only banner. */}
+        {isAdHocChannel &&
+        (!user?.profile_photo || user.profile_photo.trim() === "") &&
+        activeChannelId ? (
+          <View
+            style={[
+              styles.readOnlyBanner,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderTopColor: colors.border,
+              },
+            ]}
+          >
+            <Text
               style={[
-                styles.chatContainer,
-                whatsappShellEnabled && styles.waTransparent,
+                styles.readOnlyText,
+                { color: colors.textSecondary, marginBottom: 8 },
               ]}
             >
-              <MessageList
-                channelId={activeChannelId ?? null}
-                currentUserId={currentUserId}
-                groupId={resolvedGroupId ?? undefined}
-                channelName={activeSlug}
-                onMessageReply={handleMessageReply}
-                onMessageReact={handleMessageReact}
-                onMessageDelete={handleMessageDelete}
-                onMessageLongPress={handleLongPressMessage}
-                onMessageDoubleTap={handleDoubleTapMessage}
-                optimisticMessages={optimisticMessages}
-                onRetryMessage={retryMessage}
-                onDismissMessage={dismissMessage}
-                onCollapsibleThreadsChange={handleCollapsibleThreadsChange}
-                onAvatarPress={(userId) => {
-                  // Short-circuit on self — self-profile lives on a
-                  // different route; the MessageItem already filters
-                  // own-avatar taps, but double-check here in case a
-                  // refactor regresses that.
-                  if (userId === currentUserId) return;
-                  router.push(`/profile/${userId}` as any);
-                }}
-                highlightMessageId={
-                  params.messageId
-                    ? (params.messageId as Id<"chatMessages">)
-                    : null
-                }
-              />
-            </View>
-
-            {/* Typing Indicator */}
-            <TypingIndicator typingUsers={typingUsers} />
-
-            {/* Message Input — or banner. Banner branches in priority order:
-                  1) ad-hoc channel + caller has no profile photo → photo
-                     banner. Profile photos are required to use ad-hoc chats
-                     (ditto backend; `sendMessage` rejects with
-                     PROFILE_PHOTO_REQUIRED when the photo is missing).
-                  2) caller is still pending → request banner.
-                  3) otherwise composer / read-only banner. */}
-            {isAdHocChannel &&
-            (!user?.profile_photo || user.profile_photo.trim() === "") &&
-            activeChannelId ? (
-              <View
-                style={[
-                  styles.readOnlyBanner,
-                  {
-                    backgroundColor: colors.surfaceSecondary,
-                    borderTopColor: colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.readOnlyText,
-                    { color: colors.textSecondary, marginBottom: 8 },
-                  ]}
-                >
-                  Add a profile photo to message in this chat.
-                </Text>
-                <TouchableOpacity
-                  onPress={() => router.push("/(user)/edit-profile" as any)}
-                  style={{
-                    backgroundColor: primaryColor,
-                    paddingHorizontal: 16,
-                    paddingVertical: 10,
-                    borderRadius: 10,
-                    alignSelf: "center",
-                  }}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "600" }}>
-                    Add photo
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : channelData?.myRequestState === "pending" && activeChannelId ? (
-              <ChatRequestBanner
-                channelId={activeChannelId}
-                inviterDisplayName={channelData.inviterDisplayName ?? "Someone"}
-                onResolved={handleBack}
-              />
-            ) : canSendMessages ? (
-              <MessageInput
-                channelId={activeChannelId ?? null}
-                replyToMessage={
-                  replyToMessageId
-                    ? {
-                        _id: replyToMessageId,
-                        // Prefer the fetched parent (authoritative, reflects
-                        // edits) but fall back to the locally-captured values so
-                        // the banner is never blank — e.g. when replying to a
-                        // just-sent optimistic message the server can't resolve.
-                        ...resolveReplyPreview(replyParentMessage, replyToLocal),
-                      }
-                    : null
-                }
-                onCancelReply={handleCancelReply}
-                onReplySent={handleReplySent}
-                externalSendMessage={sendMessage}
-                externalIsSending={isSending}
-                placeholder={activeChannelHint}
-                // Ad-hoc DM where recipient hasn't accepted yet — strip
-                // attachment UI client-side. Backend rejects (messages.ts);
-                // hiding here means the user never triggers the failure path
-                // that previously cascaded into a navigator render loop.
-                recipientPending={
-                  isAdHocChannel && channelData?.recipientPending === true
-                }
-              />
-            ) : whatsappShellEnabled ? (
-              // §5 "Announcement footer note: centered, 13pt, text.secondary
-              // with the actionable noun in accent" — flag-on restyle of the
-              // same read-only affordance below (base styles reused, new
-              // wa* entries added; the flag-off branch is untouched).
-              <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, styles.waTransparent]}>
-                <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
-                  {isCommunityAdminGroupView ? (
-                    isRoleLoading ? (
-                      "Checking your access…"
-                    ) : (
-                      "You're viewing as a community admin. Join the group to post."
-                    )
-                  ) : isAnnouncementsChannel ? (
-                    <>
-                      Only{" "}
-                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
-                        leaders
-                      </Text>{" "}
-                      can post in Announcements. You can react to messages.
-                    </>
-                  ) : (
-                    <>
-                      Only{" "}
-                      <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
-                        admins
-                      </Text>{" "}
-                      can post in this channel. You can react to messages.
-                    </>
-                  )}
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
-                <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
-                  {isCommunityAdminGroupView
-                    ? isRoleLoading
-                      ? "Checking your access…"
-                      : "You're viewing as a community admin. Join the group to post."
-                    : isAnnouncementsChannel
-                      ? "Only leaders can post in Announcements. You can react to messages."
-                      : "Only admins can post in this channel. You can react to messages."}
-                </Text>
-              </View>
-            )}
-          </>
+              Add a profile photo to message in this chat.
+            </Text>
+            <TouchableOpacity
+              onPress={() => router.push("/(user)/edit-profile" as any)}
+              style={{
+                backgroundColor: primaryColor,
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 10,
+                alignSelf: "center",
+              }}
+            >
+              <Text style={{ color: "#fff", fontWeight: "600" }}>
+                Add photo
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : channelData?.myRequestState === "pending" && activeChannelId ? (
+          <ChatRequestBanner
+            channelId={activeChannelId}
+            inviterDisplayName={channelData.inviterDisplayName ?? "Someone"}
+            onResolved={handleBack}
+          />
+        ) : canSendMessages ? (
+          <MessageInput
+            channelId={activeChannelId ?? null}
+            replyToMessage={
+              replyToMessageId
+                ? {
+                    _id: replyToMessageId,
+                    // Prefer the fetched parent (authoritative, reflects
+                    // edits) but fall back to the locally-captured values so
+                    // the banner is never blank — e.g. when replying to a
+                    // just-sent optimistic message the server can't resolve.
+                    ...resolveReplyPreview(replyParentMessage, replyToLocal),
+                  }
+                : null
+            }
+            onCancelReply={handleCancelReply}
+            onReplySent={handleReplySent}
+            externalSendMessage={sendMessage}
+            externalIsSending={isSending}
+            placeholder={activeChannelHint}
+            // Ad-hoc DM where recipient hasn't accepted yet — strip
+            // attachment UI client-side. Backend rejects (messages.ts);
+            // hiding here means the user never triggers the failure path
+            // that previously cascaded into a navigator render loop.
+            recipientPending={
+              isAdHocChannel && channelData?.recipientPending === true
+            }
+          />
+        ) : whatsappShellEnabled ? (
+          // §5 "Announcement footer note: centered, 13pt, text.secondary
+          // with the actionable noun in accent" — flag-on restyle of the
+          // same read-only affordance below (base styles reused, new
+          // wa* entries added; the flag-off branch is untouched).
+          <View style={[styles.readOnlyBanner, styles.waReadOnlyBanner, styles.waTransparent]}>
+            <Text style={[styles.readOnlyText, styles.waReadOnlyText, { color: colors.textSecondary }]}>
+              {isCommunityAdminGroupView ? (
+                isRoleLoading ? (
+                  "Checking your access…"
+                ) : (
+                  "You're viewing as a community admin. Join the group to post."
+                )
+              ) : isAnnouncementsChannel ? (
+                <>
+                  Only{" "}
+                  <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                    leaders
+                  </Text>{" "}
+                  can post in Announcements. You can react to messages.
+                </>
+              ) : (
+                <>
+                  Only{" "}
+                  <Text style={{ color: waAccentPalette(primaryColor, isDark).accent, fontWeight: "600" }}>
+                    admins
+                  </Text>{" "}
+                  can post in this channel. You can react to messages.
+                </>
+              )}
+            </Text>
+          </View>
+        ) : (
+          <View style={[styles.readOnlyBanner, { backgroundColor: colors.surfaceSecondary, borderTopColor: colors.border }]}>
+            <Text style={[styles.readOnlyText, { color: colors.textSecondary }]}>
+              {isCommunityAdminGroupView
+                ? isRoleLoading
+                  ? "Checking your access…"
+                  : "You're viewing as a community admin. Join the group to post."
+                : isAnnouncementsChannel
+                  ? "Only leaders can post in Announcements. You can react to messages."
+                  : "Only admins can post in this channel. You can react to messages."}
+            </Text>
+          </View>
         )}
 
         {/* Message Actions Overlay */}

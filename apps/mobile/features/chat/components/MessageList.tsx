@@ -76,8 +76,6 @@ interface Message {
   senderNotificationsDisabled?: boolean;
   // Link preview control
   hideLinkPreview?: boolean;
-  // Reach out request reference
-  reachOutRequestId?: Id<"reachOutRequests">;
   // Canonical task reference for task cards
   taskId?: Id<"tasks">;
   // Dev-assistant bug reference for contentType === "bug_card"
@@ -692,7 +690,6 @@ export function MessageList({
             mentionedUserIds: message.mentionedUserIds,
             threadReplyCount: message.threadReplyCount,
             hideLinkPreview: message.hideLinkPreview,
-            reachOutRequestId: message.reachOutRequestId,
             taskId: message.taskId,
             bugId: message.bugId,
             pollId: message.pollId,

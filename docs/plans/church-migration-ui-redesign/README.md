@@ -319,9 +319,7 @@ with role-gated sections: header (contact actions) → health card (3 score bars
 assignment now writes the CRM assignee of record) → log follow-up (in-person /
 call / text, back-datable) → timeline (touchpoints, notes, attendance,
 serving) → tasks → **Admin section** (role management, transfer primary
-admin, remove — primary-admin-gated). Naming decision: leader-side stays
-"Reach out"; the member-initiated `reach_out` request feature is renamed
-**"Ask for help"** in UI to kill the collision.
+admin, remove — primary-admin-gated).
 
 **W17 — Channel directory.** The fractal intermediary page for a group:
 *Your channels* (with mute state inline), **Channels you can join**

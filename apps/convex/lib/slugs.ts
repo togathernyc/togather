@@ -1,7 +1,7 @@
 /**
  * Reserved slugs that cannot be used for custom channels
  */
-export const RESERVED_SLUGS = ['general', 'leaders', 'reach-out', 'create', 'settings', 'members'];
+export const RESERVED_SLUGS = ['general', 'leaders', 'create', 'settings', 'members'];
 
 /**
  * Generate a URL-friendly slug from a channel name

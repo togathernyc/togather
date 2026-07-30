@@ -10,7 +10,6 @@ Use this checklist to validate the end-to-end Tasks experience across mobile-fir
 - [ ] Convex backend is running
 - [ ] Logged in with seeded credentials (ex: phone `2025550123`, code `000000`)
 - [ ] User is in a community with at least one group where they are a leader
-- [ ] Reach Out channel is enabled for at least one test group (for migration/source testing)
 - [ ] Task Reminder bot configured with at least one role + schedule (for bot source testing)
 
 ---
@@ -99,46 +98,20 @@ Use this checklist to validate the end-to-end Tasks experience across mobile-fir
 
 ---
 
-## CUJ 5: Reach Out -> Task Source Flow
+## CUJ 5: Task Reminder Bot -> Task Source Flow
 
-### 5.1 Reach out submission creates task
-
-- [ ] Submit reach-out request as member
-- [ ] Verify `reachOutRequests` record created
-- [ ] Verify linked task is created with source `reach_out`
-- [ ] Verify leaders can see it in task views
-
-### 5.2 Reach out assignment sync
-
-- [ ] Assign reach-out request to leader
-- [ ] Verify linked task becomes person-responsibility + assigned
-
-### 5.3 Reach out resolution sync
-
-- [ ] Resolve reach-out request
-- [ ] Verify linked task is marked done
-
-### 5.4 Reach out revoke/unassign sync
-
-- [ ] Revoke request as submitter -> task canceled
-- [ ] Unassign request -> task returns to open/unassigned
-
----
-
-## CUJ 6: Task Reminder Bot -> Task Source Flow
-
-### 6.1 Scheduled reminder generates tasks
+### 5.1 Scheduled reminder generates tasks
 
 - [ ] Configure reminder bot roles/schedule
 - [ ] Trigger scheduled window or test function path
 - [ ] Verify tasks are generated with source `bot_task_reminder`
 
-### 6.2 Idempotency
+### 5.2 Idempotency
 
 - [ ] Re-run same schedule/source event
 - [ ] Verify no duplicate tasks for identical source key
 
-### 6.3 Bot message + task dual behavior
+### 5.3 Bot message + task dual behavior
 
 - [ ] Verify task created regardless of delivery mode
 - [ ] If chat mode enabled, verify message still posts as expected
@@ -146,140 +119,130 @@ Use this checklist to validate the end-to-end Tasks experience across mobile-fir
 
 ---
 
-## CUJ 7: Hierarchy (Parent + Subtasks)
+## CUJ 6: Hierarchy (Parent + Subtasks)
 
-### 7.1 Parent task with children
+### 6.1 Parent task with children
 
 - [ ] Create parent task + multiple subtasks
 - [ ] Verify compact render with expand/collapse behavior
 
-### 7.2 Child action behavior
+### 6.2 Child action behavior
 
 - [ ] Complete/snooze/cancel subtask
 - [ ] Verify parent state remains consistent with expected rules
 
-### 7.3 Ordering behavior
+### 6.3 Ordering behavior
 
 - [ ] Reorder tasks where applicable
 - [ ] Verify stable order after refresh/reconnect
 
 ---
 
-## CUJ 8: Tags & Searchability
+## CUJ 7: Tags & Searchability
 
-### 8.1 Tag normalization
+### 7.1 Tag normalization
 
 - [ ] Add tags with spaces/casing
 - [ ] Verify normalized storage (slug-like behavior)
 
-### 8.2 Filtering by tags
+### 7.2 Filtering by tags
 
 - [ ] Filter tasks by tag(s)
 - [ ] Verify result set is correct and performant
 
-### 8.3 Source + tag combinations
+### 7.3 Source + tag combinations
 
-- [ ] Filter by tag + source (ex: `reach_out` + `prayer_request`)
+- [ ] Filter by tag + source (ex: `bot_task_reminder` + `prayer_request`)
 - [ ] Verify no cross-filter leakage
 
 ---
 
-## CUJ 9: Target Context (Member/Group)
+## CUJ 8: Target Context (Member/Group)
 
-### 9.1 Member target
+### 8.1 Member target
 
 - [ ] Create task with target member
 - [ ] Verify member context pill/metadata appears
 
-### 9.2 Group target
+### 8.2 Group target
 
 - [ ] Create task with target group
 - [ ] Verify group context pill/metadata appears
 
-### 9.3 Cardinality rules
+### 8.3 Cardinality rules
 
 - [ ] Verify exactly one primary target allowed (`none|member|group`)
 - [ ] Verify invalid combinations are rejected
 
 ---
 
-## CUJ 10: Permissions & Authorization
+## CUJ 9: Permissions & Authorization
 
-### 10.1 Leader-only task mutations
+### 9.1 Leader-only task mutations
 
 - [ ] As member, attempt create/assign/claim/done/snooze/cancel via API
 - [ ] Verify all are rejected with clear authorization errors
 
-### 10.2 Group bot config permission enforcement
+### 9.2 Group bot config permission enforcement
 
 - [ ] Verify non-leader cannot toggle/update/reset bot config
 - [ ] Verify leader can perform these actions
 
-### 10.3 Cross-group isolation
+### 9.3 Cross-group isolation
 
 - [ ] Leader of Group A cannot mutate tasks in Group B (without role)
 - [ ] Verify list queries only return authorized group scope
 
 ---
 
-## CUJ 11: Realtime & Multi-Client Consistency
+## CUJ 10: Realtime & Multi-Client Consistency
 
-### 11.1 Realtime updates
+### 10.1 Realtime updates
 
 - [ ] Open same task list on two clients
 - [ ] Perform action on client A
 - [ ] Verify client B updates without manual refresh
 
-### 11.2 Race/conflict handling
+### 10.2 Race/conflict handling
 
 - [ ] Two leaders claim same task nearly simultaneously
 - [ ] Verify one authoritative result and no corrupted task state
 
-### 11.3 Offline/reconnect behavior
+### 10.3 Offline/reconnect behavior
 
 - [ ] Perform action with temporary network interruption
 - [ ] Verify eventual consistency after reconnect
 
 ---
 
-## CUJ 12: Performance & UX Reliability
+## CUJ 11: Performance & UX Reliability
 
-### 12.1 List rendering at scale
+### 11.1 List rendering at scale
 
 - [ ] Seed 100+ tasks for leader
 - [ ] Verify scrolling performance and interaction latency
 
-### 12.2 Action responsiveness
+### 11.2 Action responsiveness
 
 - [ ] Execute rapid quick actions on multiple tasks
 - [ ] Verify loading/disabled affordances prevent duplicate submits
 
-### 12.3 Empty/loading/error states
+### 11.3 Empty/loading/error states
 
 - [ ] Verify clean states for no tasks, loading tasks, and failed fetches
 
 ---
 
-## CUJ 13: Migration & Backward Compatibility
+## CUJ 12: Migration & Backward Compatibility
 
-### 13.1 Dual-write integrity (transition period)
-
-- [ ] Reach-out writes both legacy request data and task linkage
-- [ ] Verify `reachOutRequests.taskId` populated
-
-### 13.2 Legacy UI compatibility
-
-- [ ] Existing reach-out cards still render where expected during migration
-- [ ] Verify no runtime errors in legacy message rendering paths
-
-### 13.3 Data safety
+### 12.1 Data safety
 
 - [ ] No destructive migration of legacy records without explicit cutoff
 - [ ] Source refs retained for traceability/debug
 
 ---
 
-## CUJ 14: Regression Matrix
+## CUJ 13: Regression Matrix
 
 - [ ] Birthday bot tests still pass
 - [ ] Existing inbox/channel navigation unaffected
@@ -293,11 +256,11 @@ Use this checklist to validate the end-to-end Tasks experience across mobile-fir
 
 ### Pass A: Smoke (10-15 min)
 
-- CUJ 1, 2, 4.3, 4.4, 5.1
+- CUJ 1, 2, 3.3, 3.4, 4.1
 
 ### Pass B: Integration (30-45 min)
 
-- CUJ 3, 5, 6, 10, 11
+- CUJ 2, 5, 9, 10
 
 ### Pass C: Release Candidate (60+ min)
 
@@ -312,7 +275,6 @@ Use this checklist to validate the end-to-end Tasks experience across mobile-fir
 | Leader Visibility       |        |       |
 | Navigation/Responsive   |        |       |
 | Manual Lifecycle        |        |       |
-| Reach Out Source        |        |       |
 | Bot Source              |        |       |
 | Permissions/Auth        |        |       |
 | Realtime                |        |       |

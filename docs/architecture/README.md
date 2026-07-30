@@ -58,7 +58,7 @@ Active implementation guides and refactoring documentation.
 | [Events Refactor Status](./UNIFIED-EVENTS-REFACTOR-STATUS.md) | In Progress | Bug tracking for events refactor |
 | [Events Testing](./UNIFIED-EVENTS-TESTING-GUIDE.md) | In Progress | CUJ testing for events |
 | [Events UI Improvements](./EVENTS-UI-IMPROVEMENTS.md) | In Progress | UI improvements tracking |
-| [Tasks PRD](./TASKS-PRD.md) | Proposed | Unified leader task system replacing reminder/reach-out overlap |
+| [Tasks PRD](./TASKS-PRD.md) | Proposed | Unified leader task system replacing overlapping reminder and follow-up workflows |
 
 ### Future/Proposed
 

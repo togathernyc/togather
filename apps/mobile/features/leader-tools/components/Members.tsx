@@ -75,7 +75,6 @@ export function Members({ groupId, onMemberAction, canManageMembers = false }: M
     return channels.filter(
       (ch: Channel) =>
         ch.channelType !== "dm" &&
-        ch.channelType !== "reach_out" &&
         ch.isEnabled !== false
     );
   }, [channels]);

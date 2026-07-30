@@ -496,7 +496,7 @@ export function FollowupDetailContent({
   };
 
   const FOLLOWUP_TYPES_CONVERTIBLE = useMemo(
-    () => new Set(["note", "call", "text", "followed_up", "reach_out"]),
+    () => new Set(["note", "call", "text", "followed_up"]),
     [],
   );
 
@@ -505,7 +505,6 @@ export function FollowupDetailContent({
 
   const getFollowupTypeLabel = (type: string) => {
     if (type === "followed_up") return "In-person";
-    if (type === "reach_out") return "Reach out";
     return type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ");
   };
 
@@ -611,8 +610,6 @@ export function FollowupDetailContent({
         return "time-outline";
       case "followed_up":
         return "checkmark-circle-outline";
-      case "reach_out":
-        return "hand-left-outline";
       case "email":
         return "mail-outline";
       default:
@@ -634,8 +631,6 @@ export function FollowupDetailContent({
         return colors.warning;
       case "followed_up":
         return colors.success;
-      case "reach_out":
-        return colors.link;
       default:
         return colors.textSecondary;
     }

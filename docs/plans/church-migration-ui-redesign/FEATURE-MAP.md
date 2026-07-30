@@ -41,7 +41,7 @@ Legend: 🟢 stays as-is (maybe restyled) · 🔀 moves · 🆕 net-new surface 
 | Channel discovery (today: invite links or leader-add only — no browse) | **Channel directory (W17)**: "Channels you can join" via new `discoverable` toggle on custom channels + existing `joinMode`. Decision: visible to every group member; `discoverable` defaults ON, leaders hide per channel | 🆕 |
 | Cluster overflow (member of many channels) | Hygiene rules (brief §5): cluster caps at main + 2 active sub-rows, "N more channels" collapse, muted channels sink + excluded from badge, inactive/archived leave the list; leader "quiet channels" tidy-up card | 🆕 |
 | Per-group notification toggle (buried in global Settings) | **Promoted to Group info page** ("Mute group") + stays in Settings | 🔀 |
-| Thread replies, reactions, polls, voice, GIFs, event/task/bug/reach-out/availability cards | Unchanged in-thread | 🟢 |
+| Thread replies, reactions, polls, voice, GIFs, event/task/bug/availability cards | Unchanged in-thread | 🟢 |
 | External chat link ("Join on WhatsApp") | Kept, but reframed: migration bridge UI takes over during transition; external link demoted to a group-info detail row | 🔀 |
 
 ## 3. Group settings (today split across Edit form / detail screen / leader-tools)
@@ -60,7 +60,7 @@ New home: **one Group info page (W13)**, WhatsApp-group-info shaped, with an
 | Leave group | Bottom red row (WhatsApp convention) | member |
 | Share group (`g/[shortId]`) | Icon action row under hero (+ QR from invite kit) | anyone |
 | Group Type | ⚠️ Read-only chip on hero; **currently uneditable post-creation — add admin-only edit** (backend supports it via request-review `modifications`) | admin |
-| `isPublic`, `isOnBreak`/`breakUntil`, `reachOutConfig` | ⚠️ Schema-only, no UI today. On-break gets a Settings row (churches pause groups seasonally); rest stay backlog | ⚠️ |
+| `isPublic`, `isOnBreak`/`breakUntil` | ⚠️ Schema-only, no UI today. On-break gets a Settings row (churches pause groups seasonally); rest stay backlog | ⚠️ |
 | Pinned channels (`pinnedChannelSlugs`) | Channels section → reorder mode | leader |
 | Requests row (leader-approval mode) | Badge on Members row | leader/admin |
 | Members (add/remove/promote/demote) | Members row → roster (unchanged screens behind it) | leader/admin |
@@ -135,7 +135,6 @@ health workflow); code's "followup" naming stays internal. New homes:
 | FollowupDetailScreen (log in-person/call/text, back-date, notes, snooze, assign, attendance edit, serving history, timeline, tasks) | **Unified Person page** (W15) | 🔀 |
 | `PersonDetailScreen` (admin: roles, activity, remove) | Merged into unified Person page, Admin section (role-gated) | 🔀 |
 | Reach-out sheet (Text / Call / Log in-person) | Person page + list card pill (unchanged) | 🟢 |
-| Member "reach out" requests (`reach_out` channels, cards, resolve flow) | ⚠️ Naming collision with leader reach-outs — member-facing feature renamed **"Ask for help"** in UI; leader side keeps "Reach out" | ⚠️🔀 |
 | Followup Bot (round-robin leader @mention) | ⚠️ **Bot must also write `communityPeople.assigneeIds`** so bot assignment = CRM assignment of record | ⚠️ |
 | CSV import (preview/apply, header aliasing) + quick-add | People list › Import; **shared machinery with migration pre-import (brief §7)** — one importer, two entry points | 🔀 |
 | CSV export | People list › Export | 🟢 |
@@ -166,11 +165,10 @@ health workflow); code's "followup" naming stays internal. New homes:
 4. **Three person views** → one Person page with role-gated sections (§6).
 5. **Approve-with-modifications** — backend-only; add UI (§5).
 6. **Followup Bot doesn't set CRM assignee** (§6).
-7. **"Reach out" naming collision** (§6).
-8. **Group Type uneditable post-creation** (§3).
-9. **Dual score pipelines** running in parallel (§6).
-10. **Dead screens to delete**: `AdminDashboardScreen`, `PendingRequestsScreen`, `LeaderToolsScreen` hub, legacy `GroupOptionsModal` path (§4, §5).
-11. **No chat-message moderation queue** despite flags schema (§5).
-12. **Stale docs**: `docs/features/admin.md`, `docs/features/leader-tools.md`, CheckIn guide's phantom `features/check-in` path — fix alongside.
-13. **Route moves must update** `+native-intent.ts`, `KNOWN_APP_ROUTES` in the link-preview worker, and `app/__tests__/routing-conflicts.test.ts`.
+7. **Group Type uneditable post-creation** (§3).
+8. **Dual score pipelines** running in parallel (§6).
+9. **Dead screens to delete**: `AdminDashboardScreen`, `PendingRequestsScreen`, `LeaderToolsScreen` hub, legacy `GroupOptionsModal` path (§4, §5).
+10. **No chat-message moderation queue** despite flags schema (§5).
+11. **Stale docs**: `docs/features/admin.md`, `docs/features/leader-tools.md`, CheckIn guide's phantom `features/check-in` path — fix alongside.
+12. **Route moves must update** `+native-intent.ts`, `KNOWN_APP_ROUTES` in the link-preview worker, and `app/__tests__/routing-conflicts.test.ts`.
 14. **Everything ships behind the community-scoped `whatsapp-shell` flag** (brief §9.5): default off, both shells in the bundle, PostHog targeting + Convex kill-switch, new routes gated at their entry points. Nothing leaks until the flag flips.

@@ -1,6 +1,6 @@
 import React from "react";
 import { render } from "@testing-library/react-native";
-import { ReachOutTaskCard } from "../ReachOutTaskCard";
+import { TaskCard } from "../TaskCard";
 import type { Id } from "@services/api/convex";
 
 const mockMutation = jest.fn();
@@ -24,7 +24,6 @@ jest.mock("@services/api/convex", () => ({
           claim: "claim",
           markDone: "markDone",
           assign: "assign",
-          withdrawReachOut: "withdrawReachOut",
         },
       },
     },
@@ -32,10 +31,10 @@ jest.mock("@services/api/convex", () => ({
   useAuthenticatedMutation: () => mockMutation,
 }));
 
-describe("ReachOutTaskCard", () => {
+describe("TaskCard", () => {
   it("prioritizes task title over generic reminder description", () => {
     const { getByText, queryByText } = render(
-      <ReachOutTaskCard
+      <TaskCard
         variant="leader"
         task={{
           _id: "task-1" as Id<"tasks">,

@@ -116,7 +116,6 @@ export const ChatTabBar = memo(function ChatTabBar({
     if (channel.channelType === "main") return "General";
     if (channel.channelType === "leaders") return "Leaders";
     if (channel.channelType === "announcements") return "Announcements";
-    if (channel.channelType === "reach_out") return channel.name || "Reach Out";
     return channel.name;
   };
 

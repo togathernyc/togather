@@ -3,7 +3,6 @@ import type { Id } from "@services/api/convex";
 export type TaskSourceType =
   | "manual"
   | "bot_task_reminder"
-  | "reach_out"
   | "followup"
   | "workflow_template";
 export type TargetType = "none" | "member" | "group" | "placeholder";

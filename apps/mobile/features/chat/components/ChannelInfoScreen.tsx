@@ -2,7 +2,7 @@
  * ChannelInfoScreen
  *
  * Mirror of `ChatInfoScreen` (the DM info surface) but for group channels
- * — General, Leaders, Reach Out, PCO synced, and custom channels. Reached
+ * — General, Leaders, PCO synced, and custom channels. Reached
  * via the (i) icon in the chat header and via the CHANNELS card on the
  * group page.
  *
@@ -29,7 +29,7 @@
  * ("Channel info" checklist), when `whatsappShell` is on: the hero, Open
  * chat + Mute row, Members (+ Add people), Channel actions, and Leader
  * controls each regroup into `WaInsetGroup`/`WaCell` anatomy on
- * `bg.grouped`. Per-type branching (main/leaders/reach_out/custom/pco/
+ * `bg.grouped`. Per-type branching (main/leaders/custom/pco/
  * cross_team/announcements) is unchanged — only the visual shell around it
  * is. Sections not named in the restyle task (pending shared-channel
  * invite, Requests, cross-team members, PCO "Not in channel") are
@@ -126,7 +126,6 @@ type Props = {
 type ChannelType =
   | "main"
   | "leaders"
-  | "reach_out"
   | "announcements"
   | "pco_services"
   | "custom"
@@ -161,8 +160,6 @@ function getChannelIconConfig(
       return { icon: "chatbubbles", color: brand, bg: brand + "15", defaultName: "General" };
     case "leaders":
       return { icon: "star", color: "#FFA500", bg: "#FFA50015", defaultName: "Leaders" };
-    case "reach_out":
-      return { icon: "hand-left", color: "#8E44AD", bg: "#8E44AD15", defaultName: "Reach Out" };
     case "announcements":
       return { icon: "megaphone", color: "#E11D48", bg: "#E11D4815", defaultName: "Announcements" };
     case "pco_services":
@@ -189,7 +186,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
 
   const channel = useQuery(
     api.functions.messaging.channels.getChannelBySlug,
-    // includeArchived: leaders may land here on a disabled Leaders/Reach Out
+    // includeArchived: leaders may land here on a disabled Leaders/General
     // channel (where `isArchived` doubles as the legacy-disable flag) so they
     // can re-enable from Active state. Without this, the row is filtered out
     // and the screen shows "no longer available."
@@ -423,14 +420,13 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
   const isMain = channelType === "main";
   const isCustom = channelType === "custom";
   const isLeadersChannel = channelType === "leaders";
-  const isReachOut = channelType === "reach_out";
   const isPco = channelType === "pco_services";
   const isCrossTeam = channelType === "cross_team";
   const isAnnouncements = channelType === "announcements";
   // Renameable types: plain custom, serving-team (which is a `custom` channel
   // flagged isServingTeam — renaming it also renames the team, backend-side),
   // and cross-team. NOT pco_services or system channels (main/leaders/
-  // announcements/reach_out).
+  // announcements).
   const isRenameable = isCustom || isCrossTeam;
 
   // This channel's saved cross-team selectors, sourced BY CHANNEL ID from
@@ -1951,8 +1947,8 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
 
         {/* LEADER CONTROLS — §3.2/§8: one WaInsetGroup of WaCells when
             whatsapp-shell is on. Every row keeps its exact per-type gating
-            logic (isCustom/isPco/isCrossTeam/isReachOut/…) — only the
-            visual shell changes. The Reach Out / Leaders helper text moves
+            logic (isCustom/isPco/isCrossTeam/…) — only the
+            visual shell changes. The Leaders helper text moves
             into the group's `footer` slot (§3.2 "section footers sit below
             their card"). */}
         {isLeader && whatsappShell && (
@@ -1960,14 +1956,12 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             <WaInsetGroup
               header="Leader controls"
               footer={
-                isReachOut
-                  ? "Reach Out requires the Leaders channel to be active."
-                  : isLeadersChannel
-                    ? "Leaders channel is private to group leaders and admins."
-                    : undefined
+                isLeadersChannel
+                  ? "Leaders channel is private to group leaders and admins."
+                  : undefined
               }
             >
-              {/* Active state — common to main/leaders/reach_out/custom/pco.
+              {/* Active state — common to main/leaders/custom/pco.
                   For General this is the only leader control: it's how a
                   leader disables and (from the disabled row) re-enables it. */}
               <WaCell icon="toggle-outline" title="Active state" onPress={handleActiveState} />
@@ -2060,7 +2054,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                 <WaCell icon="people-outline" title="Share with groups" onPress={handleManageMembers} />
               )}
 
-              {/* Archive — custom only (Leaders/Reach Out are toggled via
+              {/* Archive — custom only (Leaders/General are toggled via
                   Active state; archive is a stronger op). */}
               {isCustom && (
                 <WaCell
@@ -2079,7 +2073,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
             <View
               style={[styles.sectionGroup, { backgroundColor: colors.surfaceSecondary }]}
             >
-              {/* Active state — common to main/leaders/reach_out/custom/pco.
+              {/* Active state — common to main/leaders/custom/pco.
                   For General this is the only leader control: it's how a
                   leader disables and (from the disabled row) re-enables it. */}
               <Pressable
@@ -2301,7 +2295,7 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                 </Pressable>
               )}
 
-              {/* Archive — custom only (Leaders/Reach Out are toggled via
+              {/* Archive — custom only (Leaders/General are toggled via
                   Active state; archive is a stronger op). */}
               {isCustom && (
                 <Pressable
@@ -2326,23 +2320,6 @@ export function ChannelInfoScreen({ groupId, channelSlug, channelId }: Props) {
                     Archive channel
                   </Text>
                 </Pressable>
-              )}
-
-              {/* Reach Out hint — surface the dependency on Leaders. */}
-              {isReachOut && (
-                <View
-                  style={[
-                    styles.helperRow,
-                    {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: colors.border,
-                    },
-                  ]}
-                >
-                  <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-                    Reach Out requires the Leaders channel to be active.
-                  </Text>
-                </View>
               )}
 
               {/* Leaders channel hint */}
