@@ -177,6 +177,16 @@ function ThemedStack() {
           gestureEnabled: true,
         }}
       />
+      {/* Community finance onboarding (ADR-032) — a full pushed screen, NOT
+          inside the (user) modal group: a multi-step form with a keyboard up
+          must not be swipe-to-dismissable as a sheet. */}
+      <Stack.Screen
+        name="finance-setup"
+        options={{
+          animation: "slide_from_right",
+          gestureEnabled: true,
+        }}
+      />
       {/* Scheduling deep links — assignment request accept/decline screen */}
       <Stack.Screen
         name="scheduling"

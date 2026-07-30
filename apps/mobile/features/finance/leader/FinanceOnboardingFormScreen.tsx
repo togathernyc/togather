@@ -47,7 +47,7 @@ export function FinanceOnboardingFormScreen() {
         },
       });
       ToastManager.success("Details submitted");
-      router.replace("/(user)/leader-tools/finance-setup");
+      router.replace("/finance-setup");
     } catch (error) {
       setSubmitError(formatError(error, "Failed to submit details"));
     } finally {
