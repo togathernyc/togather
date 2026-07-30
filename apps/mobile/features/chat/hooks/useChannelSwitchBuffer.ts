@@ -113,6 +113,16 @@ export function useChannelSwitchBuffer<T>({
       // clears its persisted cache on the same signal.
       perChannelRef.current.delete(channelId);
       lastRenderedRef.current = { channelId, messages: [] };
+      return;
+    }
+
+    // Still loading with no live rows: if this channel repainted from its own
+    // buffer, that IS what's on screen — track it, or a quick hop to a
+    // first-time channel would hold whatever channel last supplied live data
+    // (A→B(buffered)→C must scenery B, not flash back to A).
+    const buffered = perChannelRef.current.get(channelId);
+    if (buffered && buffered.length > 0) {
+      lastRenderedRef.current = { channelId, messages: buffered };
     }
   }, [enabled, channelId, messages, hasMessages, isLoading]);
 

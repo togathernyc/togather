@@ -102,6 +102,25 @@ describe('useChannelSwitchBuffer', () => {
     expect(latest.isSwitching).toBe(false);
   });
 
+  it('holds the buffered-repaint channel — not the last LIVE one — on the next hop', () => {
+    // A live → B live → A revisit (buffered repaint, query still loading) →
+    // first-time C. The hold must scenery A (what was on screen), never flash
+    // back to B (the last channel that supplied live data).
+    const { update } = setup({
+      channelId: 'ch-general',
+      messages: GENERAL,
+      isLoading: false,
+    });
+    update({ channelId: 'ch-helpers', messages: HELPERS, isLoading: false });
+    update({ channelId: 'ch-general', messages: [], isLoading: true });
+    expect(latest.channelId).toBe('ch-general');
+
+    update({ channelId: 'ch-new', messages: [], isLoading: true });
+    expect(latest.isSwitching).toBe(true);
+    expect(latest.channelId).toBe('ch-general');
+    expect(latest.messages).toEqual(GENERAL);
+  });
+
   it('drops a buffered page once the channel confirms it is empty', () => {
     const { update } = setup({
       channelId: 'ch-general',
