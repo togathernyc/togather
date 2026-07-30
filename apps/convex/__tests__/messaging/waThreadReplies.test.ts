@@ -12,7 +12,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, vi, beforeEach, afterEach } from "vitest";
+import { expect, test, describe, vi, afterEach } from "vitest";
 import schema from "../../schema";
 import { modules } from "../../test.setup";
 import { api } from "../../_generated/api";
@@ -979,13 +979,18 @@ describe("getMessages waReplies — the pill count stays bounded and honest", ()
 });
 
 describe("sendMessage — a reply joins its thread, it does not fork one", () => {
-  // `sendMessage` schedules `onMessageSent`. Left running, it leaks into the
-  // next test as "test began while previous transaction was still open", so
-  // every send here is drained before the assertions.
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
+  // `sendMessage` schedules `onMessageSent`. Left running, its transaction is
+  // still open when the next `convexTest()` calls `setConvexGlobal`, which
+  // throws "test began while previous transaction was still open" — and
+  // `global.Convex` outlives the file, so the throw can land on a completely
+  // unrelated test file later in the same worker. Every send here is therefore
+  // drained the way the rest of the messaging suite drains one.
+  //
+  // Deliberately NOT `vi.useFakeTimers()` + `finishAllScheduledFunctions`:
+  // fake timers are installed process-wide and share the same worker-global
+  // lifetime, so a file that installs them owns a second way to strand another
+  // file's scheduled work. `onMessageSent` is a plain `runAfter(0, …)`, which
+  // real timers run on their own.
   async function send(
     t: ReturnType<typeof convexTest>,
     channelId: Id<"chatChannels">,
@@ -999,7 +1004,7 @@ describe("sendMessage — a reply joins its thread, it does not fork one", () =>
       content,
       ...(parentMessageId ? { parentMessageId } : {}),
     });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    await t.finishInProgressScheduledFunctions();
     return id;
   }
 
