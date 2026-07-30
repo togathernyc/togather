@@ -366,7 +366,7 @@ describe("AttendanceDetails Integration Tests", () => {
       isAuthenticated: true,
       isLoading: false,
       community: null,
-      token: null,
+      token: "test-token",
       logout: jest.fn(),
       refreshUser: jest.fn(),
       setCommunity: jest.fn(),

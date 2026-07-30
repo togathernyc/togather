@@ -1,25 +1,33 @@
 import { useMemo } from "react";
 import { useQuery, api } from "@services/api/convex";
 import { Id } from "@services/api/convex";
+import { useAuth } from "@providers/AuthProvider";
 
 export function useAttendanceReport(
   groupId: string | number,
   options: { meetingId?: string; eventDate?: string },
   enabled: boolean = true
 ) {
+  // listAttendance / listGuests are gated by canEditMeeting server-side, so the
+  // caller's token must be passed. This hook only runs in leader/manager
+  // contexts (attendance report screens), so the caller already satisfies that.
+  const { token } = useAuth();
+
+  const canFetch = !!groupId && !!options.meetingId && enabled && !!token;
+
   // Fetch attendance data using Convex
   const attendanceData = useQuery(
     api.functions.meetings.attendance.listAttendance,
-    groupId && options.meetingId && enabled
-      ? { meetingId: options.meetingId as Id<"meetings"> }
+    canFetch
+      ? { meetingId: options.meetingId as Id<"meetings">, token: token as string }
       : "skip"
   );
 
   // Fetch guests data using Convex
   const guestsData = useQuery(
     api.functions.meetings.attendance.listGuests,
-    groupId && options.meetingId && enabled
-      ? { meetingId: options.meetingId as Id<"meetings"> }
+    canFetch
+      ? { meetingId: options.meetingId as Id<"meetings">, token: token as string }
       : "skip"
   );
 

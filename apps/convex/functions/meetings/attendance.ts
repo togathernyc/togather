@@ -18,10 +18,28 @@ import { canEditMeeting } from "../../lib/meetingPermissions";
 
 /**
  * Get attendance for a meeting
+ *
+ * Attendance joins the full user doc (name, email, phone) and is only for the
+ * people managing the event, so it is gated by `canEditMeeting` — the same rule
+ * the mutations and the check-in roster enforce. Without this gate any
+ * authenticated client could read a meeting's attendee PII by meetingId.
  */
 export const listAttendance = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view attendance"
+      );
+    }
+
     const attendance = await ctx.db
       .query("meetingAttendances")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
@@ -53,6 +71,25 @@ export const listAttendance = query({
     }));
 
     return withUsers;
+  },
+});
+
+/**
+ * Whether the current user is allowed to manage attendance / check-in for a
+ * meeting (event creator, group leaders, or community admins — same rule as
+ * editing the event). Used to gate the Check-in screen and its entry point so
+ * the UI reflects the exact permission the mutations enforce server-side.
+ */
+export const canManageAttendance = query({
+  args: { token: v.string(), meetingId: v.id("meetings") },
+  handler: async (ctx, args) => {
+    const userId = await getOptionalAuth(ctx, args.token);
+    if (!userId) return false;
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) return false;
+
+    return await canEditMeeting(ctx, userId, meeting);
   },
 });
 
@@ -157,6 +194,21 @@ export const addGuest = mutation({
     const recordedById = await requireAuth(ctx, args.token);
     const timestamp = now();
 
+    // Get the meeting so we can check permissions.
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    // Adding a guest is a host action (ADR-022): event creator, group
+    // leaders, and community admins can add to the list. Mirrors the check
+    // already guarding removeGuest / updateGuest.
+    if (!(await canEditMeeting(ctx, recordedById, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can add guests"
+      );
+    }
+
     return await ctx.db.insert("meetingGuests", {
       meetingId: args.meetingId,
       firstName: args.firstName,
@@ -171,10 +223,28 @@ export const addGuest = mutation({
 
 /**
  * List guests for a meeting
+ *
+ * Guest rows carry walk-in PII (`phoneNumber`, `notes`), so this read is gated
+ * by `canEditMeeting` — the same rule that guards adding/removing guests.
+ * Without the gate any authenticated client could read a meeting's walk-in
+ * phone numbers by meetingId.
  */
 export const listGuests = query({
-  args: { meetingId: v.id("meetings") },
+  args: { token: v.string(), meetingId: v.id("meetings") },
   handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+
+    const meeting = await ctx.db.get(args.meetingId);
+    if (!meeting) {
+      throw new Error("Meeting not found");
+    }
+
+    if (!(await canEditMeeting(ctx, userId, meeting))) {
+      throw new Error(
+        "Only the event creator, group leaders, or community admins can view guests"
+      );
+    }
+
     return await ctx.db
       .query("meetingGuests")
       .withIndex("by_meeting", (q) => q.eq("meetingId", args.meetingId))
