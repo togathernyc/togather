@@ -302,6 +302,18 @@ export const recordProvisioningFailure = internalMutation({
     // Never regress "live" — a stray retried run failing after the community
     // already went live must not flip a working community to blocked.
     if (finance.onboardingStatus === "live") return;
+    // Same for a fully provisioned row: overlapping provisionProviders runs
+    // are possible (each resubmit/retry schedules one), and a stale failing
+    // run must not overwrite a newer run's recorded success — especially
+    // since retryProvisioning refuses fully-provisioned rows, which would
+    // leave the false blocked state permanently stuck.
+    if (
+      finance.stripeConnectedAccountId &&
+      finance.increaseEntityId &&
+      finance.increaseReceivingAccountId
+    ) {
+      return;
+    }
 
     const previousStatus = finance.onboardingStatus;
     const nextStatus =

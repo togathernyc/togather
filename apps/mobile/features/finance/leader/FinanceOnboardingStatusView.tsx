@@ -163,6 +163,9 @@ export function FinanceOnboardingStatusView({
             Something went wrong creating your accounts. Retrying is safe — no
             duplicates will be created.
           </Text>
+          {linkError ? (
+            <Text style={[styles.linkError, { color: colors.error }]}>{linkError}</Text>
+          ) : null}
         </>
       ) : provisioning ? (
         // Deliberately NOT a loading Button — the shared Button hides its

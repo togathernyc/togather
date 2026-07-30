@@ -503,6 +503,34 @@ describe("provisioning failure + retry", () => {
     expect(finance?.provisioningError).toBe("Increase entity creation failed");
   });
 
+  test("ignores a stale failing run once the row is fully provisioned (verifying)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    // Overlapping provisionProviders runs: a newer run recorded success
+    // (all provider ids + "verifying"), then a stale run's failure lands.
+    await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "verifying",
+      stripeConnectedAccountId: "acct_done",
+      increaseEntityId: "entity_done",
+      increaseReceivingAccountId: "account_done",
+    });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "increase",
+      message: "stale overlapping run failure",
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("verifying");
+    expect(finance?.provisioningError).toBeUndefined();
+  });
+
   test("never regresses an already-live community, and leaves provisioningError unset", async () => {
     const t = convexTest(schema, modules);
     const { communityId } = await seedOnboardingFixture(t);

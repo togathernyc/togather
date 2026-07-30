@@ -98,6 +98,21 @@ describe("FinanceOnboardingStatusView", () => {
     expect(screen.queryByText("Continue identity verification")).toBeNull();
   });
 
+  it("shows a retry failure inline in the provisioning-failed state", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="stripe_blocked"
+        provisioningError="Stripe API error"
+        linkError="Couldn't retry setup. Please try again."
+      />
+    );
+
+    expect(screen.getByText("Try again")).toBeTruthy();
+    expect(screen.getByText("Couldn't retry setup. Please try again.")).toBeTruthy();
+  });
+
   it("shows the link error inline under the identity CTA", () => {
     render(
       <FinanceOnboardingStatusView
