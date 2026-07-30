@@ -155,10 +155,24 @@ contrast.
 `scripts/generate-chat-wallpaper.mjs`**, not WhatsApp's own copyrighted doodle sheet
 — deliberately not reused. `ChatWallpaper.tsx` (`apps/mobile/features/chat/components/`)
 renders it as an absolutely-positioned, non-interactive layer: a base fill from the
-theme's `chatWallpaper` token, with a light/dark PNG tile (`chat-wallpaper-light.png` /
-`-dark.png`) repeated over it (`resizeMode="repeat"`). It's dropped once behind the
-whole chat-room screen (header, tab strip, message list, composer) rather than
-per-section, and only renders behind the flag-on chat surface.
+theme's `chatWallpaper` token, with a light/dark 256pt tile laid out as an explicit
+grid of `<Image>`s over it. The tiles are **inlined as base64 data URIs** in the
+generated `features/chat/chatWallpaperTiles.ts`, not `require()`d from `assets/` —
+as bundled PNGs they were expo-updates assets newer than the installed binary and
+never resolved on device over OTA (owner report, 2026-07-30). It's dropped once
+behind the whole chat-room screen (header, tab strip, message list, composer)
+rather than per-section, and only renders behind the flag-on chat surface.
+
+**Safe-area strips:** the wallpaper layer cannot reach either screen edge — the
+status-bar zone is `paddingTop` on `ChatRoomSurface` and the home-indicator zone
+is `paddingBottom` on the app-wide `StatusBarAwareContainer`, and padding sits
+outside the children's box. Those two bands therefore paint the *chrome's*
+rendered tone as a solid color (`waChatChromeOpaque` / `waComposerBarOpaque` in
+`features/chat/waChatChrome.ts`, which flatten the translucent bar fills over
+`chatWallpaper`), so the header and composer read as continuing to the edge.
+Painting them with the wallpaper base or the app's root `background` is the bug
+that shipped: a white band under the composer in light mode, near-black bands at
+both edges in dark mode.
 
 Togather mapping: default wallpaper stays this neutral cream/dark tone — **do not
 tint the wallpaper with `primaryColor`.** The WhatsApp "Chat theme" screen (§6) lets
