@@ -451,6 +451,33 @@ describe('WaGroupsScreen — find groups near me', () => {
     expect(queryByText('Near you')).toBeNull();
   });
 
+  it('never sorts around stale coordinates after the current lookup fails', async () => {
+    // Seed the hook's 30-minute cache with a previous fix (Philadelphia)…
+    await AsyncStorage.setItem(
+      'user_location_cache',
+      JSON.stringify({ latitude: 39.9526, longitude: -75.1652, timestamp: Date.now() })
+    );
+    // …then type an UNKNOWN zip. The cached coords are restored by the hook,
+    // but the CURRENT lookup failed — nearby mode must not activate around
+    // the stale point while the failure hint is showing.
+    const { getByTestId, queryByText } = renderNearby({ searchQuery: '00000' });
+    await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
+    expect(queryByText('Near you')).toBeNull();
+  });
+
+  it('never sorts around a previous zip fix after location permission is denied', async () => {
+    await AsyncStorage.setItem(
+      'user_location_cache',
+      JSON.stringify({ latitude: 39.9526, longitude: -75.1652, timestamp: Date.now() })
+    );
+    denyLocation();
+    const { getByLabelText, getByTestId, queryByText } = renderNearby();
+    fireEvent.press(getByLabelText('Find groups near me'));
+    await waitFor(() => expect(getByTestId('wa-groups-nearby-hint')).toBeTruthy());
+    expect(getByTestId('wa-groups-nearby-hint').props.children).toMatch(/zip code/i);
+    expect(queryByText('Near you')).toBeNull();
+  });
+
   it('says so plainly when nothing in the directory has an address', async () => {
     grantLocation();
     const { getByLabelText, getByTestId } = renderScreen({

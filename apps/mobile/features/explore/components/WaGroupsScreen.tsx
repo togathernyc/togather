@@ -408,7 +408,13 @@ export function WaGroupsScreen({
     void requestDeviceLocation();
   }, [nearbyRequested, requestDeviceLocation]);
 
-  const origin: LatLng | null = nearbyRequested || zipQuery ? coordinates : null;
+  // Gate on the CURRENT lookup having succeeded: `useUserLocation` clears
+  // `error` at the start of every attempt and on success, so a set error means
+  // the latest zip/device request failed — in which case `coordinates` is a
+  // stale value (30-min cache or an earlier zip) that must not silently
+  // become the sort origin while we're showing a failure hint.
+  const origin: LatLng | null =
+    (nearbyRequested || zipQuery) && !locationError ? coordinates : null;
 
   const searchedGroups = useMemo(() => {
     if (zipQuery) return groups;
