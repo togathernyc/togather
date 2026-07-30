@@ -39,10 +39,11 @@ import {
   WaRow,
   WaLargeTitle,
   WaSeparator,
+  WaFloatingCta,
   WA_LIST_SEPARATOR_INSET,
   WA_GROUP_MARGIN,
   WA_GROUP_SPACING,
-  WA_TAB_CONTENT_CLEARANCE,
+  WA_FLOATING_CTA_CONTENT_CLEARANCE,
   WA_TAB_ACTIVE_PILL_LIGHT,
   WA_TAB_ACTIVE_PILL_DARK,
   WA_TYPE_SECTION_HEADER,
@@ -602,10 +603,10 @@ export function EventsScreen() {
   // center (above the tab bar). Content scrolls beneath them.
   //
   // Flag-on: the List/Map toggle becomes the neutral chip strip under the
-  // large title (`renderWaViewChips`), so it's skipped here — the Create Event
-  // button stays floating either way (its
-  // handler/position are untouched per this pass's brief), just with its
-  // shadow killed on the flag-on path (§7 "never cards-with-shadows").
+  // large title (`renderWaViewChips`), so it's skipped here — and the CTA
+  // becomes the shared `WaFloatingCta`, the kit's one floating-CTA geometry
+  // (the owner asked for Events and Groups to stop drawing their own, and the
+  // component's own clearance maths keeps it off the tab island).
   const renderFloatingControls = () => (
     <>
       {!whatsappShellEnabled && (
@@ -616,33 +617,32 @@ export function EventsScreen() {
           {renderViewToggle()}
         </View>
       )}
-      <View
-        style={[
-          styles.floatingCreateContainer,
-          {
-            // Flag-on the tab bar is a floating island over the content (S2),
-            // so the CTA has to clear it rather than the old edge-to-edge bar.
-            // The safe-area strip below the island is already reserved by the
-            // container, so this only has to clear the island itself.
-            paddingBottom: whatsappShellEnabled
-              ? WA_TAB_CONTENT_CLEARANCE
-              : insets.bottom + 16,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          style={[
-            styles.floatingCreateButton,
-            whatsappShellEnabled && styles.floatingCreateButtonWa,
-            { backgroundColor: primaryColor },
-          ]}
+      {whatsappShellEnabled ? (
+        <WaFloatingCta
+          label="Create Event"
+          icon="add"
           onPress={handleCreateEvent}
-          activeOpacity={0.85}
+          accent={primaryColor}
+          bottomInset={insets.bottom}
+          testID="wa-events-create"
+        />
+      ) : (
+        <View
+          style={[
+            styles.floatingCreateContainer,
+            { paddingBottom: insets.bottom + 16 },
+          ]}
         >
-          <Ionicons name="add" size={18} color="#fff" />
-          <Text style={styles.floatingCreateText}>Create Event</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.floatingCreateButton, { backgroundColor: primaryColor }]}
+            onPress={handleCreateEvent}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="add" size={18} color="#fff" />
+            <Text style={styles.floatingCreateText}>Create Event</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </>
   );
 
@@ -1100,14 +1100,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  // §7: "never cards-with-shadows" — kills the shadow/elevation above on the
-  // flag-on path only; position/handler/label are untouched.
-  floatingCreateButtonWa: {
-    ...Platform.select({
-      web: { boxShadow: 'none' },
-      default: { shadowOpacity: 0, elevation: 0 },
-    }),
-  },
   section: {
     marginTop: 28, // breathing room between section groups (Next Up → This week → Later)
     marginBottom: 8,
@@ -1115,6 +1107,9 @@ const styles = StyleSheet.create({
   // --- WhatsApp-shell (flag-on) styles ------------------------------------
   waScrollContent: {
     paddingHorizontal: 0,
+    // Clear the floating island AND the Create Event pill above it — the
+    // flat 120 the flag-off layout uses leaves the last row under the pill.
+    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   // §3.2 "visibly more generous than the header-to-card gap" — the rhythm
   // between one section's last row and the next section's header.
@@ -1188,7 +1183,8 @@ const styles = StyleSheet.create({
   },
   waMyRsvpsContent: {
     paddingTop: 8,
-    paddingBottom: 120, // leaves room for the floating Create Event button
+    // Clears the floating island AND the Create Event pill above it.
+    paddingBottom: WA_FLOATING_CTA_CONTENT_CLEARANCE,
   },
   sectionTitle: {
     fontSize: 19,

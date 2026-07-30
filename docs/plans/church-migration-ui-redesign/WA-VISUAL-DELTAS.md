@@ -230,9 +230,43 @@ directory:
    "Groups you're in" / "Groups you can join" (§5.3), replacing "Groups on map
    (n)" / "Groups not on map". The directory lists every group matching the
    filters; map-bounds filtering is a map concern and stays in the map view.
-5. One green element: the bottom floating "Add group" pill (S5.1).
+5. One green element: the bottom floating "Add group" pill (S5.1), rendered by
+   the shared `WaFloatingCta` (see S5.3).
 6. **The map is not dropped** — it lives behind the header's Map circle, still
    rendering the untouched `ExploreMap` + `FloatingGroupCard` preview.
+7. **Find groups near me** (owner directive, 2026-07-29): a neutral white
+   compass circle to the right of the search pill — a plain `WaFloatingButton`,
+   because the screen's accent budget is spent on the CTA, so the active state
+   reads from the filled glyph like the List/Map pair. Tapping it asks for
+   foreground location (`useUserLocation`) and re-sections the *joinable*
+   directory into "Near you" (geocoded, nearest first, distance appended to the
+   15pt subtitle) over "More groups" (no address on file — never dropped).
+   "Groups you're in" is not re-ordered; it is not a discovery list. A bare
+   5-digit zip typed into the search pill is treated as a location query rather
+   than a name filter, so zip search is the always-available alternative and
+   not merely the permission-denied fallback. Ordering is a local haversine
+   over coordinates the container already geocodes client-side — there is no
+   server geocode path in this repo and this feature does not add one. Edge
+   states are one quiet gray line, never an alert.
+
+### S5.3 One floating CTA geometry (added 2026-07-29 per owner directive)
+
+Events' "Create Event" and Groups' "Add group" are the same idea and had two
+geometries — a centered auto-width pill with a heavy drop shadow and a 15pt
+label, versus a full-width bar inset 16pt with a 17pt label. `WaFloatingCta`
+is now the single definition: centered auto-width pill, `WA_FLOATING_CTA_HEIGHT`
+(50pt) fully rounded, accent fill, white 17pt semibold label + glyph, and the
+kit's `WA_FLOATING_SHADOW` (the same lifted-paper shadow the header circles and
+the tab island use — not the material card shadow §7 bans).
+
+It also owns the clearance, which was genuinely broken (owner's dark-mode
+screenshot: the pill sitting on the tab island). **Yoga lays an absolutely
+positioned child out against its parent's *border* box and ignores the parent's
+padding** — unlike CSS — so `bottom: 0` inside a container reserving
+`waTabBarStripHeight` did *not* start above that strip. The component instead
+sets `bottom: waFloatingCtaBottomOffset(insets.bottom)` = island height +
+`waTabBarBottomOffset` + 12, measured from the screen edge; scroll surfaces pad
+by `WA_FLOATING_CTA_CONTENT_CLEARANCE` so the last row clears island *and* pill.
 
 ---
 
