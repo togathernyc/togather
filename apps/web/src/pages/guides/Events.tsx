@@ -124,9 +124,11 @@ export function Events() {
           <Step n={6}>
             <strong>Check-in at the door.</strong> On the day, open the event
             and tap <Term>Check in</Term> to run down the <Term>Going</Term>{" "}
-            list, tapping each person as they arrive. Added names count as{" "}
-            <Term>Present</Term> in your attendance numbers, and walk-ins
-            without an account can be added by name. Once the event has wrapped,
+            list, tapping each person — and each guest they brought — as they
+            arrive. Added names count as <Term>Present</Term> in your attendance
+            numbers, and walk-ins without an account can be added by name. You
+            can search the list by name instead of scrolling it. Once the event
+            has wrapped,
             that same button becomes <Term>Take attendance</Term> and opens the
             full attendance editor for after-the-fact corrections. See{" "}
             <em>Check in: take attendance at the door</em> below.
@@ -179,10 +181,12 @@ export function Events() {
           <em>this</em> event. Open the event and tap <Term>Check in</Term>{" "}
           (the button sits with the other manager actions and only shows for
           people who can manage the event). You'll see everyone who RSVP'd{" "}
-          <Term>Going</Term>, each with a tap-to-check circle and a live{" "}
-          <Term>N / M checked in</Term> count at the top. After the event has
-          passed, the same button reads <Term>Take attendance</Term> and opens
-          the full attendance editor instead.
+          <Term>Going</Term> — along with any guests they said they were
+          bringing — each with a tap-to-check circle, plus a live{" "}
+          <Term>N / M checked in</Term> count, <Term>Add walk-in</Term>, and a
+          search box pinned at the top. After the event has passed, the same
+          button reads <Term>Take attendance</Term> and opens the full
+          attendance editor instead.
         </P>
 
         <Steps>
@@ -193,16 +197,39 @@ export function Events() {
             in on their own phone sees the same list update live.
           </Step>
           <Step n={2}>
-            <strong>Walk-ins.</strong> Someone showed up who didn't RSVP — or
-            doesn't have a Togather account? Tap <Term>Add walk-in</Term>,
-            enter a first name (last name and phone are optional), and they're
-            added already checked in. Added by mistake? Remove them with the
-            trash icon.
+            <strong>Search for a name.</strong> A big event is a long list, so
+            the <Term>Search by name</Term> box at the top filters the roster as
+            you type — first name, last name, or both. Guest names are searched
+            too, so looking up a guest surfaces the member who brought them.
+            The <Term>N / M checked in</Term> count always covers the whole
+            event, not just what the search is showing.
           </Step>
           <Step n={3}>
+            <strong>Their guests.</strong> When someone RSVP'd{" "}
+            <Term>Going</Term> with plus-ones, those show up as their own rows
+            tucked under that person — <Term>Guest 1 of 2</Term>,{" "}
+            <Term>Guest 2 of 2</Term> — each with its own check circle, so you
+            count who actually walked in rather than assuming the whole party
+            came. Checking a guest in opens a quick <Term>Guest name</Term>{" "}
+            sheet: type the name if you have it, or tap <Term>Skip for now</Term>{" "}
+            and add it later by tapping the row. Someone brought a friend they
+            never RSVP'd for? <Term>Add guest</Term> under the member adds an
+            extra one.
+          </Step>
+          <Step n={4}>
+            <strong>Walk-ins.</strong> Someone showed up who didn't RSVP — or
+            doesn't have a Togather account? Tap <Term>Add walk-in</Term> at the
+            top of the screen, enter a first name (last name and phone are
+            optional), and they're added already checked in. Added by mistake?
+            Remove them with the trash icon.
+          </Step>
+          <Step n={5}>
             <strong>It feeds your numbers.</strong> A check-in is the same{" "}
             <Term>Present</Term> record the app already uses, so attendance and
             member-health stats stay correct — you're not tracking it twice.
+            Declared plus-ones count toward the expected headcount from the
+            start, so <Term>N / M</Term> tells you how much of the room you're
+            still waiting on.
           </Step>
         </Steps>
 
@@ -215,7 +242,7 @@ export function Events() {
           </p>
         </Callout>
 
-        <Figure caption="The Check-in screen: a live checked-in count, the Going list with tap-to-check circles, and Add walk-in. Rendered mock — labels match the real screen.">
+        <Figure caption="The Check-in screen: a live checked-in count, Add walk-in and search pinned at the top, then the Going list with tap-to-check circles and each person's guests nested underneath. Rendered mock — labels match the real screen.">
           {/* swap-in: <img src="/images/guides/events-checkin.png" /> */}
           <CheckInMock />
         </Figure>
@@ -314,28 +341,65 @@ function ToggleOn() {
 }
 
 /**
- * Check-in screen — mirrors the real screen: a summary card with the live
- * "N / M checked in" count and progress bar, the Going list with tap-to-check
- * circles (filled green = checked in, empty = not yet), a Walk-ins row, and the
- * dashed "Add walk-in" button.
+ * Check-in screen — mirrors the real screen: the pinned controls (summary card
+ * with the live "N / M checked in" count and progress bar, the dashed "Add
+ * walk-in" button, and the search box), then the Going list with tap-to-check
+ * circles (filled green = checked in, empty = not yet), each member's guest
+ * slots nested underneath, and the Walk-ins section.
  */
 function CheckInMock() {
   const going = [
-    { name: "Gina Going", initials: "GG", color: "bg-primary-400", checkedIn: true, time: "6:58 PM" },
-    { name: "Mel Member", initials: "MM", color: "bg-accent-500", checkedIn: true, time: "7:01 PM" },
-    { name: "Sam Rivera", initials: "SR", color: "bg-amber-500", checkedIn: false, time: null },
+    {
+      name: "Gina Going",
+      initials: "GG",
+      color: "bg-primary-400",
+      checkedIn: true,
+      time: "6:58 PM",
+      // Gina RSVP'd with two plus-ones; one is in and named, one hasn't arrived.
+      guests: [
+        { label: "Ada Lovelace", checkedIn: true, sub: "Checked in · 7:00 PM" },
+        { label: "Guest 2 of 2", checkedIn: false, sub: "Tap to check in" },
+      ],
+    },
+    {
+      name: "Mel Member",
+      initials: "MM",
+      color: "bg-accent-500",
+      checkedIn: true,
+      time: "7:01 PM",
+      guests: [
+        { label: "Guest", checkedIn: true, sub: "Checked in · tap to add name" },
+      ],
+    },
+    {
+      name: "Sam Rivera",
+      initials: "SR",
+      color: "bg-amber-500",
+      checkedIn: false,
+      time: null,
+      guests: [],
+    },
   ];
   return (
     <PhoneFrame title="Check in">
       <div className="bg-neutral-50 p-3">
-        {/* Summary card. */}
+        {/* Pinned controls: summary, Add walk-in, search. */}
         <div className="rounded-xl bg-white p-3.5 shadow-sm">
           <div className="text-[17px] font-bold text-neutral-900">
-            3 / 4 checked in
+            5 / 7 checked in
           </div>
           <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-            <div className="h-2 rounded-full bg-emerald-500" style={{ width: "75%" }} />
+            <div className="h-2 rounded-full bg-emerald-500" style={{ width: "71%" }} />
           </div>
+        </div>
+
+        <div className="mt-3 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary-400 py-2.5 text-[14px] font-semibold text-primary-600">
+          <span className="text-[16px] leading-none">＋</span> Add walk-in
+        </div>
+
+        <div className="mt-3 flex items-center gap-2 rounded-xl border-2 border-neutral-200 bg-neutral-100 px-3 py-2.5">
+          <span className="text-[13px] leading-none text-neutral-400">🔍</span>
+          <span className="text-[13px] text-neutral-400">Search by name</span>
         </div>
 
         {/* Going list. */}
@@ -344,20 +408,50 @@ function CheckInMock() {
         </div>
         <div className="mt-2 space-y-2">
           {going.map((p) => (
-            <div key={p.name} className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
-              <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${p.color} text-[11px] font-semibold text-white`}>
-                {p.initials}
-              </span>
-              <div className="flex-1">
-                <div className="text-[14px] font-semibold text-neutral-900">{p.name}</div>
-                <div className={`text-[12px] ${p.checkedIn ? "text-emerald-600" : "text-neutral-500"}`}>
-                  {p.checkedIn ? `Checked in · ${p.time}` : "Tap to check in"}
+            <div key={p.name}>
+              <div className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
+                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-full ${p.color} text-[11px] font-semibold text-white`}>
+                  {p.initials}
+                </span>
+                <div className="flex-1">
+                  <div className="text-[14px] font-semibold text-neutral-900">{p.name}</div>
+                  <div className={`text-[12px] ${p.checkedIn ? "text-emerald-600" : "text-neutral-500"}`}>
+                    {p.checkedIn ? `Checked in · ${p.time}` : "Tap to check in"}
+                  </div>
                 </div>
+                {p.checkedIn ? (
+                  <span className="text-[22px] leading-none text-emerald-500">✅</span>
+                ) : (
+                  <span className="inline-block h-[22px] w-[22px] rounded-full border-2 border-neutral-300" />
+                )}
               </div>
-              {p.checkedIn ? (
-                <span className="text-[22px] leading-none text-emerald-500">✅</span>
-              ) : (
-                <span className="inline-block h-[22px] w-[22px] rounded-full border-2 border-neutral-300" />
+
+              {/* Their guests, indented under them. */}
+              {p.guests.map((g) => (
+                <div key={g.label} className="mt-1 flex items-center pl-6">
+                  <span className="h-px w-3 bg-neutral-200" />
+                  <div className="flex flex-1 items-center gap-2.5 rounded-lg bg-white px-3 py-2 shadow-sm">
+                    <span className="text-[13px] leading-none text-neutral-400">👤</span>
+                    <div className="flex-1">
+                      <div className="text-[13px] font-medium text-neutral-900">{g.label}</div>
+                      <div className={`text-[11px] ${g.checkedIn ? "text-emerald-600" : "text-neutral-500"}`}>
+                        {g.sub}
+                      </div>
+                    </div>
+                    {g.checkedIn ? (
+                      <span className="text-[18px] leading-none text-emerald-500">✅</span>
+                    ) : (
+                      <span className="inline-block h-[18px] w-[18px] rounded-full border-2 border-neutral-300" />
+                    )}
+                  </div>
+                </div>
+              ))}
+
+              {/* Undeclared extra, offered once the member is in. */}
+              {p.checkedIn && (
+                <div className="mt-1.5 flex items-center gap-1 pl-9 text-[12px] font-semibold text-primary-600">
+                  <span className="text-[13px] leading-none">＋</span> Add guest
+                </div>
               )}
             </div>
           ))}
@@ -369,18 +463,13 @@ function CheckInMock() {
         </div>
         <div className="mt-2 flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-neutral-400 text-[11px] font-semibold text-white">
-            AD
+            JT
           </span>
           <div className="flex-1">
-            <div className="text-[14px] font-semibold text-neutral-900">Ada</div>
+            <div className="text-[14px] font-semibold text-neutral-900">Jo Tan</div>
             <div className="text-[12px] text-emerald-600">Checked in · 7:03 PM</div>
           </div>
           <span className="text-[16px] leading-none text-neutral-400">🗑️</span>
-        </div>
-
-        {/* Add walk-in. */}
-        <div className="mt-3 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-primary-400 py-3 text-[14px] font-semibold text-primary-600">
-          <span className="text-[16px] leading-none">＋</span> Add walk-in
         </div>
       </div>
     </PhoneFrame>
