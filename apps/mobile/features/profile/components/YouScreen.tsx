@@ -378,7 +378,7 @@ export function YouScreen() {
             existing /support landing route) · Dev Dashboard (ProfileMenu's
             hasDevAccess gate, kept as its own row per its existing maintainer gate). */}
         <View style={styles.group}>
-          <WaInsetGroup>
+          <WaInsetGroup header="App">
             <WaCell
               icon="information-circle-outline"
               title="App info"
