@@ -53,6 +53,11 @@ const KNOWN_FLAGS: Array<{ key: string; description: string }> = [
       "Enables @Togather dev-assistant bot + bug pipeline (staff only).",
   },
   {
+    key: "group-giving",
+    description:
+      "Group giving & finances (ADR-032): community finance onboarding (Stripe + Increase), per-group funds, donations, and reimbursements. This flag only unlocks the feature — each community must complete onboarding, and a community admin must then enable giving per group.",
+  },
+  {
     key: "nearby-device-location",
     description:
       "Shows the compass (use-my-location) button on the Groups tab. Keep OFF until a native build that includes the iOS location-permission string is live — the current binary would mis-prompt. Zip-code search works regardless of this flag.",
