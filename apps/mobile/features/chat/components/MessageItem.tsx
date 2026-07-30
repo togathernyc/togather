@@ -686,7 +686,12 @@ function MessageItemInner({
     }
 
     return (
-      <View style={styles.eventCardsContainer}>
+      <View
+        style={[
+          styles.eventCardsContainer,
+          whatsappShellEnabled && styles.waEventCardsStack,
+        ]}
+      >
         {eventShortIds.map((shortId) => {
           // Get prefetched event data if available
           const prefetchedEvent = prefetchState?.eventData?.get(shortId);
@@ -1809,6 +1814,19 @@ const styles = StyleSheet.create({
   },
   eventCardsContainer: {
     marginTop: 8,
+  },
+  /**
+   * §7: flag-on every event card is dressed as its own bubble — bubble fill,
+   * §1.6 shadow, its own RSVP pill row — and `embedded` zeroes the card's
+   * legacy `marginVertical: 4`. Two event links therefore stacked with
+   * literally 0pt between them and read as one welded slab rather than two
+   * events. They are separate, independently actionable bubbles, so they take
+   * the same bubble-to-bubble gap two consecutive messages would.
+   *
+   * A single card is unaffected: `gap` only applies between siblings.
+   */
+  waEventCardsStack: {
+    gap: WA_BUBBLE_RUN_GAP,
   },
   linkPreviewContainer: {
     marginTop: 8,
