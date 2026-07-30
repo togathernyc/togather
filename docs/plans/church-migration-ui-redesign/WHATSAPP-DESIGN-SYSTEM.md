@@ -537,9 +537,27 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     Otherwise the message they just sent appears to vanish: both replies leave
     the timeline and are replaced by a pill on a parent that may be scrolled far
     away. Only that one send — a first reply stays put, and sends from inside
-    the thread screen never navigate.
-  - Threads are exactly **one level deep** — the thread screen always sends with
-    `parentMessageId` = the thread root — so there is no reply-to-a-reply case.
+    the thread screen never navigate. The tap that collapses a thread is often
+    on the inline REPLY, not on the parent, so the timeline reports both as ways
+    into the same thread and the navigation opens the root.
+  - Threads are exactly **one level deep**, and `sendMessage` is what guarantees
+    it: a chosen parent is walked up to its thread ROOT before the row is
+    written, so replying to a reply JOINS that thread instead of forking a new
+    one off it. Originally this leaned on the thread screen always sending
+    `parentMessageId` = the root and assumed the timeline therefore had no
+    reply-to-a-reply case — it did (tap reply on an inline reply), and the
+    result was the defect this rule now prevents: every reply became the lone
+    reply of a brand-new parent, so a chain of quote bubbles rendered inline
+    forever and no thread ever activated.
+  - **The quote follows the tapped message; the thread follows the root.** That
+    is WhatsApp's behaviour and the two diverge whenever you reply to a reply,
+    so the row carries `quotedMessageId` (the tapped message) alongside
+    `parentMessageId` (the root). The quote bar reads it and falls back to
+    `parentMessageId`.
+  - Rows written before rooting can be chained arbitrarily deep. The read path
+    folds them in — admission, the pill's count and the thread screen all resolve
+    the root with a bounded walk, and a reply carrying its own send counter is
+    descended into — so old chains collapse correctly with **no data migration**.
   - This replaces the floating "ghost" pointer (a bubble-less echo of the
     original message at the thread's `lastActivityAt`), which existed only
     because the timeline hid every reply. Kept for flag-off.
