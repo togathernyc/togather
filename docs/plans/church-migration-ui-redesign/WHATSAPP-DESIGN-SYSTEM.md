@@ -558,6 +558,21 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     folds them in — admission, the pill's count and the thread screen all resolve
     the root with a bounded walk, and a reply carrying its own send counter is
     descended into — so old chains collapse correctly with **no data migration**.
+    That walk **traverses hidden rows without showing them**: a deleted or
+    blocked reply in the middle of a chain is the only route to the live replies
+    under it, so filtering it out of the walk deleted them from the timeline too.
+    Blocking hides that person's messages, never everyone else's.
+  - **A thread only collapses when its root is visible to this reader.** The pill
+    lives on the root's bubble, so a deleted or blocked root has nowhere to put
+    one — collapsing there would take the whole conversation off screen with no
+    way back in. Those replies stay inline, quoting a parent that reads as
+    deleted.
+  - **Whatever id opens the thread screen, the PAGE is the root.** The pill and
+    the ghost always pass a root; inbox search passes a hit's immediate parent,
+    which on an old chain is itself a reply. `getThreadReplies` returns the
+    `rootMessageId` it resolved to and the screen adopts it for its header, its
+    composer and its notification bell — otherwise the tapped reply appears both
+    as the header and inside the reply list.
   - This replaces the floating "ghost" pointer (a bubble-less echo of the
     original message at the thread's `lastActivityAt`), which existed only
     because the timeline hid every reply. Kept for flag-off.
