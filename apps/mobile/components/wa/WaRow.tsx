@@ -35,13 +35,18 @@ import {
 // --- S6 row density -----------------------------------------------------
 //
 // WA-VISUAL-DELTAS.md S6.1, measured off the reference screenshots: "avatar
-// ~58px … row ~78px" — the biggest single density delta in the audit. These
-// supersede `metrics.ts`'s spec-derived 56/76 (that file is shared with
-// in-flight workstreams and is not edited here), so they live locally and are
+// ~58px … row ~78px" — the biggest single density delta in the audit. The
+// calibrated pixel pass (2026-07-29) re-measured the avatar in POINTS at 56,
+// which agrees with `metrics.ts`'s `WA_AVATAR_LG`; the 78pt row height is
+// unchanged and still supersedes `metrics.ts`'s 76. These live locally and are
 // re-exported for the surfaces that have to line up with them.
 
-/** List avatar diameter (S6.1). */
-export const WA_LIST_AVATAR = 58;
+/**
+ * List avatar diameter. S6.1 read it at ~58 off a screenshot; the calibrated
+ * pixel pass (2026-07-29, points not pixels) measured 56 — back in line with
+ * `metrics.ts`'s `WA_AVATAR_LG`. Row height stays at S6.1's 78.
+ */
+export const WA_LIST_AVATAR = 56;
 /** Row height with a preview line present (S6.1). */
 export const WA_LIST_ROW_HEIGHT = 78;
 /** Row height for a title-only row. */
@@ -51,7 +56,7 @@ export const WA_LIST_ROW_HEIGHT_NO_PREVIEW = 62;
  * the avatar does (S6.1): leading padding + avatar + gap.
  */
 export const WA_LIST_SEPARATOR_INSET =
-  WA_ROW_LEADING_PADDING + WA_LIST_AVATAR + WA_ROW_AVATAR_GAP; // 86
+  WA_ROW_LEADING_PADDING + WA_LIST_AVATAR + WA_ROW_AVATAR_GAP; // 84
 
 export interface WaRowAvatarDescriptor {
   imageUrl?: string | null;
@@ -59,7 +64,7 @@ export interface WaRowAvatarDescriptor {
   label: string;
   /** 'circle' for people/groups/channels; 'squircle' is reserved for Communities (§6). */
   shape?: 'circle' | 'squircle';
-  /** Defaults to `WA_LIST_AVATAR` (58pt). */
+  /** Defaults to `WA_LIST_AVATAR` (56pt). */
   size?: number;
   /**
    * Stable identity the fallback pastel hue is derived from (S5.2). Prefer a

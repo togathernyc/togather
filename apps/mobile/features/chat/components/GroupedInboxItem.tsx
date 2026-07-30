@@ -162,7 +162,7 @@ const MAX_SECONDARY_CHANNELS = 2;
 // WaRow list share one rhythm. Sub-rows stay deliberately smaller — the
 // channel cluster is an intentional Togather divergence (per-screen §1.5) and
 // the size step is what reads as "nested under the row above".
-const WA_MAIN_AVATAR_SIZE = WA_LIST_AVATAR; // 58
+const WA_MAIN_AVATAR_SIZE = WA_LIST_AVATAR; // 56
 const WA_SUB_AVATAR_SIZE = 44;
 // Separator inset so the hairline starts at the title's x-position.
 const WA_SEPARATOR_INSET_MAIN = WA_LIST_SEPARATOR_INSET; // 86

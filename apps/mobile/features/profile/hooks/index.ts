@@ -5,4 +5,6 @@ export { useUpdateProfilePhoto, useRemoveProfilePhoto } from './useUpdateProfile
 export * from './useUserData';
 export { useUserProfile } from './useUserProfile';
 export type { UserProfile, MutualGroup, UpcomingEvent } from './useUserProfile';
+export { useYouAdminAccess } from './useYouAdminAccess';
+export type { YouAdminAccess } from './useYouAdminAccess';
 

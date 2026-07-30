@@ -152,7 +152,8 @@ jest.mock('@hooks/useTheme', () => ({
   }),
 }));
 
-const WA_FIELD_HEIGHT = 44;
+/** Calibrated pixel pass (2026-07-29): WA's empty field is 32pt, not 44. */
+const WA_FIELD_HEIGHT = 32;
 
 /** Is `candidate` an ancestor of `node` in the rendered tree? */
 function isInside(node: any, candidate: any): boolean {
@@ -170,7 +171,7 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
     Platform.OS = 'ios';
   });
 
-  it('wraps the text field in a fully-rounded ~44px white pill', () => {
+  it('wraps the text field in a fully-rounded 32pt white pill', () => {
     const { getByTestId } = render(<MessageInput channelId={'test-channel' as any} />);
     const style = StyleSheet.flatten(getByTestId('wa-composer-field').props.style);
     expect(style.backgroundColor).toBe('#FFFFFF');
@@ -186,6 +187,16 @@ describe('MessageInput WhatsApp composer (flag-on)', () => {
     expect(style.borderWidth).toBe(0);
     expect(style.backgroundColor).toBe('transparent');
     expect(style.minHeight).toBe(WA_FIELD_HEIGHT);
+  });
+
+  it('sizes the input padding so one line lands exactly on the field height', () => {
+    // Regression guard: `styles.input`'s own 10pt vertical padding puts a
+    // one-line field at ~40pt, which would silently override the 32pt
+    // `minHeight` and make WA_COMPOSER_FIELD_HEIGHT decorative.
+    const { getByTestId } = render(<MessageInput channelId={'test-channel' as any} />);
+    const style = StyleSheet.flatten(getByTestId('wa-composer-input').props.style);
+    // 20pt line box + 2x padding === the field height.
+    expect(style.paddingVertical * 2 + 20).toBe(WA_FIELD_HEIGHT);
   });
 
   it('puts a sticker/emoji glyph inside the field, not beside it', () => {
