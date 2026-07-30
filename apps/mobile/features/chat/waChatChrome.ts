@@ -157,3 +157,46 @@ export const WA_REPLY_QUOTE_RADIUS = 6;
 export const WA_COMPOSER_FIELD_HEIGHT = 32;
 /** Fully-rounded: always half the field height. */
 export const WA_COMPOSER_FIELD_RADIUS = WA_COMPOSER_FIELD_HEIGHT / 2;
+
+/* ---------------------------------------------------------------------------
+ * §7 in-thread structured cards (event card)
+ *
+ * §7 is explicit that a Togather-only element in the thread must be a
+ * *bubble*, not "a separate attachment card component with its own
+ * shadow/border language" — so the event card borrows WhatsApp's rich
+ * link-preview anatomy: a compact 16:9 banner across the bubble top, body copy
+ * on the bubble's own fill, and an RSVP pill row docked at the bottom edge.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * §7 "a thumbnail if present": WhatsApp's rich link preview crops its image to
+ * a wide banner, never a full-bleed square poster — the bubble has to stay
+ * message-sized, not poster-sized.
+ */
+export const WA_CARD_COVER_ASPECT = 16 / 9;
+
+/** Inner gutter of the card body — tighter than a screen's 16, like a bubble's. */
+export const WA_CARD_PADDING = 10;
+
+/** §7 RSVP pill row: chips-row anatomy, 32pt tall and fully rounded. */
+export const WA_CARD_PILL_HEIGHT = 32;
+export const WA_CARD_PILL_RADIUS = WA_CARD_PILL_HEIGHT / 2;
+
+/**
+ * Unselected RSVP pill fill. Same black/white-alpha reasoning as the §5
+ * reply-quote fill: the pill sits on the WHITE incoming bubble *and* on the
+ * MINT outgoing one, and no opaque token reads as "recessed" on both.
+ */
+export const WA_CARD_PILL_FILL_LIGHT = 'rgba(0, 0, 0, 0.06)';
+export const WA_CARD_PILL_FILL_DARK = 'rgba(255, 255, 255, 0.09)';
+
+/**
+ * §1.6 selected-chip treatment: a *pale accent tint* with accent ink, never an
+ * accent-filled chip (a solid brand fill on a chip reads as loud as the banned
+ * pastel taxonomy chips of §7). Expressed as an alpha wash of the accent so it
+ * darkens whichever bubble fill it lands on rather than fighting it.
+ */
+export const WA_CARD_PILL_SELECTED_ALPHA = 0.18;
+
+/** §1.6 "bubbles have a ~1px soft drop shadow" — the card is a bubble (§7). */
+export const WA_CARD_SHADOW_WEB = '0px 1px 1px rgba(0, 0, 0, 0.13)';
