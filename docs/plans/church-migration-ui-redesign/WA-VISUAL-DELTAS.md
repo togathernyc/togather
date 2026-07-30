@@ -287,10 +287,13 @@ It also owns the clearance, which was genuinely broken (owner's dark-mode
 screenshot: the pill sitting on the tab island). **Yoga lays an absolutely
 positioned child out against its parent's *border* box and ignores the parent's
 padding** — unlike CSS — so `bottom: 0` inside a container reserving
-`waTabBarStripHeight` did *not* start above that strip. The component instead
-sets `bottom: waFloatingCtaBottomOffset(insets.bottom)` = island height +
-`waTabBarBottomOffset` + 12, measured from the screen edge; scroll surfaces pad
-by `WA_FLOATING_CTA_CONTENT_CLEARANCE` so the last row clears island *and* pill.
+`waTabBarStripHeight` did *not* start above that band. The component instead
+sets `bottom: waFloatingCtaBottomOffset(insets.bottom)` = `waTabBarStripHeight`
++ 12 (92pt at inset 0, 98pt at inset 34), measured from the screen edge, so the
+pill floats a gap above the island's page-colored band rather than landing
+inside it; scroll surfaces pad by `WA_FLOATING_CTA_CONTENT_CLEARANCE` (74pt =
+pill + 2 gaps) so the last row clears the pill. The band itself already clears
+the island — see §4's island entry.
 
 ---
 
