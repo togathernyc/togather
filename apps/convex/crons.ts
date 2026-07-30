@@ -13,6 +13,7 @@
 import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 import { registerDevAssistantCrons } from "@supa-media/dev-assistant";
+import { registerFinanceCrons } from "./functions/finance/jobs";
 import "./functions/devAssistant/config"; // side-effect: sets config first
 
 const crons = cronJobs();
@@ -308,5 +309,10 @@ crons.monthly(
 // (functions/devAssistant/actions:reconcileMergedPrs) as the previous
 // hand-written registration.
 registerDevAssistantCrons(crons); // reads functionsPath from the config holder
+
+// Group giving (ADR-032): nightly ledger-vs-bank reconcile + hourly
+// stale-allocation retry backstop (the primary allocation trigger is the
+// Stripe payout.paid webhook).
+registerFinanceCrons(crons);
 
 export default crons;

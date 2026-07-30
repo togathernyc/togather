@@ -114,6 +114,9 @@ SECRET_KEYS=(
   "STRIPE_SECRET_KEY"
   "STRIPE_WEBHOOK_SECRET"
   "STRIPE_PRODUCT_ID"
+  "INCREASE_API_KEY"
+  "INCREASE_WEBHOOK_SECRET"
+  "INCREASE_API_BASE_URL"
   # Dev-assistant bot (@Togather pipeline). Optional — synced only when present.
   # Sourced from 1Password via the shared sync-secrets.yml workflow
   # (ee/secrets-allowlist.json's "optional" list), then exported into the

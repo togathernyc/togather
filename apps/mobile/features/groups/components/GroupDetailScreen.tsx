@@ -152,6 +152,18 @@ export function GroupDetailScreen() {
   ) as unknown[] | undefined;
   const hasEventPlans = Array.isArray(eventPlans) && eventPlans.length > 0;
 
+  // GIVING (ADR-032) — member-facing transparency tile, not leader-gated:
+  // every member can give and see the fund's activity. Deliberately queries
+  // the lightweight `getGivingContext` (not `getFundOverview`, which pulls
+  // ledger activity) just to learn whether a fund exists for this group; the
+  // tile shows no balance, so the heavier query only runs once the member
+  // taps through to the fund screen.
+  const givingContext = useAuthenticatedQuery(
+    api.functions.finance.giving.getGivingContext,
+    group?._id ? { groupId: group._id as Id<"groups"> } : "skip",
+  );
+  const hasGivingFund = !!givingContext;
+
   const handleMembersPress = () => {
     if (!group?._id) return;
     // Leaders/admins land on the full member-management surface (promote /
@@ -597,6 +609,36 @@ export function GroupDetailScreen() {
                   Member health & follow-up
                 </Text>
               </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* GIVING — every member's entry point into the fund's transparency
+            screen (balance, activity, reimbursements); NOT leader-gated
+            (ADR-032 §4: "Give; see transparency summary" is a member-level
+            capability). Hidden entirely until a fund exists for this group. */}
+        {group._id && hasGivingFund && (
+          <View style={{ paddingHorizontal: 12, marginTop: 4 }}>
+            <TouchableOpacity
+              onPress={() => router.push(`/groups/${group._id}/fund` as any)}
+              activeOpacity={0.7}
+              style={[
+                styles.addPeopleTile,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addPeopleIcon,
+                  { backgroundColor: colors.success + "1A" },
+                ]}
+              >
+                <Ionicons name="cash-outline" size={18} color={colors.success} />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.text, flex: 1 }]}>
+                Giving
+              </Text>
               <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>

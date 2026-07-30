@@ -358,6 +358,18 @@ export const update = mutation({
     if (args.isArchived === true) {
       const timestamp = now();
 
+      // Freeze the group's giving fund, if giving is enabled for it (ADR-032
+      // §3 "Group archive" — freeze half only; the bank-side sweep is a
+      // deferred Phase-2 admin mutation, see functions/finance/
+      // ARCHITECTURE.md's "Known Seams & TODOs"). Scheduled rather than
+      // inline so a missing/errored finance setup never blocks the (much
+      // more common) plain group archive.
+      await ctx.scheduler.runAfter(
+        0,
+        internal.functions.finance.onboarding.freezeFundForArchivedGroup,
+        { groupId },
+      );
+
       // --- Primary group cascade ---
       // Archive all channels owned by this group
       const ownedChannels = await ctx.db

@@ -19,6 +19,10 @@ import { hashApiKey } from "./lib/apiKeys";
 import { resolveLinkPreviewMeta } from "./functions/linkPreviewMeta";
 import { registerRoutes } from "@supa-media/dev-assistant";
 import "./functions/devAssistant/config"; // side-effect: sets config first
+import {
+  handleFinanceStripeEvent,
+  handleIncreaseWebhookRequest,
+} from "./functions/finance/webhooks";
 
 const http = httpRouter();
 
@@ -483,9 +487,10 @@ http.route({
           break;
         }
         default:
-          console.log(
-            `[StripeWebhook] Unhandled event type: ${event.type}`
-          );
+          // Group-giving events (account.updated, payment_intent.succeeded,
+          // payout.paid) are dispatched by the finance layer; it no-ops on
+          // anything it doesn't own (ADR-032 §6).
+          await handleFinanceStripeEvent(ctx, event);
       }
 
       return new Response(JSON.stringify({ received: true }), {
@@ -496,6 +501,21 @@ http.route({
       console.error("[StripeWebhook] Error processing event:", error);
       return new Response("Webhook processing failed", { status: 500 });
     }
+  }),
+});
+
+/**
+ * POST /increase-webhook
+ *
+ * Increase (banking) event receiver for group giving (ADR-032 §6). Signature
+ * verification, event parsing, and category dispatch all live in
+ * functions/finance/webhooks.ts — this route is pure mounting.
+ */
+http.route({
+  path: "/increase-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await handleIncreaseWebhookRequest(ctx, request);
   }),
 });
 

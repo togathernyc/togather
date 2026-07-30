@@ -8,6 +8,7 @@
  */
 
 import type { Id } from "../_generated/dataModel";
+import { isCommunityAdmin } from "./permissions";
 
 // ============================================================================
 // Soft Delete Helpers
@@ -223,6 +224,128 @@ export function channelEffectiveEnabledForGroup(
     return true;
   }
   return entry.hiddenFromNavigation !== true;
+}
+
+// ============================================================================
+// Fund Role Helpers (ADR-032 group giving)
+// ============================================================================
+
+/**
+ * Fund permission ranks, lowest to highest. Separate from group roles
+ * (ADR-032 §4) — a trusted treasurer doesn't need to be a group leader, and a
+ * leader can't automatically move money without a fund role of their own
+ * (except via `requireFundRoleOrGroupLeader` below, which the ADR carves out
+ * specifically for role assignment).
+ */
+export const FUND_ROLE_ORDER = ["cardholder", "manager", "finance_admin"] as const;
+export type FundRole = (typeof FUND_ROLE_ORDER)[number];
+
+function fundRoleRank(role: FundRole): number {
+  return FUND_ROLE_ORDER.indexOf(role);
+}
+
+/**
+ * Shape of a `fundRoles` row (or a subset of one) needed to check access.
+ */
+export interface FundRoleRecord {
+  role: FundRole;
+  revokedAt?: number;
+}
+
+/**
+ * Check if a (possibly absent/revoked) fund role grants at least `minRole`.
+ *
+ * @example
+ * if (hasFundRole(roleDoc, "manager")) {
+ *   // Can approve expenses
+ * }
+ */
+export function hasFundRole(
+  roleDoc: FundRoleRecord | null | undefined,
+  minRole: FundRole,
+): boolean {
+  if (!roleDoc) return false;
+  if (roleDoc.revokedAt !== undefined) return false;
+  return fundRoleRank(roleDoc.role) >= fundRoleRank(minRole);
+}
+
+/**
+ * Require that a user holds at least `minRole` on a fund, or throw.
+ * Community admins always pass (ADR-032 §4 override), mirroring
+ * `requireCommunityAdmin` / `requireGroupLeaderOrCommunityAdmin`.
+ *
+ * @throws Error if the fund doesn't exist or the user's fund role (if any)
+ * doesn't meet `minRole`.
+ */
+export async function requireFundRole(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  userId: Id<"users">,
+  minRole: FundRole,
+): Promise<void> {
+  const fund = await ctx.db.get(fundId);
+  if (!fund) {
+    throw new Error("Fund not found");
+  }
+
+  const isAdmin = await isCommunityAdmin(ctx, fund.communityId, userId);
+  if (isAdmin) {
+    return;
+  }
+
+  // Collect + filter rather than .first(): grantFundRole's upsert keeps the
+  // old row (with revokedAt set) and inserts a new active one, so .first()
+  // could return the revoked grant and wrongly deny a re-granted user.
+  const roleRows = await ctx.db
+    .query("fundRoles")
+    .withIndex("by_user_fund", (q: any) =>
+      q.eq("userId", userId).eq("fundId", fundId),
+    )
+    .collect();
+  const roleDoc =
+    roleRows.find((r: { revokedAt?: number }) => r.revokedAt === undefined) ??
+    null;
+
+  if (!hasFundRole(roleDoc, minRole)) {
+    throw new Error(
+      `You need at least "${minRole}" access on this fund to do that`,
+    );
+  }
+}
+
+/**
+ * Same as `requireFundRole`, but also passes for an active leader of the
+ * fund's group. Per ADR-032 §4, group leaders can always manage fund roles
+ * on their own group's fund (they're who grants the initial finance_admin
+ * on giving-enablement) even before they hold a fund role themselves.
+ *
+ * @throws Error if the fund doesn't exist, the caller isn't an active leader
+ * of the fund's group, and `requireFundRole` also rejects them.
+ */
+export async function requireFundRoleOrGroupLeader(
+  ctx: { db: any },
+  fundId: Id<"funds">,
+  userId: Id<"users">,
+  minRole: FundRole,
+): Promise<void> {
+  const fund = await ctx.db.get(fundId);
+  if (!fund) {
+    throw new Error("Fund not found");
+  }
+
+  if (fund.groupId) {
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q: any) =>
+        q.eq("groupId", fund.groupId).eq("userId", userId),
+      )
+      .first();
+    if (isActiveLeader(membership)) {
+      return;
+    }
+  }
+
+  await requireFundRole(ctx, fundId, userId, minRole);
 }
 
 // ============================================================================
