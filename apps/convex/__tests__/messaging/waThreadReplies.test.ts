@@ -1260,6 +1260,237 @@ describe("getMessages waReplies — chains written before rooting", () => {
     });
     expect(fromMiddle.messages.map((m: any) => m._id)).toEqual(links);
   });
+
+});
+
+describe("getMessages waReplies — a hidden link never swallows what hangs off it", () => {
+  /**
+   * `root ← middle ← leaf`, with `middle` hidden the way a real one gets
+   * hidden: sent live (so the root's send counter is bumped), then deleted or
+   * blocked after the fact.
+   */
+  async function chainWithHiddenMiddle(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    viewerId: Id<"users">,
+    middleSenderId: Id<"users">,
+    leaves: number,
+  ) {
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: viewerId,
+      content: "root",
+      createdAt: T0,
+    });
+    const middleId = await insertMessage(t, {
+      channelId,
+      senderId: middleSenderId,
+      content: "middle",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    const leafIds: Id<"chatMessages">[] = [];
+    for (let i = 0; i < leaves; i++) {
+      leafIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: viewerId,
+          content: `leaf ${i + 1}`,
+          createdAt: T0 + 2000 + i * 1000,
+          parentMessageId: middleId,
+        }),
+      );
+    }
+    return { rootId, middleId, leafIds };
+  }
+
+  test("a live reply under a DELETED reply is still found and still rendered", async () => {
+    // The traversal bug this pins: the scan filtered deleted rows out before
+    // they could be descended into, so the leaf was never discovered — and
+    // since the leaf still roots at the same message, it resolved to a thread
+    // reporting zero replies and dropped out of the timeline altogether.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      1,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    // The leaf is the thread's only VISIBLE reply, so it renders inline —
+    // quoting a parent that reads as deleted, which is what WhatsApp shows.
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, leafIds[0]]);
+    const leaf = page.messages[1] as any;
+    expect(leaf.replyQuote).toMatchObject({
+      parentMessageId: middleId,
+      parentDeleted: true,
+    });
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+
+  test("live replies under a deleted reply are counted into the root's thread", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      2,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const summary = (page.messages[0] as any).threadSummary;
+    // Two live leaves; the deleted middle is traversed but never counted.
+    expect(summary.replyCount).toBe(2);
+    expect(summary.lastReplyAt).toBe(T0 + 3000);
+  });
+
+  test("a BLOCKED author's reply hides itself, not the replies under it", async () => {
+    // Blocking is about not seeing that person's messages. It was never meant
+    // to erase everyone else's, so their subtree surfaces the same way a
+    // deleted link's does.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      otherUserId,
+      1,
+    );
+    await block(t, userId, otherUserId);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, leafIds[0]]);
+    // The blocked author's own bubble is gone; the quote of it is stripped the
+    // same way a deleted parent's is.
+    expect(page.messages.map((m: any) => m._id)).not.toContain(middleId);
+  });
+
+  test("a deleted ROOT keeps its replies in the timeline instead of collapsing them", async () => {
+    // Collapsing needs a visible parent to hang the pill on. A deleted root is
+    // filtered out of the timeline, so a pill there would render nowhere and
+    // the conversation would simply vanish.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const replyIds: Id<"chatMessages">[] = [];
+    for (const [i, content] of ["reply 1", "reply 2"].entries()) {
+      replyIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: userId,
+          content,
+          createdAt: T0 + 1000 + i * 1000,
+          parentMessageId: rootId,
+        }),
+      );
+    }
+    await t.run(async (ctx) => {
+      await ctx.db.patch(rootId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual(replyIds);
+    for (const message of page.messages as any[]) {
+      expect(message.replyQuote).toMatchObject({
+        parentMessageId: rootId,
+        parentDeleted: true,
+      });
+    }
+  });
+
+  test("a blocked ROOT does the same — nothing collapses onto a bubble you can't see", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, otherUserId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: otherUserId,
+      senderName: "Dara Peters",
+      content: "root",
+      createdAt: T0,
+    });
+    const replyIds: Id<"chatMessages">[] = [];
+    for (const [i, content] of ["reply 1", "reply 2"].entries()) {
+      replyIds.push(
+        await insertMessage(t, {
+          channelId,
+          senderId: userId,
+          content,
+          createdAt: T0 + 1000 + i * 1000,
+          parentMessageId: rootId,
+        }),
+      );
+    }
+    await block(t, userId, otherUserId);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual(replyIds);
+  });
+
+  test("the thread screen folds in what hangs under a deleted link too", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, middleId, leafIds } = await chainWithHiddenMiddle(
+      t,
+      channelId,
+      userId,
+      userId,
+      2,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(middleId, { isDeleted: true });
+    });
+
+    const thread = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: rootId,
+    });
+    // Exactly what the pill counted — the deleted link itself stays out.
+    expect(thread.messages.map((m: any) => m._id)).toEqual(leafIds);
+  });
 });
 
 describe("getMessages waReplies — flag-off is unchanged", () => {
