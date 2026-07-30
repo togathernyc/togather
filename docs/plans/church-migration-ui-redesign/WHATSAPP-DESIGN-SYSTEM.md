@@ -436,12 +436,17 @@ kit (`WaFloatingButton.tsx`, `WaTabBar.tsx`) around it.
     glyph) as its tab icon, not a generic "You" icon.
   - Togather uses **4 tabs** (Chats · Events · Prayer · You per README §5); all
     four get identical island styling — there's no per-tab exception.
-  - A screen pairs the island with two paddings so content doesn't run under it
-    unpainted: `waTabBarStripHeight(bottomInset)` on the container carrying the
-    page background (paints the strip below the island as page background, not
-    whatever row happens to scroll past there), and `WA_TAB_CONTENT_CLEARANCE`
-    (76pt) as the scroll content's bottom padding, so the last row clears the
-    island itself.
+  - A screen pairs the island with two paddings so its whole zone reads as ONE
+    page-colored surface: `waTabBarStripHeight(bottomInset)` on the container
+    carrying the page background — the **band**, running from the screen's
+    bottom edge to 8pt above the island's TOP edge (80pt at inset 0, 86pt at
+    inset 34) — and `WA_TAB_CONTENT_CLEARANCE` (12pt) as the scroll content's
+    bottom padding, which is only breathing room above that band.
+  - **Reserving just the strip *below* the island is not enough** (the bug the
+    owner reported on 2026-07-29 and again on 2026-07-30, "the bottom of these
+    pages is still not a uniform color"): the island is 64pt tall and inset
+    20pt from each edge, so rows kept rendering **beside** it in those side
+    margins and underneath it. The band must cover the island's full height.
 
 ---
 

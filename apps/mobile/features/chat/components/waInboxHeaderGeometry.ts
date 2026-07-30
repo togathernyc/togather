@@ -110,6 +110,9 @@ export function waNavScrimStyle(progress: number) {
  *
  * `minHeight` lets a short list still scroll far enough to complete the
  * collapse, so the header can't get stuck half-expanded on a small inbox.
+ *
+ * `paddingBottom` is only breathing room above the tab island's band — the
+ * screen container reserves that band itself (`waTabBarStripHeight`).
  */
 export function waListContentPadding(
   enabled: boolean,

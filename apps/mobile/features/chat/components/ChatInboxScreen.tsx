@@ -781,9 +781,10 @@ export function ChatInboxScreen({
   const Wrapper = React.Fragment;
   const headerPaddingTop = sidebarMode ? 16 : insets.top + 16;
 
-  // Flag-on: reserve the strip below the floating island on the container that
-  // carries the page background, so the home-indicator gap paints white rather
-  // than showing whatever list row happens to scroll past underneath.
+  // Flag-on: reserve the island BAND on the container that carries the page
+  // background — the whole zone the floating island occupies, not just the gap
+  // below it — so the bottom of the page is one uniform white surface instead
+  // of rows showing beside and under the island.
   const waStripPadding = whatsappShellEnabled
     ? { paddingBottom: waTabBarStripHeight(insets.bottom) }
     : null;
@@ -1654,9 +1655,9 @@ export function ChatInboxScreen({
                 styles.listContainer,
                 // Flag-on: reserve the floating header's height at the top
                 // (a plain style — no animated layout prop, see the geometry
-                // note at the top of this file) and the floating tab island's
-                // clearance at the bottom. The safe-area strip below the
-                // island is reserved by the container (`waStripPadding`).
+                // note at the top of this file) and breathing room at the
+                // bottom. The island's whole band is reserved by the container
+                // (`waStripPadding`), so this is only a gap above it.
                 waListContentPadding(whatsappShellEnabled, {
                   insetTop: waInsetTop,
                   chipsHeight: waChipsHeight,
