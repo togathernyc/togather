@@ -163,6 +163,17 @@ never resolved on device over OTA (owner report, 2026-07-30). It's dropped once
 behind the whole chat-room screen (header, tab strip, message list, composer)
 rather than per-section, and only renders behind the flag-on chat surface.
 
+**Safe-area strips:** the wallpaper layer cannot reach either screen edge — the
+status-bar zone is `paddingTop` on `ChatRoomSurface` and the home-indicator zone
+is `paddingBottom` on the app-wide `StatusBarAwareContainer`, and padding sits
+outside the children's box. Those two bands therefore paint the *chrome's*
+rendered tone as a solid color (`waChatChromeOpaque` / `waComposerBarOpaque` in
+`features/chat/waChatChrome.ts`, which flatten the translucent bar fills over
+`chatWallpaper`), so the header and composer read as continuing to the edge.
+Painting them with the wallpaper base or the app's root `background` is the bug
+that shipped: a white band under the composer in light mode, near-black bands at
+both edges in dark mode.
+
 Togather mapping: default wallpaper stays this neutral cream/dark tone — **do not
 tint the wallpaper with `primaryColor`.** The WhatsApp "Chat theme" screen (§6) lets
 a user pick from a curated wallpaper+bubble-color gallery; Togather's community-level
