@@ -42,6 +42,8 @@ export interface WaFloatingButtonProps {
   /** Glyph size. Defaults to `WA_HEADER_ICON_SIZE`, scaled if `size` is overridden. */
   iconSize?: number;
   accessibilityLabel?: string;
+  /** For toggle-style circles (List/Map): exposes `accessibilityState={{selected}}`. */
+  selected?: boolean;
   /** Content rendered instead of `icon` — e.g. an `<Avatar />`. Clipped to the circle. */
   children?: React.ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -55,6 +57,7 @@ export function WaFloatingButton({
   size = WA_HEADER_CIRCLE_SIZE,
   iconSize,
   accessibilityLabel,
+  selected,
   children,
   style,
 }: WaFloatingButtonProps) {
@@ -95,6 +98,7 @@ export function WaFloatingButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      accessibilityState={selected === undefined ? undefined : { selected }}
       hitSlop={8}
       style={({ pressed }) => [circle, pressed && styles.pressed]}
     >

@@ -601,11 +601,13 @@ export function WaGroupsScreen({
           icon: viewMode === 'list' ? 'list' : 'list-outline',
           onPress: () => setViewMode('list'),
           accessibilityLabel: 'List view',
+          selected: viewMode === 'list',
         },
         {
           icon: viewMode === 'map' ? 'map' : 'map-outline',
           onPress: () => setViewMode('map'),
           accessibilityLabel: 'Map view',
+          selected: viewMode === 'map',
         },
       ]}
       searchSlot={
