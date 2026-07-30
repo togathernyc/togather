@@ -978,6 +978,265 @@ describe("getMessages waReplies — the pill count stays bounded and honest", ()
   });
 });
 
+describe("sendMessage — a reply joins its thread, it does not fork one", () => {
+  /** Send through the real mutation, so rooting is exercised end to end. */
+  function sender(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    accessToken: string,
+  ) {
+    return (content: string, parentMessageId?: Id<"chatMessages">) =>
+      t.mutation(api.functions.messaging.messages.sendMessage, {
+        token: accessToken,
+        channelId,
+        content,
+        ...(parentMessageId ? { parentMessageId } : {}),
+      });
+  }
+
+  test("replying to a reply files under the root and quotes the tapped message", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const firstId = await send("I've got them", rootId);
+    // The tap that used to fork: reply to the reply, not to the root.
+    const secondId = await send("How many?", firstId);
+
+    const second = await t.run((ctx) => ctx.db.get(secondId));
+    expect(second?.parentMessageId).toBe(rootId);
+    expect(second?.quotedMessageId).toBe(firstId);
+
+    // The thread's bookkeeping lands on the root, never on the middle reply.
+    const root = await t.run((ctx) => ctx.db.get(rootId));
+    const first = await t.run((ctx) => ctx.db.get(firstId));
+    expect(root?.threadReplyCount).toBe(2);
+    expect(first?.threadReplyCount).toBeUndefined();
+
+    // Owner's scenario: reply, then someone replies to THAT — both collapse
+    // under the root behind one "2 replies" pill.
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(2);
+  });
+
+  test("the quote still shows the tapped message, not the root", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const firstId = await send("I've got them", rootId);
+    await send("How many?", firstId);
+    // Delete one so the survivor is re-admitted to the timeline and we can
+    // read the quote it renders.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(firstId, { isDeleted: true });
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    const reply = page.messages.find((m: any) => m.content === "How many?") as any;
+    // Filed under the root, but quoting the reply the sender tapped — which,
+    // now deleted, reads as WhatsApp's deleted-quote rather than the root's text.
+    expect(reply.parentMessageId).toBe(rootId);
+    expect(reply.replyQuote).toMatchObject({
+      parentMessageId: firstId,
+      parentDeleted: true,
+    });
+  });
+
+  test("a first reply is unchanged — no quote target, parent is the root", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, accessToken } = await seed(t);
+    const send = sender(t, channelId, accessToken);
+
+    const rootId = await send("Who is bringing the chairs?");
+    const replyId = await send("I've got them", rootId);
+
+    const reply = await t.run((ctx) => ctx.db.get(replyId));
+    expect(reply?.parentMessageId).toBe(rootId);
+    expect(reply?.quotedMessageId).toBeUndefined();
+  });
+
+  test("rooting never crosses into another channel", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, groupId, userId, accessToken } = await seed(t);
+    const otherChannelId = await seedSecondChannel(t, groupId, userId);
+
+    // A chained row from before the same-channel check: the middle reply lives
+    // in this channel but points at a parent in another one.
+    const foreignRootId = await insertMessage(t, {
+      channelId: otherChannelId,
+      senderId: userId,
+      content: "elsewhere",
+      createdAt: T0,
+    });
+    const strandedId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "stranded",
+      createdAt: T0 + 1000,
+      parentMessageId: foreignRootId,
+    });
+
+    const replyId = await t.mutation(api.functions.messaging.messages.sendMessage, {
+      token: accessToken,
+      channelId,
+      content: "replying to the stranded one",
+      parentMessageId: strandedId,
+    });
+
+    // The walk stops at the stranded reply rather than rooting the thread on a
+    // message in a channel this reply's readers may not be able to see.
+    const reply = await t.run((ctx) => ctx.db.get(replyId));
+    expect(reply?.parentMessageId).toBe(strandedId);
+    expect(reply?.quotedMessageId).toBeUndefined();
+  });
+});
+
+describe("getMessages waReplies — chains written before rooting", () => {
+  /** Build `V ← r1 ← r2 ← …` the way the pre-rooting client wrote it. */
+  async function chain(
+    t: ReturnType<typeof convexTest>,
+    channelId: Id<"chatChannels">,
+    senderId: Id<"users">,
+    depth: number,
+  ) {
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId,
+      content: "root",
+      createdAt: T0,
+    });
+    const links: Id<"chatMessages">[] = [];
+    let parentMessageId = rootId;
+    for (let i = 0; i < depth; i++) {
+      parentMessageId = await insertMessage(t, {
+        channelId,
+        senderId,
+        content: `reply ${i + 1}`,
+        createdAt: T0 + 1000 * (i + 1),
+        parentMessageId,
+      });
+      links.push(parentMessageId);
+    }
+    return { rootId, links };
+  }
+
+  test("a two-deep chain collapses under the root with a 2-reply pill", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId } = await chain(t, channelId, userId, 2);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const summary = (page.messages[0] as any).threadSummary;
+    expect(summary.replyCount).toBe(2);
+    expect(summary.lastReplyAt).toBe(T0 + 2000);
+  });
+
+  test("a one-deep chain is still a lone inline reply", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 1);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId, links[0]]);
+    expect((page.messages[0] as any).threadSummary).toBeUndefined();
+  });
+
+  test("the bounded walk folds a chain deeper than the model ever allows", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId } = await chain(t, channelId, userId, 5);
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(5);
+  });
+
+  test("two replies under an inline reply collapse under the root, not into thin air", async () => {
+    // The defect this pins: the summary is only ever computed for rows without
+    // a `parentMessageId`, so a chained reply that accumulated two replies of
+    // its own had them vanish from the timeline with no pill anywhere to open.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const inlineId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 1",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    for (const [i, content] of ["reply 2", "reply 3"].entries()) {
+      await insertMessage(t, {
+        channelId,
+        senderId: userId,
+        content,
+        createdAt: T0 + 2000 + i * 1000,
+        parentMessageId: inlineId,
+      });
+    }
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+      waReplies: true,
+    });
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    expect((page.messages[0] as any).threadSummary.replyCount).toBe(3);
+  });
+
+  test("the thread a chained pill opens holds everything the pill counted", async () => {
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+    const { rootId, links } = await chain(t, channelId, userId, 3);
+
+    const thread = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: rootId,
+    });
+    expect(thread.messages.map((m: any) => m._id)).toEqual(links);
+
+    // Opening the thread from a link in the middle of the chain lands on the
+    // same conversation, not a fragment of it.
+    const fromMiddle = await t.query(api.functions.messaging.messages.getThreadReplies, {
+      token: accessToken,
+      parentMessageId: links[1],
+    });
+    expect(fromMiddle.messages.map((m: any) => m._id)).toEqual(links);
+  });
+});
+
 describe("getMessages waReplies — flag-off is unchanged", () => {
   test("omitting waReplies keeps replies out and adds no decoration", async () => {
     const t = convexTest(schema, modules);
@@ -1007,6 +1266,48 @@ describe("getMessages waReplies — flag-off is unchanged", () => {
     expect(parent.threadSummary).toBeUndefined();
     expect(parent.replyQuote).toBeUndefined();
     // The old model's own signals are untouched for the flag-off ghost.
+    expect(parent.threadReplyCount).toBe(1);
+    expect(parent.lastActivityAt).toBe(T0 + 1000);
+  });
+
+  test("a chained reply is still just a hidden reply — no rooting, no decoration", async () => {
+    // Rooting is a flag-ON read rule. Flag-off filters every reply out before
+    // it can matter, so a chain leaves the ghost timeline byte-identical.
+    const t = convexTest(schema, modules);
+    const { channelId, userId, accessToken } = await seed(t);
+
+    const rootId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "root",
+      createdAt: T0,
+    });
+    const firstId = await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 1",
+      createdAt: T0 + 1000,
+      parentMessageId: rootId,
+    });
+    await insertMessage(t, {
+      channelId,
+      senderId: userId,
+      content: "reply 2",
+      createdAt: T0 + 2000,
+      parentMessageId: firstId,
+    });
+
+    const page = await t.query(api.functions.messaging.messages.getMessages, {
+      token: accessToken,
+      channelId,
+    });
+
+    expect(page.messages.map((m: any) => m._id)).toEqual([rootId]);
+    const parent = page.messages[0] as any;
+    expect(parent.threadSummary).toBeUndefined();
+    expect(parent.replyQuote).toBeUndefined();
+    // The ghost pointer still reads the chain exactly as it did before: the
+    // root's own send counter and last-activity bump, untouched by rooting.
     expect(parent.threadReplyCount).toBe(1);
     expect(parent.lastActivityAt).toBe(T0 + 1000);
   });
