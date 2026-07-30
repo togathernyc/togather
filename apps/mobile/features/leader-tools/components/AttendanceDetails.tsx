@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-} from "react-native";
+import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { useAuth } from "@providers/AuthProvider";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
+import { WaInsetGroup } from "@components/wa/WaInsetGroup";
+import { WaCell } from "@components/wa/WaCell";
+import { WA_GROUP_SPACING } from "@components/wa/metrics";
 import { ToastManager } from "@components/ui/Toast";
 import { AddGuest, SubmitAttendance } from "./modals";
 import {
@@ -60,8 +59,10 @@ export function AttendanceDetails({
   onAddGuest,
   onSelectDate,
 }: AttendanceDetailsProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const { primaryColor } = useCommunityTheme();
+  const waAccent = waAccentPalette(primaryColor, isDark).accent;
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<string>("");
 
@@ -235,17 +236,14 @@ export function AttendanceDetails({
   const modalGuestCount = anonymousGuestCount + namedGuests.length;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface }, editMode && styles.containerEditMode]}>
-      {/* Edit Button (only in view mode, not for future events) */}
-      {/* Leaders can always edit attendance, even after it's been submitted */}
-      {!editMode && !futureEvent && (
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.editButton} onPress={onEdit}>
-            <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
+    <View
+      style={[
+        styles.container,
+        // View mode sits on the screen's grouped canvas — the WaInsetGroups
+        // bring their own card fill and margins, so no padding here.
+        editMode && [styles.containerEditMode, { backgroundColor: colors.surface }],
+      ]}
+    >
       {editMode ? (
         <AttendanceEditMode
           note={note}
@@ -270,12 +268,32 @@ export function AttendanceDetails({
           onSubmitPress={() => setShowSubmitModal(true)}
         />
       ) : (
-        <AttendanceViewMode
-          isFutureEvent={futureEvent}
-          report={attendanceReport}
-          submittedDate={submittedDate ?? undefined}
-          submittedBy={submittedBy ?? undefined}
-        />
+        <>
+          <AttendanceViewMode
+            isFutureEvent={futureEvent}
+            report={attendanceReport}
+            submittedDate={submittedDate ?? undefined}
+            submittedBy={submittedBy ?? undefined}
+          />
+
+          {/* §1.3 accent action row — replaces the stray "Edit" link that used
+              to float in the top-right corner. Leaders can always correct a
+              submitted count, so this shows whether or not one exists yet. */}
+          {!futureEvent && (
+            <View style={styles.actionSection}>
+              <WaInsetGroup>
+                <WaCell
+                  variant="action"
+                  title={
+                    hasAttendanceData ? "Edit attendance" : "Take attendance"
+                  }
+                  accent={waAccent}
+                  onPress={onEdit}
+                />
+              </WaInsetGroup>
+            </View>
+          )}
+        </>
       )}
 
       {/* Modals */}
@@ -298,7 +316,7 @@ export function AttendanceDetails({
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
+    paddingTop: 4,
   },
   containerEditMode: {
     flex: 1,
@@ -329,18 +347,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: "center",
   },
-  headerActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  editButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  editButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
+  actionSection: {
+    marginBottom: WA_GROUP_SPACING,
   },
 });

@@ -453,7 +453,8 @@ describe("AttendanceDetails", () => {
     renderComponent({ editMode: false });
 
     await waitFor(() => {
-      expect(screen.getByText("Edit")).toBeTruthy();
+      // Nothing recorded yet, so the action row invites the first entry.
+      expect(screen.getByText("Take attendance")).toBeTruthy();
     });
   });
 
@@ -461,9 +462,9 @@ describe("AttendanceDetails", () => {
     renderComponent({ editMode: false });
 
     await waitFor(() => {
-      // Edit button should still be visible even when attendance is submitted
+      // Edit action should still be visible even when attendance is submitted
       // (restriction was removed to allow corrections)
-      expect(screen.getByText("Edit")).toBeTruthy();
+      expect(screen.getByText("Edit attendance")).toBeTruthy();
     });
   });
 
@@ -496,7 +497,7 @@ describe("AttendanceDetails", () => {
     renderComponent({ editMode: false, onEdit });
 
     await waitFor(() => {
-      const editButton = screen.getByText("Edit");
+      const editButton = screen.getByText("Take attendance");
       fireEvent.press(editButton);
       expect(onEdit).toHaveBeenCalled();
     });
