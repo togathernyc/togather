@@ -29,6 +29,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { Id } from '@services/api/convex';
 import { useMessages } from '../hooks/useMessages';
+import { useChannelSwitchBuffer } from '../hooks/useChannelSwitchBuffer';
 import { useCommunityTheme } from '@hooks/useCommunityTheme';
 import { useTheme } from '@hooks/useTheme';
 import { useWhatsappShell } from '@hooks/useWhatsappShell';
@@ -287,10 +288,30 @@ export function MessageList({
   // Only show loading if we have NO data (neither prefetched nor live)
   const isLoading = liveIsLoading && !hasPrefetchedMessages;
 
+  // Flag-on stale-while-switch: keep something painted while the new
+  // channel's subscription warms up, instead of tearing the FlatList down to
+  // a bare surface (the channel-tab-strip flicker). Flag-off this is a
+  // pass-through, so everything below sees exactly today's values.
+  const {
+    messages: displayMessages,
+    channelId: displayChannelId,
+    isSwitching,
+  } = useChannelSwitchBuffer({
+    enabled: whatsappShellEnabled,
+    channelId,
+    messages,
+    isLoading,
+  });
+
+  // While `isSwitching`, the painted list belongs to the *previous* channel
+  // but the composer already targets the new one — so the new channel's
+  // optimistic sends must not be appended onto it.
+  const displayOptimisticMessages = isSwitching ? undefined : optimisticMessages;
+
   // Extract message IDs for batch reactions loading
   const messageIds = useMemo<Id<"chatMessages">[]>(() => {
-    return messages.map((msg) => msg._id);
-  }, [messages]);
+    return displayMessages.map((msg) => msg._id);
+  }, [displayMessages]);
 
   // Transform messages into list items (with date separators and grouping info)
   // For inverted list, we reverse the order so newest messages come first
@@ -309,9 +330,12 @@ export function MessageList({
     // nothing is missing that a floating echo needs to stand in for. See
     // `renderThreadReplies` in MessageItem and `docs/plans/church-migration-ui-
     // redesign/WHATSAPP-DESIGN-SYSTEM.md` §5.
+    //
+    // Both branches read `displayMessages` (the channel-switch buffer's
+    // output) — flag-off the buffer is a literal pass-through of `messages`.
     const timeline = whatsappShellEnabled
-      ? messages.map((message) => ({ kind: 'message' as const, message }))
-      : buildThreadAwareTimeline(messages);
+      ? displayMessages.map((message) => ({ kind: 'message' as const, message }))
+      : buildThreadAwareTimeline(displayMessages);
     let previousMsg: Message | undefined;
     let previousDateKey: string | undefined;
 
@@ -364,7 +388,7 @@ export function MessageList({
 
     // Append optimistic messages at the end (newest, after all server messages)
     // Skip optimistic messages that already have a matching real message (dedup)
-    if (optimisticMessages && optimisticMessages.length > 0) {
+    if (displayOptimisticMessages && displayOptimisticMessages.length > 0) {
       // Predecessor for grouping is the forward pass's final `previousMsg`,
       // not raw `messages[length-1]`: the constructed timeline may end with a
       // ghost or date separator (both reset `previousMsg` to undefined), and
@@ -375,10 +399,10 @@ export function MessageList({
       // Track which server messages have already been matched so that
       // identical content sent twice within the time window is handled
       // correctly (each server message only "consumes" one optimistic).
-      const recentServerMessages = messages.slice(-5);
+      const recentServerMessages = displayMessages.slice(-5);
       const matchedServerIds = new Set<string>();
 
-      const pendingOptimistic = optimisticMessages.filter((optMsg) => {
+      const pendingOptimistic = displayOptimisticMessages.filter((optMsg) => {
         // Only dedup messages that the server has confirmed ('sent')
         if (optMsg._status !== 'sent') return true;
         // Check if a matching real message exists (that hasn't already been matched)
@@ -456,7 +480,7 @@ export function MessageList({
 
     // Reverse for inverted list (newest first)
     return items.reverse();
-  }, [messages, optimisticMessages, whatsappShellEnabled]);
+  }, [displayMessages, displayOptimisticMessages, whatsappShellEnabled]);
 
   // Report the threads a next reply would collapse (see the prop's JSDoc).
   // Flag-off this is always empty — there are no inline replies to begin with.
@@ -564,10 +588,35 @@ export function MessageList({
   // Handle load more (when scrolling up to older messages)
   // In inverted list, this is onEndReached (reaching the visual top)
   const handleLoadMore = useCallback(() => {
+    // While the painted list belongs to the previous channel, `loadMore`
+    // would page the *new* channel's history behind the user's back.
+    if (isSwitching) return;
     if (hasMore && !isLoading) {
       loadMore();
     }
-  }, [hasMore, isLoading, loadMore]);
+  }, [hasMore, isLoading, isSwitching, loadMore]);
+
+  // A newly-opened channel starts at the bottom (newest), matching today's
+  // behavior — which only happened as a side effect of the list unmounting
+  // during the blank flash. Now that the FlatList survives the switch it
+  // keeps its scroll offset, so reset it explicitly once the new channel's
+  // own content is on screen. Inverted list ⇒ offset 0 is the bottom.
+  // Skipped on first settle (mount, already at 0) and while an anchor jump
+  // owns the scroll (inbox search / ghost thread pointer).
+  const settledChannelRef = useRef<Id<"chatChannels"> | null | undefined>(undefined);
+  useEffect(() => {
+    if (!whatsappShellEnabled) return;
+    if (isSwitching || !displayChannelId) return;
+    const previousSettled = settledChannelRef.current;
+    settledChannelRef.current = displayChannelId;
+    if (previousSettled === undefined || previousSettled === displayChannelId) return;
+    if (effectiveHighlightId) return;
+    try {
+      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    } catch {
+      // List not measured yet — it mounts at offset 0 anyway.
+    }
+  }, [whatsappShellEnabled, displayChannelId, isSwitching, effectiveHighlightId]);
 
   // Handle scroll to bottom button press
   // In inverted list, scroll to index 0 to go to newest messages
@@ -700,7 +749,7 @@ export function MessageList({
   const emptyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!isLoading && messages.length === 0) {
+    if (!isLoading && displayMessages.length === 0) {
       // Wait before showing empty state so subscription has time to deliver
       emptyTimerRef.current = setTimeout(() => setShowEmptyState(true), 500);
     } else {
@@ -713,7 +762,7 @@ export function MessageList({
     return () => {
       if (emptyTimerRef.current) clearTimeout(emptyTimerRef.current);
     };
-  }, [isLoading, messages.length]);
+  }, [isLoading, displayMessages.length]);
 
   // §S4.1: flag-on, the chat room paints a doodle wallpaper behind the whole
   // screen. Painting `surface` here covered it with white-on-white, which is
@@ -723,14 +772,14 @@ export function MessageList({
   const listBackground = whatsappShellEnabled ? 'transparent' : themeColors.surface;
 
   // Loading state or waiting for messages — show empty container
-  if (messages.length === 0 && !showEmptyState) {
+  if (displayMessages.length === 0 && !showEmptyState) {
     return (
       <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]} />
     );
   }
 
   // Empty state — only shown after delay confirms no messages
-  if (showEmptyState && messages.length === 0) {
+  if (showEmptyState && displayMessages.length === 0) {
     return (
       <View testID="message-list-empty" style={[styles.centerContainer, { backgroundColor: listBackground }]}>
         <Ionicons name="chatbubbles-outline" size={64} color={themeColors.iconSecondary} style={{ marginBottom: 16 }} />
@@ -741,8 +790,17 @@ export function MessageList({
   }
 
   return (
-    <ReactionsProvider messageIds={messageIds} channelId={channelId}>
-      <View testID="message-list-container" style={[styles.container, { backgroundColor: listBackground }]}>
+    // Reactions are subscribed for the channel the painted messages actually
+    // belong to, which lags `channelId` for the length of a switch.
+    <ReactionsProvider messageIds={messageIds} channelId={displayChannelId}>
+      <View
+        testID="message-list-container"
+        style={[styles.container, { backgroundColor: listBackground }]}
+        // Scenery from the outgoing channel must not take taps — a reply or
+        // reaction would target a message the composer is no longer pointed
+        // at. Sub-second window; `undefined` keeps flag-off byte-identical.
+        pointerEvents={isSwitching ? 'none' : undefined}
+      >
         <FlatList
           ref={listRef}
           data={listItems}
@@ -804,7 +862,7 @@ export function MessageList({
         />
 
         {/* Scroll to bottom button */}
-        {showScrollToBottom && (
+        {showScrollToBottom && !isSwitching && (
           <Pressable
             style={[styles.scrollToBottomButton, { backgroundColor: primaryColor }]}
             onPress={handleScrollToBottom}
