@@ -1582,28 +1582,25 @@ function MessageItemInner({
                   </View>
                 )}
               </View>
-              {/* Bubble tail — omitted for edge-to-edge image-only bubbles so no
-                  blue/gray tail floats beside the photo. */}
-              {!isImageOnlyMessage && (
+              {/* Legacy bubble tail — a CSS-triangle View parked 5pt OUTSIDE the
+                  bubble's edge. Omitted for edge-to-edge image-only bubbles so no
+                  blue/gray tail floats beside the photo.
+
+                  Flag-on it is omitted entirely: §5's bubble anatomy makes the
+                  tail the SQUARED corner radius
+                  (`WA_BUBBLE_TAIL_CORNER_RADIUS`), never a drawn triangle. The
+                  two treatments were rendering on top of each other — and
+                  because the flag-on bubble is rounder (12pt, or the full 12 on
+                  a continuation bubble that squares no corner at all) and casts
+                  its own shadow, the triangle read as a detached "broken arrow"
+                  fragment floating beside the bubble on both sides. */}
+              {!isImageOnlyMessage && !whatsappShellEnabled && (
                 <View
+                  testID="legacy-bubble-tail"
                   style={
                     isOwnMessage
-                      ? [
-                          styles.ownMessageTail,
-                          {
-                            borderLeftColor: whatsappShellEnabled
-                              ? waPalette.bubbleOutgoing
-                              : themeColors.chatBubbleOwn,
-                          },
-                        ]
-                      : [
-                          styles.otherMessageTail,
-                          {
-                            borderRightColor: whatsappShellEnabled
-                              ? themeColors.bubbleIncoming
-                              : themeColors.chatBubbleOther,
-                          },
-                        ]
+                      ? [styles.ownMessageTail, { borderLeftColor: themeColors.chatBubbleOwn }]
+                      : [styles.otherMessageTail, { borderRightColor: themeColors.chatBubbleOther }]
                   }
                 />
               )}
