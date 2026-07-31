@@ -2235,6 +2235,7 @@ function TeamRow({
 /** The slice of a `listPlanTasks` row this section reads. */
 type AuthorTask = {
   _id: string;
+  teamIds: string[];
   roleIds: string[];
   segment: Segment;
   title: string;
@@ -2302,9 +2303,12 @@ function AuthorSection({
     (r) => r.roleId === selectedRoleId,
   );
 
+  // Team-scoped: `listPlanTasks` is plan-wide and the role catalog spans every
+  // team in the group, so team-level tasks must be matched on the SELECTED
+  // role's team or a leader would see (and be able to delete) another team's.
   const bySegment = useMemo(
-    () => tasksForRole(planTasks ?? [], selectedRoleId),
-    [planTasks, selectedRoleId],
+    () => tasksForRole(planTasks ?? [], selectedRole ?? null),
+    [planTasks, selectedRole],
   );
 
   const [addingSegment, setAddingSegment] = useState<Segment | null>(null);

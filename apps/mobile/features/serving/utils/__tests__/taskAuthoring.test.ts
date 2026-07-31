@@ -40,24 +40,32 @@ describe("canAuthorPlanTasks", () => {
 });
 
 describe("tasksForRole", () => {
+  const TEAM_1 = { roleId: "role-a", teamId: "team-1" };
+  const TEAM_1_B = { roleId: "role-b", teamId: "team-1" };
+
   const tasks: AuthorableTask[] = [
-    { roleIds: ["role-a"], segment: "before", sortOrder: 1 },
-    { roleIds: ["role-a"], segment: "before", sortOrder: 0 },
-    { roleIds: ["role-a", "role-b"], segment: "during", sortOrder: 0 },
-    { roleIds: ["role-b"], segment: "after", sortOrder: 0 },
-    { roleIds: [], segment: "before", sortOrder: 2 }, // team-level
+    { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 1 },
+    { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 0 },
+    {
+      teamIds: ["team-1"],
+      roleIds: ["role-a", "role-b"],
+      segment: "during",
+      sortOrder: 0,
+    },
+    { teamIds: ["team-1"], roleIds: ["role-b"], segment: "after", sortOrder: 0 },
+    { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 2 }, // team-level
   ];
 
-  it("returns the selected role's tasks (plus team-level), sorted by sortOrder", () => {
-    const result = tasksForRole(tasks, "role-a");
+  it("returns the selected role's tasks (plus its team's team-level), sorted by sortOrder", () => {
+    const result = tasksForRole(tasks, TEAM_1);
     expect(result.before.map((t) => t.sortOrder)).toEqual([0, 1, 2]);
     expect(result.during).toHaveLength(1);
     expect(result.after).toHaveLength(0);
   });
 
   it("includes a multi-role task under every role it lists", () => {
-    const a = tasksForRole(tasks, "role-a");
-    const b = tasksForRole(tasks, "role-b");
+    const a = tasksForRole(tasks, TEAM_1);
+    const b = tasksForRole(tasks, TEAM_1_B);
     expect(a.during).toHaveLength(1);
     expect(b.during).toHaveLength(1);
     expect(a.during[0]).toBe(b.during[0]);
@@ -67,9 +75,9 @@ describe("tasksForRole", () => {
   // the one place a leader could neither see nor fix them (they're excluded
   // from "Mine" by design and live only under the read-only Shared pill). The
   // UI labels them as whole-team so the role context stays honest.
-  it("includes team-level tasks (empty roleIds) under every role", () => {
-    const a = tasksForRole(tasks, "role-a");
-    const b = tasksForRole(tasks, "role-b");
+  it("includes team-level tasks (empty roleIds) under every role on that team", () => {
+    const a = tasksForRole(tasks, TEAM_1);
+    const b = tasksForRole(tasks, TEAM_1_B);
     expect(a.before.filter(isTeamLevelTask)).toHaveLength(1);
     expect(b.before.filter(isTeamLevelTask)).toHaveLength(1);
   });
@@ -80,21 +88,88 @@ describe("tasksForRole", () => {
   });
 
   it("still surfaces team-level tasks for a role with no tasks of its own", () => {
-    const result = tasksForRole(tasks, "role-nobody");
+    const result = tasksForRole(tasks, { roleId: "role-nobody", teamId: "team-1" });
     expect(result.before).toHaveLength(1);
     expect(result.before[0].roleIds).toEqual([]);
     expect(result.during).toEqual([]);
     expect(result.after).toEqual([]);
   });
+
+  // REGRESSION: `listPlanTasks` is PLAN-wide (every team) and the role catalog
+  // spans every team in the group, so a team-level task used to leak into
+  // another team's Edit list — captioned "Whole team", one tap from Delete.
+  describe("across teams", () => {
+    const multiTeam: AuthorableTask[] = [
+      // Worship's whole-team task.
+      { teamIds: ["team-worship"], roleIds: [], segment: "before", sortOrder: 0 },
+      // Kids' whole-team task.
+      { teamIds: ["team-kids"], roleIds: [], segment: "before", sortOrder: 1 },
+      // A task shared by both teams.
+      {
+        teamIds: ["team-worship", "team-kids"],
+        roleIds: [],
+        segment: "during",
+        sortOrder: 0,
+      },
+    ];
+
+    it("never shows another team's team-level task", () => {
+      const kids = tasksForRole(multiTeam, {
+        roleId: "role-checkin",
+        teamId: "team-kids",
+      });
+      expect(kids.before).toHaveLength(1);
+      expect(kids.before[0].teamIds).toEqual(["team-kids"]);
+
+      const worship = tasksForRole(multiTeam, {
+        roleId: "role-sound",
+        teamId: "team-worship",
+      });
+      expect(worship.before).toHaveLength(1);
+      expect(worship.before[0].teamIds).toEqual(["team-worship"]);
+    });
+
+    it("shows a task spanning both teams to each of them", () => {
+      const kids = tasksForRole(multiTeam, {
+        roleId: "role-checkin",
+        teamId: "team-kids",
+      });
+      const worship = tasksForRole(multiTeam, {
+        roleId: "role-sound",
+        teamId: "team-worship",
+      });
+      expect(kids.during).toHaveLength(1);
+      expect(worship.during).toHaveLength(1);
+      expect(kids.during[0]).toBe(worship.during[0]);
+    });
+
+    it("shows nothing team-level to a team that owns none", () => {
+      const other = tasksForRole(multiTeam, {
+        roleId: "role-usher",
+        teamId: "team-hospitality",
+      });
+      expect(other).toEqual({ before: [], during: [], after: [] });
+    });
+  });
 });
 
 describe("isTeamLevelTask", () => {
   it("is true only when the task names no role", () => {
-    expect(isTeamLevelTask({ roleIds: [], segment: "before", sortOrder: 0 })).toBe(
-      true,
-    );
     expect(
-      isTeamLevelTask({ roleIds: ["role-a"], segment: "before", sortOrder: 0 }),
+      isTeamLevelTask({
+        teamIds: ["team-1"],
+        roleIds: [],
+        segment: "before",
+        sortOrder: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isTeamLevelTask({
+        teamIds: ["team-1"],
+        roleIds: ["role-a"],
+        segment: "before",
+        sortOrder: 0,
+      }),
     ).toBe(false);
   });
 });

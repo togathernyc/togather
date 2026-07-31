@@ -569,8 +569,22 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
   ];
   const NO_SHARED_TASKS: unknown[] = [];
 
-  function mockAuthorQueries(planTasks: unknown[] = []) {
-    mockQuery.mockImplementation((ref: string) => {
+  // A second team, for the cross-team leakage regression below. `listPlanTasks`
+  // is PLAN-wide and the role catalog spans every team in the group, so these
+  // two teams' tasks arrive in the same array.
+  const MULTI_TEAMS = [
+    { _id: "team-kids", name: "Kids" },
+    { _id: "team-worship", name: "Worship" },
+  ];
+  const KIDS_ROLES = [{ _id: "role-checkin", name: "Check-in" }];
+  const WORSHIP_ROLES = [{ _id: "role-sound", name: "Sound" }];
+
+  function mockAuthorQueries(
+    planTasks: unknown[] = [],
+    teams: unknown = AUTHOR_TEAMS,
+    rolesFor: (teamId?: string) => unknown = () => AUTHOR_ROLES,
+  ) {
+    mockQuery.mockImplementation((ref: string, args?: { teamId?: string }) => {
       switch (ref) {
         case REF.mine:
           return EMPTY_MINE;
@@ -583,9 +597,9 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
         case REF.groupById:
           return { userRole: undefined };
         case REF.listTeams:
-          return AUTHOR_TEAMS;
+          return teams;
         case REF.listRoles:
-          return AUTHOR_ROLES;
+          return rolesFor(args?.teamId);
         case REF.listPlanTasks:
           return planTasks;
         case REF.listTaskTemplates:
@@ -596,6 +610,12 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
           return undefined;
       }
     });
+  }
+
+  function mockMultiTeamAuthorQueries(planTasks: unknown[]) {
+    mockAuthorQueries(planTasks, MULTI_TEAMS, (teamId) =>
+      teamId === "team-kids" ? KIDS_ROLES : WORSHIP_ROLES,
+    );
   }
 
   beforeEach(() => {
@@ -628,6 +648,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-1",
+        teamIds: ["team-1"],
         roleIds: ["role-greeter"],
         segment: "before",
         title: "Set up welcome table",
@@ -646,6 +667,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-1",
+        teamIds: ["team-1"],
         roleIds: ["role-greeter"],
         segment: "before",
         title: "Set up welcome table",
@@ -674,6 +696,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-shared",
+        teamIds: ["team-1"],
         roleIds: [],
         segment: "before",
         title: "Unlock the building",
@@ -691,6 +714,65 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     // Still visible after switching to a role that owns no tasks of its own.
     fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
     expect(getByText("Unlock the building")).toBeTruthy();
+  });
+
+  // REGRESSION: `listPlanTasks` returns EVERY task on the plan (all teams) and
+  // the role catalog spans every team in the group, so team-level tasks used to
+  // appear under other teams' roles — captioned "Whole team — not just this
+  // role" (false) and one tap from an unconfirmed Delete that cascades
+  // completions and permanently detaches the row from its template.
+  it("never shows another team's team-level task", () => {
+    mockUser = { is_admin: true };
+    mockMultiTeamAuthorQueries([
+      {
+        _id: "task-worship",
+        teamIds: ["team-worship"],
+        roleIds: [],
+        segment: "before",
+        title: "Sound check",
+        sortOrder: 0,
+      },
+      {
+        _id: "task-kids",
+        teamIds: ["team-kids"],
+        roleIds: [],
+        segment: "before",
+        title: "Check-in table setup",
+        sortOrder: 1,
+      },
+    ]);
+    const { getByText, getByLabelText, queryByText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    // Kids sorts before Worship, so Kids · Check-in is selected by default.
+    expect(getByText("Kids · Check-in")).toBeTruthy();
+    expect(getByText("Check-in table setup")).toBeTruthy();
+    expect(queryByText("Sound check")).toBeNull();
+
+    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+
+    expect(getByText("Sound check")).toBeTruthy();
+    expect(queryByText("Check-in table setup")).toBeNull();
+  });
+
+  it("shows a task spanning both teams under each team's roles", () => {
+    mockUser = { is_admin: true };
+    mockMultiTeamAuthorQueries([
+      {
+        _id: "task-both",
+        teamIds: ["team-kids", "team-worship"],
+        roleIds: [],
+        segment: "before",
+        title: "Clear the stage",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(getByText("Clear the stage")).toBeTruthy();
+    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+    expect(getByText("Clear the stage")).toBeTruthy();
   });
 
   it("adds a task for the selected role via createTask", async () => {
@@ -719,6 +801,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-1",
+        teamIds: ["team-1"],
         roleIds: ["role-greeter"],
         segment: "before",
         title: "Set up welcome table",
@@ -744,6 +827,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-1",
+        teamIds: ["team-1"],
         roleIds: ["role-greeter"],
         segment: "before",
         title: "Set up welcome table",
@@ -765,6 +849,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     mockAuthorQueries([
       {
         _id: "task-1",
+        teamIds: ["team-1"],
         roleIds: ["role-greeter"],
         segment: "before",
         title: "Set up welcome table",

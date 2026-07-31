@@ -37,6 +37,8 @@ export function canAuthorPlanTasks(
 
 /** The slice of a `listPlanTasks` row that role-filtering needs. */
 export interface AuthorableTask {
+  /** Every team the task belongs to (`listPlanTasks` returns this). */
+  teamIds: readonly string[];
   roleIds: readonly string[];
   segment: Segment;
   sortOrder: number;
@@ -53,28 +55,36 @@ export function isTeamLevelTask(task: AuthorableTask): boolean {
  * surface, sorted within each bucket by `sortOrder` (matching the plan-wide
  * task order).
  *
- * TEAM-LEVEL tasks (`roleIds` empty) are included in EVERY role's buckets.
- * They aren't the selected role's tasks — they apply to the whole team, and
- * the UI labels them as such — but excluding them made the Edit surface the
- * one place a leader could neither see nor fix them: they're absent from
- * "Mine" by design (`getMyServingTasks` skips them) and live only under the
- * Shared pill, which has no authoring controls. A leader looking at Edit and
- * seeing "No tasks yet for this role" on a plan whose tasks are all
+ * TEAM-LEVEL tasks (`roleIds` empty) are included in the buckets of every role
+ * **on the same team**. They aren't the selected role's tasks — they apply to
+ * the whole team, and the UI labels them as such — but excluding them made the
+ * Edit surface the one place a leader could neither see nor fix them: they're
+ * absent from "Mine" by design (`getMyServingTasks` skips them) and live only
+ * under the Shared pill, which has no authoring controls. A leader looking at
+ * Edit and seeing "No tasks yet for this role" on a plan whose tasks are all
  * team-level was being told something false.
  *
- * `roleId === null` (nothing selected yet, e.g. before the role catalog has
+ * The TEAM check is not optional. Both inputs are wider than one team:
+ * `listPlanTasks({ planId })` returns every task on the plan across all teams,
+ * and `buildRoleCatalog` spans every team in the group. Without it, selecting
+ * (say) `Kids · Check-in` listed Worship's team-level "Sound check" captioned
+ * "Whole team — not just this role" — a lie — and a single tap could DELETE it
+ * (cascading its completions, and permanently unsyncing it from its template).
+ *
+ * `role === null` (nothing selected yet, e.g. before the role catalog has
  * loaded) returns all-empty buckets.
  */
 export function tasksForRole<T extends AuthorableTask>(
   tasks: readonly T[],
-  roleId: string | null,
+  role: { roleId: string; teamId: string } | null,
 ): Record<Segment, T[]> {
   const result: Record<Segment, T[]> = { before: [], during: [], after: [] };
-  if (!roleId) return result;
+  if (!role) return result;
   for (const task of tasks) {
-    if (isTeamLevelTask(task) || task.roleIds.includes(roleId)) {
-      result[task.segment].push(task);
-    }
+    const belongs = isTeamLevelTask(task)
+      ? task.teamIds.includes(role.teamId)
+      : task.roleIds.includes(role.roleId);
+    if (belongs) result[task.segment].push(task);
   }
   (Object.keys(result) as Segment[]).forEach((segment) => {
     result[segment] = [...result[segment]].sort(
