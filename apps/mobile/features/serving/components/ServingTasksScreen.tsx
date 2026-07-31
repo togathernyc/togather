@@ -3006,7 +3006,8 @@ function MineEmptyNotice({
  * grid can't be destroyed by this device's stale "the plan is empty" snapshot.
  *
  * Only rendered when the plan has zero tasks, so there is nothing to destroy
- * and no confirmation step is warranted.
+ * and no confirmation step is warranted — and only on an UPCOMING plan, since
+ * the backend freezes template linkage once the event has started (see below).
  *
  * OFFLINE: hidden, for the same reason `AuthorSection` hides its controls —
  * this is a plan-wide, server-validated write with no dedupe key.
@@ -3030,15 +3031,29 @@ function PopulateFromTemplate({
     api.functions.scheduling.taskTemplates.listTaskTemplates,
     isEffectivelyOffline ? "skip" : { groupId },
   ) as Array<{ _id: string; name: string; itemCount: number }> | undefined;
+  // `setPlanTaskTemplate` throws "Past events are frozen and cannot be
+  // re-linked." once `plan.eventDate` (the FIRST service's start time, not a
+  // day bucket) has passed — which is most of the serving window this
+  // affordance exists for: serving opens 12h before the plan and stays open 4h
+  // past the last service, so for a 9:00 service every tap from 09:00 to 13:00
+  // would fail with a raw ConvexError. Read the same `isPast` the rostering
+  // grid's `PlanTemplateToolbar` uses and don't offer the rows at all.
+  // `createTask` has NO past-plan freeze, so the Edit tab genuinely still works.
+  const linkage = useAuthenticatedQuery(
+    api.functions.scheduling.planTemplates.getPlanTemplateState,
+    isEffectivelyOffline ? "skip" : { planId },
+  ) as { isPast: boolean } | undefined;
   const setPlanTaskTemplate = useAuthenticatedMutation(
     api.functions.scheduling.planTemplates.setPlanTaskTemplate,
   );
   const [applyingId, setApplyingId] = useState<string | null>(null);
 
-  if (isEffectivelyOffline || templates === undefined) return null;
+  if (isEffectivelyOffline || templates === undefined || linkage === undefined) {
+    return null;
+  }
 
   // A template with no items would link cleanly and still leave the plan empty.
-  const usable = templates.filter((t) => t.itemCount > 0);
+  const usable = linkage.isPast ? [] : templates.filter((t) => t.itemCount > 0);
 
   if (usable.length === 0) {
     return (
@@ -3049,8 +3064,9 @@ function PopulateFromTemplate({
           { color: colors.textTertiary },
         ]}
       >
-        This campus has no saved task lists yet. Use the Edit tab above to add
-        tasks role by role.
+        {linkage.isPast
+          ? "This event has already started, so it can no longer be linked to a saved task list. Use the Edit tab above to add tasks role by role."
+          : "This campus has no saved task lists yet. Use the Edit tab above to add tasks role by role."}
       </Text>
     );
   }

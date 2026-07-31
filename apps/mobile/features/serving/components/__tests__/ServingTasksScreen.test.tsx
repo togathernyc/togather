@@ -15,6 +15,7 @@ const REF = {
   listTeams: "api.functions.scheduling.teams.listTeams",
   listRoles: "api.functions.scheduling.roles.listRoles",
   listTaskTemplates: "api.functions.scheduling.taskTemplates.listTaskTemplates",
+  templateState: "api.functions.scheduling.planTemplates.getPlanTemplateState",
 };
 
 jest.mock("@services/api/convex", () => ({
@@ -56,6 +57,8 @@ jest.mock("@services/api/convex", () => ({
         },
         planTemplates: {
           setPlanTaskTemplate: "setPlanTaskTemplate",
+          getPlanTemplateState:
+            "api.functions.scheduling.planTemplates.getPlanTemplateState",
         },
       },
     },
@@ -248,6 +251,7 @@ function mockQueries(
     crew?: unknown;
     allTeams?: unknown;
     taskTemplates?: unknown;
+    templateState?: unknown;
   } = {},
 ) {
   mockQuery.mockImplementation((ref: string) => {
@@ -264,11 +268,19 @@ function mockQueries(
         return extra.allTeams ?? [];
       case REF.listTaskTemplates:
         return extra.taskTemplates ?? [];
+      case REF.templateState:
+        // Upcoming plan by default — a PAST plan can't be re-linked at all.
+        return extra.templateState ?? UPCOMING_PLAN;
       default:
         return undefined;
     }
   });
 }
+
+/** `getPlanTemplateState` — only `isPast` is read here. Hoisted for reference
+ *  stability across renders (see `AUTHOR_TEAMS` below for why that matters). */
+const UPCOMING_PLAN = { isPast: false };
+const PAST_PLAN = { isPast: true };
 
 const NO_PLAN_TASKS_MESSAGE = "This event has no tasks set up yet.";
 const NOT_ROSTERED_MESSAGE = "You're not on the roster for this event.";
@@ -487,6 +499,40 @@ describe("ServingTasksScreen — leader affordance on a task-less plan", () => {
     expect(getByText(/Use the Edit tab above/)).toBeTruthy();
   });
 
+  // `setPlanTaskTemplate` throws "Past events are frozen and cannot be
+  // re-linked." once `plan.eventDate` has passed — and `eventDate` is the FIRST
+  // SERVICE's start time, not a day bucket, while serving mode stays open until
+  // 4h after the last service. So for a 9:00 service every one of these rows
+  // failed with a raw ConvexError for the whole 09:00–13:00 at-the-venue window
+  // this affordance exists for. `createTask` has no such freeze, so the Edit tab
+  // really is the way through — say so instead of offering a guaranteed error.
+  it("offers the Edit tab instead of a guaranteed failure once the event has started", () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      taskTemplates: TEMPLATES,
+      templateState: PAST_PLAN,
+    });
+    const { queryByLabelText, queryByText, getByText } = render(
+      <ServingTasksScreen />,
+    );
+
+    expect(queryByLabelText("Add tasks from Sunday Production")).toBeNull();
+    expect(queryByText("Sunday Production · 12 tasks")).toBeNull();
+    expect(getByText(/already started/)).toBeTruthy();
+    expect(getByText(/Use the Edit tab above/)).toBeTruthy();
+  });
+
+  it("still offers the templates while the event is upcoming", () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      taskTemplates: TEMPLATES,
+      templateState: UPCOMING_PLAN,
+    });
+    const { getByLabelText } = render(<ServingTasksScreen />);
+
+    expect(getByLabelText("Add tasks from Sunday Production")).toBeTruthy();
+  });
+
   it("hides the affordance from a non-leader", () => {
     mockUser = { is_admin: false };
     mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
@@ -625,6 +671,8 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
           // These tests are about the Edit surface, not the empty-state
           // template affordance — leave the group with no saved templates.
           return [];
+        case REF.templateState:
+          return UPCOMING_PLAN;
         default:
           return undefined;
       }
