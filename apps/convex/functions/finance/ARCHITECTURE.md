@@ -26,7 +26,13 @@ Because there's one producer, there's also one name at the bank: the fund's own 
 
 **functions/finance/webhooks.ts** — Stripe payment/payout/refund/dispute and Increase event dispatch + signature verification. Handles Stripe routing to `recordDonationSucceeded` (payment_intent.succeeded, with a server-side connected-account cross-check against the fund's own `communityFinance` before crediting — see `getFundFinanceForWebhook`), `recordDonationRefund` (charge.refunded, same account cross-check via `getDonationFundForWebhook`), `recordDonationDisputed` (charge.dispute.created, audit-only), `runAllocation` (payout.paid **and** payout.reconciliation_completed — Stripe attributes balance transactions asynchronously, so the paid event alone can read a partial or empty composition), `unbindFailedPayout` (payout.failed), Increase Entity/Account status updates (entity.created, account.created), `recordCardSettlement` (transaction.created with `source.category === "card_settlement"` — turns a card swipe into a `card_charge` expense + ledger debit, see cards.ts below), and webhook signature verification via Increase's idempotency behavior (documented in lib/finance/increase.ts).
 
-**functions/finance/cards.ts** — Group-fund virtual cards (ADR-032 §3 Phase 3). Exports `listFundCards` / `getCardDetail` (cardholder+/leader/admin-gated reads; `getCardDetail` includes the card's last 20 `card_charge` expenses), `createFundCard` (mutation: finance_admin issues a card to a cardholder+ holder — rejects a non-`active` fund, a fund with no `increaseAccountId`, or a community whose `communityFinance.onboardingStatus` isn't `"live"`; inserts a `"pending"` row, audits `card.created`, then schedules `provisionCard`, an internalAction that calls Increase's `createCard` and records the result via `recordCardProvisioned`/`recordCardProvisionFailed` — same provider-write-then-record shape as onboarding.ts's `provisionProviders`), `setCardFrozen` (mutation: the holder can self-freeze, but only a finance_admin can unfreeze — a compromised holder must not be able to re-enable their own frozen card), and `cancelCard` (mutation: finance_admin-only, irreversible). Both lifecycle mutations schedule the shared `applyCardStatus` internalAction (`updateCardStatus` at Increase, then `recordCardStatus` persists whatever status Increase actually confirmed). `spendLimitCents`/`limitPeriod` are **advisory only** — Increase enforces no automatic period reset tied to them; real per-swipe enforcement needs Increase's real-time-authorization webhook, out of scope here (Phase 2 follow-up, see "Known Seams & TODOs"). The settlement side — turning a confirmed card swipe into an expense — is `webhooks.ts`'s `recordCardSettlement`, not this file.
+**functions/finance/cards.ts** — Group-fund virtual cards (ADR-032 §3 Phase 3). Exports `listFundCards` / `getCardDetail` (cardholder+/leader/admin-gated reads; `getCardDetail` includes the card's last 20 `card_charge` expenses), `createFundCard` (mutation: finance_admin issues a card to a cardholder+ holder — rejects a non-`active` fund, a fund with no `increaseAccountId`, or a community whose `communityFinance.onboardingStatus` isn't `"live"`; inserts a `"pending"` row, audits `card.created`, then schedules `provisionCard`, an internalAction that calls Increase's `createCard` and records the result via `recordCardProvisioned`/`recordCardProvisionFailed` — same provider-write-then-record shape as onboarding.ts's `provisionProviders`), `setCardLimit` (mutation: finance_admin changes or clears a live card's limit — same readiness gates as `createFundCard`, i.e. an `active` fund and a card that is `active`/`disabled`; a `canceled` card and a frozen fund are both refused, since changing a cap is mostly a spending-power grant. It returns `{ status: "pending", requested* }`, never the limit as if applied), `setCardFrozen` (mutation: the holder can self-freeze, but only a finance_admin can unfreeze — a compromised holder must not be able to re-enable their own frozen card), and `cancelCard` (mutation: finance_admin-only, irreversible). The lifecycle mutations schedule the shared `applyCardStatus` internalAction (`updateCardStatus` at Increase, then `recordCardStatus` persists whatever status Increase actually confirmed); `setCardLimit` schedules the equivalent `applyCardLimit`/`recordCardLimit` pair. The settlement side — turning a confirmed card swipe into an expense — is `webhooks.ts`'s `recordCardSettlement`, not this file.
+
+**Spend limits are bank-enforced, not advisory.** `spendLimitCents`/`limitPeriod` are translated by **lib/finance/cardPolicy.ts** into Increase's `authorization_controls.usage.multi_use.spending_limits` and sent at card creation and on every change, so Increase declines an over-limit authorization without calling us ([Increase: Launching a card program](https://increase.com/documentation/launch-a-card-program) — "enforced at authorization time without a round trip to your server"). Increase's own reset semantics apply and are UTC: `week` → `per_week` (resets Mondays at midnight UTC), `month` → `per_month` (the 1st, midnight UTC), `charge` → `per_transaction`. The stored pair is a **mirror** of the bank's copy, only ever written after Increase confirms the change; `webhooks.ts` compares settlements against it and audits `card.limit_exceeded` when the two disagree.
+
+**The drift audit runs in its own transaction, on purpose.** `recordCardSettlement` *schedules* `auditOverLimitCardCharge` rather than calling it — a Convex mutation is one transaction, so an inline check that threw would roll back the `card_charge` expense **and** the `card_capture` ledger debit, and Increase would retry the webhook straight into the same failure: a card swipe that silently stops being recorded. Scheduling is atomic with the settlement (it only happens if the settlement commits) while running separately, which is the only arrangement in which "the audit can never affect the money path" is true rather than intended. Its window query is bounded by the `expenses.by_card_created` index range (`cardId` + `createdAt`), not a `.collect()` of a card's whole history, so a card in weekly use for years can't grow the read until it hits Convex's limits. `finance-cards.test.ts` pins both: one test fails the audit deliberately and asserts the expense and ledger entry survive.
+
+**Two card mutations are deliberately NOT behind the `group-giving` flag** — `setCardFrozen` and `cancelCard`. A card is a bank object that keeps authorizing when the app is switched off, so gating de-escalation on the kill switch would disarm the only tool for containing an incident. Role checks are unchanged. See lib/finance/flag.ts.
 
 ## Money Flow
 
@@ -86,6 +92,11 @@ Because there's one producer, there's also one name at the bank: the fund's own 
   - `fund.frozen` — Fund frozen (e.g. its group was archived)
   - `card.created` — Card issued (row inserted; provisioning at Increase is still in flight)
   - `card.provision_failed` — `provisionCard`'s Increase call itself failed; card marked `"failed"`
+  - `card.provision_refused` — `provisionCard` re-checked the fund/community immediately before the provider call and found it no longer qualified (fund frozen, Account gone, onboarding out of `"live"`) between `createFundCard` and the scheduled action; no card was issued, row marked `"failed"`
+  - `card.limit_update_requested` — A finance_admin asked to change or clear a card's spend limit (`from*`/`to*` in details). The **request**, recorded by `setCardLimit` with the actor; Increase hasn't been called yet
+  - `card.limit_updated` — Increase **accepted** the change and the mirror was patched (written by `recordCardLimit`, not by the mutation). The audit trail must never assert a limit the bank never took, so the applied row only exists once it has
+  - `card.limit_update_failed` — The change didn't complete. `details.providerApplied` is the important field: `false` = Increase refused, bank and mirror both still hold the old limit (consistent); `true` = Increase took the change but the mirror write failed, so **the bank and the app now disagree** and nothing reconciles it automatically (there is no read-back cron) — a finance_admin has to re-save the limit
+  - `card.limit_exceeded` — A settled charge put the card past the limit Increase is supposed to be enforcing, i.e. our mirror and the bank disagree (see `webhooks.ts`'s `auditOverLimitCardCharge`). Audit-only; the money has already moved
   - `card.frozen` / `card.unfrozen` — Card status change requested (holder self-freeze, or finance_admin either direction)
   - `card.canceled` — Card permanently canceled (finance_admin only)
   - `expense.card_charge_recorded` — Card-settlement webhook created a `card_charge` expense + ledger debit
@@ -166,7 +177,9 @@ Finance test files in `apps/convex/__tests__/`:
 - **finance-roles.test.ts** — Tests the group-leader carve-out end to end: no self-grant at any rank, the escalation chain (self-grant → self-issued card) stays closed, the ADR's grant-to-someone-else bootstrap still works, admin-who-is-also-a-leader precedence, and a finance_admin changing their own role
 - **finance-general-account.test.ts** — Tests the General Account (ADR-032 §1): that `provisionProviders` mints it alongside the receiving Account, that all three provisioning paths ask Increase for the **same idempotency key** (asserted on the key, not just the account name), that the backfill heals older communities with per-fund error isolation and truthful counts, that a community with historically no-transfer `"allocated"` general donations **reconciles to zero drift** after the backfill (and that its ledger entries are untouched), that replaying the recorded payout actually moves the cash, and that a general-fund donation makes a real receiving → General transfer at its NET (staying `"pending"` when the fund has no Account yet). Unlike the other suites it MOCKS lib/finance/increase + lib/finance/stripeConnect and genuinely RUNS the actions (`provisionProviders`, `provisionFundAccount`, `runAllocation`, `runNightlyReconcile`, the migration) rather than freezing timers so they never fire — the assertions are about what was asked of the bank
 - **finance-receipt-provenance.test.ts** — Tests both producers of `r2:` keys against the receipt check: a `putR2Object` upload with `grantTo` is accepted by `submitExpense`, one without stays unclaimable, and a failing grant write never propagates out of either the presign path or `putR2Object` (mocks `@aws-sdk/client-s3`)
-- **finance-cards.test.ts** — Tests `createFundCard` (pending row + audit, holder-role gate, caller gate, fund-readiness gates), `listFundCards`/`getCardDetail` viewer gating, `setCardFrozen` permissions (self-freeze vs. finance_admin-only unfreeze), `cancelCard` (finance_admin-only), and `recordCardSettlement` (idempotency, account-mismatch rejection, missing-card log-not-throw)
+- **finance-cards.test.ts** — Tests `createFundCard` (pending row + audit, holder-role gate, caller gate, fund-readiness gates), spend-limit validation on both `createFundCard` and `setCardLimit`, `listFundCards`/`getCardDetail` viewer gating, `setCardFrozen` permissions (self-freeze vs. finance_admin-only unfreeze), `cancelCard` (finance_admin-only), that freeze/unfreeze/cancel still work with the `group-giving` flag OFF while every other entry point refuses, and `recordCardSettlement` (idempotency, account-mismatch rejection, missing-card log-not-throw, over-limit drift audit). The internalActions — `provisionCard`, `applyCardStatus`, `applyCardLimit` — are invoked directly against a mocked `lib/finance/increase`, so the payload sent to the provider (in particular the spend limit and its interval mapping) is asserted rather than assumed; the suite's `vi.useFakeTimers()` only stops SCHEDULED runs, it must not be allowed to skip the action logic itself
+- **finance-increase-cards.test.ts** — The card request bodies actually put on the wire. `finance-cards.test.ts` mocks the whole `lib/finance/increase` module, so `buildAuthorizationControls` — the function that decides what the bank is told — never runs there. This suite stubs `fetch` instead and asserts the literal JSON: `{"usage":{"category":"multi_use","multi_use":{"spending_limits":[{"interval":"per_week","settlement_amount":25000}]}}}` and the empty-array clear form. Without it, renaming `spending_limits` keeps CI green while shipping an uncapped card under a UI that promises the bank declines overages
+
 
 ## Known Seams & TODOs
 
@@ -391,6 +404,40 @@ Finance test files in `apps/convex/__tests__/`:
   on the first bind). `resumeAllocations: false` skips the Stripe replay:
   correct, zero-drift ledger, cash still in receiving, and
   `allocation.stale_pending` will (truthfully) alert after three days.
+
+- **What card controls still DON'T do.** Increase enforces the amount-per-interval
+  cap we send it, and nothing else. There is no merchant-category restriction, no
+  merchant-country restriction, no per-holder velocity rule, and no receipt
+  requirement — a charge with no receipt sits `"pending"` and is visible, but
+  nothing chases it and nothing blocks the card. All of those need either
+  Increase's other `authorization_controls` fields (`merchant_category_code`,
+  `merchant_country`, `merchant_acceptor_identifier` — declarative, cheap to add)
+  or its real-time-decision webhook (`real_time_decision`, for anything requiring
+  our own logic per swipe). ADR-032 §3 already scopes the latter out ("No custom
+  real-time authorization decisioner sits on the critical path (Increase's
+  real-time decisions remain available later for merchant-category rules)").
+  **And there is no approval step for a card charge.** Nothing in the app
+  surfaces a `card_charge` for approval, and `expensePolicy.ts`'s `canPay`
+  requires `kind === "reimbursement"`, so the reimbursement flow's two-approver
+  threshold is unreachable from a card swipe. A settled charge becomes a
+  `"pending"` expense that is *visible*, and that is all.
+
+  **The rule this seam exists to protect:** no card surface may claim a control
+  that isn't in this list — the create-card sheet and card detail once advertised
+  a "Require receipts — On" toggle backed by nothing at all, and later a
+  "needs a second approver" line backed by nothing either. The mobile constant is
+  `CARD_CHARGE_SETTLEMENT_NOTE` (`features/finance/leader/types.ts`), and the
+  view tests assert the *claim* is absent (`/second approver/i`, `/sign-off/i`),
+  not one historical sentence — the earlier string-literal assertion is exactly
+  how the reworded version shipped past CI.
+
+- **Legacy cards may be uncapped at the bank.** Cards provisioned before spend
+  limits were wired through carry a `spendLimitCents` we never sent to Increase,
+  so the bank is enforcing nothing on them. There is no backfill: a finance_admin
+  re-saving the limit via `setCardLimit` pushes it, and until then
+  `card.limit_exceeded` is the only signal. If group giving reaches more than the
+  pilot community, this wants a one-off migration that replays every card's
+  stored limit through `applyCardLimit`.
 
 **Member payout destination stub** (expenses.ts `getPayoutDestination`) — Phase 2 follow-up. Currently returns `null` (every expense blocks at "no destination found"). Awaiting linking flow to ship; structure is in place (`payReimbursement` action + `recordReimbursementPaid` mutation + Increase ACH client calls). Replace the stub with a real lookup once the UI for members to link their bank account lands.
 

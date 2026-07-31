@@ -135,8 +135,11 @@ and can delegate from there.
   vendors shows, and it is a background job, not a user-facing flow.
 - **Card spend**: Increase Card bound to the group's Account, spend limit,
   digital wallet token (Apple/Google Pay). Authorization is scoped by the
-  Account balance natively. The card-transaction webhook writes the debit
-  entry and triggers the receipt-nudge push.
+  Account balance natively, and the per-card spend limit is enforced natively
+  too — Increase's `authorization_controls.usage.multi_use.spending_limits`
+  declines an over-limit authorization at the bank, without a round trip to
+  us. The card-transaction webhook writes the debit entry and triggers the
+  receipt-nudge push.
 - **Reimbursement**: member submits amount + receipt (R2) → manager approves →
   Increase ACH transfer from the group's Account to the member's linked bank.
   Idempotency key = expense id.

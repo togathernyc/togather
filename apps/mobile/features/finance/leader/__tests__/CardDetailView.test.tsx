@@ -44,6 +44,40 @@ describe("CardDetailView", () => {
     expect(screen.getByText("$250.00 / week")).toBeTruthy();
   });
 
+  // Same rule as the create sheet: state the limit (Increase enforces it),
+  // never state a receipts-required control that doesn't exist.
+  it("does not claim a receipts-required control", () => {
+    render(<CardDetailView {...baseProps} />);
+
+    expect(screen.queryByText("Receipts required")).toBeNull();
+    expect(screen.queryByText("Charge auto-flags until a receipt is attached")).toBeNull();
+  });
+
+  // The claim, not a phrasing. There is no approval path for a card_charge —
+  // no screen surfaces one and canPay refuses the kind — so no wording of
+  // "sign-off" or "second approver" may appear on a card surface.
+  it("does not claim any approval control over card charges", () => {
+    render(<CardDetailView {...baseProps} />);
+
+    expect(screen.getByText(/settle straight away/i)).toBeTruthy();
+    expect(screen.queryByText(/second approver/i)).toBeNull();
+    expect(screen.queryByText(/\$200/)).toBeNull();
+    expect(screen.queryByText(/sign-off/i)).toBeNull();
+  });
+
+  it("says the bank enforces the limit, and warns when there isn't one", () => {
+    render(<CardDetailView {...baseProps} />);
+    expect(screen.getByText(/bank declines anything over this limit/i)).toBeTruthy();
+
+    screen.rerender(
+      <CardDetailView
+        {...baseProps}
+        card={makeCard({ spendLimitCents: null, limitPeriod: null })}
+      />,
+    );
+    expect(screen.getByText(/can spend the fund's whole balance/i)).toBeTruthy();
+  });
+
   it("shows the frozen strip and 'Unfreeze' label when the card is disabled", () => {
     render(<CardDetailView {...baseProps} card={makeCard({ status: "disabled" })} />);
 

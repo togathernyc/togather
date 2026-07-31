@@ -18,7 +18,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Input, Button, EmptyState, Skeleton } from "@components/ui";
 import { formatCents } from "../format";
-import { FUND_ROLE_LABELS, CARD_RECEIPTS_POLICY_NOTE, type CardholderCandidate, type CardLimitPeriod } from "./types";
+import { FUND_ROLE_LABELS, CARD_CHARGE_SETTLEMENT_NOTE, type CardholderCandidate, type CardLimitPeriod } from "./types";
 
 export type LimitSelection = "none" | CardLimitPeriod;
 
@@ -29,10 +29,17 @@ const LIMIT_OPTIONS: { key: LimitSelection; label: string }[] = [
   { key: "charge", label: "Per charge" },
 ];
 
+/**
+ * The bank's own reset semantics, stated plainly. These aren't decoration:
+ * Increase enforces the limit on these exact windows (per_week / per_month /
+ * per_transaction, all anchored to midnight UTC — see
+ * `apps/convex/lib/finance/cardPolicy.ts`), so the wording has to match what
+ * Increase actually does, UTC included.
+ */
 const LIMIT_HINTS: Record<LimitSelection, string | null> = {
   none: null,
-  week: "Resets every Monday",
-  month: "Resets on the 1st of the month",
+  week: "Resets every Monday at midnight UTC",
+  month: "Resets on the 1st of the month at midnight UTC",
   charge: "Applies to each individual charge",
 };
 
@@ -222,23 +229,17 @@ export function CreateCardView({
               )}
             </View>
           )}
+          <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
+            {limitSelection === "none"
+              ? "Without a limit, this card can spend the fund's whole balance. It can never reach another group's money."
+              : "The bank declines anything over this limit, so it holds even if nobody's watching."}
+          </Text>
         </View>
 
-        {/* RECEIPTS POLICY */}
+        {/* WHAT HAPPENS AFTER A CHARGE */}
         <View>
-          <View style={[styles.group, { backgroundColor: colors.surface }]}>
-            <View style={styles.cell}>
-              <View style={styles.cellMain}>
-                <Text style={[styles.cellTitle, { color: colors.text }]}>Require receipts</Text>
-                <Text style={[styles.cellSub, { color: colors.textSecondary }]}>
-                  Charges flag for approval until a receipt is attached
-                </Text>
-              </View>
-              <Text style={[styles.cellValue, { color: colors.success }]}>On</Text>
-            </View>
-          </View>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            {CARD_RECEIPTS_POLICY_NOTE}
+            {CARD_CHARGE_SETTLEMENT_NOTE}
           </Text>
         </View>
 
@@ -290,7 +291,6 @@ const styles = StyleSheet.create({
   cellMain: { flex: 1 },
   cellTitle: { fontSize: 15.5 },
   cellSub: { fontSize: 12.5, marginTop: 2 },
-  cellValue: { fontSize: 14.5, fontWeight: "600" },
   actionCellText: { fontSize: 15.5, fontWeight: "600" },
   footerNote: { fontSize: 12.5, marginTop: 8, paddingHorizontal: 4, lineHeight: 17 },
   centeredNote: { textAlign: "center" },

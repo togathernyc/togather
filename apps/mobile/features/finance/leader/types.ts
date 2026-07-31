@@ -144,9 +144,21 @@ export function formatCardLimit(
   return `${formatCents(spendLimitCents)} / ${CARD_LIMIT_PERIOD_LABELS[limitPeriod]}`;
 }
 
-/** Fund policy surfaced verbatim on the create-card sheet and card detail. */
-export const CARD_RECEIPTS_POLICY_NOTE =
-  "Two finance admins must approve any single charge over $200 — this is fund policy and applies to every card.";
+/**
+ * What actually happens to a card charge, surfaced verbatim on the
+ * create-card sheet and card detail.
+ *
+ * Says only what the product does today. A card swipe settles straight from
+ * the fund's bank account: the only things that can stop it are the card's
+ * own limit (Increase enforces it) and the account balance. There is no
+ * approval step for a `card_charge` expense — nothing surfaces one for
+ * sign-off and `canPay` refuses the kind outright — so this copy must claim
+ * neither sign-off nor a second approver. See the "What card controls still
+ * DON'T do" seam in `apps/convex/functions/finance/ARCHITECTURE.md`: no card
+ * surface may advertise a control that isn't on that list.
+ */
+export const CARD_CHARGE_SETTLEMENT_NOTE =
+  "Charges settle straight away — nothing in the app can stop one. Each lands in the fund's activity as soon as the bank confirms it.";
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields

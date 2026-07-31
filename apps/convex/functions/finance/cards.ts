@@ -14,19 +14,22 @@
  *   (an internalAction — Increase is called outside the mutation, same
  *   pattern as onboarding.ts's `provisionProviders`) to actually create the
  *   card at Increase and record the result.
+ * - `setCardLimit` — finance_admin changes (or removes) a live card's limit.
  * - `setCardFrozen` / `cancelCard` — lifecycle control. Both patch the local
  *   row via a scheduled internalAction + internalMutation pair (same
  *   provider-write-then-record shape as `createFundCard`), so a card's
  *   `status` only ever reflects what Increase actually confirmed, never an
  *   optimistic guess.
  *
- * `spendLimitCents` / `limitPeriod` are ADVISORY ONLY — display guidance for
- * the fund's roster and any spend-nudge UI. Increase itself enforces no
- * automatic period reset or hard cap tied to these fields; real per-swipe
- * enforcement would need Increase's real-time authorization webhook
- * (`real_time_decision`) making an accept/decline call against them, which is
- * out of scope here — Phase 2 follow-up, tracked alongside the other
- * Known Seams in ARCHITECTURE.md.
+ * `spendLimitCents` / `limitPeriod` are ENFORCED BY THE BANK, not advisory:
+ * they're translated (lib/finance/cardPolicy.ts) into Increase's
+ * `authorization_controls.usage.multi_use.spending_limits` and applied at
+ * card creation and on every limit change, so Increase declines an
+ * authorization that would breach them without ever calling us. Our stored
+ * copy is a mirror for display; the bank's copy is the control. Everything
+ * beyond an amount-per-interval cap (merchant-category rules, per-swipe
+ * custom logic) would still need Increase's real-time authorization webhook
+ * and remains out of scope — see ARCHITECTURE.md's Known Seams.
  *
  * Card-settlement transaction sync (turning a card swipe into a `card_charge`
  * expense) lives in functions/finance/webhooks.ts's `transaction.created`
@@ -48,6 +51,11 @@ import { now, getDisplayName, getMediaUrl } from "../../lib/utils";
 import { requireGroupGivingEnabled } from "../../lib/finance/flag";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import {
+  LIMIT_PERIOD_TO_INCREASE_INTERVAL,
+  validateCardLimit,
+  type CardLimitPeriod,
+} from "../../lib/finance/cardPolicy";
+import {
   requireFundRole,
   requireFundRoleOrGroupLeader,
   hasFundRole,
@@ -58,6 +66,22 @@ const limitPeriodValidator = v.union(
   v.literal("month"),
   v.literal("charge"),
 );
+
+/**
+ * Our stored limit pair -> the provider shape `lib/finance/increase.ts`
+ * sends. `null` means "no limit", which Increase must be told explicitly
+ * (see `buildAuthorizationControls`), so this never returns `undefined`.
+ */
+function toIncreaseSpendingLimit(
+  spendLimitCents: number | undefined,
+  limitPeriod: CardLimitPeriod | undefined,
+) {
+  if (spendLimitCents === undefined || limitPeriod === undefined) return null;
+  return {
+    interval: LIMIT_PERIOD_TO_INCREASE_INTERVAL[limitPeriod],
+    settlementAmountCents: spendLimitCents,
+  };
+}
 
 /** Find a user's currently-active (non-revoked) fundRoles row, if any. */
 async function getActiveRoleRow(
@@ -158,6 +182,11 @@ export const createFundCard = mutation({
     // override) issues cards — mirrors expenses.ts's approver gate.
     await requireFundRole(ctx, args.fundId, userId, "finance_admin");
 
+    // The limit is a bank-enforced control, so it must be a number Increase
+    // will accept BEFORE the row exists — a card row carrying a bogus limit
+    // would provision with no cap at all when the provider call rejects it.
+    validateCardLimit(args.spendLimitCents, args.limitPeriod);
+
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
       throw new Error("Fund not found");
@@ -239,7 +268,39 @@ export const getCardForProvisioning = internalQuery({
     if (!card) return null;
     const fund = await ctx.db.get(card.fundId);
     if (!fund) return null;
-    return { card, fund };
+    // The onboarding status is re-read here (not just at createFundCard) so
+    // provisionCard can re-check it against the state at provider-call time
+    // — see the refusal block in provisionCard for why.
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", fund.communityId))
+      .first();
+    return { card, fund, onboardingStatus: finance?.onboardingStatus ?? null };
+  },
+});
+
+/**
+ * Provisioning was refused because the fund/community stopped qualifying
+ * between `createFundCard` and the provider call. Distinct from
+ * `recordCardProvisionFailed` (Increase itself errored) because the two need
+ * different responses: a refusal means someone froze the fund and the card
+ * should stay unissued, not be retried.
+ */
+export const recordCardProvisionRefused = internalMutation({
+  args: { cardId: v.id("cards"), reason: v.string() },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    await ctx.db.patch(args.cardId, { status: "failed", updatedAt: now() });
+    if (fund) {
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        action: "card.provision_refused",
+        details: { cardId: args.cardId, reason: args.reason },
+      });
+    }
   },
 });
 
@@ -296,10 +357,32 @@ export const provisionCard = internalAction({
       );
       return;
     }
-    const { card, fund } = loaded;
-    if (!fund.increaseAccountId) {
+    const { card, fund, onboardingStatus } = loaded;
+
+    // Re-check every gate createFundCard checked, immediately before the
+    // provider call. createFundCard's checks ran in a DIFFERENT transaction,
+    // however long ago; a fund frozen (e.g. its group was archived) or a
+    // community knocked out of "live" in the gap would otherwise still get a
+    // live card at the bank — an app-side freeze that quietly issues spending
+    // power is worse than no freeze at all. Refuse loudly and audit; do not
+    // retry, because the state that changed is a deliberate one.
+    const accountId = fund.increaseAccountId;
+    const refusal = !accountId
+      ? "fund has no Increase Account"
+      : fund.status !== "active"
+        ? `fund status is "${fund.status}"`
+        : onboardingStatus !== "live"
+          ? `community onboarding status is "${onboardingStatus ?? "missing"}"`
+          : null;
+    // `!accountId` is re-tested only so TypeScript can narrow it below —
+    // the `refusal` chain above already covers that case.
+    if (refusal !== null || !accountId) {
       console.error(
-        `[finance] provisionCard: fund ${fund._id} has no Increase Account — cannot provision card ${args.cardId}`,
+        `[finance] provisionCard: refusing to provision card ${args.cardId} — ${refusal}`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.cards.recordCardProvisionRefused,
+        { cardId: args.cardId, reason: refusal ?? "unknown" },
       );
       return;
     }
@@ -307,9 +390,13 @@ export const provisionCard = internalAction({
     try {
       const { createCard } = await import("../../lib/finance/increase");
       const increaseCard = await createCard(
-        fund.increaseAccountId,
+        accountId,
         `${fund.name} — ${card.name ?? "Card"}`,
         `finance:card:${args.cardId}`,
+        // The spend limit the finance_admin picked, translated into
+        // Increase's own interval vocabulary. Sent AT CREATION so there is
+        // never a window where the card is live and uncapped.
+        toIncreaseSpendingLimit(card.spendLimitCents, card.limitPeriod),
       );
       await ctx.runMutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId: args.cardId,
@@ -337,13 +424,19 @@ export const provisionCard = internalAction({
 // unfreezable by a possibly-compromised holder acting alone, so unfreezing
 // always requires finance_admin (or community admin, via requireFundRole's
 // override).
+//
+// NOT gated on `requireGroupGivingEnabled`, unlike every other mutation
+// here. A card is a BANK object: flipping the `group-giving` flag off stops
+// the app, not the card — the plastic keeps authorizing. Gating freeze on
+// the flag would mean the one switch meant to contain an incident is also
+// the switch that disables the only tool for containing it. De-escalation is
+// never flag-gated (see lib/finance/flag.ts). Role checks are unchanged.
 // ============================================================================
 
 export const setCardFrozen = mutation({
   args: { token: v.string(), cardId: v.id("cards"), frozen: v.boolean() },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireGroupGivingEnabled(ctx);
 
     const card = await ctx.db.get(args.cardId);
     if (!card) {
@@ -392,14 +485,16 @@ export const setCardFrozen = mutation({
 });
 
 // ============================================================================
-// cancelCard — irreversible; finance_admin only.
+// cancelCard — irreversible; finance_admin only. Also exempt from
+// `requireGroupGivingEnabled`, for the same reason setCardFrozen is: killing
+// a card is the strongest de-escalation there is, and it must stay reachable
+// with the feature flag off.
 // ============================================================================
 
 export const cancelCard = mutation({
   args: { token: v.string(), cardId: v.id("cards") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
-    await requireGroupGivingEnabled(ctx);
 
     const card = await ctx.db.get(args.cardId);
     if (!card) {
@@ -477,6 +572,244 @@ export const applyCardStatus = internalAction({
       cardId: args.cardId,
       status: result.status,
     });
+  },
+});
+
+// ============================================================================
+// setCardLimit — change (or clear) a live card's bank-enforced spend limit.
+// Same provider-write-then-record shape as the status mutations: the local
+// mirror is only patched once Increase has actually accepted the new limit,
+// so the roster can never show a cap the bank isn't enforcing. The audit
+// trail follows the same rule — this mutation records the REQUEST, and the
+// applied `card.limit_updated` is written by `recordCardLimit`, i.e. only
+// after Increase confirms. An audit log that asserts limit changes the bank
+// never took is worse than no audit log.
+// ============================================================================
+
+export const setCardLimit = mutation({
+  args: {
+    token: v.string(),
+    cardId: v.id("cards"),
+    /** Omit BOTH to remove the limit entirely. */
+    spendLimitCents: v.optional(v.number()),
+    limitPeriod: v.optional(limitPeriodValidator),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
+    const card = await ctx.db.get(args.cardId);
+    if (!card) {
+      throw new Error("Card not found");
+    }
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) {
+      throw new Error("Fund not found");
+    }
+    // Raising a cap is a spending-power grant, so it's finance_admin-only
+    // (ADR-032 §4: "Issue/freeze cards; set spend limits"). Lowering one is
+    // held to the same bar rather than split out — a holder who wants less
+    // rope can freeze the card, which they already can.
+    await requireFundRole(ctx, fund._id, userId, "finance_admin");
+
+    validateCardLimit(args.spendLimitCents, args.limitPeriod);
+
+    // The same fund/card readiness gates `createFundCard` applies. Changing a
+    // limit is mostly a spending-power GRANT (that's why it's finance_admin
+    // only), so it can't be the one card mutation that skips them: raising a
+    // cap on a card whose fund was frozen — because its group got archived —
+    // would contradict every other gate in the module. De-escalation is still
+    // reachable on a frozen fund: `setCardFrozen`/`cancelCard` are ungated on
+    // purpose, and freezing the card is the stronger move anyway.
+    if (fund.status !== "active") {
+      throw new Error("This fund isn't active — card limits can't be changed");
+    }
+    if (!card.increaseCardId) {
+      throw new Error("This card hasn't finished provisioning yet");
+    }
+    // "canceled" is irreversible and "failed"/"pending" have no card at the
+    // bank to PATCH; only a live or frozen card has a limit worth changing.
+    if (card.status !== "active" && card.status !== "disabled") {
+      throw new Error(`This card is ${card.status} — its limit can't be changed`);
+    }
+
+    // The REQUEST, not the change — see this section's header. The applied
+    // `card.limit_updated` lands in `recordCardLimit`, once Increase agrees.
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: userId,
+      action: "card.limit_update_requested",
+      details: {
+        cardId: args.cardId,
+        fromSpendLimitCents: card.spendLimitCents ?? null,
+        fromLimitPeriod: card.limitPeriod ?? null,
+        toSpendLimitCents: args.spendLimitCents ?? null,
+        toLimitPeriod: args.limitPeriod ?? null,
+      },
+    });
+
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.finance.cards.applyCardLimit,
+      {
+        cardId: args.cardId,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: userId,
+      },
+    );
+
+    // The REQUESTED limit, explicitly labelled as not-yet-applied: the bank
+    // hasn't been asked yet, so a caller that rendered this as the live limit
+    // would be making exactly the claim this module exists to stop.
+    return {
+      status: "pending" as const,
+      requestedSpendLimitCents: args.spendLimitCents ?? null,
+      requestedLimitPeriod: args.limitPeriod ?? null,
+    };
+  },
+});
+
+/** Increase took the new limit: patch the mirror and audit it as APPLIED. */
+export const recordCardLimit = internalMutation({
+  args: {
+    cardId: v.id("cards"),
+    spendLimitCents: v.optional(v.number()),
+    limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    await ctx.db.patch(args.cardId, {
+      spendLimitCents: args.spendLimitCents,
+      limitPeriod: args.limitPeriod,
+      updatedAt: now(),
+    });
+    if (fund) {
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        actorUserId: args.actorUserId,
+        action: "card.limit_updated",
+        details: {
+          cardId: args.cardId,
+          fromSpendLimitCents: card.spendLimitCents ?? null,
+          fromLimitPeriod: card.limitPeriod ?? null,
+          toSpendLimitCents: args.spendLimitCents ?? null,
+          toLimitPeriod: args.limitPeriod ?? null,
+        },
+      });
+    }
+  },
+});
+
+/**
+ * A limit change that didn't complete. `providerApplied` is the whole point
+ * of the row: `false` means Increase refused and both sides still hold the
+ * old limit (consistent, safe); `true` means Increase TOOK the change but we
+ * failed to mirror it, so the bank and the app now disagree — and in the
+ * raise/clear direction the card is looser than the app claims. Nothing
+ * reconciles that automatically (there is no read-back cron), so it has to
+ * be loud in the audit trail where a finance admin can act on it.
+ */
+export const recordCardLimitFailed = internalMutation({
+  args: {
+    cardId: v.id("cards"),
+    message: v.string(),
+    providerApplied: v.boolean(),
+    spendLimitCents: v.optional(v.number()),
+    limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return;
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: args.actorUserId,
+      action: "card.limit_update_failed",
+      details: {
+        cardId: args.cardId,
+        providerApplied: args.providerApplied,
+        message: args.message,
+        toSpendLimitCents: args.spendLimitCents ?? null,
+        toLimitPeriod: args.limitPeriod ?? null,
+      },
+    });
+  },
+});
+
+export const applyCardLimit = internalAction({
+  args: {
+    cardId: v.id("cards"),
+    spendLimitCents: v.optional(v.number()),
+    limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.runQuery(internal.functions.finance.cards.getCardInternal, {
+      cardId: args.cardId,
+    });
+    if (!card?.increaseCardId) {
+      console.error(
+        `[finance] applyCardLimit: card ${args.cardId} has no increaseCardId — cannot update its limit at Increase`,
+      );
+      return;
+    }
+
+    // Two failure modes, deliberately caught separately, because they leave
+    // the world in opposite states — see recordCardLimitFailed. Mirrors
+    // provisionCard's catch-and-record shape; a limit change that silently
+    // vanished is the one outcome nobody can detect from the app.
+    const { updateCardSpendingLimit } = await import("../../lib/finance/increase");
+    try {
+      await updateCardSpendingLimit(
+        card.increaseCardId,
+        toIncreaseSpendingLimit(args.spendLimitCents, args.limitPeriod),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] applyCardLimit: Increase refused the new limit for card ${args.cardId}: ${message}`,
+      );
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
+        cardId: args.cardId,
+        message: message.slice(0, 500),
+        providerApplied: false,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+      return;
+    }
+
+    try {
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimit, {
+        cardId: args.cardId,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] applyCardLimit: Increase APPLIED the new limit for card ${args.cardId} but the mirror write failed — bank and app now disagree: ${message}`,
+      );
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
+        cardId: args.cardId,
+        message: message.slice(0, 500),
+        providerApplied: true,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+    }
   },
 });
 
