@@ -883,13 +883,21 @@ describe("cross-team channel — serving-mode inbox (getInboxChannels)", () => {
     ).toBe(true);
   });
 
-  it("nests a cross-GROUP cross-team channel under the volunteer's OWN group, not its home group", async () => {
-    // Regression: the serving branch of `getInboxChannels` used to skip the
-    // `isShared`/`sharedGroups` nesting and attach every cross-team channel to
-    // its home (creation) group, injecting a section for a campus group the
-    // volunteer isn't a member of. `resolveCrossTeamSharing` shares the channel
-    // into every source team's group precisely so it nests under the
-    // volunteer's own campus — serving mode must respect that too.
+  it("documents the end state: a cross-GROUP cross-team channel sits under the volunteer's OWN group", async () => {
+    // NOT a regression guard, deliberately — this asserts the desired end state
+    // in the simplest topology, and it PASSES against the pre-fix code (verified
+    // at 444ec98). Pre-fix the channel was attached to its home group as well,
+    // but with no other activity anywhere the volunteer's own group happened to
+    // sort first and win the shared-channel dedup, and the home group was then
+    // dropped for holding no channels — the right answer by coincidence.
+    //
+    // The ordering is what the fix actually changes, so the real guard is the
+    // "keeps the home group out ... even when it also holds a fresh event
+    // channel" test below, which gives the home group the activity to win that
+    // race. Kept here as the readable statement of intent: the serving branch of
+    // `getInboxChannels` must honour `isShared`/`sharedGroups` nesting, because
+    // `resolveCrossTeamSharing` shares a cross-team channel into every source
+    // team's group precisely so it lands under the volunteer's own campus.
     const { t, base, groupBId, groupBRosteredId, channelId, planBId } =
       await setupCrossGroupServingScenario();
 
