@@ -29,6 +29,7 @@
  *
  * Route: /rostering/[group_id]/grid
  * Backend: scheduling.roster.rosterMatrix (reactive — mutations self-refresh),
+ *          scheduling.roster.getMemberContact (one number, fetched on tap),
  *          scheduling.assignments.assignRole / .unassign
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -63,6 +64,7 @@ import {
   useAuthenticatedQuery,
   useAuthenticatedMutation,
   useAuthenticatedAction,
+  authenticatedConvexVanilla,
   api,
 } from "@services/api/convex";
 import { errorMessage } from "@/utils/error-handling";
@@ -182,8 +184,6 @@ type RosterMember = {
   userId: Id<"users">;
   userName: string;
   isLeader: boolean;
-  /** Their phone, if on file — powers the one-tap "text them" reach-out. */
-  phone: string | null;
   availableCount: number;
   /** Upcoming serving assignments across every group the member belongs to. */
   servingTotal: number;
@@ -699,10 +699,29 @@ export function RosterGridScreen() {
   // from the Together Twilio number rather than the leader's own phone, and
   // people are less likely to reply). Prefers texting from the leader's own
   // number; falls back to an in-app DM when there's no usable phone on file.
+  //
+  // The number is fetched ON TAP (`getMemberContact`), one person at a time —
+  // deliberately NOT carried on `rosterMatrix`, which spans every active member
+  // of the group. Shipping all N numbers up front to power a one-at-a-time
+  // action is a bulk-harvest shape, and the matrix's gate is satisfied by
+  // managing any single team. `getMemberContact` re-checks, per person, that
+  // the caller may reach THEM; a refusal (or no number on file) lands on the
+  // same DM fallback, so the interaction never dead-ends.
   const { messageUser } = useStartDirectMessage();
   const handleReachOut = useCallback(
     async (member: RosterMember) => {
-      const dialable = (member.phone ?? "").replace(/[^\d+]/g, "");
+      let phone: string | null = null;
+      try {
+        const contact = await authenticatedConvexVanilla.query(
+          api.functions.scheduling.roster.getMemberContact,
+          { groupId, userId: member.userId },
+        );
+        phone = contact.phone;
+      } catch {
+        // Not allowed to reach them, or the lookup failed — fall through to
+        // the in-app DM below rather than surfacing an error.
+      }
+      const dialable = (phone ?? "").replace(/[^\d+]/g, "");
       if (dialable) {
         const firstName = member.userName.trim().split(/\s+/)[0] || member.userName;
         const body = `Hi ${firstName}, could you fill out your availability for the upcoming serving schedule?`;
@@ -730,7 +749,7 @@ export function RosterGridScreen() {
         displayName: member.userName,
       });
     },
-    [messageUser],
+    [groupId, messageUser],
   );
 
   // --- Derived filters ---

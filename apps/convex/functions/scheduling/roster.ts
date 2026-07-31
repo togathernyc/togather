@@ -16,12 +16,13 @@
  * Scheduler-gated: it exposes the whole roster's assignments + availability.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { query } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
 import {
+  isGroupScheduler,
   managedTeamIdsInGroup,
   requireGroupMember,
   requireGroupScheduler,
@@ -474,9 +475,6 @@ export const rosterMatrix = query({
           userId: m.userId,
           userName: userName(uid, u),
           isLeader: isLeaderRole(m.role),
-          // Their phone, if on file — powers the People view's one-tap
-          // "text them" reach-out (falls back to DM when absent).
-          phone: u?.phone ?? null,
           availableCount,
           servingTotal,
           doubleBooked,
@@ -526,6 +524,87 @@ export const rosterMatrix = query({
         ).length,
       },
     };
+  },
+});
+
+/**
+ * ONE member's contact details, for the roster grid's one-tap reach-out.
+ *
+ * Deliberately not part of `rosterMatrix`: that payload covers every active
+ * member of the group, so carrying phone numbers on it handed a whole roster's
+ * worth of personal numbers — leaders, community admins and never-joined
+ * placeholder invitees included — to anyone who could open the grid. The
+ * reach-out needs exactly one number, at the moment a name is pressed, so this
+ * fetches exactly that. Same posture as `getServingTeamRoster`, which surfaces
+ * phone numbers only among people serving the same event.
+ *
+ * Auth — strictly tighter than `rosterMatrix`'s gate, which any manager of any
+ * single team in the group satisfies:
+ *   - a group scheduler (group leader / community admin) may reach anyone on
+ *     the roster; or
+ *   - a team manager may reach only people who actually hold a role assignment
+ *     on one of THEIR teams — the same basis as the grid's `memberInTeamScope`
+ *     filter, so a manager of team X can't pull the number of someone who only
+ *     ever serves on team Y.
+ * The target must also be an active member of the group being rostered.
+ *
+ * Returns `{ phone: string | null }` — null when there's none on file, which
+ * the client reads as "fall back to an in-app DM".
+ */
+export const getMemberContact = query({
+  args: {
+    token: v.string(),
+    groupId: v.id("groups"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const callerId = await requireAuth(ctx, args.token);
+
+    const group = await ctx.db.get(args.groupId);
+    if (!group) {
+      throw new ConvexError("Group not found");
+    }
+
+    // The target must be on this group's active roster — the same population
+    // `rosterMatrix` builds its People rows from. Without this, a valid
+    // scheduler could resolve any user id in the deployment.
+    const membership = await ctx.db
+      .query("groupMembers")
+      .withIndex("by_group_user", (q) =>
+        q.eq("groupId", args.groupId).eq("userId", args.userId),
+      )
+      .filter((q) => q.eq(q.field("leftAt"), undefined))
+      .first();
+    if (
+      !membership ||
+      (membership.requestStatus && membership.requestStatus !== "accepted")
+    ) {
+      throw new ConvexError("They're not on this group's roster");
+    }
+
+    if (!(await isGroupScheduler(ctx, group, callerId))) {
+      const managedTeamIds = await managedTeamIdsInGroup(
+        ctx,
+        args.groupId,
+        callerId,
+      );
+      const managed = new Set(managedTeamIds.map((id) => id.toString()));
+      // Every team is scoped to one group, so an assignment on a managed team
+      // is by construction an assignment in this group.
+      const assignments = await ctx.db
+        .query("roleAssignments")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .collect();
+      const onMyTeam = assignments.some((a) => managed.has(a.teamId as string));
+      if (!onMyTeam) {
+        throw new ConvexError(
+          "You can only reach out to people serving on a team you manage",
+        );
+      }
+    }
+
+    const user = await ctx.db.get(args.userId);
+    return { phone: user?.phone ?? null };
   },
 });
 
