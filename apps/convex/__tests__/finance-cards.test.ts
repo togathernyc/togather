@@ -397,14 +397,14 @@ describe("listFundCards", () => {
       await seedCardFixture(t);
     await createCard(t, fundId, financeAdminUserId, cardholderUserId);
 
-    const rows = await t.query(api.functions.finance.cards.listFundCards, {
+    const result = await t.query(api.functions.finance.cards.listFundCards, {
       token: await tokenFor(cardholderUserId),
       fundId,
     });
-    expect(rows).toHaveLength(1);
-    expect(rows[0].holderUserId).toBe(cardholderUserId);
-    expect(rows[0].holderName).toContain("Cardholder");
-    expect(rows[0].status).toBe("pending");
+    expect(result.cards).toHaveLength(1);
+    expect(result.cards[0].holderUserId).toBe(cardholderUserId);
+    expect(result.cards[0].holderName).toContain("Cardholder");
+    expect(result.cards[0].status).toBe("pending");
   });
 
   test("an active group leader (no fund role) can list", async () => {
@@ -413,11 +413,39 @@ describe("listFundCards", () => {
       await seedCardFixture(t);
     await createCard(t, fundId, financeAdminUserId, cardholderUserId);
 
-    const rows = await t.query(api.functions.finance.cards.listFundCards, {
+    const result = await t.query(api.functions.finance.cards.listFundCards, {
       token: await tokenFor(leaderUserId),
       fundId,
     });
-    expect(rows).toHaveLength(1);
+    expect(result.cards).toHaveLength(1);
+  });
+
+  test("viewerCanManageCards mirrors createFundCard's own gate", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, cardholderUserId, leaderUserId } =
+      await seedCardFixture(t);
+
+    const asFinanceAdmin = await t.query(api.functions.finance.cards.listFundCards, {
+      token: await tokenFor(financeAdminUserId),
+      fundId,
+    });
+    expect(asFinanceAdmin.viewerCanManageCards).toBe(true);
+
+    const asCardholder = await t.query(api.functions.finance.cards.listFundCards, {
+      token: await tokenFor(cardholderUserId),
+      fundId,
+    });
+    expect(asCardholder.viewerCanManageCards).toBe(false);
+
+    // The leader passes the viewer gate (can list) but has no fund role, so
+    // must not see the "New card" affordance — createFundCard would reject
+    // them since they aren't finance_admin.
+    const asLeader = await t.query(api.functions.finance.cards.listFundCards, {
+      token: await tokenFor(leaderUserId),
+      fundId,
+    });
+    expect(asLeader.cards).toBeDefined();
+    expect(asLeader.viewerCanManageCards).toBe(false);
   });
 });
 
@@ -689,6 +717,69 @@ describe("getCardDetail", () => {
       }),
     ).rejects.toThrow();
   });
+
+  test("capability flags: holder gets freeze-only, finance_admin gets all, a manager gets none", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+
+    // A manager-role viewer — not the holder, not finance_admin — for the
+    // "freeze false" case.
+    const managerUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        firstName: "Manager",
+        lastName: "User",
+        phone: `+1555001${Math.floor(Math.random() * 9000 + 1000)}`,
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: fixture.groupId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+      await ctx.db.insert("fundRoles", {
+        fundId: fixture.fundId,
+        userId,
+        role: "manager",
+        grantedBy: fixture.adminUserId,
+        grantedAt: Date.now(),
+      });
+      return userId;
+    });
+
+    const asHolder = await t.query(api.functions.finance.cards.getCardDetail, {
+      token: await tokenFor(fixture.cardholderUserId),
+      cardId,
+    });
+    expect(asHolder.viewerCanFreeze).toBe(true);
+    expect(asHolder.viewerCanUnfreeze).toBe(false);
+    expect(asHolder.viewerCanCancel).toBe(false);
+
+    const asFinanceAdmin = await t.query(api.functions.finance.cards.getCardDetail, {
+      token: await tokenFor(fixture.financeAdminUserId),
+      cardId,
+    });
+    expect(asFinanceAdmin.viewerCanFreeze).toBe(true);
+    expect(asFinanceAdmin.viewerCanUnfreeze).toBe(true);
+    expect(asFinanceAdmin.viewerCanCancel).toBe(true);
+
+    const asManager = await t.query(api.functions.finance.cards.getCardDetail, {
+      token: await tokenFor(managerUserId),
+      cardId,
+    });
+    expect(asManager.viewerCanFreeze).toBe(false);
+    expect(asManager.viewerCanUnfreeze).toBe(false);
+    expect(asManager.viewerCanCancel).toBe(false);
+  });
 });
 
 // ============================================================================
@@ -804,6 +895,40 @@ describe("recordCardSettlement", () => {
     expect(
       events.some((e) => e.action === "webhook.rejected_account_mismatch"),
     ).toBe(true);
+  });
+
+  test("still records expense + card_capture ledger entry when the fund is frozen", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, cardId } = await seedSettledCard(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fixture.fundId, { status: "frozen" });
+    });
+
+    await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
+      increaseCardId: "increase_card_settlement_test",
+      increaseTransactionId: "txn_settlement_frozen",
+      accountId: "increase_account_test",
+      amountCents: 2200,
+      merchantDescription: "Frozen Fund Grocery",
+    });
+
+    const expenses = await t.run(async (ctx) =>
+      ctx.db
+        .query("expenses")
+        .withIndex("by_card", (q) => q.eq("cardId", cardId))
+        .collect(),
+    );
+    expect(expenses).toHaveLength(1);
+    expect(expenses[0].kind).toBe("card_charge");
+
+    const ledgerEntries = await t.run(async (ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
+        .collect(),
+    );
+    const captureEntries = ledgerEntries.filter((e) => e.kind === "card_capture");
+    expect(captureEntries).toHaveLength(1);
   });
 
   test("a missing card is logged, not thrown", async () => {

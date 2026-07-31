@@ -105,6 +105,20 @@ export interface CardActivityEntry {
 
 export interface CardDetail extends FundCard {
   activity: CardActivityEntry[];
+  /** Per-action capability flags — mirror the mutations' own gates, so the UI
+   * never renders a control whose mutation would reject this viewer. Freeze =
+   * finance_admin OR the card's holder; unfreeze/cancel = finance_admin only. */
+  viewerCanFreeze: boolean;
+  viewerCanUnfreeze: boolean;
+  viewerCanCancel: boolean;
+}
+
+/** `listFundCards`' return shape — a fund's card roster plus whether the
+ * viewer can issue new cards (finance_admin, incl. the community-admin
+ * override — same gate `createFundCard` enforces). */
+export interface ListFundCardsResult {
+  cards: FundCard[];
+  viewerCanManageCards: boolean;
 }
 
 /** A fund member eligible to hold a card — cardholder role or higher. */

@@ -59,7 +59,14 @@ export function CardDetailView({
   const isFailed = card.status === "failed";
   const isPending = card.status === "pending";
   const isCanceled = card.status === "canceled";
-  const canManage = !isFailed && !isCanceled;
+  // Per-action gates mirror the mutations' own checks (setCardFrozen /
+  // cancelCard) so the UI never offers a control that would reject this
+  // viewer — e.g. a non-admin holder who froze their own card must see no
+  // unfreeze control at all.
+  const canFreeze = card.status === "active" && card.viewerCanFreeze;
+  const canUnfreeze = isFrozen && card.viewerCanUnfreeze;
+  const showFreezeToggle = canFreeze || canUnfreeze;
+  const canCancel = !isFailed && !isCanceled && card.viewerCanCancel;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary }]}>
@@ -106,27 +113,30 @@ export function CardDetailView({
         {/* ACTIONS */}
         <View style={styles.actionsRow}>
           <DisabledAction icon="eye-outline" label="Reveal number" colors={colors} />
-          <TouchableOpacity
-            style={[styles.actionCard, { backgroundColor: colors.surface }]}
-            onPress={onToggleFrozen}
-            disabled={!canManage || isFreezing}
-            accessibilityRole="button"
-            testID="card-freeze-action"
-          >
-            <Ionicons
-              name={isFrozen ? "sunny-outline" : "snow-outline"}
-              size={20}
-              color={canManage ? colors.text : colors.textTertiary}
-            />
-            <Text
-              style={[
-                styles.actionLabel,
-                { color: canManage ? colors.text : colors.textTertiary },
-              ]}
+          {showFreezeToggle ? (
+            <TouchableOpacity
+              style={[styles.actionCard, { backgroundColor: colors.surface }]}
+              onPress={onToggleFrozen}
+              disabled={isFreezing}
+              accessibilityRole="button"
+              testID="card-freeze-action"
             >
-              {isFrozen ? "Unfreeze" : "Freeze"}
-            </Text>
-          </TouchableOpacity>
+              <Ionicons
+                name={isFrozen ? "sunny-outline" : "snow-outline"}
+                size={20}
+                color={colors.text}
+              />
+              <Text style={[styles.actionLabel, { color: colors.text }]}>
+                {isFrozen ? "Unfreeze" : "Freeze"}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <DisabledAction
+              icon={isFrozen ? "sunny-outline" : "snow-outline"}
+              label={isFrozen ? "Unfreeze" : "Freeze"}
+              colors={colors}
+            />
+          )}
           <DisabledAction icon="phone-portrait-outline" label="Add to wallet" colors={colors} />
         </View>
         <Text style={[styles.comingSoonNote, { color: colors.textTertiary }]}>
@@ -202,7 +212,7 @@ export function CardDetailView({
           )}
         </View>
 
-        {canManage && (
+        {canCancel && (
           <View style={[styles.group, { backgroundColor: colors.surface }]}>
             <TouchableOpacity
               style={styles.cancelCell}

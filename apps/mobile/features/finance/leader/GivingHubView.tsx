@@ -56,7 +56,8 @@ export interface GivingHubViewProps {
 
   cards: FundCard[];
   isLoadingCards: boolean;
-  /** finance_admin / group leader / community admin — gates "New card". */
+  /** finance_admin (incl. community-admin override) — same gate `createFundCard`
+   * enforces. Comes straight from `listFundCards`' `viewerCanManageCards`. */
   canManageCards: boolean;
 
   /** Pending expenses (card charges + reimbursements) awaiting approval. */

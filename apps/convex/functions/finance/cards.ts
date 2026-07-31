@@ -125,9 +125,16 @@ export const listFundCards = query({
 
     const holders = await Promise.all(cards.map((c) => ctx.db.get(c.holderUserId)));
 
-    return cards.map((card, i) =>
-      toCardSummary(card, getDisplayName(holders[i]?.firstName, holders[i]?.lastName)),
-    );
+    return {
+      cards: cards.map((card, i) =>
+        toCardSummary(card, getDisplayName(holders[i]?.firstName, holders[i]?.lastName)),
+      ),
+      // The UI must gate "New card" on the SAME check createFundCard enforces
+      // (finance_admin, incl. the community-admin override) — a group leader
+      // without a finance role can view this list but not issue cards, and
+      // must not be shown an affordance that can only error on submit.
+      viewerCanManageCards: await isFundFinanceAdmin(ctx, args.fundId, userId),
+    };
   },
 });
 
@@ -512,10 +519,20 @@ export const getCardDetail = query({
       createdAt: e.createdAt,
     }));
 
+    // Per-action capabilities mirroring the mutations' own gates, so the UI
+    // never renders a control whose mutation would reject this viewer:
+    // freeze = finance_admin OR the holder; unfreeze/cancel = finance_admin
+    // only (a possibly-compromised holder must not re-enable their card).
+    const viewerIsFinanceAdmin = await isFundFinanceAdmin(ctx, card.fundId, userId);
+    const viewerIsHolder = card.holderUserId === userId;
+
     return {
       ...toCardSummary(card, getDisplayName(holder?.firstName, holder?.lastName)),
       holderProfileImage: getMediaUrl(holder?.profilePhoto),
       activity,
+      viewerCanFreeze: viewerIsFinanceAdmin || viewerIsHolder,
+      viewerCanUnfreeze: viewerIsFinanceAdmin,
+      viewerCanCancel: viewerIsFinanceAdmin,
     };
   },
 });

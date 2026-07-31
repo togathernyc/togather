@@ -82,7 +82,10 @@ export function GivingHubScreen() {
     [expensesRaw],
   );
 
-  const cards: FundCard[] = useMemo(() => (cardsRaw ?? []).map(toFundCard), [cardsRaw]);
+  const cards: FundCard[] = useMemo(
+    () => (cardsRaw?.cards ?? []).map(toFundCard),
+    [cardsRaw],
+  );
 
   const balance: GivingHubBalanceSummary | undefined = useMemo(() => {
     if (!overview) return undefined;
@@ -110,12 +113,11 @@ export function GivingHubScreen() {
   const canApprove =
     myFundRole?.role === "manager" || myFundRole?.role === "finance_admin" || isCommunityAdmin;
 
-  const canManageCards = !!(
-    myFundRole?.role === "finance_admin" ||
-    myFundRole?.isGroupLeader ||
-    myFundRole?.isCommunityAdmin ||
-    user?.is_admin
-  );
+  // Mirrors createFundCard's own gate (finance_admin, incl. the
+  // community-admin override) — a group leader without a finance role can
+  // view the card list but must not be shown an affordance that can only
+  // error on submit. Comes straight from listFundCards, not derived here.
+  const canManageCards = !!cardsRaw?.viewerCanManageCards;
 
   const handleApprove = async (expenseId: string) => {
     if (processingExpenseId) return;

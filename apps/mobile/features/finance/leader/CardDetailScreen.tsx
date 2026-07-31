@@ -116,6 +116,9 @@ function toCardDetail(raw: any): CardDetail {
       receiptAttached: !!entry.receiptAttached,
       createdAt: entry.createdAt,
     })),
+    viewerCanFreeze: !!raw.viewerCanFreeze,
+    viewerCanUnfreeze: !!raw.viewerCanUnfreeze,
+    viewerCanCancel: !!raw.viewerCanCancel,
   };
 }
 

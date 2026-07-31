@@ -15,6 +15,9 @@ function makeCard(overrides: Partial<CardDetail> = {}): CardDetail {
     limitPeriod: "week",
     createdAt: Date.now(),
     activity: [],
+    viewerCanFreeze: true,
+    viewerCanUnfreeze: true,
+    viewerCanCancel: true,
     ...overrides,
   };
 }
@@ -103,5 +106,27 @@ describe("CardDetailView", () => {
     render(<CardDetailView {...baseProps} card={undefined} />);
 
     expect(screen.queryByTestId("card-art")).toBeNull();
+  });
+
+  it("hides the unfreeze control for a disabled card when the viewer can't unfreeze", () => {
+    const onToggleFrozen = jest.fn();
+    render(
+      <CardDetailView
+        {...baseProps}
+        onToggleFrozen={onToggleFrozen}
+        card={makeCard({ status: "disabled", viewerCanUnfreeze: false })}
+      />,
+    );
+
+    // No pressable freeze/unfreeze control — a non-admin holder who froze
+    // their own card must not be able to unfreeze it themselves.
+    expect(screen.queryByTestId("card-freeze-action")).toBeNull();
+    expect(onToggleFrozen).not.toHaveBeenCalled();
+  });
+
+  it("hides the cancel row when the viewer can't cancel", () => {
+    render(<CardDetailView {...baseProps} card={makeCard({ viewerCanCancel: false })} />);
+
+    expect(screen.queryByTestId("cancel-card-button")).toBeNull();
   });
 });
