@@ -4,12 +4,16 @@
  * the status checklist on success.
  */
 import React, { useState } from "react";
-import { View, StyleSheet, TouchableOpacity, Text } from "react-native";
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@providers/AuthProvider";
-import { useAuthenticatedMutation, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
 import { ToastManager } from "@components/ui";
@@ -23,6 +27,15 @@ export function FinanceOnboardingFormScreen() {
   const { community } = useAuth();
 
   const startOnboarding = useAuthenticatedMutation(api.functions.finance.onboarding.startOnboarding);
+
+  // Previously submitted intake, echoed by the status query so an admin
+  // editing one rejected field doesn't retype the whole form ("Edit church
+  // details" used to reopen blank). The form is only rendered once this
+  // resolves — react-hook-form captures defaultValues at first render.
+  const status = useAuthenticatedQuery(
+    api.functions.finance.onboarding.getOnboardingStatus,
+    community?.id ? { communityId: community.id as Id<"communities"> } : "skip",
+  );
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -67,11 +80,32 @@ export function FinanceOnboardingFormScreen() {
         </View>
       </View>
 
-      <FinanceOnboardingFormView
-        isSubmitting={isSubmitting}
-        submitError={submitError}
-        onSubmit={handleSubmit}
-      />
+      {status === undefined ? (
+        <View style={styles.loading}>
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+        </View>
+      ) : (
+        <FinanceOnboardingFormView
+          isSubmitting={isSubmitting}
+          submitError={submitError}
+          onSubmit={handleSubmit}
+          defaultValues={
+            status?.intake
+              ? {
+                  legalName: status.intake.legalName,
+                  ein: status.intake.ein,
+                  website: status.intake.website ?? "",
+                  statementDescriptor: status.intake.statementDescriptor ?? "",
+                  addressLine1: status.intake.address.addressLine1,
+                  addressLine2: status.intake.address.addressLine2 ?? "",
+                  city: status.intake.address.city,
+                  state: status.intake.address.state,
+                  zipCode: status.intake.address.zipCode,
+                }
+              : undefined
+          }
+        />
+      )}
     </View>
   );
 }
@@ -97,5 +131,10 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     marginTop: 2,
+  },
+  loading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
