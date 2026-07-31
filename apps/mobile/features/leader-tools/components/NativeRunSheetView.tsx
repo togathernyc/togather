@@ -25,6 +25,7 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useConnectionStatus } from "@providers/ConnectionProvider";
@@ -38,8 +39,19 @@ import {
   pickActiveServiceIndex,
   totalDurationSec,
 } from "@features/scheduling/utils/runSheetTiming";
+import {
+  runSheetItemMatchesViewer,
+  segmentHasContentForViewer,
+} from "@features/scheduling/utils/runSheetViewerFilter";
 import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
+
+/** "All" / "Mine" run sheet filter (stakeholder request — see runSheetViewerFilter.ts). */
+type ViewMode = "all" | "mine";
+const VIEW_MODE_OPTIONS: Array<{ key: ViewMode; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "mine", label: "Mine" },
+];
 
 /** Current-item highlight, mirroring the PCO run sheet (RunSheetScreen). */
 const CURRENT_ITEM_BG_LIGHT = "#FFF9E6";
@@ -79,7 +91,7 @@ type RunSheetItem = {
 
 type EventRole = {
   roleId: Id<"teamRoles">;
-  assignments: Array<{ userName: string; status: string }>;
+  assignments: Array<{ userId: Id<"users">; userName: string; status: string }>;
 };
 
 export function NativeRunSheetView({
@@ -207,6 +219,7 @@ export function NativeRunSheetView({
 
       {activePlanId ? (
         <PlanRunSheet
+          key={activePlanId}
           planId={activePlanId}
           groupId={groupId}
           canEdit={canEdit}
@@ -247,6 +260,7 @@ export function PlanRunSheet({
   const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { isNetworkAvailable } = useConnectionStatus();
+  const { user } = useAuth();
   // Subscribe so AsyncStorage rehydration re-renders us (see NativeRunSheetView).
   const runSheetCache = useServingRunSheetCache();
 
@@ -381,6 +395,31 @@ export function PlanRunSheet({
     }
     return map;
   }, [effEvent?.roles]);
+
+  // "All / Mine" filter (per-instance state — each stacked plan section in
+  // serving mode's Runsheet tab gets its own PlanRunSheet, so this never
+  // leaks across sections). The viewer's roles on THIS plan are derived from
+  // the same `event.roles` already loaded above — no extra query.
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
+  const viewerRoleIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!user?.id) return ids;
+    for (const r of effEvent?.roles ?? []) {
+      const holds = r.assignments.some(
+        (a) => a.userId === user.id && a.status !== "declined",
+      );
+      if (holds) ids.add(r.roleId as string);
+    }
+    return ids;
+  }, [effEvent?.roles, user?.id]);
+  const hasAnyViewerRole = viewerRoleIds.size > 0;
+  // Whether "Mine" has anything to show at all — distinct from `hasAnyViewerRole`
+  // because a viewer can hold a role on the plan that no run sheet item is
+  // actually tagged with (e.g. scheduled for sound, but sound has no rows yet).
+  const mineHasContent = useMemo(() => {
+    if (viewMode !== "mine") return true;
+    return segmentHasContentForViewer(effItems ?? [], viewerRoleIds);
+  }, [viewMode, effItems, viewerRoleIds]);
   // Only surface the rehearsal shortcut when the sheet actually has songs.
   const hasSongs = useMemo(
     () => (effItems ?? []).some((it) => it.type === "song"),
@@ -545,35 +584,96 @@ export function PlanRunSheet({
           This event plan's run sheet is empty.
         </Text>
       ) : (
-        SEGMENT_OPTIONS.map((seg) => {
-          const segItems = itemsBySegment[seg.key];
-          if (segItems.length === 0) return null;
-          // Hide items that follow a collapsed header (positional: a header
-          // owns the rows after it until the next header in the segment).
-          const visibleItems = filterVisible(segItems, collapsedHeaders);
-          return (
-            <View key={seg.key}>
-              <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
-                {seg.label.toUpperCase()}
+        <>
+          <View style={styles.viewModeRow}>
+            {VIEW_MODE_OPTIONS.map((opt) => {
+              const selected = viewMode === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  onPress={() => setViewMode(opt.key)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={`Show ${opt.label.toLowerCase()} run sheet items`}
+                >
+                  <View
+                    style={[
+                      styles.viewModePill,
+                      {
+                        backgroundColor: selected
+                          ? primaryColor
+                          : colors.surfaceSecondary,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.viewModeText,
+                        { color: selected ? colors.textInverse : colors.textSecondary },
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {viewMode === "mine" && !mineHasContent ? (
+            <View style={styles.mineEmptyState}>
+              <Ionicons name="person-outline" size={22} color={colors.textTertiary} />
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {hasAnyViewerRole
+                  ? "None of the run sheet items are tagged with your roles yet."
+                  : "You're not assigned a role on this plan yet."}
               </Text>
-              {visibleItems.map((item) => (
-                <ReadOnlyRow
-                  key={item._id}
-                  item={item}
-                  clockMs={clockTimes[item._id]}
-                  peopleByRole={peopleByRole}
-                  colors={colors}
-                  isDark={isDark}
-                  isCurrent={item._id === currentItemId}
-                  isExpanded={expandedItemIds.has(item._id)}
-                  onToggleExpand={() => toggleItemExpanded(item._id)}
-                  isCollapsed={collapsedHeaders.has(item._id)}
-                  onToggleCollapse={() => toggleHeaderCollapsed(item._id)}
-                />
-              ))}
             </View>
-          );
-        })
+          ) : (
+            SEGMENT_OPTIONS.map((seg) => {
+              const segItems = itemsBySegment[seg.key];
+              const modeItems =
+                viewMode === "mine"
+                  ? segItems.filter((it) => runSheetItemMatchesViewer(it, viewerRoleIds))
+                  : segItems;
+              if (modeItems.length === 0) return null;
+              // In "Mine", a segment whose only matches are headers has no
+              // actual content to show — skip the whole segment rather than
+              // render a label + bare header row (see runSheetViewerFilter).
+              if (
+                viewMode === "mine" &&
+                !segmentHasContentForViewer(segItems, viewerRoleIds)
+              ) {
+                return null;
+              }
+              // Hide items that follow a collapsed header (positional: a header
+              // owns the rows after it until the next header in the segment).
+              const visibleItems = filterVisible(modeItems, collapsedHeaders);
+              return (
+                <View key={seg.key}>
+                  <Text style={[styles.segmentLabel, { color: colors.textSecondary }]}>
+                    {seg.label.toUpperCase()}
+                  </Text>
+                  {visibleItems.map((item) => (
+                    <ReadOnlyRow
+                      key={item._id}
+                      item={item}
+                      clockMs={clockTimes[item._id]}
+                      peopleByRole={peopleByRole}
+                      colors={colors}
+                      isDark={isDark}
+                      isCurrent={item._id === currentItemId}
+                      isExpanded={expandedItemIds.has(item._id)}
+                      onToggleExpand={() => toggleItemExpanded(item._id)}
+                      isCollapsed={collapsedHeaders.has(item._id)}
+                      onToggleCollapse={() => toggleHeaderCollapsed(item._id)}
+                    />
+                  ))}
+                </View>
+              );
+            })
+          )}
+        </>
       )}
     </Root>
   );
@@ -798,6 +898,16 @@ const styles = StyleSheet.create({
   sheetHeaderActions: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   planTitle: { fontSize: 20, fontWeight: "700" },
   ranges: { fontSize: 13, fontWeight: "600", marginTop: 4 },
+  viewModeRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  viewModePill: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: 999 },
+  viewModeText: { fontSize: 13, fontWeight: "600" },
+  mineEmptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+  },
   segmentLabel: {
     fontSize: 12,
     fontWeight: "800",

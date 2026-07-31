@@ -36,6 +36,11 @@ const SAME_DAY_LEAD_MS = 12 * 60 * 60 * 1000;
  * eventModeStore `autoEnterBlocked`).
  */
 const AUTO_ENTER_LEAD_MS = SAME_DAY_LEAD_MS;
+/**
+ * How many future plans `upcomingPlans` offers for early opening. A volunteer
+ * preparing ahead cares about their next few events, not their whole year.
+ */
+const UPCOMING_PLANS_LIMIT = 10;
 
 /** Earliest service `startsAt` on a plan, or its `eventDate` if it has none. */
 function planStartsAt(plan: Doc<"eventPlans">): number {
@@ -169,6 +174,20 @@ type ServingPlan = {
 };
 
 /**
+ * A future plan the user can open EARLY to prepare (see `upcomingPlans`). Same
+ * fields as `ServingPlan` minus the resolved channel arrays: the client opens
+ * exactly one of these at a time and the inbox re-resolves that plan's channels
+ * server-side, so resolving them for every future plan would be wasted work.
+ */
+type UpcomingServingPlan = {
+  planId: string;
+  groupId: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+};
+
+/**
  * Every plan the current user can currently enter Serving Mode for. A plan is a
  * candidate when the user has a non-declined (`unconfirmed` or `confirmed`) role
  * assignment on it and "now" falls inside the plan's serving window; multiple
@@ -184,6 +203,19 @@ type ServingPlan = {
  * "you're serving now" before they've accepted — the nudge to accept stays
  * meaningful without locking them out. With multiple active plans the choice is
  * ambiguous, so we never auto-enter and the client offers a manual chip instead.
+ *
+ * `upcomingPlans` is a SEPARATE, soonest-first list of PUBLISHED plans that are
+ * still in the future (before the same-day window opens) and that the user holds
+ * a non-declined assignment on, capped at `UPCOMING_PLANS_LIMIT`. Draft plans are
+ * excluded: opening one early would expose a run sheet and tasks still being
+ * written, weeks ahead, to anyone holding an unconfirmed assignment. (Same-day
+ * `plans` stays status-agnostic — see the loop.) It exists so the
+ * client can offer "open this event early to prepare" from My Schedule; it does
+ * NOT make anyone eligible and never feeds `autoEnter`. The client opens exactly
+ * ONE of them at a time (`eventModeStore.previewPlanId`) and scopes every
+ * serving surface — including the inbox's `servingPlanIds` — to that single
+ * plan; scoping to the whole list would explode the serving inbox across every
+ * future event.
  *
  * Auth: any authenticated user.
  */
@@ -204,17 +236,68 @@ export const getServingEligibility = query({
     const planIds = [...new Set(nonDeclined.map((a) => a.planId as string))];
 
     const entries: (ServingPlan & { autoEnter: boolean })[] = [];
+    const upcoming: UpcomingServingPlan[] = [];
+
+    // `isActiveGroupMember` is 2 serial reads and a volunteer's plans cluster
+    // into a handful of groups, so memoise it per group for this call. Without
+    // it a weekly assignment a year out costs ~100 redundant reads of the same
+    // group doc on every invalidation of this (reactive) query.
+    const membershipByGroup = new Map<string, boolean>();
+    const isActiveMember = async (groupId: Id<"groups">): Promise<boolean> => {
+      const key = groupId as string;
+      const cached = membershipByGroup.get(key);
+      if (cached !== undefined) return cached;
+      const active = await isActiveGroupMember(ctx, groupId, userId);
+      membershipByGroup.set(key, active);
+      return active;
+    };
+
+    // Split first, membership-check second. The upcoming list is capped at
+    // `UPCOMING_PLANS_LIMIT`, so checking membership in soonest-first order and
+    // stopping at the cap bounds the work instead of only trimming the result.
+    const sameDayPlans: Doc<"eventPlans">[] = [];
+    const upcomingCandidates: Doc<"eventPlans">[] = [];
 
     for (const planIdStr of planIds) {
       const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
       if (!plan) continue;
 
+      // The event is over — neither servable nor worth preparing for.
+      if (now > planEndsAt(plan)) continue;
+
+      if (now < planStartsAt(plan) - SAME_DAY_LEAD_MS) {
+        // Before the same-day window: openable EARLY to prepare, but not
+        // eligible and never auto-entered — `plans` stays strictly same-day.
+        // Only PUBLISHED plans though: a draft's run sheet and tasks are still
+        // being written, and preview would otherwise expose them weeks ahead to
+        // anyone holding an unconfirmed assignment. (The same-day `plans` array
+        // deliberately keeps its status-agnostic behaviour — a volunteer
+        // standing at the venue must not be locked out by an unpublished plan.)
+        if (plan.status !== "published") continue;
+        upcomingCandidates.push(plan);
+        continue;
+      }
+
+      sameDayPlans.push(plan);
+    }
+
+    upcomingCandidates.sort((a, b) => planStartsAt(a) - planStartsAt(b));
+    for (const plan of upcomingCandidates) {
+      if (upcoming.length >= UPCOMING_PLANS_LIMIT) break;
+      if (!(await isActiveMember(plan.groupId))) continue;
+      upcoming.push({
+        planId: plan._id as string,
+        groupId: plan.groupId as string,
+        title: plan.title,
+        startsAt: planStartsAt(plan),
+        endsAt: planEndsAt(plan),
+      });
+    }
+
+    for (const plan of sameDayPlans) {
+      const planIdStr = plan._id as string;
       const startsAt = planStartsAt(plan);
       const endsAt = planEndsAt(plan);
-      const sameDayStart = startsAt - SAME_DAY_LEAD_MS;
-
-      // Must be within the broader same-day window to be eligible at all.
-      if (now < sameDayStart || now > endsAt) continue;
 
       // A stale assignment can outlive group membership: `groupMembers.remove`
       // soft-deletes (sets `leftAt`) but leaves the `roleAssignments` row
@@ -223,7 +306,7 @@ export const getServingEligibility = query({
       // never-answered assignment would regain serving access (and the roster's
       // teammate phone numbers). Confirmed-only never surfaced this because an
       // unanswered assignment is unconfirmed.
-      if (!(await isActiveGroupMember(ctx, plan.groupId, userId))) continue;
+      if (!(await isActiveMember(plan.groupId))) continue;
 
       // The user's assignments on this plan (any status), from the set above.
       const planAssignments = nonDeclined.filter(
@@ -259,7 +342,9 @@ export const getServingEligibility = query({
       });
     }
 
-    // Soonest-first so the first entry is the natural default.
+    // Soonest-first so the first entry is the natural default. (`upcoming` is
+    // already in that order — its candidates were sorted before the capped
+    // membership pass above.)
     entries.sort((a, b) => a.startsAt - b.startsAt);
 
     const plans: ServingPlan[] = entries.map(
@@ -280,6 +365,7 @@ export const getServingEligibility = query({
       autoEnter,
       activePlan,
       plans,
+      upcomingPlans: upcoming,
     };
   },
 });

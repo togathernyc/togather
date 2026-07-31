@@ -6,6 +6,11 @@
  * Accept / Decline actions and a per-event bulk "Accept all". Declining
  * prompts an optional one-line note.
  *
+ * It's also where serving mode is entered: the day-of banner for today's
+ * eligible plans, and — from `getServingEligibility().upcomingPlans` — an
+ * "open early to prepare" affordance that opens ONE future plan as a preview
+ * (`eventModeStore.previewPlanId`).
+ *
  * Route: /(user)/my-schedule
  *
  * Backend: scheduling.mySchedule.myAssignments,
@@ -74,6 +79,7 @@ export function MyScheduleScreen() {
   const { primaryColor } = useCommunityTheme();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
   const enterServingMode = useEventModeStore((s) => s.enter);
+  const enterPreviewPlan = useEventModeStore((s) => s.enterPreview);
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
       ?.eventTasksEnabled === true;
@@ -83,17 +89,55 @@ export function MyScheduleScreen() {
   ) as
     | {
         plans: { planId: string; title: string; startsAt: number }[];
+        upcomingPlans: { planId: string; title: string; startsAt: number }[];
       }
     | undefined;
   // Serving mode now spans every eligible plan at once (each tab shows all of
   // them as sections), so a single entry point covers them all. Hidden while
   // already serving.
   const servingPlans = isServingMode ? [] : servingEligibility?.plans ?? [];
+  // Future plans the volunteer can open EARLY to prepare — one at a time, as a
+  // preview scoped to that single plan. Never auto-entered.
+  const upcomingPlans = isServingMode
+    ? []
+    : servingEligibility?.upcomingPlans ?? [];
+  const nextUpcoming = upcomingPlans[0];
 
   const handleEnterServing = useCallback(() => {
     enterServingMode();
     router.replace("/(tabs)/serving-tasks" as never);
   }, [enterServingMode, router]);
+
+  // Opening a specific event from a row: a same-day plan enters serving mode
+  // normally; a future one opens as a single-plan preview so the serving tabs
+  // and inbox scope to it alone.
+  const handleOpenPlan = useCallback(
+    (planId: string) => {
+      const isToday = (servingEligibility?.plans ?? []).some(
+        (p) => p.planId === planId,
+      );
+      if (isToday) {
+        enterServingMode();
+      } else {
+        enterPreviewPlan(planId);
+      }
+      router.replace("/(tabs)/serving-tasks" as never);
+    },
+    [servingEligibility, enterServingMode, enterPreviewPlan, router],
+  );
+
+  // Only events the backend will actually resolve can be opened — otherwise the
+  // serving tabs would open onto nothing.
+  const openablePlanIds = useMemo(
+    () =>
+      new Set(
+        [
+          ...(servingEligibility?.plans ?? []),
+          ...(servingEligibility?.upcomingPlans ?? []),
+        ].map((p) => p.planId),
+      ),
+    [servingEligibility],
+  );
 
   // Pending requests pinned at top; the rest grouped by calendar day.
   const { pending, dateGroups } = useMemo(() => {
@@ -157,6 +201,40 @@ export function MyScheduleScreen() {
         </Text>
         <View style={styles.headerSpacer} />
       </View>
+
+      {servingPlans.length === 0 && nextUpcoming ? (
+        <View style={styles.servingBannerGroup}>
+          <Pressable
+            onPress={() => handleOpenPlan(nextUpcoming.planId)}
+            style={({ pressed }) => [
+              styles.previewBanner,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: primaryColor,
+              },
+              pressed && { opacity: 0.85 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${nextUpcoming.title} early to prepare`}
+          >
+            <Ionicons name="eye-outline" size={20} color={primaryColor} />
+            <View style={styles.servingBannerTextWrap}>
+              <Text
+                style={[styles.previewBannerTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {nextUpcoming.title}
+              </Text>
+              <Text
+                style={[styles.previewBannerSub, { color: colors.textSecondary }]}
+              >
+                Open early to prepare
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={primaryColor} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {servingPlans.length > 0 ? (
         <View style={styles.servingBannerGroup}>
@@ -278,7 +356,9 @@ export function MyScheduleScreen() {
                   assignment={a}
                   onPress={() => openDetail(a._id)}
                   onOpenEvent={
-                    eventTasksEnabled ? () => handleEnterServing() : undefined
+                    eventTasksEnabled && openablePlanIds.has(a.planId as string)
+                      ? () => handleOpenPlan(a.planId as string)
+                      : undefined
                   }
                 />
               ))}
@@ -481,6 +561,24 @@ const styles = StyleSheet.create({
   },
   servingBannerTextWrap: {
     flex: 1,
+  },
+  previewBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  previewBannerTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  previewBannerSub: {
+    fontSize: 13,
+    marginTop: 2,
   },
   servingBannerTitle: {
     fontSize: 15,

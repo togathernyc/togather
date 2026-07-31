@@ -32,16 +32,20 @@ import {
 } from "@components/wa";
 import { PlanRunSheet } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
-import { useCachedServingPlans } from "../hooks/useCachedServingPlans";
+import { useServingPlans } from "../hooks/useServingPlans";
+
+type ServingPlan = {
+  planId: string;
+  groupId: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+};
 
 type EligibilityResult = {
-  plans: Array<{
-    planId: string;
-    groupId: string;
-    title: string;
-    startsAt: number;
-    endsAt: number;
-  }>;
+  plans: ServingPlan[];
+  /** Future plans openable early to prepare — see `useServingPlans`. */
+  upcomingPlans: ServingPlan[];
 };
 
 function formatPlanDate(startsAt: number): string {
@@ -61,13 +65,15 @@ export function ServingRunsheetScreen() {
   const wa = useWhatsappShell();
   const router = useRouter();
   const isServingMode = useEventModeStore((s) => s.isServingMode);
+  const previewPlanId = useEventModeStore((s) => s.previewPlanId);
 
   const eligibility = useAuthenticatedQuery(
     api.functions.scheduling.serving.getServingEligibility,
     isServingMode ? {} : "skip",
   ) as EligibilityResult | null | undefined;
 
-  const plans = useCachedServingPlans(eligibility?.plans);
+  // Today's plans, or the single upcoming plan opened early for preview.
+  const plans = useServingPlans(eligibility);
 
   // This tool renders inside the `(user)` modal route group; pushing a
   // `/rostering/...` card from inside the modal lands it behind the modal on
@@ -111,7 +117,9 @@ export function ServingRunsheetScreen() {
         <Text
           style={[styles.emptyText, wa && waStyles.emptyText, { color: colors.textSecondary }]}
         >
-          No run sheet available.
+          {previewPlanId
+            ? "This event isn't available to preview anymore."
+            : "No run sheet available."}
         </Text>
       </View>
     );

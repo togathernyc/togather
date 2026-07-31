@@ -337,6 +337,43 @@ export function EventPlans() {
         </P>
 
         <P>
+          The People view respects <Term>team scope</Term> — the same{" "}
+          <Term>team</Term> chip that narrows the Roles view. The first time you
+          open a group's roster, it defaults to <Term>My teams</Term> if you
+          manage any team there, so a worship leader lands on their own
+          worship-team people rather than the whole roster; a leader or admin who
+          manages no team here keeps seeing everyone. Because scope is based on
+          who currently holds a role assignment on one of your teams, a volunteer
+          who's never been rostered can be scoped out along with everyone else —
+          so whenever scope hides anyone, a quiet note above the list reads{" "}
+          <Term>{"{n} people hidden by team scope"}</Term> with a one-tap{" "}
+          <Term>Show everyone</Term> to widen back to every team.
+        </P>
+
+        <P>
+          A <Term>Needs availability</Term> chip (People view only) isolates
+          people who haven't answered a single upcoming date on the grid — the
+          non-responders you actually need to chase. It's built to pair with team
+          scope: narrow to your people, flip on <Term>Needs availability</Term>,
+          then tap a name in the list to text them directly (it falls back to an
+          in-app direct message if they have no phone on file). It's always one
+          person at a time — there's no mass send.
+        </P>
+
+        <Figure caption="The People view, scoped to the teams you manage — with the hidden-by-scope notice and the Needs availability filter.">
+          <RosterPeopleViewMock />
+        </Figure>
+
+        <P>
+          Tapping an empty cell in the People view opens{" "}
+          <Term>{"Place {name}"}</Term> — the roles still open on that date. That
+          list is scoped to the teams you manage too, with the same escape hatch:
+          when scoping would leave nothing to place them in (or just narrows the
+          list), a <Term>Show roles on every team</Term> link widens it back to
+          every open role on that date.
+        </P>
+
+        <P>
           Tap a role cell to manage who's in it. Once the plan is published, next
           to anyone still awaiting a response is <Term>Send request</Term> — it
           pings just that one person, so after you assign or reassign a single
@@ -450,6 +487,20 @@ export function EventPlans() {
           Leaders build and use this native run sheet inside Rostering for{" "}
           <em>any</em> group — it's the Togather-native order of service for the
           plan.
+        </P>
+
+        <P>
+          <strong>All / Mine.</strong> Above the Before/During/After list, an{" "}
+          <Term>All</Term> / <Term>Mine</Term> toggle lets anyone viewing the
+          sheet — leader or member — narrow it down to just the rows tied to
+          their own roles on that plan, like a worship leader who only wants
+          their songs and cues without the rest of the service in the way.{" "}
+          <Term>Mine</Term> keeps a segment's header only when it still has a
+          matching row underneath — an empty segment (say, nothing before the
+          service for a vocalist) disappears entirely instead of showing a bare
+          label with nothing under it. Switching plan tabs always starts the
+          newly-selected plan back at <Term>All</Term>, so a filter you picked
+          on one plan never leaks into another.
         </P>
 
         <P>
@@ -597,6 +648,14 @@ function Ion({
       return (
         <svg {...common}>
           <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      );
+    case "eye-off-outline":
+      return (
+        <svg {...common}>
+          <path d="M3 3l18 18" />
+          <path d="M10.6 10.6a3 3 0 0 0 4.24 4.24" />
+          <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-3.22 4.36M6.61 6.61A18.5 18.5 0 0 0 1 12s4 8 11 8a10.94 10.94 0 0 0 5.39-1.44" />
         </svg>
       );
     case "chevron-forward":
@@ -1250,6 +1309,16 @@ function RunSheetMock() {
             9:00 AM – 10:15 AM · 11:00 AM – 12:15 PM
           </div>
 
+          {/* All / Mine viewer toggle */}
+          <div className="mt-2 flex gap-1.5">
+            <span className="rounded-full bg-primary-600 px-3 py-1 text-[10px] font-semibold text-white">
+              All
+            </span>
+            <span className="rounded-full border border-neutral-200 px-3 py-1 text-[10px] font-medium text-neutral-500">
+              Mine
+            </span>
+          </div>
+
           {/* BEFORE EVENT */}
           <div className="mt-4 text-[10px] font-extrabold uppercase tracking-[0.08em] text-neutral-400">
             Before event
@@ -1689,6 +1758,95 @@ function RosterGridMock() {
             ))}
           </tbody>
         </table>
+      </div>
+    </DesktopFrame>
+  );
+}
+
+/**
+ * The People view, scoped to "My teams" — filter chips (team scope, Needs
+ * availability), the hidden-by-scope notice with its "Show everyone" widen
+ * link, and a few rows with the ✓available/total + srv counts and the
+ * tap-to-text reach-out.
+ */
+function RosterPeopleViewMock() {
+  const people = [
+    { name: "Amara M.", leader: true, avail: "4/4", srv: 3 },
+    { name: "Jordan D.", leader: false, avail: "3/4", srv: 1 },
+    { name: "Riley S.", leader: false, avail: "2/4", srv: 2 },
+  ];
+  return (
+    <DesktopFrame url="togather.nyc/rostering">
+      <div className="min-w-[560px] p-4 text-neutral-800">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <div className="text-base font-bold text-neutral-900">Roster</div>
+            <div className="text-[11px] text-neutral-500">
+              4 events · 18/24 responded
+            </div>
+          </div>
+          <div className="flex overflow-hidden rounded-lg border border-neutral-200 text-[11px] font-semibold">
+            <span className="bg-white px-3 py-1 text-neutral-500">Roles</span>
+            <span className="bg-primary-600 px-3 py-1 text-white">People</span>
+          </div>
+        </div>
+
+        {/* Filter chips */}
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 rounded-full border border-primary-400 bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">
+            <Ion name="people-outline" size={12} className="text-primary-700" />
+            My teams
+            <span className="text-primary-400">▾</span>
+          </span>
+          <span className="rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-medium text-neutral-500">
+            Open only
+          </span>
+          <span className="rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-medium text-neutral-500">
+            Available only
+          </span>
+          <span className="rounded-full border border-primary-400 bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">
+            Needs availability
+          </span>
+        </div>
+
+        {/* Hidden-by-team-scope notice */}
+        <div className="mb-3 flex items-center gap-1.5 border-t border-neutral-100 pt-2 text-[11px] text-neutral-500">
+          <Ion name="eye-off-outline" size={13} />
+          <span>6 people hidden by team scope</span>
+          <span className="ml-auto text-[11px] font-bold text-primary-700">
+            Show everyone
+          </span>
+        </div>
+
+        {/* People rows */}
+        <div className="space-y-1.5">
+          {people.map((p) => (
+            <div
+              key={p.name}
+              className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[12px] font-medium text-neutral-900">
+                    {p.name}
+                  </span>
+                  {p.leader && (
+                    <span className="text-[9px] font-semibold text-neutral-400">
+                      Leader
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-green-600">✓{p.avail}</span>
+                  <span className="text-neutral-400">{p.srv} srv</span>
+                </div>
+              </div>
+              <span className="text-[13px]" title={`Text ${p.name}`}>
+                💬
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </DesktopFrame>
   );

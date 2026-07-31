@@ -46,12 +46,14 @@ import { useTheme } from "@hooks/useTheme";
 import { GroupedInboxItem } from "./GroupedInboxItem";
 import { selectMainChannel } from "../utils/selectMainChannel";
 import { useExpandedGroups } from "../hooks/useExpandedGroups";
+import { useInboxGroupCollapse } from "../../../stores/inboxGroupCollapse";
 import { useInboxCache } from "../../../stores/inboxCache";
 import { Avatar } from "@components/ui/Avatar";
 import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
-import { useCachedServingPlans } from "@features/serving/hooks/useCachedServingPlans";
+import { useServingPlans } from "@features/serving/hooks/useServingPlans";
+import { shouldAutoExitServing } from "@features/serving/utils/servingAutoExit";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   WaAvatar,
@@ -324,6 +326,16 @@ export function ChatInboxScreen({
   // scope above.
   const collapsingHeaderTitle = whatsappShellEnabled ? "Chats" : "Inbox";
   const { isGroupExpanded, toggleGroupExpanded } = useExpandedGroups();
+  // Collapse chevron on each group cluster (owner directive, 2026-07-30):
+  // deliberately a separate persisted store from useExpandedGroups above —
+  // see stores/inboxGroupCollapse.ts for why. Select the raw map (not the
+  // `isCollapsed` getter) so this component re-renders when it changes.
+  const collapsedGroupIds = useInboxGroupCollapse((s) => s.collapsedGroupIds);
+  const toggleGroupCollapsed = useInboxGroupCollapse((s) => s.toggleCollapsed);
+  // Collapse state rehydrates from AsyncStorage asynchronously, so on the first
+  // frames every group looks expanded. Without this gate a collapsed group
+  // renders open and then snaps shut — which reads as "it didn't remember".
+  const collapseHydrated = useInboxGroupCollapse((s) => s.hasHydrated);
   const { getInboxChannels, setInboxChannels } = useInboxCache();
   // Device network state. Drives the loading strategy: online we hold for a
   // complete first paint; with no network we fall back to cached channels.
@@ -356,6 +368,8 @@ export function ChatInboxScreen({
   // then stripping it down to the serving-mode view a beat later.
   const eventModeHydrated = useEventModeStore((s) => s.hasHydrated);
   const enterServingMode = useEventModeStore((s) => s.enter);
+  const exitServingMode = useEventModeStore((s) => s.exit);
+  const previewPlanId = useEventModeStore((s) => s.previewPlanId);
   const autoEnterBlocked = useEventModeStore((s) => s.autoEnterBlocked);
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
@@ -382,9 +396,21 @@ export function ChatInboxScreen({
           startsAt: number;
           endsAt: number;
         }>;
+        /** Future plans openable early to prepare — see `useServingPlans`. */
+        upcomingPlans: Array<{
+          planId: string;
+          groupId: string;
+          title: string;
+          startsAt: number;
+          endsAt: number;
+        }>;
       }
     | undefined;
-  const eligiblePlans = useCachedServingPlans(servingEligibility?.plans);
+  // Today's eligible plans — or, when the user opened an upcoming plan early
+  // from My Schedule, just that ONE plan. The serving inbox is filtered
+  // server-side by these ids, so a preview must never widen to every upcoming
+  // plan's channels.
+  const eligiblePlans = useServingPlans(servingEligibility);
   const eligiblePlanIds = useMemo(
     () => eligiblePlans.map((p) => p.planId as Id<"eventPlans">),
     [eligiblePlans],
@@ -508,6 +534,35 @@ export function ChatInboxScreen({
       enterServingMode();
     }
   }, [servingEligibility, isServingMode, enterServingMode, autoEnterBlocked]);
+
+  // Serving mode auto-exit. Nothing but the Exit tab ever cleared the persisted
+  // serving flag, and an empty `servingPlanIds` now means "empty serving inbox"
+  // rather than "no filter" — so once the day's plans age out, a volunteer who
+  // never tapped Exit would be stranded on an empty Chats list, Runsheet and
+  // Tasks. `eligiblePlanIds` already folds in the offline cache, so this only
+  // fires on a genuinely resolved, genuinely empty result (see
+  // `shouldAutoExitServing`). Uses the same `exit()` the Exit tab does, so it
+  // also sets `autoEnterBlocked` for the session — harmless here, since with
+  // zero eligible plans the backend isn't asking for auto-entry anyway, and the
+  // manual chip still appears the moment a plan becomes eligible again.
+  useEffect(() => {
+    if (
+      shouldAutoExitServing({
+        inServingMode,
+        previewPlanId,
+        eligibilityResolved: servingEligibility !== undefined,
+        planCount: eligiblePlanIds.length,
+      })
+    ) {
+      exitServingMode();
+    }
+  }, [
+    inServingMode,
+    previewPlanId,
+    servingEligibility,
+    eligiblePlanIds,
+    exitServingMode,
+  ]);
 
   // Show the manual re-entry chip when eligible but not currently serving.
   const showServingChip = !!servingEligibility?.eligible && !isServingMode;
@@ -755,6 +810,8 @@ export function ChatInboxScreen({
           userRole={item.item.userRole}
           isExpanded={isGroupExpanded(item.item.group._id)}
           onToggleExpand={() => toggleGroupExpanded(item.item.group._id)}
+          isCollapsed={Boolean(collapsedGroupIds[item.item.group._id])}
+          onToggleCollapse={() => toggleGroupCollapsed(item.item.group._id)}
           activeGroupId={sidebarMode ? activeGroupId : undefined}
           activeChannelSlug={sidebarMode ? activeChannelSlug : undefined}
           resources={resourcesByGroup.get(item.item.group._id)}
@@ -762,7 +819,7 @@ export function ChatInboxScreen({
         />
       );
     },
-    [isGroupExpanded, toggleGroupExpanded, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, isDark, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
+    [isGroupExpanded, toggleGroupExpanded, collapsedGroupIds, toggleGroupCollapsed, sidebarMode, activeGroupId, activeChannelSlug, primaryColor, colors, isDark, router, resourcesByGroup, inServingMode, whatsappShellEnabled]
   );
 
   // Key extractor for FlatList
@@ -1545,19 +1602,20 @@ export function ChatInboxScreen({
   }
 
   // Hold the loading state until the whole first paint is ready: the persisted
-  // serving-mode flag has hydrated (so we know which inbox to build), the channel
-  // backbone has loaded, and every active auxiliary subscription (resources, DMs,
-  // requests, notifications, serving extras) has resolved once. Waiting for all of
+  // serving-mode flag and group-collapse state have hydrated (so we know which
+  // inbox to build and which groups are collapsed), the channel backbone has
+  // loaded, and every active auxiliary subscription (resources, DMs, requests,
+  // notifications, serving extras) has resolved once. Waiting for all of
   // them means the inbox appears complete instead of having rows, resources, and
   // DMs pop in and re-sort piecemeal.
   const firstPaintComplete =
-    eventModeHydrated && !isLoading && !auxDataLoading;
+    eventModeHydrated && collapseHydrated && !isLoading && !auxDataLoading;
   // Offline is the one exception: the live queries can never resolve, so rather
   // than spin forever we fall back to whatever channels are cached (once the
   // serving-mode flag has hydrated, so the cache key is correct). Web always
   // reports a network, so it always waits for the complete paint.
   const offlineStaleFallback =
-    !isNetworkAvailable && eventModeHydrated && isStale;
+    !isNetworkAvailable && eventModeHydrated && collapseHydrated && isStale;
   const showLoadingSpinner = !firstPaintComplete && !offlineStaleFallback;
 
   if (showLoadingSpinner) {
