@@ -832,6 +832,12 @@ export const getChannelsByGroup = query({
       if (channel.channelType === "leaders") {
         return isLeader;
       }
+      // The Reach Out feature is gone, but its channels may still exist on
+      // deployments that had it enabled. Hide them: there is no longer a screen
+      // that renders one, so surfacing it would show an empty chat tab.
+      if (channel.channelType === "reach_out") {
+        return false;
+      }
       // Custom and pco_services channels require membership (or leader/admin access)
       if (isCustomChannel(channel.channelType) || channel.channelType === "pco_services") {
         if (!channelIsLeaderEnabled(channel) && !isLeader) {
@@ -1345,6 +1351,11 @@ export const listGroupChannels = query({
       }
       // Leaders channel only visible to leaders/admins
       if (ch.channelType === "leaders" && !userIsLeaderOrAdmin) {
+        return false;
+      }
+      // Retired Reach Out channels (see getChannelsByGroup) never surface —
+      // checked before the leader passthrough below, which would else show them.
+      if (ch.channelType === "reach_out") {
         return false;
       }
       // Leaders/community admins see every channel on this list (including disabled, for toggles)

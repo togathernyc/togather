@@ -2107,6 +2107,89 @@ describe("removeChannelMember", () => {
 // listGroupChannels Query Tests
 // ============================================================================
 
+describe("retired reach_out channels", () => {
+  // The Reach Out feature was removed but its channels survive on deployments
+  // that had it enabled (no data migration ships with the removal). Nothing
+  // renders one any more, so both channel-list queries must hide them —
+  // otherwise a member sees an empty, unusable chat tab labelled "Reach Out".
+  async function seedRetiredReachOutChannel(
+    t: ReturnType<typeof convexTest>,
+    groupId: any,
+    memberId: any,
+    creatorId: any,
+  ) {
+    return await t.run(async (ctx) => {
+      const chId = await ctx.db.insert("chatChannels", {
+        groupId,
+        slug: "reach-out",
+        channelType: "reach_out",
+        name: "Reach Out",
+        createdById: creatorId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        isArchived: false,
+        memberCount: 1,
+      });
+      await ctx.db.insert("chatChannelMembers", {
+        channelId: chId,
+        userId: memberId,
+        role: "member",
+        joinedAt: Date.now(),
+        isMuted: false,
+      });
+      return chId;
+    });
+  }
+
+  test("listGroupChannels hides them from members", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+    await seedRetiredReachOutChannel(t, groupId, userId, leaderId);
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(channels.find((c) => c.channelType === "reach_out")).toBeUndefined();
+  });
+
+  test("listGroupChannels hides them from leaders too", async () => {
+    // Leaders hit an early `return true` passthrough that shows every channel
+    // for the toggle UI, so the exclusion has to sit above it.
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId } = await seedTestData(t);
+    const { userId: leaderId, accessToken: leaderToken } = await createLeaderUser(
+      t,
+      communityId,
+      groupId,
+    );
+    await seedRetiredReachOutChannel(t, groupId, userId, leaderId);
+
+    const channels = await t.query(api.functions.messaging.channels.listGroupChannels, {
+      token: leaderToken,
+      groupId,
+    });
+
+    expect(channels.find((c) => c.channelType === "reach_out")).toBeUndefined();
+  });
+
+  test("getChannelsByGroup hides them", async () => {
+    const t = convexTest(schema, modules);
+    const { userId, communityId, groupId, accessToken } = await seedTestData(t);
+    const { userId: leaderId } = await createLeaderUser(t, communityId, groupId);
+    await seedRetiredReachOutChannel(t, groupId, userId, leaderId);
+
+    const channels = await t.query(api.functions.messaging.channels.getChannelsByGroup, {
+      token: accessToken,
+      groupId,
+    });
+
+    expect(channels.find((c: any) => c.channelType === "reach_out")).toBeUndefined();
+  });
+});
+
 describe("listGroupChannels", () => {
   test("returns all channels with membership status", async () => {
     const t = convexTest(schema, modules);
