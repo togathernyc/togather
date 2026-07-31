@@ -220,9 +220,17 @@ export function GroupInfoScreen() {
   // showing no balance has no use for). Returns null when the flag is off or
   // no fund exists; the flag is still checked separately below so the row
   // can't flash in while that query is in flight.
+  //
+  // Gated on `isMember` because non-members reach this route too (share link
+  // / Explore — see the GroupNonMemberView branch below) and have no giving
+  // row to render, so the subscription is pure waste for them. It's also the
+  // client half of a belt-and-braces fix: `getGivingContext` used to THROW
+  // for a non-member, and Convex re-throws that during render, which put the
+  // root ErrorBoundary in front of the join CTA. The server now returns null
+  // instead; skipping here means a regression there can't reach this screen.
   const givingContext = useAuthenticatedQuery(
     api.functions.finance.giving.getGivingContext,
-    group?._id ? { groupId: group._id as Id<"groups"> } : "skip",
+    group?._id && isMember ? { groupId: group._id as Id<"groups"> } : "skip",
   );
   const hasGivingFund = !!givingContext;
   const canEditGroup = useMemo(() => {

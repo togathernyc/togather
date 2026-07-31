@@ -41,7 +41,7 @@ const EXPENSE_STATUS_LABELS: Record<ExpenseStatus, string> = {
   // money. The automated ACH payout is still a stub (`getPayoutDestination` in
   // functions/finance/expenses.ts always returns null, so `payReimbursement`
   // short-circuits), which means an approved row NEVER advances on its own: a
-  // treasurer has to send the money out of band and have it recorded as paid.
+  // fund manager has to send the money out of band and have it recorded as paid.
   // A bare "Approved" badge reads as "settled, money on the way", so the badge
   // itself has to name the state the submitter is actually in.
   approved: "Awaiting payout",
@@ -61,10 +61,16 @@ export function formatExpenseStatus(status: string): string {
  * Only the approved-but-unpaid state needs one: it's the one status a member
  * can misread as "I've been paid". Deliberately promises no date — there is no
  * payout schedule to promise (see `EXPENSE_STATUS_LABELS.approved`).
+ *
+ * Says "a fund manager", not "a treasurer": the point of the sentence is that
+ * a specific human still has to act, so it has to name someone the member can
+ * actually go and find. `manager` is a real grantable role in ADR-032 §4's
+ * table; "treasurer" is only the ADR's informal shorthand for whoever holds
+ * that role, and nothing in the product ever labels a person one.
  */
 export function expenseStatusNote(status: string): string | undefined {
   if ((status as ExpenseStatus) === "approved") {
-    return "Approved — a treasurer still needs to send you the money. It'll say Paid here once they have.";
+    return "Approved — a fund manager still needs to send you the money. It'll say Paid here once they have.";
   }
   return undefined;
 }

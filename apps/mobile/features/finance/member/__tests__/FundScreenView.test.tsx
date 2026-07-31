@@ -231,7 +231,7 @@ describe("FundScreenView", () => {
 
   // An approved reimbursement is NOT money in flight: the ACH payout is still
   // stubbed (`getPayoutDestination` returns null), so nothing advances the row
-  // until a treasurer pays out of band and the status is recorded as paid. The
+  // until a fund manager pays out of band and the status is recorded as paid. The
   // row has to say that rather than leave a bare blue "Approved" badge the
   // reader settles for as "paid".
   describe("approved-but-unpaid honesty", () => {
@@ -260,7 +260,10 @@ describe("FundScreenView", () => {
     it("explains who still has to send the money, with no promised date", () => {
       renderWith(approved);
       const note = screen.getByTestId("expense-note-exp-approved");
-      expect(note.props.children).toMatch(/treasurer/i);
+      // A real role from ADR-032 §4's table — not "treasurer", which the
+      // product never labels anyone (see expenseStatusNote's doc comment).
+      expect(note.props.children).toMatch(/fund manager/i);
+      expect(note.props.children).not.toMatch(/treasurer/i);
       // No ETA language — the payout has no schedule to promise.
       expect(note.props.children).not.toMatch(/\b\d+\s*(day|week|business)/i);
     });

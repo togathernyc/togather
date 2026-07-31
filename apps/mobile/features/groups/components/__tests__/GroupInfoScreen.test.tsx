@@ -415,6 +415,69 @@ describe("GroupInfoScreen", () => {
       fireEvent.press(screen.getAllByText("Giving")[1]);
       expect(mockRouterPush).toHaveBeenLastCalledWith("/(user)/leader-tools/1/giving");
     });
+
+    // The tests above stub `isGroupMember` true and hand `getGivingContext` a
+    // friendly value, so they can't see what a real non-member gets. This
+    // route is reachable without membership (share link / Explore), and the
+    // server's answer to a non-member used to be a THROWN error, which Convex
+    // re-raises synchronously during render — i.e. the root ErrorBoundary
+    // instead of the join CTA, for every non-member of any group with a fund.
+    describe("as a genuine non-member", () => {
+      const renderAsNonMember = () => {
+        (useGroupDetails as jest.Mock).mockReturnValue({
+          data: mockGroup,
+          isLoading: false,
+          error: null,
+        });
+        (useAuth as jest.Mock).mockReturnValue({ user: { id: 999, is_admin: false } });
+        (useUserData as jest.Mock).mockReturnValue({
+          data: { group_memberships: [] },
+          isLoading: false,
+        });
+        (isGroupMember as jest.Mock).mockReturnValue(false);
+        return render(<GroupInfoScreen />, { wrapper: createWrapper() });
+      };
+
+      it("skips the giving query entirely — it has no row to render", () => {
+        (useQuery as jest.Mock).mockImplementation((ref: any, args: any) =>
+          ref === "api.functions.admin.featureFlags.getFeatureFlag" && args?.key === "group-giving"
+            ? true
+            : undefined,
+        );
+        renderAsNonMember();
+
+        const givingCalls = (useAuthenticatedQuery as jest.Mock).mock.calls.filter(
+          ([ref]) => ref === "api.functions.finance.giving.getGivingContext",
+        );
+        expect(givingCalls.length).toBeGreaterThan(0);
+        for (const [, args] of givingCalls) {
+          expect(args).toBe("skip");
+        }
+        expect(screen.getByTestId("non-member-view")).toBeTruthy();
+        expect(screen.queryByText("Group fund")).toBeNull();
+      });
+
+      it("still reaches the join CTA even if the giving query throws", () => {
+        // Reproduces the crash directly: `useAuthenticatedQuery` throws the way
+        // Convex re-throws a server error mid-render. If the screen ever fires
+        // this query for a non-member again, this test dies with that error
+        // instead of rendering GroupNonMemberView.
+        (useQuery as jest.Mock).mockImplementation((ref: any, args: any) =>
+          ref === "api.functions.admin.featureFlags.getFeatureFlag" && args?.key === "group-giving"
+            ? true
+            : undefined,
+        );
+        (useAuthenticatedQuery as jest.Mock).mockImplementation((ref: any, args: any) => {
+          if (ref === "api.functions.finance.giving.getGivingContext" && args !== "skip") {
+            throw new Error("You don't have access to this fund");
+          }
+          return undefined;
+        });
+
+        expect(() => renderAsNonMember()).not.toThrow();
+        expect(screen.getByTestId("non-member-view")).toBeTruthy();
+      });
+    });
   });
 
   // --- WA-VISUAL-DELTAS.md §3 ------------------------------------------------

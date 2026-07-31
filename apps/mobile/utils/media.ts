@@ -37,14 +37,21 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
 
   // Local, not-yet-uploaded URIs (from the image picker) - return as-is for
   // preview. `file://` is what expo-image-picker hands back on native; on web
-  // it returns a `blob:` object URL (or an inline `data:` URI). Dropping the
-  // web forms made every just-picked preview fall through to AppImage's gray
-  // placeholder, so the user couldn't see what they'd attached.
-  if (
-    path.startsWith('file://') ||
-    path.startsWith('blob:') ||
-    path.startsWith('data:')
-  ) {
+  // it returns a `blob:` object URL (`URL.createObjectURL` in
+  // expo-image-picker's ExponentImagePicker.web). Dropping `blob:` made every
+  // just-picked preview on web fall through to AppImage's gray placeholder,
+  // so the user couldn't see what they'd attached.
+  //
+  // Both are *references*, not payloads: they only resolve against this
+  // device/document, so a `blob:` string arriving from the server simply
+  // fails to load - the same gray placeholder as before. `data:` is
+  // deliberately NOT accepted here, because it's the one scheme that carries
+  // an arbitrary, unbounded payload inline. `chatMessages.attachments[].url`
+  // is an unvalidated `v.string()`, so trusting `data:` in this shared
+  // resolver would let any group member post a huge inline blob that renders
+  // at full size, uncached and untransformed, for every other subscriber. The
+  // picker never produces one, so nothing legitimate needs it.
+  if (path.startsWith('file://') || path.startsWith('blob:')) {
     return path;
   }
 
