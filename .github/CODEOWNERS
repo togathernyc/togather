@@ -34,8 +34,14 @@
 # - Migrations: run once against production data. There is no second attempt.
 #
 # NOTE: last matching pattern wins in CODEOWNERS, so these override the
-# defaults above. Enforcement additionally requires "Require review from Code
-# Owners" on the branch protection rule for main.
+# defaults above.
+#
+# This is reviewer routing and documentation, NOT a merge gate. Do not turn on
+# "Require review from Code Owners" for these paths: @lilseyi is the only human
+# here, and GitHub does not count a PR author's own review, so the toggle would
+# make his own lockfile bumps and migrations unmergeable without an admin
+# override. The real gate is that only lilseyi merges these, which the agent
+# deny-rules in .claude/settings.json already enforce from the other side.
 # ---------------------------------------------------------------------------
 
 # Dependency graph / native safety (ADR-013)
@@ -43,8 +49,11 @@
 /apps/mobile/package.json @lilseyi
 /apps/mobile/native-deps.json @lilseyi
 
-# Auth
+# Auth - the directory plus the central modules that live outside it
 /apps/convex/functions/auth/ @lilseyi
+/apps/convex/auth.ts @lilseyi
+/apps/convex/lib/auth.ts @lilseyi
+/apps/convex/functions/authInternal.ts @lilseyi
 
 # Billing, payments, and the money ledger
 /apps/convex/functions/billing.ts @lilseyi
@@ -53,7 +62,11 @@
 /apps/convex/lib/finance/ @lilseyi
 
 # Migrations - run once against production data
-# (migrations.ts is a sibling of migrations/, so the directory glob misses it)
+# (a trailing-slash pattern does not match a sibling FILE of the same name, so
+# every migrations.ts is listed explicitly)
 /apps/convex/migrations/ @lilseyi
 /apps/convex/functions/migrations/ @lilseyi
 /apps/convex/functions/migrations.ts @lilseyi
+/apps/convex/functions/admin/migrations.ts @lilseyi
+/apps/convex/functions/meetings/migrations.ts @lilseyi
+/apps/convex/functions/notifications/migrations.ts @lilseyi

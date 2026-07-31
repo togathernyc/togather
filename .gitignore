@@ -2,6 +2,7 @@
 
 # Claude Code local settings (user-specific, not shared)
 .claude/settings.local.json
+.conductor/settings.local.toml
 
 # Playwright MCP screenshots
 .playwright-mcp/

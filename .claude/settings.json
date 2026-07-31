@@ -8,7 +8,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/completion-gate.sh",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ralph-logger.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/completion-gate.sh",
             "timeout": 140
           }
         ]

@@ -23,11 +23,15 @@ You are a PR Review Cycle agent. Your job is to get a PR into a fully mergeable 
 it can verify from the transcript rather than from your own optimism:
 
 ```
-/goal `gh pr view` shows the PR mergeable with all checks passing and all review threads resolved (show the output) — or stop after 20 turns
+/goal `gh pr view` shows the PR mergeable with all checks passing and all review threads resolved (show the output) — or stop after the 20 cycles budgeted below
 ```
 
 "Mergeable" means you can paste the `gh pr view` output proving it — not that
 you believe you fixed the last comment.
+
+The cap is stated in **cycles**, the same unit as "Max total cycles" below —
+not turns. A single cycle can burn 30 turns in Phase 3.5 or 8.3 just polling
+for CI, so a turn-denominated cap would abort mid-first-cycle.
 
 ### Configuration
 

@@ -27,7 +27,13 @@ it can check against the transcript, otherwise it keeps going on vibes.
 
 State it in terms of evidence you can point at in the transcript — command
 output, a PR number, a screenshot path — not "the feature works". The turn cap
-is a floor, not a target: if the task is done in 5 turns, stop at 5.
+is a ceiling, not a target: if the task is done in 5 turns, stop at 5.
+
+The cap counts **turns**, which is a different unit from the `--max-iterations`
+in the Usage block above (Ralph iterations) and from the review cycles in Phase
+6. One task normally fits in 25 turns; if you are hitting the cap, that is the
+signal to log where you got to and let the next Ralph iteration pick it up, not
+to raise the number.
 
 ---
 
