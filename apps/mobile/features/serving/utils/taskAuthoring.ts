@@ -42,15 +42,26 @@ export interface AuthorableTask {
   sortOrder: number;
 }
 
+/** True when a task belongs to the whole team rather than a single role. */
+export function isTeamLevelTask(task: AuthorableTask): boolean {
+  return task.roleIds.length === 0;
+}
+
 /**
  * Group a plan's tasks (as returned by `listPlanTasks`) into Before/During/
- * After buckets scoped to ONE role — the role the leader is currently
- * "viewing as" in the Edit surface, sorted within each bucket by `sortOrder`
- * (matching the plan-wide task order).
+ * After buckets for the role the leader is currently "viewing as" in the Edit
+ * surface, sorted within each bucket by `sortOrder` (matching the plan-wide
+ * task order).
  *
- * Team-level tasks (`roleIds` empty) are never included — those are the
- * whole team's Shared-tab tasks, not a single role's list, and stay out of
- * scope for this friction-removal surface (see the work order's non-goals).
+ * TEAM-LEVEL tasks (`roleIds` empty) are included in EVERY role's buckets.
+ * They aren't the selected role's tasks — they apply to the whole team, and
+ * the UI labels them as such — but excluding them made the Edit surface the
+ * one place a leader could neither see nor fix them: they're absent from
+ * "Mine" by design (`getMyServingTasks` skips them) and live only under the
+ * Shared pill, which has no authoring controls. A leader looking at Edit and
+ * seeing "No tasks yet for this role" on a plan whose tasks are all
+ * team-level was being told something false.
+ *
  * `roleId === null` (nothing selected yet, e.g. before the role catalog has
  * loaded) returns all-empty buckets.
  */
@@ -61,7 +72,9 @@ export function tasksForRole<T extends AuthorableTask>(
   const result: Record<Segment, T[]> = { before: [], during: [], after: [] };
   if (!roleId) return result;
   for (const task of tasks) {
-    if (task.roleIds.includes(roleId)) result[task.segment].push(task);
+    if (isTeamLevelTask(task) || task.roleIds.includes(roleId)) {
+      result[task.segment].push(task);
+    }
   }
   (Object.keys(result) as Segment[]).forEach((segment) => {
     result[segment] = [...result[segment]].sort(

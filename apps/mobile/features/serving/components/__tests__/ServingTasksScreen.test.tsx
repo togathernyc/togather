@@ -398,7 +398,11 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     expect(getAllByText("No tasks yet for this role.")).toHaveLength(3);
   });
 
-  it("excludes a team-level (no-role) task from every role's list", () => {
+  // Team-level tasks used to be hidden here, which left the Edit surface — a
+  // leader's only authoring surface inside serving mode — blind to them: they
+  // are excluded from "Mine" by design and appear only under the read-only
+  // Shared pill. They now show under every role, captioned as whole-team.
+  it("shows a team-level (no-role) task under every role, labelled whole-team", () => {
     mockUser = { is_admin: true };
     mockAuthorQueries([
       {
@@ -409,11 +413,17 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
         sortOrder: 0,
       },
     ]);
-    const { queryByText, getByLabelText, getAllByText } = render(<ServingTasksScreen />);
+    const { getByText, getByLabelText, getAllByText } = render(<ServingTasksScreen />);
     fireEvent.press(getByLabelText("Edit"));
 
-    expect(queryByText("Unlock the building")).toBeNull();
-    expect(getAllByText("No tasks yet for this role.")).toHaveLength(3);
+    expect(getByText("Unlock the building")).toBeTruthy();
+    expect(getByText("Whole team — not just this role")).toBeTruthy();
+    // Only Before has the task; During/After stay empty.
+    expect(getAllByText("No tasks yet for this role.")).toHaveLength(2);
+
+    // Still visible after switching to a role that owns no tasks of its own.
+    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+    expect(getByText("Unlock the building")).toBeTruthy();
   });
 
   it("adds a task for the selected role via createTask", async () => {

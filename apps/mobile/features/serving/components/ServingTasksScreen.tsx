@@ -80,9 +80,17 @@ import { HowToViewer, type HowToViewerContent } from "./HowToViewer";
 import {
   buildRoleCatalog,
   canAuthorPlanTasks,
+  isTeamLevelTask,
   tasksForRole,
   type RoleCatalogEntry,
 } from "../utils/taskAuthoring";
+import {
+  diagnoseMineEmpty,
+  mineEmptyCopy,
+  myRoleNamesFromCrew,
+  planTaskCountFromAllTeams,
+  type MineEmptyReason,
+} from "../utils/servingTaskEmptyState";
 
 type Segment = "before" | "during" | "after";
 
@@ -2447,6 +2455,7 @@ function AuthorRoleAndSegments({
                   <AuthorTaskRow
                     key={task._id}
                     title={task.title}
+                    teamLevel={isTeamLevelTask(task)}
                     first={i === 0}
                     editable={!isEffectivelyOffline}
                     editing={editingTaskId === task._id}
@@ -2561,9 +2570,14 @@ function RoleLoader({
 }
 
 /** One task row in the Edit surface: title, tap-to-edit (title only) when
- *  online; read-only when offline (see the OFFLINE note above). */
+ *  online; read-only when offline (see the OFFLINE note above).
+ *
+ *  `teamLevel` rows belong to the WHOLE TEAM, not the role currently selected
+ *  in the switcher — they show under every role (that's the only place a
+ *  leader can reach them), so they carry a caption saying so. */
 function AuthorTaskRow({
   title,
+  teamLevel,
   first,
   editable,
   editing,
@@ -2576,6 +2590,7 @@ function AuthorTaskRow({
   onDelete,
 }: {
   title: string;
+  teamLevel: boolean;
   first: boolean;
   editable: boolean;
   editing: boolean;
@@ -2607,6 +2622,19 @@ function AuthorTaskRow({
         <Text style={[styles.taskTitle, wa && waStyles.taskTitle, { color: colors.text }]}>
           {title}
         </Text>
+        {teamLevel ? (
+          <View style={styles.taskMetaRow}>
+            <Text
+              style={[
+                styles.taskMeta,
+                wa && waStyles.taskMeta,
+                { color: colors.textTertiary },
+              ]}
+            >
+              Whole team — not just this role
+            </Text>
+          </View>
+        ) : null}
       </Pressable>
 
       {editing && editable ? (

@@ -1,6 +1,7 @@
 import {
   buildRoleCatalog,
   canAuthorPlanTasks,
+  isTeamLevelTask,
   tasksForRole,
   type AuthorableTask,
 } from "../taskAuthoring";
@@ -47,9 +48,9 @@ describe("tasksForRole", () => {
     { roleIds: [], segment: "before", sortOrder: 2 }, // team-level
   ];
 
-  it("returns only tasks that include the selected role, sorted by sortOrder", () => {
+  it("returns the selected role's tasks (plus team-level), sorted by sortOrder", () => {
     const result = tasksForRole(tasks, "role-a");
-    expect(result.before.map((t) => t.sortOrder)).toEqual([0, 1]);
+    expect(result.before.map((t) => t.sortOrder)).toEqual([0, 1, 2]);
     expect(result.during).toHaveLength(1);
     expect(result.after).toHaveLength(0);
   });
@@ -62,9 +63,15 @@ describe("tasksForRole", () => {
     expect(a.during[0]).toBe(b.during[0]);
   });
 
-  it("excludes team-level tasks (empty roleIds) from every bucket", () => {
-    const result = tasksForRole(tasks, "role-a");
-    expect(result.before.some((t) => t.roleIds.length === 0)).toBe(false);
+  // Team-level tasks used to be filtered out here, which made the Edit surface
+  // the one place a leader could neither see nor fix them (they're excluded
+  // from "Mine" by design and live only under the read-only Shared pill). The
+  // UI labels them as whole-team so the role context stays honest.
+  it("includes team-level tasks (empty roleIds) under every role", () => {
+    const a = tasksForRole(tasks, "role-a");
+    const b = tasksForRole(tasks, "role-b");
+    expect(a.before.filter(isTeamLevelTask)).toHaveLength(1);
+    expect(b.before.filter(isTeamLevelTask)).toHaveLength(1);
   });
 
   it("returns all-empty buckets when no role is selected", () => {
@@ -72,9 +79,23 @@ describe("tasksForRole", () => {
     expect(result).toEqual({ before: [], during: [], after: [] });
   });
 
-  it("returns all-empty buckets for a role with no tasks", () => {
+  it("still surfaces team-level tasks for a role with no tasks of its own", () => {
     const result = tasksForRole(tasks, "role-nobody");
-    expect(result).toEqual({ before: [], during: [], after: [] });
+    expect(result.before).toHaveLength(1);
+    expect(result.before[0].roleIds).toEqual([]);
+    expect(result.during).toEqual([]);
+    expect(result.after).toEqual([]);
+  });
+});
+
+describe("isTeamLevelTask", () => {
+  it("is true only when the task names no role", () => {
+    expect(isTeamLevelTask({ roleIds: [], segment: "before", sortOrder: 0 })).toBe(
+      true,
+    );
+    expect(
+      isTeamLevelTask({ roleIds: ["role-a"], segment: "before", sortOrder: 0 }),
+    ).toBe(false);
   });
 });
 
