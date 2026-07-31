@@ -71,6 +71,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import {
+  useQuery,
   useAuthenticatedQuery,
   useAuthenticatedMutation,
   api,
@@ -204,6 +205,12 @@ export function GroupInfoScreen() {
 
   const isAdmin = user?.is_admin === true;
   const isLeader = group?.user_role === "leader";
+  // Group giving is behind the app-wide "group-giving" feature flag — the
+  // Giving leader tool row only renders when it's on (same gate as
+  // SettingsContent's Community Finance quick link).
+  const groupGivingFlag = useQuery(api.functions.admin.featureFlags.getFeatureFlag, {
+    key: "group-giving",
+  });
   const canEditGroup = useMemo(() => {
     if (!group || !user?.id) return false;
     if (user.is_admin === true) return true;
@@ -789,6 +796,13 @@ export function GroupInfoScreen() {
                 title="Rostering"
                 onPress={() => router.push(`/rostering/${group._id}` as any)}
               />
+              {groupGivingFlag === true && (
+                <WaCell
+                  icon="cash-outline"
+                  title="Giving"
+                  onPress={() => router.push(`/(user)/leader-tools/${group._id}/giving` as any)}
+                />
+              )}
               <WaCell
                 icon="document-text-outline"
                 title="Run sheet"

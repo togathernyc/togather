@@ -140,28 +140,62 @@ export interface IncreaseEntity {
 export async function createEntity(
   input: CreateEntityInput,
 ): Promise<IncreaseEntity> {
+  const corporation: Record<string, unknown> = {
+    name: input.legalName,
+    website: input.website,
+    address: {
+      line1: input.address.addressLine1,
+      line2: input.address.addressLine2,
+      city: input.address.city,
+      state: input.address.state,
+      zip: input.address.zipCode,
+      country: "US",
+    },
+    legal_identifier: {
+      category: "us_employer_identification_number",
+      value: input.ein.replace(/-/g, ""),
+    },
+  };
+
+  if (getIncreaseBaseUrl().includes("sandbox")) {
+    // The exemption parameter is rejected until Increase's bank partner
+    // approves it for the program (verified live: sandbox 400s with
+    // "beneficial_ownership_exemption_reason: Unexpected parameter" and then
+    // requires beneficial_owners). Sandbox is test data by definition, so we
+    // submit an obviously-fake owner there to keep dev/staging flows working
+    // end-to-end. Production keeps the exemption — real owner PII must never
+    // be fabricated, and launch is gated on the exemption approval anyway
+    // (docs/finance/COMPLIANCE.md).
+    corporation.beneficial_owners = [
+      {
+        individual: {
+          name: "Sandbox Test Owner",
+          date_of_birth: "1980-01-01",
+          address: {
+            line1: "123 Main Street",
+            city: "New York",
+            state: "NY",
+            zip: "10001",
+            country: "US",
+          },
+          identification: {
+            method: "social_security_number",
+            number: "078051120",
+          },
+        },
+        prongs: ["control"],
+      },
+    ];
+  } else {
+    corporation.beneficial_ownership_exemption_reason = "other";
+  }
+
   return await increaseRequest<IncreaseEntity>("/entities", {
     method: "POST",
     idempotencyKey: input.idempotencyKey,
     body: {
       structure: "corporation",
-      corporation: {
-        name: input.legalName,
-        website: input.website,
-        address: {
-          line1: input.address.addressLine1,
-          line2: input.address.addressLine2,
-          city: input.address.city,
-          state: input.address.state,
-          zip: input.address.zipCode,
-          country: "US",
-        },
-        legal_identifier: {
-          category: "us_employer_identification_number",
-          value: input.ein.replace(/-/g, ""),
-        },
-        beneficial_ownership_exemption_reason: "other",
-      },
+      corporation,
     },
   });
 }
@@ -300,9 +334,84 @@ export async function createAchTransfer(
       routing_number: input.routingNumber,
       account_number: input.accountNumber,
       individual_name: input.individualName,
-      individual_id: input.individualId,
+      // Increase enforces a 15-character max on individual_id (verified live:
+      // longer values 400). Callers pass Convex document ids (~32 chars) as a
+      // reconciliation breadcrumb, so truncate here at the client boundary —
+      // the full id lives in our own expense/audit records anyway.
+      individual_id: input.individualId?.slice(0, 15),
     },
   });
+}
+
+// ============================================================================
+// Cards — POST /cards, PATCH /cards/{id} (ADR-032 §3 Phase 3, cards.ts).
+// create_a_card_parameters / card.
+// ============================================================================
+
+export interface IncreaseCard {
+  id: string;
+  status: string;
+  last4: string;
+}
+
+/**
+ * Create a virtual card bound to an Account. Increase enforces spend
+ * segregation at the bank level (a card can never move money outside its
+ * bound Account) — there's no separate authorization decisioner to configure
+ * here beyond the description.
+ */
+export async function createCard(
+  accountId: string,
+  description: string,
+  idempotencyKey: string,
+): Promise<IncreaseCard> {
+  return await increaseRequest<IncreaseCard>("/cards", {
+    method: "POST",
+    idempotencyKey,
+    body: { account_id: accountId, description },
+  });
+}
+
+/** PATCH /cards/{id} — freeze ("disabled"), reactivate ("active"), or permanently cancel ("canceled") a card. */
+export async function updateCardStatus(
+  cardId: string,
+  status: "active" | "disabled" | "canceled",
+): Promise<{ id: string; status: string }> {
+  return await increaseRequest<{ id: string; status: string }>(
+    `/cards/${cardId}`,
+    { method: "PATCH", body: { status } },
+  );
+}
+
+// ============================================================================
+// Transactions — GET /transactions/{id} (transaction). Individual Events for
+// transaction.created carry only the id (same pattern as entity.created/
+// entity.updated — see getEntity above), so the webhook handler fetches the
+// current transaction before dispatching.
+// ============================================================================
+
+export interface IncreaseTransaction {
+  id: string;
+  account_id: string;
+  /** Signed cents — negative is a debit (money leaving the Account), which is what a card settlement always is. */
+  amount: number;
+  description: string;
+  source: {
+    category: string;
+    card_settlement?: {
+      card_id: string;
+      merchant_name?: string | null;
+    };
+  };
+}
+
+export async function getTransaction(
+  transactionId: string,
+): Promise<IncreaseTransaction> {
+  return await increaseRequest<IncreaseTransaction>(
+    `/transactions/${transactionId}`,
+    { method: "GET" },
+  );
 }
 
 // ============================================================================

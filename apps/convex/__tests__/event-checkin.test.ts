@@ -267,6 +267,33 @@ describe("event check-in — permissions", () => {
   });
 });
 
+// `markAttendance` schedules two background jobs (followup + community score
+// recompute) via plain `runAfter(0, …)`. Left running, the job is still open
+// when the next `convexTest()` calls `setConvexGlobal`, which throws "test
+// began while previous transaction was still open" — and `global.Convex`
+// outlives the file, so under contention the throw can land on a later test
+// in this same file (or a different one in the same worker). Every check-in
+// is therefore drained on real timers, the same way the messaging suite
+// drains `sendMessage`'s scheduled work (see waThreadReplies.test.ts).
+// Deliberately NOT `vi.useFakeTimers()`: fake timers are installed
+// process-wide and share the same worker-global lifetime, so a file that
+// installs them owns a second way to strand another file's scheduled work.
+//
+// A single `finishInProgressScheduledFunctions()` call right after the
+// mutation is not enough on its own: a zero-delay job may still be PENDING
+// (its `setTimeout(0)` hasn't fired yet) at that instant — the function only
+// awaits jobs already IN_PROGRESS (see the same race documented in
+// auth/placeholder-claim.test.ts) — and under real CPU contention that race
+// is losable. Yield to the real macrotask queue first so the pending timer
+// gets to run, then drain, repeating a couple of times to also cover a job
+// that itself schedules another.
+async function drainScheduledFunctions(t: ReturnType<typeof convexTest>) {
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await t.finishInProgressScheduledFunctions();
+  }
+}
+
 describe("event check-in — check in / undo", () => {
   test("a leader checks a Going attendee in, then undoes it", async () => {
     const t = convexTest(schema, modules);
@@ -280,6 +307,7 @@ describe("event check-in — check in / undo", () => {
       userId: goingUserId,
       status: 1,
     });
+    await drainScheduledFunctions(t);
 
     let attendance = await t.query(
       api.functions.meetings.attendance.listAttendance,
@@ -296,6 +324,7 @@ describe("event check-in — check in / undo", () => {
       userId: goingUserId,
       status: 0,
     });
+    await drainScheduledFunctions(t);
 
     attendance = await t.query(
       api.functions.meetings.attendance.listAttendance,
@@ -429,5 +458,123 @@ describe("event check-in — walk-ins", () => {
       { token: leaderToken, meetingId, firstName: "Solo" }
     );
     expect(guestId).toBeDefined();
+  });
+});
+
+describe("event check-in — a member's guests (plus-ones)", () => {
+  test("the Going roster exposes the plus-ones each member declared", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    // Gina updates her RSVP to bring two people.
+    await t.run(async (ctx) => {
+      const rsvp = await ctx.db
+        .query("meetingRsvps")
+        .withIndex("by_meeting_user", (q) =>
+          q.eq("meetingId", meetingId).eq("userId", goingUserId)
+        )
+        .first();
+      await ctx.db.patch(rsvp!._id, { guestCount: 2 });
+    });
+
+    const roster = await t.query(api.functions.meetingRsvps.goingRoster, {
+      token: leaderToken,
+      meetingId,
+    });
+    expect(roster).toHaveLength(1);
+    expect(roster[0].guestCount).toBe(2);
+  });
+
+  test("a guest checked in under a member is linked to that member", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const guestId = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests).toHaveLength(1);
+    expect(guests[0]._id).toBe(guestId);
+    // Checked in first, named later — the row is valid with no name at all.
+    expect(guests[0].hostUserId).toBe(goingUserId);
+    expect(guests[0].firstName).toBeUndefined();
+  });
+
+  test("a guest's name can be filled in after they are checked in", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const guestId = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+
+    await t.mutation(api.functions.meetings.attendance.updateGuest, {
+      token: leaderToken,
+      guestId,
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests[0]).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      hostUserId: goingUserId,
+    });
+  });
+
+  test("undoing a guest check-in removes only that guest", async () => {
+    const t = convexTest(schema, modules);
+    const { leaderToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    const first = await t.mutation(
+      api.functions.meetings.attendance.addGuest,
+      { token: leaderToken, meetingId, hostUserId: goingUserId }
+    );
+    await t.mutation(api.functions.meetings.attendance.addGuest, {
+      token: leaderToken,
+      meetingId,
+      hostUserId: goingUserId,
+      firstName: "Stays",
+    });
+
+    await t.mutation(api.functions.meetings.attendance.removeGuest, {
+      token: leaderToken,
+      guestId: first,
+    });
+
+    const guests = await t.query(
+      api.functions.meetings.attendance.listGuests,
+      { token: leaderToken, meetingId }
+    );
+    expect(guests).toHaveLength(1);
+    expect(guests[0].firstName).toBe("Stays");
+  });
+
+  test("a non-manager cannot check in someone else's guest", async () => {
+    const t = convexTest(schema, modules);
+    const { memberToken, meetingId, goingUserId } =
+      await seedCheckInFixture(t);
+
+    await expect(
+      t.mutation(api.functions.meetings.attendance.addGuest, {
+        token: memberToken,
+        meetingId,
+        hostUserId: goingUserId,
+      })
+    ).rejects.toThrow(/Only the event creator, group leaders, or community admins/);
   });
 });

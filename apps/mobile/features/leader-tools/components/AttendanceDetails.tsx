@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-} from "react-native";
+import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
 import { useAuth } from "@providers/AuthProvider";
+import { useCommunityTheme } from "@hooks/useCommunityTheme";
+import { waAccentPalette } from "@utils/waPalette";
+import { WaInsetGroup } from "@components/wa/WaInsetGroup";
+import { WaCell } from "@components/wa/WaCell";
+import { WA_GROUP_SPACING } from "@components/wa/metrics";
 import { ToastManager } from "@components/ui/Toast";
 import { AddGuest, SubmitAttendance } from "./modals";
 import {
@@ -60,8 +59,10 @@ export function AttendanceDetails({
   onAddGuest,
   onSelectDate,
 }: AttendanceDetailsProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { user } = useAuth();
+  const { primaryColor } = useCommunityTheme();
+  const waAccent = waAccentPalette(primaryColor, isDark).accent;
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState<string>("");
 
@@ -71,11 +72,14 @@ export function AttendanceDetails({
 
   // Fetch attendance report (for view mode or to pre-populate edit mode)
   // Prefer meetingId over eventDate for direct lookup (more efficient and unambiguous)
-  const { data: attendanceReport, isLoading: isLoadingReport } =
-    useAttendanceReport(groupId, {
-      meetingId: meetingId,
-      eventDate: meetingId ? undefined : eventDate,
-    });
+  const {
+    data: attendanceReport,
+    isLoading: isLoadingReport,
+    isPermissionDenied,
+  } = useAttendanceReport(groupId, {
+    meetingId: meetingId,
+    eventDate: meetingId ? undefined : eventDate,
+  });
 
   // Fetch group members (for edit mode when there's no attendance report)
   // loadAllMembers: true ensures all members are loaded for attendance tracking (Issue #272)
@@ -189,6 +193,23 @@ export function AttendanceDetails({
     }
   };
 
+  // Attendance is host/leader/admin-only server-side. Say so instead of
+  // rendering an empty roster (or letting the query throw and crash the
+  // screen) when the viewer can't manage this event.
+  if (isPermissionDenied) {
+    return (
+      <View style={styles.restrictedContainer}>
+        <Text style={[styles.restrictedTitle, { color: colors.text }]}>
+          You don&apos;t have access to this attendance
+        </Text>
+        <Text style={[styles.restrictedText, { color: colors.textSecondary }]}>
+          Only the event&apos;s hosts, group leaders, or community admins can
+          view attendance for this event.
+        </Text>
+      </View>
+    );
+  }
+
   if (isLoadingReport || (editMode && isLoadingMembers)) {
     return (
       <View style={styles.loadingContainer}>
@@ -215,17 +236,14 @@ export function AttendanceDetails({
   const modalGuestCount = anonymousGuestCount + namedGuests.length;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.surface }, editMode && styles.containerEditMode]}>
-      {/* Edit Button (only in view mode, not for future events) */}
-      {/* Leaders can always edit attendance, even after it's been submitted */}
-      {!editMode && !futureEvent && (
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.editButton} onPress={onEdit}>
-            <Text style={[styles.editButtonText, { color: colors.text }]}>Edit</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
+    <View
+      style={[
+        styles.container,
+        // View mode sits on the screen's grouped canvas — the WaInsetGroups
+        // bring their own card fill and margins, so no padding here.
+        editMode && [styles.containerEditMode, { backgroundColor: colors.surface }],
+      ]}
+    >
       {editMode ? (
         <AttendanceEditMode
           note={note}
@@ -250,12 +268,32 @@ export function AttendanceDetails({
           onSubmitPress={() => setShowSubmitModal(true)}
         />
       ) : (
-        <AttendanceViewMode
-          isFutureEvent={futureEvent}
-          report={attendanceReport}
-          submittedDate={submittedDate ?? undefined}
-          submittedBy={submittedBy ?? undefined}
-        />
+        <>
+          <AttendanceViewMode
+            isFutureEvent={futureEvent}
+            report={attendanceReport}
+            submittedDate={submittedDate ?? undefined}
+            submittedBy={submittedBy ?? undefined}
+          />
+
+          {/* §1.3 accent action row — replaces the stray "Edit" link that used
+              to float in the top-right corner. Leaders can always correct a
+              submitted count, so this shows whether or not one exists yet. */}
+          {!futureEvent && (
+            <View style={styles.actionSection}>
+              <WaInsetGroup>
+                <WaCell
+                  variant="action"
+                  title={
+                    hasAttendanceData ? "Edit attendance" : "Take attendance"
+                  }
+                  accent={waAccent}
+                  onPress={onEdit}
+                />
+              </WaInsetGroup>
+            </View>
+          )}
+        </>
       )}
 
       {/* Modals */}
@@ -278,10 +316,15 @@ export function AttendanceDetails({
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
+    paddingTop: 4,
   },
+  // Edit mode keeps the old inset: AttendanceEditMode supplies no horizontal
+  // padding of its own, so its note input and member list would sit flush
+  // against the screen edges without it. Only view mode goes edge-to-edge,
+  // because its WaInsetGroups bring their own margins.
   containerEditMode: {
     flex: 1,
+    padding: 20,
   },
   loadingContainer: {
     flex: 1,
@@ -293,18 +336,23 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 16,
   },
-  headerActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
+  restrictedContainer: {
+    flex: 1,
+    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 16,
+    padding: 24,
   },
-  editButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  editButtonText: {
-    fontSize: 16,
+  restrictedTitle: {
+    fontSize: 17,
     fontWeight: "600",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  restrictedText: {
+    fontSize: 15,
+    textAlign: "center",
+  },
+  actionSection: {
+    marginBottom: WA_GROUP_SPACING,
   },
 });

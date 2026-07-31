@@ -14,6 +14,34 @@
 
 type StripeClient = InstanceType<typeof import("stripe").default>;
 
+/** True when the configured key is a test-mode key (`sk_test_…`). Payout
+ * destination selection branches on this — see choosePayoutDestination. */
+export function isStripeTestMode(): boolean {
+  return process.env.STRIPE_SECRET_KEY?.startsWith("sk_test") ?? false;
+}
+
+/**
+ * Pick the bank account to attach as a connected account's payout
+ * destination. Production attaches the real Increase receiving-account
+ * number. Test mode CANNOT: Stripe test mode rejects any bank account not on
+ * its test list ("You must use a test bank account number" — hit live on
+ * staging, since Increase's sandbox mints realistic numbers), so dev/staging
+ * attach Stripe's documented test account instead
+ * (https://docs.stripe.com/connect/testing#account-numbers). Stripe-side
+ * payout webhooks still fire against it; the Increase sandbox receiving
+ * account is funded via simulations when a test needs bank-side money.
+ * Pure so it's unit-testable.
+ */
+export function choosePayoutDestination(
+  stripeTestMode: boolean,
+  minted: { routingNumber: string; accountNumber: string },
+): { routingNumber: string; accountNumber: string } {
+  if (stripeTestMode) {
+    return { routingNumber: "110000000", accountNumber: "000123456789" };
+  }
+  return minted;
+}
+
 async function getStripeClient(): Promise<StripeClient> {
   const Stripe = (await import("stripe")).default;
   const secretKey = process.env.STRIPE_SECRET_KEY;

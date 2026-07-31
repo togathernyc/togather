@@ -1,7 +1,7 @@
 import React from "react";
 import { render, fireEvent } from "@testing-library/react-native";
 import { ServingTasksScreen } from "../ServingTasksScreen";
-import { useAuthenticatedQuery } from "@services/api/convex";
+import { useAuthenticatedQuery, useAuthenticatedMutation } from "@services/api/convex";
 
 // --- Convex API refs used by the screen -------------------------------------
 const REF = {
@@ -10,32 +10,60 @@ const REF = {
   shared: "api.functions.scheduling.eventTasks.getSharedTeamTasks",
   crew: "api.functions.scheduling.eventTasks.getCrewTasks",
   allTeams: "api.functions.scheduling.eventTasks.getAllTeamsTasks",
+  groupById: "api.functions.groups.queries.getById",
+  listPlanTasks: "api.functions.scheduling.eventTasks.listPlanTasks",
+  listTeams: "api.functions.scheduling.teams.listTeams",
+  listRoles: "api.functions.scheduling.roles.listRoles",
 };
 
 jest.mock("@services/api/convex", () => ({
   api: {
     functions: {
+      groups: {
+        queries: {
+          getById: "api.functions.groups.queries.getById",
+        },
+      },
       scheduling: {
         eventTasks: {
           getMyServingTasks: "api.functions.scheduling.eventTasks.getMyServingTasks",
           getSharedTeamTasks: "api.functions.scheduling.eventTasks.getSharedTeamTasks",
           getCrewTasks: "api.functions.scheduling.eventTasks.getCrewTasks",
           getAllTeamsTasks: "api.functions.scheduling.eventTasks.getAllTeamsTasks",
+          listPlanTasks: "api.functions.scheduling.eventTasks.listPlanTasks",
           toggleSharedTeamTask: "toggleSharedTeamTask",
           toggleTaskCompletion: "toggleTaskCompletion",
           togglePersonalTask: "togglePersonalTask",
           addPersonalTask: "addPersonalTask",
           updatePersonalTask: "updatePersonalTask",
           deletePersonalTask: "deletePersonalTask",
+          createTask: "createTask",
+          updateTask: "updateTask",
+          deleteTask: "deleteTask",
         },
         serving: {
           getServingEligibility: "api.functions.scheduling.serving.getServingEligibility",
+        },
+        teams: {
+          listTeams: "api.functions.scheduling.teams.listTeams",
+        },
+        roles: {
+          listRoles: "api.functions.scheduling.roles.listRoles",
         },
       },
     },
   },
   useAuthenticatedQuery: jest.fn(),
-  useAuthenticatedMutation: () => jest.fn(),
+  useAuthenticatedMutation: jest.fn(() => jest.fn()),
+}));
+
+// Leader gate for the "Edit" surface (AuthorSection) — default every test to a
+// plain, non-admin user so the pre-existing assertions (none of which expect
+// an "Edit" pill) keep pinning today's rendering. The dedicated AuthorSection
+// tests below override this per-test.
+let mockUser: { is_admin?: boolean } | null = { is_admin: false };
+jest.mock("@providers/AuthProvider", () => ({
+  useAuth: () => ({ user: mockUser }),
 }));
 
 jest.mock("@hooks/useTheme", () => ({
@@ -77,10 +105,14 @@ jest.mock("@/stores/eventModeStore", () => ({
     sel({ isServingMode: mockIsServingMode }),
 }));
 
+// Connectivity is online by default; the Edit-surface offline tests flip
+// `mockIsEffectivelyOffline` to pin the deliberate online-only authoring gate.
+let mockIsNetworkAvailable = true;
+let mockIsEffectivelyOffline = false;
 jest.mock("@providers/ConnectionProvider", () => ({
   useConnectionStatus: () => ({
-    isNetworkAvailable: true,
-    isEffectivelyOffline: false,
+    isNetworkAvailable: mockIsNetworkAvailable,
+    isEffectivelyOffline: mockIsEffectivelyOffline,
   }),
 }));
 
@@ -113,6 +145,7 @@ jest.mock("../HowToViewer", () => ({ HowToViewer: () => null }));
 jest.mock("@components/ui/ProgressBar", () => ({ ProgressBar: () => null }));
 
 const mockQuery = useAuthenticatedQuery as jest.Mock;
+const mockMutation = useAuthenticatedMutation as jest.Mock;
 
 const EMPTY_MINE = { before: [], during: [], after: [] };
 
@@ -248,6 +281,235 @@ describe("ServingTasksScreen — plan sections", () => {
   });
 });
 
+/**
+ * The leader "Edit" surface (`AuthorSection`) — lets a leader add/edit/delete
+ * a role's shared serving tasks in place. Gated by `canAuthorPlanTasks`
+ * (mirroring the backend's `isGroupScheduler`), so most of these tests set
+ * `mockUser.is_admin = true` to get past the gate; the role catalog comes
+ * from one `listTeams` + one `listRoles` call per team.
+ */
+describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
+  const mockCreateTask = jest.fn().mockResolvedValue({ taskId: "task-new" });
+  const mockUpdateTask = jest.fn().mockResolvedValue({ taskId: "task-1" });
+  const mockDeleteTask = jest.fn().mockResolvedValue({ taskId: "task-1" });
+
+  // Hoisted so every call returns the SAME array/object reference — real
+  // Convex queries only produce a new reference when the underlying data
+  // actually changes, and `RoleLoader`'s effect (like `EventTasksScreen`'s)
+  // depends on that stability; a mock that hands back a fresh literal on
+  // every render would fire the effect (and its `setRolesForTeam` state
+  // update) every render, forever.
+  const AUTHOR_TEAMS = [{ _id: "team-1", name: "Hospitality" }];
+  const AUTHOR_ROLES = [
+    { _id: "role-greeter", name: "Greeter" },
+    { _id: "role-usher", name: "Usher" },
+  ];
+  const NO_SHARED_TASKS: unknown[] = [];
+
+  function mockAuthorQueries(planTasks: unknown[] = []) {
+    mockQuery.mockImplementation((ref: string) => {
+      switch (ref) {
+        case REF.mine:
+          return EMPTY_MINE;
+        case REF.eligibility:
+          return { plans: DEFAULT_PLANS };
+        case REF.shared:
+        case REF.crew:
+        case REF.allTeams:
+          return NO_SHARED_TASKS;
+        case REF.groupById:
+          return { userRole: undefined };
+        case REF.listTeams:
+          return AUTHOR_TEAMS;
+        case REF.listRoles:
+          return AUTHOR_ROLES;
+        case REF.listPlanTasks:
+          return planTasks;
+        default:
+          return undefined;
+      }
+    });
+  }
+
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockMutation.mockImplementation((ref: string) => {
+      if (ref === "createTask") return mockCreateTask;
+      if (ref === "updateTask") return mockUpdateTask;
+      if (ref === "deleteTask") return mockDeleteTask;
+      return jest.fn();
+    });
+  });
+  afterEach(() => {
+    mockUser = { is_admin: false };
+    mockIsNetworkAvailable = true;
+    mockIsEffectivelyOffline = false;
+    mockMutation.mockImplementation(() => jest.fn());
+    jest.clearAllMocks();
+  });
+
+  it("hides the Edit pill for a plain member", () => {
+    mockUser = { is_admin: false };
+    mockQueries(EMPTY_MINE);
+    const { queryByText } = render(<ServingTasksScreen />);
+
+    expect(queryByText("Edit")).toBeNull();
+  });
+
+  it("shows the Edit pill for a community admin, defaulting to the first role", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(getByText("Hospitality · Greeter")).toBeTruthy();
+    expect(getByText("Set up welcome table")).toBeTruthy();
+  });
+
+  it("switches to another role's task list without showing the previous role's tasks", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByText, getByLabelText, queryByText, getAllByText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Edit"));
+    expect(getByText("Set up welcome table")).toBeTruthy();
+
+    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+
+    expect(queryByText("Set up welcome table")).toBeNull();
+    // All three segments (Before/During/After) are empty for the Usher role.
+    expect(getAllByText("No tasks yet for this role.")).toHaveLength(3);
+  });
+
+  it("excludes a team-level (no-role) task from every role's list", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-shared",
+        roleIds: [],
+        segment: "before",
+        title: "Unlock the building",
+        sortOrder: 0,
+      },
+    ]);
+    const { queryByText, getByLabelText, getAllByText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(queryByText("Unlock the building")).toBeNull();
+    expect(getAllByText("No tasks yet for this role.")).toHaveLength(3);
+  });
+
+  it("adds a task for the selected role via createTask", async () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([]);
+    const { getByLabelText, getByPlaceholderText, getByText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Edit"));
+    fireEvent.press(getByLabelText("Add a Before task for Greeter"));
+    fireEvent.changeText(getByPlaceholderText("Task title"), "Count the offering");
+    await fireEvent.press(getByText("Add"));
+
+    expect(mockCreateTask).toHaveBeenCalledWith({
+      planId: "plan-1",
+      teamIds: ["team-1"],
+      roleIds: ["role-greeter"],
+      segment: "before",
+      title: "Count the offering",
+      howToType: "none",
+    });
+  });
+
+  it("edits an existing task's title via updateTask", async () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByText, getByLabelText, getByPlaceholderText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Edit"));
+    fireEvent.press(getByLabelText("Edit Set up welcome table"));
+    fireEvent.changeText(getByPlaceholderText("Task title"), "Set up welcome tables x2");
+    await fireEvent.press(getByText("Save"));
+
+    expect(mockUpdateTask).toHaveBeenCalledWith({
+      taskId: "task-1",
+      title: "Set up welcome tables x2",
+    });
+  });
+
+  it("deletes a task via deleteTask", async () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText, getByText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+    fireEvent.press(getByLabelText("Edit Set up welcome table"));
+    await fireEvent.press(getByText("Delete"));
+
+    expect(mockDeleteTask).toHaveBeenCalledWith({ taskId: "task-1" });
+  });
+
+  it("hides add/edit controls and explains why when offline", () => {
+    mockUser = { is_admin: true };
+    mockIsNetworkAvailable = false;
+    mockIsEffectivelyOffline = true;
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText, getByText, queryByText, queryByLabelText } = render(
+      <ServingTasksScreen />,
+    );
+    fireEvent.press(getByLabelText("Edit"));
+
+    // The existing task is still visible (read-only) …
+    expect(getByText("Set up welcome table")).toBeTruthy();
+    // … but every write affordance is gone, replaced by an explanation.
+    expect(queryByText("Add task")).toBeNull();
+    expect(queryByLabelText("Edit Set up welcome table")).toBeNull();
+    expect(getByText("You're offline")).toBeTruthy();
+    expect(
+      getByText("Adding or changing shared tasks needs a connection. Reconnect to make changes."),
+    ).toBeTruthy();
+  });
+});
 
 /**
  * Flag-on restyle (WHATSAPP-DESIGN-SYSTEM.md §3.2/§7). These pin the SKIN,

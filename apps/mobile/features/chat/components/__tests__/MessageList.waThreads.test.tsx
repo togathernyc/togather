@@ -205,9 +205,12 @@ describe('MessageList flag-on — replies in the timeline', () => {
     });
   });
 
-  it('reports the parent as collapsible while its lone reply is inline', () => {
+  it('reports the parent AND its inline reply as ways into the same thread', () => {
     // This is the signal the chat room follows to navigate the sender into the
-    // thread on the send that collapses it.
+    // thread on the send that collapses it. Replying to the inline reply roots
+    // at the same parent, so it has to map onto the same thread — otherwise the
+    // owner's exact tap ("reply to the reply") sends them nowhere and their
+    // message appears to vanish.
     const onCollapsibleThreadsChange = jest.fn();
     setMessages([parent, loneReply]);
     render(
@@ -218,7 +221,10 @@ describe('MessageList flag-on — replies in the timeline', () => {
       />,
     );
     expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(
-      new Set(['msg-parent']),
+      new Map([
+        ['msg-parent', 'msg-parent'],
+        ['msg-reply', 'msg-parent'],
+      ]),
     );
   });
 
@@ -232,7 +238,7 @@ describe('MessageList flag-on — replies in the timeline', () => {
         onCollapsibleThreadsChange={onCollapsibleThreadsChange}
       />,
     );
-    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Map());
   });
 
   it('reports nothing collapsible once the thread has already collapsed', () => {
@@ -257,7 +263,7 @@ describe('MessageList flag-on — replies in the timeline', () => {
         onCollapsibleThreadsChange={onCollapsibleThreadsChange}
       />,
     );
-    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Map());
   });
 
   it('renders a reply whose parent is not in the loaded window', () => {
@@ -311,6 +317,6 @@ describe('MessageList flag-off — the ghost model is untouched', () => {
         onCollapsibleThreadsChange={onCollapsibleThreadsChange}
       />,
     );
-    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Set());
+    expect(onCollapsibleThreadsChange).toHaveBeenCalledWith(new Map());
   });
 });

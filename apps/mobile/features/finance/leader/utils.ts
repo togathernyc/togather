@@ -21,3 +21,22 @@ export function formatEinInput(text: string): string {
   if (digits.length <= 2) return digits;
   return `${digits.slice(0, 2)}-${digits.slice(2)}`;
 }
+
+/** Mirrors `ledgerEntries.kind` in apps/convex/schema.ts (also duplicated in
+ * `../member/labels.ts` — kept local rather than cross-imported so each
+ * finance surface's View stays self-contained). */
+const LEDGER_KIND_LABELS: Record<string, string> = {
+  donation: "Donation",
+  allocation: "Allocation",
+  card_capture: "Card purchase",
+  refund: "Refund",
+  reimbursement: "Reimbursement",
+  transfer: "Transfer",
+  sweep: "Sweep",
+  fee: "Fee",
+};
+
+/** "Donation" / "Card purchase" / "Reimbursement" / ... for activity rows. */
+export function formatLedgerKind(kind: string): string {
+  return LEDGER_KIND_LABELS[kind] ?? kind;
+}

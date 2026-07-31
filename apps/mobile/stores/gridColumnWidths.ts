@@ -6,11 +6,15 @@
  * `storageKey` (e.g. "runSheet", "eventTasks") so each grid remembers its own
  * layout, then by the column's `key`.
  *
- * Unlike the offline data caches (`stores/*Cache.ts`, which ship a `.web.ts`
- * no-op stub), these are a UI PREFERENCE we WANT to persist on web too — desktop
- * is the primary surface for these tables. AsyncStorage maps to localStorage on
- * web, so this single cross-platform file is correct; there is deliberately no
- * `.web.ts` stub.
+ * Unlike the offline data caches (`stores/*Cache.ts`, whose `.web.ts` files are
+ * no-op stubs), these are a UI PREFERENCE we WANT to persist on web too —
+ * desktop is the primary surface for these tables. This file DOES still need
+ * a `.web.ts` counterpart (`gridColumnWidths.web.ts`) — not because the data
+ * is web-irrelevant, but because zustand v5's `persist` middleware reads a
+ * bundler-only build-mode global that crashes the web bundle (see
+ * `__tests__/web-bundle-safety.test.ts`). The web counterpart re-implements
+ * this same API over `useSyncExternalStore` + `localStorage` so widths still
+ * persist across a refresh.
  *
  * Overrides are committed on drag RELEASE (not on every move) so we don't thrash
  * AsyncStorage during a drag — the live width feeds off local component state

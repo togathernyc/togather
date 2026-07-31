@@ -51,6 +51,7 @@ jest.mock('@components/ui', () => ({ AppImage: () => null, ImageViewer: () => nu
 jest.mock('@/utils/media', () => ({ getMediaUrl: (url: string) => url }));
 
 import { MessageItem } from '../MessageItem';
+import { WA_BUBBLE_GROUPED_GAP, WA_BUBBLE_RUN_GAP } from '@components/wa/metrics';
 
 const EVENT_URL = 'https://togather.nyc/e/evt123';
 const TIME_RE = /^\d{1,2}:\d{2} (AM|PM)$/;
@@ -180,6 +181,71 @@ describe('messages that still need their own bubble (flag-on)', () => {
   });
 });
 
+/**
+ * Owner device screenshots, 2026-07-30: "lack of personal space between these
+ * two events" — two event cards butted together with no gap at all.
+ *
+ * Two sources of vertical space are in play and both are pinned here:
+ *   1. Cards stacked INSIDE one message. `embedded` zeroes each card's legacy
+ *      `marginVertical: 4`, so flag-on they touched at exactly 0pt.
+ *   2. Consecutive card-only MESSAGES, whose gap is the §5 run/grouped margin
+ *      on the row itself. That one was already non-zero — pinned so a future
+ *      grouping change can't quietly collapse it.
+ */
+describe('event cards never touch (flag-on)', () => {
+  /** The row margin §5 grouping puts between this message and the one above. */
+  function rowGap(tree: any): number {
+    // container > Pressable > row
+    const row = tree.children[0].children[0];
+    const style: any = StyleSheet.flatten(row.props.style);
+    return style.marginTop;
+  }
+
+  /** The container that stacks a message's event cards. */
+  function cardStackStyle(tree: any): any {
+    const found: any[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if ((node.children ?? []).some((c: any) => c?.props?.testID === 'event-card')) {
+        found.push(node);
+      }
+      (node.children ?? []).forEach(walk);
+    };
+    walk(tree);
+    expect(found).toHaveLength(1);
+    return StyleSheet.flatten(found[0].props.style);
+  }
+
+  it('separates two cards stacked in one message', () => {
+    const { toJSON } = render(
+      <MessageItem
+        message={{ ...incoming, content: `${EVENT_URL} https://togather.nyc/e/evt456` }}
+        currentUserId={'user-1' as any}
+      />
+    );
+
+    expect(cardStackStyle(toJSON()).gap).toBe(WA_BUBBLE_RUN_GAP);
+    expect(WA_BUBBLE_RUN_GAP).toBeGreaterThan(0);
+  });
+
+  it('keeps the grouped-run gap between consecutive card messages from one sender', () => {
+    const { toJSON } = render(
+      <MessageItem message={incoming} currentUserId={'user-1' as any} isFirstInGroup={false} />
+    );
+
+    expect(rowGap(toJSON())).toBe(WA_BUBBLE_GROUPED_GAP);
+    expect(WA_BUBBLE_GROUPED_GAP).toBeGreaterThan(0);
+    // The card's own top margin rides on top of that row gap.
+    expect(cardStackStyle(toJSON()).marginTop).toBeGreaterThan(0);
+  });
+
+  it('keeps the full run gap when the card starts a new run', () => {
+    const { toJSON } = render(<MessageItem message={incoming} currentUserId={'user-1' as any} />);
+
+    expect(rowGap(toJSON())).toBe(WA_BUBBLE_RUN_GAP);
+  });
+});
+
 describe('flag-off twin', () => {
   it('still renders the bubble, its footer and the above-content name', () => {
     mockShellEnabled = false;
@@ -192,6 +258,29 @@ describe('flag-off twin', () => {
     expect(getByText('Ada Nwosu')).toBeTruthy();
     expect(getByTestId('wa-bubble-footer')).toBeTruthy();
     expect(queryByTestId('wa-card-footer')).toBeNull();
+  });
+
+  it('leaves the stacked-card container ungapped, exactly as it was', () => {
+    mockShellEnabled = false;
+
+    const { toJSON } = render(
+      <MessageItem
+        message={{ ...incoming, content: `${EVENT_URL} https://togather.nyc/e/evt456` }}
+        currentUserId={'user-1' as any}
+      />
+    );
+
+    const stack = toJSON();
+    const containers: any[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if ((node.children ?? []).some((c: any) => c?.props?.testID === 'event-card')) {
+        containers.push(node);
+      }
+      (node.children ?? []).forEach(walk);
+    };
+    walk(stack);
+    expect(StyleSheet.flatten(containers[0].props.style).gap).toBeUndefined();
   });
 
   it('still labels the sender on a continuation message, which flag-off does not group', () => {

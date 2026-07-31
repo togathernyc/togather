@@ -27,8 +27,13 @@ import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
-import { isValidEin } from "../functions/finance/onboarding";
+import {
+  isValidEin,
+  fingerprintIntake,
+  normalizeWebsite,
+} from "../functions/finance/onboarding";
 import { verifyIncreaseWebhookSignature } from "../lib/finance/increase";
+import { choosePayoutDestination } from "../lib/finance/stripeConnect";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -246,6 +251,78 @@ describe("isValidEin", () => {
 });
 
 // ============================================================================
+// normalizeWebsite
+// ============================================================================
+
+describe("normalizeWebsite", () => {
+  test("prefixes https:// on bare domains (churches type these)", () => {
+    expect(normalizeWebsite("firstchurch.org")).toBe("https://firstchurch.org");
+    expect(normalizeWebsite("www.firstchurch.org")).toBe("https://www.firstchurch.org");
+  });
+
+  test("passes through already-schemed URLs and trims whitespace", () => {
+    expect(normalizeWebsite("https://example.org")).toBe("https://example.org");
+    expect(normalizeWebsite("  http://example.org  ")).toBe("http://example.org");
+  });
+
+  test("drops empty and whitespace-only values", () => {
+    expect(normalizeWebsite(undefined)).toBeUndefined();
+    expect(normalizeWebsite("")).toBeUndefined();
+    expect(normalizeWebsite("   ")).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// choosePayoutDestination
+// ============================================================================
+
+describe("choosePayoutDestination", () => {
+  const minted = { routingNumber: "074920909", accountNumber: "9498589619" };
+
+  test("production attaches the real Increase receiving-account number", () => {
+    expect(choosePayoutDestination(false, minted)).toEqual(minted);
+  });
+
+  test("test mode attaches Stripe's documented test bank account (real numbers are rejected)", () => {
+    expect(choosePayoutDestination(true, minted)).toEqual({
+      routingNumber: "110000000",
+      accountNumber: "000123456789",
+    });
+  });
+});
+
+// ============================================================================
+// fingerprintIntake
+// ============================================================================
+
+describe("fingerprintIntake", () => {
+  const intake = {
+    legalName: "Demo Community Church",
+    ein: "00-0000000",
+    address: {
+      addressLine1: "123 Main Street",
+      city: "New York",
+      state: "NY",
+      zipCode: "10001",
+    },
+  };
+
+  test("is deterministic for identical intake data (safe retry, same idempotency keys)", () => {
+    expect(fingerprintIntake(intake)).toBe(fingerprintIntake({ ...intake }));
+  });
+
+  test("changes when any provider-visible field changes (corrected resubmission gets fresh keys)", () => {
+    const base = fingerprintIntake(intake);
+    expect(fingerprintIntake({ ...intake, legalName: "Other Church" })).not.toBe(base);
+    expect(fingerprintIntake({ ...intake, ein: "12-3456789" })).not.toBe(base);
+    expect(fingerprintIntake({ ...intake, website: "https://example.org" })).not.toBe(base);
+    expect(
+      fingerprintIntake({ ...intake, address: { ...intake.address, zipCode: "10002" } }),
+    ).not.toBe(base);
+  });
+});
+
+// ============================================================================
 // startOnboarding
 // ============================================================================
 
@@ -282,6 +359,42 @@ describe("startOnboarding", () => {
     );
     expect(auditEvents).toHaveLength(1);
     expect(auditEvents[0].action).toBe("onboarding.status_changed");
+
+    // The status query echoes the stored intake so "Edit church details"
+    // prefills instead of reopening a blank form.
+    const status = await t.query(api.functions.finance.onboarding.getOnboardingStatus, {
+      token: adminToken,
+      communityId,
+    });
+    expect(status.intake).toEqual({
+      legalName: "Test Church Inc",
+      ein: "12-3456789",
+      website: "https://example.com",
+      statementDescriptor: undefined,
+      address: ADDRESS,
+    });
+  });
+
+  test("normalizes a bare-domain website to https:// on store", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+
+    await t.mutation(api.functions.finance.onboarding.startOnboarding, {
+      token: adminToken,
+      communityId,
+      legalName: "Test Church Inc",
+      ein: "12-3456789",
+      website: "firstchurch.org",
+      address: ADDRESS,
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.website).toBe("https://firstchurch.org");
   });
 
   test("rejects a non-admin caller", async () => {
@@ -312,6 +425,42 @@ describe("startOnboarding", () => {
         address: ADDRESS,
       }),
     ).rejects.toThrow(/EIN/);
+  });
+
+  test("resubmission clears a previously recorded provisioningError", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "stripe",
+      message: "Stripe declined the connected account application",
+    });
+
+    let finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.provisioningError).toBeDefined();
+
+    await t.mutation(api.functions.finance.onboarding.startOnboarding, {
+      token: adminToken,
+      communityId,
+      legalName: "Test Church Inc",
+      ein: "12-3456789",
+      address: ADDRESS,
+    });
+
+    finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("collecting");
+    expect(finance?.provisioningError).toBeUndefined();
   });
 });
 
@@ -392,6 +541,226 @@ describe("recordProvisioned", () => {
         .first(),
     );
     expect(finance?.onboardingStatus).toBe("live");
+  });
+});
+
+// ============================================================================
+// recordProvisioningFailure + retryProvisioning
+// ============================================================================
+
+describe("provisioning failure + retry", () => {
+  test("recordProvisioningFailure(stripe) sets stripe_blocked + provisioningError, reflected in getOnboardingStatus", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "stripe",
+      message: "Stripe declined the connected account application",
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("stripe_blocked");
+    expect(finance?.provisioningError).toBe(
+      "Stripe declined the connected account application",
+    );
+
+    const status = await t.query(api.functions.finance.onboarding.getOnboardingStatus, {
+      token: adminToken,
+      communityId,
+    });
+    expect(status.providersReady).toBe(false);
+    expect(status.blockedReason).toBe("stripe_blocked");
+    expect(status.provisioningError).toBe(
+      "Stripe declined the connected account application",
+    );
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    expect(
+      auditEvents.filter((e) => e.action === "onboarding.provisioning_failed"),
+    ).toHaveLength(1);
+  });
+
+  test("recordProvisioningFailure(increase) sets increase_blocked", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "collecting",
+      stripeConnectedAccountId: "acct_ok",
+    });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "increase",
+      message: "Increase entity creation failed",
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("increase_blocked");
+    expect(finance?.provisioningError).toBe("Increase entity creation failed");
+  });
+
+  test("ignores a stale failing run once the row is fully provisioned (verifying)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    // Overlapping provisionProviders runs: a newer run recorded success
+    // (all provider ids + "verifying"), then a stale run's failure lands.
+    await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "verifying",
+      stripeConnectedAccountId: "acct_done",
+      increaseEntityId: "entity_done",
+      increaseReceivingAccountId: "account_done",
+    });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "increase",
+      message: "stale overlapping run failure",
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("verifying");
+    expect(finance?.provisioningError).toBeUndefined();
+  });
+
+  test("never regresses an already-live community, and leaves provisioningError unset", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "live",
+      stripeConnectedAccountId: "acct_live",
+      increaseEntityId: "entity_live",
+      increaseReceivingAccountId: "account_live",
+    });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "stripe",
+      message: "stray retry failure",
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("live");
+    expect(finance?.provisioningError).toBeUndefined();
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    expect(auditEvents).toHaveLength(0);
+  });
+
+  test("retryProvisioning resets a blocked community to collecting, clears provisioningError, and audit-logs the retry", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioningFailure, {
+      communityId,
+      provider: "stripe",
+      message: "Stripe declined the connected account application",
+    });
+
+    const result = await t.mutation(api.functions.finance.onboarding.retryProvisioning, {
+      token: adminToken,
+      communityId,
+    });
+    expect(result.onboardingStatus).toBe("collecting");
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.onboardingStatus).toBe("collecting");
+    expect(finance?.provisioningError).toBeUndefined();
+
+    const status = await t.query(api.functions.finance.onboarding.getOnboardingStatus, {
+      token: adminToken,
+      communityId,
+    });
+    expect(status.provisioningError).toBeNull();
+
+    const auditEvents = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    expect(
+      auditEvents.filter((e) => e.action === "onboarding.provisioning_retried"),
+    ).toHaveLength(1);
+  });
+
+  test("throws when onboarding hasn't started (no communityFinance row)", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+
+    await expect(
+      t.mutation(api.functions.finance.onboarding.retryProvisioning, {
+        token: adminToken,
+        communityId,
+      }),
+    ).rejects.toThrow(/hasn't started/i);
+  });
+
+  test("throws 'already set up' once all three provider ids are present", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "verifying",
+      stripeConnectedAccountId: "acct_done",
+      increaseEntityId: "entity_done",
+      increaseReceivingAccountId: "account_done",
+    });
+
+    await expect(
+      t.mutation(api.functions.finance.onboarding.retryProvisioning, {
+        token: adminToken,
+        communityId,
+      }),
+    ).rejects.toThrow(/already set up/i);
+  });
+
+  test("rejects a non-admin member token", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, memberToken } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "stripe_blocked" });
+
+    await expect(
+      t.mutation(api.functions.finance.onboarding.retryProvisioning, {
+        token: memberToken,
+        communityId,
+      }),
+    ).rejects.toThrow();
   });
 });
 

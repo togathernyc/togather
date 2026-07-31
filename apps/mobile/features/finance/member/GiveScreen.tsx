@@ -5,9 +5,17 @@
  *
  * All Convex/router wiring lives here; the actual UI is `GiveScreenView`,
  * kept prop-only so a verification harness can render it with mock data.
+ *
+ * Payment collection is a hosted Stripe Checkout page (ADR-032 §3/§7 Phase 1
+ * decision: zero native dependencies, ships via OTA, Apple Pay works in the
+ * browser sheet) — "Continue" creates a Checkout Session, then opens its
+ * `url` via expo-web-browser, the same `openBrowserAsync` pattern
+ * FinanceOnboardingStatusScreen uses for Stripe's hosted onboarding.
  */
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
+import { Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import {
   useAuthenticatedQuery,
   useAuthenticatedAction,
@@ -17,7 +25,17 @@ import type { Id } from "@services/api/convex";
 import { formatError } from "@/utils/error-handling";
 import { GiveScreenView, type GiveStep } from "./GiveScreenView";
 import { estimateCoverFeesCents, resolveGiveAmountCents } from "./amount";
-import type { DonationIntent } from "./types";
+import type { CheckoutSession } from "./types";
+
+/** Opens a URL in the platform's browser sheet — mirrors
+ * FinanceOnboardingStatusScreen's handleContinueIdentityVerification. */
+async function openCheckoutUrl(url: string): Promise<void> {
+  if (Platform.OS === "web") {
+    window.location.href = url;
+  } else {
+    await WebBrowser.openBrowserAsync(url);
+  }
+}
 
 export function GiveScreen() {
   const params = useLocalSearchParams<{ group_id: string }>();
@@ -29,8 +47,8 @@ export function GiveScreen() {
     groupId ? { groupId: groupId as Id<"groups"> } : "skip",
   );
 
-  const createDonationIntent = useAuthenticatedAction(
-    api.functions.finance.giving.createDonationIntent,
+  const createDonationCheckoutSession = useAuthenticatedAction(
+    api.functions.finance.giving.createDonationCheckoutSession,
   );
 
   const [step, setStep] = useState<GiveStep>("amount");
@@ -39,10 +57,23 @@ export function GiveScreen() {
   const [coverFees, setCoverFees] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [intent, setIntent] = useState<DonationIntent | null>(null);
+  const [checkoutSession, setCheckoutSession] = useState<CheckoutSession | null>(null);
+
+  // Minted once per give-sheet session (not per tap) so a retried/double-tapped
+  // "Continue" reuses the same Stripe idempotency key instead of creating a
+  // second Checkout Session — see createDonationCheckoutSession's doc comment.
+  const idempotencyNonceRef = useRef<string>(
+    `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
 
   const handleBack = () => {
     if (step === "confirmation") {
+      // Editing the gift after a session was created starts a NEW submission
+      // — drop the stale session so "Reopen" can't relaunch the old amount.
+      // (The nonce was already rotated when that session was created, so the
+      // next Continue gets a fresh idempotency key; reusing the old key with
+      // different params would make Stripe reject the request.)
+      setCheckoutSession(null);
       setStep("amount");
       return;
     }
@@ -74,18 +105,30 @@ export function GiveScreen() {
     setError(null);
     try {
       const coverFeesCents = coverFees ? estimateCoverFeesCents(amountCents) : 0;
-      const result = await createDonationIntent({
+      const result = await createDonationCheckoutSession({
         fundId: context.fundId as Id<"funds">,
         amountCents,
         coverFeesCents,
+        idempotencyNonce: idempotencyNonceRef.current,
       });
-      setIntent(result);
+      setCheckoutSession(result);
+      // Rotate the nonce now that this submission has its session: a failed
+      // call keeps the old nonce (retry = same idempotency key = no double
+      // session), while the donor's NEXT gift — after Done/back — gets a
+      // fresh key instead of colliding with this one.
+      idempotencyNonceRef.current = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setStep("confirmation");
+      await openCheckoutUrl(result.url);
     } catch (err) {
       setError(formatError(err, "Couldn't start this gift. Please try again."));
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleReopenCheckout = async () => {
+    if (!checkoutSession) return;
+    await openCheckoutUrl(checkoutSession.url);
   };
 
   return (
@@ -97,12 +140,13 @@ export function GiveScreen() {
       coverFees={coverFees}
       submitting={submitting}
       error={error}
-      intent={intent}
+      checkoutSession={checkoutSession}
       onBack={handleBack}
       onSelectPreset={handleSelectPreset}
       onCustomAmountChange={handleCustomAmountChange}
       onToggleCoverFees={setCoverFees}
       onContinue={handleContinue}
+      onReopenCheckout={handleReopenCheckout}
     />
   );
 }

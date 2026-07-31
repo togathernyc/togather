@@ -351,6 +351,225 @@ describe("rosterMatrix", () => {
       }),
     ).rejects.toThrow(ConvexError);
   });
+
+  // The matrix covers EVERY active group member, and its gate passes for any
+  // manager of any single team — so phone numbers must not ride along on it.
+  // `getMemberContact` serves the one-tap reach-out instead (see below).
+  it("does not carry phone numbers on the member rows", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: leader,
+      groupId: world.groupId,
+    });
+
+    expect(m.members.length).toBeGreaterThan(0);
+    for (const row of m.members) {
+      expect(row).not.toHaveProperty("phone");
+    }
+  });
+});
+
+/**
+ * The narrow contact lookup behind the roster grid's one-tap reach-out. The
+ * gate is deliberately tighter than `rosterMatrix`'s: a team manager may only
+ * reach people serving on a team THEY manage.
+ */
+describe("getMemberContact", () => {
+  /** A second team in the world's group, with a role, plus one manager for it. */
+  async function makeManagedTeam(
+    t: ReturnType<typeof convexTest>,
+    world: Awaited<ReturnType<typeof setup>>["world"],
+    leaderToken: string,
+    managerId: Id<"users">,
+    name: string,
+  ) {
+    const { teamId } = await t.mutation(
+      api.functions.scheduling.teams.createServingTeam,
+      { token: leaderToken, groupId: world.groupId, name, withChannel: false },
+    );
+    const { roleId } = await t.mutation(
+      api.functions.scheduling.roles.createRole,
+      { token: leaderToken, teamId, name: `${name} Lead` },
+    );
+    await t.mutation(api.functions.scheduling.teams.addTeamManager, {
+      token: leaderToken,
+      teamId,
+      userId: managerId,
+    });
+    return { teamId, roleId };
+  }
+
+  it("gives a group leader any roster member's number", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const contact = await t.query(
+      api.functions.scheduling.roster.getMemberContact,
+      { token: leader, groupId: world.groupId, userId: world.channelMemberId },
+    );
+    expect(contact.phone).toBe("+12025550003");
+  });
+
+  it("returns null (not an error) when there's no number on file — the DM fallback", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    const noPhoneUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        firstName: "Noah",
+        lastName: "Nophone",
+        isActive: true,
+        roles: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: world.groupId,
+        userId,
+        role: "member",
+        joinedAt: Date.now(),
+        notificationsEnabled: true,
+      });
+      return userId;
+    });
+
+    const contact = await t.query(
+      api.functions.scheduling.roster.getMemberContact,
+      { token: leader, groupId: world.groupId, userId: noPhoneUserId },
+    );
+    expect(contact.phone).toBeNull();
+  });
+
+  it("lets a team manager reach someone assigned on their own team", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const manager = (await generateTokens(world.channelAdminId)).accessToken;
+
+    const { teamId, roleId } = await makeManagedTeam(
+      t,
+      world,
+      leader,
+      world.channelAdminId,
+      "Production",
+    );
+    const plan = await createPlan(
+      t,
+      leader,
+      world.groupId,
+      "Service",
+      Date.now() + 7 * DAY,
+    );
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leader,
+      planId: plan,
+      teamId,
+      roleId,
+      userId: world.channelMemberId,
+    });
+
+    const contact = await t.query(
+      api.functions.scheduling.roster.getMemberContact,
+      { token: manager, groupId: world.groupId, userId: world.channelMemberId },
+    );
+    expect(contact.phone).toBe("+12025550003");
+  });
+
+  // The regression this whole change exists for: `rosterMatrix`'s gate passes
+  // for a manager of ANY one team, and its member rows span the whole group.
+  // Managing Production must not hand over the number of someone who only ever
+  // serves on Worship — nor a group leader's or a never-joined placeholder's.
+  it("refuses a team manager the number of someone outside their teams", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+    const manager = (await generateTokens(world.channelAdminId)).accessToken;
+
+    // channelAdmin manages Production only.
+    await makeManagedTeam(t, world, leader, world.channelAdminId, "Production");
+
+    // channelMember serves on the world's Worship team — never on Production.
+    const plan = await createPlan(
+      t,
+      leader,
+      world.groupId,
+      "Service",
+      Date.now() + 7 * DAY,
+    );
+    await t.mutation(api.functions.scheduling.assignments.assignRole, {
+      token: leader,
+      planId: plan,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+    });
+
+    // They can still open the grid (the manager gate) …
+    const m = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token: manager,
+      groupId: world.groupId,
+    });
+    expect(
+      m.members.some((mm) => mm.userId === world.channelMemberId),
+    ).toBe(true);
+
+    // … but not pull that person's number.
+    await expect(
+      t.query(api.functions.scheduling.roster.getMemberContact, {
+        token: manager,
+        groupId: world.groupId,
+        userId: world.channelMemberId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    // Nor the group leader's, who serves on nothing.
+    await expect(
+      t.query(api.functions.scheduling.roster.getMemberContact, {
+        token: manager,
+        groupId: world.groupId,
+        userId: world.groupLeaderId,
+      }),
+    ).rejects.toThrow(ConvexError);
+
+    // Nor a phone-invited placeholder who never joined.
+    await expect(
+      t.query(api.functions.scheduling.roster.getMemberContact, {
+        token: manager,
+        groupId: world.groupId,
+        userId: world.placeholderUserId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
+  it("rejects a plain member and a non-member of the group", async () => {
+    const { t, world } = await setup();
+    const plainMember = (await generateTokens(world.channelModeratorId))
+      .accessToken;
+    const outsider = (await generateTokens(world.outsiderId)).accessToken;
+
+    for (const token of [plainMember, outsider]) {
+      await expect(
+        t.query(api.functions.scheduling.roster.getMemberContact, {
+          token,
+          groupId: world.groupId,
+          userId: world.channelMemberId,
+        }),
+      ).rejects.toThrow(ConvexError);
+    }
+  });
+
+  it("rejects a target who isn't on this group's roster", async () => {
+    const { t, world } = await setup();
+    const leader = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    await expect(
+      t.query(api.functions.scheduling.roster.getMemberContact, {
+        token: leader,
+        groupId: world.groupId,
+        userId: world.communityOnlyAId,
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
 });
 
 describe("roster group filter", () => {

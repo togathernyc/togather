@@ -104,7 +104,7 @@ pnpm dev
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (starts with `whsec_`) | Billing disabled |
 | `STRIPE_PRODUCT_ID` | Stripe Product ID for "Togather Community Hosting" (optional — auto-created if not set) | Auto-created on first use |
 
-> **Note**: These variables are configured in the Convex deployment dashboard. The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
+> **Note**: `STRIPE_SECRET_KEY` is synced from 1Password like everything else (it's in `ee/secrets-allowlist.json` `required`, and deploys forward it to Convex) — **staging must hold a test-mode `sk_test_…` key and production the live `sk_live_…` key**. A live key on staging makes Stripe reject the documented test tax IDs ("Invalid Tax ID … is not an allowed value") and breaks test-mode Connect onboarding; that shipped once because this key predated the 1Password sync and GitHub's manually-seeded live value was silently forwarded forever. `STRIPE_WEBHOOK_SECRET`/`STRIPE_PRODUCT_ID` are still manually configured (add them to the allowlist + 1Password before relying on the sync for them — an `optional` key absent from 1Password gets PRUNED from GitHub). The webhook URL should be registered as `https://<convex-deployment>.convex.site/stripe-webhook`.
 
 ### KLIPY GIF API (Optional)
 

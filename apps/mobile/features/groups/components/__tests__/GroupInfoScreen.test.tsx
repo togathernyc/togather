@@ -19,6 +19,11 @@ jest.mock("@services/api/convex", () => ({
   useAuthenticatedMutation: jest.fn(() => jest.fn()),
   api: {
     functions: {
+      admin: {
+        featureFlags: {
+          getFeatureFlag: "api.functions.admin.featureFlags.getFeatureFlag",
+        },
+      },
       groups: {
         index: {
           getById: "api.functions.groups.index.getById",

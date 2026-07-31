@@ -39,6 +39,7 @@ import { getGroupTypeColorScheme } from "../../../constants/groupTypes";
 import type { Id } from "@services/api/convex";
 import { useAwaitPrefetch, useTriggerPrefetch } from "../hooks/usePrefetchChannel";
 import { selectMainChannel } from "../utils/selectMainChannel";
+import { computeChannelRowsVisibility } from "../utils/groupCollapse";
 
 // Type for channel data from getInboxChannels query
 interface ChannelData {
@@ -90,6 +91,14 @@ export interface GroupedInboxItemProps {
   userRole: "leader" | "member";
   isExpanded?: boolean;
   onToggleExpand?: () => void;
+  /**
+   * Whether this group's channel sub-rows are collapsed (whatsapp-shell
+   * only). Persisted in `stores/inboxGroupCollapse.ts`, independent of
+   * `isExpanded`/`onToggleExpand` above — see that store's doc comment for
+   * why the two don't share state.
+   */
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
   activeGroupId?: string;
   activeChannelSlug?: string;
   /** Resources flagged to show under this group in the inbox. */
@@ -344,6 +353,8 @@ function GroupedInboxItemInner({
   userRole,
   isExpanded = false,
   onToggleExpand,
+  isCollapsed = false,
+  onToggleCollapse,
   activeGroupId,
   activeChannelSlug,
   resources,
@@ -836,11 +847,23 @@ function GroupedInboxItemInner({
     );
     const clusterHasUnread = mainHasUnread || totalUnread > 0;
 
+    // Whether the channel sub-rows render at all — collapsed via the chevron
+    // below hides them entirely, independent of the cap/expand logic above.
+    const rowsVisibility = computeChannelRowsVisibility({
+      canExpand,
+      isCollapsed,
+      hiddenChannelCount,
+    });
+
     // Sub-rows below the main row: secondary channels, then the "N more"
     // row — one flat list, hairline-separated. (Resources are NOT here
-    // flag-on; see the note above `resourceRows`.)
+    // flag-on; see the note above `resourceRows`.) Empty when the group is
+    // collapsed, per `rowsVisibility` above.
     const subRows: React.ReactNode[] = [];
-    secondaryChannels.forEach((channel) => {
+    const visibleSecondaryChannels = rowsVisibility.showSecondaryChannels
+      ? secondaryChannels
+      : [];
+    visibleSecondaryChannels.forEach((channel) => {
       const channelHasUnread = channel.unreadCount > 0;
       subRows.push(
         <Pressable
@@ -890,7 +913,7 @@ function GroupedInboxItemInner({
       );
     });
 
-    if (hiddenChannelCount > 0) {
+    if (rowsVisibility.showMoreChannelsRow) {
       subRows.push(
         <Pressable
           key="more"
@@ -972,6 +995,29 @@ function GroupedInboxItemInner({
             primaryColor={primaryColor}
             colors={colors}
           />
+          {/* Collapse affordance (owner directive, 2026-07-30): an explicit,
+              always-visible chevron — not the long-press action sheet above,
+              which he could not find. Default expanded; collapsing hides the
+              sub-rows below while this row stays visible and tappable. Only
+              shown for clusters that actually have sub-rows to hide. */}
+          {canExpand && onToggleCollapse && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onToggleCollapse();
+              }}
+              hitSlop={8}
+              style={styles.collapseToggle}
+              accessibilityRole="button"
+              accessibilityLabel={isCollapsed ? `Expand ${group.name}` : `Collapse ${group.name}`}
+            >
+              <Ionicons
+                name={isCollapsed ? "chevron-forward" : "chevron-down"}
+                size={18}
+                color={colors.textTertiary}
+              />
+            </Pressable>
+          )}
         </Pressable>
 
         {subRows.length > 0 && (
@@ -1512,5 +1558,12 @@ const styles = StyleSheet.create({
   },
   waSeparator: {
     height: StyleSheet.hairlineWidth,
+  },
+  // Explicit collapse chevron (owner directive, 2026-07-30) — a dedicated hit
+  // target next to the right column so it doesn't compete with the row's own
+  // tap-to-open target.
+  collapseToggle: {
+    marginLeft: 4,
+    padding: 4,
   },
 });

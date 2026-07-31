@@ -10,21 +10,26 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as WebBrowser from "expo-web-browser";
+import { DOMAIN_CONFIG } from "@togather/shared/config";
 import { useAuth } from "@providers/AuthProvider";
-import { useAuthenticatedQuery, useAuthenticatedAction, api } from "@services/api/convex";
+import {
+  useAuthenticatedQuery,
+  useAuthenticatedAction,
+  useAuthenticatedMutation,
+  api,
+} from "@services/api/convex";
 import type { Id } from "@services/api/convex";
 import { useTheme } from "@hooks/useTheme";
-import { ToastManager } from "@components/ui";
 import { formatError } from "@/utils/error-handling";
 import { FinanceOnboardingStatusView } from "./FinanceOnboardingStatusView";
 
 // An https universal link, NOT the custom "togather://" scheme: Stripe
 // requires https return/refresh URLs for hosted onboarding (the backend's
-// getStripeOnboardingLinkUrl enforces it too), and the app registers
-// applinks for togather.nyc (app.config.js associatedDomains) so this
-// re-opens the app when installed. Stripe just needs a URL to bounce back
-// to; Convex reactivity (not the redirect itself) refreshes this screen.
-const FINANCE_SETUP_DEEP_LINK = "https://togather.nyc/leader-tools/finance-setup";
+// getStripeOnboardingLinkUrl enforces it too). DOMAIN_CONFIG keeps it
+// environment-aware — a staging admin must bounce back to staging, not prod.
+// Stripe just needs a URL to bounce back to; Convex reactivity (not the
+// redirect itself) refreshes this screen.
+const FINANCE_SETUP_DEEP_LINK = `${DOMAIN_CONFIG.appUrl}/finance-setup`;
 
 export function FinanceOnboardingStatusScreen() {
   const { colors } = useTheme();
@@ -40,12 +45,18 @@ export function FinanceOnboardingStatusScreen() {
   const getStripeOnboardingLinkUrl = useAuthenticatedAction(
     api.functions.finance.onboarding.getStripeOnboardingLinkUrl,
   );
+  const retryProvisioning = useAuthenticatedMutation(
+    api.functions.finance.onboarding.retryProvisioning,
+  );
 
   const [isLoadingLink, setIsLoadingLink] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
 
   const handleContinueIdentityVerification = async () => {
     if (!community?.id || isLoadingLink) return;
     setIsLoadingLink(true);
+    setLinkError(null);
     try {
       const { url } = await getStripeOnboardingLinkUrl({
         communityId: community.id as Id<"communities">,
@@ -58,9 +69,26 @@ export function FinanceOnboardingStatusScreen() {
         await WebBrowser.openBrowserAsync(url);
       }
     } catch (error) {
-      ToastManager.error(formatError(error, "Failed to open identity verification"));
+      // Inline, not a toast — toasts don't render on web, and this error is
+      // the difference between a working and dead-end screen.
+      setLinkError(formatError(error, "Failed to open identity verification"));
     } finally {
       setIsLoadingLink(false);
+    }
+  };
+
+  const handleRetryProvisioning = async () => {
+    if (!community?.id || isRetrying) return;
+    setIsRetrying(true);
+    setLinkError(null);
+    try {
+      await retryProvisioning({
+        communityId: community.id as Id<"communities">,
+      });
+    } catch (error) {
+      setLinkError(formatError(error, "Couldn't retry setup. Please try again."));
+    } finally {
+      setIsRetrying(false);
     }
   };
 
@@ -79,13 +107,18 @@ export function FinanceOnboardingStatusScreen() {
       <FinanceOnboardingStatusView
         isLoading={status === undefined}
         formSubmitted={!!status?.formSubmitted}
+        providersReady={!!status?.providersReady}
         paymentsVerified={!!status?.paymentsVerified}
         bankAccountsReady={!!status?.bankAccountsReady}
         onboardingStatus={status?.onboardingStatus ?? "collecting"}
         blockedReason={status?.blockedReason}
+        provisioningError={status?.provisioningError}
+        linkError={linkError}
         isLoadingLink={isLoadingLink}
-        onStartForm={() => router.push("/(user)/leader-tools/finance-setup/intake")}
+        isRetrying={isRetrying}
+        onStartForm={() => router.push("/finance-setup/intake")}
         onContinueIdentityVerification={handleContinueIdentityVerification}
+        onRetryProvisioning={handleRetryProvisioning}
       />
     </View>
   );

@@ -1,17 +1,22 @@
 import React from "react";
-import { render, screen } from "@testing-library/react-native";
+import { render, screen, fireEvent } from "@testing-library/react-native";
 import { FinanceOnboardingStatusView } from "../FinanceOnboardingStatusView";
 
 const baseProps = {
   isLoading: false,
   formSubmitted: true,
+  providersReady: true,
   paymentsVerified: false,
   bankAccountsReady: false,
   onboardingStatus: "verifying" as const,
   blockedReason: null,
+  provisioningError: null,
+  linkError: null,
   isLoadingLink: false,
+  isRetrying: false,
   onStartForm: jest.fn(),
   onContinueIdentityVerification: jest.fn(),
+  onRetryProvisioning: jest.fn(),
 };
 
 describe("FinanceOnboardingStatusView", () => {
@@ -39,6 +44,25 @@ describe("FinanceOnboardingStatusView", () => {
     expect(screen.getByText("We need a clearer photo ID.")).toBeTruthy();
   });
 
+  it("maps the raw stripe_blocked enum to human copy instead of leaking it", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        onboardingStatus="stripe_blocked"
+        blockedReason="stripe_blocked"
+      />
+    );
+
+    expect(screen.queryByText("stripe_blocked")).toBeNull();
+    expect(
+      screen.getByText(
+        "Stripe needs more information — continue identity verification below."
+      )
+    ).toBeTruthy();
+    // The actionable fix is the identity flow — the CTA must stay available.
+    expect(screen.getByText("Continue identity verification")).toBeTruthy();
+  });
+
   it("shows the live banner and hides all action buttons once fully live", () => {
     render(
       <FinanceOnboardingStatusView
@@ -60,5 +84,67 @@ describe("FinanceOnboardingStatusView", () => {
 
     expect(screen.getByText("Get started")).toBeTruthy();
     expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows a setting-up state (not the identity CTA) while providers are provisioning", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="collecting"
+      />
+    );
+
+    expect(screen.getByText("Setting up your accounts…")).toBeTruthy();
+    expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows the provisioning error and a retry CTA when provisioning failed", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="stripe_blocked"
+        provisioningError="Stripe API error: platform profile incomplete"
+      />
+    );
+
+    expect(
+      screen.getByText("Stripe API error: platform profile incomplete")
+    ).toBeTruthy();
+    fireEvent.press(screen.getByText("Try again"));
+    expect(baseProps.onRetryProvisioning).toHaveBeenCalled();
+    // Deterministic provider rejections need corrected data, not a retry —
+    // the failure state must offer a path back to the intake form.
+    fireEvent.press(screen.getByText("Edit church details"));
+    expect(baseProps.onStartForm).toHaveBeenCalled();
+    expect(screen.queryByText("Continue identity verification")).toBeNull();
+  });
+
+  it("shows a retry failure inline in the provisioning-failed state", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        providersReady={false}
+        onboardingStatus="stripe_blocked"
+        provisioningError="Stripe API error"
+        linkError="Couldn't retry setup. Please try again."
+      />
+    );
+
+    expect(screen.getByText("Try again")).toBeTruthy();
+    expect(screen.getByText("Couldn't retry setup. Please try again.")).toBeTruthy();
+  });
+
+  it("shows the link error inline under the identity CTA", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        linkError="Failed to open identity verification"
+      />
+    );
+
+    expect(screen.getByText("Continue identity verification")).toBeTruthy();
+    expect(screen.getByText("Failed to open identity verification")).toBeTruthy();
   });
 });

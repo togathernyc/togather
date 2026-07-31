@@ -40,6 +40,8 @@ import {
   createConnectedAccount,
   createAccountOnboardingLink,
   attachIncreasePayoutAccount,
+  choosePayoutDestination,
+  isStripeTestMode,
 } from "../../lib/finance/stripeConnect";
 import { createEntity, createAccount, createAccountNumber } from "../../lib/finance/increase";
 
@@ -66,6 +68,60 @@ type OnboardingStatus =
 /** Pure so it's unit-testable without a Convex context (mirrors isAnomalousCountChange in billing.ts). */
 export function isValidEin(ein: string): boolean {
   return EIN_REGEX.test(ein);
+}
+
+/**
+ * Normalize the optional website field: trim, drop empties, and default a
+ * bare domain ("firstchurch.org") to https:// — church admins type bare
+ * domains, and Stripe's business_profile.url validation hard-rejects
+ * scheme-less values, which blocked provisioning with "Not a valid URL".
+ * Pure so it's unit-testable.
+ */
+export function normalizeWebsite(raw: string | undefined): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+/**
+ * Deterministic fingerprint of the intake fields that feed the provider
+ * requests, appended to every provisioning idempotency key. Same submission →
+ * same keys (safe retry, no duplicate provider objects); corrected
+ * resubmission → new keys, because Stripe/Increase permanently reject reusing
+ * an idempotency key with different parameters — a bare communityId key
+ * deadlocked onboarding after any failed-then-corrected first attempt.
+ * djb2 over a NUL-joined field list: a uniqueness tag, not a security hash.
+ * Pure so it's unit-testable without a Convex context.
+ */
+export function fingerprintIntake(intake: {
+  legalName: string;
+  ein: string;
+  website?: string;
+  statementDescriptor?: string;
+  address: {
+    addressLine1: string;
+    addressLine2?: string;
+    city: string;
+    state: string;
+    zipCode: string;
+  };
+}): string {
+  const joined = [
+    intake.legalName,
+    intake.ein,
+    intake.website ?? "",
+    intake.statementDescriptor ?? "",
+    intake.address.addressLine1,
+    intake.address.addressLine2 ?? "",
+    intake.address.city,
+    intake.address.state,
+    intake.address.zipCode,
+  ].join("\u0000");
+  let hash = 5381;
+  for (let i = 0; i < joined.length; i++) {
+    hash = ((hash << 5) + hash + joined.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 // ============================================================================
@@ -115,10 +171,13 @@ export const startOnboarding = mutation({
     const fields = {
       legalName: args.legalName,
       ein: args.ein,
-      website: args.website,
+      website: normalizeWebsite(args.website),
       statementDescriptor: args.statementDescriptor,
       address: args.address,
       onboardingStatus: "collecting" as const,
+      // A resubmitted form re-schedules provisioning below — clear any stale
+      // failure message so the checklist reflects the fresh attempt.
+      provisioningError: undefined,
       updatedAt: timestamp,
     };
 
@@ -188,71 +247,221 @@ export const provisionProviders = internalAction({
       return;
     }
 
-    // Every external call is keyed on the community id, not a fresh random
-    // key per attempt — a retried provisionProviders run resolves to the
-    // SAME provider objects instead of creating duplicates.
-    let stripeConnectedAccountId = finance.stripeConnectedAccountId;
-    if (!stripeConnectedAccountId) {
-      stripeConnectedAccountId = await createConnectedAccount({
-        legalName: finance.legalName,
-        ein: finance.ein,
-        website: finance.website,
-        address: finance.address,
-        statementDescriptor: finance.statementDescriptor,
-        idempotencyKey: `finance:stripe-account:${args.communityId}`,
-      });
-    }
+    // Idempotency keys carry a fingerprint of the intake data. Same
+    // submission retried → same keys → providers return the original objects
+    // (no duplicates). CORRECTED submission → new fingerprint → fresh keys —
+    // without this, Stripe permanently rejects the retry ("keys can only be
+    // used with the same parameters they were first used with"), which
+    // deadlocked onboarding whenever the first attempt failed and the admin
+    // resubmitted with fixed details (hit live on staging). An earlier
+    // attempt's now-orphaned provider objects are harmless: nothing is
+    // recorded until recordProvisioned persists the ids we actually use.
+    const fp = fingerprintIntake(finance);
 
-    let increaseEntityId = finance.increaseEntityId;
-    if (!increaseEntityId) {
-      const entity = await createEntity({
-        legalName: finance.legalName,
-        ein: finance.ein,
-        website: finance.website,
-        address: finance.address,
-        idempotencyKey: `finance:entity:${args.communityId}`,
-      });
-      increaseEntityId = entity.id;
-    }
+    // A failed provider call must not vanish into the scheduler (there's no
+    // webhook yet at this stage to explain a stall) — record which provider
+    // broke so the checklist can show a blocked state with the reason
+    // instead of a permanent "In progress".
+    let failingProvider: "stripe" | "increase" = "stripe";
+    try {
+      // Every external call is keyed on the community id, not a fresh random
+      // key per attempt — a retried provisionProviders run resolves to the
+      // SAME provider objects instead of creating duplicates.
+      let stripeConnectedAccountId = finance.stripeConnectedAccountId;
+      if (!stripeConnectedAccountId) {
+        stripeConnectedAccountId = await createConnectedAccount({
+          legalName: finance.legalName,
+          ein: finance.ein,
+          website: finance.website,
+          address: finance.address,
+          statementDescriptor: finance.statementDescriptor,
+          idempotencyKey: `finance:stripe-account:${args.communityId}:${fp}`,
+        });
+      }
 
-    let increaseReceivingAccountId = finance.increaseReceivingAccountId;
-    if (!increaseReceivingAccountId) {
-      const account = await createAccount(
-        increaseEntityId,
-        "Receiving Account",
-        `finance:receiving-account:${args.communityId}`,
-      );
-      increaseReceivingAccountId = account.id;
-    }
+      failingProvider = "increase";
+      let increaseEntityId = finance.increaseEntityId;
+      if (!increaseEntityId) {
+        const entity = await createEntity({
+          legalName: finance.legalName,
+          ein: finance.ein,
+          website: finance.website,
+          address: finance.address,
+          idempotencyKey: `finance:entity:${args.communityId}:${fp}`,
+        });
+        increaseEntityId = entity.id;
+      }
 
-    // Mint an Account Number for the receiving Account and set it as the
-    // connected account's payout destination. Both calls carry a
-    // community-derived idempotency key (Increase's on the account-number
-    // create; Stripe's external-account attach doesn't take one natively, so
-    // stripeConnect.ts passes it via Stripe's request-options idempotency
-    // key), so re-running this step on retry never mints a second bank
-    // account or attaches a second payout destination.
-    const accountNumber = await createAccountNumber(
-      increaseReceivingAccountId,
-      "Stripe payout destination",
-      `finance:receiving-account-number:${args.communityId}`,
-    );
-    await attachIncreasePayoutAccount(
-      stripeConnectedAccountId,
-      accountNumber.routingNumber,
-      accountNumber.accountNumber,
-      `finance:payout-destination:${args.communityId}`,
-    );
+      let increaseReceivingAccountId = finance.increaseReceivingAccountId;
+      if (!increaseReceivingAccountId) {
+        const account = await createAccount(
+          increaseEntityId,
+          "Receiving Account",
+          `finance:receiving-account:${args.communityId}:${fp}`,
+        );
+        increaseReceivingAccountId = account.id;
+      }
 
-    await ctx.runMutation(
-      internal.functions.finance.onboarding.recordProvisioned,
-      {
-        communityId: args.communityId,
-        stripeConnectedAccountId,
-        increaseEntityId,
+      // Mint an Account Number for the receiving Account and set it as the
+      // connected account's payout destination. Both calls carry a
+      // community-derived idempotency key (Increase's on the account-number
+      // create; Stripe's external-account attach doesn't take one natively, so
+      // stripeConnect.ts passes it via Stripe's request-options idempotency
+      // key), so re-running this step on retry never mints a second bank
+      // account or attaches a second payout destination.
+      const accountNumber = await createAccountNumber(
         increaseReceivingAccountId,
+        "Stripe payout destination",
+        `finance:receiving-account-number:${args.communityId}:${fp}`,
+      );
+      failingProvider = "stripe";
+      // Test mode attaches Stripe's test bank account instead of the minted
+      // Increase number (see choosePayoutDestination). The idempotency key
+      // additionally carries the destination: Stripe caches FAILED requests
+      // under their key too, so a retry that switches destinations (e.g.
+      // after this fix deploys over a previously failed attach) must not
+      // replay the old key with new params.
+      const payoutDestination = choosePayoutDestination(
+        isStripeTestMode(),
+        accountNumber,
+      );
+      await attachIncreasePayoutAccount(
+        stripeConnectedAccountId,
+        payoutDestination.routingNumber,
+        payoutDestination.accountNumber,
+        `finance:payout-destination:${args.communityId}:${fp}:${payoutDestination.routingNumber}-${payoutDestination.accountNumber.slice(-4)}`,
+      );
+
+      await ctx.runMutation(
+        internal.functions.finance.onboarding.recordProvisioned,
+        {
+          communityId: args.communityId,
+          stripeConnectedAccountId,
+          increaseEntityId,
+          increaseReceivingAccountId,
+        },
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] provisionProviders failed (${failingProvider}) for community ${args.communityId}: ${message}`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.onboarding.recordProvisioningFailure,
+        {
+          communityId: args.communityId,
+          provider: failingProvider,
+          message: message.slice(0, 500),
+        },
+      );
+    }
+  },
+});
+
+// ============================================================================
+// recordProvisioningFailure — marks onboarding blocked when provisionProviders
+// itself failed, so the checklist shows the reason instead of "In progress".
+// ============================================================================
+
+export const recordProvisioningFailure = internalMutation({
+  args: {
+    communityId: v.id("communities"),
+    provider: v.union(v.literal("stripe"), v.literal("increase")),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    if (!finance) return;
+    // Never regress "live" — a stray retried run failing after the community
+    // already went live must not flip a working community to blocked.
+    if (finance.onboardingStatus === "live") return;
+    // Same for a fully provisioned row: overlapping provisionProviders runs
+    // are possible (each resubmit/retry schedules one), and a stale failing
+    // run must not overwrite a newer run's recorded success — especially
+    // since retryProvisioning refuses fully-provisioned rows, which would
+    // leave the false blocked state permanently stuck.
+    if (
+      finance.stripeConnectedAccountId &&
+      finance.increaseEntityId &&
+      finance.increaseReceivingAccountId
+    ) {
+      return;
+    }
+
+    const previousStatus = finance.onboardingStatus;
+    const nextStatus =
+      args.provider === "stripe" ? ("stripe_blocked" as const) : ("increase_blocked" as const);
+    await ctx.db.patch(finance._id, {
+      onboardingStatus: nextStatus,
+      provisioningError: args.message,
+      updatedAt: now(),
+    });
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      action: "onboarding.provisioning_failed",
+      details: {
+        from: previousStatus,
+        to: nextStatus,
+        provider: args.provider,
+        message: args.message,
       },
+    });
+  },
+});
+
+// ============================================================================
+// retryProvisioning — admin-triggered re-run after a provisioning failure.
+// Safe to repeat: every provider call in provisionProviders is idempotency-
+// keyed on the community id.
+// ============================================================================
+
+export const retryProvisioning = mutation({
+  args: { token: v.string(), communityId: v.id("communities") },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx, args.token);
+    await requireCommunityAdmin(ctx, args.communityId, userId);
+    await requireGroupGivingEnabled(ctx);
+
+    const finance = await ctx.db
+      .query("communityFinance")
+      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
+      .first();
+    if (!finance) {
+      throw new Error("Onboarding hasn't started — submit the church details form first");
+    }
+    const fullyProvisioned =
+      !!finance.stripeConnectedAccountId &&
+      !!finance.increaseEntityId &&
+      !!finance.increaseReceivingAccountId;
+    if (fullyProvisioned) {
+      // All provider objects exist — blocked states past this point come
+      // from webhooks (e.g. Stripe requirements) and resolve via the hosted
+      // flow, not by re-provisioning. Re-running would also clobber a
+      // legitimate webhook-set blocked status back to "verifying".
+      throw new Error("Accounts are already set up — nothing to retry");
+    }
+
+    await ctx.db.patch(finance._id, {
+      onboardingStatus: "collecting",
+      provisioningError: undefined,
+      updatedAt: now(),
+    });
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      actorUserId: userId,
+      action: "onboarding.provisioning_retried",
+      details: { from: finance.onboardingStatus },
+    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.finance.onboarding.provisionProviders,
+      { communityId: args.communityId },
     );
+    return { onboardingStatus: "collecting" as const };
   },
 });
 
@@ -356,10 +565,32 @@ export const getOnboardingStatus = query({
     if (!finance) {
       return {
         formSubmitted: false,
+        // False until provisionProviders lands the Stripe connected account —
+        // the "Continue identity verification" action is impossible before
+        // then (getStripeOnboardingLinkUrl would throw), so the UI shows a
+        // "setting up" state instead of an actionable button.
+        providersReady: false,
         paymentsVerified: false,
         bankAccountsReady: false,
         onboardingStatus: null as OnboardingStatus | null,
         blockedReason: null as "stripe_blocked" | "increase_blocked" | null,
+        provisioningError: null as string | null,
+        // Stored intake values, echoed so "Edit church details" can prefill
+        // the form — without this an admin fixing one rejected field had to
+        // retype the entire form.
+        intake: null as {
+          legalName: string;
+          ein: string;
+          website?: string;
+          statementDescriptor?: string;
+          address: {
+            addressLine1: string;
+            addressLine2?: string;
+            city: string;
+            state: string;
+            zipCode: string;
+          };
+        } | null,
       };
     }
 
@@ -369,6 +600,7 @@ export const getOnboardingStatus = query({
     // live provider call (queries can't fetch external APIs).
     return {
       formSubmitted: true,
+      providersReady: !!finance.stripeConnectedAccountId,
       paymentsVerified: finance.onboardingStatus === "live",
       bankAccountsReady:
         !!finance.increaseEntityId && !!finance.increaseReceivingAccountId,
@@ -378,6 +610,14 @@ export const getOnboardingStatus = query({
         finance.onboardingStatus === "increase_blocked"
           ? finance.onboardingStatus
           : null,
+      provisioningError: finance.provisioningError ?? null,
+      intake: {
+        legalName: finance.legalName,
+        ein: finance.ein,
+        website: finance.website,
+        statementDescriptor: finance.statementDescriptor,
+        address: finance.address,
+      },
     };
   },
 });

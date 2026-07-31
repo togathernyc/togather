@@ -25,6 +25,8 @@ import { useServingTasksCache } from "../stores/servingTasksCache";
 import { useServingTaskQueue } from "../stores/servingTaskQueue";
 import { useServingPlansCache } from "../stores/servingPlansCache";
 import { useGridColumnWidths } from "../stores/gridColumnWidths";
+import { useInboxGroupCollapse } from "../stores/inboxGroupCollapse";
+import { useEventModeStore } from "../stores/eventModeStore";
 import type { User, Community } from "@/types/shared";
 import type { Id } from "@services/api/convex";
 
@@ -658,6 +660,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       "serving-task-queue",
       "serving-plans-cache",
       "grid-column-widths",
+      "inbox-group-collapse",
+      "event-mode",
     ];
 
     await Promise.all(
@@ -679,6 +683,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingTaskQueue.getState().clear();
     useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
+    // Serving mode + the early-opened preview plan are persisted, so on a
+    // shared device the next user would otherwise land in the previous one's
+    // serving state.
+    useEventModeStore.getState().clearAll();
 
     // On web, clear localStorage
     if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
@@ -859,6 +868,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         "serving-task-queue",
         "serving-plans-cache",
         "grid-column-widths",
+        "inbox-group-collapse",
+        "event-mode",
       ].map((key) =>
         AsyncStorage.removeItem(key).catch((err) =>
           console.warn(`Failed to remove ${key}:`, err)
@@ -875,6 +886,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useServingTaskQueue.getState().clear();
     useServingPlansCache.getState().clearAll();
     useGridColumnWidths.getState().clearAll();
+    useInboxGroupCollapse.getState().clearAll();
+    // Serving mode and the early-opened preview plan are scoped to plans in the
+    // community being left — carrying them across would leave the user in a
+    // serving state for an event they can no longer see.
+    useEventModeStore.getState().clearAll();
 
     setCommunityState(null);
     return refreshed;

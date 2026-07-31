@@ -34,6 +34,17 @@ interface UseThreadRepliesResult {
   replies: ThreadReply[];
   isLoading: boolean;
   hasMore: boolean;
+  /**
+   * The thread the backend actually resolved `parentMessageId` to.
+   *
+   * Threads are one level deep, but an entry point can hand us any message in
+   * the conversation — inbox search opens a hit's immediate parent, which may
+   * itself be a reply. The server folds that back to the root; callers adopt
+   * this so the PAGE is canonical too, or the tapped reply shows up once as
+   * the header and again inside the reply list. Undefined until the query
+   * resolves (and from the prefetch cache, which stores replies only).
+   */
+  rootMessageId?: Id<"chatMessages">;
 }
 
 /**
@@ -74,6 +85,7 @@ export function useThreadReplies(
       replies: result.messages,
       isLoading: false,
       hasMore: result.hasMore ?? false,
+      rootMessageId: result.rootMessageId,
     };
   }
 
