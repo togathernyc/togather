@@ -39,7 +39,10 @@ import {
   pickActiveServiceIndex,
   totalDurationSec,
 } from "@features/scheduling/utils/runSheetTiming";
-import { runSheetItemMatchesViewer } from "@features/scheduling/utils/runSheetViewerFilter";
+import {
+  runSheetItemMatchesViewer,
+  segmentHasContentForViewer,
+} from "@features/scheduling/utils/runSheetViewerFilter";
 import { ServiceTimeSelector } from "@features/scheduling/components/ServiceTimeSelector";
 import { renderTextWithLinks } from "../utils/runSheetLinks";
 
@@ -216,6 +219,7 @@ export function NativeRunSheetView({
 
       {activePlanId ? (
         <PlanRunSheet
+          key={activePlanId}
           planId={activePlanId}
           groupId={groupId}
           canEdit={canEdit}
@@ -414,9 +418,7 @@ export function PlanRunSheet({
   // actually tagged with (e.g. scheduled for sound, but sound has no rows yet).
   const mineHasContent = useMemo(() => {
     if (viewMode !== "mine") return true;
-    return (effItems ?? []).some(
-      (it) => it.type !== "header" && runSheetItemMatchesViewer(it, viewerRoleIds),
-    );
+    return segmentHasContentForViewer(effItems ?? [], viewerRoleIds);
   }, [viewMode, effItems, viewerRoleIds]);
   // Only surface the rehearsal shortcut when the sheet actually has songs.
   const hasSongs = useMemo(
@@ -635,6 +637,15 @@ export function PlanRunSheet({
                   ? segItems.filter((it) => runSheetItemMatchesViewer(it, viewerRoleIds))
                   : segItems;
               if (modeItems.length === 0) return null;
+              // In "Mine", a segment whose only matches are headers has no
+              // actual content to show — skip the whole segment rather than
+              // render a label + bare header row (see runSheetViewerFilter).
+              if (
+                viewMode === "mine" &&
+                !segmentHasContentForViewer(segItems, viewerRoleIds)
+              ) {
+                return null;
+              }
               // Hide items that follow a collapsed header (positional: a header
               // owns the rows after it until the next header in the segment).
               const visibleItems = filterVisible(modeItems, collapsedHeaders);

@@ -36,3 +36,22 @@ export function runSheetItemMatchesViewer(
   if (item.assignments.length === 0) return false;
   return item.assignments.some((a) => viewerRoleIds.has(a.roleId));
 }
+
+/**
+ * Does this group of items (e.g. a run sheet segment) have any actual
+ * CONTENT for "Mine" — i.e. at least one non-header item the viewer matches?
+ *
+ * Headers always pass `runSheetItemMatchesViewer`, so filtering a segment
+ * with that alone can leave a segment that's "matching" but empty of
+ * content — a header with nothing under it. Callers that decide whether to
+ * render a "Mine" segment at all (as opposed to filtering its rows) should
+ * use this instead of checking the filtered list's length.
+ */
+export function segmentHasContentForViewer(
+  items: ReadonlyArray<ViewerFilterItem>,
+  viewerRoleIds: ReadonlySet<string>,
+): boolean {
+  return items.some(
+    (it) => it.type !== "header" && runSheetItemMatchesViewer(it, viewerRoleIds),
+  );
+}
