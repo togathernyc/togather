@@ -46,16 +46,35 @@ function success(msg) {
 
 function getAgentNumber() {
   const agentArg = process.argv.find(arg => arg.startsWith('--agent='));
-  if (!agentArg) {
-    error('Missing --agent=N argument (1-4)');
-    process.exit(1);
+  if (agentArg) {
+    const num = parseInt(agentArg.split('=')[1], 10);
+    if (!isNaN(num) && num >= 1 && num <= 4) {
+      return num;
+    }
   }
-  const num = parseInt(agentArg.split('=')[1], 10);
-  if (isNaN(num) || num < 1 || num > 4) {
-    error('Agent must be 1-4');
-    process.exit(1);
+
+  // Detect via PAPERCLIP_AGENT_ID
+  const agentId = process.env.PAPERCLIP_AGENT_ID;
+  if (agentId) {
+    try {
+      const cwd = process.cwd();
+      const repoMatch = cwd.match(/(.+?)(?:\/worktrees\/agent-\d+|$)/);
+      const rootDir = repoMatch ? repoMatch[1] : cwd;
+      
+      const slotsPath = path.join(rootDir, 'config/agent-slots.json');
+      if (fs.existsSync(slotsPath)) {
+        const slots = JSON.parse(fs.readFileSync(slotsPath, 'utf8'));
+        if (slots[agentId]) {
+          return slots[agentId];
+        }
+      }
+    } catch (e) {
+      log(`Warning: Failed to read agent-slots.json: ${e.message}`);
+    }
   }
-  return num;
+
+  error('Missing --agent=N argument (1-4) and no PAPERCLIP_AGENT_ID mapping found.');
+  process.exit(1);
 }
 
 function hasFlag(flag) {
@@ -204,7 +223,7 @@ async function stopServers(workerNum) {
   // Also kill any lingering node processes for this worktree
   // Use full path pattern to avoid killing unrelated processes
   try {
-    execSync(`pkill -f "Togather-worktrees/worker-${workerNum}" 2>/dev/null`, { stdio: 'ignore' });
+    execSync(`pkill -f "worktrees/agent-${workerNum}" 2>/dev/null`, { stdio: 'ignore' });
   } catch (e) {}
 
   success('Servers stopped');
@@ -220,21 +239,18 @@ async function main() {
 
   // Check if we're somewhere within a worktree directory
   // Capture both the full path and the worker number from the path
-  const worktreeMatch = cwd.match(/(.+Togather-worktrees\/worker-(\d+))(?:\/|$)/);
+  const worktreeMatch = cwd.match(/(.+?\/worktrees\/agent-(\d+))(?:\/|$)/);
   if (worktreeMatch) {
     const matchedWorkerNum = parseInt(worktreeMatch[2], 10);
     // Validate that the current directory matches the requested agent number
     if (matchedWorkerNum !== agentNum) {
-      error(`Current directory is worker-${matchedWorkerNum}, but --agent=${agentNum} was specified. This prevents accidentally starting servers in the wrong worktree.`);
+      error(`Current directory is agent-${matchedWorkerNum}, but agent ${agentNum} was specified/detected. This prevents accidentally starting servers in the wrong worktree.`);
       process.exit(1);
     }
     worktreePath = worktreeMatch[1];
-  } else if (cwd.match(/\/Togather(?:\/|$)/) && !cwd.includes('Togather-worktrees')) {
-    // We're in the main Togather repo (not a worktree), point to the worktree
-    worktreePath = path.resolve(cwd, `../Togather-worktrees/worker-${agentNum}`);
   } else {
-    error('Cannot determine worktree path. Run from within the monorepo.');
-    process.exit(1);
+    // We're in the main Togather repo (not a worktree), point to the worktree
+    worktreePath = path.resolve(cwd, `worktrees/agent-${agentNum}`);
   }
 
   console.log('');
