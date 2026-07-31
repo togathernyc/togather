@@ -160,6 +160,106 @@ describe("group-giving feature flag (default off)", () => {
     ).rejects.toThrow(/not enabled/i);
   });
 
+  test("role-gated management reads throw while the flag is off", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedWithoutFlag(t);
+    const token = await tokenFor(s.adminUserId);
+
+    // The caller here is a community admin AND a group leader — they'd sail
+    // through every permission check. The flag is the only thing stopping
+    // them, which is the point: these are the fund's management surfaces
+    // (roster of who can move money, every expense and receipt on the fund),
+    // and the kill switch has to reach them like it reaches cards.ts's reads.
+    await expect(
+      t.query(api.functions.finance.roles.listFundRoles, { token, fundId: s.fundId }),
+    ).rejects.toThrow(/not enabled/i);
+
+    await expect(
+      t.query(api.functions.finance.roles.getMyFundRole, { token, fundId: s.fundId }),
+    ).rejects.toThrow(/not enabled/i);
+
+    await expect(
+      t.query(api.functions.finance.expenses.listExpenses, { token, fundId: s.fundId }),
+    ).rejects.toThrow(/not enabled/i);
+
+    await expect(
+      t.query(api.functions.finance.expenses.listMyExpenses, { token, fundId: s.fundId }),
+    ).rejects.toThrow(/not enabled/i);
+  });
+
+  test("de-escalation stays available with the flag off (deliberately ungated)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedWithoutFlag(t);
+    const adminToken = await tokenFor(s.adminUserId);
+
+    // Flipping the kill switch is most likely DURING an incident. Revoking a
+    // compromised finance_admin and denying a pending expense both only ever
+    // take power away or stop money moving — gating them would lock the
+    // response out along with the feature. Same call as setCardFrozen /
+    // cancelCard in cards.ts.
+    const { treasurerUserId, expenseId } = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      const treasurerUserId = await ctx.db.insert("users", {
+        firstName: "Treasurer",
+        lastName: "Person",
+        phone: "+15550002222",
+        isActive: true,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      await ctx.db.insert("groupMembers", {
+        groupId: s.groupId,
+        userId: treasurerUserId,
+        role: "member",
+        joinedAt: timestamp,
+        notificationsEnabled: true,
+      });
+      await ctx.db.insert("fundRoles", {
+        fundId: s.fundId,
+        userId: treasurerUserId,
+        role: "finance_admin" as const,
+        grantedBy: s.adminUserId,
+        grantedAt: timestamp,
+      });
+      const expenseId = await ctx.db.insert("expenses", {
+        fundId: s.fundId,
+        submitterId: treasurerUserId,
+        amountCents: 2500,
+        kind: "reimbursement" as const,
+        description: "Pending when the switch flipped",
+        receiptKey: "r2:uploads/legacy-receipt.jpg",
+        status: "pending" as const,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      return { treasurerUserId, expenseId };
+    });
+
+    await t.mutation(api.functions.finance.expenses.denyExpense, {
+      token: adminToken,
+      expenseId,
+      reason: "Feature paused",
+    });
+    expect(await t.run((ctx) => ctx.db.get(expenseId))).toMatchObject({
+      status: "denied",
+    });
+
+    await t.mutation(api.functions.finance.roles.revokeFundRole, {
+      token: adminToken,
+      fundId: s.fundId,
+      userId: treasurerUserId,
+    });
+    const roles = await t.run((ctx) =>
+      ctx.db
+        .query("fundRoles")
+        .withIndex("by_user_fund", (q) =>
+          q.eq("userId", treasurerUserId).eq("fundId", s.fundId),
+        )
+        .collect(),
+    );
+    expect(roles.every((r) => r.revokedAt !== undefined)).toBe(true);
+  });
+
   test("flipping the flag on via setFeatureFlag opens the gates", async () => {
     const t = convexTest(schema, modules);
     const s = await seedWithoutFlag(t);
