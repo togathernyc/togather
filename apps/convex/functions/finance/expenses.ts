@@ -167,6 +167,34 @@ export const submitExpense = mutation({
       throw new Error("Receipt must be an uploaded file (r2:<key>)");
     }
 
+    // PROVENANCE, not just format. An `r2:` string proves nothing on its own:
+    // receipt URLs are handed to every manager+ viewer of a fund
+    // (`listExpenses`) and every card viewer (`getCardDetail`), so a member
+    // who has seen someone else's receipt could otherwise submit a
+    // reimbursement backed by that person's proof of purchase. The
+    // `uploadGrants` row written when the presigned URL was minted
+    // (functions/uploads.ts, or lib/r2.ts's `putR2Object` with `grantTo`) is
+    // the only record of who the key belongs to.
+    const grant = await ctx.db
+      .query("uploadGrants")
+      .withIndex("by_storagePath", (q) => q.eq("storagePath", args.receiptKey))
+      .first();
+    if (!grant) {
+      // NO ROW is a different situation from SOMEONE ELSE'S ROW, and it has an
+      // honest cause the member can act on: a photo picked before this check
+      // shipped (or before a grant write that failed) has no provenance to
+      // read, and refusing it with "that isn't yours" reads as a bug. Say what
+      // fixes it instead. Not a weaker gate — still a refusal.
+      throw new Error(
+        "We couldn't verify who uploaded that receipt — re-attach the photo and submit again",
+      );
+    }
+    if (grant.userId !== userId) {
+      throw new Error(
+        "That receipt wasn't uploaded from this account — attach a photo you uploaded yourself",
+      );
+    }
+
     const timestamp = now();
     const expenseId = await ctx.db.insert("expenses", {
       fundId: args.fundId,
@@ -276,7 +304,17 @@ export const approveExpense = mutation({
 // denyExpense
 // ============================================================================
 
-/** Deny a pending expense. Requires manager+ on the fund; never the submitter. */
+/**
+ * Deny a pending expense. Requires manager+ on the fund; never the submitter.
+ *
+ * DELIBERATELY NOT behind `requireGroupGivingEnabled`, unlike `submitExpense`
+ * / `approveExpense`. A denial is pure de-escalation — it's the one decision
+ * that can only ever stop money from leaving. If the kill switch is flipped
+ * off with expenses sitting `"pending"`, gating this would trap them: nobody
+ * could approve them (correctly gated) and nobody could clear them either.
+ * Same judgement as `setCardFrozen` / `cancelCard` in cards.ts and
+ * `revokeFundRole` in roles.ts.
+ */
 export const denyExpense = mutation({
   args: { token: v.string(), expenseId: v.id("expenses"), reason: v.string() },
   handler: async (ctx, args) => {
@@ -548,6 +586,7 @@ export const listExpenses = query({
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
     await requireFundRoleOrGroupLeader(ctx, args.fundId, userId, "manager");
 
     let rows = await ctx.db
@@ -585,6 +624,7 @@ export const listMyExpenses = query({
   args: { token: v.string(), fundId: v.id("funds") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
 
     const rows = await ctx.db
       .query("expenses")

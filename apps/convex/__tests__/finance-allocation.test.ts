@@ -558,11 +558,13 @@ describe("runAllocation", () => {
 
     expect(result).toEqual({ allocated: 3, failed: 0 });
 
-    // Group funds get a transfer each; the general fund does not (its Account
-    // is where unearmarked money already belongs).
+    // Every fund gets its own transfer, general included: Stripe pays out to
+    // the RECEIVING Account, so unearmarked money is no more "already there"
+    // than a group's is.
     expect(stubs.transferCalls).toEqual([
       { toAccountId: "account_fund_a", amountCents: 9_680, idempotencyKey: `alloc:${aId}` },
       { toAccountId: "account_fund_b", amountCents: 4_825, idempotencyKey: `alloc:${bId}` },
+      { toAccountId: "account_general", amountCents: 1_912, idempotencyKey: `alloc:${gId}` },
     ]);
 
     for (const id of [aId, bId, gId]) {

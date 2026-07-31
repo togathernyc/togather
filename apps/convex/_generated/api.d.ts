@@ -246,6 +246,7 @@ import type * as lib_utils from "../lib/utils.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations_addChannelSlugs from "../migrations/addChannelSlugs.js";
+import type * as migrations_backfillGeneralFundAccounts from "../migrations/backfillGeneralFundAccounts.js";
 import type * as migrations_backfillLastActivityAt from "../migrations/backfillLastActivityAt.js";
 import type * as migrations_ensureDevAssistantBotUser from "../migrations/ensureDevAssistantBotUser.js";
 
@@ -494,6 +495,7 @@ declare const fullApi: ApiFromModules<{
   "lib/validation": typeof lib_validation;
   "lib/validators": typeof lib_validators;
   "migrations/addChannelSlugs": typeof migrations_addChannelSlugs;
+  "migrations/backfillGeneralFundAccounts": typeof migrations_backfillGeneralFundAccounts;
   "migrations/backfillLastActivityAt": typeof migrations_backfillLastActivityAt;
   "migrations/ensureDevAssistantBotUser": typeof migrations_ensureDevAssistantBotUser;
 }>;

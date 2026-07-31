@@ -10,8 +10,8 @@
  *      Stripe already took, minus any refund of the same charge that settled
  *      in the same payout), `planAllocations` binds each of those charges'
  *      donations to the payout, and each bound donation's net is then moved
- *      from the receiving Account to its group's Account via Increase,
- *      flipping `donations.allocationStatus`.
+ *      from the receiving Account to its fund's own Account via Increase
+ *      (every fund, general included), flipping `donations.allocationStatus`.
  *
  *      NET, not gross (ADR-032 Phase-2 requirement 6): a payout physically
  *      delivers the sum of its charges' NETS. Matching donations by their
@@ -35,7 +35,7 @@
  * — that credit represents money Togather has *attributed* to the fund, not
  * money physically sitting in the fund's Increase Account yet (it's still in
  * the Stripe→receiving-Account pipeline). Allocation is purely a BANK-side
- * move of already-attributed money from the receiving Account to the group's
+ * move of already-attributed money from the receiving Account to the fund's
  * Account; crediting the ledger again would double-count the fund's balance.
  * So allocation (a) flips `donations.allocationStatus` to "allocated",
  * (b) writes a `financeAuditEvents` row ("donation.allocated") carrying the
@@ -681,9 +681,23 @@ export interface AllocationRunResult {
  * "money moved but we never booked it" indistinguishable from "money never
  * moved" in the audit trail.
  *
- * General-fund donations need no transfer: the community's General Account
- * is where money that isn't earmarked to a group belongs in the first place,
- * so those are recorded directly with no `increaseTransferId`.
+ * EVERY fund transfers, the general fund included. This used to special-case
+ * general-fund donations and record them "allocated" with no transfer at
+ * all, on the premise that the General Account was already where unearmarked
+ * money sat. It wasn't: Stripe pays out to the RECEIVING Account, which is
+ * transit for money still attributed to individual funds. General-fund gifts
+ * were therefore booked as settled while their cash sat in receiving —
+ * neither pending nor reconciled, so the nightly invariant could never see
+ * them. The community's General Account is a destination like any other
+ * (ADR-032 §1), and it is now actually provisioned, so the general fund is
+ * just an ordinary fund on this path.
+ *
+ * A fund with NO Increase Account fails its item rather than skipping it:
+ * the donation stays "pending" — its cash really is still in the receiving
+ * Account — the failure is audited, and the retry cron finishes it once
+ * migrations/backfillGeneralFundAccounts.ts (or the next enableGroupGiving)
+ * mints the missing Account. Marking it allocated would strand money that
+ * never moved.
  */
 async function executeAllocationItems(
   ctx: ActionCtx,
@@ -725,39 +739,44 @@ async function executeAllocationItems(
   };
 
   for (const item of args.items) {
-    // --- 1. Move the money (group funds only). ---
-    let increaseTransferId: string | undefined;
-    if (item.fundType === "group") {
-      try {
-        const fund: Doc<"funds"> | null = await ctx.runQuery(
-          internal.functions.finance.jobs.getFundForAllocation,
-          { fundId: item.fundId },
+    // --- 1. Move the money. No fund type is exempt: the payout landed in the
+    // RECEIVING Account, so a general-fund gift is as much in transit as a
+    // group's. ---
+    let increaseTransferId: string;
+    try {
+      const fund: Doc<"funds"> | null = await ctx.runQuery(
+        internal.functions.finance.jobs.getFundForAllocation,
+        { fundId: item.fundId },
+      );
+      if (!fund?.increaseAccountId) {
+        // Thrown, not skipped: this is the transfer stage, so the item is
+        // audited as `allocation.transfer_failed` and left pending with its
+        // payout stamp — exactly the state the retry cron re-selects once the
+        // Account is minted. Recording it instead would book money that is
+        // still sitting in receiving as settled.
+        throw new Error(
+          `${item.fundType} fund ${item.fundId} has no Increase Account to transfer into`,
         );
-        if (!fund?.increaseAccountId) {
-          throw new Error(
-            `fund ${item.fundId} has no Increase Account to transfer into`,
-          );
-        }
-
-        const { createAccountTransfer } = await import("../../lib/finance/increase");
-        const transfer = await createAccountTransfer({
-          fromAccountId: args.receivingAccountId,
-          toAccountId: fund.increaseAccountId,
-          amountCents: item.amountCents,
-          description: `Allocation: donation ${item.donationId}`,
-          idempotencyKey: `alloc:${item.donationId}`,
-        });
-        increaseTransferId = transfer.id;
-      } catch (error) {
-        failed += 1;
-        const reason = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[finance] ${args.context}: TRANSFER failed for donation ${item.donationId} (${item.amountCents} cents) — no money moved; it stays pending and will be retried`,
-          error,
-        );
-        await noteFailure(item, "transfer", reason);
-        continue;
       }
+
+      const { createAccountTransfer } = await import("../../lib/finance/increase");
+      const transfer = await createAccountTransfer({
+        fromAccountId: args.receivingAccountId,
+        toAccountId: fund.increaseAccountId,
+        amountCents: item.amountCents,
+        description: `Allocation: donation ${item.donationId}`,
+        idempotencyKey: `alloc:${item.donationId}`,
+      });
+      increaseTransferId = transfer.id;
+    } catch (error) {
+      failed += 1;
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] ${args.context}: TRANSFER failed for donation ${item.donationId} (${item.amountCents} cents) — no money moved; it stays pending and will be retried`,
+        error,
+      );
+      await noteFailure(item, "transfer", reason);
+      continue;
     }
 
     // --- 2. Book it. Money has already moved by this point. ---
@@ -771,7 +790,7 @@ async function executeAllocationItems(
       failed += 1;
       const reason = error instanceof Error ? error.message : String(error);
       console.error(
-        `[finance] ${args.context}: RECORD failed for donation ${item.donationId} (${item.amountCents} cents) after transfer ${increaseTransferId ?? "n/a"} already landed — the money HAS moved and is not yet in the ledger`,
+        `[finance] ${args.context}: RECORD failed for donation ${item.donationId} (${item.amountCents} cents) after transfer ${increaseTransferId} already landed — the money HAS moved and is not yet in the ledger`,
         error,
       );
       await noteFailure(item, "record", reason, increaseTransferId);
@@ -802,7 +821,7 @@ function unmatchedPayoutIsAlarming(leftoverCents: number, payoutCents: number): 
 }
 
 /**
- * `payout.paid` entry point: allocate one Stripe payout into group Accounts.
+ * `payout.paid` entry point: allocate one Stripe payout into fund Accounts.
  *
  * Order matters. Stripe is asked for the payout's composition BEFORE
  * anything is written, so an unreachable Stripe leaves the payout completely

@@ -186,6 +186,30 @@ async function tokenFor(userId: Id<"users">): Promise<string> {
   return accessToken;
 }
 
+/**
+ * Stand in for functions/uploads.ts's presign step: mint an `r2:` key and
+ * record who it belongs to. `submitExpense` refuses a receipt with no
+ * matching `uploadGrants` row (or one owned by someone else), so every test
+ * that submits has to go through this the way the real client does.
+ */
+async function grantReceiptKey(
+  t: ReturnType<typeof convexTest>,
+  ownerId: Id<"users">,
+  label = "test-receipt",
+): Promise<string> {
+  const storagePath = `r2:uploads/${label}-${Math.random().toString(36).slice(2)}.jpg`;
+  await t.run(async (ctx) => {
+    await ctx.db.insert("uploadGrants", {
+      storagePath,
+      userId: ownerId,
+      folder: "uploads",
+      contentType: "image/jpeg",
+      createdAt: Date.now(),
+    });
+  });
+  return storagePath;
+}
+
 async function submitReimbursement(
   t: ReturnType<typeof convexTest>,
   fundId: Id<"funds">,
@@ -199,7 +223,7 @@ async function submitReimbursement(
     amountCents,
     kind: "reimbursement",
     description: "Snacks for small group",
-    receiptKey: "r2:receipts/test-receipt.jpg",
+    receiptKey: await grantReceiptKey(t, submitterId),
   });
 }
 
@@ -703,6 +727,73 @@ describe("submitExpense", () => {
     ).rejects.toThrow(/receipt/i);
   });
 
+  test("rejects a receipt uploaded by somebody else", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId, managerUserId } = await seedExpenseFixture(t);
+
+    // The manager's receipt key — the sort of value a member can read
+    // straight off `listExpenses`'s receiptUrl or a card's activity list.
+    const someoneElsesReceipt = await grantReceiptKey(t, managerUserId, "theirs");
+
+    await expect(
+      t.mutation(api.functions.finance.expenses.submitExpense, {
+        token: await tokenFor(memberUserId),
+        fundId,
+        amountCents: 5000,
+        kind: "reimbursement",
+        description: "Borrowed proof of purchase",
+        receiptKey: someoneElsesReceipt,
+      }),
+    ).rejects.toThrow(/wasn't uploaded from this account/i);
+
+    const expenses = await t.run((ctx) =>
+      ctx.db
+        .query("expenses")
+        .withIndex("by_fund_status", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    expect(expenses).toHaveLength(0);
+  });
+
+  test("rejects a well-formed r2: key this backend never issued", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId } = await seedExpenseFixture(t);
+
+    // Still a refusal — but the message is the "no provenance at all" one,
+    // which is also what an upload picked before this check shipped gets, and
+    // it tells the member the thing that actually fixes it.
+    await expect(
+      t.mutation(api.functions.finance.expenses.submitExpense, {
+        token: await tokenFor(memberUserId),
+        fundId,
+        amountCents: 5000,
+        kind: "reimbursement",
+        description: "Made-up key",
+        receiptKey: "r2:uploads/totally-invented.jpg",
+      }),
+    ).rejects.toThrow(/re-attach the photo/i);
+  });
+
+  test("accepts the submitter's own uploaded receipt", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, memberUserId } = await seedExpenseFixture(t);
+    const receiptKey = await grantReceiptKey(t, memberUserId, "mine");
+
+    const expenseId = await t.mutation(
+      api.functions.finance.expenses.submitExpense,
+      {
+        token: await tokenFor(memberUserId),
+        fundId,
+        amountCents: 5000,
+        kind: "reimbursement",
+        description: "Snacks",
+        receiptKey,
+      },
+    );
+    const expense = await t.run((ctx) => ctx.db.get(expenseId));
+    expect(expense?.receiptKey).toBe(receiptKey);
+  });
+
   test("rejects kind card_charge", async () => {
     const t = convexTest(schema, modules);
     const { fundId, memberUserId } = await seedExpenseFixture(t);
@@ -714,7 +805,7 @@ describe("submitExpense", () => {
         amountCents: 5000,
         kind: "card_charge",
         description: "Card swipe",
-        receiptKey: "r2:receipts/x.jpg",
+        receiptKey: await grantReceiptKey(t, memberUserId),
       }),
     ).rejects.toThrow(/card-charge/i);
   });
@@ -730,7 +821,7 @@ describe("submitExpense", () => {
         amountCents: 500_001,
         kind: "reimbursement",
         description: "Too big",
-        receiptKey: "r2:receipts/x.jpg",
+        receiptKey: await grantReceiptKey(t, memberUserId),
       }),
     ).rejects.toThrow(/amount/i);
   });

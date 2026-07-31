@@ -171,6 +171,14 @@ configurable two-approver threshold (default $200); receipt-required policy
 with push nudges. Enforcement via `requireFundRole(ctx, fundId, userId,
 minRole)` in `lib/helpers.ts`, mirroring `requireGroupLeaderOrCommunityAdmin`.
 
+The leader row of the "Assign finance roles" line is a **grant to others,
+not to self**. `requireFundRoleOrGroupLeader`'s carve-out ignores the
+required role level — that's what makes the bootstrap possible — so a leader
+allowed to name themselves would have a one-tap path to `finance_admin`, a
+card, and the fund's balance with no second human involved. `grantFundRole`
+therefore refuses a self-targeted grant from a caller whose only standing is
+"leads this group". Finance admins and community admins are unaffected.
+
 ### 5. Schema (new tables, `apps/convex/schema.ts`)
 
 ```
