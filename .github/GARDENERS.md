@@ -115,10 +115,12 @@ only knows *list* prices:
   is a flat-rate subscription), so gh-aw falls back to the same model's list
   price at its *original* provider — Zhipu's for `glm-5.2`, DeepSeek's for
   `deepseek-v4-flash`. Those numbers are a **throttle, not an invoice**: they
-  still cut a runaway run off, which is the useful part. The rates actually in
-  force are baked into each lock file as `GH_AW_INFO_MODEL_COSTS`; read them
-  there rather than trusting a number quoted in prose, because they move (see
-  below).
+  still cut a runaway run off, which is the useful part. The rates in force are
+  the ones each workflow declares under `models.default-ai-credits-pricing` —
+  pinned to the model vendor's list price, not fetched at compile time (see
+  [Always pass `--no-models-dev-lookup`](#always-pass---no-models-dev-lookup)).
+  They reach the proxy as `defaultAiCreditsPricing` in the lock file, which is
+  where to check what is actually enforced.
 
   **Your real exposure on the Ollama path is the Ollama Cloud subscription
   itself** ($20/mo Pro, with session limits resetting every 5 hours and weekly
@@ -130,9 +132,14 @@ Metering works on the Ollama path at all only because gh-aw routes **every**
 engine through the AWF API proxy sidecar; the proxy is retargeted at `ollama.com`
 rather than bypassed. The failure mode is the opposite of the usual worry: an
 unpriced model does not run unmetered, it gets **rejected with HTTP 400
-`unknown_model_ai_credits`**. That is why each Ollama gardener also declares
-`models.default-ai-credits-pricing` as a fallback — gh-aw's own daily Ollama test
-broke for eight consecutive days on exactly this.
+`unknown_model_ai_credits`**. That is why each Ollama gardener declares
+`models.default-ai-credits-pricing` — gh-aw's own daily Ollama test broke for
+eight consecutive days on exactly this.
+
+Since we compile with `--no-models-dev-lookup`, that declaration is not a
+fallback any more; it is **the** pricing. If you add an Ollama-backed gardener
+and forget it, the proxy rejects every request rather than running unmetered —
+loud, and in the safe direction.
 
 ---
 
@@ -142,7 +149,7 @@ broke for eight consecutive days on exactly this.
 > **The `.md` file is the source; the `.lock.yml` is what actually runs.**
 > Editing the `.md` without recompiling changes *nothing* — GitHub Actions only
 > ever reads the `.lock.yml`. The schedule will silently stay exactly as it was.
-> Always run `gh aw compile` and commit **both** files.
+> Always run `gh aw compile --no-models-dev-lookup` and commit **both** files.
 
 ### One-time setup
 
@@ -158,7 +165,7 @@ gh aw --version
 $EDITOR .github/workflows/gardener-large-files.md
 
 # 2. Recompile (regenerates the .lock.yml)
-gh aw compile
+gh aw compile --no-models-dev-lookup
 
 # 3. Commit BOTH files together
 git add .github/workflows/gardener-large-files.md \
@@ -166,9 +173,10 @@ git add .github/workflows/gardener-large-files.md \
 git commit -m "chore(gardeners): move large-files scan to Wednesdays"
 ```
 
-Recompile everything at once with a bare `gh aw compile`. Add `--approve` if it
-warns about a newly-introduced secret or action (it is asking you to review a
-supply-chain change — read what it lists before approving).
+Recompile everything at once with a bare
+`gh aw compile --no-models-dev-lookup`. Add `--approve` if it warns about a
+newly-introduced secret or action (it is asking you to review a supply-chain
+change — read what it lists before approving).
 
 Sanity check that the change landed:
 
@@ -177,22 +185,40 @@ git diff --stat .github/workflows/          # both .md and .lock.yml should appe
 grep 'cron:' .github/workflows/gardener-large-files.lock.yml
 ```
 
-> [!NOTE]
-> **`gh aw compile` is not reproducible across days, and that is expected.**
-> For models outside gh-aw's embedded catalogue — which includes every Ollama
-> model we use — the compiler fetches pricing from models.dev *at compile time*
-> and bakes it into the lock file as `GH_AW_INFO_MODEL_COSTS`. When those list
-> prices change upstream, a recompile produces a diff in the three Ollama
-> gardeners' lock files even though nobody touched a `.md`.
+> [!IMPORTANT]
+> ### Always pass `--no-models-dev-lookup`
 >
-> That is a genuine refresh, not corruption — commit it. It does mean "recompile
-> and confirm the diff is empty" is **not** a valid integrity check for those
-> three; compare everything *except* `GH_AW_INFO_MODEL_COSTS`. `gh aw compile
-> --no-models-dev-lookup` makes the output deterministic by skipping the lookup
-> and leaning on each workflow's `models.default-ai-credits-pricing` fallback,
-> at the cost of the imputed dollars drifting from reality over time. We use the
-> default (live lookup); switching is a one-flag decision worth making
-> deliberately rather than by accident.
+> **Why:** it makes the lock files deterministic. Without it, `gh aw compile`
+> looks up per-token pricing on models.dev *at compile time* for any model
+> outside gh-aw's embedded catalogue — which is all three Ollama models — and
+> bakes the result into the lock file. models.dev lists the same model under
+> dozens of resellers at different prices (`glm-5.2` ranges from $0.50 to $1.80
+> per 1M input), and the compiler does not always pick the same one. Two compiles
+> minutes apart in this repo produced **two different prices for the same model**.
+> The result is lock-file churn with no source change, which makes "recompile and
+> confirm an empty diff" — the integrity check this whole workflow rests on —
+> useless exactly where it matters most.
+>
+> **What you give up:** the imputed dollar figures no longer track the market.
+> They come instead from each workflow's `models.default-ai-credits-pricing`,
+> which is pinned to the model vendor's own list price (`glm-5.2` → Zhipu's
+> $1.40/$4.40; `deepseek-v4-flash` → DeepSeek's $0.14/$0.28). At those rates a
+> rounding error is worth fractions of a cent, and `max-ai-credits` still bounds
+> the worst case regardless — so this costs precision that was never real
+> anyway, and buys a reproducible build.
+>
+> **Refresh the fallbacks deliberately** when a model reprices, rather than
+> having the compiler do it behind your back:
+> ```bash
+> curl -s https://models.dev/api.json | python3 -c \
+>   "import json,sys; d=json.load(sys.stdin); m='glm-5.2'; \
+>    print({k: v['models'][m].get('cost') for k,v in d.items() if m in v.get('models',{})})"
+> ```
+> Pick the model vendor's own entry (`zhipuai` for GLM, `deepseek` for DeepSeek),
+> update `models.default-ai-credits-pricing` in the workflow, recompile, commit.
+>
+> Verify determinism any time by compiling twice and diffing — it should be
+> byte-identical.
 
 ### Schedule syntax
 
@@ -265,7 +291,7 @@ running forever if nobody looks at it. Minimum unit is hours.
 
 Each gardener picks its own engine and model, so you are not locked into one
 provider. The knobs are all frontmatter, so the loop is the same as cadence:
-**edit → `gh aw compile` → commit both files.**
+**edit → `gh aw compile --no-models-dev-lookup` → commit both files.**
 
 ### Move a gardener onto Ollama (open model, flat-rate)
 
@@ -278,9 +304,9 @@ engine:
 model: glm-5.2
 
 models:
-  default-ai-credits-pricing:   # fallback so the proxy never 400s ($/1M tokens)
-    input: 1.40                 # deliberately conservative — erring high makes
-    output: 4.40                # the cap bind sooner, which is the safe direction
+  default-ai-credits-pricing:   # REQUIRED ($/1M tokens) — without it the proxy
+    input: 1.40                 # 400s every request. Pin to the model VENDOR's
+    output: 4.40                # list price (zhipuai for GLM, deepseek for V4).
 
 network:
   allowed:
@@ -465,7 +491,7 @@ shadow mode.
 | `.github/aw/actions-lock.json` | SHA pins for every action the compiled workflows use. Do not hand-edit. |
 | `.gitattributes` | Marks `*.lock.yml` as `linguist-generated` so they collapse in diffs. Its `merge=ours` needs `git config merge.ours.driver true` to take effect; without that git falls back with a warning. |
 
-Regenerate all of them with `gh aw compile`.
+Regenerate all of them with `gh aw compile --no-models-dev-lookup`.
 
 ---
 

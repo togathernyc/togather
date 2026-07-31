@@ -37,7 +37,8 @@ engine:
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: glm-5.2
 
-# Fallback only — see gardener-docs-drift.md. Values are $/1M tokens.
+# THE pricing the AWF proxy meters against, not a fallback — see
+# gardener-docs-drift.md. Pinned to Zhipu's own list price; $/1M tokens.
 models:
   default-ai-credits-pricing:
     input: 1.40

@@ -42,9 +42,10 @@ engine:
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: deepseek-v4-flash
 
-# Belt-and-braces: both models are in gh-aw's built-in pricing table today, but if
-# that ever changes the AWF proxy rejects every request with HTTP 400
-# (unknown_model_ai_credits) rather than running unmetered. Values are $/1M tokens.
+# THE pricing the AWF proxy meters against, not a fallback: we compile with
+# --no-models-dev-lookup so nothing is fetched at build time (see
+# .github/GARDENERS.md). Without this the proxy rejects every request with HTTP
+# 400 unknown_model_ai_credits. Pinned to DeepSeek's own list price; $/1M tokens.
 models:
   default-ai-credits-pricing:
     input: 0.14

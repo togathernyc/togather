@@ -37,9 +37,10 @@ engine:
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: glm-5.2
 
-# Fallback only — glm-5.2 is in gh-aw's built-in pricing table today. Without a
-# price the AWF proxy rejects every request (HTTP 400 unknown_model_ai_credits)
-# rather than running unmetered. Values are $/1M tokens.
+# THE pricing the AWF proxy meters against, not a fallback: we compile with
+# --no-models-dev-lookup so nothing is fetched at build time (see
+# .github/GARDENERS.md). Without this the proxy rejects every request with HTTP
+# 400 unknown_model_ai_credits. Pinned to Zhipu's own list price; $/1M tokens.
 models:
   default-ai-credits-pricing:
     input: 1.40
