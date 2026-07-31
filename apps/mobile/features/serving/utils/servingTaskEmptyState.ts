@@ -56,8 +56,17 @@ export interface MineEmptyFacts {
   myRoleNames: string[] | null;
   /** Preloaded (non-personal) tasks in the viewer's own "Mine" list. */
   myTemplateTaskCount: number;
-  /** Team-level tasks the viewer can see on the "Shared" tab. */
-  sharedTaskCount: number;
+  /**
+   * Team-level tasks the viewer can see on the "Shared" tab.
+   *
+   * Nullable for the same reason the two above are: `getSharedTeamTasks` is
+   * `undefined` until it resolves, and offline it stays `undefined` whenever
+   * that section was never cached (the stale-cache read returns `null`). A
+   * defaulted `0` made the shared hint and the "Open Shared (N)" jump silently
+   * wrong — a pop-in on first paint, and permanently absent offline, which is
+   * exactly when that pointer is most useful.
+   */
+  sharedTaskCount: number | null;
 }
 
 /**
@@ -106,7 +115,9 @@ export function myRoleNamesFromCrew(
  *
  * Precedence, most-root-cause first:
  *  1. `has-tasks` — nothing to explain.
- *  2. `loading` — refuse to guess while the plan-wide or crew data is missing.
+ *  2. `loading` — refuse to guess while the plan-wide, crew, or shared data is
+ *     missing. Shared counts because the notice POINTS AT it; a defaulted 0
+ *     produced a confidently wrong hint that never corrected itself offline.
  *  3. `no-plan-tasks` — checked BEFORE rostering because it is the root cause
  *     when both are true: a plan with no tasks shows nothing to anybody, so
  *     fixing the roster wouldn't help, and telling a rostered leader "you're
@@ -117,7 +128,11 @@ export function myRoleNamesFromCrew(
  */
 export function diagnoseMineEmpty(facts: MineEmptyFacts): MineEmptyReason {
   if (facts.myTemplateTaskCount > 0) return "has-tasks";
-  if (facts.planTaskCount === null || facts.myRoleNames === null) {
+  if (
+    facts.planTaskCount === null ||
+    facts.myRoleNames === null ||
+    facts.sharedTaskCount === null
+  ) {
     return "loading";
   }
   if (facts.planTaskCount === 0) return "no-plan-tasks";
@@ -156,12 +171,16 @@ export function mineEmptyCopy(
   reason: MineEmptyReason,
   facts: MineEmptyFacts,
 ): MineEmptyCopy | null {
-  const planCount = facts.planTaskCount ?? 0;
   const shared = facts.sharedTaskCount;
+  // `null` = unresolved: say nothing about Shared rather than guess. (In
+  // practice `diagnoseMineEmpty` returns `loading` first; this keeps the copy
+  // honest for any caller.)
   const sharedHint =
-    shared > 0
-      ? `Shared has ${pluralTasks(shared)} for your whole team.`
-      : "Check All teams to see the rest of the event.";
+    shared === null
+      ? null
+      : shared > 0
+        ? `Shared has ${pluralTasks(shared)} for your whole team.`
+        : "Check All teams to see the rest of the event.";
 
   switch (reason) {
     case "has-tasks":
@@ -177,16 +196,34 @@ export function mineEmptyCopy(
     case "not-rostered":
       return {
         title: "You're not on the roster for this event.",
-        hint: `The event has ${pluralTasks(planCount)}, but tasks follow roles and you don't hold one here. Ask your team lead to add you to the roster.`,
+        hint: `The event has ${pluralTasks(facts.planTaskCount ?? 0)}, but tasks follow roles and you don't hold one here. Ask your team lead to add you to the roster.`,
       };
 
     case "role-mismatch": {
       const roles = facts.myRoleNames ?? [];
       const roleWord = roles.length === 1 ? "role" : "roles";
       return {
-        title: `This event has ${pluralTasks(planCount)}, but none are assigned to your ${roleWord}.`,
-        hint: `You're serving as ${formatRoleList(roles)}. ${sharedHint}`,
+        title: `This event has ${pluralTasks(facts.planTaskCount ?? 0)}, but none are assigned to your ${roleWord}.`,
+        hint: [`You're serving as ${formatRoleList(roles)}.`, sharedHint]
+          .filter(Boolean)
+          .join(" "),
       };
     }
   }
+}
+
+/**
+ * Whether the notice should offer its one-tap jump to the "Shared" tab.
+ *
+ * Only for the two states where whole-team tasks are a genuine next place to
+ * look. `no-plan-tasks` is excluded on purpose: a stale-cache mix (an empty
+ * all-teams snapshot next to a cached shared list) could otherwise render
+ * "This event has no tasks set up yet." directly above "Open Shared (2)".
+ */
+export function shouldOfferSharedJump(
+  reason: MineEmptyReason,
+  facts: MineEmptyFacts,
+): boolean {
+  if (reason !== "role-mismatch" && reason !== "not-rostered") return false;
+  return (facts.sharedTaskCount ?? 0) > 0;
 }

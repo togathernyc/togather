@@ -3,6 +3,7 @@ import {
   mineEmptyCopy,
   myRoleNamesFromCrew,
   planTaskCountFromAllTeams,
+  shouldOfferSharedJump,
   type MineEmptyFacts,
 } from "../servingTaskEmptyState";
 
@@ -80,6 +81,20 @@ describe("diagnoseMineEmpty", () => {
 
   it("loading: refuses to guess while the viewer's roles are unresolved", () => {
     expect(diagnoseMineEmpty(facts({ myRoleNames: null }))).toBe("loading");
+  });
+
+  // Shared was the one fact defaulted to 0 instead of treated as unloaded, so a
+  // `role-mismatch` viewer whose team DOES have shared tasks got the wrong hint
+  // and no "Open Shared" button — popping in on first paint, and (offline, with
+  // that section never cached) staying wrong for the whole session.
+  it("loading: refuses to guess while the shared count is unresolved", () => {
+    expect(diagnoseMineEmpty(facts({ sharedTaskCount: null }))).toBe("loading");
+  });
+
+  it("has-tasks still wins over an unresolved shared count", () => {
+    expect(
+      diagnoseMineEmpty(facts({ myTemplateTaskCount: 1, sharedTaskCount: null })),
+    ).toBe("has-tasks");
   });
 
   it("no-plan-tasks: the plan has zero eventTasks rows", () => {
@@ -177,5 +192,66 @@ describe("mineEmptyCopy", () => {
       facts({ myRoleNames: ["Camera 1", "Greeter", "Usher"] }),
     )!;
     expect(copy.hint).toContain("You're serving as Camera 1, Greeter and Usher.");
+  });
+
+  it("says nothing at all about Shared while its count is unresolved", () => {
+    const copy = mineEmptyCopy(
+      "role-mismatch",
+      facts({ sharedTaskCount: null }),
+    )!;
+    expect(copy.hint).not.toContain("Shared");
+    expect(copy.hint).not.toContain("All teams");
+  });
+});
+
+/**
+ * The jump is a POINTER, so it must only appear where Shared is a real answer.
+ * Offering it on `no-plan-tasks` let a stale-cache mix render "This event has no
+ * tasks set up yet." directly above "Open Shared (2)".
+ */
+describe("shouldOfferSharedJump", () => {
+  it("offers the jump on a role mismatch with shared tasks", () => {
+    expect(
+      shouldOfferSharedJump("role-mismatch", facts({ sharedTaskCount: 2 })),
+    ).toBe(true);
+  });
+
+  it("offers the jump to an unrostered viewer with shared tasks", () => {
+    expect(
+      shouldOfferSharedJump(
+        "not-rostered",
+        facts({ myRoleNames: [], sharedTaskCount: 2 }),
+      ),
+    ).toBe(true);
+  });
+
+  it("NEVER offers it alongside 'this event has no tasks set up yet'", () => {
+    expect(
+      shouldOfferSharedJump(
+        "no-plan-tasks",
+        facts({ planTaskCount: 0, sharedTaskCount: 2 }),
+      ),
+    ).toBe(false);
+  });
+
+  it("withholds it while the shared count is unresolved", () => {
+    expect(
+      shouldOfferSharedJump("role-mismatch", facts({ sharedTaskCount: null })),
+    ).toBe(false);
+  });
+
+  it("withholds it when the team has no shared tasks", () => {
+    expect(
+      shouldOfferSharedJump("role-mismatch", facts({ sharedTaskCount: 0 })),
+    ).toBe(false);
+  });
+
+  it("renders no jump for the states that render no notice", () => {
+    expect(
+      shouldOfferSharedJump("has-tasks", facts({ sharedTaskCount: 2 })),
+    ).toBe(false);
+    expect(shouldOfferSharedJump("loading", facts({ sharedTaskCount: 2 }))).toBe(
+      false,
+    );
   });
 });

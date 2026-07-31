@@ -97,6 +97,7 @@ import {
   mineEmptyCopy,
   myRoleNamesFromCrew,
   planTaskCountFromAllTeams,
+  shouldOfferSharedJump,
   type MineEmptyFacts,
   type MineEmptyReason,
 } from "../utils/servingTaskEmptyState";
@@ -769,7 +770,10 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
       planTaskCount: planTaskCountFromAllTeams(effAllTeams),
       myRoleNames: myRoleNamesFromCrew(effCrew),
       myTemplateTaskCount,
-      sharedTaskCount: effShared?.length ?? 0,
+      // `null`, not 0, while unresolved — offline this NEVER self-corrects when
+      // the shared section was never cached, and a defaulted 0 hid the "Open
+      // Shared" pointer exactly when it matters most.
+      sharedTaskCount: effShared?.length ?? null,
     }),
     [effAllTeams, effCrew, myTemplateTaskCount, effShared],
   );
@@ -2896,7 +2900,8 @@ function OfflineBanner({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
  * available underneath in every case.
  *
  * Two extra affordances hang off it:
- *   • a one-tap jump to "Shared" whenever the team HAS whole-team tasks — the
+ *   • a one-tap jump to "Shared" whenever the team HAS whole-team tasks AND the
+ *     diagnosis is one that Shared could answer (`shouldOfferSharedJump`) — the
  *     screen opens on "Mine" and `getMyServingTasks` deliberately omits
  *     team-level tasks, so otherwise the viewer has to guess they exist;
  *   • for a leader on a plan with NO tasks, `PopulateFromTemplate` — the
@@ -2957,7 +2962,7 @@ function MineEmptyNotice({
             {copy.hint}
           </Text>
 
-          {facts.sharedTaskCount > 0 ? (
+          {shouldOfferSharedJump(reason, facts) ? (
             <Pressable
               onPress={onViewShared}
               style={styles.noticeAction}
@@ -2971,7 +2976,7 @@ function MineEmptyNotice({
                   { color: primaryColor },
                 ]}
               >
-                {`Open Shared (${facts.sharedTaskCount})`}
+                {`Open Shared (${facts.sharedTaskCount ?? 0})`}
               </Text>
               <Ionicons name="arrow-forward" size={15} color={primaryColor} />
             </Pressable>

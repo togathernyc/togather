@@ -404,6 +404,48 @@ describe("ServingTasksScreen — Shared discoverability from an empty Mine", () 
     expect(getByText("Set the thermostat")).toBeTruthy();
   });
 
+  // `getSharedTeamTasks` was the one fact defaulted to 0 rather than treated as
+  // unloaded, so the notice rendered a confident (wrong) shared hint and no
+  // jump, which then popped in. Offline it never corrected itself at all: the
+  // stale-cache read returns null when that section was never cached.
+  it("says nothing until the shared count has resolved, rather than assuming zero", () => {
+    mockQuery.mockImplementation((ref: string) => {
+      if (ref === REF.mine) return EMPTY_MINE;
+      if (ref === REF.eligibility) return { plans: DEFAULT_PLANS };
+      if (ref === REF.allTeams) return [allTeamsRow(["task-1", "task-2"])];
+      if (ref === REF.crew) return [myCrewRow("Greeter")];
+      if (ref === REF.shared) return undefined; // unresolved
+      return undefined;
+    });
+    const { queryByText, queryByLabelText, getAllByText } = render(
+      <ServingTasksScreen />,
+    );
+
+    expect(queryByText(/Check All teams/)).toBeNull();
+    expect(queryByLabelText("Open the Shared tab")).toBeNull();
+    expect(queryByText(/none are assigned to your role/)).toBeNull();
+    // The per-segment empty cards stay visible while we can't say anything.
+    expect(getAllByText("Nothing here yet.")).toHaveLength(3);
+  });
+
+  // A stale-cache mix (an empty all-teams snapshot next to a cached shared
+  // list) used to render "This event has no tasks set up yet." directly above
+  // "Open Shared (2)" — two statements that contradict each other.
+  it("never puts an Open Shared jump under 'this event has no tasks set up yet'", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [],
+      crew: [myCrewRow("Greeter")],
+      shared: [
+        sharedRow("task-1", "Unlock the building"),
+        sharedRow("task-2", "Set the thermostat"),
+      ],
+    });
+    const { getByText, queryByLabelText } = render(<ServingTasksScreen />);
+
+    expect(getByText(NO_PLAN_TASKS_MESSAGE)).toBeTruthy();
+    expect(queryByLabelText("Open the Shared tab")).toBeNull();
+  });
+
   it("offers no Shared jump when the team has no shared tasks", () => {
     mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
       allTeams: [allTeamsRow(["task-1"])],
