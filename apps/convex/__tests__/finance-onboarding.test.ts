@@ -535,18 +535,20 @@ describe("recordProvisioned", () => {
     expect(auditEvents.filter((e) => e.action === "fund.created")).toHaveLength(1);
   });
 
-  test("binds the General fund to the community's General Account", async () => {
+  test("hands the General fund back so its Account can be keyed on the fund id", async () => {
     const t = convexTest(schema, modules);
     const { communityId } = await seedOnboardingFixture(t);
     await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
 
-    await t.mutation(internal.functions.finance.onboarding.recordProvisioned, {
-      communityId,
-      stripeConnectedAccountId: "acct_test123",
-      increaseEntityId: "entity_test123",
-      increaseReceivingAccountId: "account_receiving123",
-      increaseGeneralAccountId: "account_general123",
-    });
+    const returnedFundId = await t.mutation(
+      internal.functions.finance.onboarding.recordProvisioned,
+      {
+        communityId,
+        stripeConnectedAccountId: "acct_test123",
+        increaseEntityId: "entity_test123",
+        increaseReceivingAccountId: "account_receiving123",
+      },
+    );
 
     const generalFund = await t.run((ctx) =>
       ctx.db
@@ -555,9 +557,12 @@ describe("recordProvisioned", () => {
         .filter((q) => q.eq(q.field("type"), "general"))
         .first(),
     );
-    // Without this the fund had no bank account: general-fund donations were
-    // booked "allocated" with no transfer, and nightly reconcile skipped it.
-    expect(generalFund?.increaseAccountId).toBe("account_general123");
+    // The Account is minted by provisionFundAccount against THIS id — one
+    // producer, one idempotency key per fund. Binding it here instead would
+    // need a key the fund id can't supply (the fund doesn't exist yet), which
+    // is how the General Account ended up with two different keys.
+    expect(returnedFundId).toBe(generalFund?._id);
+    expect(generalFund?.increaseAccountId).toBeUndefined();
   });
 
   test("heals a General fund that predates the General Account", async () => {
@@ -579,17 +584,21 @@ describe("recordProvisioned", () => {
       });
     });
 
-    await t.mutation(internal.functions.finance.onboarding.recordProvisioned, {
-      communityId,
-      stripeConnectedAccountId: "acct_test123",
-      increaseEntityId: "entity_test123",
-      increaseReceivingAccountId: "account_receiving123",
-      increaseGeneralAccountId: "account_general123",
-    });
+    const returnedFundId = await t.mutation(
+      internal.functions.finance.onboarding.recordProvisioned,
+      {
+        communityId,
+        stripeConnectedAccountId: "acct_test123",
+        increaseEntityId: "entity_test123",
+        increaseReceivingAccountId: "account_receiving123",
+      },
+    );
 
+    // The EXISTING fund is handed back for provisioning — not duplicated, and
+    // its history is untouched.
+    expect(returnedFundId).toBe(generalFundId);
     const fund = await t.run((ctx) => ctx.db.get(generalFundId));
-    expect(fund?.increaseAccountId).toBe("account_general123");
-    expect(fund?.balanceCents).toBe(12_345); // history untouched
+    expect(fund?.balanceCents).toBe(12_345);
 
     const funds = await t.run((ctx) =>
       ctx.db

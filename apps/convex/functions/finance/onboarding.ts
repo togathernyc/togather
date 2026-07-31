@@ -33,6 +33,7 @@ import {
   query,
 } from "../../_generated/server";
 import { internal } from "../../_generated/api";
+import type { Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { requireCommunityAdmin } from "../../lib/permissions";
 import { logFinanceAudit } from "../../lib/finance/audit";
@@ -233,28 +234,12 @@ export const getCommunityFinanceInternal = internalQuery({
   },
 });
 
-/**
- * The Increase Account already bound to the community's general fund, if
- * any. `provisionProviders` reads this before minting one so a re-run (or a
- * community whose General Account was created by the backfill) reuses the
- * existing account instead of asking Increase for a second one under a
- * fingerprint-shifted idempotency key.
- */
-export const getGeneralFundAccountId = internalQuery({
-  args: { communityId: v.id("communities") },
-  handler: async (ctx, args): Promise<string | null> => {
-    const fund = await ctx.db
-      .query("funds")
-      .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
-      .filter((q) => q.eq(q.field("type"), "general"))
-      .first();
-    return fund?.increaseAccountId ?? null;
-  },
-});
-
 export const provisionProviders = internalAction({
   args: { communityId: v.id("communities") },
-  handler: async (ctx, args) => {
+  // Explicit return annotation breaks the self-referential type cycle that
+  // otherwise poisons ApiFromModules inference repo-wide (this action calls
+  // its own module via `internal.functions.finance.onboarding.*`).
+  handler: async (ctx, args): Promise<void> => {
     const finance = await ctx.runQuery(
       internal.functions.finance.onboarding.getCommunityFinanceInternal,
       { communityId: args.communityId },
@@ -324,30 +309,6 @@ export const provisionProviders = internalAction({
         increaseReceivingAccountId = account.id;
       }
 
-      // ADR-032 §1 puts TWO accounts under the community's Entity: the
-      // receiving Account (Stripe's payout destination — a transit account
-      // holding money still attributed to individual funds) and a General
-      // Account, which is the community-wide fund's own bank account.
-      // Minting it here, alongside the receiving Account, is what lets
-      // general-fund donations settle like every other fund's: allocated out
-      // of receiving by a real AccountTransfer, and reconciled nightly
-      // against a real bank balance. Without it, `runAllocation` had nowhere
-      // to send general-fund money and `getFundsWithIncreaseAccount` skipped
-      // the fund entirely.
-      const existingGeneralAccountId = await ctx.runQuery(
-        internal.functions.finance.onboarding.getGeneralFundAccountId,
-        { communityId: args.communityId },
-      );
-      const increaseGeneralAccountId =
-        existingGeneralAccountId ??
-        (
-          await createAccount(
-            increaseEntityId,
-            "General Account",
-            `finance:general-account:${args.communityId}:${fp}`,
-          )
-        ).id;
-
       // Mint an Account Number for the receiving Account and set it as the
       // connected account's payout destination. Both calls carry a
       // community-derived idempotency key (Increase's on the account-number
@@ -378,16 +339,49 @@ export const provisionProviders = internalAction({
         `finance:payout-destination:${args.communityId}:${fp}:${payoutDestination.routingNumber}-${payoutDestination.accountNumber.slice(-4)}`,
       );
 
-      await ctx.runMutation(
+      const generalFundId: Id<"funds"> = await ctx.runMutation(
         internal.functions.finance.onboarding.recordProvisioned,
         {
           communityId: args.communityId,
           stripeConnectedAccountId,
           increaseEntityId,
           increaseReceivingAccountId,
-          increaseGeneralAccountId,
         },
       );
+
+      // ADR-032 §1 puts TWO accounts under the community's Entity: the
+      // receiving Account (Stripe's payout destination — a transit account
+      // holding money still attributed to individual funds) and a General
+      // Account, which is the community-wide fund's own bank account. Without
+      // it, `runAllocation` has nowhere to send general-fund money and
+      // `getFundsWithIncreaseAccount` skips the fund entirely.
+      //
+      // It is minted here by the SAME action every other fund's Account goes
+      // through, after `recordProvisioned` has created the fund row — because
+      // there must be exactly ONE producer of a fund's Increase Account, with
+      // exactly one idempotency key per fund. Minting it inline here as well
+      // (which is what this used to do, under a community+fingerprint key)
+      // gave the General Account two different keys across the three
+      // provisioning paths, and Increase dedupes on the key: a backfill run
+      // interleaved with this one would have minted a SECOND, unreferenced
+      // Account under a KYB'd Entity.
+      //
+      // Its failure is logged, not reported as a provisioning failure: the
+      // community's own onboarding genuinely did succeed, and the missing
+      // Account self-heals (next `enableGroupGiving`, `retryProvisioning`, or
+      // migrations/backfillGeneralFundAccounts.ts) without an admin-facing
+      // blocked state that they cannot act on.
+      try {
+        await ctx.runAction(
+          internal.functions.finance.onboarding.provisionFundAccount,
+          { fundId: generalFundId },
+        );
+      } catch (generalAccountError) {
+        console.error(
+          `[finance] provisionProviders: community ${args.communityId} is provisioned but its General Account could not be created — it will be healed by the next enableGroupGiving/backfill`,
+          generalAccountError,
+        );
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);
@@ -523,12 +517,11 @@ export const recordProvisioned = internalMutation({
     stripeConnectedAccountId: v.string(),
     increaseEntityId: v.string(),
     increaseReceivingAccountId: v.string(),
-    // The community-wide General Account (ADR-032 §1). Optional only so a
-    // scheduled call queued by an older deploy still applies cleanly; every
-    // live caller passes it.
-    increaseGeneralAccountId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  // Returns the community's General fund id so `provisionProviders` can mint
+  // its Increase Account through `provisionFundAccount` — the single producer
+  // of every fund's Account (see the comment at that call site).
+  handler: async (ctx, args): Promise<Id<"funds">> => {
     const finance = await ctx.db
       .query("communityFinance")
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
@@ -576,52 +569,37 @@ export const recordProvisioned = internalMutation({
       .filter((q) => q.eq(q.field("type"), "general"))
       .first();
 
-    if (!existingGeneralFund) {
-      const fundId = await ctx.db.insert("funds", {
-        communityId: args.communityId,
-        name: "General Fund",
-        type: "general",
-        // The community-wide fund is bound to its own Increase Account from
-        // birth, exactly like a group fund. Money given to it still lands in
-        // the receiving Account first and is moved here by the allocation
-        // job — the General Account is NOT Stripe's payout destination.
-        increaseAccountId: args.increaseGeneralAccountId,
-        status: "active",
-        balanceCents: 0,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      });
-      await logFinanceAudit(ctx, {
-        communityId: args.communityId,
-        fundId,
-        action: "fund.created",
-        details: {
-          type: "general",
-          name: "General Fund",
-          increaseAccountId: args.increaseGeneralAccountId,
-        },
-      });
-    } else if (
-      !existingGeneralFund.increaseAccountId &&
-      args.increaseGeneralAccountId
-    ) {
+    if (existingGeneralFund) {
       // Communities provisioned before the General Account existed (see
-      // migrations/backfillGeneralFundAccounts.ts) have a general fund with
-      // no bank account behind it. A re-run of provisioning heals them.
-      await ctx.db.patch(existingGeneralFund._id, {
-        increaseAccountId: args.increaseGeneralAccountId,
-        updatedAt: timestamp,
-      });
-      await logFinanceAudit(ctx, {
-        communityId: args.communityId,
-        fundId: existingGeneralFund._id,
-        action: "fund.account_provisioned",
-        details: {
-          type: "general",
-          increaseAccountId: args.increaseGeneralAccountId,
-        },
-      });
+      // migrations/backfillGeneralFundAccounts.ts) have a general fund with no
+      // bank account behind it. Returning it heals them: the caller runs
+      // `provisionFundAccount` on it, which is a no-op if it already has one.
+      return existingGeneralFund._id;
     }
+
+    // The fund is created WITHOUT an `increaseAccountId`; the caller binds one
+    // moments later via `provisionFundAccount`. Two reasons it isn't set here:
+    // the Account has to be keyed on the fund id (which only exists after this
+    // insert), and every fund's Account must come from one code path or the
+    // idempotency keys drift apart. A general fund that ends up without an
+    // Account isn't silently broken — allocation fails its items loudly and
+    // the fund is picked up by the backfill/self-heal.
+    const fundId = await ctx.db.insert("funds", {
+      communityId: args.communityId,
+      name: "General Fund",
+      type: "general",
+      status: "active",
+      balanceCents: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await logFinanceAudit(ctx, {
+      communityId: args.communityId,
+      fundId,
+      action: "fund.created",
+      details: { type: "general", name: "General Fund" },
+    });
+    return fundId;
   },
 });
 
@@ -891,23 +869,51 @@ export const enableGroupGiving = mutation({
 });
 
 // ============================================================================
-// provisionFundAccount — mints a fund's Increase Account once the fund exists
-// and the community's Increase Entity is provisioned. Works for BOTH fund
-// types: a group's Account (the enableGroupGiving path) and the community's
-// General Account (the backfill/self-heal path for communities provisioned
-// before ADR-032 §1's General Account was built).
+// provisionFundAccount — the ONE producer of a fund's Increase Account. Works
+// for both fund types: a group's Account (the enableGroupGiving path) and the
+// community's General Account (provisionProviders, the enableGroupGiving
+// self-heal, and migrations/backfillGeneralFundAccounts.ts all route here).
 // ============================================================================
+
+/**
+ * The Increase idempotency key for a fund's Account. One key per fund,
+ * forever — Increase dedupes on it, so two DIFFERENT keys for the same
+ * logical account are two different bank Accounts under a KYB'd Entity.
+ *
+ * The `group-account` prefix is kept for group funds rather than unified to
+ * something tidier: changing it would ask Increase for a SECOND Account for
+ * any group fund whose first attempt is still in flight under the old key.
+ * The General Account has no such history — it was never minted under a
+ * fund-scoped key at all — so it takes the honest `general-account` prefix.
+ *
+ * Pure so it's unit-testable, and exported so tests can assert the exact key
+ * every provisioning path asks Increase for.
+ */
+export function fundAccountIdempotencyKey(
+  fundType: "general" | "group",
+  fundId: Id<"funds">,
+): string {
+  return `finance:${fundType}-account:${fundId}`;
+}
 
 export const provisionFundAccount = internalAction({
   args: { fundId: v.id("funds") },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    provisioned: boolean;
+    reopenedCount: number;
+    reopenedCents: number;
+  }> => {
+    const noop = { provisioned: false, reopenedCount: 0, reopenedCents: 0 };
     const fund = await ctx.runQuery(
       internal.functions.finance.onboarding.getFundInternal,
       { fundId: args.fundId },
     );
     if (!fund || fund.increaseAccountId) {
       // Already provisioned (retry-safe no-op), or the fund is gone.
-      return;
+      return noop;
     }
 
     const finance = await ctx.runQuery(
@@ -922,20 +928,16 @@ export const provisionFundAccount = internalAction({
       console.error(
         `[finance] provisionFundAccount: community ${fund.communityId} has no Increase Entity yet — cannot create an Account for fund ${args.fundId}`,
       );
-      return;
+      return noop;
     }
 
-    // Idempotency key keeps the historical `group-account` prefix on purpose:
-    // it's keyed on the fund id, and changing the prefix would ask Increase
-    // for a SECOND account for any fund whose first attempt is still in
-    // flight under the old key.
     const account = await createAccount(
       finance.increaseEntityId,
       fund.name,
-      `finance:group-account:${args.fundId}`,
+      fundAccountIdempotencyKey(fund.type, args.fundId),
     );
 
-    await ctx.runMutation(
+    return await ctx.runMutation(
       internal.functions.finance.onboarding.recordFundAccount,
       { fundId: args.fundId, increaseAccountId: account.id },
     );
@@ -944,13 +946,65 @@ export const provisionFundAccount = internalAction({
 
 export const recordFundAccount = internalMutation({
   args: { fundId: v.id("funds"), increaseAccountId: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    provisioned: boolean;
+    reopenedCount: number;
+    reopenedCents: number;
+  }> => {
     const fund = await ctx.db.get(args.fundId);
-    if (!fund || fund.increaseAccountId) return; // already recorded — idempotent no-op
+    if (!fund || fund.increaseAccountId) {
+      // already recorded — idempotent no-op
+      return { provisioned: false, reopenedCount: 0, reopenedCents: 0 };
+    }
+
+    // ------------------------------------------------------------------
+    // Reconcile the fund's history BEFORE it enters reconcile scope.
+    //
+    // `getFundsWithIncreaseAccount` selects on `increaseAccountId`, so the
+    // patch below is the exact instant the nightly invariant starts covering
+    // this fund. Any donation already marked "allocated" on a fund that had
+    // no Account cannot have settled — there was no Account to transfer it
+    // into. (This is how general-fund donations behaved before ADR-032 §1's
+    // General Account was actually built: `runAllocation` special-cased them
+    // and flipped them to "allocated" with no transfer at all.) Their cash is
+    // still sitting in the community's receiving Account.
+    //
+    // Bringing the fund into scope on top of that history would report
+    // `drift = the whole historical balance` every night, forever — killing,
+    // through alarm fatigue, the one control that would catch real theft. So
+    // reopen them: "pending" is what they factually are, and it is what makes
+    // the invariant hold on the very first night
+    // (ledger == bank 0 + pending), with the money movement left to the
+    // ordinary allocation path rather than invented here.
+    //
+    // The ledger is untouched — it is APPEND-ONLY, and nothing needs
+    // appending: allocation deliberately posts no credit (the donation credit
+    // already happened at gift time), so an allocation that never moved money
+    // left no ledger entry to reverse.
+    // ------------------------------------------------------------------
+    const settledWithoutTransfer = await ctx.db
+      .query("donations")
+      .withIndex("by_fund", (q) => q.eq("fundId", args.fundId))
+      .filter((q) => q.eq(q.field("allocationStatus"), "allocated"))
+      .collect();
+
+    let reopenedCents = 0;
+    for (const donation of settledWithoutTransfer) {
+      await ctx.db.patch(donation._id, { allocationStatus: "pending" });
+      // Sum on the same basis `computePendingAllocationCents` will now count
+      // them: the delivered net once a payout bound one, gross otherwise.
+      reopenedCents +=
+        donation.payoutNetCents ?? donation.amountCents + donation.feeCoverCents;
+    }
+
     await ctx.db.patch(args.fundId, {
       increaseAccountId: args.increaseAccountId,
       updatedAt: now(),
     });
+
     // Binding a fund to a bank account is a control-plane event worth a
     // trail: it's the moment allocation and nightly reconcile start covering
     // the fund, and for a backfilled General Account it's the only record of
@@ -961,6 +1015,29 @@ export const recordFundAccount = internalMutation({
       action: "fund.account_provisioned",
       details: { type: fund.type, increaseAccountId: args.increaseAccountId },
     });
+
+    if (settledWithoutTransfer.length > 0) {
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: args.fundId,
+        action: "allocation.reopened",
+        details: {
+          reason: "fund_account_provisioned_after_the_fact",
+          reopenedCount: settledWithoutTransfer.length,
+          reopenedCents,
+          // Capped: the point of the row is that an operator can find the
+          // affected gifts, not that it holds an unbounded array.
+          donationIds: settledWithoutTransfer.slice(0, 100).map((d) => d._id),
+          truncated: settledWithoutTransfer.length > 100,
+        },
+      });
+    }
+
+    return {
+      provisioned: true,
+      reopenedCount: settledWithoutTransfer.length,
+      reopenedCents,
+    };
   },
 });
 

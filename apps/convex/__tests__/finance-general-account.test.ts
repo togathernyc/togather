@@ -34,21 +34,29 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 // Provider fakes
 // ============================================================================
 
-const createAccount = vi.fn(async (entityId: string, name: string) => ({
+/** Third arg is the Increase idempotency key — asserted on, so it's declared. */
+const defaultCreateAccount = async (
+  entityId: string,
+  name: string,
+  _idempotencyKey?: string,
+) => ({
   id: `account_${name.toLowerCase().replace(/\W+/g, "_")}_${entityId}`,
   name,
   status: "open",
-}));
+});
+const createAccount = vi.fn(defaultCreateAccount);
 const createEntity = vi.fn(async () => ({ id: "entity_fake", status: "active" }));
 const createAccountNumber = vi.fn(async () => ({
   id: "account_number_fake",
   accountNumber: "987654321",
   routingNumber: "101010101",
 }));
-const createAccountTransfer = vi.fn(async () => ({
-  id: `transfer_${createAccountTransfer.mock.calls.length}`,
-  status: "complete",
-}));
+const createAccountTransfer = vi.fn(
+  async (_input?: Record<string, unknown>) => ({
+    id: `transfer_${createAccountTransfer.mock.calls.length}`,
+    status: "complete",
+  }),
+);
 const getAccountBalance = vi.fn(async () => ({
   currentBalanceCents: 0,
   availableBalanceCents: 0,
@@ -100,6 +108,9 @@ vi.mock("../lib/finance/stripeConnect", async (importOriginal) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks wipes call history but NOT implementations — a test that
+  // makes createAccount throw would otherwise poison every test after it.
+  createAccount.mockImplementation(defaultCreateAccount);
   payoutStubs.clear();
 });
 
@@ -184,6 +195,8 @@ async function insertDonation(
   amountCents: number,
   /** Allocation matches on this, so a payout stub has to name it. */
   paymentIntentId = `pi_${Math.random().toString(36).slice(2)}`,
+  /** "allocated" reproduces the pre-fix shape: booked settled, never moved. */
+  allocationStatus: "pending" | "allocated" = "pending",
 ): Promise<Id<"donations">> {
   return await t.run(async (ctx) => {
     const timestamp = Date.now();
@@ -192,7 +205,7 @@ async function insertDonation(
       amountCents,
       feeCoverCents: 0,
       stripePaymentIntentId: paymentIntentId,
-      allocationStatus: "pending" as const,
+      allocationStatus,
       receiptEmailStatus: "pending" as const,
       createdAt: timestamp,
     });
@@ -215,7 +228,7 @@ describe("provisionProviders creates the General Account", () => {
 
     // Two accounts under the Entity: receiving + General (ADR-032 §1).
     const accountNames = createAccount.mock.calls.map((c) => c[1]);
-    expect(accountNames).toEqual(["Receiving Account", "General Account"]);
+    expect(accountNames).toEqual(["Receiving Account", "General Fund"]);
 
     const generalFund = await t.run((ctx) =>
       ctx.db
@@ -226,6 +239,12 @@ describe("provisionProviders creates the General Account", () => {
     );
     expect(generalFund).not.toBeNull();
     expect(generalFund?.increaseAccountId).toBeTruthy();
+
+    // THE KEY, not just the name. Increase dedupes on the idempotency key, so
+    // a second key for the same logical account is a second bank Account.
+    expect(createAccount.mock.calls[1][2]).toBe(
+      `finance:general-account:${generalFund?._id}`,
+    );
 
     // …and it is NOT the receiving Account — the two must stay distinct, or
     // "allocating" to the General fund would be a transfer to itself.
@@ -274,6 +293,87 @@ describe("provisionProviders creates the General Account", () => {
         .first(),
     );
     expect(generalFund?.increaseAccountId).toBe(firstAccountId);
+  });
+});
+
+// ============================================================================
+// One idempotency key per fund, across every provisioning path
+// ============================================================================
+
+describe("the General Account has ONE idempotency key everywhere", () => {
+  /** Every key `createAccount` was asked for, in call order. */
+  const keysAskedFor = () => createAccount.mock.calls.map((c) => c[2]);
+
+  test("provisionProviders and the backfill agree on the key", async () => {
+    // The bug: provisionProviders keyed the General Account on
+    // `communityId:fingerprint` while provisionFundAccount keyed it on the
+    // fund id. Increase dedupes on the key, so two keys = two real bank
+    // Accounts under a KYB'd Entity, one of them unreferenced and unaudited.
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedCommunity(t);
+    await insertFinance(t, communityId);
+
+    await t.action(internal.functions.finance.onboarding.provisionProviders, {
+      communityId,
+    });
+    const generalFund = await t.run((ctx) =>
+      ctx.db
+        .query("funds")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .filter((q) => q.eq(q.field("type"), "general"))
+        .first(),
+    );
+    const expectedKey = `finance:general-account:${generalFund?._id}`;
+    expect(keysAskedFor()).toContain(expectedKey);
+
+    // Now the OTHER path, on a fund deliberately reset to the pre-backfill
+    // shape: it must ask for the very same key.
+    await t.run((ctx) =>
+      ctx.db.patch(generalFund!._id, { increaseAccountId: undefined }),
+    );
+    createAccount.mockClear();
+    await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      {},
+    );
+    expect(keysAskedFor()).toEqual([expectedKey]);
+  });
+
+  test("the enableGroupGiving self-heal uses it too, and a group fund keeps the historical prefix", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedCommunity(t);
+    await insertFinance(t, communityId, {
+      onboardingStatus: "live",
+      stripeConnectedAccountId: "acct_live",
+      increaseEntityId: "entity_live",
+      increaseReceivingAccountId: "account_receiving_live",
+    });
+    const generalFundId = await insertFund(t, communityId, {
+      type: "general",
+      name: "General Fund",
+    });
+    const groupFundId = await insertFund(t, communityId, {
+      type: "group",
+      name: "Youth Fund",
+    });
+
+    await t.action(
+      internal.functions.finance.onboarding.provisionFundAccount,
+      { fundId: generalFundId },
+    );
+    await t.action(
+      internal.functions.finance.onboarding.provisionFundAccount,
+      { fundId: groupFundId },
+    );
+
+    // `group-account` is kept on purpose for group funds — changing it would
+    // ask Increase for a second Account for any first attempt still in flight
+    // under the old key. The General Account never had that history.
+    expect(keysAskedFor()).toEqual([
+      `finance:general-account:${generalFundId}`,
+      `finance:group-account:${groupFundId}`,
+    ]);
   });
 });
 
@@ -343,6 +443,138 @@ describe("backfillGeneralFundAccounts", () => {
 
     expect(second.provisioned).toBe(0);
     expect(createAccount).not.toHaveBeenCalled();
+  });
+
+  test("isolates a failing community and reports truthful counts", async () => {
+    const t = convexTest(schema, modules);
+
+    const good = await seedCommunity(t);
+    await insertFinance(t, good.communityId, {
+      onboardingStatus: "live",
+      increaseEntityId: "entity_good",
+      increaseReceivingAccountId: "account_receiving_good",
+    });
+    const goodFundId = await insertFund(t, good.communityId, {
+      type: "general",
+      name: "General Fund",
+    });
+
+    const bad = await seedCommunity(t);
+    await insertFinance(t, bad.communityId, {
+      onboardingStatus: "live",
+      increaseEntityId: "entity_bad",
+      increaseReceivingAccountId: "account_receiving_bad",
+    });
+    const badFundId = await insertFund(t, bad.communityId, {
+      type: "general",
+      name: "General Fund",
+    });
+
+    // One community's Entity is rejected by Increase. Before per-fund
+    // isolation this aborted the whole run mid-way and ops got a stack trace
+    // with no idea how far it got.
+    createAccount.mockImplementation(async (entityId: string, name: string) => {
+      if (entityId === "entity_bad") {
+        throw new Error("entity is not eligible for accounts");
+      }
+      return {
+        id: `account_${name.toLowerCase().replace(/\W+/g, "_")}_${entityId}`,
+        name,
+        status: "open",
+      };
+    });
+
+    const result = await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      {},
+    );
+
+    expect(result.provisioned).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(await t.run((ctx) => ctx.db.get(goodFundId))).toMatchObject({
+      increaseAccountId: expect.stringContaining("entity_good"),
+    });
+    expect(
+      (await t.run((ctx) => ctx.db.get(badFundId)))?.increaseAccountId,
+    ).toBeUndefined();
+    expect(
+      result.funds.find((f) => f.fundId === badFundId),
+    ).toMatchObject({ status: "failed" });
+  });
+
+  test("`provisioned` counts what was written, not what was attempted", async () => {
+    // provisionFundAccount fails SOFT on a community with no Increase Entity
+    // (it logs and returns), so a run could previously report a dozen
+    // provisioned having provisioned none. That soft path is unreachable from
+    // the list query, but a concurrent run winning the race is not: the fund
+    // already has an Account by the time we get to it.
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedCommunity(t);
+    await insertFinance(t, communityId, {
+      onboardingStatus: "live",
+      increaseEntityId: "entity_live",
+      increaseReceivingAccountId: "account_receiving_live",
+    });
+    const fundId = await insertFund(t, communityId, {
+      type: "general",
+      name: "General Fund",
+    });
+
+    let raced = false;
+    createAccount.mockImplementation(async (entityId: string, name: string) => {
+      if (!raced) {
+        raced = true;
+        // Stand in for the other run's recordFundAccount landing first.
+        await t.run((ctx) =>
+          ctx.db.patch(fundId, { increaseAccountId: "account_from_other_run" }),
+        );
+      }
+      return { id: `account_${name}_${entityId}`, name, status: "open" };
+    });
+
+    const result = await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      {},
+    );
+
+    expect(result).toMatchObject({ provisioned: 0, skipped: 1, failed: 0 });
+    expect(
+      (await t.run((ctx) => ctx.db.get(fundId)))?.increaseAccountId,
+    ).toBe("account_from_other_run");
+  });
+
+  test("a dry run reports the work without doing any of it", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedCommunity(t);
+    await insertFinance(t, communityId, {
+      onboardingStatus: "live",
+      increaseEntityId: "entity_live",
+      increaseReceivingAccountId: "account_receiving_live",
+    });
+    const generalFundId = await insertFund(t, communityId, {
+      type: "general",
+      name: "General Fund",
+      balanceCents: 10_000,
+    });
+    await insertDonation(t, generalFundId, 10_000, "pi_hist_dry", "allocated");
+
+    const result = await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      { dryRun: true },
+    );
+
+    expect(result).toMatchObject({
+      provisioned: 1,
+      reopened: 1,
+      reopenedCents: 10_000,
+    });
+    expect(createAccount).not.toHaveBeenCalled();
+    expect(
+      (await t.run((ctx) => ctx.db.get(generalFundId)))?.increaseAccountId,
+    ).toBeUndefined();
   });
 
   test("skips a community whose own onboarding never produced an Entity", async () => {
@@ -467,6 +699,176 @@ describe("allocation of general-fund donations", () => {
         .collect(),
     );
     expect(audits.some((a) => a.action === "allocation.transfer_failed")).toBe(true);
+  });
+});
+
+// ============================================================================
+// The history the backfill inherits (the reason the alarm would never clear)
+// ============================================================================
+
+describe("backfilling a community that already has no-transfer history", () => {
+  /**
+   * The pre-fix shape, exactly: general-fund donations flipped to "allocated"
+   * with no transfer, so the ledger holds their gross while the cash is still
+   * in the receiving Account. Minting the General Account brings the fund into
+   * reconcile scope; without reconciling the history first, the nightly job
+   * would report the whole historical balance as drift every night, forever.
+   */
+  async function seedHistoricalCommunity(t: ReturnType<typeof convexTest>) {
+    const { communityId } = await seedCommunity(t);
+    await insertFinance(t, communityId, {
+      onboardingStatus: "live",
+      stripeConnectedAccountId: "acct_hist",
+      increaseEntityId: "entity_hist",
+      increaseReceivingAccountId: "account_receiving_hist",
+    });
+    const generalFundId = await insertFund(t, communityId, {
+      type: "general",
+      name: "General Fund",
+      // The gross credit recordDonationSucceeded posted at gift time; no fee
+      // debit was ever realised, because no transfer ever landed.
+      balanceCents: 10_000,
+    });
+    const donationId = await insertDonation(
+      t,
+      generalFundId,
+      10_000,
+      "pi_hist_1",
+      "allocated",
+    );
+    return { communityId, generalFundId, donationId };
+  }
+
+  test("reconciles to ZERO drift the first night after the backfill", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, generalFundId, donationId } =
+      await seedHistoricalCommunity(t);
+
+    const result = await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      // No payout history to replay here — this is the pure "did we avoid
+      // arming a permanent alarm" case.
+      { resumeAllocations: false },
+    );
+    expect(result).toMatchObject({
+      provisioned: 1,
+      reopened: 1,
+      reopenedCents: 10_000,
+      stillPending: 1,
+    });
+
+    // The donation is back to what it factually is: money attributed to the
+    // fund that has not been moved into the fund's Account.
+    const donation = await t.run((ctx) => ctx.db.get(donationId));
+    expect(donation?.allocationStatus).toBe("pending");
+
+    // Ledger 10,000 == bank 0 + pending 10,000. No drift, no alarm.
+    getAccountBalance.mockResolvedValueOnce({
+      currentBalanceCents: 0,
+      availableBalanceCents: 0,
+    });
+    const reconcile = await t.action(
+      internal.functions.finance.jobs.runNightlyReconcile,
+      { communityId },
+    );
+    expect(reconcile).toEqual({ checked: 1, drifted: 0 });
+
+    const audits = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", generalFundId))
+        .collect(),
+    );
+    expect(audits.some((a) => a.action === "reconcile.drift")).toBe(false);
+    // …and the reopen is on the trail, so an operator can see what moved.
+    const reopened = audits.find((a) => a.action === "allocation.reopened");
+    expect(reopened).toBeDefined();
+    expect(JSON.parse(reopened!.detailsJson!).reopenedCents).toBe(10_000);
+  });
+
+  test("the ledger is only appended to — the historical entry survives untouched", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, generalFundId } = await seedHistoricalCommunity(t);
+    const entryId = await t.run((ctx) =>
+      ctx.db.insert("ledgerEntries", {
+        fundId: generalFundId,
+        communityId,
+        direction: "credit" as const,
+        amountCents: 10_000,
+        kind: "donation" as const,
+        idempotencyKey: "donation:pi_hist_1",
+        createdAt: Date.now(),
+      }),
+    );
+
+    await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      { resumeAllocations: false },
+    );
+
+    // Reopening a donation rewrites no history: the gift really was credited,
+    // and allocation posts no credit of its own, so there is nothing to
+    // reverse — which is what keeps the append-only rule intact.
+    const entries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", generalFundId))
+        .collect(),
+    );
+    expect(entries.map((e) => e._id)).toEqual([entryId]);
+    expect(entries[0].amountCents).toBe(10_000);
+  });
+
+  test("replaying the recorded payout actually moves the cash into the General Account", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, generalFundId, donationId } =
+      await seedHistoricalCommunity(t);
+
+    // The payout that carried this gift is already on record — allocation
+    // wrote it the first time round. Replaying it re-reads the real per-charge
+    // NET from Stripe, so nothing has to be invented.
+    await t.run((ctx) =>
+      ctx.db.insert("processedStripePayouts", {
+        communityId,
+        stripePayoutId: "po_hist_1",
+        payoutCents: 9_700,
+        processedAt: Date.now(),
+      }),
+    );
+    payoutStubs.set("po_hist_1", [
+      { paymentIntentId: "pi_hist_1", netCents: 9_700 },
+    ]);
+
+    const result = await t.action(
+      internal.migrations.backfillGeneralFundAccounts
+        .backfillGeneralFundAccounts,
+      {},
+    );
+    expect(result).toMatchObject({ reopened: 1, resumed: 1, stillPending: 0 });
+
+    // A real receiving -> General AccountTransfer, at the delivered net.
+    expect(createAccountTransfer).toHaveBeenCalledTimes(1);
+    expect(createAccountTransfer.mock.calls[0][0]).toMatchObject({
+      fromAccountId: "account_receiving_hist",
+      amountCents: 9_700,
+      idempotencyKey: `alloc:${donationId}`,
+    });
+
+    // Ledger settles to net (the 300-cent Stripe fee is realised as a debit),
+    // bank holds net, nothing pending — the invariant closes.
+    const fund = await t.run((ctx) => ctx.db.get(generalFundId));
+    expect(fund?.balanceCents).toBe(9_700);
+    getAccountBalance.mockResolvedValueOnce({
+      currentBalanceCents: 9_700,
+      availableBalanceCents: 9_700,
+    });
+    expect(
+      await t.action(internal.functions.finance.jobs.runNightlyReconcile, {
+        communityId,
+      }),
+    ).toEqual({ checked: 1, drifted: 0 });
   });
 });
 
