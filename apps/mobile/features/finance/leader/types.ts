@@ -72,3 +72,89 @@ export const FUND_ROLE_LABELS: Record<FundRole, string> = {
 /** Backend guardrails surfaced verbatim to admins granting/reviewing roles. */
 export const GIVING_GUARDRAILS_NOTE =
   "Approvals over $200 need a second approver. You can't approve your own requests.";
+
+/**
+ * Group-fund virtual cards (ADR-032 cards phase). Mirrors
+ * `apps/convex/functions/finance/cards.ts`'s `listFundCards`/`getCardDetail`
+ * return shapes — loosely typed (string ids) per this file's Convex-free
+ * contract for presentational Views.
+ */
+export type CardStatus = "pending" | "active" | "disabled" | "canceled" | "failed";
+export type CardLimitPeriod = "week" | "month" | "charge";
+
+export interface FundCard {
+  id: string;
+  name: string;
+  holderUserId: string;
+  holderName: string;
+  last4: string;
+  status: CardStatus;
+  spendLimitCents: number | null;
+  limitPeriod: CardLimitPeriod | null;
+  createdAt: number;
+}
+
+export interface CardActivityEntry {
+  id: string;
+  amountCents: number;
+  description: string;
+  status: ExpenseStatus;
+  receiptAttached: boolean;
+  createdAt: number;
+}
+
+export interface CardDetail extends FundCard {
+  activity: CardActivityEntry[];
+}
+
+/** A fund member eligible to hold a card — cardholder role or higher. */
+export interface CardholderCandidate {
+  userId: string;
+  name: string;
+  role: FundRole;
+}
+
+export const CARD_LIMIT_PERIOD_LABELS: Record<CardLimitPeriod, string> = {
+  week: "week",
+  month: "month",
+  charge: "charge",
+};
+
+/** "$250 / week" / "$500 / month" / "$40 / charge" / "No limit" for card rows. */
+export function formatCardLimit(
+  spendLimitCents: number | null,
+  limitPeriod: CardLimitPeriod | null,
+  formatCents: (cents: number) => string,
+): string {
+  if (spendLimitCents == null || limitPeriod == null) return "No limit";
+  return `${formatCents(spendLimitCents)} / ${CARD_LIMIT_PERIOD_LABELS[limitPeriod]}`;
+}
+
+/** Fund policy surfaced verbatim on the create-card sheet and card detail. */
+export const CARD_RECEIPTS_POLICY_NOTE =
+  "Two finance admins must approve any single charge over $200 — this is fund policy and applies to every card.";
+
+/**
+ * Giving hub balance header + month-to-date stat tiles. Mirrors the fields
+ * of `getFundOverview`'s return (`fund.name`, `balanceCents`,
+ * `monthToDate.*`) the hub actually renders — kept as a narrow local shape
+ * rather than importing the member feature's `FundOverview` type, per this
+ * file's Convex-free, cross-feature-import-free contract.
+ */
+export interface GivingHubBalanceSummary {
+  fundName: string;
+  balanceCents: number;
+  monthDonationsCents: number;
+  monthDonationCount: number;
+  monthSpentCents: number;
+}
+
+/** A single "Recent activity" row — mirrors `getFundOverview`'s `activity` entries. */
+export interface GivingHubActivityEntry {
+  id: string;
+  kind: string;
+  amountCents: number;
+  direction: "credit" | "debit";
+  createdAt: number;
+  donorName?: string | null;
+}

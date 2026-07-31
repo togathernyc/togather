@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react-native";
 import { GivingHubView } from "../GivingHubView";
-import type { GivingExpense } from "../types";
+import type { FundCard, GivingExpense, GivingHubBalanceSummary } from "../types";
 
 function makeExpense(overrides: Partial<GivingExpense> = {}): GivingExpense {
   return {
@@ -27,20 +27,54 @@ function makeExpense(overrides: Partial<GivingExpense> = {}): GivingExpense {
   };
 }
 
+function makeCard(overrides: Partial<FundCard> = {}): FundCard {
+  return {
+    id: "card-1",
+    name: "Groceries & supplies",
+    holderUserId: "user-2",
+    holderName: "Carol Williams",
+    last4: "4921",
+    status: "active",
+    spendLimitCents: 25000,
+    limitPeriod: "week",
+    createdAt: Date.now(),
+    ...overrides,
+  };
+}
+
+const balance: GivingHubBalanceSummary = {
+  fundName: "Just the 2 of us",
+  balanceCents: 128450,
+  monthDonationsCents: 64000,
+  monthDonationCount: 12,
+  monthSpentCents: 21238,
+};
+
 const baseProps = {
   state: "ready" as const,
   groupName: "Young Adults",
-  tab: "pending" as const,
-  onTabChange: jest.fn(),
+  givingLive: true,
+  balance,
+  cards: [] as FundCard[],
+  isLoadingCards: false,
+  canManageCards: true,
+  expenses: [] as GivingExpense[],
   isLoadingExpenses: false,
   canApprove: true,
   currentUserId: "leader-1",
   processingExpenseId: null,
   onApprove: jest.fn(),
   onDeny: jest.fn(),
+  activity: [],
   onEnableGiving: jest.fn(),
   isEnablingGiving: false,
   onViewRoles: jest.fn(),
+  onGivePress: jest.fn(),
+  onReimbursePress: jest.fn(),
+  onCreateCardPress: jest.fn(),
+  onSharePress: jest.fn(),
+  onViewCard: jest.fn(),
+  onViewAllActivity: jest.fn(),
 };
 
 describe("GivingHubView", () => {
@@ -48,55 +82,155 @@ describe("GivingHubView", () => {
     jest.clearAllMocks();
   });
 
-  it("shows the two-approver state for an expense with one approval already recorded", () => {
-    const expense = makeExpense({ approverId: "manager-1", status: "pending" });
-    render(<GivingHubView {...baseProps} expenses={[expense]} />);
+  describe("balance header", () => {
+    it("renders the fund balance and 'Giving is live' chip", () => {
+      render(<GivingHubView {...baseProps} />);
 
-    expect(screen.getByText("1 of 2 approvals")).toBeTruthy();
+      expect(screen.getByText("$1,284.50")).toBeTruthy();
+      expect(screen.getByText("Giving is live")).toBeTruthy();
+      expect(screen.getByText("$640.00")).toBeTruthy();
+    });
+
+    it("hides the 'Giving is live' chip when givingLive is false", () => {
+      render(<GivingHubView {...baseProps} givingLive={false} />);
+
+      expect(screen.queryByText("Giving is live")).toBeNull();
+    });
   });
 
-  it("does not show the two-approver badge when no approval has been recorded yet", () => {
-    const expense = makeExpense({ approverId: null, status: "pending" });
-    render(<GivingHubView {...baseProps} expenses={[expense]} />);
+  describe("quick actions", () => {
+    it("calls onGivePress and onReimbursePress when tapped", () => {
+      const onGivePress = jest.fn();
+      const onReimbursePress = jest.fn();
+      render(<GivingHubView {...baseProps} onGivePress={onGivePress} onReimbursePress={onReimbursePress} />);
 
-    expect(screen.queryByText("1 of 2 approvals")).toBeNull();
+      fireEvent.press(screen.getByTestId("giving-hub-action-give"));
+      fireEvent.press(screen.getByTestId("giving-hub-action-reimburse"));
+
+      expect(onGivePress).toHaveBeenCalled();
+      expect(onReimbursePress).toHaveBeenCalled();
+    });
+
+    it("hides Share fund when onSharePress is undefined", () => {
+      render(<GivingHubView {...baseProps} onSharePress={undefined} />);
+
+      expect(screen.queryByTestId("giving-hub-action-share")).toBeNull();
+    });
   });
 
-  it("hides Approve/Deny controls when the viewer cannot approve", () => {
-    const expense = makeExpense();
-    render(<GivingHubView {...baseProps} expenses={[expense]} canApprove={false} />);
+  describe("cards", () => {
+    it("renders card rows with holder, limit, and status badge", () => {
+      render(<GivingHubView {...baseProps} cards={[makeCard()]} />);
 
-    expect(screen.queryByText("Approve")).toBeNull();
-    expect(screen.queryByText("Deny")).toBeNull();
+      expect(screen.getByText("Groceries & supplies ·· 4921")).toBeTruthy();
+      expect(screen.getByText("Carol Williams · $250.00 / week")).toBeTruthy();
+      expect(screen.getByText("Active")).toBeTruthy();
+    });
+
+    it("shows a Frozen badge for a disabled card", () => {
+      render(<GivingHubView {...baseProps} cards={[makeCard({ status: "disabled" })]} />);
+
+      expect(screen.getByText("Frozen")).toBeTruthy();
+    });
+
+    it("calls onViewCard when a card row is pressed", () => {
+      const onViewCard = jest.fn();
+      render(<GivingHubView {...baseProps} cards={[makeCard()]} onViewCard={onViewCard} />);
+
+      fireEvent.press(screen.getByTestId("giving-hub-card-card-1"));
+      expect(onViewCard).toHaveBeenCalledWith("card-1");
+    });
+
+    it("shows the 'Create a virtual card…' action and New card tile when canManageCards is true", () => {
+      render(<GivingHubView {...baseProps} canManageCards />);
+
+      expect(screen.getByTestId("giving-hub-action-new-card")).toBeTruthy();
+      expect(screen.getByTestId("giving-hub-create-card")).toBeTruthy();
+    });
+
+    it("hides the create-card affordances when canManageCards is false", () => {
+      render(<GivingHubView {...baseProps} canManageCards={false} cards={[]} />);
+
+      expect(screen.queryByTestId("giving-hub-action-new-card")).toBeNull();
+      expect(screen.queryByTestId("giving-hub-create-card")).toBeNull();
+      expect(screen.getByText("No cards yet")).toBeTruthy();
+    });
+
+    it("calls onCreateCardPress when the create-card row is pressed", () => {
+      const onCreateCardPress = jest.fn();
+      render(<GivingHubView {...baseProps} onCreateCardPress={onCreateCardPress} />);
+
+      fireEvent.press(screen.getByTestId("giving-hub-create-card"));
+      expect(onCreateCardPress).toHaveBeenCalled();
+    });
   });
 
-  it("hides Approve/Deny controls and shows a note for the submitter's own request", () => {
-    const expense = makeExpense({ submitter: { ...makeExpense().submitter, id: "leader-1" } });
-    render(<GivingHubView {...baseProps} expenses={[expense]} currentUserId="leader-1" />);
+  describe("approvals", () => {
+    it("shows the two-approver state for an expense with one approval already recorded", () => {
+      const expense = makeExpense({ approverId: "manager-1", status: "pending" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
 
-    expect(screen.queryByText("Approve")).toBeNull();
-    expect(screen.getByText("You can't approve your own request.")).toBeTruthy();
+      expect(screen.getByText("1 of 2 approvals")).toBeTruthy();
+    });
+
+    it("does not show the two-approver badge when no approval has been recorded yet", () => {
+      const expense = makeExpense({ approverId: null, status: "pending" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
+
+      expect(screen.queryByText("1 of 2 approvals")).toBeNull();
+    });
+
+    it("hides Approve/Deny controls when the viewer cannot approve", () => {
+      const expense = makeExpense();
+      render(<GivingHubView {...baseProps} expenses={[expense]} canApprove={false} />);
+
+      expect(screen.queryByText("Approve")).toBeNull();
+      expect(screen.queryByText("Deny")).toBeNull();
+    });
+
+    it("hides Approve/Deny controls and shows a note for the submitter's own request", () => {
+      const expense = makeExpense({ submitter: { ...makeExpense().submitter, id: "leader-1" } });
+      render(<GivingHubView {...baseProps} expenses={[expense]} currentUserId="leader-1" />);
+
+      expect(screen.queryByText("Approve")).toBeNull();
+      expect(screen.getByText("You can't approve your own request.")).toBeTruthy();
+    });
+
+    it("calls onApprove with the expense id when Approve is pressed", () => {
+      const onApprove = jest.fn();
+      const expense = makeExpense();
+      render(<GivingHubView {...baseProps} expenses={[expense]} onApprove={onApprove} />);
+
+      fireEvent.press(screen.getByText("Approve"));
+      expect(onApprove).toHaveBeenCalledWith("expense-1");
+    });
+
+    it("flags a card charge missing a receipt", () => {
+      const expense = makeExpense({ kind: "card_charge", receiptUrl: null, description: "TRADER JOE'S #552" });
+      render(<GivingHubView {...baseProps} expenses={[expense]} />);
+
+      expect(screen.getByText("receipt missing")).toBeTruthy();
+    });
+
+    it("shows 'No pending approvals' when there are no pending expenses", () => {
+      render(<GivingHubView {...baseProps} expenses={[]} />);
+
+      expect(screen.getByText("No pending approvals")).toBeTruthy();
+    });
   });
 
-  it("calls onApprove with the expense id when Approve is pressed", () => {
-    const onApprove = jest.fn();
-    const expense = makeExpense();
-    render(<GivingHubView {...baseProps} expenses={[expense]} onApprove={onApprove} />);
+  describe("top-level states", () => {
+    it("renders the enable-giving CTA for community admins when no fund exists", () => {
+      render(<GivingHubView {...baseProps} state="no-fund-admin" expenses={[]} />);
 
-    fireEvent.press(screen.getByText("Approve"));
-    expect(onApprove).toHaveBeenCalledWith("expense-1");
-  });
+      expect(screen.getByText("Enable giving for this group")).toBeTruthy();
+    });
 
-  it("renders the enable-giving CTA for community admins when no fund exists", () => {
-    render(<GivingHubView {...baseProps} state="no-fund-admin" expenses={[]} />);
+    it("renders an explainer (no CTA) for non-admins when no fund exists", () => {
+      render(<GivingHubView {...baseProps} state="no-fund-member" expenses={[]} />);
 
-    expect(screen.getByText("Enable giving for this group")).toBeTruthy();
-  });
-
-  it("renders an explainer (no CTA) for non-admins when no fund exists", () => {
-    render(<GivingHubView {...baseProps} state="no-fund-member" expenses={[]} />);
-
-    expect(screen.queryByText("Enable giving for this group")).toBeNull();
-    expect(screen.getByText(/Ask a community admin/)).toBeTruthy();
+      expect(screen.queryByText("Enable giving for this group")).toBeNull();
+      expect(screen.getByText(/Ask a community admin/)).toBeTruthy();
+    });
   });
 });
