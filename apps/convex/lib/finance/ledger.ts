@@ -59,6 +59,11 @@ const FROZEN_ALLOWED_KINDS: ReadonlySet<LedgerKind> = new Set([
   // spend; it just loses the record (webhook retries expire against an
   // indefinitely-frozen archived fund). Same in-flight reasoning as refunds.
   "card_capture",
+  // The Stripe processing fee on a donation given before the freeze, realised
+  // when its allocation transfer lands after it (jobs.ts recordAllocation).
+  // Stripe already kept the money; refusing the entry would leave the frozen
+  // fund's ledger overstating its balance forever. Same in-flight reasoning.
+  "fee",
 ]);
 
 // ============================================================================

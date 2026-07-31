@@ -191,7 +191,17 @@ export function GivingHubView({
               value={formatCents(balance.monthDonationsCents)}
               sub={`${balance.monthDonationCount} ${balance.monthDonationCount === 1 ? "gift" : "gifts"}`}
             />
-            <StatTile label="SPENT THIS MONTH" value={formatCents(balance.monthSpentCents)} />
+            <StatTile
+              label="SPENT THIS MONTH"
+              value={formatCents(balance.monthSpentCents)}
+              // Processing fees aren't spend, but hiding them makes "given"
+              // minus "spent" fail to reconcile against the balance above.
+              sub={
+                balance.monthFeesCents > 0
+                  ? `+ ${formatCents(balance.monthFeesCents)} fees`
+                  : undefined
+              }
+            />
             <StatTile
               label="PENDING"
               value={formatCents(pendingTotalCents)}

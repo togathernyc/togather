@@ -54,8 +54,20 @@ jest.mock("@components/ui", () => {
 const baseOverview: FundOverview = {
   fund: { id: "fund1", name: "Small Group Fund", status: "active" },
   balanceCents: 123456,
-  monthToDate: { donationsCents: 5000, spentCents: 2000, donationCount: 2 },
-  yearToDate: { donationsCents: 50000, spentCents: 20000, donationCount: 12 },
+  monthToDate: {
+    donationsCents: 5000,
+    spentCents: 2000,
+    feesCents: 175,
+    refundedCents: 0,
+    donationCount: 2,
+  },
+  yearToDate: {
+    donationsCents: 50000,
+    spentCents: 20000,
+    feesCents: 1810,
+    refundedCents: 0,
+    donationCount: 12,
+  },
   activity: [
     {
       id: "e1",
@@ -129,6 +141,42 @@ describe("FundScreenView", () => {
       />,
     );
     expect(screen.getByText(formatCents(123456))).toBeTruthy();
+  });
+
+  it("shows card fees on their own line instead of inflating 'spent'", () => {
+    render(
+      <FundScreenView
+        overview={baseOverview}
+        myExpenses={baseExpenses}
+        onBack={noop}
+        onGivePress={noop}
+        onGetReimbursedPress={noop}
+      />,
+    );
+
+    // MTD spent stays $20.00 — the group's own outgoings — and the $1.75
+    // Stripe kept is named rather than counted as spending.
+    expect(screen.getByText(/\$20\.00 spent/)).toBeTruthy();
+    expect(screen.getByText("$1.75 card fees")).toBeTruthy();
+    expect(screen.getByText("$18.10 card fees")).toBeTruthy();
+  });
+
+  it("omits the fees line when a period had none", () => {
+    render(
+      <FundScreenView
+        overview={{
+          ...baseOverview,
+          monthToDate: { ...baseOverview.monthToDate, feesCents: 0 },
+          yearToDate: { ...baseOverview.yearToDate, feesCents: 0 },
+        }}
+        myExpenses={baseExpenses}
+        onBack={noop}
+        onGivePress={noop}
+        onGetReimbursedPress={noop}
+      />,
+    );
+
+    expect(screen.queryByText(/card fees/)).toBeNull();
   });
 
   it("labels activity kinds and formats signed amounts, showing donor names when present", () => {

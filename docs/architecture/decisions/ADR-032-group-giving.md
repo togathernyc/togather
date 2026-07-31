@@ -126,11 +126,13 @@ and can delegate from there.
   fees as a charge), ACH debit offered for large gifts. `payment_intent.
   succeeded` writes `donations` + a credit `ledgerEntries` row and sends the
   Resend receipt from the church's name/EIN.
-- **Allocation**: Stripe pays out in bulk (T+2) to the receiving Account. An
-  allocation job splits each payout into group Accounts via Increase
-  AccountTransfers, driven by donation metadata; `donations.allocationStatus`
-  tracks it. This is the one place the seam between vendors shows, and it is
-  a background job, not a user-facing flow.
+- **Allocation**: Stripe pays out in bulk (T+2) to the receiving Account,
+  **net** of processing fees. An allocation job asks Stripe which charges
+  composed the payout and at what net (balance transactions), then splits
+  those nets into group Accounts via Increase AccountTransfers;
+  `donations.allocationStatus` tracks it and the `gross − net` fee is posted
+  to the ledger as the transfer lands. This is the one place the seam between
+  vendors shows, and it is a background job, not a user-facing flow.
 - **Card spend**: Increase Card bound to the group's Account, spend limit,
   digital wallet token (Apple/Google Pay). Authorization is scoped by the
   Account balance natively. The card-transaction webhook writes the debit
@@ -187,7 +189,10 @@ fundRoles         fundId, userId, role: "finance_admin" | "manager"
                       | "cardholder", grantedBy, grantedAt, revokedAt?
 donations         fundId, donorUserId?, amountCents, feeCoverCents,
                   stripePaymentIntentId, allocationStatus, recurringId?,
-                  receiptEmailStatus
+                  receiptEmailStatus,
+                  allocationPayoutId?, payoutNetCents?  (the payout this gift
+                  was matched into and the NET it delivered — see §3
+                  Allocation and Phase-2 requirement 6)
 cards             fundId, holderUserId, increaseCardId, status,
                   spendLimitCents, controls
 expenses          fundId, submitterId, amountCents,
@@ -305,9 +310,27 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
 5. **Offboarding runbook.** A church leaving Togather gets its full balance
    ACH'd to its verified bank and its Increase accounts closed — tooling +
    terms-of-service clause, not a support ticket.
-6. **Net-amount allocation.** Allocation matching must switch from gross
-   donation totals to Stripe balance-transaction per-charge NET amounts
-   (already documented as a hard go-live prerequisite in ARCHITECTURE.md).
+6. **Net-amount allocation.** ✅ **Done** — allocation matching now reads
+   Stripe balance-transaction per-PaymentIntent NET amounts for the payout
+   (`getPayoutComposition`) instead of gross donation totals, which also
+   means the payout tells us exactly which donations it contained rather
+   than the job inferring membership from a running total. Falls out of
+   that: allocation is retried per (payout, donation) rather than dropped
+   whole on a redelivered webhook, so one failed Increase transfer no longer
+   strands the rest of the batch; and the fee Stripe kept is posted as a
+   `fee` ledger debit when the transfer lands, which is what makes the
+   §3 invariant satisfiable and a stalled allocation visible as drift.
+   Reversals (refunds and chargeback `adjustment`s) are netted against their
+   own charge rather than discarded, so a gift refunded before its payout
+   contributes nothing and is never transferred into a group's spendable
+   Account; a fully refunded gift is additionally flipped to a terminal
+   `donations.allocationStatus: "refunded"`. Concurrency between an
+   in-flight payout webhook and the hourly retry cron is closed by a
+   per-donation transfer lease taken in the selection mutation. See
+   `functions/finance/ARCHITECTURE.md` → "Known Seams & TODOs" for the full
+   recovery semantics, the refund/dispute states, and the one case that is
+   deliberately left drifting (a refund arriving after allocation needs a
+   bank-side clawback that is not designed yet).
 
 ## Open questions
 

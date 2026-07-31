@@ -120,6 +120,11 @@ export function FundScreenView({
                 {overview.monthToDate.donationCount}{" "}
                 {overview.monthToDate.donationCount === 1 ? "gift" : "gifts"}
               </Text>
+              {overview.monthToDate.feesCents > 0 && (
+                <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
+                  {formatCents(overview.monthToDate.feesCents)} card fees
+                </Text>
+              )}
             </View>
             <View style={[styles.statCard, { backgroundColor: colors.surfaceSecondary }]}>
               <Text style={[styles.statHeader, { color: colors.textSecondary }]}>
@@ -133,6 +138,11 @@ export function FundScreenView({
                 {overview.yearToDate.donationCount}{" "}
                 {overview.yearToDate.donationCount === 1 ? "gift" : "gifts"}
               </Text>
+              {overview.yearToDate.feesCents > 0 && (
+                <Text style={[styles.statSubvalue, { color: colors.textSecondary }]}>
+                  {formatCents(overview.yearToDate.feesCents)} card fees
+                </Text>
+              )}
             </View>
           </View>
 

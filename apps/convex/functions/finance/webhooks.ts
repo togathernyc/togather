@@ -673,7 +673,16 @@ export async function handleFinanceStripeEvent(
       return;
     }
 
-    case "payout.paid": {
+    // Both events mean "this payout's composition is readable now". Stripe
+    // attributes balance transactions to a payout ASYNCHRONOUSLY, which is
+    // exactly what `payout.reconciliation_completed` announces — a query at
+    // `payout.paid` alone can come back partial or empty, and an empty plan
+    // has no automatic recovery (see jobs.ts `runAllocation`). Running both
+    // is safe: allocation is idempotent per (payout, donation), so the second
+    // pass either finds nothing left to do or finishes the tail the first
+    // one couldn't see yet.
+    case "payout.paid":
+    case "payout.reconciliation_completed": {
       // Payouts fire on the CONNECTED account, so the payload has no
       // metadata of ours — resolve the community from event.account.
       if (!event.account) {
@@ -692,6 +701,33 @@ export async function handleFinanceStripeEvent(
         stripePayoutId: payout.id,
         payoutCents: payout.amount,
       });
+      return;
+    }
+
+    case "payout.failed": {
+      // Stripe can follow `payout.paid` with `payout.failed` when the bank
+      // rejects it. Anything the paid event bound to this payout has to be
+      // unbound, or the hourly retry cron — which resumes bound items
+      // unconditionally now — spends forever trying to move money out of a
+      // receiving Account that never received it.
+      if (!event.account) {
+        return;
+      }
+      const finance = await ctx.runQuery(
+        internal.functions.finance.webhooks.getCommunityFinanceByStripeAccount,
+        { stripeConnectedAccountId: event.account },
+      );
+      if (!finance) {
+        return;
+      }
+      const payout = event.data.object;
+      const { unbound } = await ctx.runMutation(
+        internal.functions.finance.jobs.unbindFailedPayout,
+        { communityId: finance.communityId, stripePayoutId: payout.id },
+      );
+      console.error(
+        `[finance] payout.failed: ${payout.id} for community ${finance.communityId} — unbound ${unbound} donation(s)`,
+      );
       return;
     }
 

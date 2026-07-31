@@ -3887,6 +3887,10 @@ export default defineSchema({
    * Stripe-bulk-payout -> Increase-AccountTransfer allocation job (ADR-032
    * §3); "n/a" covers donations made before Increase went live for the
    * community, which never need allocating out of a receiving Account.
+   * "refunded" is terminal and means the donor got the whole gift back, so
+   * nothing will ever be allocated for it — every allocation query selects on
+   * `allocationStatus === "pending"`, so this one flag is what keeps a
+   * refunded gift out of the planner, the retry cron, AND the pending sum.
    */
   donations: defineTable({
     fundId: v.id("funds"),
@@ -3897,10 +3901,47 @@ export default defineSchema({
     allocationStatus: v.union(
       v.literal("pending"),
       v.literal("allocated"),
+      v.literal("refunded"),
       v.literal("n/a"),
     ),
+    // Stripe's CUMULATIVE `amount_refunded` for this donation's charge, as of
+    // the last `charge.refunded` we processed (giving.ts
+    // recordDonationRefund). Absent means never refunded. Allocation reads it
+    // so a partially-refunded gift is only ever transferred/counted at what
+    // is actually left of it.
+    refundedCents: v.optional(v.number()),
     recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
+    // The Stripe payout this donation was matched into by planAllocations
+    // (functions/finance/jobs.ts). Stamped once, at plan time, and never
+    // re-stamped — it is what makes allocation replay-safe per DONATION
+    // rather than per payout: a redelivered `payout.paid` re-processes only
+    // the donations already bound to that payout id and still "pending".
+    // Optional/backfill-safe: donations recorded before net matching shipped
+    // (and any donation not yet paid out) simply have neither field.
+    allocationPayoutId: v.optional(v.string()),
+    // Integer cents allocation will move for this donation out of that
+    // payout: the Stripe balance-transaction NET (gross minus Stripe's
+    // processing fee) — what the bulk payout physically delivered, and
+    // therefore the ceiling on what we can transfer on to the group's
+    // Increase Account — CAPPED at the unrefunded gross. The cap matters when
+    // a partial refund's own balance transaction settles in a different
+    // payout: the charge still appears here at its full net while the ledger
+    // has already taken the refund debit, and transferring the full net would
+    // move money the donor got back (jobs.ts `allocationAmountCents`). The
+    // gross (amountCents + feeCoverCents) is what the ledger credited at
+    // donation time; the difference is posted as a "fee" debit once the
+    // allocation transfer lands (see jobs.ts recordAllocation).
+    payoutNetCents: v.optional(v.number()),
+    // LEASE, not a marker: set in the same transaction that selects this
+    // donation for a transfer, and cleared when that transfer resolves either
+    // way. A second pass (a redelivered `payout.paid`, or the hourly retry
+    // cron racing an in-flight `runAllocation`) skips a donation whose lease
+    // is still live, so two passes can never both issue the same
+    // `alloc:{donationId}` transfer concurrently. Stale leases expire after
+    // ALLOCATION_LEASE_TTL_MS (jobs.ts) so a crashed pass can't strand an
+    // item forever.
+    allocationTransferStartedAt: v.optional(v.number()),
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_fund", ["fundId"])
@@ -3992,13 +4033,21 @@ export default defineSchema({
 
   /**
    * One row per Stripe payout that has had an allocation pass run against
-   * it. Payout-LEVEL replay protection: a redelivered `payout.paid` webhook
-   * must not run a second allocation pass, because the first pass already
-   * marked its donations "allocated" — a second planAllocations would grab
-   * the NEXT pending donations and move money that payout never contained
-   * (Codex review, PR #653). Per-donation idempotency keys can't catch that;
-   * this table does. Insert-if-absent via claimPayout (functions/finance/
-   * jobs.ts) is transactional under Convex OCC.
+   * it — a record of when the payout was first seen, plus the payout amount
+   * we matched against.
+   *
+   * This used to be the ONLY replay protection: a redelivered `payout.paid`
+   * was dropped outright, because the old gross-total matcher would have
+   * grabbed the NEXT pending donations on a re-plan and moved money the
+   * payout never contained (Codex review, PR #653). That also meant a
+   * partially-failed pass could never be retried. Replay protection now
+   * lives on the donation rows themselves (`donations.allocationPayoutId` —
+   * matched by Stripe payment-intent id out of the payout's own balance
+   * transactions, so a re-plan can only ever re-select the SAME donations),
+   * which makes a redelivery a safe resume of the unfinished items. This row
+   * remains as the audit/bookkeeping record of the FIRST pass over a payout
+   * (`payoutCents` is never re-written by a later pass — the per-pass detail
+   * lives in `financeAuditEvents` instead).
    */
   processedStripePayouts: defineTable({
     communityId: v.id("communities"),

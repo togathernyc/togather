@@ -48,6 +48,7 @@ const balance: GivingHubBalanceSummary = {
   monthDonationsCents: 64000,
   monthDonationCount: 12,
   monthSpentCents: 21238,
+  monthFeesCents: 1886,
 };
 
 const baseProps = {
@@ -89,6 +90,25 @@ describe("GivingHubView", () => {
       expect(screen.getByText("$1,284.50")).toBeTruthy();
       expect(screen.getByText("Giving is live")).toBeTruthy();
       expect(screen.getByText("$640.00")).toBeTruthy();
+    });
+
+    it("shows Stripe fees beside 'spent' rather than folded into it", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      // Spend is the group's own outgoings only ($212.38). The processing
+      // fees Stripe kept ($18.86) get their own line — a fee bucketed into
+      // "spent" reports spending on a group that spent nothing, and a fee
+      // shown nowhere leaves "given" minus "spent" not reconciling.
+      expect(screen.getByText("$212.38")).toBeTruthy();
+      expect(screen.getByText("+ $18.86 fees")).toBeTruthy();
+    });
+
+    it("omits the fees line entirely when there are none", () => {
+      render(
+        <GivingHubView {...baseProps} balance={{ ...balance, monthFeesCents: 0 }} />,
+      );
+
+      expect(screen.queryByText(/fees/)).toBeNull();
     });
 
     it("hides the 'Giving is live' chip when givingLive is false", () => {

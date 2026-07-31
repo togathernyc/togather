@@ -161,6 +161,12 @@ export interface GivingHubBalanceSummary {
   monthDonationsCents: number;
   monthDonationCount: number;
   monthSpentCents: number;
+  /**
+   * Stripe's processing fees this month. Kept OUT of `monthSpentCents` — the
+   * group didn't spend them — but shown, because a fee nobody can see is a
+   * gap between "given" and "balance" that leaders can't explain.
+   */
+  monthFeesCents: number;
 }
 
 /** A single "Recent activity" row — mirrors `getFundOverview`'s `activity` entries. */

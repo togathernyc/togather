@@ -4,8 +4,9 @@
  *
  * Covers functions/finance/giving.ts (getFundOverview aggregates + donor-name
  * gating, getGivingContext live-gating, recordDonationSucceeded idempotency)
- * functions/finance/jobs.ts (planAllocations, recordAllocation,
- * computePendingAllocationCents, recordReconcileResult), and
+ * functions/finance/jobs.ts (recordAllocation, computePendingAllocationCents,
+ * recordReconcileResult — payout matching and the allocation action itself
+ * are covered in __tests__/finance-allocation.test.ts), and
  * lib/finance/receipts.ts (buildDonationReceiptEmail content). The live
  * Stripe/Resend/Increase paths (createDonationIntent, sendDonationReceipt's
  * actual send, runAllocation/runNightlyReconcile's provider calls) are
@@ -231,6 +232,28 @@ describe("getFundOverview", () => {
         actorUserId: s.donorUserId,
         createdAt: withinYearNotMonthTs,
       });
+      // Within this month: the Stripe processing fee allocation realises for
+      // the donation above. A debit, but NOT something the group spent — it
+      // must never inflate the member-facing "… spent" figure.
+      await ctx.db.insert("ledgerEntries", {
+        fundId: s.fundId,
+        communityId: s.communityId,
+        direction: "debit",
+        amountCents: 175,
+        kind: "fee",
+        idempotencyKey: "alloc-fee:donation_month",
+        createdAt: withinMonthTs,
+      });
+      // Within this month: a refund. Also a debit, also not spending.
+      await ctx.db.insert("ledgerEntries", {
+        fundId: s.fundId,
+        communityId: s.communityId,
+        direction: "debit",
+        amountCents: 400,
+        kind: "refund",
+        idempotencyKey: "refund:ch_month:400",
+        createdAt: withinMonthTs,
+      });
       // Before this year: excluded from both MTD and YTD entirely.
       await ctx.db.insert("ledgerEntries", {
         fundId: s.fundId,
@@ -251,14 +274,21 @@ describe("getFundOverview", () => {
 
     expect(memberResult).not.toBeNull();
     expect(memberResult!.balanceCents).toBe(10_000); // fund's cached balance, unaffected by these direct-insert entries
+    // "spent" is 300 — the card capture — and NOT 875. Bucketing the fee and
+    // the refund into spend would have a group that spent $3 report $8.75,
+    // on the one screen whose purpose is telling members where the money went.
     expect(memberResult!.monthToDate).toEqual({
       donationsCents: 5000,
       spentCents: 300,
+      feesCents: 175,
+      refundedCents: 400,
       donationCount: 1,
     });
     expect(memberResult!.yearToDate).toEqual({
       donationsCents: 5000 + 9999,
       spentCents: 300,
+      feesCents: 175,
+      refundedCents: 400,
       donationCount: 2,
     });
     expect(memberResult!.viewerCanSeeDonorNames).toBe(false);
@@ -1071,97 +1101,14 @@ async function seedJobsFixture(t: ReturnType<typeof convexTest>): Promise<JobsFi
   });
 }
 
-describe("planAllocations", () => {
-  test("selects pending donations oldest-first across the whole community, whole donations only, with leftover", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, fundAId, fundBId } = await seedJobsFixture(t);
-
-    await t.run(async (ctx) => {
-      // Oldest, on fund A: total 1000.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 1000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_1",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 1_000,
-      });
-      // Second oldest, on fund B: total 2100.
-      await ctx.db.insert("donations", {
-        fundId: fundBId,
-        amountCents: 2000,
-        feeCoverCents: 100,
-        stripePaymentIntentId: "pi_2",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 2_000,
-      });
-      // Newest, on fund A: total 5000 — doesn't fit in a 3100-cent payout.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 5000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_3",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 3_000,
-      });
-      // Already allocated — must never be selected, even though it's oldest.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 999,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_0_already_allocated",
-        allocationStatus: "allocated",
-        receiptEmailStatus: "sent",
-        createdAt: 500,
-      });
-    });
-
-    const result = await t.mutation(internal.functions.finance.jobs.planAllocations, {
-      communityId,
-      payoutCents: 3100,
-      stripePayoutId: "po_test_1",
-    });
-
-    expect(result.plan).toHaveLength(2);
-    expect(result.plan[0]).toMatchObject({ fundId: fundAId, amountCents: 1000 });
-    expect(result.plan[1]).toMatchObject({ fundId: fundBId, amountCents: 2100 });
-    expect(result.leftoverCents).toBe(0);
-  });
-
-  test("leftoverCents reflects a payout that doesn't exactly cover whole donations", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, fundAId } = await seedJobsFixture(t);
-
-    await t.run((ctx) =>
-      ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 1000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_solo",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 1_000,
-      }),
-    );
-
-    // Payout is $9.90 more than the one donation — e.g. Stripe's processing
-    // fee taken out of the gross payout, never matching a whole donation.
-    const result = await t.mutation(internal.functions.finance.jobs.planAllocations, {
-      communityId,
-      payoutCents: 1990,
-      stripePayoutId: "po_test_2",
-    });
-
-    expect(result.plan).toHaveLength(1);
-    expect(result.leftoverCents).toBe(990);
-  });
-});
+// `planAllocations` selection (NET matching, skip-don't-stall, per-donation
+// replay protection) lives in __tests__/finance-allocation.test.ts alongside
+// the `runAllocation` action it feeds — this file keeps the two pieces that
+// stand alone from a payout: recordAllocation and the pending-sum used by
+// reconcile.
 
 describe("recordAllocation", () => {
-  test("flips allocationStatus and audit-logs without changing the fund's balanceCents", async () => {
+  test("a donation with no recorded payout NET posts no fee entry, so the balance is untouched", async () => {
     const t = convexTest(schema, modules);
     const { fundAId } = await seedJobsFixture(t);
 
@@ -1188,7 +1135,19 @@ describe("recordAllocation", () => {
     expect(donation?.allocationStatus).toBe("allocated");
 
     const balanceAfter = await t.run(async (ctx) => (await ctx.db.get(fundAId))?.balanceCents);
-    expect(balanceAfter).toBe(balanceBefore); // no ledger entry posted — see jobs.ts's design-decision comment
+    // Unchanged specifically because this fixture donation carries no
+    // `payoutNetCents` — a legacy row allocated before net matching shipped,
+    // where there is no realised fee to post. Allocation of a NET-matched
+    // donation DOES post a `fee` debit and does move the balance; that side
+    // is covered in finance-allocation.test.ts.
+    expect(balanceAfter).toBe(balanceBefore);
+    const feeEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundAId))
+        .collect(),
+    );
+    expect(feeEntries.filter((e) => e.kind === "fee")).toHaveLength(0);
 
     const auditEvents = await t.run((ctx) =>
       ctx.db

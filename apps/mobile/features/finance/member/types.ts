@@ -17,7 +17,15 @@ export interface FundActivityEntry {
 
 export interface FundPeriodTotals {
   donationsCents: number;
+  /**
+   * What the group chose to spend — card swipes, reimbursements, transfers,
+   * sweeps. Deliberately excludes processing fees and refunds; see
+   * `summarizePeriod` in apps/convex/functions/finance/giving.ts.
+   */
   spentCents: number;
+  /** Stripe's processing fees, shown as their own line rather than as spend. */
+  feesCents: number;
+  refundedCents: number;
   donationCount: number;
 }
 

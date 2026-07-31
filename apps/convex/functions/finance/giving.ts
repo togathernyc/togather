@@ -170,25 +170,58 @@ function donorDisplayName(donor: Doc<"users"> | null): string {
 interface ActivityPeriodTotals {
   donationsCents: number;
   spentCents: number;
+  /** Stripe's processing fees, realised as "fee" ledger entries. */
+  feesCents: number;
+  /** Gifts handed back to donors, as "refund" ledger entries. */
+  refundedCents: number;
   donationCount: number;
 }
 
-/** Sums a set of ledger entries into the aggregates the transparency screen shows. */
+/**
+ * Sums a set of ledger entries into the aggregates the transparency screen
+ * shows.
+ *
+ * "Spent" means the group CHOSE to spend it — card swipes, reimbursements,
+ * transfers, sweeps. Processing fees and refunds are debits too, but neither
+ * is the group spending anything: allocation posts a `fee` debit for every
+ * gift (jobs.ts recordAllocation), so bucketing fees into "spent" would have
+ * a group that spent nothing report spending 2.9% + 30¢ of every gift on the
+ * one screen whose entire purpose is telling members where their money went.
+ * They get their own totals instead of disappearing — a fee that is invisible
+ * is exactly as dishonest as a fee mislabelled as spend.
+ *
+ * TODO: Investigate — `refundedCents` is computed here and typed all the way
+ * through to `member/types.ts`, but no surface renders it, so on a fund with
+ * a refund "given" minus "spent" minus "fees" does not reconcile. That is the
+ * same argument that put fees on their own line. Left as-is deliberately for
+ * now: it is a copy/layout decision on the member transparency screen rather
+ * than a correctness one, and this pass is scoped to money movement. Refunds
+ * on group funds are rare enough that shipping the wrong words for them is
+ * worse than shipping nothing yet.
+ */
 function summarizePeriod(
   entries: Array<Pick<Doc<"ledgerEntries">, "direction" | "amountCents" | "kind">>,
 ): ActivityPeriodTotals {
   let donationsCents = 0;
   let spentCents = 0;
+  let feesCents = 0;
+  let refundedCents = 0;
   let donationCount = 0;
   for (const entry of entries) {
     if (entry.direction === "credit" && entry.kind === "donation") {
       donationsCents += entry.amountCents;
       donationCount += 1;
+    } else if (entry.kind === "fee") {
+      // Signed: a fee reversal (a refunded gift's fee, see
+      // recordDonationRefund) is a credit that cancels an earlier debit.
+      feesCents += entry.direction === "debit" ? entry.amountCents : -entry.amountCents;
+    } else if (entry.kind === "refund") {
+      refundedCents += entry.direction === "debit" ? entry.amountCents : -entry.amountCents;
     } else if (entry.direction === "debit") {
       spentCents += entry.amountCents;
     }
   }
-  return { donationsCents, spentCents, donationCount };
+  return { donationsCents, spentCents, feesCents, refundedCents, donationCount };
 }
 
 export const getFundOverview = query({
@@ -743,6 +776,29 @@ export const recordDonationSucceeded = internalMutation({
  * FROZEN_ALLOWED_KINDS) — a fund frozen mid-flight (e.g. its group just
  * archived) must still be able to settle a refund already in progress at
  * Stripe.
+ *
+ * ALLOCATION CONSEQUENCES (ADR-032 §3; the refund states in jobs.ts's
+ * invariant table). A refund is not just a ledger debit — it changes what
+ * allocation is allowed to move:
+ *
+ *  - The cumulative refund is stamped on the donation (`refundedCents`), so
+ *    the planner and the nightly pending sum only ever count what is left of
+ *    the gift, and `recordAllocation` charges a fee on that remainder rather
+ *    than on the original gross.
+ *  - A FULLY refunded gift flips to `allocationStatus: "refunded"`, which is
+ *    terminal. Every allocation query selects `"pending"`, so this is what
+ *    guarantees a returned gift can never be transferred into a group's
+ *    spendable Increase Account — belt and braces with the netting in
+ *    `getPayoutComposition`, which already removes it from the payout's
+ *    composition when the refund settles in the same payout.
+ *  - Refunding a gift that was ALREADY allocated can leave the fund's ledger
+ *    negative, because the allocation posted a `fee` debit and the refund
+ *    now debits the full gross on top of it. Once the donor has been given
+ *    back more than the fund ever received, that fee is not recoverable from
+ *    this gift, so the entry is reversed with a compensating credit
+ *    (`alloc-fee-reversal:{donationId}`) rather than driving a member-visible
+ *    fund balance below zero. The ledger stays append-only; nothing is
+ *    patched.
  */
 export const recordDonationRefund = internalMutation({
   args: {
@@ -804,6 +860,49 @@ export const recordDonationRefund = internalMutation({
       stripeObjectId: args.chargeId,
     });
 
+    // --- Keep allocation from moving money the donor already got back. ---
+    const grossCents = donation.amountCents + donation.feeCoverCents;
+    const refundedCents = args.amountRefundedCents;
+    const fullyRefunded = refundedCents >= grossCents;
+    const donationPatch: {
+      refundedCents: number;
+      allocationStatus?: "refunded";
+      allocationTransferStartedAt?: undefined;
+    } = { refundedCents };
+    if (fullyRefunded && donation.allocationStatus === "pending") {
+      // Terminal: no payout will ever fund this gift. Releasing the lease too
+      // means a pass that had claimed it doesn't hold a dead reservation.
+      donationPatch.allocationStatus = "refunded";
+      donationPatch.allocationTransferStartedAt = undefined;
+    }
+    await ctx.db.patch(donation._id, donationPatch);
+
+    // --- Don't let an already-realised fee drive the fund below zero. ---
+    // The `fee` debit exists only to reconcile the GROSS ledger credit
+    // against the NET the bank actually holds. Once the refunds exceed that
+    // net (gross − fee), the credit it was offsetting is gone and the debit
+    // is pure overdraft, so reverse it. Below that line the arithmetic still
+    // works out non-negative and the fee stays where it is: Stripe really did
+    // keep it on the portion the fund retained.
+    const allocationFeeEntry = fundEntries.find(
+      (e) => e.idempotencyKey === `alloc-fee:${donation._id}`,
+    );
+    const allocationFeeCents = allocationFeeEntry?.amountCents ?? 0;
+    const feeReversedCents =
+      allocationFeeCents > 0 && refundedCents > grossCents - allocationFeeCents
+        ? allocationFeeCents
+        : 0;
+    if (feeReversedCents > 0) {
+      await postLedgerEntry(ctx, {
+        fundId: fund._id,
+        direction: "credit",
+        amountCents: allocationFeeCents,
+        kind: "fee",
+        idempotencyKey: `alloc-fee-reversal:${donation._id}`,
+        stripeObjectId: args.chargeId,
+      });
+    }
+
     await logFinanceAudit(ctx, {
       communityId: fund.communityId,
       fundId: fund._id,
@@ -812,7 +911,12 @@ export const recordDonationRefund = internalMutation({
         paymentIntentId: args.paymentIntentId,
         chargeId: args.chargeId,
         deltaCents,
-        cumulativeCents: args.amountRefundedCents,
+        cumulativeCents: refundedCents,
+        donationId: donation._id,
+        // Spelled out so the audit row alone explains why (or why not) this
+        // gift dropped out of the allocation queue.
+        allocationStatus: donationPatch.allocationStatus ?? donation.allocationStatus,
+        feeReversedCents,
       },
     });
   },
