@@ -469,12 +469,12 @@ describe("requireFundRole", () => {
     const t = convexTest(schema, modules);
     const { fundId, managerUserId } = await seedFinanceFixture(t);
 
-    // t.run round-trips the return value through Convex value semantics,
-    // which normalizes `undefined` to `null` — so "resolves without
-    // throwing" is expressed as `resolves.toBeNull()` here.
+    // Both helpers report WHICH of ADR-032 §4's access paths let the caller
+    // through — grantFundRole needs that to tell the leader carve-out apart
+    // from a real grant (see the self-escalation guard in roles.ts).
     await expect(
       t.run((ctx) => requireFundRole(ctx, fundId, managerUserId, "manager")),
-    ).resolves.toBeNull();
+    ).resolves.toBe("fund_role");
   });
 
   test("finance_admin is allowed a finance_admin-level action", async () => {
@@ -485,7 +485,7 @@ describe("requireFundRole", () => {
       t.run((ctx) =>
         requireFundRole(ctx, fundId, financeAdminUserId, "finance_admin"),
       ),
-    ).resolves.toBeNull();
+    ).resolves.toBe("fund_role");
   });
 
   test("community admin overrides even with no fund role at all", async () => {
@@ -494,7 +494,7 @@ describe("requireFundRole", () => {
 
     await expect(
       t.run((ctx) => requireFundRole(ctx, fundId, adminUserId, "finance_admin")),
-    ).resolves.toBeNull();
+    ).resolves.toBe("community_admin");
   });
 
   test("a revoked role is denied", async () => {
@@ -529,7 +529,7 @@ describe("requireFundRoleOrGroupLeader", () => {
       t.run((ctx) =>
         requireFundRoleOrGroupLeader(ctx, fundId, leaderUserId, "finance_admin"),
       ),
-    ).resolves.toBeNull();
+    ).resolves.toBe("group_leader");
   });
 
   test("a plain member without a fund role is still denied", async () => {
@@ -571,6 +571,6 @@ describe("requireFundRoleOrGroupLeader", () => {
           "finance_admin",
         ),
       ),
-    ).resolves.toBeNull();
+    ).resolves.toBe("community_admin");
   });
 });
