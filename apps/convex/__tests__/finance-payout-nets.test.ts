@@ -1,14 +1,14 @@
 /**
- * `listPayoutChargeNets` (lib/finance/stripeConnect.ts) — the Stripe
+ * `getPayoutComposition` (lib/finance/stripeConnect.ts) — the Stripe
  * balance-transaction lookup that ADR-032 Phase-2 requirement 6 makes
  * allocation depend on.
  *
  * Lives in its own file because it mocks the `stripe` SDK itself, which the
  * rest of the finance suites deliberately never load. Everything asserted
  * here is about turning a payout's balance transactions into the per-charge
- * NET amounts allocation can actually fund: paging, non-charge rows, and the
- * PaymentIntent mapping that connects a balance transaction to a `donations`
- * row.
+ * NET amounts allocation can actually fund: paging, netting reversals against
+ * their charge, and the PaymentIntent mapping that connects a balance
+ * transaction to a `donations` row.
  *
  * Run with: cd apps/convex && pnpm test __tests__/finance-payout-nets.test.ts
  */
@@ -54,12 +54,29 @@ function chargeTxn(id: string, paymentIntentId: string, net: number) {
   };
 }
 
-async function listNets(payoutId = "po_1") {
-  const { listPayoutChargeNets } = await import("../lib/finance/stripeConnect");
-  return await listPayoutChargeNets("acct_connected", payoutId);
+/** A refund-type balance transaction. Its expanded `source` is a Refund,
+ * which carries `payment_intent` just like a Charge does — and its `net` is
+ * already negative. */
+function refundTxn(id: string, paymentIntentId: string, net: number) {
+  return {
+    id,
+    type: "refund",
+    net,
+    source: { id: `re_${id}`, payment_intent: paymentIntentId },
+  };
 }
 
-describe("listPayoutChargeNets", () => {
+async function composition(payoutId = "po_1") {
+  const { getPayoutComposition } = await import("../lib/finance/stripeConnect");
+  return await getPayoutComposition("acct_connected", payoutId);
+}
+
+/** The charges half, which is what allocation actually plans against. */
+async function listNets(payoutId = "po_1") {
+  return (await composition(payoutId)).charges;
+}
+
+describe("getPayoutComposition", () => {
   test("returns the NET per charge, keyed by PaymentIntent, scoped to the connected account", async () => {
     stubs.pages.push({
       data: [chargeTxn("txn_1", "pi_1", 9_680), chargeTxn("txn_2", "pi_2", 4_825)],
@@ -81,13 +98,106 @@ describe("listPayoutChargeNets", () => {
     expect(stubs.calls[0].options).toEqual({ stripeAccount: "acct_connected" });
   });
 
-  test("skips fee/payout/refund rows — they are the payout's leftover, not donor money", async () => {
+  test("skips pure bookkeeping rows — Stripe's own fee and the payout leg are not donor money", async () => {
     stubs.pages.push({
       data: [
         chargeTxn("txn_1", "pi_1", 9_680),
         { id: "txn_fee", type: "stripe_fee", net: -50, source: null },
         { id: "txn_payout", type: "payout", net: -9_630, source: "po_abc" },
-        { id: "txn_refund", type: "refund", net: -1_000, source: { id: "re_1" } },
+      ],
+      has_more: false,
+    });
+
+    expect(await listNets()).toEqual([{ paymentIntentId: "pi_1", netCents: 9_680 }]);
+  });
+
+  test("THE P0: a refund is netted against its charge, never discarded — a fully refunded gift yields NO fundable charge", async () => {
+    // $100 gift, refunded in full before the payout settled. Stripe pays out
+    // the charge's net (9680) and takes the refund (10000) out of the same
+    // payout. Dropping the refund row (as this used to) left 9680 looking
+    // like a fundable gift, and the donation is still `pending` because
+    // nothing about a refund used to touch allocationStatus — so real money
+    // the donor already got back was transferred into a group's spendable
+    // Increase Account.
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_refunded", 9_680),
+        refundTxn("txn_2", "pi_refunded", -10_000),
+        chargeTxn("txn_3", "pi_healthy", 4_825),
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_refund");
+    expect(result.charges).toEqual([
+      { paymentIntentId: "pi_healthy", netCents: 4_825 },
+    ]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_refunded"]);
+    expect(result.unattributedReversalCents).toBe(0);
+  });
+
+  test("a PARTIAL refund reduces its charge's net rather than removing it", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_partial", 9_680),
+        refundTxn("txn_2", "pi_partial", -3_000),
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_partial_refund");
+    expect(result.charges).toEqual([
+      { paymentIntentId: "pi_partial", netCents: 6_680 },
+    ]);
+    expect(result.reversedPaymentIntentIds).toEqual([]);
+  });
+
+  test("a chargeback posts as an `adjustment` and nets out the same way", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_disputed", 9_680),
+        {
+          id: "txn_dispute",
+          type: "adjustment",
+          net: -11_500, // gift back plus Stripe's dispute fee
+          source: { id: "dp_1", payment_intent: "pi_disputed" },
+        },
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_disputed");
+    expect(result.charges).toEqual([]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_disputed"]);
+  });
+
+  test("a refund whose PaymentIntent can't be resolved is reported, not silently swallowed", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_1", 9_680),
+        // Unexpanded source: we cannot tell which charge this reversed, so
+        // the payout is short by 1000 cents we can't subtract from anything.
+        { id: "txn_orphan", type: "refund", net: -1_000, source: "re_unexpanded" },
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_orphan_refund");
+    expect(result.charges).toEqual([{ paymentIntentId: "pi_1", netCents: 9_680 }]);
+    expect(result.unattributedReversalCents).toBe(-1_000);
+  });
+
+  test("a failed refund puts the money back, so it nets positively", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_1", 9_680),
+        refundTxn("txn_2", "pi_1", -9_680),
+        {
+          id: "txn_refund_failed",
+          type: "refund_failure",
+          net: 9_680,
+          source: { id: "re_1", payment_intent: "pi_1" },
+        },
       ],
       has_more: false,
     });
@@ -128,6 +238,33 @@ describe("listPayoutChargeNets", () => {
     expect(stubs.calls[1].params.starting_after).toBe("txn_1");
   });
 
+  test("nets a charge and its refund across DIFFERENT pages", async () => {
+    stubs.pages.push(
+      { data: [chargeTxn("txn_1", "pi_split", 9_680)], has_more: true },
+      { data: [refundTxn("txn_2", "pi_split", -10_000)], has_more: false },
+    );
+
+    const result = await composition("po_split_pages");
+    expect(result.charges).toEqual([]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_split"]);
+  });
+
+  test("REFUSES to allocate on a truncated view rather than returning the prefix", async () => {
+    // 100 pages that all still say has_more: the cap is hit while Stripe
+    // insists there is more. Returning the prefix would look like a complete
+    // payout, and every retry would read the same first 100 pages.
+    for (let i = 0; i < 120; i++) {
+      stubs.pages.push({
+        data: [chargeTxn(`txn_${i}`, `pi_${i}`, 100)],
+        has_more: true,
+      });
+    }
+
+    await expect(composition("po_huge")).rejects.toThrow(
+      /refusing to allocate on a truncated view/,
+    );
+  });
+
   test("drops a charge with no resolvable payment_intent rather than guessing", async () => {
     stubs.pages.push({
       data: [
@@ -160,7 +297,7 @@ describe("listPayoutChargeNets", () => {
     ]);
   });
 
-  test("drops non-integer or non-positive nets — never allocates a fractional cent", async () => {
+  test("drops non-integer or non-positive charge nets — never allocates a fractional cent", async () => {
     stubs.pages.push({
       data: [
         chargeTxn("txn_1", "pi_float", 100.5),

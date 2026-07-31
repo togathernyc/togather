@@ -3887,6 +3887,10 @@ export default defineSchema({
    * Stripe-bulk-payout -> Increase-AccountTransfer allocation job (ADR-032
    * §3); "n/a" covers donations made before Increase went live for the
    * community, which never need allocating out of a receiving Account.
+   * "refunded" is terminal and means the donor got the whole gift back, so
+   * nothing will ever be allocated for it — every allocation query selects on
+   * `allocationStatus === "pending"`, so this one flag is what keeps a
+   * refunded gift out of the planner, the retry cron, AND the pending sum.
    */
   donations: defineTable({
     fundId: v.id("funds"),
@@ -3897,8 +3901,15 @@ export default defineSchema({
     allocationStatus: v.union(
       v.literal("pending"),
       v.literal("allocated"),
+      v.literal("refunded"),
       v.literal("n/a"),
     ),
+    // Stripe's CUMULATIVE `amount_refunded` for this donation's charge, as of
+    // the last `charge.refunded` we processed (giving.ts
+    // recordDonationRefund). Absent means never refunded. Allocation reads it
+    // so a partially-refunded gift is only ever transferred/counted at what
+    // is actually left of it.
+    refundedCents: v.optional(v.number()),
     recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
     // The Stripe payout this donation was matched into by planAllocations
@@ -3917,6 +3928,15 @@ export default defineSchema({
     // donation time; the difference is posted as a "fee" debit once the
     // allocation transfer lands (see jobs.ts recordAllocation).
     payoutNetCents: v.optional(v.number()),
+    // LEASE, not a marker: set in the same transaction that selects this
+    // donation for a transfer, and cleared when that transfer resolves either
+    // way. A second pass (a redelivered `payout.paid`, or the hourly retry
+    // cron racing an in-flight `runAllocation`) skips a donation whose lease
+    // is still live, so two passes can never both issue the same
+    // `alloc:{donationId}` transfer concurrently. Stale leases expire after
+    // ALLOCATION_LEASE_TTL_MS (jobs.ts) so a crashed pass can't strand an
+    // item forever.
+    allocationTransferStartedAt: v.optional(v.number()),
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_fund", ["fundId"])
@@ -4020,7 +4040,9 @@ export default defineSchema({
    * matched by Stripe payment-intent id out of the payout's own balance
    * transactions, so a re-plan can only ever re-select the SAME donations),
    * which makes a redelivery a safe resume of the unfinished items. This row
-   * remains as the audit/bookkeeping record of the pass.
+   * remains as the audit/bookkeeping record of the FIRST pass over a payout
+   * (`payoutCents` is never re-written by a later pass — the per-pass detail
+   * lives in `financeAuditEvents` instead).
    */
   processedStripePayouts: defineTable({
     communityId: v.id("communities"),

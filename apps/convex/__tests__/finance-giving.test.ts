@@ -232,6 +232,28 @@ describe("getFundOverview", () => {
         actorUserId: s.donorUserId,
         createdAt: withinYearNotMonthTs,
       });
+      // Within this month: the Stripe processing fee allocation realises for
+      // the donation above. A debit, but NOT something the group spent — it
+      // must never inflate the member-facing "… spent" figure.
+      await ctx.db.insert("ledgerEntries", {
+        fundId: s.fundId,
+        communityId: s.communityId,
+        direction: "debit",
+        amountCents: 175,
+        kind: "fee",
+        idempotencyKey: "alloc-fee:donation_month",
+        createdAt: withinMonthTs,
+      });
+      // Within this month: a refund. Also a debit, also not spending.
+      await ctx.db.insert("ledgerEntries", {
+        fundId: s.fundId,
+        communityId: s.communityId,
+        direction: "debit",
+        amountCents: 400,
+        kind: "refund",
+        idempotencyKey: "refund:ch_month:400",
+        createdAt: withinMonthTs,
+      });
       // Before this year: excluded from both MTD and YTD entirely.
       await ctx.db.insert("ledgerEntries", {
         fundId: s.fundId,
@@ -252,14 +274,21 @@ describe("getFundOverview", () => {
 
     expect(memberResult).not.toBeNull();
     expect(memberResult!.balanceCents).toBe(10_000); // fund's cached balance, unaffected by these direct-insert entries
+    // "spent" is 300 — the card capture — and NOT 875. Bucketing the fee and
+    // the refund into spend would have a group that spent $3 report $8.75,
+    // on the one screen whose purpose is telling members where the money went.
     expect(memberResult!.monthToDate).toEqual({
       donationsCents: 5000,
       spentCents: 300,
+      feesCents: 175,
+      refundedCents: 400,
       donationCount: 1,
     });
     expect(memberResult!.yearToDate).toEqual({
       donationsCents: 5000 + 9999,
       spentCents: 300,
+      feesCents: 175,
+      refundedCents: 400,
       donationCount: 2,
     });
     expect(memberResult!.viewerCanSeeDonorNames).toBe(false);
@@ -1079,7 +1108,7 @@ async function seedJobsFixture(t: ReturnType<typeof convexTest>): Promise<JobsFi
 // reconcile.
 
 describe("recordAllocation", () => {
-  test("flips allocationStatus and audit-logs without changing the fund's balanceCents", async () => {
+  test("a donation with no recorded payout NET posts no fee entry, so the balance is untouched", async () => {
     const t = convexTest(schema, modules);
     const { fundAId } = await seedJobsFixture(t);
 
@@ -1106,7 +1135,19 @@ describe("recordAllocation", () => {
     expect(donation?.allocationStatus).toBe("allocated");
 
     const balanceAfter = await t.run(async (ctx) => (await ctx.db.get(fundAId))?.balanceCents);
-    expect(balanceAfter).toBe(balanceBefore); // no ledger entry posted — see jobs.ts's design-decision comment
+    // Unchanged specifically because this fixture donation carries no
+    // `payoutNetCents` — a legacy row allocated before net matching shipped,
+    // where there is no realised fee to post. Allocation of a NET-matched
+    // donation DOES post a `fee` debit and does move the balance; that side
+    // is covered in finance-allocation.test.ts.
+    expect(balanceAfter).toBe(balanceBefore);
+    const feeEntries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundAId))
+        .collect(),
+    );
+    expect(feeEntries.filter((e) => e.kind === "fee")).toHaveLength(0);
 
     const auditEvents = await t.run((ctx) =>
       ctx.db

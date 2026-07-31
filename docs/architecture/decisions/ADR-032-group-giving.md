@@ -311,17 +311,26 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
    ACH'd to its verified bank and its Increase accounts closed — tooling +
    terms-of-service clause, not a support ticket.
 6. **Net-amount allocation.** ✅ **Done** — allocation matching now reads
-   Stripe balance-transaction per-charge NET amounts for the payout
-   (`listPayoutChargeNets`) instead of gross donation totals, which also
+   Stripe balance-transaction per-PaymentIntent NET amounts for the payout
+   (`getPayoutComposition`) instead of gross donation totals, which also
    means the payout tells us exactly which donations it contained rather
    than the job inferring membership from a running total. Falls out of
    that: allocation is retried per (payout, donation) rather than dropped
    whole on a redelivered webhook, so one failed Increase transfer no longer
    strands the rest of the batch; and the fee Stripe kept is posted as a
    `fee` ledger debit when the transfer lands, which is what makes the
-   §3 invariant satisfiable and a stalled allocation visible as drift. See
+   §3 invariant satisfiable and a stalled allocation visible as drift.
+   Reversals (refunds and chargeback `adjustment`s) are netted against their
+   own charge rather than discarded, so a gift refunded before its payout
+   contributes nothing and is never transferred into a group's spendable
+   Account; a fully refunded gift is additionally flipped to a terminal
+   `donations.allocationStatus: "refunded"`. Concurrency between an
+   in-flight payout webhook and the hourly retry cron is closed by a
+   per-donation transfer lease taken in the selection mutation. See
    `functions/finance/ARCHITECTURE.md` → "Known Seams & TODOs" for the full
-   recovery semantics.
+   recovery semantics, the refund/dispute states, and the one case that is
+   deliberately left drifting (a refund arriving after allocation needs a
+   bank-side clawback that is not designed yet).
 
 ## Open questions
 

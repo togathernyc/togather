@@ -95,6 +95,7 @@ export function GivingHubScreen() {
       monthDonationsCents: overview.monthToDate.donationsCents,
       monthDonationCount: overview.monthToDate.donationCount,
       monthSpentCents: overview.monthToDate.spentCents,
+      monthFeesCents: overview.monthToDate.feesCents ?? 0,
     };
   }, [overview]);
 
