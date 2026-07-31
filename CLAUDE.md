@@ -25,8 +25,7 @@ builds fine). Learned from PRs #548, #619, #629. Non-negotiable rules:
 - The `react: "19.1.0"` **and** `react-dom: "19.1.0"` devDependency pins in
   `apps/convex/package.json` are **load-bearing** — do not remove either, keep them
   the same exact version.
-- Any change touching native media/views (video, GIF, blur, `expo-*` native views)
-  or the mobile dependency graph **MUST be device/staging-OTA verified before merge**.
+- Any change touching native media/views (video, GIF, blur, `expo-*` native views) or the mobile dependency graph **MUST be device/staging-OTA verified before merge**.
 
 Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guards.
 
@@ -41,8 +40,7 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
 
 - **Use Playwright** to confirm UI changes look correct
 - Don't assume - verify components render as expected; screenshot complex UI changes
-- **Act autonomously** - don't ask permission for each Playwright action; use the
-  seeded test credentials (phone + OTP bypass) from the seed script
+- **Act autonomously** - don't ask permission for each Playwright action; use the seeded test credentials (phone + OTP bypass) from the seed script
 
 ### Commands
 
@@ -108,12 +106,12 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
 
 - Add JSDoc/docstrings for non-obvious functions; document **"why"** not "what";
   link frontend types to backend schemas where applicable
-- ADRs live in `/docs/architecture/`; feature folders may have an `ARCHITECTURE.md`
+- ADRs (Architecture Decision Records) live in `/docs/architecture/`; feature
+  folders may have an `ARCHITECTURE.md` explaining their structure
 - **Update documentation when implementing features** - don't leave stale docs.
   Change an API → update its contracts and types. Refactor a feature → update its
   ARCHITECTURE.md. If docs are wrong, fix them - don't just work around them.
-- User-facing changes may also require an `apps/web` guide update — see the
-  `guides-and-link-previews` skill
+- User-facing changes may need an `apps/web` guide update — see `guides-and-link-previews`
 
 ## File and Project Hygiene
 
@@ -144,8 +142,9 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
   into pieces, delegate to subagents
 - Prepare clear, self-contained prompts so subagents finish without asking questions
 - Flow: user requests feature → YOU ask all clarifying questions upfront → user
-  answers → YOU plan → YOU spawn a subagent per piece (tests, backend, frontend)
-  → YOU review and commit
+  answers → YOU create the implementation plan → YOU spawn a subagent per piece
+  (`Task("Write tests for X", subagent_type="general-purpose")`, likewise backend
+  and frontend) → YOU review and commit
 
 ### Protect Context
 
@@ -164,8 +163,9 @@ Read the `native-deps-safety` skill for the mechanisms, war stories, and CI guar
 - **Frontend**: React Native + Expo; Expo Router (file-based); state via Convex hooks
   (`useQuery`/`useMutation`/`useAction`); chat via Convex real-time messaging;
   Sentry for error tracking; PostHog for analytics / feature flags
-- **Integrations**: Twilio (SMS OTP + notifications), Resend (transactional email),
-  Expo Push API, Mapbox (maps), Cloudflare R2 (storage + image transformations)
+- **Integrations**: Twilio (SMS: OTP verification, notifications), Resend
+  (transactional email: attendance confirmations, notifications), Expo Push API
+  (push notifications), Mapbox (maps), Cloudflare R2 (file storage, image transformations)
 - **Shared**: Convex generates types from schema (`apps/convex/_generated/`);
   API client `@services/api/convex` (Convex React client)
 
