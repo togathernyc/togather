@@ -3002,8 +3002,8 @@ function MineEmptyNotice({
  * links a template from the rostering grid (or duplicates an event). That grid
  * is where a leader would otherwise have to go, on a laptop, mid-service. This
  * calls the SAME existing `setPlanTaskTemplate` mutation the grid uses (no new
- * backend surface); the default `carryover` is irrelevant here because the
- * plan has no rows to carry over.
+ * backend surface), with `carryover: "copy"` so a concurrent write from the
+ * grid can't be destroyed by this device's stale "the plan is empty" snapshot.
  *
  * Only rendered when the plan has zero tasks, so there is nothing to destroy
  * and no confirmation step is warranted.
@@ -3076,6 +3076,14 @@ function PopulateFromTemplate({
               await setPlanTaskTemplate({
                 planId,
                 templateId: template._id as Id<"eventTaskTemplates">,
+                // "copy" — NOT the backend's "discard" default. This affordance
+                // only renders off a `no-plan-tasks` snapshot, but that snapshot
+                // is reactive and can be stale: if another leader adds tasks
+                // from the grid between their write and this device receiving
+                // the update, "discard" would silently delete every one of them
+                // and cascade their completions, with no confirm and no undo.
+                // On a genuinely empty plan "copy" is a no-op.
+                carryover: "copy",
               });
             } catch (err) {
               notify(

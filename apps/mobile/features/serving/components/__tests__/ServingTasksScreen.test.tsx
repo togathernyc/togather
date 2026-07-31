@@ -448,7 +448,26 @@ describe("ServingTasksScreen — leader affordance on a task-less plan", () => {
     expect(mockSetPlanTaskTemplate).toHaveBeenCalledWith({
       planId: "plan-1",
       templateId: "tmpl-1",
+      carryover: "copy",
     });
+  });
+
+  // The backend defaults `carryover` to "discard", which DELETES every
+  // pre-existing task on the plan and cascades its completions — and
+  // `setPlanTaskTemplate` does no emptiness check of its own. The only guard is
+  // this device's reactive "the plan has no tasks" snapshot, which is stale for
+  // as long as it takes another leader's grid write to arrive. "copy" is a
+  // no-op on a genuinely empty plan and preserves their rows in the race.
+  it("passes carryover 'copy' so a concurrent write is never discarded", async () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
+    const { getByLabelText } = render(<ServingTasksScreen />);
+
+    await fireEvent.press(getByLabelText("Add tasks from Midweek"));
+
+    expect(mockSetPlanTaskTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({ carryover: "copy" }),
+    );
   });
 
   it("omits an item-less template rather than offering a no-op", () => {
