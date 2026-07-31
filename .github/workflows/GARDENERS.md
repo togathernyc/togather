@@ -20,10 +20,10 @@ This is a plain document, not a workflow. Editing it changes nothing.
 
 | Gardener | File | What it does | Cadence | Per-run cap | Daily cap | Files |
 |---|---|---|---|---:|---:|---|
-| **Large Files** | `gardener-large-files.md` | Finds the largest hand-written source file; if it is over 500 lines, proposes a concrete split | Weekly · Tue ~09:15 UTC | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 issue, `[gardener:large-files]` |
-| **Docs Drift** | `gardener-docs-drift.md` | Diffs the last week of merged changes against `docs/` and the `apps/web` onboarding guides | Weekly · Thu ~09:15 UTC | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 issue, `[gardener:docs-drift]` |
-| **CI Doctor** | `gardener-ci-doctor.md` | Diagnoses `CI` failures on `main`, grouped by failure signature; plus a weekly roll-up | On CI failure (main) **+** weekly · Mon ~09:15 UTC | 200 AIC ($2.00) | 400 AIC ($4.00) | ≤2 issues, `[gardener:ci-doctor]` |
-| **Cost Report** | `gardener-cost-report.md` | The visibility surface — keeps one standing issue with a per-gardener cost & activity table | Weekly · Fri ~09:15 UTC | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 standing issue, `[gardeners]` |
+| **Large Files** | `gardener-large-files.md` | Finds the largest hand-written source file; if it is over 500 lines, proposes a concrete split | Weekly · **Tue 09:15 ET** | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 issue, `[gardener:large-files]` |
+| **Docs Drift** | `gardener-docs-drift.md` | Diffs the last week of merged changes against `docs/` and the `apps/web` onboarding guides | Weekly · **Thu 09:15 ET** | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 issue, `[gardener:docs-drift]` |
+| **CI Doctor** | `gardener-ci-doctor.md` | Diagnoses `CI` failures on `main`, grouped by failure signature; plus a weekly roll-up | On CI failure (main) **+** weekly · **Mon 09:15 ET** | 200 AIC ($2.00) | 400 AIC ($4.00) | ≤2 issues, `[gardener:ci-doctor]` |
+| **Cost Report** | `gardener-cost-report.md` | The visibility surface — keeps one standing issue with a per-gardener cost & activity table | Weekly · **Fri 09:15 ET** | 300 AIC ($3.00) | 200 AIC ($2.00) | 1 standing issue, `[gardeners]` |
 | | | | | | **1000 AIC ($10.00)** repo-wide/day | |
 
 **Engine:** all four use `engine: claude` and require an `ANTHROPIC_API_KEY`
@@ -39,9 +39,24 @@ all hit at once. The real cron lives in the generated `.lock.yml`:
 grep 'cron:' .github/workflows/gardener-*.lock.yml
 ```
 
-Times are **UTC**. During US Eastern Daylight Time (Mar–Nov) 09:15 UTC is
-05:15 ET; during Standard Time it is 04:15 ET. If you want them to land in your
-morning rather than overnight, see [Changing the timezone](#changing-the-timezone).
+All four run at **09:15 America/New_York**, on four different weekdays. That is
+real ET, not UTC — each schedule entry carries a `timezone:` field, and GitHub
+Actions handles daylight saving automatically, so it stays 09:15 ET year-round.
+
+Two things about this are worth knowing before you change it:
+
+- **`gh aw compile` prints an advisory warning** for each of these: *"Schedule
+  uses fixed weekly time (Tuesday 9:15 UTC). Consider using fuzzy schedule…"*.
+  Both halves of that message are misleading. It says "UTC" because gh-aw renders
+  the warning without accounting for the `timezone:` field it just emitted — the
+  runs really are 09:15 ET. And the fuzzy-schedule suggestion is about spreading
+  load across GitHub's fleet, which does not matter for four weekly workflows on
+  four separate days. **The warning is expected. It is not an error, and the
+  compile still reports `0 error(s)`.**
+- **The `timezone` field is new.** GitHub shipped it on 2026-03-19; before that,
+  scheduled workflows were UTC-only. Tooling that pins an older schema snapshot
+  may redline it locally — that is a linter false positive, not a failure.
+  (`actionlint` 1.7.12, which `gh aw lint` bundles, accepts it.)
 
 ### Reading the cost caps
 
@@ -133,12 +148,27 @@ on:
 
 ### Changing the timezone
 
+`timezone` is a property of a **schedule array item**, alongside `cron` — not a
+sibling key of the `schedule:` block. This is the form the gardeners use:
+
 ```yaml
 on:
   schedule:
-    cron: weekly on tuesday around 9:15
-    timezone: America/New_York
+    - cron: "15 9 * * 2"          # Tuesday 09:15 America/New_York
+      timezone: America/New_York
 ```
+
+Getting the nesting wrong fails loudly (`schedule field must be a string or an
+array`), so you will know immediately.
+
+**Use an explicit cron with `timezone`, not a fuzzy string.** gh-aw does not do
+timezone math itself — it passes `timezone:` straight through to GitHub Actions,
+which interprets the cron in that zone. So the cron you write is the local time
+you get. A fuzzy expression (`weekly on tuesday around 9:15`) still works, but
+gh-aw resolves its scattered minute first and the result is harder to predict;
+with an explicit cron, 09:15 means 09:15.
+
+To go back to UTC, delete the `timezone` line.
 
 ### Making a gardener run less often
 

@@ -8,7 +8,9 @@ description: |
 emoji: "🧾"
 
 on:
-  schedule: weekly on friday around 9:15
+  schedule:
+    - cron: "15 9 * * 5"          # Friday 09:15 America/New_York
+      timezone: America/New_York
   workflow_dispatch:
   roles: [admin, maintainer, write]
 

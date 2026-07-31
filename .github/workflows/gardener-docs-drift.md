@@ -8,7 +8,9 @@ description: |
 emoji: "🌿"
 
 on:
-  schedule: weekly on thursday around 9:15
+  schedule:
+    - cron: "15 9 * * 4"          # Thursday 09:15 America/New_York
+      timezone: America/New_York
   workflow_dispatch:
   roles: [admin, maintainer, write]
   skip-if-match: 'is:issue is:open in:title "[gardener:docs-drift]"'

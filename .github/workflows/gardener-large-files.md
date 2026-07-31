@@ -7,7 +7,9 @@ description: |
 emoji: "🌱"
 
 on:
-  schedule: weekly on tuesday around 9:15
+  schedule:
+    - cron: "15 9 * * 2"          # Tuesday 09:15 America/New_York
+      timezone: America/New_York
   workflow_dispatch:
   roles: [admin, maintainer, write]
   # Idempotency: if last week's report is still open and unaddressed, skip

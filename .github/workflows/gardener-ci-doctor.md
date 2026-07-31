@@ -12,7 +12,9 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
-  schedule: weekly on monday around 9:15
+  schedule:
+    - cron: "15 9 * * 1"          # Monday 09:15 America/New_York
+      timezone: America/New_York
   workflow_dispatch:
   roles: [admin, maintainer, write]
 
