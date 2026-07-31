@@ -189,6 +189,15 @@ interface ActivityPeriodTotals {
  * one screen whose entire purpose is telling members where their money went.
  * They get their own totals instead of disappearing — a fee that is invisible
  * is exactly as dishonest as a fee mislabelled as spend.
+ *
+ * TODO: Investigate — `refundedCents` is computed here and typed all the way
+ * through to `member/types.ts`, but no surface renders it, so on a fund with
+ * a refund "given" minus "spent" minus "fees" does not reconcile. That is the
+ * same argument that put fees on their own line. Left as-is deliberately for
+ * now: it is a copy/layout decision on the member transparency screen rather
+ * than a correctness one, and this pass is scoped to money movement. Refunds
+ * on group funds are rare enough that shipping the wrong words for them is
+ * worse than shipping nothing yet.
  */
 function summarizePeriod(
   entries: Array<Pick<Doc<"ledgerEntries">, "direction" | "amountCents" | "kind">>,

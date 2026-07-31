@@ -44,7 +44,7 @@ const stubs = vi.hoisted(() => ({
     | {
         charges: unknown[];
         reversedPaymentIntentIds?: string[];
-        unattributedReversalCents?: number;
+        unattributedNetCents?: number;
       }
     | { error: string }
   >(),
@@ -71,6 +71,10 @@ vi.mock("../lib/finance/stripeConnect", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/finance/stripeConnect")>();
   return {
     ...actual,
+    // The real one takes `payoutCents` too and refuses a composition whose
+    // nets don't add up to it — that guard is exercised against raw Stripe
+    // rows in finance-payout-nets.test.ts. Here the composition is the
+    // fixture, so the third argument is irrelevant.
     getPayoutComposition: vi.fn(async (_accountId: string, payoutId: string) => {
       const stub = stubs.payouts.get(payoutId);
       if (!stub) {
@@ -82,7 +86,7 @@ vi.mock("../lib/finance/stripeConnect", async (importOriginal) => {
       return {
         charges: stub.charges as PayoutChargeNet[],
         reversedPaymentIntentIds: stub.reversedPaymentIntentIds ?? [],
-        unattributedReversalCents: stub.unattributedReversalCents ?? 0,
+        unattributedNetCents: stub.unattributedNetCents ?? 0,
       };
     }),
   };
@@ -1285,6 +1289,106 @@ describe("refunds and allocation", () => {
     ).toEqual({ ok: true, driftCents: 0 });
   });
 
+  test("P1-7: a partial refund settling in a LATER payout transfers only what's left of the gift", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    // $100 gift, $30 refunded before the payout settles. Stripe does NOT
+    // guarantee the refund's balance transaction shares the charge's payout,
+    // so this payout still carries the charge at its FULL net (9680) — the
+    // netting in `getPayoutComposition` cannot help here, and the gift stays
+    // legitimately "pending" so the full-refund belt-and-braces doesn't reach
+    // it either. Taking Stripe's net verbatim moved 9680 while the ledger
+    // said 7000, leaving 2680 of returned donor money spendable on the
+    // group's card.
+    const donationId = await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_late_refund",
+      amountCents: 10_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    await refundDonation(t, {
+      paymentIntentId: "pi_late_refund",
+      chargeId: "ch_late_refund",
+      amountRefundedCents: 3_000,
+    });
+
+    stubs.payouts.set("po_late_refund", {
+      charges: [{ paymentIntentId: "pi_late_refund", netCents: 9_680 }],
+    });
+
+    await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_late_refund",
+      payoutCents: 9_680,
+    });
+
+    // What the bank was actually ASKED to move is the assertion that matters.
+    expect(stubs.transferCalls).toEqual([
+      {
+        toAccountId: "account_fund_a",
+        amountCents: 7_000, // 10000 gross − 3000 refunded, NOT Stripe's 9680
+        idempotencyKey: `alloc:${donationId}`,
+      },
+    ]);
+
+    const donation = await getDonation(t, donationId);
+    expect(donation?.allocationStatus).toBe("allocated");
+    expect(donation?.payoutNetCents).toBe(7_000);
+
+    // Ledger and bank agree exactly: credit 10000, refund 3000, no fee left
+    // to realise on the part the fund kept.
+    const entries = await t.run((ctx) =>
+      ctx.db
+        .query("ledgerEntries")
+        .withIndex("by_fund", (q) => q.eq("fundId", fundAId))
+        .collect(),
+    );
+    expect(entries.map((e) => `${e.kind}:${e.direction}:${e.amountCents}`)).toEqual([
+      "donation:credit:10000",
+      "refund:debit:3000",
+    ]);
+    expect((await t.run((ctx) => ctx.db.get(fundAId)))?.balanceCents).toBe(7_000);
+  });
+
+  test("P1-7: the retry cron resumes a bound gift at the refunded-down amount, not its stale stamped net", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    const donationId = await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_bound_then_partial",
+      amountCents: 10_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    // Bound at the full net by a pass whose transfer never landed — it
+    // couldn't have known about a refund that hadn't happened yet.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(donationId, {
+        allocationPayoutId: "po_bound_partial_retry",
+        payoutNetCents: 9_680,
+      });
+    });
+    await refundDonation(t, {
+      paymentIntentId: "pi_bound_then_partial",
+      chargeId: "ch_bound_partial_retry",
+      amountRefundedCents: 3_000,
+    });
+
+    await t.action(internal.functions.finance.jobs.retryStaleAllocations, {});
+
+    expect(stubs.transferCalls).toEqual([
+      {
+        toAccountId: "account_fund_a",
+        amountCents: 7_000,
+        idempotencyKey: `alloc:${donationId}`,
+      },
+    ]);
+    expect((await t.run((ctx) => ctx.db.get(fundAId)))?.balanceCents).toBe(7_000);
+  });
+
   test("a gift refunded while bound to a payout is dropped by the retry cron, not transferred", async () => {
     const t = convexTest(schema, modules);
     const { communityId, fundAId } = await seedAllocFixture(t);
@@ -1517,6 +1621,176 @@ describe("unmatched payouts are observable", () => {
     });
 
     expect(await auditActions(t, communityId)).toContain("allocation.payout_unmatched");
+  });
+
+  test("P1-8: replaying a HEALTHY payout raises no unmatched alarm — that's the success condition", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_healthy",
+      amountCents: 10_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    stubs.payouts.set("po_healthy", {
+      charges: [{ paymentIntentId: "pi_healthy", netCents: 9_680 }],
+    });
+
+    const first = await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_healthy",
+      payoutCents: 9_680,
+    });
+    expect(first).toEqual({ allocated: 1, failed: 0 });
+
+    // webhooks.ts routes `payout.reconciliation_completed` to this same
+    // handler, and Stripe emits it after EVERY payout — so this second pass
+    // is the normal course of business, not an edge case. The gift is
+    // already allocated, so the plan is empty; treating an empty plan as
+    // "matched nothing" wrote a full-payout `payout_unmatched` row (with
+    // leftoverCents equal to the entire payout) on every healthy payout,
+    // forever, drowning the one signal that has no automatic recovery.
+    const second = await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_healthy",
+      payoutCents: 9_680,
+    });
+    expect(second).toEqual({ allocated: 0, failed: 0 });
+
+    expect(await auditActions(t, communityId)).toEqual(["donation.allocated"]);
+  });
+
+  test("P1-8: a payout that finished some items but genuinely lost the rest still alarms", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_known",
+      amountCents: 1_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    // 941 of a 50000 payout maps to a gift we know. The alarm must survive
+    // the P1-8 guard: "something was already allocated" is not a licence to
+    // stop looking at the 49059 we cannot account for.
+    stubs.payouts.set("po_partial_known", {
+      charges: [{ paymentIntentId: "pi_known", netCents: 941 }],
+    });
+
+    await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_partial_known",
+      payoutCents: 50_000,
+    });
+    await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_partial_known",
+      payoutCents: 50_000,
+    });
+
+    const unmatched = (await auditActions(t, communityId)).filter(
+      (a) => a === "allocation.payout_unmatched",
+    );
+    expect(unmatched).toHaveLength(2);
+  });
+
+  test("P1-6: a payout short by money we can't attribute is REFUSED, not allocated around", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    const donationId = await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_healthy",
+      amountCents: 50_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    // A reversal Stripe attributed to this payout that we could not tie to
+    // any PaymentIntent. The charge rows now sum to MORE than the payout
+    // delivered, so funding them all would move money that never arrived —
+    // and the residual-budget check would quietly strand whichever gift
+    // sorted last instead, with leftoverCents at 0.
+    stubs.payouts.set("po_short", {
+      charges: [{ paymentIntentId: "pi_healthy", netCents: 48_500 }],
+      unattributedNetCents: -48_500,
+    });
+
+    const result = await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_short",
+      payoutCents: 0,
+    });
+
+    expect(result).toEqual({ allocated: 0, failed: 0 });
+    expect(stubs.transferCalls).toEqual([]);
+    const donation = await getDonation(t, donationId);
+    expect(donation?.allocationStatus).toBe("pending");
+    expect(donation?.allocationPayoutId).toBeUndefined();
+
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    const unmatched = rows.find((r) => r.action === "allocation.payout_unmatched");
+    expect(JSON.parse(unmatched!.detailsJson!)).toMatchObject({
+      stripePayoutId: "po_short",
+      refused: true,
+      unattributedNetCents: -48_500,
+    });
+  });
+
+  test("P1-6: a gift skipped for overrunning the payout alarms instead of vanishing", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, fundAId } = await seedAllocFixture(t);
+
+    await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_a",
+      amountCents: 50_000,
+      createdAt: 1_000,
+      creditLedger: true,
+    });
+    await seedDonation(t, {
+      fundId: fundAId,
+      paymentIntentId: "pi_b",
+      amountCents: 50_000,
+      createdAt: 2_000,
+      creditLedger: true,
+    });
+    // Both gifts are in the payout at 49600, but the payout only carried one
+    // of them. The second is skipped — correctly, it can't be funded — and
+    // leftoverCents then comes out at 0, which used to look perfectly
+    // healthy. A stranded gift is not a healthy pass.
+    stubs.payouts.set("po_overrun", {
+      charges: [
+        { paymentIntentId: "pi_a", netCents: 49_600 },
+        { paymentIntentId: "pi_b", netCents: 49_600 },
+      ],
+    });
+
+    await t.action(internal.functions.finance.jobs.runAllocation, {
+      communityId,
+      stripePayoutId: "po_overrun",
+      payoutCents: 49_600,
+    });
+
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    const unmatched = rows.find((r) => r.action === "allocation.payout_unmatched");
+    expect(unmatched).toBeDefined();
+    expect(JSON.parse(unmatched!.detailsJson!)).toMatchObject({
+      leftoverCents: 0, // the number that made this invisible
+      overrunSkippedCount: 1,
+    });
   });
 
   test("a fully matched payout does not alarm", async () => {

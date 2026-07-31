@@ -174,13 +174,22 @@ export interface PayoutComposition {
    */
   reversedPaymentIntentIds: string[];
   /**
-   * Reversal cents in this payout we could not attribute to any
-   * PaymentIntent. Should always be 0 — a Refund's expanded `source` carries
-   * `payment_intent` — but a non-zero value means the payout is short by
-   * money we cannot subtract from anything, so the caller must alarm rather
-   * than allocate as if the shortfall didn't exist.
+   * Signed cents this payout carried on rows we could NOT tie to any
+   * PaymentIntent — Stripe's own `stripe_fee`, a Refund whose `source` came
+   * back unexpanded, an Issuing row, anything.
+   *
+   * The SIGN is the whole point, and only one direction is dangerous:
+   *
+   *  - **Positive** — money arrived that we can't credit to a donor. Nothing
+   *    over-transfers; it simply shows up as `leftoverCents` in the plan.
+   *  - **Negative** — the payout is SHORT by money we cannot subtract from
+   *    any gift. The charge rows then sum to more than the payout actually
+   *    delivered, so funding every one of them at its full net would move
+   *    more out of the receiving Account than went in. `runAllocation`
+   *    refuses the payout rather than letting the residual-budget check
+   *    absorb the shortfall by silently skipping whichever gift sorts last.
    */
-  unattributedReversalCents: number;
+  unattributedNetCents: number;
 }
 
 /** One page of `GET /v1/balance_transactions` is 100 rows; a payout with more
@@ -192,33 +201,30 @@ const BALANCE_TXN_PAGE_LIMIT = 100;
 const BALANCE_TXN_MAX_PAGES = 100;
 
 /**
+ * The payout's OWN leg. Listing balance transactions by payout returns the
+ * payout itself alongside its contents ("`payout`: The payout itself, which
+ * is also a transaction that moved funds from your Stripe account to your
+ * bank account" — Stripe, Payout reconciliation), at `net = -payout.amount`.
+ * Counting it would net the whole payout to zero, so it is excluded from
+ * every total below. The cancel/failure variants are the same leg in its
+ * other terminal states.
+ */
+const PAYOUT_LEG_TXN_TYPES: ReadonlySet<string> = new Set([
+  "payout",
+  "payout_cancel",
+  "payout_failure",
+]);
+
+/**
  * Balance-transaction types that represent donor money ARRIVING. "charge" is
  * a card payment; "payment" is the ACH-debit equivalent (ADR-032 §3 offers
  * ACH for large gifts).
+ *
+ * This is a SANITY set, not a filter: membership no longer decides whether a
+ * row counts (see `getPayoutComposition`), it only tells us that a negative
+ * `net` on such a row is nonsense worth logging.
  */
 const INBOUND_TXN_TYPES: ReadonlySet<string> = new Set(["charge", "payment"]);
-
-/**
- * Balance-transaction types that represent money for an EARLIER charge
- * moving back out (or, for the `*_failure` pair, a failed reversal coming
- * back in). Their `net` is already signed by Stripe, so they are summed
- * as-is against the charge's own net.
- *
- * These MUST NOT be discarded. A donation refunded before its payout settles
- * is still `allocationStatus: "pending"`, so dropping the refund row would
- * leave the surviving charge row looking like a fundable gift and transfer
- * money the donor already got back into a group's spendable Increase
- * Account. `adjustment` covers the dispute/chargeback case, whose source is
- * a Dispute — also `payment_intent`-bearing.
- */
-const REVERSAL_TXN_TYPES: ReadonlySet<string> = new Set([
-  "refund",
-  "payment_refund",
-  "refund_failure",
-  "payment_refund_failure",
-  "payment_failure_refund",
-  "adjustment",
-]);
 
 /**
  * Read what one Stripe payout was actually composed of, per PaymentIntent.
@@ -233,9 +239,37 @@ const REVERSAL_TXN_TYPES: ReadonlySet<string> = new Set([
  *
  * Charges and their reversals are NETTED per PaymentIntent rather than the
  * reversals being thrown away, because both directions are donor money and
- * only their sum is fundable. Pure bookkeeping rows (`stripe_fee`, `payout`,
- * `transfer`, …) are skipped — those are the difference between the payout
- * total and the sum of the nets.
+ * only their sum is fundable.
+ *
+ * MEMBERSHIP IS DECIDED BY `payment_intent`, NOT BY `type`. Any row whose
+ * expanded `source` resolves to a PaymentIntent is that gift's money moving,
+ * in whichever direction Stripe already signed `net`; everything else is
+ * bookkeeping we cannot attribute. This used to be an allowlist of reversal
+ * types, and an allowlist is the wrong shape here because every omission
+ * fails OPEN — it leaves the charge row looking like a fundable gift and
+ * over-transfers. The old list proved the point twice over: it contained
+ * `payment_refund_failure`, which is not a type Stripe emits at all, and
+ * omitted `payment_reversal`, which is ("Created when a debit/failure related
+ * to a payment is detected from a banking partner. This balance transaction
+ * takes funds that were previously credited to the merchant for a payment out
+ * of the merchant balance") — the post-credit bank reversal of an ACH
+ * `payment`, and ACH is live in this flow. Reading `payment_intent` instead
+ * handles that type, and every type Stripe adds after this comment was
+ * written, without anyone having to notice.
+ *
+ * TWO STRUCTURAL GUARDS make a miss loud instead of expensive:
+ *
+ *  1. Every row's `net` must add up. A payout IS the sum of the nets Stripe
+ *     attributed to it, so `Σ net (excluding the payout's own leg)` must
+ *     equal `payoutCents` exactly. It doesn't when the composition is
+ *     partial — Stripe attributes balance transactions asynchronously, which
+ *     is what `payout.reconciliation_completed` announces — or when paging
+ *     dropped something. Either way, allocating against a view that doesn't
+ *     add up is allocating against money that may not be there, so this
+ *     throws (like the page-cap guard below) and lets the redelivery retry.
+ *  2. Anything we could not attribute lands in `unattributedNetCents`, and
+ *     the negative direction is refused by the caller. So a reversal type we
+ *     somehow still can't map fails CLOSED.
  *
  * `expand: ["data.source"]` inflates each balance transaction's `source`
  * into the full Charge / Refund / Dispute, which is where `payment_intent`
@@ -254,12 +288,15 @@ const REVERSAL_TXN_TYPES: ReadonlySet<string> = new Set([
 export async function getPayoutComposition(
   connectedAccountId: string,
   payoutId: string,
+  /** `payout.amount`, in integer cents — the total guard #1 checks against. */
+  payoutCents: number,
 ): Promise<PayoutComposition> {
   const stripe = await getStripeClient();
   // Insertion-ordered so the emitted charge list is stable across runs, which
   // keeps a re-plan of the same payout deterministic.
   const netByPaymentIntent = new Map<string, number>();
-  let unattributedReversalCents = 0;
+  let unattributedNetCents = 0;
+  let totalNetCents = 0;
   let startingAfter: string | undefined;
   let pagedToEnd = false;
 
@@ -275,44 +312,40 @@ export async function getPayoutComposition(
     );
 
     for (const txn of result.data) {
-      const isInbound = INBOUND_TXN_TYPES.has(txn.type);
-      const isReversal = REVERSAL_TXN_TYPES.has(txn.type);
-      if (!isInbound && !isReversal) continue;
+      // The payout's own leg is the movement to the bank, not part of what
+      // the payout carried.
+      if (PAYOUT_LEG_TXN_TYPES.has(txn.type)) continue;
 
-      // Integer cents only — a fractional net would be a Stripe-side
-      // surprise, and allocating against it would move a wrong amount of
-      // real money. Skip loudly instead.
+      // Integer cents only. A fractional net means we cannot state what this
+      // payout was composed of, and guard #1 below would compare a float
+      // against an integer forever. Refuse the whole payout rather than
+      // dropping one row and allocating against the rest.
       if (!Number.isInteger(txn.net)) {
-        console.error(
-          `[finance] getPayoutComposition: balance transaction ${txn.id} has a non-integer net (${txn.net}) — skipping`,
+        throw new Error(
+          `getPayoutComposition: balance transaction ${txn.id} on payout ${payoutId} has a non-integer net (${txn.net}) — refusing to allocate against a composition we cannot state exactly`,
         );
-        continue;
-      }
-      if (txn.net === 0) continue;
-      // An inbound row must bring money in; a reversal must take it out (or,
-      // for a failed reversal, put it back). Either way, `net`'s own sign is
-      // what we sum — a wrong-signed row is nonsense we refuse to reason on.
-      if (isInbound && txn.net < 0) {
-        console.error(
-          `[finance] getPayoutComposition: ${txn.type} balance transaction ${txn.id} has a negative net (${txn.net}) — skipping`,
-        );
-        continue;
       }
 
+      totalNetCents += txn.net;
+      if (txn.net === 0) continue;
+
+      // Money in for a gift should never be negative. Logged, not skipped:
+      // dropping it would put guard #1 out of balance, and netting it signed
+      // is the safe reading anyway (it can only push that PaymentIntent's
+      // total DOWN, i.e. towards not being funded).
+      if (INBOUND_TXN_TYPES.has(txn.type) && txn.net < 0) {
+        console.error(
+          `[finance] getPayoutComposition: ${txn.type} balance transaction ${txn.id} has a negative net (${txn.net}) — netting it signed, which can only reduce what is allocated`,
+        );
+      }
+
+      // `payment_intent`, not `type`, decides whether this is donor money.
       const paymentIntentId = paymentIntentIdFromSource(txn.source);
       if (!paymentIntentId) {
-        if (isReversal) {
-          // Losing a reversal is the dangerous direction: the payout is short
-          // by this much and we would allocate as though it weren't.
-          unattributedReversalCents += txn.net;
-          console.error(
-            `[finance] getPayoutComposition: ${txn.type} balance transaction ${txn.id} on payout ${payoutId} (net ${txn.net}) has no resolvable payment_intent — it cannot be netted against any donation`,
-          );
-        } else {
-          console.error(
-            `[finance] getPayoutComposition: balance transaction ${txn.id} on payout ${payoutId} has no resolvable payment_intent — skipping`,
-          );
-        }
+        unattributedNetCents += txn.net;
+        console.error(
+          `[finance] getPayoutComposition: ${txn.type} balance transaction ${txn.id} on payout ${payoutId} (net ${txn.net}) has no resolvable payment_intent — it cannot be netted against any donation`,
+        );
         continue;
       }
 
@@ -343,6 +376,21 @@ export async function getPayoutComposition(
     );
   }
 
+  // GUARD #1. A payout is exactly the sum of the nets Stripe attributed to
+  // it. If our reading doesn't add up, we are looking at a composition that
+  // isn't the payout — most likely a partial one, because Stripe attributes
+  // balance transactions asynchronously (hence
+  // `payout.reconciliation_completed`). Throwing leaves the payout entirely
+  // unwritten, so the redelivery — or the reconciliation event — simply runs
+  // it again against the complete set. Note this guard alone does NOT catch a
+  // misclassified row: a reversal we failed to recognise is still inside the
+  // sum. Guard #2 (`unattributedNetCents`) is what covers that.
+  if (totalNetCents !== payoutCents) {
+    throw new Error(
+      `getPayoutComposition: payout ${payoutId} balance transactions net to ${totalNetCents} cents but the payout is ${payoutCents} — refusing to allocate against a composition that does not add up`,
+    );
+  }
+
   const charges: PayoutChargeNet[] = [];
   const reversedPaymentIntentIds: string[] = [];
   for (const [paymentIntentId, netCents] of netByPaymentIntent) {
@@ -356,7 +404,7 @@ export async function getPayoutComposition(
     }
   }
 
-  return { charges, reversedPaymentIntentIds, unattributedReversalCents };
+  return { charges, reversedPaymentIntentIds, unattributedNetCents };
 }
 
 /**

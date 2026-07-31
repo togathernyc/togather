@@ -3920,10 +3920,15 @@ export default defineSchema({
     // Optional/backfill-safe: donations recorded before net matching shipped
     // (and any donation not yet paid out) simply have neither field.
     allocationPayoutId: v.optional(v.string()),
-    // Integer cents this donation actually contributed to that payout — the
-    // Stripe balance-transaction NET (gross minus Stripe's processing fee),
-    // which is what the bulk payout physically delivered and therefore the
-    // only amount we can transfer on to the group's Increase Account. The
+    // Integer cents allocation will move for this donation out of that
+    // payout: the Stripe balance-transaction NET (gross minus Stripe's
+    // processing fee) — what the bulk payout physically delivered, and
+    // therefore the ceiling on what we can transfer on to the group's
+    // Increase Account — CAPPED at the unrefunded gross. The cap matters when
+    // a partial refund's own balance transaction settles in a different
+    // payout: the charge still appears here at its full net while the ledger
+    // has already taken the refund debit, and transferring the full net would
+    // move money the donor got back (jobs.ts `allocationAmountCents`). The
     // gross (amountCents + feeCoverCents) is what the ledger credited at
     // donation time; the difference is posted as a "fee" debit once the
     // allocation transfer lands (see jobs.ts recordAllocation).

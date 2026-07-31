@@ -66,14 +66,20 @@ function refundTxn(id: string, paymentIntentId: string, net: number) {
   };
 }
 
-async function composition(payoutId = "po_1") {
+/**
+ * `payoutCents` is not decoration: a payout IS the sum of the nets Stripe
+ * attributed to it (excluding the payout's own leg), and `getPayoutComposition`
+ * refuses a composition that doesn't add up to it. Every case below therefore
+ * states the arithmetic total of the rows it feeds in.
+ */
+async function composition(payoutId: string, payoutCents: number) {
   const { getPayoutComposition } = await import("../lib/finance/stripeConnect");
-  return await getPayoutComposition("acct_connected", payoutId);
+  return await getPayoutComposition("acct_connected", payoutId, payoutCents);
 }
 
 /** The charges half, which is what allocation actually plans against. */
-async function listNets(payoutId = "po_1") {
-  return (await composition(payoutId)).charges;
+async function listNets(payoutId: string, payoutCents: number) {
+  return (await composition(payoutId, payoutCents)).charges;
 }
 
 describe("getPayoutComposition", () => {
@@ -83,7 +89,7 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets("po_abc")).toEqual([
+    expect(await listNets("po_abc", 14_505)).toEqual([
       { paymentIntentId: "pi_1", netCents: 9_680 },
       { paymentIntentId: "pi_2", netCents: 4_825 },
     ]);
@@ -108,7 +114,9 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([{ paymentIntentId: "pi_1", netCents: 9_680 }]);
+    expect(await listNets("po_bookkeeping", 9_630)).toEqual([
+      { paymentIntentId: "pi_1", netCents: 9_680 },
+    ]);
   });
 
   test("THE P0: a refund is netted against its charge, never discarded — a fully refunded gift yields NO fundable charge", async () => {
@@ -128,12 +136,12 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    const result = await composition("po_refund");
+    const result = await composition("po_refund", 4_505);
     expect(result.charges).toEqual([
       { paymentIntentId: "pi_healthy", netCents: 4_825 },
     ]);
     expect(result.reversedPaymentIntentIds).toEqual(["pi_refunded"]);
-    expect(result.unattributedReversalCents).toBe(0);
+    expect(result.unattributedNetCents).toBe(0);
   });
 
   test("a PARTIAL refund reduces its charge's net rather than removing it", async () => {
@@ -145,7 +153,7 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    const result = await composition("po_partial_refund");
+    const result = await composition("po_partial_refund", 6_680);
     expect(result.charges).toEqual([
       { paymentIntentId: "pi_partial", netCents: 6_680 },
     ]);
@@ -162,12 +170,14 @@ describe("getPayoutComposition", () => {
           net: -11_500, // gift back plus Stripe's dispute fee
           source: { id: "dp_1", payment_intent: "pi_disputed" },
         },
+        chargeTxn("txn_other", "pi_other", 20_000),
       ],
       has_more: false,
     });
 
-    const result = await composition("po_disputed");
-    expect(result.charges).toEqual([]);
+    // 9680 - 11500 + 20000 = 18180.
+    const result = await composition("po_disputed", 18_180);
+    expect(result.charges).toEqual([{ paymentIntentId: "pi_other", netCents: 20_000 }]);
     expect(result.reversedPaymentIntentIds).toEqual(["pi_disputed"]);
   });
 
@@ -182,9 +192,9 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    const result = await composition("po_orphan_refund");
+    const result = await composition("po_orphan_refund", 8_680);
     expect(result.charges).toEqual([{ paymentIntentId: "pi_1", netCents: 9_680 }]);
-    expect(result.unattributedReversalCents).toBe(-1_000);
+    expect(result.unattributedNetCents).toBe(-1_000);
   });
 
   test("a failed refund puts the money back, so it nets positively", async () => {
@@ -202,7 +212,9 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([{ paymentIntentId: "pi_1", netCents: 9_680 }]);
+    expect(await listNets("po_refund_failed", 9_680)).toEqual([
+      { paymentIntentId: "pi_1", netCents: 9_680 },
+    ]);
   });
 
   test("includes ACH-debit charges, which Stripe types as 'payment'", async () => {
@@ -218,7 +230,7 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([
+    expect(await listNets("po_ach", 49_600)).toEqual([
       { paymentIntentId: "pi_ach", netCents: 49_600 },
     ]);
   });
@@ -229,7 +241,7 @@ describe("getPayoutComposition", () => {
       { data: [chargeTxn("txn_2", "pi_2", 200)], has_more: false },
     );
 
-    expect(await listNets()).toEqual([
+    expect(await listNets("po_paged", 300)).toEqual([
       { paymentIntentId: "pi_1", netCents: 100 },
       { paymentIntentId: "pi_2", netCents: 200 },
     ]);
@@ -241,11 +253,20 @@ describe("getPayoutComposition", () => {
   test("nets a charge and its refund across DIFFERENT pages", async () => {
     stubs.pages.push(
       { data: [chargeTxn("txn_1", "pi_split", 9_680)], has_more: true },
-      { data: [refundTxn("txn_2", "pi_split", -10_000)], has_more: false },
+      {
+        data: [
+          refundTxn("txn_2", "pi_split", -10_000),
+          chargeTxn("txn_3", "pi_healthy", 10_000),
+        ],
+        has_more: false,
+      },
     );
 
-    const result = await composition("po_split_pages");
-    expect(result.charges).toEqual([]);
+    // 9680 - 10000 + 10000 = 9680.
+    const result = await composition("po_split_pages", 9_680);
+    expect(result.charges).toEqual([
+      { paymentIntentId: "pi_healthy", netCents: 10_000 },
+    ]);
     expect(result.reversedPaymentIntentIds).toEqual(["pi_split"]);
   });
 
@@ -260,7 +281,7 @@ describe("getPayoutComposition", () => {
       });
     }
 
-    await expect(composition("po_huge")).rejects.toThrow(
+    await expect(composition("po_huge", 12_000)).rejects.toThrow(
       /refusing to allocate on a truncated view/,
     );
   });
@@ -276,7 +297,9 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([{ paymentIntentId: "pi_ok", netCents: 700 }]);
+    expect(await listNets("po_unmappable", 1_800)).toEqual([
+      { paymentIntentId: "pi_ok", netCents: 700 },
+    ]);
   });
 
   test("accepts an expanded payment_intent object, not just an id", async () => {
@@ -292,22 +315,119 @@ describe("getPayoutComposition", () => {
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([
+    expect(await listNets("po_expanded", 800)).toEqual([
       { paymentIntentId: "pi_expanded", netCents: 800 },
     ]);
   });
 
-  test("drops non-integer or non-positive charge nets — never allocates a fractional cent", async () => {
+  test("drops zero and non-positive charge nets — only a gift that delivered something is fundable", async () => {
     stubs.pages.push({
       data: [
-        chargeTxn("txn_1", "pi_float", 100.5),
         chargeTxn("txn_2", "pi_zero", 0),
+        // Nonsense from Stripe. Netted signed rather than dropped (dropping
+        // it would put the payout total out of balance), which can only push
+        // this PaymentIntent below zero and OUT of the fundable set.
         chargeTxn("txn_3", "pi_negative", -400),
         chargeTxn("txn_4", "pi_good", 400),
       ],
       has_more: false,
     });
 
-    expect(await listNets()).toEqual([{ paymentIntentId: "pi_good", netCents: 400 }]);
+    const result = await composition("po_nonsense", 0);
+    expect(result.charges).toEqual([{ paymentIntentId: "pi_good", netCents: 400 }]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_negative"]);
+  });
+
+  test("REFUSES a fractional net rather than dropping the row and allocating the rest", async () => {
+    stubs.pages.push({
+      data: [chargeTxn("txn_1", "pi_float", 100.5), chargeTxn("txn_2", "pi_ok", 400)],
+      has_more: false,
+    });
+
+    await expect(composition("po_float", 500)).rejects.toThrow(
+      /non-integer net/,
+    );
+  });
+
+  // ==========================================================================
+  // P1-6: membership is decided by `payment_intent`, not by `type`
+  // ==========================================================================
+
+  test("THE MISS: `payment_reversal` — a real type the old allowlist omitted — nets against its payment", async () => {
+    // Two $500 ACH gifts; the bank reverses one after Stripe had already
+    // credited it. `payment_reversal` was not in the reversal allowlist (which
+    // instead listed `payment_refund_failure`, a type Stripe does not emit),
+    // so the reversed gift kept its full net and got FUNDED, while the
+    // residual-budget check absorbed the shortfall by stranding the healthy
+    // one — with leftoverCents at 0, so nothing alarmed.
+    stubs.pages.push({
+      data: [
+        { id: "txn_a", type: "payment", net: 49_600, source: { id: "py_a", payment_intent: "pi_healthy" } },
+        { id: "txn_b", type: "payment", net: 49_600, source: { id: "py_b", payment_intent: "pi_reversed" } },
+        {
+          id: "txn_rev",
+          type: "payment_reversal",
+          net: -49_600,
+          source: { id: "pyr_b", payment_intent: "pi_reversed" },
+        },
+        { id: "txn_payout", type: "payout", net: -49_600, source: "po_rev" },
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_rev", 49_600);
+    expect(result.charges).toEqual([
+      { paymentIntentId: "pi_healthy", netCents: 49_600 },
+    ]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_reversed"]);
+    expect(result.unattributedNetCents).toBe(0);
+  });
+
+  test("a type invented after this code was written still nets, because only `payment_intent` decides", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_1", 9_680),
+        {
+          id: "txn_future",
+          type: "some_future_reversal_type_stripe_adds_in_2027",
+          net: -9_680,
+          source: { id: "xx_1", payment_intent: "pi_1" },
+        },
+        chargeTxn("txn_2", "pi_2", 4_825),
+      ],
+      has_more: false,
+    });
+
+    const result = await composition("po_future", 4_825);
+    expect(result.charges).toEqual([{ paymentIntentId: "pi_2", netCents: 4_825 }]);
+    expect(result.reversedPaymentIntentIds).toEqual(["pi_1"]);
+  });
+
+  test("REFUSES a composition whose nets don't add up to the payout — a partial read is not a payout", async () => {
+    // Stripe attributes balance transactions asynchronously, so a query at
+    // `payout.paid` can come back with only some of them. Allocating against
+    // that view allocates against money that may not be there.
+    stubs.pages.push({
+      data: [chargeTxn("txn_1", "pi_1", 9_680)],
+      has_more: false,
+    });
+
+    await expect(composition("po_partial_read", 19_360)).rejects.toThrow(
+      /balance transactions net to 9680 cents but the payout is 19360/,
+    );
+  });
+
+  test("the payout's own leg is excluded from the total rather than double-counted", async () => {
+    stubs.pages.push({
+      data: [
+        chargeTxn("txn_1", "pi_1", 9_680),
+        { id: "txn_payout", type: "payout", net: -9_680, source: "po_leg" },
+      ],
+      has_more: false,
+    });
+
+    expect(await listNets("po_leg", 9_680)).toEqual([
+      { paymentIntentId: "pi_1", netCents: 9_680 },
+    ]);
   });
 });

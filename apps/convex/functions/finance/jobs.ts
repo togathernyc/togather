@@ -56,7 +56,10 @@
  *
  * (`pendingAllocationCents` switches from gross to net the moment a donation
  * is bound to a payout — see `allocationAmountCents` — because from that
- * point on, net is all that will ever arrive.)
+ * point on, net is all that will ever arrive. Every selection path values a
+ * donation through that same helper, so what the planner asks Increase to
+ * transfer and what the nightly reconcile calls "pending" can never be
+ * different numbers.)
  *
  * REFUNDS AND DISPUTES — the fourth and fifth states, and the one place the
  * model is deliberately incomplete:
@@ -67,6 +70,9 @@
  *   refunded in part after a payout bound it (but before the transfer):
  *                                  ledger gross−refund, bank 0,
  *                                  pending min(net, gross−refund)     → ok
+ *   …and once that transfer lands : ledger gross−refund,
+ *                                  bank min(net, gross−refund),
+ *                                  pending 0                          → ok
  *   refunded after allocation    : ledger gross−fee−refund (+fee back
  *                                  once refunds exceed the net),
  *                                  bank NET, pending 0   → DRIFT = the money
@@ -91,12 +97,16 @@
  * credit rather than left as an overdraft (see `recordDonationRefund`).
  *
  * DISPUTES are the same shape and are known-drifting: `recordDonationDisputed`
- * is audit-only (no provisional debit, no fund-status change), so a disputed
- * gift's ledger credit stands until the nightly reconcile flags it. The money
- * path is nonetheless safe, because Stripe posts a chargeback as an
- * `adjustment` balance transaction, which `getPayoutComposition` nets against
- * the charge just like a refund — a disputed gift is not transferred out of
- * the receiving Account.
+ * is audit-only (no provisional debit, no `refundedCents`, no status change),
+ * so a disputed gift's ledger credit stands until the nightly reconcile flags
+ * it. The money path is safe ONLY when the chargeback settles in the same
+ * payout as the charge: Stripe posts it as an `adjustment` balance
+ * transaction, which `getPayoutComposition` nets against the charge just like
+ * a refund, so nothing is transferred. Disputes typically arrive weeks after
+ * the payout, by which point the gift is already allocated; and a dispute
+ * filed before the payout but settling in a LATER one funds the gift in full,
+ * because — unlike a refund — nothing about a dispute marks the donation.
+ * Both cases surface as reconcile drift, not as a blocked transfer.
  *
  * Every provider call (lib/finance/increase.ts, lib/finance/stripeConnect.ts)
  * is a lazy `await import(...)` inside an action body — never a top-level
@@ -222,6 +232,19 @@ export interface AllocationPlan {
   alreadyClaimed: boolean;
   /** Matched donations another in-flight pass currently holds the lease on. */
   leasedElsewhere: number;
+  /**
+   * Donations this payout ALREADY finished — bound to it and "allocated".
+   * A redelivery of a healthy payout produces an empty plan, which is the
+   * success condition and must not be mistaken for "matched nothing".
+   */
+  alreadyAllocated: number;
+  /**
+   * Donations the residual-budget check refused because funding them would
+   * have overrun the payout. Each one is a gift left stranded to cover money
+   * we could not account for, so the pass has to say so out loud rather than
+   * letting `leftoverCents` come out at 0 and look healthy.
+   */
+  overrunSkipped: number;
 }
 
 /**
@@ -254,13 +277,16 @@ export interface AllocationPlan {
  *
  * REFUNDED gifts never reach here: a fully refunded donation is
  * `allocationStatus: "refunded"` (giving.ts `recordDonationRefund`) and the
- * selection below only ever reads `"pending"` rows, while a refund that
+ * selection below only ever plans `"pending"` rows, while a refund that
  * settled inside this payout has already been netted out of `charges` by
- * `getPayoutComposition`.
+ * `getPayoutComposition`. A PARTIALLY refunded gift stays pending and is
+ * still fundable, but only for what is left of it — every selection path
+ * values it through `allocationAmountCents`.
  *
- * `leftoverCents` is the payout minus every net this pass took responsibility
- * for: charges we couldn't map to an actionable donation, plus anything held
- * by another pass.
+ * `leftoverCents` is the payout minus every net this pass accounted for:
+ * items it planned, plus items an earlier pass already allocated out of this
+ * same payout. What remains is charges we couldn't map to an actionable
+ * donation, plus anything held by another pass.
  */
 export const planAllocations = internalMutation({
   args: {
@@ -310,39 +336,59 @@ export const planAllocations = internalMutation({
       .withIndex("by_community", (q) => q.eq("communityId", args.communityId))
       .collect();
 
-    const pending: Array<Doc<"donations"> & { fundType: "group" | "general" }> = [];
+    // Every donation in the community, not just the pending ones: a donation
+    // this payout has ALREADY allocated still accounts for its slice of the
+    // payout, and a pass that ignored it would report the whole payout as
+    // unmatched on every redelivery. (`.filter()` on a Convex query is a
+    // post-read filter, so reading them all costs the same.)
+    const candidates: Array<Doc<"donations"> & { fundType: "group" | "general" }> = [];
     for (const fund of funds) {
       const fundDonations = await ctx.db
         .query("donations")
         .withIndex("by_fund", (q) => q.eq("fundId", fund._id))
-        .filter((q) => q.eq(q.field("allocationStatus"), "pending"))
         .collect();
       for (const donation of fundDonations) {
-        pending.push({ ...donation, fundType: fund.type });
+        candidates.push({ ...donation, fundType: fund.type });
       }
     }
     // Deterministic order: oldest gift first, tie-broken by id so two runs
     // over the same data always plan the same sequence.
-    pending.sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id));
+    candidates.sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id));
 
     const nowMs = now();
     const plan: AllocationPlanItem[] = [];
     let usedCents = 0;
     let leasedElsewhere = 0;
-    for (const donation of pending) {
-      if (
-        donation.allocationPayoutId &&
-        donation.allocationPayoutId !== args.stripePayoutId
-      ) {
+    let alreadyAllocated = 0;
+    let overrunSkipped = 0;
+    for (const donation of candidates) {
+      const boundHere = donation.allocationPayoutId === args.stripePayoutId;
+
+      if (boundHere && donation.allocationStatus === "allocated") {
+        // Finished on an earlier pass. Its net is spoken for, so count it
+        // against the payout — otherwise a redelivered `payout.paid` (and
+        // this branch also routes `payout.reconciliation_completed`, which
+        // arrives after EVERY healthy payout) reports `leftoverCents` equal
+        // to the entire payout and raises a false unmatched alarm.
+        usedCents += donation.payoutNetCents ?? 0;
+        alreadyAllocated += 1;
+        continue;
+      }
+      if (donation.allocationStatus !== "pending") {
+        continue; // "refunded" is terminal; "n/a" pre-dates Increase.
+      }
+      if (donation.allocationPayoutId && !boundHere) {
         continue; // Belongs to another payout's pass.
       }
 
       let netCents: number;
-      if (donation.allocationPayoutId === args.stripePayoutId) {
+      if (boundHere) {
         // Resume: an earlier pass over this payout matched this donation but
         // its transfer never landed. Re-use the net already recorded rather
-        // than re-deriving it, so the retry moves the identical amount.
-        netCents = donation.payoutNetCents ?? 0;
+        // than re-deriving it, so the retry moves the identical amount —
+        // capped, via `allocationAmountCents`, at what is left of the gift
+        // after any refund that landed since the binding.
+        netCents = allocationAmountCents(donation);
         if (netCents <= 0) {
           console.error(
             `[finance] planAllocations: donation ${donation._id} is bound to payout ${args.stripePayoutId} with no usable net — skipping`,
@@ -354,17 +400,33 @@ export const planAllocations = internalMutation({
         if (matched === undefined) {
           continue; // Not one of this payout's charges — a later payout owns it.
         }
-        // Defensive only: the nets came out of this payout, so they sum to
-        // it by construction. `continue` (never `break`) so one oversized
-        // outlier can't wedge the queue behind it forever, which is exactly
-        // how the old gross matcher stalled.
-        if (usedCents + matched > args.payoutCents) {
+        // Cap Stripe's net at the unrefunded gross. A partial refund whose
+        // own balance transaction settles in a DIFFERENT payout leaves this
+        // payout carrying the charge at its full net, while the ledger has
+        // already taken the refund debit — transferring the full net would
+        // put money the donor got back into a group's spendable Account.
+        // Same helper the nightly pending sum uses, so the planner and the
+        // invariant can never disagree about what a gift is worth.
+        netCents = allocationAmountCents({ ...donation, payoutNetCents: matched });
+        if (netCents <= 0) {
           console.error(
-            `[finance] planAllocations: donation ${donation._id} (net ${matched}) would overrun payout ${args.stripePayoutId} (${args.payoutCents}, ${usedCents} used) — skipping it, not the rest`,
+            `[finance] planAllocations: donation ${donation._id} is in payout ${args.stripePayoutId} at net ${matched} but nothing is left of it after ${donation.refundedCents ?? 0} refunded — skipping`,
           );
           continue;
         }
-        netCents = matched;
+        // Defensive only: the nets came out of this payout, so they sum to
+        // it by construction. `continue` (never `break`) so one oversized
+        // outlier can't wedge the queue behind it forever, which is exactly
+        // how the old gross matcher stalled. Counted, though — skipping a
+        // gift here is a gift stranded, and it must not look like a healthy
+        // pass just because the arithmetic then comes out even.
+        if (usedCents + netCents > args.payoutCents) {
+          overrunSkipped += 1;
+          console.error(
+            `[finance] planAllocations: donation ${donation._id} (net ${netCents}) would overrun payout ${args.stripePayoutId} (${args.payoutCents}, ${usedCents} used) — skipping it, not the rest`,
+          );
+          continue;
+        }
       }
 
       // Take the lease in the same transaction that hands the item out. A
@@ -395,6 +457,8 @@ export const planAllocations = internalMutation({
       leftoverCents: args.payoutCents - usedCents,
       alreadyClaimed: existingClaim !== null,
       leasedElsewhere,
+      alreadyAllocated,
+      overrunSkipped,
     };
   },
 });
@@ -779,6 +843,7 @@ export const runAllocation = internalAction({
     const composition = await getPayoutComposition(
       communityFinance.stripeConnectedAccountId,
       args.stripePayoutId,
+      args.payoutCents,
     );
 
     if (composition.reversedPaymentIntentIds.length > 0) {
@@ -788,19 +853,59 @@ export const runAllocation = internalAction({
         `[finance] runAllocation: payout ${args.stripePayoutId} carried ${composition.reversedPaymentIntentIds.length} fully reversed charge(s) — nothing will be allocated for them`,
       );
     }
-    if (composition.unattributedReversalCents !== 0) {
+    if (composition.unattributedNetCents < 0) {
+      // REFUSE. The payout is short by money we cannot subtract from any
+      // gift, so the charge rows sum to more than actually arrived. Allocate
+      // anyway and the residual-budget check absorbs the shortfall by
+      // skipping whichever gift happens to sort last — a healthy donor's
+      // money stranded, silently, to cover a reversal we couldn't attribute.
+      // Nothing is written here, so a redelivery (or a manual re-run once
+      // someone has read the Stripe rows) can still allocate it properly.
+      //
+      // The trade-off is deliberate: this also refuses a payout carrying a
+      // small unattributable Stripe platform fee, which would otherwise have
+      // funded everyone but one. Blocking a payout is recoverable by hand;
+      // stranding a gift silently is not noticed at all.
       console.error(
-        `[finance] runAllocation: payout ${args.stripePayoutId} carries ${composition.unattributedReversalCents} cents of reversals with no resolvable PaymentIntent — the payout is short by money that cannot be netted against any donation`,
+        `[finance] runAllocation: payout ${args.stripePayoutId} carries ${composition.unattributedNetCents} cents we cannot attribute to any PaymentIntent — the payout is short by money that cannot be netted against a donation, so NOTHING will be allocated`,
+      );
+      await ctx.runMutation(
+        internal.functions.finance.jobs.recordUnmatchedPayout,
+        {
+          communityId: args.communityId,
+          stripePayoutId: args.stripePayoutId,
+          payoutCents: args.payoutCents,
+          leftoverCents: args.payoutCents,
+          matchedCount: 0,
+          chargeCount: composition.charges.length,
+          reversedCount: composition.reversedPaymentIntentIds.length,
+          unattributedNetCents: composition.unattributedNetCents,
+          refused: true,
+        },
+      );
+      return { allocated: 0, failed: 0 };
+    }
+    if (composition.unattributedNetCents > 0) {
+      // Harmless direction: money arrived that we can't credit to a donor. It
+      // stays in the receiving Account and shows up as `leftoverCents`.
+      console.log(
+        `[finance] runAllocation: payout ${args.stripePayoutId} carries ${composition.unattributedNetCents} cents with no resolvable PaymentIntent — nothing will be allocated for it`,
       );
     }
 
-    const { plan, alreadyClaimed, leftoverCents, leasedElsewhere } =
-      await ctx.runMutation(internal.functions.finance.jobs.planAllocations, {
-        communityId: args.communityId,
-        payoutCents: args.payoutCents,
-        stripePayoutId: args.stripePayoutId,
-        charges: composition.charges,
-      });
+    const {
+      plan,
+      alreadyClaimed,
+      leftoverCents,
+      leasedElsewhere,
+      alreadyAllocated,
+      overrunSkipped,
+    } = await ctx.runMutation(internal.functions.finance.jobs.planAllocations, {
+      communityId: args.communityId,
+      payoutCents: args.payoutCents,
+      stripePayoutId: args.stripePayoutId,
+      charges: composition.charges,
+    });
 
     if (alreadyClaimed) {
       console.log(
@@ -818,9 +923,17 @@ export const runAllocation = internalAction({
       leasedElsewhere === 0 &&
       unmatchedPayoutIsAlarming(leftoverCents, args.payoutCents);
 
-    if (plan.length === 0 || unmatchedIsAlarming) {
+    // An empty plan is only a problem when the payout got nothing DONE — not
+    // when there is nothing left to do. A redelivered `payout.paid`, and the
+    // `payout.reconciliation_completed` that follows every healthy payout,
+    // both land here with `plan.length === 0` and every gift already
+    // allocated. Alarming on those made the alarm fire on every payout,
+    // forever, which is worse than not having one.
+    const matchedNothing = plan.length === 0 && alreadyAllocated === 0;
+
+    if (matchedNothing || unmatchedIsAlarming || overrunSkipped > 0) {
       console.error(
-        `[finance] runAllocation: payout ${args.stripePayoutId} (${args.payoutCents} cents) matched ${plan.length} donation(s) from ${composition.charges.length} charge(s), leaving ${leftoverCents} cents unattributed`,
+        `[finance] runAllocation: payout ${args.stripePayoutId} (${args.payoutCents} cents) matched ${plan.length} donation(s) from ${composition.charges.length} charge(s) (${alreadyAllocated} already allocated, ${overrunSkipped} skipped as overrunning), leaving ${leftoverCents} cents unattributed`,
       );
       await ctx.runMutation(
         internal.functions.finance.jobs.recordUnmatchedPayout,
@@ -832,7 +945,9 @@ export const runAllocation = internalAction({
           matchedCount: plan.length,
           chargeCount: composition.charges.length,
           reversedCount: composition.reversedPaymentIntentIds.length,
-          unattributedReversalCents: composition.unattributedReversalCents,
+          unattributedNetCents: composition.unattributedNetCents,
+          alreadyAllocatedCount: alreadyAllocated,
+          overrunSkippedCount: overrunSkipped,
         },
       );
     }
@@ -871,17 +986,21 @@ export const runAllocation = internalAction({
 });
 
 /**
- * Audits a payout whose allocation pass couldn't account for it: either it
- * matched no donation at all, or a material slice of it went unattributed.
+ * Audits a payout whose allocation pass couldn't account for it: it matched
+ * no donation at all, a material slice of it went unattributed, a gift was
+ * skipped for overrunning the payout, or the pass refused it outright.
  *
  * This is the alarm for the one failure mode that has no automatic recovery
  * (see `runAllocation`'s "OBSERVABILITY" note). Reachable in practice:
- * Stripe attributes balance transactions to a payout asynchronously (hence
- * `payout.reconciliation_completed`, which webhooks.ts also routes here);
  * `?payout=` only ever lists AUTOMATIC payouts, so a community that switched
  * to manual payouts in the Express dashboard gets an empty composition
- * forever; and a refund with no resolvable PaymentIntent leaves the payout
+ * forever; and a reversal with no resolvable PaymentIntent leaves the payout
  * short by money nothing can be netted against.
+ *
+ * It deliberately does NOT fire for a payout that simply has nothing left to
+ * do. Stripe attributes balance transactions asynchronously, so webhooks.ts
+ * routes `payout.reconciliation_completed` here after every healthy
+ * `payout.paid` — an empty plan on that second pass is success, not silence.
  */
 export const recordUnmatchedPayout = internalMutation({
   args: {
@@ -892,7 +1011,11 @@ export const recordUnmatchedPayout = internalMutation({
     matchedCount: v.number(),
     chargeCount: v.number(),
     reversedCount: v.number(),
-    unattributedReversalCents: v.number(),
+    unattributedNetCents: v.number(),
+    /** Set when the pass declined to allocate anything at all. */
+    refused: v.optional(v.boolean()),
+    alreadyAllocatedCount: v.optional(v.number()),
+    overrunSkippedCount: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     await logFinanceAudit(ctx, {
@@ -905,7 +1028,10 @@ export const recordUnmatchedPayout = internalMutation({
         matchedCount: args.matchedCount,
         chargeCount: args.chargeCount,
         reversedCount: args.reversedCount,
-        unattributedReversalCents: args.unattributedReversalCents,
+        unattributedNetCents: args.unattributedNetCents,
+        refused: args.refused ?? false,
+        alreadyAllocatedCount: args.alreadyAllocatedCount,
+        overrunSkippedCount: args.overrunSkippedCount,
       },
     });
   },
@@ -925,6 +1051,14 @@ export const recordUnmatchedPayout = internalMutation({
  * Donations already flipped to "allocated" are left alone — their transfer
  * really did happen, and reversing a completed bank movement is a clawback,
  * not a rollback. They surface as reconcile drift instead.
+ *
+ * So are donations whose transfer LEASE is still live. `payout.failed` can
+ * arrive while a `runAllocation` pass is mid-flight, and clearing
+ * `payoutNetCents` out from under it means the `recordAllocation` that
+ * follows flips the gift to "allocated" with no net and therefore posts no
+ * `fee` entry — drift of exactly the fee, on a gift whose money we just said
+ * never arrived. Leaving the lease alone lets that pass finish or fail on its
+ * own terms; the next hourly tick unbinds it once the lease expires.
  */
 export const unbindFailedPayout = internalMutation({
   args: {
@@ -937,11 +1071,20 @@ export const unbindFailedPayout = internalMutation({
       .withIndex("by_allocationStatus", (q) => q.eq("allocationStatus", "pending"))
       .collect();
 
+    const nowMs = now();
     let unbound = 0;
+    let leaseHeld = 0;
     for (const donation of pending) {
       if (donation.allocationPayoutId !== args.stripePayoutId) continue;
       const fund = await ctx.db.get(donation.fundId);
       if (fund?.communityId !== args.communityId) continue;
+      if (allocationLeaseHeld(donation, nowMs)) {
+        leaseHeld += 1;
+        console.error(
+          `[finance] unbindFailedPayout: donation ${donation._id} is bound to failed payout ${args.stripePayoutId} but a transfer pass still holds its lease — leaving it bound`,
+        );
+        continue;
+      }
       await ctx.db.patch(donation._id, {
         allocationPayoutId: undefined,
         payoutNetCents: undefined,
@@ -953,7 +1096,11 @@ export const unbindFailedPayout = internalMutation({
     await logFinanceAudit(ctx, {
       communityId: args.communityId,
       action: "allocation.payout_failed",
-      details: { stripePayoutId: args.stripePayoutId, unboundCount: unbound },
+      details: {
+        stripePayoutId: args.stripePayoutId,
+        unboundCount: unbound,
+        leaseHeldCount: leaseHeld,
+      },
     });
     return { unbound };
   },
@@ -1311,12 +1458,23 @@ export const listResumableAllocations = internalMutation({
         .collect();
       for (const donation of pendingDonations) {
         if (!donation.allocationPayoutId) continue;
-        const netCents = donation.payoutNetCents;
-        if (netCents === undefined || !Number.isInteger(netCents) || netCents <= 0) {
+        if (donation.payoutNetCents === undefined) continue;
+        // Same cap the planner applies: a refund that landed after the
+        // binding has already reduced the ledger, so the stamped net can be
+        // more than the gift is now worth.
+        const netCents = allocationAmountCents(donation);
+        if (!Number.isInteger(netCents) || netCents <= 0) {
           continue;
         }
         if (allocationLeaseHeld(donation, nowMs)) continue;
-        await ctx.db.patch(donation._id, { allocationTransferStartedAt: nowMs });
+        await ctx.db.patch(donation._id, {
+          allocationTransferStartedAt: nowMs,
+          // Re-stamp: the cap can only have come DOWN since the binding (a
+          // refund landed), and `recordAllocation` derives the `fee` entry
+          // from this field. Leaving the stale net there would have it
+          // computing a fee against money we no longer transferred.
+          payoutNetCents: netCents,
+        });
         rows.push({
           createdAt: donation.createdAt,
           item: {

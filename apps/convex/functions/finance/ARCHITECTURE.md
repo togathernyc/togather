@@ -28,7 +28,7 @@
 
 **Why NET, not gross (ADR-032 Phase-2 requirement 6).** A payout delivers the sum of its charges' nets. Matching donations by gross — what the donor was charged and what the ledger was credited — could never fit a donation inside the payout carrying it, which deterministically stalled allocation on the ordinary one-donation-per-payout case. Stripe's balance transactions for a payout also say exactly *which* charges it contained, so membership is read rather than inferred from a running total, and a donation is matched by PaymentIntent identity.
 
-**Refunds are netted, never dropped.** A payout's balance transactions include reversals (`refund`, `payment_refund`, `adjustment` for a chargeback, and the `*_failure` rows that put money back). `getPayoutComposition` sums each PaymentIntent's rows — a Refund's expanded `source` carries `payment_intent` just like a Charge's does — and emits only PaymentIntents whose total is strictly positive; the rest come back as `reversedPaymentIntentIds`. Discarding reversal rows (as the first cut of this job did) was a P0: a donation refunded before its payout is still `allocationStatus: "pending"`, so the surviving charge row looked like a fundable gift and the job transferred money the donor had already been given back into a group's spendable Increase Account. Belt and braces on the other side: `recordDonationRefund` stamps `donations.refundedCents` and flips a fully-refunded pending gift to the terminal `"refunded"` status, which every allocation query (planner, retry cron, pending sum) excludes.
+**Refunds are netted, never dropped, and `payment_intent` — not `type` — decides what counts.** A payout's balance transactions include reversals (`refund`, `payment_refund`, `adjustment` for a chargeback, `payment_reversal` for a bank-side reversal of an ACH `payment`, and the `*_failure` rows that put money back). `getPayoutComposition` sums each PaymentIntent's rows — a Refund's expanded `source` carries `payment_intent` just like a Charge's does — and emits only PaymentIntents whose total is strictly positive; the rest come back as `reversedPaymentIntentIds`. Membership deliberately is **not** an allowlist of reversal types: every omission from such a list fails *open* (the charge row survives alone and looks fundable), and the first cut proved it by listing `payment_refund_failure`, which Stripe does not emit, while omitting `payment_reversal`, which it does. Two structural guards back this up: the nets of every row (excluding the payout's own `payout` leg) must sum **exactly** to `payout.amount` or `getPayoutComposition` throws, and anything it could not tie to a PaymentIntent lands in `unattributedNetCents`, whose negative direction `runAllocation` refuses outright. Discarding reversal rows (as the first cut of this job did) was a P0: a donation refunded before its payout is still `allocationStatus: "pending"`, so the surviving charge row looked like a fundable gift and the job transferred money the donor had already been given back into a group's spendable Increase Account. Belt and braces on the other side: `recordDonationRefund` stamps `donations.refundedCents` and flips a fully-refunded pending gift to the terminal `"refunded"` status, which every allocation query (planner, retry cron, pending sum) excludes.
 
 **Reimbursement → Approve → Pay**
 
@@ -129,7 +129,7 @@ Finance test files in `apps/convex/__tests__/`:
 - **finance-expenses.test.ts** — Tests `submitExpense`, `approveExpense`, `denyExpense`, two-approver $200 threshold, policy violations (non-members can't submit, expired roles can't approve)
 - **finance-giving.test.ts** — Tests the donation lifecycle (`recordDonationSucceeded`/`Refund`/`Disputed`, transparency reads), plus `recordAllocation` semantics, `computePendingAllocationCents`, and reconcile drift detection; exercises them directly without the Increase provider (lazy-imported in actions so these tests never load it)
 - **finance-allocation.test.ts** — Tests the payout seam end to end: NET matching (including the exact stall — a lone donation whose gross exceeds its payout's net), skip-don't-stall selection, per-donation replay protection, the concurrency lease (a second pass over a live-leased item gets nothing; an expired lease is reclaimable), partial-failure isolation and resume (transfer 2 of 3 fails → 1 and 3 land, a redelivery finishes 2 and re-transfers nothing), transfer-landed-record-failed as a distinct audited outcome, no-op replay of a completed payout, the full refund sequences (before payout → nothing transfers and no negative balance; partial before payout; full after allocation → fee reversed; refunded while bound → retry cron drops it), unmatched/empty payouts alarming, `payout.failed` unbinding, `retryStaleAllocations` recovery vs. alert-only, and drift on a stranded allocation. Unlike the other suites this one drives the `runAllocation` **action**, with `getPayoutComposition` and `createAccountTransfer` mocked at the module boundary — the Increase mock models idempotency-key dedupe, so the "same key returns the same transfer" lock is genuinely exercised — and deliberately no suite-wide fake timers, so an awaited action can't silently no-op
-- **finance-payout-nets.test.ts** — Tests `getPayoutComposition` against a mocked `stripe` SDK: NET extraction, PaymentIntent mapping via the expanded `source`, paging (including a charge and its refund landing on different pages), netting refunds/chargebacks/failed-refunds against their charge, reporting reversals that can't be attributed, refusing a truncated view, and skipping pure bookkeeping rows and malformed nets
+- **finance-payout-nets.test.ts** — Tests `getPayoutComposition` against a mocked `stripe` SDK: NET extraction, PaymentIntent mapping via the expanded `source`, paging (including a charge and its refund landing on different pages), netting refunds/chargebacks/failed-refunds against their charge, reporting reversals that can't be attributed, refusing a truncated view, refusing a fractional net, refusing a composition whose nets don't sum to the payout, excluding the payout's own leg, and netting types the code has never heard of (`payment_reversal`, and a made-up future type) purely off `payment_intent`
 - **finance-cards.test.ts** — Tests `createFundCard` (pending row + audit, holder-role gate, caller gate, fund-readiness gates), `listFundCards`/`getCardDetail` viewer gating, `setCardFrozen` permissions (self-freeze vs. finance_admin-only unfreeze), `cancelCard` (finance_admin-only), and `recordCardSettlement` (idempotency, account-mismatch rejection, missing-card log-not-throw)
 
 ## Known Seams & TODOs
@@ -198,8 +198,15 @@ Finance test files in `apps/convex/__tests__/`:
   the `processedStripePayouts` row was already written and the webhook 200'd —
   no redelivery, and the retry cron only resumes *bound* donations, so nothing
   would ever re-plan that payout. `runAllocation` now audits
-  `allocation.payout_unmatched` for an empty plan or a material unattributed
-  remainder (>$1, or >1% of the payout). `payout.reconciliation_completed` is
+  `allocation.payout_unmatched` when a pass got nothing *done* (an empty plan
+  with nothing already allocated out of this payout), when a material slice
+  is unattributed (>$1, or >1% of the payout), when the residual-budget check
+  had to strand a gift, or when the pass refused the payout outright. It
+  deliberately stays quiet for a payout with nothing left to do: Stripe emits
+  `payout.reconciliation_completed` after every healthy payout and webhooks.ts
+  routes it to the same handler, so an empty plan on that second pass is the
+  success condition — treating it as "matched nothing" fired a full-payout
+  alarm on every payout and made the signal useless. `payout.reconciliation_completed` is
   routed alongside `payout.paid` because Stripe attributes balance
   transactions to a payout asynchronously, so a query at `payout.paid` can
   legitimately come back partial or empty; and `getPayoutComposition` throws
@@ -234,6 +241,13 @@ Finance test files in `apps/convex/__tests__/`:
   balance. Both surfaces render the separate line: `FundScreenView`'s MTD/YTD
   cards and `GivingHubView`'s "SPENT THIS MONTH" tile.
 
+  **Known gap:** `refundedCents` is computed and typed through to
+  `member/types.ts` but rendered nowhere, so the same "given minus spent must
+  reconcile" argument that put fees on-screen is not yet satisfied for a fund
+  that has taken a refund. Deliberately left for a copy/layout pass rather
+  than bolted on here — refunds on group funds are rare, and the wrong words
+  for them are worse than none.
+
   **Refund states (the fourth and fifth rows of that table).**
   `recordDonationRefund` stamps `donations.refundedCents` and, on a full
   refund of a still-pending gift, flips it to the terminal `"refunded"`
@@ -257,10 +271,16 @@ Finance test files in `apps/convex/__tests__/`:
   debited twice.
 
   DISPUTES remain audit-only and known-drifting (see "Dispute lifecycle"
-  below), but the money path is safe without a dispute state machine: Stripe
-  posts a chargeback as an `adjustment` balance transaction, which
-  `getPayoutComposition` nets against the charge exactly like a refund, so a
-  disputed gift is never transferred out of the receiving Account.
+  below), and the money path is safe **only when the chargeback settles in
+  the same payout as the charge**: Stripe posts it as an `adjustment` balance
+  transaction, which `getPayoutComposition` nets against the charge exactly
+  like a refund, so that gift is not transferred out of the receiving
+  Account. Disputes typically arrive weeks after the payout, by which point
+  the gift is already allocated — and a dispute filed *before* the payout but
+  settling in a later one funds the gift in full, because unlike
+  `recordDonationRefund` the dispute path sets no `refundedCents` and no
+  status. Both cases surface as nightly reconcile drift, not as a blocked
+  transfer.
 
   **Still open (pre-existing, unchanged here):** general-fund donations are
   recorded as allocated without any transfer, because `recordProvisioned`
