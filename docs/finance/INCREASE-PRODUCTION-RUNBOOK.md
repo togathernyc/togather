@@ -14,13 +14,50 @@ into Increase — every external claim below is sourced and linked.
 
 ---
 
+## 0. Verified state of the Increase account (2026-07-31)
+
+Read against the live production API before writing anything below. This
+corrects the earlier assumption that production had "not been started".
+
+| | Verified |
+| --- | --- |
+| Production API access | **Live.** The `Togather Integration` key (created 2026-07-30) authenticates against `https://api.increase.com`, and is rejected by `sandbox.increase.com` with `reason: wrong_environment` |
+| Entities | **1** — `Supa Media, LLC`, corporation, `active`. Togather's own company; no church Entities exist |
+| Programs | **1** — `Commercial Banking` (`program_vwj4reqzjhptgzbe9s8i`), bank partner First Internet Bank |
+| Accounts | **0** |
+
+**What that means.** `Commercial Banking` is the default every Increase team
+receives at signup — per [Increase's Programs
+docs](https://increase.com/documentation/programs), it exists "to hold your
+company's own funds". ADR-032 §1 requires **one Entity per community with
+Accounts underneath**, which is a *platform* program: "For companies managing
+funds on behalf of your customers… Increase and your bank partner will work
+together to create additional Programs for you."
+
+So production access exists, but **the platform program — the only thing that
+makes churches-as-Entities legal and possible — has not been requested.** That
+request is the actual critical-path item, and §2 is how to make it.
+
+> **Live-key hazard, now confirmed rather than hypothetical.** Production
+> Convex already holds a working production `INCREASE_API_KEY`, and
+> `INCREASE_API_BASE_URL` is **unset** there, so `getIncreaseBaseUrl()` falls
+> through to `https://api.increase.com` (`lib/finance/increase.ts:52`). If
+> `group-giving` were enabled in production today, provisioning would fire
+> real Entity-creation calls against the live Commercial Banking program. The
+> feature flag being off is currently the only thing preventing that. Fix
+> landmine (a) in §5.1 before the flag is ever flipped.
+
+---
+
 ## 1. What this unblocks — and what it doesn't
 
-Starting the Increase program **today** unblocks the underwriting clock,
+Requesting the **platform program** today unblocks the underwriting clock,
 which is the thing on the critical path. It does **not** unblock real money
 movement by itself — that also needs, independently:
 
-- Increase underwriting **approved** (not just started) and a program live.
+- The platform program **approved** (not just requested) and live. The
+  existing `Commercial Banking` program does not count: it holds Supa Media's
+  own funds and cannot carry church Entities.
 - The three code landmines in §5 fixed (base-URL default, sandbox/production
   detection, and a General Account for the community-wide fund).
 - The Phase-2 product gaps in §6 (net-amount allocation, reimbursement
@@ -93,7 +130,15 @@ list but implied by what the API calls need (`apps/convex/lib/finance/increase.t
 
 ### 2.3 How to actually reach Increase
 
-- **Sign up (self-serve sandbox account, if not already done):**
+> **The account already exists** (Supa Media LLC, production access live, see
+> §0) — so skip signup. The single next action is to **ask for a platform
+> program**, in writing, and to raise §3's two compliance questions in the
+> same message so the answers arrive with the underwriting rather than after
+> it. Say plainly: you are moving *your customers'* money (the churches'),
+> those customers are *businesses* (`corporation` Entities), and you need
+> Entity-per-customer with Accounts and virtual cards beneath them.
+
+- **Sign up (self-serve sandbox account) — already done, listed for reference:**
   [`https://dashboard.increase.com/signup`](https://dashboard.increase.com/signup)
 - **Talk to sales / start a platform conversation:**
   [`https://increase.com/contact`](https://increase.com/contact) — the form
