@@ -8,7 +8,7 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query, action } from "../_generated/server";
+import { mutation, query, action, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
@@ -251,6 +251,42 @@ export const deleteFile = mutation({
 // ============================================================================
 
 /**
+ * Record who a presigned R2 key was minted for (schema.ts `uploadGrants`).
+ *
+ * WHY: the `r2:<key>` string a client later hands back to a mutation is not
+ * self-authenticating. Without this row, a feature that treats the key as
+ * proof of the caller's own upload (reimbursement receipts) can't distinguish
+ * an object the caller uploaded from one whose key they merely saw. Written
+ * at presign time — the only moment we know both the key and the caller.
+ *
+ * Insert-if-absent so a retried presign (same key can't recur, but a retried
+ * mutation can) never writes twice.
+ */
+export const recordUploadGrant = internalMutation({
+  args: {
+    storagePath: v.string(),
+    userId: v.id("users"),
+    folder: v.string(),
+    contentType: v.string(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const existing = await ctx.db
+      .query("uploadGrants")
+      .withIndex("by_storagePath", (q) => q.eq("storagePath", args.storagePath))
+      .first();
+    if (existing) return;
+
+    await ctx.db.insert("uploadGrants", {
+      storagePath: args.storagePath,
+      userId: args.userId,
+      folder: args.folder,
+      contentType: args.contentType,
+      createdAt: now(),
+    });
+  },
+});
+
+/**
  * Get presigned URL for R2 upload (action - can call external APIs)
  *
  * Use this for all new image uploads. R2 is S3-compatible with:
@@ -279,7 +315,10 @@ export const getR2UploadUrl = action({
     publicUrl: string;
     storagePath: string; // Path to store in database (r2:prefix)
   }> => {
-    await requireAuthFromTokenAction(ctx, args.token);
+    const uploaderId = (await requireAuthFromTokenAction(
+      ctx,
+      args.token,
+    )) as Id<"users">;
     // Validate file extension
     const ext = "." + args.fileName.split(".").pop()?.toLowerCase();
     if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -336,11 +375,21 @@ export const getR2UploadUrl = action({
       expiresIn: 3600, // 1 hour
     });
 
+    const storagePath = `r2:${key}`; // This is what gets stored in the database
+    // Record provenance BEFORE returning the URL, so the key is attributable
+    // the instant the client can start using it (see recordUploadGrant).
+    await ctx.runMutation(internal.functions.uploads.recordUploadGrant, {
+      storagePath,
+      userId: uploaderId,
+      folder: args.folder,
+      contentType: args.contentType,
+    });
+
     return {
       uploadUrl,
       key,
       publicUrl: `${publicUrl}/${key}`,
-      storagePath: `r2:${key}`, // This is what gets stored in the database
+      storagePath,
     };
   },
 });
@@ -371,7 +420,10 @@ export const getR2FileUploadUrl = action({
     publicUrl: string;
     storagePath: string;
   }> => {
-    await requireAuthFromTokenAction(ctx, args.token);
+    const uploaderId = (await requireAuthFromTokenAction(
+      ctx,
+      args.token,
+    )) as Id<"users">;
     // Validate file size
     if (args.fileSize > MAX_FILE_SIZE_BYTES) {
       throw new Error(
@@ -435,11 +487,19 @@ export const getR2FileUploadUrl = action({
       expiresIn: 3600, // 1 hour
     });
 
+    const storagePath = `r2:${key}`;
+    await ctx.runMutation(internal.functions.uploads.recordUploadGrant, {
+      storagePath,
+      userId: uploaderId,
+      folder: args.folder,
+      contentType: args.contentType,
+    });
+
     return {
       uploadUrl,
       key,
       publicUrl: `${publicUrl}/${key}`,
-      storagePath: `r2:${key}`,
+      storagePath,
     };
   },
 });

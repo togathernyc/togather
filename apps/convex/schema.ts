@@ -3738,6 +3738,35 @@ export default defineSchema({
     .index("by_gridKey", ["gridKey"])
     .index("by_gridKey_user", ["gridKey", "userId"]),
 
+  /**
+   * Provenance for every R2 object key this backend hands out a presigned
+   * upload URL for (functions/uploads.ts's getR2UploadUrl /
+   * getR2FileUploadUrl). Written at presign time, before the bytes exist.
+   *
+   * WHY: an `r2:<key>` string is just a string. Any caller can put any
+   * `r2:` value into a field that stores one, so a feature that treats the
+   * key as evidence ("here is MY receipt") has no way to tell an object the
+   * caller uploaded from one they merely learned the key of — e.g. from
+   * another member's expense receipt URL. This table is the record that says
+   * who the key was minted for, so those features can check.
+   *
+   * Consumed today by `submitExpense` (functions/finance/expenses.ts), which
+   * refuses a reimbursement receipt whose key wasn't minted for the
+   * submitter. Rows predate no key: keys minted before this table existed
+   * simply have no row, which reads as "not yours" — correct for new
+   * submissions, and harmless for expenses already stored.
+   */
+  uploadGrants: defineTable({
+    /** The `r2:<key>` storage path exactly as returned to the client. */
+    storagePath: v.string(),
+    userId: v.id("users"),
+    folder: v.string(),
+    contentType: v.string(),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_storagePath", ["storagePath"])
+    .index("by_user", ["userId"]),
+
   // =============================================================================
   // GROUP GIVING (ADR-032) — Stripe (acquiring) + Increase (banking) + our own
   // append-only ledger for attribution/audit. See docs/architecture/decisions/
