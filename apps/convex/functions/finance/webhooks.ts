@@ -24,8 +24,10 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { ActionCtx } from "../../_generated/server";
+import type { ActionCtx, MutationCtx } from "../../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import { cardLimitWindowStart } from "../../lib/finance/cardPolicy";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {
@@ -209,8 +211,77 @@ export const recordCardSettlement = internalMutation({
         increaseTransactionId: args.increaseTransactionId,
       },
     });
+
+    // Runs last, and only ever writes an audit row, so a bug here can never
+    // affect the expense or the ledger entry above.
+    await auditOverLimitCardCharge(ctx, card, fund, expenseId, timestamp);
   },
 });
+
+/**
+ * Drift check: did a settled charge push this card past the limit the bank
+ * is supposed to be enforcing?
+ *
+ * Increase enforces `spendLimitCents`/`limitPeriod` at authorization time
+ * (cards.ts, lib/finance/increase.ts), so in the normal case this never
+ * fires. It fires when our stored limit and the bank's disagree — a card
+ * issued before limits were wired through, a `setCardLimit` whose provider
+ * call failed after the audit row landed, or a settlement that exceeds its
+ * own authorization (forced posts, tip adjustments). Those are exactly the
+ * cases where a fund's finance admins need a record, and the only way to
+ * catch them is to compare after the money has moved.
+ *
+ * Audit-only by design: the charge already settled, so there is nothing to
+ * block — this makes the stored limit a real monitoring control rather than
+ * a number nobody ever reads back.
+ */
+async function auditOverLimitCardCharge(
+  ctx: MutationCtx,
+  card: Doc<"cards">,
+  fund: Doc<"funds">,
+  expenseId: Id<"expenses">,
+  atMs: number,
+): Promise<void> {
+  const limitCents = card.spendLimitCents;
+  const limitPeriod = card.limitPeriod;
+  if (limitCents === undefined || limitPeriod === undefined) return;
+
+  const windowStart = cardLimitWindowStart(limitPeriod, atMs);
+  let windowTotalCents: number;
+  if (windowStart === null) {
+    // "charge" — a per-transaction cap, so the window is this charge alone.
+    windowTotalCents = (await ctx.db.get(expenseId))?.amountCents ?? 0;
+  } else {
+    // The expense for this charge is already inserted, so it's counted here
+    // rather than added on top.
+    const charges = await ctx.db
+      .query("expenses")
+      .withIndex("by_card", (q) => q.eq("cardId", card._id))
+      .collect();
+    windowTotalCents = charges
+      .filter((e) => e.kind === "card_charge" && e.createdAt >= windowStart)
+      .reduce((sum, e) => sum + e.amountCents, 0);
+  }
+
+  if (windowTotalCents <= limitCents) return;
+
+  console.error(
+    `[finance] card ${card._id} settled past its ${limitPeriod} limit: ${windowTotalCents} > ${limitCents} cents`,
+  );
+  await logFinanceAudit(ctx, {
+    communityId: fund.communityId,
+    fundId: fund._id,
+    action: "card.limit_exceeded",
+    details: {
+      cardId: card._id,
+      expenseId,
+      spendLimitCents: limitCents,
+      limitPeriod,
+      windowTotalCents,
+      windowStart,
+    },
+  });
+}
 
 // ============================================================================
 // handleIncreaseWebhookRequest — POST /increase-webhook (orchestrator wires

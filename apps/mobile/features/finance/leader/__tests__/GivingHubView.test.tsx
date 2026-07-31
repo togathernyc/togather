@@ -161,6 +161,17 @@ describe("GivingHubView", () => {
       expect(onViewCard).toHaveBeenCalledWith("card-1");
     });
 
+    // A card swipe has no approval gate — it settles at the bank and only
+    // then becomes an expense to sign off. The footer must not imply a
+    // second approver stands between a cardholder and the money.
+    it("describes card spend truthfully: bank-enforced limit, sign-off afterwards", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      expect(screen.queryByText(/Charges over \$200 need a second approver/i)).toBeNull();
+      expect(screen.getByText(/bank declines anything over a card's/i)).toBeTruthy();
+      expect(screen.getByText(/for sign-off afterwards/i)).toBeTruthy();
+    });
+
     it("shows the 'Create a virtual card…' action and New card tile when canManageCards is true", () => {
       render(<GivingHubView {...baseProps} canManageCards />);
 

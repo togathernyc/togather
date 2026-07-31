@@ -10,7 +10,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Badge, Skeleton, ConfirmModal } from "@components/ui";
 import { formatCents } from "../format";
-import { formatCardLimit, type CardDetail } from "./types";
+import { formatCardLimit, CARD_CHARGE_REVIEW_NOTE, type CardDetail } from "./types";
 
 export interface CardDetailViewProps {
   /** `undefined` while loading, `null` if the card couldn't be found/loaded. */
@@ -155,18 +155,14 @@ export function CardDetailView({
                 {formatCardLimit(card.spendLimitCents, card.limitPeriod, formatCents)}
               </Text>
             </View>
-            <View style={[styles.cell, styles.cellDivider, { borderTopColor: colors.border }]}>
-              <View style={styles.cellMain}>
-                <Text style={[styles.cellTitle, { color: colors.text }]}>Receipts required</Text>
-                <Text style={[styles.cellSub, { color: colors.textSecondary }]}>
-                  Charge auto-flags until a receipt is attached
-                </Text>
-              </View>
-              <Text style={[styles.cellValue, { color: colors.success }]}>On</Text>
-            </View>
           </View>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            Changes take effect on the next authorization. Only finance admins can raise limits.
+            {card.spendLimitCents == null
+              ? "No limit set, so this card can spend the fund's whole balance. Only finance admins can set one."
+              : "The bank declines anything over this limit. Only finance admins can change it."}
+          </Text>
+          <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
+            {CARD_CHARGE_REVIEW_NOTE}
           </Text>
         </View>
 

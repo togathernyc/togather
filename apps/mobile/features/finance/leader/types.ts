@@ -144,9 +144,18 @@ export function formatCardLimit(
   return `${formatCents(spendLimitCents)} / ${CARD_LIMIT_PERIOD_LABELS[limitPeriod]}`;
 }
 
-/** Fund policy surfaced verbatim on the create-card sheet and card detail. */
-export const CARD_RECEIPTS_POLICY_NOTE =
-  "Two finance admins must approve any single charge over $200 — this is fund policy and applies to every card.";
+/**
+ * What actually happens to a card charge, surfaced verbatim on the
+ * create-card sheet and card detail.
+ *
+ * Deliberately describes review AFTER the fact, not authorization: a card
+ * swipe settles straight from the fund's bank account, and the only thing
+ * that can stop it is the card's own limit (which Increase enforces) or the
+ * account balance. The app never gets a vote at swipe time, so this copy
+ * must not imply it does — see `apps/convex/functions/finance/cards.ts`.
+ */
+export const CARD_CHARGE_REVIEW_NOTE =
+  "Charges settle straight away, then land in the fund's activity for sign-off. Anything over $200 needs a second approver.";
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields

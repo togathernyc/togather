@@ -13,15 +13,19 @@
  * functions on a REAL setTimeout, so without fake timers they'd actually
  * fire in the background (mirrors finance-onboarding.test.ts's identical
  * hazard for provisionProviders). Freezing timers for the whole suite means
- * those scheduled actions never run here; the actions' own logic (calling
- * Increase, then recording the result) is exercised indirectly by calling
- * the internal mutations they'd otherwise call directly.
+ * those scheduled actions never run here.
+ *
+ * The actions themselves are NOT skipped, though: `provisionCard`,
+ * `applyCardStatus` and `applyCardLimit` are invoked directly with
+ * `t.action` against a mocked lib/finance/increase, so what we actually send
+ * the provider — in particular the spending limit, which the bank is the
+ * only thing enforcing — is asserted rather than assumed.
  *
  * Run with: cd apps/convex && pnpm test __tests__/finance-cards.test.ts
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, vi } from "vitest";
+import { expect, test, describe, vi, beforeEach } from "vitest";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -31,6 +35,38 @@ import { generateTokens } from "../lib/auth";
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 vi.useFakeTimers();
+
+/**
+ * The Increase client, stubbed. Only the card endpoints are replaced — the
+ * rest of the module (webhook signature verification et al) stays real so
+ * nothing else in the suite silently changes shape.
+ */
+const increase = vi.hoisted(() => ({
+  createCard: vi.fn(async () => ({
+    id: "increase_card_provisioned",
+    status: "active",
+    last4: "4242",
+  })),
+  updateCardStatus: vi.fn(async (_cardId: string, status: string) => ({
+    id: "increase_card_provisioned",
+    status,
+  })),
+  updateCardSpendingLimit: vi.fn(async () => ({
+    id: "increase_card_provisioned",
+    status: "active",
+  })),
+}));
+
+vi.mock("../lib/finance/increase", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/finance/increase")>()),
+  ...increase,
+}));
+
+beforeEach(() => {
+  increase.createCard.mockClear();
+  increase.updateCardStatus.mockClear();
+  increase.updateCardSpendingLimit.mockClear();
+});
 
 const ADDRESS = {
   addressLine1: "1 Main St",
@@ -213,6 +249,39 @@ async function createCard(
   });
 }
 
+/** Flip the app-wide "group-giving" flag off, the way a superuser would. */
+async function disableGroupGiving(t: ReturnType<typeof convexTest>) {
+  await t.run(async (ctx) => {
+    const flag = await ctx.db
+      .query("featureFlags")
+      .withIndex("by_key", (q) => q.eq("key", "group-giving"))
+      .first();
+    await ctx.db.patch(flag!._id, { enabled: false });
+  });
+}
+
+/** A card that has been through provisioning and has an Increase card id. */
+async function provisionedCard(
+  t: ReturnType<typeof convexTest>,
+  fixture: CardFixture,
+  extra?: { spendLimitCents?: number; limitPeriod?: "week" | "month" | "charge" },
+): Promise<Id<"cards">> {
+  const cardId = await createCard(
+    t,
+    fixture.fundId,
+    fixture.financeAdminUserId,
+    fixture.cardholderUserId,
+    extra,
+  );
+  await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
+    cardId,
+    increaseCardId: "increase_card_1",
+    last4: "4242",
+    status: "active",
+  });
+  return cardId;
+}
+
 // ============================================================================
 // createFundCard
 // ============================================================================
@@ -327,6 +396,95 @@ describe("createFundCard", () => {
 });
 
 // ============================================================================
+// Spend-limit validation — the limit is a bank-enforced control, so garbage
+// must never reach the row (let alone Increase).
+// ============================================================================
+
+describe("spend-limit validation", () => {
+  const BAD_LIMITS: {
+    label: string;
+    limit: { spendLimitCents?: number; limitPeriod?: "week" | "month" | "charge" };
+    message: RegExp;
+  }[] = [
+    {
+      label: "an amount with no period",
+      limit: { spendLimitCents: 20000 },
+      message: /both an amount and a period/i,
+    },
+    {
+      label: "a period with no amount",
+      limit: { limitPeriod: "week" },
+      message: /both an amount and a period/i,
+    },
+    {
+      label: "a negative amount",
+      limit: { spendLimitCents: -5000, limitPeriod: "week" },
+      message: /more than \$0/i,
+    },
+    {
+      label: "a zero amount",
+      limit: { spendLimitCents: 0, limitPeriod: "month" },
+      message: /more than \$0/i,
+    },
+    {
+      label: "fractional cents",
+      limit: { spendLimitCents: 1999.5, limitPeriod: "charge" },
+      message: /whole number of cents/i,
+    },
+    {
+      label: "an absurd amount",
+      limit: { spendLimitCents: 99_999_999_99, limitPeriod: "month" },
+      message: /can't be more than/i,
+    },
+  ];
+
+  for (const { label, limit, message } of BAD_LIMITS) {
+    test(`createFundCard rejects ${label}`, async () => {
+      const t = convexTest(schema, modules);
+      const { fundId, financeAdminUserId, cardholderUserId } =
+        await seedCardFixture(t);
+
+      await expect(
+        createCard(t, fundId, financeAdminUserId, cardholderUserId, limit),
+      ).rejects.toThrow(message);
+
+      const cards = await t.run(async (ctx) =>
+        ctx.db
+          .query("cards")
+          .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+          .collect(),
+      );
+      expect(cards).toHaveLength(0);
+    });
+
+    test(`setCardLimit rejects ${label}`, async () => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedCardFixture(t);
+      const cardId = await provisionedCard(t, fixture);
+
+      await expect(
+        t.mutation(api.functions.finance.cards.setCardLimit, {
+          token: await tokenFor(fixture.financeAdminUserId),
+          cardId,
+          ...limit,
+        }),
+      ).rejects.toThrow(message);
+    });
+  }
+
+  test("no limit at all is valid — a card may be uncapped below the fund balance", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, cardholderUserId } =
+      await seedCardFixture(t);
+
+    const cardId = await createCard(t, fundId, financeAdminUserId, cardholderUserId);
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.spendLimitCents).toBeUndefined();
+    expect(card?.limitPeriod).toBeUndefined();
+  });
+});
+
+// ============================================================================
 // provisionCard's internal mutations (success + failure paths)
 // ============================================================================
 
@@ -368,6 +526,178 @@ describe("recordCardProvisioned / recordCardProvisionFailed", () => {
       ctx.db
         .query("financeAuditEvents")
         .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+        .collect(),
+    );
+    expect(events.some((e) => e.action === "card.provision_failed")).toBe(true);
+  });
+});
+
+// ============================================================================
+// provisionCard — the action itself, against a mocked Increase. This is the
+// only place the spend limit becomes real, so it is asserted at the provider
+// boundary, not at the row.
+// ============================================================================
+
+describe("provisionCard", () => {
+  test("sends the spend limit to Increase, mapped to Increase's own interval", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, cardholderUserId } =
+      await seedCardFixture(t);
+    const cardId = await createCard(t, fundId, financeAdminUserId, cardholderUserId, {
+      spendLimitCents: 25_000,
+      limitPeriod: "week",
+    });
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard).toHaveBeenCalledTimes(1);
+    const [accountId, description, idempotencyKey, spendingLimit] =
+      increase.createCard.mock.calls[0] as unknown as [
+        string,
+        string,
+        string,
+        { interval: string; settlementAmountCents: number } | null,
+      ];
+    expect(accountId).toBe("increase_account_test");
+    expect(description).toContain("Groceries & supplies");
+    expect(idempotencyKey).toBe(`finance:card:${cardId}`);
+    expect(spendingLimit).toEqual({
+      interval: "per_week",
+      settlementAmountCents: 25_000,
+    });
+
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("active");
+    expect(card?.increaseCardId).toBe("increase_card_provisioned");
+  });
+
+  test.each([
+    ["month", "per_month"],
+    ["charge", "per_transaction"],
+  ] as const)("maps limitPeriod %s -> Increase interval %s", async (period, interval) => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, cardholderUserId } =
+      await seedCardFixture(t);
+    const cardId = await createCard(t, fundId, financeAdminUserId, cardholderUserId, {
+      spendLimitCents: 4_000,
+      limitPeriod: period,
+    });
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard.mock.calls[0][3]).toEqual({
+      interval,
+      settlementAmountCents: 4_000,
+    });
+  });
+
+  test("sends null when the card has no limit", async () => {
+    const t = convexTest(schema, modules);
+    const { fundId, financeAdminUserId, cardholderUserId } =
+      await seedCardFixture(t);
+    const cardId = await createCard(t, fundId, financeAdminUserId, cardholderUserId);
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard.mock.calls[0][3]).toBeNull();
+  });
+
+  test("refuses to issue on a fund frozen AFTER the card was created", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+    // The gap createFundCard can't see: the group gets archived (which
+    // freezes its fund) between the mutation and the scheduled action.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fixture.fundId, { status: "frozen" });
+    });
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard).not.toHaveBeenCalled();
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("failed");
+    expect(card?.increaseCardId).toBeUndefined();
+
+    const events = await t.run(async (ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
+        .collect(),
+    );
+    const refusal = events.find((e) => e.action === "card.provision_refused");
+    expect(refusal).toBeDefined();
+    expect(refusal!.detailsJson).toContain("frozen");
+  });
+
+  test("refuses to issue when the community drops out of \"live\" onboarding", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+    await t.run(async (ctx) => {
+      const finance = await ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", fixture.communityId))
+        .first();
+      await ctx.db.patch(finance!._id, { onboardingStatus: "increase_blocked" });
+    });
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard).not.toHaveBeenCalled();
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("failed");
+  });
+
+  test("refuses to issue when the fund lost its Increase Account", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fixture.fundId, { increaseAccountId: undefined });
+    });
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    expect(increase.createCard).not.toHaveBeenCalled();
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("failed");
+  });
+
+  test("marks the card failed when Increase itself errors", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+    increase.createCard.mockRejectedValueOnce(new Error("Increase API 500"));
+
+    await t.action(internal.functions.finance.cards.provisionCard, { cardId });
+
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("failed");
+    const events = await t.run(async (ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
         .collect(),
     );
     expect(events.some((e) => e.action === "card.provision_failed")).toBe(true);
@@ -634,6 +964,274 @@ describe("cancelCard", () => {
         cardId,
       }),
     ).rejects.toThrow();
+  });
+});
+
+// ============================================================================
+// applyCardStatus — the shared action behind setCardFrozen/cancelCard.
+// ============================================================================
+
+describe("applyCardStatus", () => {
+  test.each(["disabled", "active", "canceled"] as const)(
+    "pushes %s to Increase and stores what Increase confirmed",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedCardFixture(t);
+      const cardId = await provisionedCard(t, fixture);
+
+      await t.action(internal.functions.finance.cards.applyCardStatus, {
+        cardId,
+        status,
+      });
+
+      expect(increase.updateCardStatus).toHaveBeenCalledWith("increase_card_1", status);
+      const card = await t.run(async (ctx) => ctx.db.get(cardId));
+      expect(card?.status).toBe(status);
+    },
+  );
+
+  test("a card with no increaseCardId is logged, not pushed", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+
+    await t.action(internal.functions.finance.cards.applyCardStatus, {
+      cardId,
+      status: "disabled",
+    });
+
+    expect(increase.updateCardStatus).not.toHaveBeenCalled();
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.status).toBe("pending");
+  });
+});
+
+// ============================================================================
+// setCardLimit
+// ============================================================================
+
+describe("setCardLimit", () => {
+  test("finance_admin changes the limit; the local mirror only moves once Increase confirms", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+
+    const result = await t.mutation(api.functions.finance.cards.setCardLimit, {
+      token: await tokenFor(fixture.financeAdminUserId),
+      cardId,
+      spendLimitCents: 50_000,
+      limitPeriod: "month",
+    });
+    expect(result).toEqual({ spendLimitCents: 50_000, limitPeriod: "month" });
+
+    // The scheduled action hasn't run (fake timers), so the row still holds
+    // the OLD limit — the mirror never claims a cap the bank hasn't taken.
+    const beforeApply = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(beforeApply?.spendLimitCents).toBe(10_000);
+
+    const events = await t.run(async (ctx) =>
+      ctx.db
+        .query("financeAuditEvents")
+        .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
+        .collect(),
+    );
+    const audit = events.find((e) => e.action === "card.limit_updated");
+    expect(audit).toBeDefined();
+    expect(JSON.parse(audit!.detailsJson!)).toMatchObject({
+      fromSpendLimitCents: 10_000,
+      fromLimitPeriod: "week",
+      toSpendLimitCents: 50_000,
+      toLimitPeriod: "month",
+    });
+
+    await t.action(internal.functions.finance.cards.applyCardLimit, {
+      cardId,
+      spendLimitCents: 50_000,
+      limitPeriod: "month",
+    });
+
+    expect(increase.updateCardSpendingLimit).toHaveBeenCalledWith("increase_card_1", {
+      interval: "per_month",
+      settlementAmountCents: 50_000,
+    });
+    const afterApply = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(afterApply?.spendLimitCents).toBe(50_000);
+    expect(afterApply?.limitPeriod).toBe("month");
+  });
+
+  test("clearing the limit tells Increase explicitly, and clears the mirror", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+
+    await t.mutation(api.functions.finance.cards.setCardLimit, {
+      token: await tokenFor(fixture.financeAdminUserId),
+      cardId,
+    });
+    await t.action(internal.functions.finance.cards.applyCardLimit, { cardId });
+
+    expect(increase.updateCardSpendingLimit).toHaveBeenCalledWith(
+      "increase_card_1",
+      null,
+    );
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.spendLimitCents).toBeUndefined();
+    expect(card?.limitPeriod).toBeUndefined();
+  });
+
+  test("the card's own holder cannot change their own limit", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.cardholderUserId),
+        cardId,
+        spendLimitCents: 500_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("rejects a card that hasn't finished provisioning", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await createCard(
+      t,
+      fixture.fundId,
+      fixture.financeAdminUserId,
+      fixture.cardholderUserId,
+    );
+
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.financeAdminUserId),
+        cardId,
+        spendLimitCents: 5_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/provisioning/i);
+  });
+});
+
+// ============================================================================
+// The group-giving kill switch must never disarm the incident-response
+// tools: a card is a bank object, so it keeps authorizing after the flag
+// goes off. Freeze and cancel stay reachable; everything else stops.
+// ============================================================================
+
+describe("with the group-giving flag OFF", () => {
+  test("the holder can still freeze a compromised card", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+    await disableGroupGiving(t);
+
+    const result = await t.mutation(api.functions.finance.cards.setCardFrozen, {
+      token: await tokenFor(fixture.cardholderUserId),
+      cardId,
+      frozen: true,
+    });
+    expect(result.status).toBe("disabled");
+  });
+
+  test("finance_admin can still unfreeze and cancel", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+    await disableGroupGiving(t);
+    const token = await tokenFor(fixture.financeAdminUserId);
+
+    await t.mutation(api.functions.finance.cards.setCardFrozen, {
+      token,
+      cardId,
+      frozen: true,
+    });
+    const unfrozen = await t.mutation(api.functions.finance.cards.setCardFrozen, {
+      token,
+      cardId,
+      frozen: false,
+    });
+    expect(unfrozen.status).toBe("active");
+
+    const canceled = await t.mutation(api.functions.finance.cards.cancelCard, {
+      token,
+      cardId,
+    });
+    expect(canceled.status).toBe("canceled");
+  });
+
+  test("the role checks still apply — a plain member can't freeze", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+    await disableGroupGiving(t);
+
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardFrozen, {
+        token: await tokenFor(fixture.memberUserId),
+        cardId,
+        frozen: true,
+      }),
+    ).rejects.toThrow();
+  });
+
+  test("the holder still can't self-unfreeze", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+    await disableGroupGiving(t);
+
+    await t.mutation(api.functions.finance.cards.setCardFrozen, {
+      token: await tokenFor(fixture.cardholderUserId),
+      cardId,
+      frozen: true,
+    });
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardFrozen, {
+        token: await tokenFor(fixture.cardholderUserId),
+        cardId,
+        frozen: false,
+      }),
+    ).rejects.toThrow(/can't self-unfreeze/i);
+  });
+
+  test("every other card entry point still refuses", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture);
+    await disableGroupGiving(t);
+    const token = await tokenFor(fixture.financeAdminUserId);
+
+    await expect(
+      createCard(t, fixture.fundId, fixture.financeAdminUserId, fixture.cardholderUserId),
+    ).rejects.toThrow(/group-giving/i);
+    await expect(
+      t.query(api.functions.finance.cards.listFundCards, { token, fundId: fixture.fundId }),
+    ).rejects.toThrow(/group-giving/i);
+    await expect(
+      t.query(api.functions.finance.cards.getCardDetail, { token, cardId }),
+    ).rejects.toThrow(/group-giving/i);
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token,
+        cardId,
+        spendLimitCents: 5_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/group-giving/i);
   });
 });
 
@@ -929,6 +1527,128 @@ describe("recordCardSettlement", () => {
     );
     const captureEntries = ledgerEntries.filter((e) => e.kind === "card_capture");
     expect(captureEntries).toHaveLength(1);
+  });
+
+  // The drift check: Increase enforces the limit, so an over-limit
+  // settlement means our mirror and the bank disagree (a card issued before
+  // limits were wired, a failed setCardLimit, a forced post). Audit-only —
+  // the money already moved.
+  describe("over-limit drift audit", () => {
+    async function seedCardWithLimit(
+      t: ReturnType<typeof convexTest>,
+      limit: { spendLimitCents: number; limitPeriod: "week" | "month" | "charge" },
+    ) {
+      const fixture = await seedCardFixture(t);
+      const cardId = await createCard(
+        t,
+        fixture.fundId,
+        fixture.financeAdminUserId,
+        fixture.cardholderUserId,
+        limit,
+      );
+      await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
+        cardId,
+        increaseCardId: "increase_card_settlement_test",
+        last4: "4242",
+        status: "active",
+      });
+      return { fixture, cardId };
+    }
+
+    async function settle(
+      t: ReturnType<typeof convexTest>,
+      transactionId: string,
+      amountCents: number,
+    ) {
+      await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
+        increaseCardId: "increase_card_settlement_test",
+        increaseTransactionId: transactionId,
+        accountId: "increase_account_test",
+        amountCents,
+        merchantDescription: "Local Grocery Co",
+      });
+    }
+
+    async function limitEvents(
+      t: ReturnType<typeof convexTest>,
+      fundId: Id<"funds">,
+    ) {
+      const events = await t.run(async (ctx) =>
+        ctx.db
+          .query("financeAuditEvents")
+          .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+          .collect(),
+      );
+      return events.filter((e) => e.action === "card.limit_exceeded");
+    }
+
+    test("a single charge past a per-charge limit is flagged", async () => {
+      const t = convexTest(schema, modules);
+      const { fixture } = await seedCardWithLimit(t, {
+        spendLimitCents: 4_000,
+        limitPeriod: "charge",
+      });
+
+      await settle(t, "txn_over_charge", 4_001);
+
+      const flagged = await limitEvents(t, fixture.fundId);
+      expect(flagged).toHaveLength(1);
+      expect(JSON.parse(flagged[0].detailsJson!)).toMatchObject({
+        spendLimitCents: 4_000,
+        limitPeriod: "charge",
+        windowTotalCents: 4_001,
+      });
+    });
+
+    test("a charge exactly at the limit is not flagged", async () => {
+      const t = convexTest(schema, modules);
+      const { fixture } = await seedCardWithLimit(t, {
+        spendLimitCents: 4_000,
+        limitPeriod: "charge",
+      });
+
+      await settle(t, "txn_at_limit", 4_000);
+
+      expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
+    });
+
+    test("charges that only breach the cap in aggregate are flagged on the one that tips it", async () => {
+      const t = convexTest(schema, modules);
+      const { fixture } = await seedCardWithLimit(t, {
+        spendLimitCents: 10_000,
+        limitPeriod: "month",
+      });
+
+      await settle(t, "txn_month_1", 6_000);
+      expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
+
+      await settle(t, "txn_month_2", 4_500);
+
+      const flagged = await limitEvents(t, fixture.fundId);
+      expect(flagged).toHaveLength(1);
+      expect(JSON.parse(flagged[0].detailsJson!).windowTotalCents).toBe(10_500);
+    });
+
+    test("a card with no limit is never flagged", async () => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedCardFixture(t);
+      const cardId = await createCard(
+        t,
+        fixture.fundId,
+        fixture.financeAdminUserId,
+        fixture.cardholderUserId,
+      );
+      await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
+        cardId,
+        increaseCardId: "increase_card_settlement_test",
+        last4: "4242",
+        status: "active",
+      });
+
+      await settle(t, "txn_no_limit", 999_999);
+
+      expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
+    });
   });
 
   test("a missing card is logged, not thrown", async () => {

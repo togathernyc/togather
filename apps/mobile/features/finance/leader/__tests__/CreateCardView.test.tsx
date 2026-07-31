@@ -68,7 +68,42 @@ describe("CreateCardView", () => {
     render(<CreateCardView {...baseProps} limitSelection="week" />);
 
     expect(screen.getByPlaceholderText("$0.00")).toBeTruthy();
-    expect(screen.getByText("Resets every Monday")).toBeTruthy();
+    // Increase's real reset semantics for per_week — UTC included, because
+    // that is when the bank actually resets the window.
+    expect(screen.getByText("Resets every Monday at midnight UTC")).toBeTruthy();
+  });
+
+  // The sheet must never claim a control the product doesn't have. The limit
+  // IS real (Increase enforces it), so it may be stated plainly; a
+  // receipt-required toggle is not, so it may not appear at all.
+  describe("only claims controls that actually exist", () => {
+    it("does not render a receipts-required toggle", () => {
+      render(<CreateCardView {...baseProps} />);
+
+      expect(screen.queryByText("Require receipts")).toBeNull();
+      expect(
+        screen.queryByText("Charges flag for approval until a receipt is attached"),
+      ).toBeNull();
+      expect(screen.queryByText("On")).toBeNull();
+    });
+
+    it("says what a charge actually does — settles first, reviewed after", () => {
+      render(<CreateCardView {...baseProps} />);
+
+      expect(screen.getByText(/settle straight away/i)).toBeTruthy();
+    });
+
+    it("warns that a card with no limit can spend the whole fund", () => {
+      render(<CreateCardView {...baseProps} limitSelection="none" />);
+
+      expect(screen.getByText(/can spend the fund's whole balance/i)).toBeTruthy();
+    });
+
+    it("says the bank enforces the limit once one is set", () => {
+      render(<CreateCardView {...baseProps} limitSelection="month" />);
+
+      expect(screen.getByText(/bank declines anything over this limit/i)).toBeTruthy();
+    });
   });
 
   it("calls onChangeLimitSelection when a segmented option is tapped", () => {

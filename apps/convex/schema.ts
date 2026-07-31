@@ -4007,10 +4007,13 @@ export default defineSchema({
     // provisionCard action hasn't returned yet) and "failed" (it errored).
     status: v.string(),
     spendLimitCents: v.optional(v.number()),
-    // Advisory period the spend limit is meant to cover — Increase enforces
-    // no automatic per-period reset (see cards.ts's module comment: real-time
-    // authorization-based limit enforcement is Phase 2), so this is display
-    // guidance only ("$200/week") until that lands.
+    // The period the spend limit covers. Both fields are a MIRROR of a
+    // control Increase actually enforces: cards.ts translates them into
+    // `authorization_controls.usage.multi_use.spending_limits` at card
+    // creation and on every change, and Increase declines authorizations
+    // past the cap without calling us. Reset semantics are Increase's, and
+    // UTC: "week" resets Mondays at midnight UTC, "month" on the 1st,
+    // "charge" applies per authorization (lib/finance/cardPolicy.ts).
     limitPeriod: v.optional(
       v.union(v.literal("week"), v.literal("month"), v.literal("charge")),
     ),
