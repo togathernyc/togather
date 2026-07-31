@@ -13,6 +13,7 @@ import {
   formatLedgerKind,
   formatExpenseStatus,
   expenseStatusBadgeVariant,
+  expenseStatusNote,
 } from "./labels";
 import type { FundOverview, MyExpense } from "./types";
 
@@ -211,30 +212,44 @@ export function FundScreenView({
               </View>
             ) : (
               <View style={[styles.card, { backgroundColor: colors.surfaceSecondary }]}>
-                {myExpenses.map((expense, index) => (
-                  <View
-                    key={expense.id}
-                    style={[
-                      styles.expenseRow,
-                      index > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: colors.border,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.expenseDescription, { color: colors.text }]}>
-                        {expense.description || "Reimbursement"}
-                      </Text>
-                      <Text style={[styles.expenseAmount, { color: colors.textSecondary }]}>
-                        {formatCents(expense.amountCents)}
-                      </Text>
+                {myExpenses.map((expense, index) => {
+                  // Approved-but-unpaid is the one status a member can read as
+                  // "settled" when it isn't — it gets a sentence saying who
+                  // still owes them the money (see labels.ts).
+                  const note = expenseStatusNote(expense.status);
+                  return (
+                    <View
+                      key={expense.id}
+                      style={[
+                        styles.expenseRow,
+                        index > 0 && {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: colors.border,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.expenseDescription, { color: colors.text }]}>
+                          {expense.description || "Reimbursement"}
+                        </Text>
+                        <Text style={[styles.expenseAmount, { color: colors.textSecondary }]}>
+                          {formatCents(expense.amountCents)}
+                        </Text>
+                        {!!note && (
+                          <Text
+                            testID={`expense-note-${expense.id}`}
+                            style={[styles.expenseNote, { color: colors.textSecondary }]}
+                          >
+                            {note}
+                          </Text>
+                        )}
+                      </View>
+                      <Badge variant={expenseStatusBadgeVariant(expense.status)}>
+                        {formatExpenseStatus(expense.status)}
+                      </Badge>
                     </View>
-                    <Badge variant={expenseStatusBadgeVariant(expense.status)}>
-                      {formatExpenseStatus(expense.status)}
-                    </Badge>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             )}
           </View>
@@ -303,7 +318,9 @@ const styles = StyleSheet.create({
   activityAmount: { fontSize: 15, fontWeight: "600" },
   expenseRow: {
     flexDirection: "row",
-    alignItems: "center",
+    // Top-aligned, not centered: the approved rows carry a wrapping note, and
+    // a centered badge would drift to the middle of a three-line row.
+    alignItems: "flex-start",
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -312,4 +329,5 @@ const styles = StyleSheet.create({
   },
   expenseDescription: { fontSize: 15, fontWeight: "500" },
   expenseAmount: { fontSize: 13, marginTop: 2 },
+  expenseNote: { fontSize: 12, lineHeight: 16, marginTop: 6 },
 });

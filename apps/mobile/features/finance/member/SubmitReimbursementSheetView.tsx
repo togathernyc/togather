@@ -73,6 +73,7 @@ export function SubmitReimbursementSheetView({
           currentImage={receiptPreviewUri ?? undefined}
           isUploading={receiptUploading}
           buttonText="Attach receipt photo"
+          testID="receipt-preview"
         />
 
         {!!error && <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>}

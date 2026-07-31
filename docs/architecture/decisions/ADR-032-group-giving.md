@@ -233,7 +233,13 @@ provider object id.
   drift alarm, receipt-nudge digest, January statements batch.
 - **Mobile**: giving section slots into `GroupDetailScreen` between Check-in
   and Rostering, gated like Rostering (`isLeader || isAdmin` for management
-  surfaces; everyone sees Give + transparency). New routes under
+  surfaces; everyone sees Give + transparency). Behind the `whatsapp-shell`
+  flag the group page is `GroupInfoScreen` instead, so the same pair of
+  entry points lives there too: a member-level "Giving → Group fund" card
+  between Channels and Leader tools (→ `groups/[group_id]/fund`), and the
+  leader-only "Giving" row inside Leader tools (→ the management hub). Both
+  screens must carry the member door — leader-gating it strands members with
+  no way to give at all. New routes under
   `app/(user)/leader-tools/[group_id]/giving/` and a public
   `groups/[group_id]/give` sheet. **No new native dependencies** — payment
   sheet via `@stripe/stripe-react-native` must be classified in

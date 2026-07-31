@@ -435,6 +435,56 @@ describe("getGivingContext", () => {
     });
     expect(result!.givingLive).toBe(false);
   });
+
+  // This query answers "should this surface show a fund at all?" — and it runs
+  // on GroupInfoScreen / GroupDetailScreen, routes a NON-member legitimately
+  // reaches from a share link or Explore. Convex re-throws a query's server
+  // error synchronously during render, so a throw here put the app's root
+  // ErrorBoundary in front of the join CTA for every non-member of any group
+  // with a fund. "You can't see it" has to be the same answer as "there isn't
+  // one": null.
+  test("returns null (not a throw) for a non-member — the join flow must survive", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const outsiderId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Outsider",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    const result = await t.query(api.functions.finance.giving.getGivingContext, {
+      token: await tokenFor(outsiderId),
+      groupId: s.groupId,
+    });
+    expect(result).toBeNull();
+  });
+
+  // Failing open is scoped to THIS query. Everything that hands back actual
+  // fund detail or moves money still refuses loudly — see getFundOverview's
+  // "rejects a user with no access to the fund's group" above, and this.
+  test("failing open does not spread to donation creation", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedGivingFixture(t);
+    const outsiderId = await t.run((ctx) =>
+      ctx.db.insert("users", {
+        firstName: "Outsider",
+        isActive: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }),
+    );
+
+    await expect(
+      t.query(internal.functions.finance.giving.prepareDonationIntent, {
+        token: await tokenFor(outsiderId),
+        fundId: s.fundId,
+        amountCents: 2500,
+      }),
+    ).rejects.toThrow(/access to this fund/i);
+  });
 });
 
 // ============================================================================

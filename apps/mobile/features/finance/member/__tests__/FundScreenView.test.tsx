@@ -229,6 +229,59 @@ describe("FundScreenView", () => {
     expect(screen.getByText("Pending")).toBeTruthy();
   });
 
+  // An approved reimbursement is NOT money in flight: the ACH payout is still
+  // stubbed (`getPayoutDestination` returns null), so nothing advances the row
+  // until a fund manager pays out of band and the status is recorded as paid. The
+  // row has to say that rather than leave a bare blue "Approved" badge the
+  // reader settles for as "paid".
+  describe("approved-but-unpaid honesty", () => {
+    const approved: MyExpense[] = [
+      { ...baseExpenses[0], id: "exp-approved", status: "approved" },
+    ];
+    const paid: MyExpense[] = [{ ...baseExpenses[0], id: "exp-paid", status: "paid" }];
+
+    const renderWith = (myExpenses: MyExpense[]) =>
+      render(
+        <FundScreenView
+          overview={baseOverview}
+          myExpenses={myExpenses}
+          onBack={noop}
+          onGivePress={noop}
+          onGetReimbursedPress={noop}
+        />,
+      );
+
+    it("badges an approved reimbursement as awaiting payout, never a bare 'Approved'", () => {
+      renderWith(approved);
+      expect(screen.getByText("Awaiting payout")).toBeTruthy();
+      expect(screen.queryByText("Approved")).toBeNull();
+    });
+
+    it("explains who still has to send the money, with no promised date", () => {
+      renderWith(approved);
+      const note = screen.getByTestId("expense-note-exp-approved");
+      // A real role from ADR-032 §4's table — not "treasurer", which the
+      // product never labels anyone (see expenseStatusNote's doc comment).
+      expect(note.props.children).toMatch(/fund manager/i);
+      expect(note.props.children).not.toMatch(/treasurer/i);
+      // No ETA language — the payout has no schedule to promise.
+      expect(note.props.children).not.toMatch(/\b\d+\s*(day|week|business)/i);
+    });
+
+    it("still reads clearly as paid — and differently — once it's actually paid", () => {
+      renderWith(paid);
+      expect(screen.getByText("Paid")).toBeTruthy();
+      expect(screen.queryByText("Awaiting payout")).toBeNull();
+      expect(screen.queryByTestId("expense-note-exp-paid")).toBeNull();
+    });
+
+    it("leaves pending rows alone", () => {
+      renderWith(baseExpenses);
+      expect(screen.getByText("Pending")).toBeTruthy();
+      expect(screen.queryByTestId("expense-note-exp1")).toBeNull();
+    });
+  });
+
   it("fires onGivePress from the header Give button", () => {
     const onGivePress = jest.fn();
     render(

@@ -89,19 +89,24 @@ async function isActiveCommunityMember(
 }
 
 /**
- * Throws unless `userId` may view `fund` — an active member of the fund's
- * group (or, for the community-wide general fund, any active community
- * member), or a community admin. Mirrors the "Give; see transparency
- * summary" row of the ADR-032 §4 permission table, which every role from
- * plain member up satisfies.
+ * Whether `userId` may view `fund` — an active member of the fund's group
+ * (or, for the community-wide general fund, any active community member), or
+ * a community admin. Mirrors the "Give; see transparency summary" row of the
+ * ADR-032 §4 permission table, which every role from plain member up
+ * satisfies.
+ *
+ * Non-throwing so `getGivingContext` — whose entire job is answering "does a
+ * fund I can see exist here?" — can answer `null` instead of erroring. Use
+ * `assertCanViewFund` wherever a caller has already committed to showing fund
+ * detail and a refusal should be loud.
  */
-async function assertCanViewFund(
+async function canViewFund(
   ctx: { db: any },
   fund: Doc<"funds">,
   userId: Id<"users">,
-): Promise<void> {
+): Promise<boolean> {
   if (await isCommunityAdmin(ctx, fund.communityId, userId)) {
-    return;
+    return true;
   }
   if (fund.groupId) {
     const membership = await ctx.db
@@ -110,13 +115,20 @@ async function assertCanViewFund(
         q.eq("groupId", fund.groupId).eq("userId", userId),
       )
       .first();
-    if (isActiveMember(membership)) {
-      return;
-    }
-  } else if (await isActiveCommunityMember(ctx, fund.communityId, userId)) {
-    return;
+    return isActiveMember(membership);
   }
-  throw new Error("You don't have access to this fund");
+  return await isActiveCommunityMember(ctx, fund.communityId, userId);
+}
+
+/** Throwing form of {@link canViewFund}. */
+async function assertCanViewFund(
+  ctx: { db: any },
+  fund: Doc<"funds">,
+  userId: Id<"users">,
+): Promise<void> {
+  if (!(await canViewFund(ctx, fund, userId))) {
+    throw new Error("You don't have access to this fund");
+  }
 }
 
 /**
@@ -308,7 +320,19 @@ export const getGivingContext = query({
       return null;
     }
 
-    await assertCanViewFund(ctx, fund, userId);
+    // Fail OPEN, not loud. This query's whole job is "should this surface
+    // show a fund at all?", and it runs on `GroupInfoScreen` /
+    // `GroupDetailScreen` — routes a NON-member legitimately reaches from a
+    // share link or Explore. Convex re-throws a query's server error
+    // synchronously during render, so throwing here put the root
+    // ErrorBoundary in front of the join CTA for every non-member of any
+    // group with a fund. Matching its sibling reads on those screens
+    // (`countGroupJoinRequests`, `getGroupNotifications`), "you can't see it"
+    // is the same answer as "there isn't one": null. Nothing about the fund
+    // leaks, and every read that returns fund DETAIL still asserts.
+    if (!(await canViewFund(ctx, fund, userId))) {
+      return null;
+    }
 
     const communityFinance = await ctx.db
       .query("communityFinance")
