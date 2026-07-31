@@ -37,14 +37,36 @@ export function formatLedgerKind(kind: string): string {
 
 const EXPENSE_STATUS_LABELS: Record<ExpenseStatus, string> = {
   pending: "Pending",
-  approved: "Approved",
+  // NOT "Approved". Approval only clears the request for payment — it moves no
+  // money. The automated ACH payout is still a stub (`getPayoutDestination` in
+  // functions/finance/expenses.ts always returns null, so `payReimbursement`
+  // short-circuits), which means an approved row NEVER advances on its own: a
+  // treasurer has to send the money out of band and have it recorded as paid.
+  // A bare "Approved" badge reads as "settled, money on the way", so the badge
+  // itself has to name the state the submitter is actually in.
+  approved: "Awaiting payout",
   denied: "Denied",
   paid: "Paid",
 };
 
-/** "Pending" / "Approved" / "Denied" / "Paid" for the my-reimbursements list. */
+/** "Pending" / "Awaiting payout" / "Denied" / "Paid" for the my-reimbursements list. */
 export function formatExpenseStatus(status: string): string {
   return EXPENSE_STATUS_LABELS[status as ExpenseStatus] ?? status;
+}
+
+/**
+ * Plain-language sub-line for a reimbursement row, or `undefined` when the
+ * badge already says everything true about the state.
+ *
+ * Only the approved-but-unpaid state needs one: it's the one status a member
+ * can misread as "I've been paid". Deliberately promises no date — there is no
+ * payout schedule to promise (see `EXPENSE_STATUS_LABELS.approved`).
+ */
+export function expenseStatusNote(status: string): string | undefined {
+  if ((status as ExpenseStatus) === "approved") {
+    return "Approved — a treasurer still needs to send you the money. It'll say Paid here once they have.";
+  }
+  return undefined;
 }
 
 /** Badge `variant` per status — mirrors components/ui/Badge.tsx's variant union. */

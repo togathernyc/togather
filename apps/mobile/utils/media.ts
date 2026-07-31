@@ -35,8 +35,16 @@ export function getMediaUrl(path: string | null | undefined): string | undefined
     return path;
   }
 
-  // Local file URIs (from image picker) - return as-is for preview
-  if (path.startsWith('file://')) {
+  // Local, not-yet-uploaded URIs (from the image picker) - return as-is for
+  // preview. `file://` is what expo-image-picker hands back on native; on web
+  // it returns a `blob:` object URL (or an inline `data:` URI). Dropping the
+  // web forms made every just-picked preview fall through to AppImage's gray
+  // placeholder, so the user couldn't see what they'd attached.
+  if (
+    path.startsWith('file://') ||
+    path.startsWith('blob:') ||
+    path.startsWith('data:')
+  ) {
     return path;
   }
 

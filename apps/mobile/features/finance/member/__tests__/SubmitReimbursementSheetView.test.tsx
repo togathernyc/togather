@@ -41,11 +41,17 @@ jest.mock("@components/ui", () => {
         },
         ReactActual.createElement(RN.Text, null, children),
       ),
-    ImagePicker: ({ onImageSelected, isUploading, buttonText }: any) =>
+    // Echoes `currentImage` back out so the sheet's preview wiring is
+    // observable here; the picker's own rendering is covered by
+    // components/ui/__tests__/ImagePicker.test.tsx.
+    ImagePicker: ({ onImageSelected, isUploading, buttonText, currentImage, testID }: any) =>
       ReactActual.createElement(
         RN.TouchableOpacity,
         { onPress: () => onImageSelected("file://mock-receipt.jpg"), accessibilityLabel: buttonText },
         ReactActual.createElement(RN.Text, null, isUploading ? "Uploading..." : buttonText),
+        currentImage
+          ? ReactActual.createElement(RN.Text, { testID: `${testID}-uri` }, currentImage)
+          : null,
       ),
   };
 });
@@ -121,6 +127,14 @@ describe("SubmitReimbursementSheetView", () => {
     render(<SubmitReimbursementSheetView {...baseProps} onPickReceipt={onPickReceipt} />);
     fireEvent.press(screen.getByLabelText("Attach receipt photo"));
     expect(onPickReceipt).toHaveBeenCalledWith("file://mock-receipt.jpg");
+  });
+
+  it("hands the picked receipt URI to the picker so it can preview it", () => {
+    // Web picks come back as blob:/data: URIs, so the sheet must pass them
+    // through untouched — see the ImagePicker/getMediaUrl regression tests.
+    const uri = "blob:http://localhost:8081/6b9f-1f2e";
+    render(<SubmitReimbursementSheetView {...baseProps} receiptPreviewUri={uri} />);
+    expect(screen.getByTestId("receipt-preview-uri").props.children).toBe(uri);
   });
 
   it("calls onSubmit when the submit button is pressed while valid", () => {
