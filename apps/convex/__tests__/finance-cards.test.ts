@@ -62,11 +62,86 @@ vi.mock("../lib/finance/increase", async (importOriginal) => ({
   ...increase,
 }));
 
+/**
+ * `cardLimitWindowStart` is the first thing the settlement drift audit calls.
+ * Making it throw on demand is the only deterministic way to prove the claim
+ * this suite has to keep honest: a bug inside the audit must not be able to
+ * undo the expense and the ledger debit the settlement already wrote.
+ */
+const policy = vi.hoisted(() => ({ explodeOnWindowStart: false }));
+
+vi.mock("../lib/finance/cardPolicy", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../lib/finance/cardPolicy")>();
+  return {
+    ...actual,
+    cardLimitWindowStart: (
+      ...args: Parameters<typeof actual.cardLimitWindowStart>
+    ) => {
+      if (policy.explodeOnWindowStart) {
+        throw new Error("drift-audit boom");
+      }
+      return actual.cardLimitWindowStart(...args);
+    },
+  };
+});
+
+/**
+ * Lets a test blow up one specific audit write. Used to fail the MIRROR half
+ * of `applyCardLimit` after Increase has already accepted the change — the
+ * split-brain case (bank capped, app not) that nothing reconciles
+ * automatically, so the failure has to be recorded rather than vanish.
+ */
+const auditFuse = vi.hoisted(() => ({ explodeOnAction: null as string | null }));
+
+vi.mock("../lib/finance/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/finance/audit")>();
+  return {
+    ...actual,
+    logFinanceAudit: async (
+      ...args: Parameters<typeof actual.logFinanceAudit>
+    ) => {
+      if (auditFuse.explodeOnAction && args[1].action === auditFuse.explodeOnAction) {
+        throw new Error("mirror-write boom");
+      }
+      return actual.logFinanceAudit(...args);
+    },
+  };
+});
+
 beforeEach(() => {
   increase.createCard.mockClear();
   increase.updateCardStatus.mockClear();
   increase.updateCardSpendingLimit.mockClear();
+  policy.explodeOnWindowStart = false;
+  auditFuse.explodeOnAction = null;
 });
+
+/**
+ * Run whatever the code under test scheduled, then stop. Timers are frozen
+ * for the whole suite so provisioning actions never fire behind our backs —
+ * but the settlement drift audit runs in its OWN transaction by design (see
+ * webhooks.ts's `recordCardSettlement`), so any test that expects it has to
+ * drain the scheduler on purpose.
+ */
+async function drainScheduled(t: ReturnType<typeof convexTest>): Promise<void> {
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+}
+
+/** Every `financeAuditEvents` row on a fund with the given action. */
+async function auditEvents(
+  t: ReturnType<typeof convexTest>,
+  fundId: Id<"funds">,
+  action: string,
+) {
+  const events = await t.run(async (ctx) =>
+    ctx.db
+      .query("financeAuditEvents")
+      .withIndex("by_fund", (q) => q.eq("fundId", fundId))
+      .collect(),
+  );
+  return events.filter((e) => e.action === action);
+}
 
 const ADDRESS = {
   addressLine1: "1 Main St",
@@ -1030,32 +1105,36 @@ describe("setCardLimit", () => {
       spendLimitCents: 50_000,
       limitPeriod: "month",
     });
-    expect(result).toEqual({ spendLimitCents: 50_000, limitPeriod: "month" });
+    // The REQUEST, labelled as such — the bank hasn't been asked yet.
+    expect(result).toEqual({
+      status: "pending",
+      requestedSpendLimitCents: 50_000,
+      requestedLimitPeriod: "month",
+    });
 
     // The scheduled action hasn't run (fake timers), so the row still holds
     // the OLD limit — the mirror never claims a cap the bank hasn't taken.
     const beforeApply = await t.run(async (ctx) => ctx.db.get(cardId));
     expect(beforeApply?.spendLimitCents).toBe(10_000);
 
-    const events = await t.run(async (ctx) =>
-      ctx.db
-        .query("financeAuditEvents")
-        .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
-        .collect(),
-    );
-    const audit = events.find((e) => e.action === "card.limit_updated");
-    expect(audit).toBeDefined();
-    expect(JSON.parse(audit!.detailsJson!)).toMatchObject({
+    // …and the audit trail says "requested", not "updated". A compliance log
+    // that asserts a limit change Increase never took is the same lie as a UI
+    // that does, just harder to notice.
+    const requested = await auditEvents(t, fixture.fundId, "card.limit_update_requested");
+    expect(requested).toHaveLength(1);
+    expect(JSON.parse(requested[0].detailsJson!)).toMatchObject({
       fromSpendLimitCents: 10_000,
       fromLimitPeriod: "week",
       toSpendLimitCents: 50_000,
       toLimitPeriod: "month",
     });
+    expect(await auditEvents(t, fixture.fundId, "card.limit_updated")).toHaveLength(0);
 
     await t.action(internal.functions.finance.cards.applyCardLimit, {
       cardId,
       spendLimitCents: 50_000,
       limitPeriod: "month",
+      actorUserId: fixture.financeAdminUserId,
     });
 
     expect(increase.updateCardSpendingLimit).toHaveBeenCalledWith("increase_card_1", {
@@ -1065,6 +1144,168 @@ describe("setCardLimit", () => {
     const afterApply = await t.run(async (ctx) => ctx.db.get(cardId));
     expect(afterApply?.spendLimitCents).toBe(50_000);
     expect(afterApply?.limitPeriod).toBe("month");
+
+    // Only now — after Increase confirmed — is the change audited as applied.
+    const applied = await auditEvents(t, fixture.fundId, "card.limit_updated");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].actorUserId).toBe(fixture.financeAdminUserId);
+    expect(JSON.parse(applied[0].detailsJson!)).toMatchObject({
+      fromSpendLimitCents: 10_000,
+      toSpendLimitCents: 50_000,
+      toLimitPeriod: "month",
+    });
+  });
+
+  test("Increase refusing the change audits the failure and leaves the mirror alone", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+
+    increase.updateCardSpendingLimit.mockRejectedValueOnce(
+      new Error("Increase API PATCH /cards/increase_card_1 failed (400): nope"),
+    );
+
+    // Same shape as provisionCard: the action swallows the provider error and
+    // records it, rather than dying silently.
+    await t.action(internal.functions.finance.cards.applyCardLimit, {
+      cardId,
+      spendLimitCents: 50_000,
+      limitPeriod: "month",
+      actorUserId: fixture.financeAdminUserId,
+    });
+
+    const failures = await auditEvents(t, fixture.fundId, "card.limit_update_failed");
+    expect(failures).toHaveLength(1);
+    const details = JSON.parse(failures[0].detailsJson!);
+    // providerApplied false = bank and mirror both still hold the OLD limit.
+    expect(details.providerApplied).toBe(false);
+    expect(details.message).toMatch(/400/);
+
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.spendLimitCents).toBe(10_000);
+    expect(card?.limitPeriod).toBe("week");
+    expect(await auditEvents(t, fixture.fundId, "card.limit_updated")).toHaveLength(0);
+  });
+
+  test("Increase applying the change but the mirror write failing is audited as a disagreement", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+
+    // The dangerous half of a split brain: the bank TOOK the new limit and
+    // our mirror still shows the old one. Nothing reconciles that (no
+    // read-back, no cron), so the audit row is the only signal anyone gets.
+    // Forced here by failing the applied-audit write inside recordCardLimit,
+    // which rolls that mutation — patch included — back.
+    auditFuse.explodeOnAction = "card.limit_updated";
+
+    await t.action(internal.functions.finance.cards.applyCardLimit, {
+      cardId,
+      spendLimitCents: 50_000,
+      limitPeriod: "month",
+      actorUserId: fixture.financeAdminUserId,
+    });
+
+    expect(increase.updateCardSpendingLimit).toHaveBeenCalledWith("increase_card_1", {
+      interval: "per_month",
+      settlementAmountCents: 50_000,
+    });
+
+    const card = await t.run(async (ctx) => ctx.db.get(cardId));
+    expect(card?.spendLimitCents).toBe(10_000); // mirror never moved
+
+    const failures = await auditEvents(t, fixture.fundId, "card.limit_update_failed");
+    expect(failures).toHaveLength(1);
+    // providerApplied TRUE is the whole point: this is not "nothing
+    // happened", it's "the bank changed and we didn't".
+    expect(JSON.parse(failures[0].detailsJson!)).toMatchObject({
+      providerApplied: true,
+      toSpendLimitCents: 50_000,
+      toLimitPeriod: "month",
+    });
+  });
+
+  test("refuses to change a limit on a frozen fund's card", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(fixture.fundId, { status: "frozen" });
+    });
+
+    // Raising a cap is a spending-power grant; a fund frozen because its
+    // group was archived must not be able to hand out more of it.
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.financeAdminUserId),
+        cardId,
+        spendLimitCents: 500_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/isn't active/i);
+
+    // Not even clearing it, and nothing was scheduled at the bank.
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.financeAdminUserId),
+        cardId,
+      }),
+    ).rejects.toThrow(/isn't active/i);
+    expect(increase.updateCardSpendingLimit).not.toHaveBeenCalled();
+  });
+
+  test("refuses to change a limit on a canceled card", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(cardId, { status: "canceled" });
+    });
+
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.financeAdminUserId),
+        cardId,
+        spendLimitCents: 500_000,
+        limitPeriod: "week",
+      }),
+    ).rejects.toThrow(/canceled/i);
+  });
+
+  test("a frozen (disabled) card can still have its limit changed", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedCardFixture(t);
+    const cardId = await provisionedCard(t, fixture, {
+      spendLimitCents: 10_000,
+      limitPeriod: "week",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(cardId, { status: "disabled" });
+    });
+
+    // A frozen card is still a live card at the bank — tightening it before
+    // unfreezing is a reasonable thing to want, and nothing about it is a
+    // grant of spending power the freeze was meant to stop.
+    await expect(
+      t.mutation(api.functions.finance.cards.setCardLimit, {
+        token: await tokenFor(fixture.financeAdminUserId),
+        cardId,
+        spendLimitCents: 1_000,
+        limitPeriod: "week",
+      }),
+    ).resolves.toMatchObject({ status: "pending" });
   });
 
   test("clearing the limit tells Increase explicitly, and clears the mirror", async () => {
@@ -1395,6 +1636,10 @@ describe("recordCardSettlement", () => {
       fixture.financeAdminUserId,
       fixture.cardholderUserId,
     );
+    // Consume the provisionCard run createFundCard scheduled BEFORE stamping
+    // the settlement-test card id, so a later `drainScheduled` can't come
+    // back and overwrite it with the mock's own id.
+    await drainScheduled(t);
     await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
       cardId,
       increaseCardId: "increase_card_settlement_test",
@@ -1418,6 +1663,7 @@ describe("recordCardSettlement", () => {
 
     await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, args);
     await t.mutation(internal.functions.finance.webhooks.recordCardSettlement, args);
+    await drainScheduled(t); // the settlement's scheduled drift audit
 
     const expenses = await t.run(async (ctx) =>
       ctx.db
@@ -1509,6 +1755,7 @@ describe("recordCardSettlement", () => {
       amountCents: 2200,
       merchantDescription: "Frozen Fund Grocery",
     });
+    await drainScheduled(t); // the settlement's scheduled drift audit
 
     const expenses = await t.run(async (ctx) =>
       ctx.db
@@ -1546,6 +1793,7 @@ describe("recordCardSettlement", () => {
         fixture.cardholderUserId,
         limit,
       );
+      await drainScheduled(t); // see seedSettledCard
       await t.mutation(internal.functions.finance.cards.recordCardProvisioned, {
         cardId,
         increaseCardId: "increase_card_settlement_test",
@@ -1567,6 +1815,9 @@ describe("recordCardSettlement", () => {
         amountCents,
         merchantDescription: "Local Grocery Co",
       });
+      // The drift audit is scheduled, not inline — nothing to assert until
+      // its own transaction has run.
+      await drainScheduled(t);
     }
 
     async function limitEvents(
@@ -1646,6 +1897,104 @@ describe("recordCardSettlement", () => {
       });
 
       await settle(t, "txn_no_limit", 999_999);
+
+      expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
+    });
+
+    // The whole reason the audit is scheduled rather than called inline. When
+    // it lived inside recordCardSettlement's transaction, a throw here rolled
+    // back the card_charge expense AND the card_capture ledger debit, and
+    // Increase retried the webhook straight back into the same failure — a
+    // card swipe that silently stopped being recorded. If anyone moves the
+    // call back inline, the settlement below throws and this test fails.
+    test("a drift audit that throws leaves the expense and the ledger entry standing", async () => {
+      const t = convexTest(schema, modules);
+      const { fixture, cardId } = await seedCardWithLimit(t, {
+        spendLimitCents: 4_000,
+        limitPeriod: "charge",
+      });
+
+      policy.explodeOnWindowStart = true;
+
+      // The money path itself must not care.
+      await expect(
+        t.mutation(internal.functions.finance.webhooks.recordCardSettlement, {
+          increaseCardId: "increase_card_settlement_test",
+          increaseTransactionId: "txn_audit_explodes",
+          accountId: "increase_account_test",
+          amountCents: 9_999,
+          merchantDescription: "Local Grocery Co",
+        }),
+      ).resolves.toBeNull();
+
+      const expenses = await t.run(async (ctx) =>
+        ctx.db
+          .query("expenses")
+          .withIndex("by_card", (q) => q.eq("cardId", cardId))
+          .collect(),
+      );
+      expect(expenses).toHaveLength(1);
+      expect(expenses[0].amountCents).toBe(9_999);
+
+      const captures = await t.run(async (ctx) =>
+        ctx.db
+          .query("ledgerEntries")
+          .withIndex("by_fund", (q) => q.eq("fundId", fixture.fundId))
+          .collect(),
+      );
+      expect(captures.filter((e) => e.kind === "card_capture")).toHaveLength(1);
+
+      // And the audit really does blow up when run — i.e. the settlement
+      // survived a genuinely failing audit, not a silently-skipped one.
+      await expect(
+        t.mutation(internal.functions.finance.webhooks.auditOverLimitCardCharge, {
+          cardId,
+          expenseId: expenses[0]._id,
+          atMs: expenses[0].createdAt,
+        }),
+      ).rejects.toThrow(/drift-audit boom/);
+
+      // Let the scheduled run fail too, so nothing leaks into the next test's
+      // timers, and confirm the money rows are still standing afterwards.
+      await drainScheduled(t);
+      const after = await t.run(async (ctx) =>
+        ctx.db
+          .query("expenses")
+          .withIndex("by_card", (q) => q.eq("cardId", cardId))
+          .collect(),
+      );
+      expect(after).toHaveLength(1);
+      expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
+    });
+
+    // The window query used to `.collect()` every card_charge the card ever
+    // had and filter in JS, which grows without bound on a busy card. It is
+    // now an index range — so charges outside the window must not be read
+    // back into the total, which is what this asserts.
+    test("only charges inside the window count toward the total", async () => {
+      const t = convexTest(schema, modules);
+      const { fixture, cardId } = await seedCardWithLimit(t, {
+        spendLimitCents: 10_000,
+        limitPeriod: "month",
+      });
+
+      // A big charge from a previous month, backdated past the window start.
+      await t.run(async (ctx) => {
+        const lastMonth = Date.UTC(2020, 0, 15);
+        await ctx.db.insert("expenses", {
+          fundId: fixture.fundId,
+          submitterId: fixture.cardholderUserId,
+          amountCents: 500_000,
+          kind: "card_charge",
+          status: "pending",
+          cardId,
+          increaseTransactionId: "txn_ancient",
+          createdAt: lastMonth,
+          updatedAt: lastMonth,
+        });
+      });
+
+      await settle(t, "txn_this_month", 6_000);
 
       expect(await limitEvents(t, fixture.fundId)).toHaveLength(0);
     });

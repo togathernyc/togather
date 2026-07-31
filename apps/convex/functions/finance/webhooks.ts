@@ -24,8 +24,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "../../_generated/server";
 import { internal } from "../../_generated/api";
-import type { ActionCtx, MutationCtx } from "../../_generated/server";
-import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
 import { logFinanceAudit } from "../../lib/finance/audit";
 import { cardLimitWindowStart } from "../../lib/finance/cardPolicy";
 import { postLedgerEntry } from "../../lib/finance/ledger";
@@ -212,9 +211,19 @@ export const recordCardSettlement = internalMutation({
       },
     });
 
-    // Runs last, and only ever writes an audit row, so a bug here can never
-    // affect the expense or the ledger entry above.
-    await auditOverLimitCardCharge(ctx, card, fund, expenseId, timestamp);
+    // SCHEDULED, not called inline. A Convex mutation is one transaction, so
+    // an inline drift check that threw — on a bug, or on the read limits its
+    // window query could reach — would roll back the expense AND the ledger
+    // debit above, and Increase would retry the webhook straight back into
+    // the same failure. Scheduling is atomic with this transaction (it only
+    // happens if the settlement commits) while running in its own, which is
+    // the only arrangement where "the audit can never affect the money path"
+    // is actually true rather than merely intended.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.finance.webhooks.auditOverLimitCardCharge,
+      { cardId: card._id, expenseId, atMs: timestamp },
+    );
   },
 });
 
@@ -234,54 +243,68 @@ export const recordCardSettlement = internalMutation({
  * Audit-only by design: the charge already settled, so there is nothing to
  * block — this makes the stored limit a real monitoring control rather than
  * a number nobody ever reads back.
+ *
+ * Runs as its OWN transaction, scheduled by `recordCardSettlement` — see the
+ * comment at that call site for why it must never share the settlement's.
  */
-async function auditOverLimitCardCharge(
-  ctx: MutationCtx,
-  card: Doc<"cards">,
-  fund: Doc<"funds">,
-  expenseId: Id<"expenses">,
-  atMs: number,
-): Promise<void> {
-  const limitCents = card.spendLimitCents;
-  const limitPeriod = card.limitPeriod;
-  if (limitCents === undefined || limitPeriod === undefined) return;
+export const auditOverLimitCardCharge = internalMutation({
+  args: {
+    cardId: v.id("cards"),
+    expenseId: v.id("expenses"),
+    /** Settlement time, so the window matches the one the settlement fell in. */
+    atMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return;
 
-  const windowStart = cardLimitWindowStart(limitPeriod, atMs);
-  let windowTotalCents: number;
-  if (windowStart === null) {
-    // "charge" — a per-transaction cap, so the window is this charge alone.
-    windowTotalCents = (await ctx.db.get(expenseId))?.amountCents ?? 0;
-  } else {
-    // The expense for this charge is already inserted, so it's counted here
-    // rather than added on top.
-    const charges = await ctx.db
-      .query("expenses")
-      .withIndex("by_card", (q) => q.eq("cardId", card._id))
-      .collect();
-    windowTotalCents = charges
-      .filter((e) => e.kind === "card_charge" && e.createdAt >= windowStart)
-      .reduce((sum, e) => sum + e.amountCents, 0);
-  }
+    const limitCents = card.spendLimitCents;
+    const limitPeriod = card.limitPeriod;
+    if (limitCents === undefined || limitPeriod === undefined) return;
 
-  if (windowTotalCents <= limitCents) return;
+    const windowStart = cardLimitWindowStart(limitPeriod, args.atMs);
+    let windowTotalCents: number;
+    if (windowStart === null) {
+      // "charge" — a per-transaction cap, so the window is this charge alone.
+      windowTotalCents = (await ctx.db.get(args.expenseId))?.amountCents ?? 0;
+    } else {
+      // Bounded by the index range, not filtered in JS: a card in weekly use
+      // for years must not make this read grow without limit. The expense for
+      // this charge is already inserted, so it's counted here rather than
+      // added on top.
+      const charges = await ctx.db
+        .query("expenses")
+        .withIndex("by_card_created", (q) =>
+          q.eq("cardId", args.cardId).gte("createdAt", windowStart),
+        )
+        .collect();
+      windowTotalCents = charges
+        .filter((e) => e.kind === "card_charge")
+        .reduce((sum, e) => sum + e.amountCents, 0);
+    }
 
-  console.error(
-    `[finance] card ${card._id} settled past its ${limitPeriod} limit: ${windowTotalCents} > ${limitCents} cents`,
-  );
-  await logFinanceAudit(ctx, {
-    communityId: fund.communityId,
-    fundId: fund._id,
-    action: "card.limit_exceeded",
-    details: {
-      cardId: card._id,
-      expenseId,
-      spendLimitCents: limitCents,
-      limitPeriod,
-      windowTotalCents,
-      windowStart,
-    },
-  });
-}
+    if (windowTotalCents <= limitCents) return;
+
+    console.error(
+      `[finance] card ${card._id} settled past its ${limitPeriod} limit: ${windowTotalCents} > ${limitCents} cents`,
+    );
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "card.limit_exceeded",
+      details: {
+        cardId: card._id,
+        expenseId: args.expenseId,
+        spendLimitCents: limitCents,
+        limitPeriod,
+        windowTotalCents,
+        windowStart,
+      },
+    });
+  },
+});
 
 // ============================================================================
 // handleIncreaseWebhookRequest — POST /increase-webhook (orchestrator wires

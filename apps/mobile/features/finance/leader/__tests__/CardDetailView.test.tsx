@@ -53,6 +53,18 @@ describe("CardDetailView", () => {
     expect(screen.queryByText("Charge auto-flags until a receipt is attached")).toBeNull();
   });
 
+  // The claim, not a phrasing. There is no approval path for a card_charge —
+  // no screen surfaces one and canPay refuses the kind — so no wording of
+  // "sign-off" or "second approver" may appear on a card surface.
+  it("does not claim any approval control over card charges", () => {
+    render(<CardDetailView {...baseProps} />);
+
+    expect(screen.getByText(/settle straight away/i)).toBeTruthy();
+    expect(screen.queryByText(/second approver/i)).toBeNull();
+    expect(screen.queryByText(/\$200/)).toBeNull();
+    expect(screen.queryByText(/sign-off/i)).toBeNull();
+  });
+
   it("says the bank enforces the limit, and warns when there isn't one", () => {
     render(<CardDetailView {...baseProps} />);
     expect(screen.getByText(/bank declines anything over this limit/i)).toBeTruthy();

@@ -148,14 +148,17 @@ export function formatCardLimit(
  * What actually happens to a card charge, surfaced verbatim on the
  * create-card sheet and card detail.
  *
- * Deliberately describes review AFTER the fact, not authorization: a card
- * swipe settles straight from the fund's bank account, and the only thing
- * that can stop it is the card's own limit (which Increase enforces) or the
- * account balance. The app never gets a vote at swipe time, so this copy
- * must not imply it does — see `apps/convex/functions/finance/cards.ts`.
+ * Says only what the product does today. A card swipe settles straight from
+ * the fund's bank account: the only things that can stop it are the card's
+ * own limit (Increase enforces it) and the account balance. There is no
+ * approval step for a `card_charge` expense — nothing surfaces one for
+ * sign-off and `canPay` refuses the kind outright — so this copy must claim
+ * neither sign-off nor a second approver. See the "What card controls still
+ * DON'T do" seam in `apps/convex/functions/finance/ARCHITECTURE.md`: no card
+ * surface may advertise a control that isn't on that list.
  */
-export const CARD_CHARGE_REVIEW_NOTE =
-  "Charges settle straight away, then land in the fund's activity for sign-off. Anything over $200 needs a second approver.";
+export const CARD_CHARGE_SETTLEMENT_NOTE =
+  "Charges settle straight away — nothing in the app can stop one. Each lands in the fund's activity as soon as the bank confirms it.";
 
 /**
  * Giving hub balance header + month-to-date stat tiles. Mirrors the fields

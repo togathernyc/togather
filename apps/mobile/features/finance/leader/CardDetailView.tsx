@@ -10,7 +10,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Badge, Skeleton, ConfirmModal } from "@components/ui";
 import { formatCents } from "../format";
-import { formatCardLimit, CARD_CHARGE_REVIEW_NOTE, type CardDetail } from "./types";
+import { formatCardLimit, CARD_CHARGE_SETTLEMENT_NOTE, type CardDetail } from "./types";
 
 export interface CardDetailViewProps {
   /** `undefined` while loading, `null` if the card couldn't be found/loaded. */
@@ -162,7 +162,7 @@ export function CardDetailView({
               : "The bank declines anything over this limit. Only finance admins can change it."}
           </Text>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            {CARD_CHARGE_REVIEW_NOTE}
+            {CARD_CHARGE_SETTLEMENT_NOTE}
           </Text>
         </View>
 

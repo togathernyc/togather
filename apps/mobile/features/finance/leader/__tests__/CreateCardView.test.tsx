@@ -87,10 +87,17 @@ describe("CreateCardView", () => {
       expect(screen.queryByText("On")).toBeNull();
     });
 
-    it("says what a charge actually does — settles first, reviewed after", () => {
+    it("says what a charge actually does — settles, then shows up; no approval promised", () => {
       render(<CreateCardView {...baseProps} />);
 
       expect(screen.getByText(/settle straight away/i)).toBeTruthy();
+      // Assert the CLAIM, not a phrasing: no approval path exists for a
+      // card_charge (nothing surfaces one, and canPay refuses the kind), so
+      // neither a threshold nor a second approver may be mentioned however
+      // it's worded.
+      expect(screen.queryByText(/second approver/i)).toBeNull();
+      expect(screen.queryByText(/\$200/)).toBeNull();
+      expect(screen.queryByText(/sign-off/i)).toBeNull();
     });
 
     it("warns that a card with no limit can spend the whole fund", () => {

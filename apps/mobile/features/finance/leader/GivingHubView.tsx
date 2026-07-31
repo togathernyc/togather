@@ -280,7 +280,7 @@ export function GivingHubView({
           )}
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
             Cards spend directly from this fund's bank account, and the bank declines anything over a card's
-            limit. Every charge lands in the fund's activity for sign-off afterwards.
+            limit. Every charge lands in the fund's activity as soon as it settles.
           </Text>
         </View>
 

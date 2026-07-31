@@ -161,15 +161,20 @@ describe("GivingHubView", () => {
       expect(onViewCard).toHaveBeenCalledWith("card-1");
     });
 
-    // A card swipe has no approval gate — it settles at the bank and only
-    // then becomes an expense to sign off. The footer must not imply a
-    // second approver stands between a cardholder and the money.
-    it("describes card spend truthfully: bank-enforced limit, sign-off afterwards", () => {
+    // A card swipe has no approval gate at all: nothing surfaces a
+    // card_charge for approval and canPay refuses the kind, so the only
+    // control is the bank-enforced limit. Assert the CLAIM is absent, not one
+    // historical sentence — the previous version of this test matched an
+    // exact string, so a reworded "Anything over $200 needs a second
+    // approver" shipped straight past it.
+    it("claims no approval control over card spend — only the bank-enforced limit", () => {
       render(<GivingHubView {...baseProps} />);
 
-      expect(screen.queryByText(/Charges over \$200 need a second approver/i)).toBeNull();
+      expect(screen.queryByText(/second approver/i)).toBeNull();
+      expect(screen.queryByText(/\$200/)).toBeNull();
+      expect(screen.queryByText(/sign-off/i)).toBeNull();
       expect(screen.getByText(/bank declines anything over a card's/i)).toBeTruthy();
-      expect(screen.getByText(/for sign-off afterwards/i)).toBeTruthy();
+      expect(screen.getByText(/as soon as it settles/i)).toBeTruthy();
     });
 
     it("shows the 'Create a virtual card…' action and New card tile when canManageCards is true", () => {

@@ -4068,6 +4068,12 @@ export default defineSchema({
     .index("by_submitter", ["submitterId"])
     .index("by_increaseTransferId", ["increaseTransferId"])
     .index("by_card", ["cardId"])
+    // Card charges inside one spend-limit window. `by_card` alone can only be
+    // read whole, and the over-limit drift check (webhooks.ts's
+    // `auditOverLimitCardCharge`) would then grow with a card's entire
+    // lifetime history until it hit Convex's read limits. The window is a
+    // time range, so `createdAt` has to be in the index for it to be bounded.
+    .index("by_card_created", ["cardId", "createdAt"])
     .index("by_increaseTransactionId", ["increaseTransactionId"]),
 
   /**

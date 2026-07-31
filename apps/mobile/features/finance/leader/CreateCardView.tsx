@@ -18,7 +18,7 @@ import { useTheme } from "@hooks/useTheme";
 import { useCommunityTheme } from "@hooks/useCommunityTheme";
 import { Input, Button, EmptyState, Skeleton } from "@components/ui";
 import { formatCents } from "../format";
-import { FUND_ROLE_LABELS, CARD_CHARGE_REVIEW_NOTE, type CardholderCandidate, type CardLimitPeriod } from "./types";
+import { FUND_ROLE_LABELS, CARD_CHARGE_SETTLEMENT_NOTE, type CardholderCandidate, type CardLimitPeriod } from "./types";
 
 export type LimitSelection = "none" | CardLimitPeriod;
 
@@ -239,7 +239,7 @@ export function CreateCardView({
         {/* WHAT HAPPENS AFTER A CHARGE */}
         <View>
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            {CARD_CHARGE_REVIEW_NOTE}
+            {CARD_CHARGE_SETTLEMENT_NOTE}
           </Text>
         </View>
 

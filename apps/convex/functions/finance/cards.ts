@@ -579,7 +579,11 @@ export const applyCardStatus = internalAction({
 // setCardLimit — change (or clear) a live card's bank-enforced spend limit.
 // Same provider-write-then-record shape as the status mutations: the local
 // mirror is only patched once Increase has actually accepted the new limit,
-// so the roster can never show a cap the bank isn't enforcing.
+// so the roster can never show a cap the bank isn't enforcing. The audit
+// trail follows the same rule — this mutation records the REQUEST, and the
+// applied `card.limit_updated` is written by `recordCardLimit`, i.e. only
+// after Increase confirms. An audit log that asserts limit changes the bank
+// never took is worse than no audit log.
 // ============================================================================
 
 export const setCardLimit = mutation({
@@ -610,15 +614,32 @@ export const setCardLimit = mutation({
 
     validateCardLimit(args.spendLimitCents, args.limitPeriod);
 
+    // The same fund/card readiness gates `createFundCard` applies. Changing a
+    // limit is mostly a spending-power GRANT (that's why it's finance_admin
+    // only), so it can't be the one card mutation that skips them: raising a
+    // cap on a card whose fund was frozen — because its group got archived —
+    // would contradict every other gate in the module. De-escalation is still
+    // reachable on a frozen fund: `setCardFrozen`/`cancelCard` are ungated on
+    // purpose, and freezing the card is the stronger move anyway.
+    if (fund.status !== "active") {
+      throw new Error("This fund isn't active — card limits can't be changed");
+    }
     if (!card.increaseCardId) {
       throw new Error("This card hasn't finished provisioning yet");
     }
+    // "canceled" is irreversible and "failed"/"pending" have no card at the
+    // bank to PATCH; only a live or frozen card has a limit worth changing.
+    if (card.status !== "active" && card.status !== "disabled") {
+      throw new Error(`This card is ${card.status} — its limit can't be changed`);
+    }
 
+    // The REQUEST, not the change — see this section's header. The applied
+    // `card.limit_updated` lands in `recordCardLimit`, once Increase agrees.
     await logFinanceAudit(ctx, {
       communityId: fund.communityId,
       fundId: fund._id,
       actorUserId: userId,
-      action: "card.limit_updated",
+      action: "card.limit_update_requested",
       details: {
         cardId: args.cardId,
         fromSpendLimitCents: card.spendLimitCents ?? null,
@@ -635,29 +656,91 @@ export const setCardLimit = mutation({
         cardId: args.cardId,
         spendLimitCents: args.spendLimitCents,
         limitPeriod: args.limitPeriod,
+        actorUserId: userId,
       },
     );
 
+    // The REQUESTED limit, explicitly labelled as not-yet-applied: the bank
+    // hasn't been asked yet, so a caller that rendered this as the live limit
+    // would be making exactly the claim this module exists to stop.
     return {
-      spendLimitCents: args.spendLimitCents ?? null,
-      limitPeriod: args.limitPeriod ?? null,
+      status: "pending" as const,
+      requestedSpendLimitCents: args.spendLimitCents ?? null,
+      requestedLimitPeriod: args.limitPeriod ?? null,
     };
   },
 });
 
+/** Increase took the new limit: patch the mirror and audit it as APPLIED. */
 export const recordCardLimit = internalMutation({
   args: {
     cardId: v.id("cards"),
     spendLimitCents: v.optional(v.number()),
     limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     const card = await ctx.db.get(args.cardId);
     if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
     await ctx.db.patch(args.cardId, {
       spendLimitCents: args.spendLimitCents,
       limitPeriod: args.limitPeriod,
       updatedAt: now(),
+    });
+    if (fund) {
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        actorUserId: args.actorUserId,
+        action: "card.limit_updated",
+        details: {
+          cardId: args.cardId,
+          fromSpendLimitCents: card.spendLimitCents ?? null,
+          fromLimitPeriod: card.limitPeriod ?? null,
+          toSpendLimitCents: args.spendLimitCents ?? null,
+          toLimitPeriod: args.limitPeriod ?? null,
+        },
+      });
+    }
+  },
+});
+
+/**
+ * A limit change that didn't complete. `providerApplied` is the whole point
+ * of the row: `false` means Increase refused and both sides still hold the
+ * old limit (consistent, safe); `true` means Increase TOOK the change but we
+ * failed to mirror it, so the bank and the app now disagree — and in the
+ * raise/clear direction the card is looser than the app claims. Nothing
+ * reconciles that automatically (there is no read-back cron), so it has to
+ * be loud in the audit trail where a finance admin can act on it.
+ */
+export const recordCardLimitFailed = internalMutation({
+  args: {
+    cardId: v.id("cards"),
+    message: v.string(),
+    providerApplied: v.boolean(),
+    spendLimitCents: v.optional(v.number()),
+    limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return;
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      actorUserId: args.actorUserId,
+      action: "card.limit_update_failed",
+      details: {
+        cardId: args.cardId,
+        providerApplied: args.providerApplied,
+        message: args.message,
+        toSpendLimitCents: args.spendLimitCents ?? null,
+        toLimitPeriod: args.limitPeriod ?? null,
+      },
     });
   },
 });
@@ -667,6 +750,7 @@ export const applyCardLimit = internalAction({
     cardId: v.id("cards"),
     spendLimitCents: v.optional(v.number()),
     limitPeriod: v.optional(limitPeriodValidator),
+    actorUserId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
     const card = await ctx.runQuery(internal.functions.finance.cards.getCardInternal, {
@@ -679,16 +763,53 @@ export const applyCardLimit = internalAction({
       return;
     }
 
+    // Two failure modes, deliberately caught separately, because they leave
+    // the world in opposite states — see recordCardLimitFailed. Mirrors
+    // provisionCard's catch-and-record shape; a limit change that silently
+    // vanished is the one outcome nobody can detect from the app.
     const { updateCardSpendingLimit } = await import("../../lib/finance/increase");
-    await updateCardSpendingLimit(
-      card.increaseCardId,
-      toIncreaseSpendingLimit(args.spendLimitCents, args.limitPeriod),
-    );
-    await ctx.runMutation(internal.functions.finance.cards.recordCardLimit, {
-      cardId: args.cardId,
-      spendLimitCents: args.spendLimitCents,
-      limitPeriod: args.limitPeriod,
-    });
+    try {
+      await updateCardSpendingLimit(
+        card.increaseCardId,
+        toIncreaseSpendingLimit(args.spendLimitCents, args.limitPeriod),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] applyCardLimit: Increase refused the new limit for card ${args.cardId}: ${message}`,
+      );
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
+        cardId: args.cardId,
+        message: message.slice(0, 500),
+        providerApplied: false,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+      return;
+    }
+
+    try {
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimit, {
+        cardId: args.cardId,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[finance] applyCardLimit: Increase APPLIED the new limit for card ${args.cardId} but the mirror write failed — bank and app now disagree: ${message}`,
+      );
+      await ctx.runMutation(internal.functions.finance.cards.recordCardLimitFailed, {
+        cardId: args.cardId,
+        message: message.slice(0, 500),
+        providerApplied: true,
+        spendLimitCents: args.spendLimitCents,
+        limitPeriod: args.limitPeriod,
+        actorUserId: args.actorUserId,
+      });
+    }
   },
 });
 
