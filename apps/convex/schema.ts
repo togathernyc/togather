@@ -3739,9 +3739,14 @@ export default defineSchema({
     .index("by_gridKey_user", ["gridKey", "userId"]),
 
   /**
-   * Provenance for every R2 object key this backend hands out a presigned
-   * upload URL for (functions/uploads.ts's getR2UploadUrl /
-   * getR2FileUploadUrl). Written at presign time, before the bytes exist.
+   * Provenance for an R2 object key: who it was minted for.
+   *
+   * Written by both producers of `r2:` keys — functions/uploads.ts's
+   * getR2UploadUrl / getR2FileUploadUrl (at presign time, before the bytes
+   * exist) and lib/r2.ts's putR2Object when a server-side upload names the
+   * member it is for via `grantTo`. Server-side uploads that belong to the
+   * system rather than a person (PCO song files, dev-assistant config) pass
+   * nothing on purpose: no row means nobody can claim the key.
    *
    * WHY: an `r2:<key>` string is just a string. Any caller can put any
    * `r2:` value into a field that stores one, so a feature that treats the
@@ -3752,9 +3757,11 @@ export default defineSchema({
    *
    * Consumed today by `submitExpense` (functions/finance/expenses.ts), which
    * refuses a reimbursement receipt whose key wasn't minted for the
-   * submitter. Rows predate no key: keys minted before this table existed
-   * simply have no row, which reads as "not yours" — correct for new
-   * submissions, and harmless for expenses already stored.
+   * submitter. A key with NO row (minted before this table existed, or whose
+   * best-effort grant write failed) is refused too, with a message that asks
+   * the member to re-attach the photo rather than accusing them — the fix is
+   * one re-upload, and expenses already stored are unaffected because the
+   * check runs only at submit.
    */
   uploadGrants: defineTable({
     /** The `r2:<key>` storage path exactly as returned to the client. */

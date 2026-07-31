@@ -2,9 +2,19 @@
 
 ## Module Map
 
-**functions/finance/onboarding.ts** — Community-level intake and status machine. Exports `startOnboarding` (mutation: one-time intake form — legalName, EIN, address, website, statementDescriptor — triggering `provisionProviders`), `getOnboardingStatus` (read-side for the mobile admin checklist), `enableGroupGiving` (per-group fund provisioning + leader role grants; **refuses unless the community's own `onboardingStatus` is `"live"`** — provisioning a group fund under a half-onboarded community used to "succeed" with a toast and then fail silently in the background, leaving a fund with no bank account), `applyStripeAccountStatus` (Stripe webhook-driven status machine), `recordProvisioned` (internal: stores provider ids after external provisioning succeeds, and creates/heals the community's General Fund **with its `increaseAccountId` set to the General Account** — ADR-032 §1), `recordProvisioningFailure` (internal: marks `stripe_blocked`/`increase_blocked` with a stored `provisioningError` when `provisionProviders` itself throws — there is no webhook at that stage to explain a stall, so the checklist surfaces the provider error directly), `retryProvisioning` (mutation: admin re-runs a failed provisioning; safe because every provider call is idempotency-keyed on the community id; refuses once all provider ids exist so it can't clobber a webhook-set blocked state), `provisionFundAccount` (internal action: mints ANY fund's Increase Account — a group's on `enableGroupGiving`, or the community's General Account on the backfill/self-heal path; no-ops if the fund already has one), `freezeFundForArchivedGroup` (internal: freezes a group's fund on archive — ADR-032 §3, freeze half only), and `isValidEin` (pure validator for EIN format).
+**functions/finance/onboarding.ts** — Community-level intake and status machine. Exports `startOnboarding` (mutation: one-time intake form — legalName, EIN, address, website, statementDescriptor — triggering `provisionProviders`), `getOnboardingStatus` (read-side for the mobile admin checklist), `enableGroupGiving` (per-group fund provisioning + leader role grants; **refuses unless the community's own `onboardingStatus` is `"live"`** — provisioning a group fund under a half-onboarded community used to "succeed" with a toast and then fail silently in the background, leaving a fund with no bank account), `applyStripeAccountStatus` (Stripe webhook-driven status machine), `recordProvisioned` (internal: stores provider ids after external provisioning succeeds, creates the community's General Fund once, and **returns its fund id** so the caller can mint its Account against it — ADR-032 §1), `recordProvisioningFailure` (internal: marks `stripe_blocked`/`increase_blocked` with a stored `provisioningError` when `provisionProviders` itself throws — there is no webhook at that stage to explain a stall, so the checklist surfaces the provider error directly), `retryProvisioning` (mutation: admin re-runs a failed provisioning; safe because every provider call is idempotency-keyed on the community id; refuses once all provider ids exist so it can't clobber a webhook-set blocked state), `provisionFundAccount` (internal action: **the one and only producer of a fund's Increase Account** — a group's on `enableGroupGiving`, the community's General Account on the provisioning, self-heal and backfill paths alike; no-ops if the fund already has one), `recordFundAccount` (internal: binds the Account to the fund and reconciles the fund's pre-Account history in the same transaction — see "General Account" below), `freezeFundForArchivedGroup` (internal: freezes a group's fund on archive — ADR-032 §3, freeze half only), and `isValidEin` (pure validator for EIN format).
 
-`provisionProviders` creates **two** Accounts under the community's Entity: the receiving Account (Stripe's payout destination — transit for money still attributed to individual funds) and the **General Account**, the community-wide fund's own bank account. They must stay distinct: allocating a general-fund donation is a receiving → General transfer, which would be a no-op against itself. Communities provisioned before the General Account was built are healed by `migrations/backfillGeneralFundAccounts.ts` (idempotent; re-runnable) and, opportunistically, by the next `enableGroupGiving` call.
+### The General Account, and the one key that mints it
+
+A community's Entity carries **two** Accounts: the receiving Account (Stripe's payout destination — transit for money still attributed to individual funds) and the **General Account**, the community-wide fund's own bank account. They must stay distinct: allocating a general-fund donation is a receiving → General transfer, which would be a no-op against itself.
+
+**Exactly one code path mints a fund's Account, under exactly one key.** `provisionProviders` creates the Entity and receiving Account itself, then calls `recordProvisioned` (which inserts the General Fund row) and hands the resulting fund id to `provisionFundAccount`. `enableGroupGiving` and `migrations/backfillGeneralFundAccounts.ts` call the same action. The key is `fundAccountIdempotencyKey(type, fundId)` — `finance:general-account:{fundId}` or `finance:group-account:{fundId}`.
+
+This is load-bearing, not tidiness. Increase dedupes on the idempotency key, so **two keys for the same logical account are two real bank Accounts** under a KYB'd Entity. `provisionProviders` used to mint the General Account inline under `finance:general-account:{communityId}:{fingerprint}` while `provisionFundAccount` used `finance:group-account:{fundId}`; a backfill interleaved with a provisioning run would have created a second, unreferenced, unaudited Account (the fund itself stayed single-valued, so no money could land in the loser — but the artefact would exist). Minting it against the fund id is also what makes the key fingerprint-free: the fund is inserted once and never re-created, so the key is stable across a corrected intake resubmission that mints a fresh Entity. The `group-account` prefix is kept for group funds deliberately — changing it would ask Increase for a second Account for any first attempt still in flight under the old key.
+
+Because there's one producer, there's also one name at the bank: the fund's own `name` ("General Fund"), not two names depending on which path got there first. A name mismatch under a shared key would itself be an Increase error.
+
+**Binding an Account reconciles the fund's history first.** `recordFundAccount` reopens every donation already marked `"allocated"` on the fund before it writes `increaseAccountId` — see "Backfilling a fund that already has history" under Known Seams.
 
 **functions/finance/giving.ts** — Donation lifecycle and transparency screen. Exports `getGivingContext` (assembly of donation UI: fund list, suggested amounts, fee-cover toggle), `createDonationIntent` (creates Stripe PaymentIntent on the connected account, with an optional client nonce folded into Stripe's own request idempotency key to prevent a double-tap double-charge), `recordDonationSucceeded` (internal: Stripe webhook handler — writes donation + ledger credit + schedules receipt), `recordDonationRefund` (internal: Stripe `charge.refunded` handler — posts a "refund" ledger debit, replay-safe against Stripe's cumulative `amount_refunded`; also stamps `donations.refundedCents`, flips a fully-refunded pending gift to the terminal `"refunded"` allocation status so it can never be transferred, and reverses the realised allocation fee when refunds exceed the net the fund received, so a fund balance can't go negative), `recordDonationDisputed` (internal: Stripe `charge.dispute.created` handler — audit-only), `getFundOverview` (transparency screen with donor-name visibility gating for non-finance roles; period totals split spend from `feesCents`/`refundedCents`), and `updateDonationReceipt` (internal: Resend email callback handler).
 
@@ -61,6 +71,7 @@
   - `allocation.payout_unmatched` — A payout matched no donation at all, or a material slice of it couldn't be attributed. The one allocation failure with no automatic recovery (the `processedStripePayouts` row is written and the webhook 200s, so Stripe never redelivers), hence the alarm
   - `allocation.payout_failed` — `payout.failed` arrived; donations that a `payout.paid` for the same payout had bound were unbound so the retry cron stops trying to move money out of an Account that never received it
   - `allocation.stale_pending` — Donations pending allocation for > 3 days; the amount is the **>3-day slice only**, not the community's whole pending balance. Details include how many stranded items that run managed to resume
+  - `allocation.reopened` — A fund gained its Increase Account with donations already marked `"allocated"` behind it. Those can never have settled (there was no Account to transfer into), so they were flipped back to `"pending"` in the same transaction that bound the Account; details carry the count, the cents, and the donation ids (capped at 100, with `truncated`)
   - `reconcile.drift` — Nightly invariant failed (ledger ≠ bank + pending)
   - `expense.submitted` — Member reimbursement created
   - `expense.approved` — First or second approval
@@ -86,6 +97,7 @@ Every external write (Stripe, Increase API calls) is idempotency-keyed to safely
 
 - **`finance:stripe-account:{communityId}`** — Community Stripe connected account creation (used in onboarding.ts createConnectedAccount)
 - **`finance:entity:{communityId}`** — Increase Entity creation (communityFinance.increaseEntityId — used in increase.ts createEntity)
+- **`finance:general-account:{fundId}` / `finance:group-account:{fundId}`** — A fund's own Increase Account (`fundAccountIdempotencyKey` in onboarding.ts, the only caller of `createAccount` for a fund). Fund-scoped and fingerprint-free on purpose: the fund row is inserted once and never re-created, so all three provisioning paths resolve to the same key — and therefore the same Account — forever. See "The General Account, and the one key that mints it"
 - **`donation:{paymentIntentId}`** — Donation ledger credit (giving.ts recordDonationSucceeded + ledger posting)
 - **`alloc:{donationId}`** — Increase AccountTransfer for one allocated donation (jobs.ts `executeAllocationItems` → `createAccountTransfer`). Doing double duty as replay protection: if a transfer succeeded but the action died before recording it, the retry resolves to the SAME transfer at Increase instead of moving money twice.
 - **`alloc-fee:{donationId}`** — The `fee` ledger debit for the Stripe processing fee realised when that donation's allocation lands (jobs.ts recordAllocation + postLedgerEntry)
@@ -131,7 +143,15 @@ Residual, not closed by code: a leader can still grant `manager` to a second acc
 - *Member-facing reads return null instead of throwing* (`getGivingContext`, `getFundOverview`) so the flag hides the UI rather than erroring it. Role-gated management reads throw (`listFundRoles`, `getMyFundRole`, `listExpenses`, `listMyExpenses`, `listFundCards`, `getCardDetail`) — the screens that call them are only reachable once a null-returning read has already said the feature is on.
 - *De-escalation / incident response is never gated*: `setCardFrozen`, `cancelCard`, `denyExpense`, `revokeFundRole`. The kill switch is most likely flipped DURING an incident, which is exactly when someone needs to freeze a card, strip a compromised finance_admin, or clear a pending expense. Each only ever removes power or stops money moving, and every path that ADDS power or moves money is still gated, so none of them can be a step toward anything.
 
-**Receipt provenance** — an `r2:<key>` string is not self-authenticating, and receipt URLs are shown to every manager+ viewer (`listExpenses`) and card viewer (`getCardDetail`). `functions/uploads.ts` therefore records an `uploadGrants` row (storagePath → userId) when it mints a presigned R2 URL, and `submitExpense` refuses a receipt whose grant is missing or belongs to someone else. Keys minted before the table existed have no row, which reads as "not yours" — correct for new submissions, harmless for expenses already stored.
+**Receipt provenance** — an `r2:<key>` string is not self-authenticating, and receipt URLs are shown to every manager+ viewer (`listExpenses`) and card viewer (`getCardDetail`). An `uploadGrants` row (storagePath → userId) records who each key was minted for, and `submitExpense` refuses a receipt whose grant is missing or belongs to someone else.
+
+*Both* producers of `r2:` keys write the row:
+- `functions/uploads.ts` — `getR2UploadUrl` / `getR2FileUploadUrl`, at presign time.
+- `lib/r2.ts` — `putR2Object`, when the caller passes `grantTo`. This is the server-side PUT used for bytes we already hold (PCO song files, dev-assistant config). Those are system uploads and pass nothing, deliberately: no row means no user can claim the key. A server-side upload made *on behalf of a member* must pass `grantTo`, or that member's own file would be refused as not theirs.
+
+**The grant write is non-fatal, on both paths.** It hangs off actions that serve every upload in the product — chat images, profile photos, group covers, event posters — so awaiting it bare let one write conflict on `uploadGrants` stop the whole app from uploading anything, for the sake of a finance-only check. It is wrapped and logged instead (`recordUploadGrantBestEffort`). Safe because the security property is enforced at the **read**: a lost row costs one member one re-attach, never a false accept.
+
+**Two rejection messages, on purpose.** A grant owned by *someone else* is the attack the check exists for and says so. *No grant at all* has an innocent cause the member can act on — a photo picked before this shipped, or a grant write that failed — so it asks them to re-attach the photo rather than accusing them. Still a refusal either way. **Deploy note:** an upload in flight across the deploy that introduced `uploadGrants` has no row; those members see the re-attach message once and re-attaching fixes it. Expenses already stored are unaffected — the check runs only at submit.
 
 ## Testing
 
@@ -144,7 +164,8 @@ Finance test files in `apps/convex/__tests__/`:
 - **finance-allocation.test.ts** — Tests the payout seam end to end: NET matching (including the exact stall — a lone donation whose gross exceeds its payout's net), skip-don't-stall selection, per-donation replay protection, the concurrency lease (a second pass over a live-leased item gets nothing; an expired lease is reclaimable), partial-failure isolation and resume (transfer 2 of 3 fails → 1 and 3 land, a redelivery finishes 2 and re-transfers nothing), transfer-landed-record-failed as a distinct audited outcome, no-op replay of a completed payout, the full refund sequences (before payout → nothing transfers and no negative balance; partial before payout; full after allocation → fee reversed; refunded while bound → retry cron drops it), unmatched/empty payouts alarming, `payout.failed` unbinding, `retryStaleAllocations` recovery vs. alert-only, and drift on a stranded allocation. Unlike the other suites this one drives the `runAllocation` **action**, with `getPayoutComposition` and `createAccountTransfer` mocked at the module boundary — the Increase mock models idempotency-key dedupe, so the "same key returns the same transfer" lock is genuinely exercised — and deliberately no suite-wide fake timers, so an awaited action can't silently no-op
 - **finance-payout-nets.test.ts** — Tests `getPayoutComposition` against a mocked `stripe` SDK: NET extraction, PaymentIntent mapping via the expanded `source`, paging (including a charge and its refund landing on different pages), netting refunds/chargebacks/failed-refunds against their charge, reporting reversals that can't be attributed, refusing a truncated view, refusing a fractional net, refusing a composition whose nets don't sum to the payout, excluding the payout's own leg, and netting types the code has never heard of (`payment_reversal`, and a made-up future type) purely off `payment_intent`
 - **finance-roles.test.ts** — Tests the group-leader carve-out end to end: no self-grant at any rank, the escalation chain (self-grant → self-issued card) stays closed, the ADR's grant-to-someone-else bootstrap still works, admin-who-is-also-a-leader precedence, and a finance_admin changing their own role
-- **finance-general-account.test.ts** — Tests the General Account (ADR-032 §1): that `provisionProviders` mints it alongside the receiving Account, that the backfill heals older communities, and that a general-fund donation makes a real receiving → General transfer at its NET (staying `"pending"` when the fund has no Account yet). Unlike the other suites it MOCKS lib/finance/increase + lib/finance/stripeConnect and genuinely RUNS the actions (`provisionProviders`, `provisionFundAccount`, `runAllocation`, `runNightlyReconcile`) rather than freezing timers so they never fire — the assertions are about what was asked of the bank
+- **finance-general-account.test.ts** — Tests the General Account (ADR-032 §1): that `provisionProviders` mints it alongside the receiving Account, that all three provisioning paths ask Increase for the **same idempotency key** (asserted on the key, not just the account name), that the backfill heals older communities with per-fund error isolation and truthful counts, that a community with historically no-transfer `"allocated"` general donations **reconciles to zero drift** after the backfill (and that its ledger entries are untouched), that replaying the recorded payout actually moves the cash, and that a general-fund donation makes a real receiving → General transfer at its NET (staying `"pending"` when the fund has no Account yet). Unlike the other suites it MOCKS lib/finance/increase + lib/finance/stripeConnect and genuinely RUNS the actions (`provisionProviders`, `provisionFundAccount`, `runAllocation`, `runNightlyReconcile`, the migration) rather than freezing timers so they never fire — the assertions are about what was asked of the bank
+- **finance-receipt-provenance.test.ts** — Tests both producers of `r2:` keys against the receipt check: a `putR2Object` upload with `grantTo` is accepted by `submitExpense`, one without stays unclaimable, and a failing grant write never propagates out of either the presign path or `putR2Object` (mocks `@aws-sdk/client-s3`)
 - **finance-cards.test.ts** — Tests `createFundCard` (pending row + audit, holder-role gate, caller gate, fund-readiness gates), `listFundCards`/`getCardDetail` viewer gating, `setCardFrozen` permissions (self-freeze vs. finance_admin-only unfreeze), `cancelCard` (finance_admin-only), and `recordCardSettlement` (idempotency, account-mismatch rejection, missing-card log-not-throw)
 
 ## Known Seams & TODOs
@@ -303,16 +324,73 @@ Finance test files in `apps/convex/__tests__/`:
   ADR's topology calls for; unearmarked cash therefore sat in the receiving
   Account while the ledger called it settled, and — with no
   `increaseAccountId` — `getFundsWithIncreaseAccount` excluded the fund from
-  nightly reconcile, so nothing could ever have alarmed. `provisionProviders`
-  now mints the General Account alongside the receiving one and binds it to
-  the fund, so the general fund flows through exactly the path above with
-  nothing exempted: matched on NET, leased, transferred receiving → General,
-  fee realised, reconciled. A fund still missing an Account (an older
-  community awaiting `migrations/backfillGeneralFundAccounts.ts`) fails its
-  item at the transfer stage rather than skipping it, so it is audited as
+  nightly reconcile, so nothing could ever have alarmed. Provisioning now
+  mints the General Account (see "The General Account, and the one key that
+  mints it") and binds it to the fund, so the general fund flows through
+  exactly the path above with nothing exempted: matched on NET, leased,
+  transferred receiving → General, fee realised, reconciled. A fund still
+  missing an Account (an older community awaiting
+  `migrations/backfillGeneralFundAccounts.ts`) fails its item at the transfer
+  stage rather than skipping it, so it is audited as
   `allocation.transfer_failed` and the donation keeps its `pending` status
   and payout stamp — which is exactly what `listResumableAllocations` looks
   for, so the hourly retry finishes it the moment the Account exists.
+
+  **Backfilling a fund that already has history — the reopen.** Minting the
+  Account is the easy half; it is also the half that arms the nightly alarm.
+  A pre-fix general fund holds donations marked `"allocated"` whose money was
+  never moved: ledger holds their gross, the General Account holds nothing,
+  and `computePendingAllocationCents` counts only `"pending"` rows, so pending
+  is zero too. Bringing that fund into reconcile scope would report
+  `drift = the whole historical balance` **every night, forever** — which
+  destroys, through alarm fatigue, the one control that would catch real
+  theft.
+
+  So `recordFundAccount` reopens them, in the same transaction that binds the
+  Account, before the fund can ever be selected by
+  `getFundsWithIncreaseAccount`. A donation marked allocated on a fund that
+  had no Account cannot have settled — there was nowhere to send it —
+  so `"pending"` is simply what it factually is. The invariant then holds on
+  the very first night by construction: `ledger == bank 0 + pending`, whether
+  the row carries a payout stamp (ledger net / pending net) or not (ledger
+  gross / pending gross).
+
+  **The ledger is not touched, and that is the point.** `ledgerEntries` is
+  append-only, and nothing needs appending: allocation deliberately posts no
+  credit (the gift was credited at donation time), so an allocation that never
+  moved money left no entry to reverse. The reopen changes
+  `donations.allocationStatus` and writes an `allocation.reopened` audit row.
+  Nothing else.
+
+  **Moving the cash: the catch-up sweep.** `backfillGeneralFundAccounts` then
+  replays each of the community's recorded `processedStripePayouts` through
+  the ordinary `runAllocation` (default `resumeAllocations: true`, capped at
+  200 payouts per community). That re-reads the payout's real per-charge NETs
+  from Stripe, stamps them, makes the receiving → General AccountTransfer the
+  original pass never made, and realises the fee — no bespoke money-moving
+  code and no invented amounts. A transfer Increase rejects (e.g. the
+  receiving Account is short) fails that item only: the donation stays
+  `pending`, so drift stays zero and the hourly retry keeps trying.
+
+  **Running it.** Dry run first — it writes nothing and calls no provider,
+  and reports the funds and the donation count/cents it would reopen:
+
+  ```
+  npx convex run migrations/backfillGeneralFundAccounts:backfillGeneralFundAccounts '{"dryRun": true}'
+  npx convex run migrations/backfillGeneralFundAccounts:backfillGeneralFundAccounts
+  ```
+
+  The result is `{ provisioned, skipped, failed, reopened, reopenedCents,
+  resumed, stillPending, funds[] }`. `provisioned` counts Accounts actually
+  written by `recordFundAccount`, not funds attempted — `provisionFundAccount`
+  fails soft on a community with no Entity, so counting intent could report a
+  dozen having provisioned none. Each fund is wrapped individually: one
+  community whose Increase Entity is rejected is recorded as `failed` with its
+  error in `funds[]` and the run continues. Re-running is safe at every layer
+  (Account key per fund, `alloc:{donationId}` per transfer, reopen only fires
+  on the first bind). `resumeAllocations: false` skips the Stripe replay:
+  correct, zero-drift ledger, cash still in receiving, and
+  `allocation.stale_pending` will (truthfully) alert after three days.
 
 **Member payout destination stub** (expenses.ts `getPayoutDestination`) — Phase 2 follow-up. Currently returns `null` (every expense blocks at "no destination found"). Awaiting linking flow to ship; structure is in place (`payReimbursement` action + `recordReimbursementPaid` mutation + Increase ACH client calls). Replace the stub with a real lookup once the UI for members to link their bank account lands.
 
