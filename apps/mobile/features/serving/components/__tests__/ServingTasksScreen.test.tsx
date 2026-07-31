@@ -328,10 +328,12 @@ describe("ServingTasksScreen — diagnostic empty state (Mine)", () => {
     const { getByText } = render(<ServingTasksScreen />);
 
     expect(getByText(NOT_ROSTERED_MESSAGE)).toBeTruthy();
-    expect(getByText(/The event has 2 tasks/)).toBeTruthy();
+    // True whether the assignment was removed OR declined — the only two ways
+    // to reach this state with the screen already open.
+    expect(getByText(/your assignment was removed, or you declined it/)).toBeTruthy();
   });
 
-  it("quotes the task count and the viewer's actual roles on a role mismatch", () => {
+  it("scopes the task count to all teams and names the viewer's actual roles on a role mismatch", () => {
     mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
       allTeams: [allTeamsRow(["task-1", "task-2", "task-3"])],
       crew: [myCrewRow("Greeter"), myCrewRow("Usher")],
@@ -339,9 +341,14 @@ describe("ServingTasksScreen — diagnostic empty state (Mine)", () => {
     const { getByText } = render(<ServingTasksScreen />);
 
     expect(
-      getByText("This event has 3 tasks, but none are assigned to your roles."),
+      getByText("None of this event's tasks are assigned to your roles."),
     ).toBeTruthy();
     expect(getByText(/You're serving as Greeter and Usher\./)).toBeTruthy();
+    // The count is plan-wide, so it must say so rather than implying the
+    // viewer was singled out.
+    expect(getByText(/across all teams/)).toBeTruthy();
+    // …and the actionable instruction the old single-message copy had is back.
+    expect(getByText(/Ask your team lead to add tasks for your roles\./)).toBeTruthy();
   });
 
   it("shows nothing until the plan-wide data has loaded, rather than guessing", () => {

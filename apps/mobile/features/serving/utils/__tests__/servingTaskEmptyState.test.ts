@@ -141,25 +141,35 @@ describe("mineEmptyCopy", () => {
     expect(copy.hint).toContain("add your own tasks below");
   });
 
-  it("not-rostered names the rostering gap and quotes the plan's task count", () => {
+  // This state is essentially only reachable when the viewer's assignment is
+  // REMOVED or DECLINED while the screen is open — so "ask your team lead to
+  // add you to the roster" was wrong for whoever had just declined it.
+  it("not-rostered names both ways the assignment can vanish, and neither wrongly", () => {
     const copy = mineEmptyCopy(
       "not-rostered",
       facts({ planTaskCount: 7, myRoleNames: [] }),
     )!;
     expect(copy.title).toBe("You're not on the roster for this event.");
-    expect(copy.hint).toContain("7 tasks");
-    expect(copy.hint).toContain("add you to the roster");
+    expect(copy.hint).toContain("your assignment was removed, or you declined it");
+    expect(copy.hint).toContain("check with your team lead");
+    expect(copy.hint).not.toContain("add you to the roster");
   });
 
-  it("role-mismatch quotes the task count and names the roles actually held", () => {
+  // `planTaskCount` is PLAN-wide across every team, so leading the headline
+  // with it read as "5 tasks exist and you were skipped" to a volunteer whose
+  // OWN team authored none — pointing at a non-problem. The count stays (it is
+  // useful) but is explicitly scoped, and the actionable instruction is back.
+  it("role-mismatch scopes the count to all teams and names a next step", () => {
     const copy = mineEmptyCopy(
       "role-mismatch",
       facts({ planTaskCount: 5, myRoleNames: ["Greeter", "Usher"] }),
     )!;
     expect(copy.title).toBe(
-      "This event has 5 tasks, but none are assigned to your roles.",
+      "None of this event's tasks are assigned to your roles.",
     );
     expect(copy.hint).toContain("You're serving as Greeter and Usher.");
+    expect(copy.hint).toContain("Its 5 tasks — across all teams — are for other roles.");
+    expect(copy.hint).toContain("Ask your team lead to add tasks for your roles.");
   });
 
   it("role-mismatch uses the singular for one task and one role", () => {
@@ -168,9 +178,11 @@ describe("mineEmptyCopy", () => {
       facts({ planTaskCount: 1, myRoleNames: ["Greeter"] }),
     )!;
     expect(copy.title).toBe(
-      "This event has 1 task, but none are assigned to your role.",
+      "None of this event's tasks are assigned to your role.",
     );
     expect(copy.hint).toContain("You're serving as Greeter.");
+    expect(copy.hint).toContain("Its 1 task — across all teams — is for other roles.");
+    expect(copy.hint).toContain("Ask your team lead to add tasks for your role.");
   });
 
   it("role-mismatch points at Shared when the team has shared tasks", () => {

@@ -193,18 +193,39 @@ export function mineEmptyCopy(
         hint: "Nobody has added tasks to it, so there's nothing to show for any role. You can still add your own tasks below.",
       };
 
+    // Reachable essentially only when the viewer's assignment is REMOVED or
+    // DECLINED while this screen is open (serving eligibility is what put them
+    // here in the first place). "Ask your team lead to add you to the roster"
+    // was wrong for the second case — telling someone who has just declined to
+    // ask to be re-added. This wording is true either way.
     case "not-rostered":
       return {
         title: "You're not on the roster for this event.",
-        hint: `The event has ${pluralTasks(facts.planTaskCount ?? 0)}, but tasks follow roles and you don't hold one here. Ask your team lead to add you to the roster.`,
+        hint: "Tasks follow roles, and you don't hold one here — your assignment was removed, or you declined it. If that's not right, check with your team lead.",
       };
 
     case "role-mismatch": {
       const roles = facts.myRoleNames ?? [];
       const roleWord = roles.length === 1 ? "role" : "roles";
+      // `planTaskCount` is PLAN-wide, across every team. Leading with it read as
+      // "20 tasks exist and you were skipped" — for a Kids volunteer on a plan
+      // where Worship authored all 20 and Kids authored none, that points at a
+      // non-problem. Say "across all teams" out loud instead, and restore the
+      // one actionable instruction the old single-message copy had.
+      const planWide =
+        facts.planTaskCount === null
+          ? null
+          : `Its ${pluralTasks(facts.planTaskCount)} — across all teams — ${
+              facts.planTaskCount === 1 ? "is" : "are"
+            } for other roles.`;
       return {
-        title: `This event has ${pluralTasks(facts.planTaskCount ?? 0)}, but none are assigned to your ${roleWord}.`,
-        hint: [`You're serving as ${formatRoleList(roles)}.`, sharedHint]
+        title: `None of this event's tasks are assigned to your ${roleWord}.`,
+        hint: [
+          `You're serving as ${formatRoleList(roles)}.`,
+          planWide,
+          `Ask your team lead to add tasks for your ${roleWord}.`,
+          sharedHint,
+        ]
           .filter(Boolean)
           .join(" "),
       };
