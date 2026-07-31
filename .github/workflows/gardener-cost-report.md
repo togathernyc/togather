@@ -14,14 +14,34 @@ on:
   workflow_dispatch:
   roles: [admin, maintainer, write]
 
+# SHIPPED DISABLED — see .github/GARDENERS.md. Enable all four with:
+#   gh variable set GARDENERS_ENABLED --body true
+if: ${{ vars.GARDENERS_ENABLED == 'true' }}
+
 tracker-id: togather-gardener-cost-report
 
 # Cost caps. gh-aw meters spend in AI Credits (AIC); 1 AIC = $0.01 USD.
-max-ai-credits: 300        # ~$3.00 per run
+max-ai-credits: 200        # ~$2.00 per run — held at or below the daily slice
 max-daily-ai-credits: 200  # ~$2.00 / 24h
 max-turns: 30
+max-turn-cache-misses: 40  # Ollama has no prompt caching; every turn is a miss
 
-engine: claude
+# Ollama Cloud via the OpenAI-compatible endpoint (see GARDENERS.md). glm-5.2,
+# the stronger of the two open models, because this gardener does arithmetic the
+# owner is meant to trust. If its numbers ever look wrong, move it to
+# `engine: claude` first and see whether the problem follows.
+engine:
+  id: codex
+  env:
+    OPENAI_BASE_URL: "https://ollama.com/v1"
+    OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+model: glm-5.2
+
+# Fallback only — see gardener-docs-drift.md. Values are $/1M tokens.
+models:
+  default-ai-credits-pricing:
+    input: 1.40
+    output: 4.40
 
 permissions:
   contents: read
@@ -29,7 +49,14 @@ permissions:
   issues: read
   pull-requests: read
 
-network: defaults
+# Narrowed from `defaults` (~50 domains). This gardener reads run metadata and
+# downloads usage artifacts from GitHub.
+network:
+  allowed:
+    - github
+    - node
+    - threat-detection
+    - "ollama.com"
 
 timeout-minutes: 15
 
@@ -83,16 +110,16 @@ one issue and updates to it. Never open a pull request or edit a file.
 
 ## The gardeners you are reporting on
 
-| Workflow file | Workflow name | Schedule |
-|---|---|---|
-| `gardener-large-files.lock.yml` | Gardener: Large Files | weekly, Tuesday ~09:15 |
-| `gardener-docs-drift.lock.yml` | Gardener: Docs Drift | weekly, Thursday ~09:15 |
-| `gardener-ci-doctor.lock.yml` | Gardener: CI Doctor | on CI failure (main) + weekly, Monday ~09:15 |
-| `gardener-cost-report.lock.yml` | Gardener: Cost Report | weekly, Friday ~09:15 (this one) |
+| Workflow file | Workflow name | Engine · model | Schedule |
+|---|---|---|---|
+| `gardener-large-files.lock.yml` | Gardener: Large Files | codex → Ollama · `deepseek-v4-flash` | weekly, **Tue 09:15 ET** |
+| `gardener-docs-drift.lock.yml` | Gardener: Docs Drift | codex → Ollama · `glm-5.2` | weekly, **Thu 09:15 ET** |
+| `gardener-ci-doctor.lock.yml` | Gardener: CI Doctor | claude · default | on CI failure (main) + weekly, **Mon 09:15 ET** |
+| `gardener-cost-report.lock.yml` | Gardener: Cost Report | codex → Ollama · `glm-5.2` | weekly, **Fri 09:15 ET** (this one) |
 
-Note the schedules above are the *intended* ones. gh-aw scatters fuzzy schedules
-slightly to avoid load spikes, so the real cron may differ by minutes — read the
-`schedule:` block in each `.lock.yml` if you need the exact value.
+These are explicit `15 9 * * N` crons with `timezone: America/New_York` — no
+scattering, and the times are Eastern, not UTC. If you need to be certain, read
+the `schedule:` block in each `.lock.yml`; that is the authority, not this table.
 
 ## Phase 1 — Collect the runs
 
@@ -106,6 +133,17 @@ gh run list --workflow=<file>.lock.yml --limit=100 \
 From this you get, per gardener: **run count**, **success / failure split**, and
 **duration** (`updatedAt` − `createdAt`). Report both the last 7 days and the
 last 30 days so a trend is visible.
+
+> [!IMPORTANT]
+> **Exclude your own in-flight run.** This workflow appears in its own
+> `gh run list` output, but its usage artifact is not uploaded until after the
+> agent step finishes — which is after you. If you count it, it looks like a
+> run with no conclusion, no duration, and no cost, and every report
+> understates the current cycle forever.
+>
+> Drop the run whose ID is `${{ github.run_id }}` from every table, and note at
+> the bottom of the report that the current run's own cost lands in next week's
+> figures. Past runs of this same workflow still count normally.
 
 ## Phase 2 — Get the actual spend
 
@@ -157,13 +195,24 @@ the number as estimated.
 
 ## Phase 3 — Write the standing issue
 
-**Find the standing issue first.** Search open issues for the title
+**Find the standing issue first.** Search open issues for the full title
 `[gardeners] weekly cost & activity report`.
 
 - **If it exists** → update its body in place with the new report. Keep the same
   issue; the owner may have bookmarked its URL.
-- **If it does not exist** (first run, or someone closed it) → create it with
-  exactly that title.
+- **If it does not exist** (first run, or someone closed it) → create it.
+
+> [!WARNING]
+> **When creating, pass the title as `weekly cost & activity report` — without
+> the `[gardeners] ` prefix.** The safe-output config carries
+> `title-prefix: "[gardeners] "` and adds it for you. If you pass the full
+> title you get `[gardeners] [gardeners] weekly cost & activity report`, and
+> every later run searching for the correct title fails to find it — so the
+> standing issue silently forks into a new one each week, which defeats the
+> entire point of this gardener.
+>
+> Search using the **full** title (with prefix). Create using the **bare** title
+> (without). They are deliberately different.
 
 Body:
 
@@ -218,7 +267,7 @@ and stop.>
 
 ---
 *Shadow mode: all four gardeners are issues-only. Cadence and caps are documented
-in [`.github/workflows/GARDENERS.md`](../blob/main/.github/workflows/GARDENERS.md).*
+in `.github/GARDENERS.md`.*
 ```
 
 ## Rules

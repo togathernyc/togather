@@ -18,9 +18,14 @@ on:
   workflow_dispatch:
   roles: [admin, maintainer, write]
 
-# Only investigate actual failures. The scheduled roll-up and manual dispatch
-# always proceed.
-if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'failure' }}
+# Two guards in one condition:
+#  1. SHIPPED DISABLED — see .github/GARDENERS.md. Enable all four with:
+#       gh variable set GARDENERS_ENABLED --body true
+#  2. Only investigate actual failures. The scheduled roll-up and manual dispatch
+#     always proceed.
+if: >
+  ${{ vars.GARDENERS_ENABLED == 'true' &&
+  (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'failure') }}
 
 tracker-id: togather-gardener-ci-doctor
 
@@ -31,6 +36,9 @@ max-ai-credits: 200        # ~$2.00 per run
 max-daily-ai-credits: 400  # ~$4.00 / 24h — roughly two investigations per day
 max-turns: 30
 
+# Deliberately the one gardener NOT on an open model. It reads noisy CI logs and
+# drives many tool calls per run, and a wrong diagnosis costs a human more time
+# than the model saves. Highest stakes, most tool-call-dependent — keep it here.
 engine: claude
 
 permissions:
@@ -39,7 +47,14 @@ permissions:
   issues: read
   pull-requests: read
 
-network: defaults
+# Narrowed from `defaults` (~50 domains). This matters most here: ci-doctor is
+# the one gardener that ingests untrusted text (CI logs), so the firewall is its
+# backstop. api.anthropic.com is added automatically by the claude engine.
+network:
+  allowed:
+    - github
+    - node
+    - threat-detection
 
 timeout-minutes: 15
 
@@ -48,6 +63,11 @@ concurrency:
   cancel-in-progress: false
 
 safe-outputs:
+  # This gardener quotes untrusted CI log text into issue bodies. Default
+  # sanitization already neutralizes the realistic cases; zeroing bot mentions is
+  # cheap belt-and-braces against a log line containing an @-mention.
+  # (1, not 0 — the schema enforces `minimum: 1`, so 0 does not compile.)
+  max-bot-mentions: 1
   create-issue:
     title-prefix: "[gardener:ci-doctor] "
     labels: [gardener, ci]
@@ -178,7 +198,7 @@ that.>
 
 ---
 *Filed by the ci-doctor gardener (shadow mode — issue only, no PR).
-See `.github/workflows/GARDENERS.md`.*
+See `.github/GARDENERS.md`.*
 ```
 
 Recurrence comment:

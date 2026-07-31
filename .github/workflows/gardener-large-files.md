@@ -16,21 +16,54 @@ on:
   # entirely during the cheap pre-activation phase (no inference is billed).
   skip-if-match: 'is:issue is:open in:title "[gardener:large-files]"'
 
+# SHIPPED DISABLED — see .github/GARDENERS.md. Without this guard, a merge with no
+# API key configured would file a failure issue every week. One command to enable:
+#   gh variable set GARDENERS_ENABLED --body true
+if: ${{ vars.GARDENERS_ENABLED == 'true' }}
+
 tracker-id: togather-gardener-large-files
 
 # Cost caps. gh-aw meters spend in AI Credits (AIC); 1 AIC = $0.01 USD.
-max-ai-credits: 300        # ~$3.00 per run
+# Per-run is held at or below the daily slice so one run cannot blow the day's budget.
+max-ai-credits: 200        # ~$2.00 per run
 max-daily-ai-credits: 200  # ~$2.00 / 24h — this gardener's slice of the $10/day repo budget
 max-turns: 30
+# Ollama does not do prompt caching, so every turn is a cache miss. The default of
+# 5 would have the proxy block the run partway through.
+max-turn-cache-misses: 40
 
-engine: claude
+# Ollama Cloud via the OpenAI-compatible endpoint. gh-aw reads OPENAI_BASE_URL at
+# compile time and retargets the AWF API proxy at ollama.com, so traffic is still
+# metered and firewalled. Cheapest tier — this is the most mechanical gardener.
+engine:
+  id: codex
+  env:
+    OPENAI_BASE_URL: "https://ollama.com/v1"
+    OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+model: deepseek-v4-flash
+
+# Belt-and-braces: both models are in gh-aw's built-in pricing table today, but if
+# that ever changes the AWF proxy rejects every request with HTTP 400
+# (unknown_model_ai_credits) rather than running unmetered. Values are $/1M tokens.
+models:
+  default-ai-credits-pricing:
+    input: 0.14
+    output: 0.28
 
 permissions:
   contents: read
   issues: read
   pull-requests: read
 
-network: defaults
+# Narrowed from `defaults` (~50 domains incl. pypi, ubuntu archives, playwright,
+# sentry). The firewall is the backstop behind prompt injection; this gardener
+# reads source files and needs GitHub plus its model endpoint, nothing else.
+network:
+  allowed:
+    - github            # api.github.com, github.com, *.githubusercontent.com
+    - node              # registry.npmjs.org — the engine CLI is installed via npm
+    - threat-detection
+    - "ollama.com"      # the model endpoint
 
 timeout-minutes: 15
 
@@ -43,7 +76,10 @@ safe-outputs:
     title-prefix: "[gardener:large-files] "
     labels: [gardener, code-health, refactoring]
     max: 1
-    expires: 7d
+    # 6d, not 7d: the maintenance sweep runs at 00:37 UTC, so a 7d expiry lands
+    # ~11h AFTER the next weekly run's skip-if-match check — which would silently
+    # make this gardener fortnightly. 6d closes it the morning before.
+    expires: 6d
     deduplicate-by-title: true
 
 tools:
@@ -180,7 +216,7 @@ or touch `package.json` / `pnpm-lock.yaml` as part of it.
 
 ---
 *Filed by the large-files gardener (shadow mode — issue only, no PR).
-See `.github/workflows/GARDENERS.md`.*
+See `.github/GARDENERS.md`.*
 ```
 
 ## Rules

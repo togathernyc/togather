@@ -15,21 +15,48 @@ on:
   roles: [admin, maintainer, write]
   skip-if-match: 'is:issue is:open in:title "[gardener:docs-drift]"'
 
+# SHIPPED DISABLED — see .github/GARDENERS.md. Enable all four with:
+#   gh variable set GARDENERS_ENABLED --body true
+if: ${{ vars.GARDENERS_ENABLED == 'true' }}
+
 tracker-id: togather-gardener-docs-drift
 
 # Cost caps. gh-aw meters spend in AI Credits (AIC); 1 AIC = $0.01 USD.
-max-ai-credits: 300        # ~$3.00 per run
+max-ai-credits: 200        # ~$2.00 per run — held at or below the daily slice
 max-daily-ai-credits: 200  # ~$2.00 / 24h
 max-turns: 30
+max-turn-cache-misses: 40  # Ollama has no prompt caching; every turn is a miss
 
-engine: claude
+# Ollama Cloud via the OpenAI-compatible endpoint (see GARDENERS.md). glm-5.2
+# rather than the flash tier: deciding what counts as drift takes more judgment
+# than finding a big file, and the 976k context swallows a week of diffs.
+engine:
+  id: codex
+  env:
+    OPENAI_BASE_URL: "https://ollama.com/v1"
+    OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+model: glm-5.2
+
+# Fallback only — glm-5.2 is in gh-aw's built-in pricing table today. Without a
+# price the AWF proxy rejects every request (HTTP 400 unknown_model_ai_credits)
+# rather than running unmetered. Values are $/1M tokens.
+models:
+  default-ai-credits-pricing:
+    input: 1.40
+    output: 4.40
 
 permissions:
   contents: read
   issues: read
   pull-requests: read
 
-network: defaults
+# Narrowed from `defaults` (~50 domains). This gardener reads git history and docs.
+network:
+  allowed:
+    - github
+    - node
+    - threat-detection
+    - "ollama.com"
 
 timeout-minutes: 15
 
@@ -42,7 +69,9 @@ safe-outputs:
     title-prefix: "[gardener:docs-drift] "
     labels: [gardener, documentation]
     max: 1
-    expires: 7d
+    # 6d, not 7d — see the note in gardener-large-files.md. A 7d expiry is swept
+    # ~11h after the next run's skip-if-match check, making this fortnightly.
+    expires: 6d
     deduplicate-by-title: true
 
 tools:
@@ -167,7 +196,7 @@ you actually looked at, so an empty finding is trustworthy.>
 
 ---
 *Filed by the docs-drift gardener (shadow mode — issue only, no PR).
-See `.github/workflows/GARDENERS.md`.*
+See `.github/GARDENERS.md`.*
 ```
 
 ## Rules
