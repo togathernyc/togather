@@ -21,6 +21,14 @@
  * A "＋ Add task" affordance opens a small inline form (title + optional note +
  * segment; a time label when adding under During) that calls `addPersonalTask`.
  *
+ * When "Mine" is empty, `MineEmptyNotice` says WHY — a plan with no tasks at
+ * all, a viewer who holds no role on the plan, or tasks that exist but name
+ * other roles are three different problems with three different fixes (see
+ * `utils/servingTaskEmptyState.ts`). It also offers a jump to "Shared" when the
+ * team has whole-team tasks, and — for a leader on a task-less plan —
+ * `PopulateFromTemplate`, which links one of the group's saved task templates
+ * via the existing `setPlanTaskTemplate`.
+ *
  * A fifth pill, "Edit", appears only for a leader/community admin
  * (`canAuthorPlanTasks` — mirrors the backend's `isGroupScheduler` gate on
  * `createTask`/`updateTask`/`deleteTask`): `AuthorSection` lets them switch
@@ -89,6 +97,7 @@ import {
   mineEmptyCopy,
   myRoleNamesFromCrew,
   planTaskCountFromAllTeams,
+  type MineEmptyFacts,
   type MineEmptyReason,
 } from "../utils/servingTaskEmptyState";
 
@@ -748,10 +757,27 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   const overallTotal = allTasks.length;
 
   // "Preloaded" tasks are the template (assigned) tasks for the user's role;
-  // personal tasks are the ones the user adds themselves. When the role has no
-  // preloaded tasks, we guide the user to their team lead while still letting
-  // them add their own tasks per segment.
-  const hasPreloadedTasks = allTasks.some((t) => !t.isPersonal);
+  // personal tasks are the ones the user adds themselves.
+  const myTemplateTaskCount = allTasks.filter((t) => !t.isPersonal).length;
+
+  // WHY the "Mine" list is empty. Three unrelated causes used to share one
+  // message ("No preloaded task. Please contact your team lead to add tasks.")
+  // that was wrong for two of them; `diagnoseMineEmpty` tells them apart from
+  // data these four queries already carry. See `servingTaskEmptyState.ts`.
+  const mineFacts = useMemo(
+    () => ({
+      planTaskCount: planTaskCountFromAllTeams(effAllTeams),
+      myRoleNames: myRoleNamesFromCrew(effCrew),
+      myTemplateTaskCount,
+      sharedTaskCount: effShared?.length ?? 0,
+    }),
+    [effAllTeams, effCrew, myTemplateTaskCount, effShared],
+  );
+  const mineEmptyReason: MineEmptyReason = diagnoseMineEmpty(mineFacts);
+  // `loading` renders nothing, so the per-segment empty cards stay visible
+  // until we can say something true.
+  const showMineNotice =
+    mineEmptyReason !== "has-tasks" && mineEmptyReason !== "loading";
 
   // Small badges on the section pills (null hides the badge).
   const sectionCounts: Record<Section, string | null> = {
@@ -809,7 +835,21 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
             )
           ) : (
             <>
-            {!hasPreloadedTasks ? <NoPreloadedNotice colors={colors} wa={wa} /> : null}
+            {showMineNotice ? (
+              <MineEmptyNotice
+                reason={mineEmptyReason}
+                facts={mineFacts}
+                onViewShared={() => setSection("shared")}
+                leader={
+                  canAuthor && mineEmptyReason === "no-plan-tasks"
+                    ? { planId, groupId, isEffectivelyOffline }
+                    : null
+                }
+                colors={colors}
+                primaryColor={primaryColor}
+                wa={wa}
+              />
+            ) : null}
             {SEGMENTS.map(({ key, label }) => {
             const segmentTasks = mineWithOverlay[key] ?? [];
             const done = segmentTasks.filter((t) => t.completed).length;
@@ -845,10 +885,11 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
                   height={4}
                 />
 
-                {/* When the role has no preloaded tasks, the notice above already
-                    explains the empty state, so we skip the per-segment empty
-                    card and leave just the "Add my own task" affordance. */}
-                {segmentTasks.length === 0 && !hasPreloadedTasks ? null : (
+                {/* When the notice above is explaining the empty state, skip
+                    the per-segment empty card and leave just the "Add my own
+                    task" affordance. (While the diagnosis is still `loading`
+                    no notice shows, so the cards stay.) */}
+                {segmentTasks.length === 0 && showMineNotice ? null : (
                 <View
                   style={[
                     styles.card,
@@ -2845,11 +2886,43 @@ function OfflineBanner({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
 }
 
 /**
- * Shown at the top of the "Mine" section when the user's role has no preloaded
- * (template) tasks. Explains the empty state and points the user to their team
- * lead, while the per-segment "Add my own task" affordances remain available.
+ * Shown at the top of the "Mine" section when the viewer has no preloaded
+ * (template) tasks — and says WHICH of the several possible reasons applies
+ * (`diagnoseMineEmpty`). The per-segment "Add my own task" affordances stay
+ * available underneath in every case.
+ *
+ * Two extra affordances hang off it:
+ *   • a one-tap jump to "Shared" whenever the team HAS whole-team tasks — the
+ *     screen opens on "Mine" and `getMyServingTasks` deliberately omits
+ *     team-level tasks, so otherwise the viewer has to guess they exist;
+ *   • for a leader on a plan with NO tasks, `PopulateFromTemplate` — the
+ *     nothing-backfills-a-new-plan case is theirs to fix, in place.
  */
-function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean }) {
+function MineEmptyNotice({
+  reason,
+  facts,
+  onViewShared,
+  leader,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  reason: MineEmptyReason;
+  facts: MineEmptyFacts;
+  onViewShared: () => void;
+  /** Non-null only for a leader on a plan with zero tasks (see `canAuthorPlanTasks`). */
+  leader: {
+    planId: Id<"eventPlans">;
+    groupId: Id<"groups">;
+    isEffectivelyOffline: boolean;
+  } | null;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  const copy = mineEmptyCopy(reason, facts);
+  if (!copy) return null;
+
   return (
     <View style={[styles.segment, wa && waStyles.segment]}>
       <View
@@ -2868,7 +2941,7 @@ function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean })
           <Text
             style={[styles.noticeMessage, wa && waStyles.noticeMessage, { color: colors.text }]}
           >
-            No preloaded task. Please contact your team lead to add tasks.
+            {copy.title}
           </Text>
           <Text
             style={[
@@ -2877,10 +2950,156 @@ function NoPreloadedNotice({ colors, wa }: { colors: ThemeColors; wa: boolean })
               { color: colors.textTertiary },
             ]}
           >
-            You can still add your own tasks below.
+            {copy.hint}
           </Text>
+
+          {facts.sharedTaskCount > 0 ? (
+            <Pressable
+              onPress={onViewShared}
+              style={styles.noticeAction}
+              accessibilityRole="button"
+              accessibilityLabel="Open the Shared tab"
+            >
+              <Text
+                style={[
+                  styles.noticeActionText,
+                  wa && waStyles.noticeActionText,
+                  { color: primaryColor },
+                ]}
+              >
+                {`Open Shared (${facts.sharedTaskCount})`}
+              </Text>
+              <Ionicons name="arrow-forward" size={15} color={primaryColor} />
+            </Pressable>
+          ) : null}
+
+          {leader ? (
+            <PopulateFromTemplate
+              planId={leader.planId}
+              groupId={leader.groupId}
+              isEffectivelyOffline={leader.isEffectivelyOffline}
+              colors={colors}
+              primaryColor={primaryColor}
+              wa={wa}
+            />
+          ) : null}
         </View>
       </View>
+    </View>
+  );
+}
+
+/**
+ * Leader-only: fill an EMPTY plan's task list from one of the group's saved
+ * task templates, without leaving serving mode.
+ *
+ * A plan created by `createEventDraftImpl` has no `taskTemplateId` and no
+ * tasks, and nothing ever backfills it — tasks only materialise when someone
+ * links a template from the rostering grid (or duplicates an event). That grid
+ * is where a leader would otherwise have to go, on a laptop, mid-service. This
+ * calls the SAME existing `setPlanTaskTemplate` mutation the grid uses (no new
+ * backend surface); the default `carryover` is irrelevant here because the
+ * plan has no rows to carry over.
+ *
+ * Only rendered when the plan has zero tasks, so there is nothing to destroy
+ * and no confirmation step is warranted.
+ *
+ * OFFLINE: hidden, for the same reason `AuthorSection` hides its controls —
+ * this is a plan-wide, server-validated write with no dedupe key.
+ */
+function PopulateFromTemplate({
+  planId,
+  groupId,
+  isEffectivelyOffline,
+  colors,
+  primaryColor,
+  wa,
+}: {
+  planId: Id<"eventPlans">;
+  groupId: Id<"groups">;
+  isEffectivelyOffline: boolean;
+  colors: ThemeColors;
+  primaryColor: string;
+  wa: boolean;
+}) {
+  const templates = useAuthenticatedQuery(
+    api.functions.scheduling.taskTemplates.listTaskTemplates,
+    isEffectivelyOffline ? "skip" : { groupId },
+  ) as Array<{ _id: string; name: string; itemCount: number }> | undefined;
+  const setPlanTaskTemplate = useAuthenticatedMutation(
+    api.functions.scheduling.planTemplates.setPlanTaskTemplate,
+  );
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
+  if (isEffectivelyOffline || templates === undefined) return null;
+
+  // A template with no items would link cleanly and still leave the plan empty.
+  const usable = templates.filter((t) => t.itemCount > 0);
+
+  if (usable.length === 0) {
+    return (
+      <Text
+        style={[
+          styles.noticeHint,
+          wa && waStyles.noticeHint,
+          { color: colors.textTertiary },
+        ]}
+      >
+        This campus has no saved task lists yet. Use the Edit tab above to add
+        tasks role by role.
+      </Text>
+    );
+  }
+
+  return (
+    <View style={styles.noticeActions}>
+      <Text
+        style={[
+          styles.noticeHint,
+          wa && waStyles.noticeHint,
+          { color: colors.textTertiary },
+        ]}
+      >
+        Add this event&apos;s tasks from a saved list:
+      </Text>
+      {usable.map((template) => (
+        <Pressable
+          key={template._id}
+          disabled={applyingId !== null}
+          onPress={async () => {
+            setApplyingId(template._id);
+            try {
+              await setPlanTaskTemplate({
+                planId,
+                templateId: template._id as Id<"eventTaskTemplates">,
+              });
+            } catch (err) {
+              notify(
+                "Couldn't add these tasks",
+                String((err as Error)?.message ?? err),
+              );
+            } finally {
+              setApplyingId(null);
+            }
+          }}
+          style={styles.noticeAction}
+          accessibilityRole="button"
+          accessibilityLabel={`Add tasks from ${template.name}`}
+        >
+          <Ionicons name="add" size={16} color={primaryColor} />
+          <Text
+            style={[
+              styles.noticeActionText,
+              wa && waStyles.noticeActionText,
+              { color: primaryColor },
+            ]}
+          >
+            {`${template.name} · ${template.itemCount} ${
+              template.itemCount === 1 ? "task" : "tasks"
+            }`}
+          </Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -3003,6 +3222,16 @@ const styles = StyleSheet.create({
   noticeBody: { flex: 1 },
   noticeMessage: { fontSize: 14, lineHeight: 20, fontWeight: "500" },
   noticeHint: { fontSize: 13, lineHeight: 18, marginTop: 4 },
+  // Actions inside the "Mine" empty-state notice (jump to Shared; a leader's
+  // "populate from a saved task list" rows).
+  noticeActions: { marginTop: 4 },
+  noticeAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+  },
+  noticeActionText: { fontSize: 14, fontWeight: "600" },
 
   // Author (leader "Edit" surface) role-switcher caption
   authorHint: {
@@ -3212,6 +3441,7 @@ const waStyles = StyleSheet.create({
   noticeCard: { borderRadius: WA_GROUP_RADIUS, borderWidth: 0, padding: WA_CELL_PADDING },
   noticeMessage: { fontSize: WA_TYPE_ROW_TITLE, lineHeight: 22, fontWeight: WA_WEIGHT_REGULAR },
   noticeHint: { fontSize: WA_TYPE_FOOTNOTE, lineHeight: 18 },
+  noticeActionText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
   authorHint: { fontSize: WA_TYPE_FOOTNOTE, marginHorizontal: WA_GROUP_MARGIN },
 
   // Task rows (§3.2 cell anatomy)

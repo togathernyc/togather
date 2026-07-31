@@ -14,6 +14,7 @@ const REF = {
   listPlanTasks: "api.functions.scheduling.eventTasks.listPlanTasks",
   listTeams: "api.functions.scheduling.teams.listTeams",
   listRoles: "api.functions.scheduling.roles.listRoles",
+  listTaskTemplates: "api.functions.scheduling.taskTemplates.listTaskTemplates",
 };
 
 jest.mock("@services/api/convex", () => ({
@@ -49,6 +50,12 @@ jest.mock("@services/api/convex", () => ({
         },
         roles: {
           listRoles: "api.functions.scheduling.roles.listRoles",
+        },
+        taskTemplates: {
+          listTaskTemplates: "api.functions.scheduling.taskTemplates.listTaskTemplates",
+        },
+        planTemplates: {
+          setPlanTaskTemplate: "setPlanTaskTemplate",
         },
       },
     },
@@ -179,7 +186,70 @@ const DEFAULT_PLANS: EligiblePlan[] = [
   { planId: "plan-1", title: "Sunday Gathering", startsAt: 0 },
 ];
 
-function mockQueries(mine: unknown, plans: EligiblePlan[] = DEFAULT_PLANS) {
+/** An `getAllTeamsTasks` row. Only `tasks[].taskId` is read for the count. */
+function allTeamsRow(taskIds: string[], teamId = "team-1") {
+  return {
+    teamId,
+    teamName: "Hospitality",
+    taskCount: taskIds.length,
+    done: 0,
+    total: taskIds.length,
+    tasks: taskIds.map((taskId) => ({
+      taskId,
+      title: taskId,
+      segment: "before",
+      roleNames: [],
+      completed: false,
+      howToType: "none",
+    })),
+  };
+}
+
+/** A `getCrewTasks` row for the viewer themself (they hold `roleName`). */
+function myCrewRow(roleName: string) {
+  return {
+    userId: "user-1",
+    name: "Alex",
+    roleId: `role-${roleName}`,
+    roleName,
+    teamId: "team-1",
+    teamName: "Hospitality",
+    isCurrentUser: true,
+    status: "confirmed",
+    done: 0,
+    total: 0,
+    tasks: [],
+  };
+}
+
+/** A `getSharedTeamTasks` row (team-level task, Shared pill only). */
+function sharedRow(taskId: string, title: string) {
+  return {
+    taskId,
+    teamIds: ["team-1"],
+    teamNames: ["Hospitality"],
+    title,
+    segment: "before",
+    howToType: "none",
+    completed: false,
+  };
+}
+
+/**
+ * The empty-state discrimination needs more than "Mine" to tell its four
+ * states apart, so the shared/crew/all-teams results are overridable.
+ * Defaulting them all to `[]` reproduces the plan-has-no-tasks-at-all case.
+ */
+function mockQueries(
+  mine: unknown,
+  plans: EligiblePlan[] = DEFAULT_PLANS,
+  extra: {
+    shared?: unknown;
+    crew?: unknown;
+    allTeams?: unknown;
+    taskTemplates?: unknown;
+  } = {},
+) {
   mockQuery.mockImplementation((ref: string) => {
     switch (ref) {
       case REF.mine:
@@ -187,53 +257,246 @@ function mockQueries(mine: unknown, plans: EligiblePlan[] = DEFAULT_PLANS) {
       case REF.eligibility:
         return { plans };
       case REF.shared:
+        return extra.shared ?? [];
       case REF.crew:
+        return extra.crew ?? [];
       case REF.allTeams:
-        return [];
+        return extra.allTeams ?? [];
+      case REF.listTaskTemplates:
+        return extra.taskTemplates ?? [];
       default:
         return undefined;
     }
   });
 }
 
-const NO_PRELOAD_MESSAGE =
-  "No preloaded task. Please contact your team lead to add tasks.";
+const NO_PLAN_TASKS_MESSAGE = "This event has no tasks set up yet.";
+const NOT_ROSTERED_MESSAGE = "You're not on the roster for this event.";
 
-describe("ServingTasksScreen — no preloaded tasks", () => {
+/**
+ * The "Mine" tab's diagnostic empty state. One generic sentence ("No preloaded
+ * task. Please contact your team lead to add tasks.") used to cover three
+ * unrelated causes; these pin that each now gets its own honest message. The
+ * discrimination itself is unit-tested in
+ * `utils/__tests__/servingTaskEmptyState.test.ts` — these cover the wiring.
+ */
+describe("ServingTasksScreen — diagnostic empty state (Mine)", () => {
   beforeEach(() => {
     mockIsServingMode = true;
   });
   afterEach(() => jest.clearAllMocks());
 
-  it("shows the no-preloaded-task notice when the role has no template tasks", () => {
+  it("says the EVENT has no tasks when the plan has zero task rows", () => {
     mockQueries(EMPTY_MINE);
     const { getByText, queryByText, getAllByText } = render(<ServingTasksScreen />);
 
-    // The exact guidance message is shown.
-    expect(getByText(NO_PRELOAD_MESSAGE)).toBeTruthy();
+    expect(getByText(NO_PLAN_TASKS_MESSAGE)).toBeTruthy();
+    // It must NOT imply tasks exist and are misconfigured.
+    expect(queryByText(/contact your team lead/i)).toBeNull();
     // The generic per-segment empty text is suppressed in this state.
     expect(queryByText("Nothing here yet.")).toBeNull();
     // Users can still add their own tasks in every segment.
     expect(getAllByText("Add my own task")).toHaveLength(3);
   });
 
-  it("still shows the notice when only personal (user-added) tasks exist", () => {
+  it("still explains the empty state when only personal tasks exist", () => {
     mockQueries({ before: [personalTask()], during: [], after: [] });
     const { getByText } = render(<ServingTasksScreen />);
 
-    expect(getByText(NO_PRELOAD_MESSAGE)).toBeTruthy();
+    expect(getByText(NO_PLAN_TASKS_MESSAGE)).toBeTruthy();
     // The personal task is still rendered.
     expect(getByText("Bring water bottle")).toBeTruthy();
+  });
+
+  it("names the rostering gap when the viewer holds no role on the plan", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [allTeamsRow(["task-1", "task-2"])],
+      crew: [], // no non-declined assignment => getCrewTasks short-circuits
+    });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText(NOT_ROSTERED_MESSAGE)).toBeTruthy();
+    expect(getByText(/The event has 2 tasks/)).toBeTruthy();
+  });
+
+  it("quotes the task count and the viewer's actual roles on a role mismatch", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [allTeamsRow(["task-1", "task-2", "task-3"])],
+      crew: [myCrewRow("Greeter"), myCrewRow("Usher")],
+    });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(
+      getByText("This event has 3 tasks, but none are assigned to your roles."),
+    ).toBeTruthy();
+    expect(getByText(/You're serving as Greeter and Usher\./)).toBeTruthy();
+  });
+
+  it("shows nothing until the plan-wide data has loaded, rather than guessing", () => {
+    // `getAllTeamsTasks` unresolved: no honest statement is possible yet.
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { allTeams: undefined });
+    mockQuery.mockImplementation((ref: string) => {
+      if (ref === REF.mine) return EMPTY_MINE;
+      if (ref === REF.eligibility) return { plans: DEFAULT_PLANS };
+      if (ref === REF.crew || ref === REF.shared) return [];
+      return undefined;
+    });
+    const { queryByText, getAllByText } = render(<ServingTasksScreen />);
+
+    expect(queryByText(NO_PLAN_TASKS_MESSAGE)).toBeNull();
+    expect(queryByText(NOT_ROSTERED_MESSAGE)).toBeNull();
+    // The per-segment empty cards stay visible while we can't say anything.
+    expect(getAllByText("Nothing here yet.")).toHaveLength(3);
   });
 
   it("hides the notice when the role has preloaded (template) tasks", () => {
     mockQueries({ before: [templateTask()], during: [], after: [] });
     const { queryByText, getByText, getAllByText } = render(<ServingTasksScreen />);
 
-    expect(queryByText(NO_PRELOAD_MESSAGE)).toBeNull();
+    expect(queryByText(NO_PLAN_TASKS_MESSAGE)).toBeNull();
     expect(getByText("Set up chairs")).toBeTruthy();
     // The other (empty) segments fall back to the generic empty text.
     expect(getAllByText("Nothing here yet.")).toHaveLength(2);
+  });
+});
+
+/**
+ * "Mine" omits team-level tasks by design (`getMyServingTasks` skips them) and
+ * the screen opens on "Mine" — so a team whose tasks are ALL team-level saw an
+ * empty tab with no hint that "Shared" held everything. The notice now says so
+ * and jumps there in one tap.
+ */
+describe("ServingTasksScreen — Shared discoverability from an empty Mine", () => {
+  beforeEach(() => {
+    mockIsServingMode = true;
+  });
+  afterEach(() => jest.clearAllMocks());
+
+  it("advertises Shared and jumps to it when Mine is empty but Shared has tasks", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [allTeamsRow(["task-1", "task-2"])],
+      crew: [myCrewRow("Greeter")],
+      shared: [
+        sharedRow("task-1", "Unlock the building"),
+        sharedRow("task-2", "Set the thermostat"),
+      ],
+    });
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+
+    expect(getByText(/Shared has 2 tasks for your whole team\./)).toBeTruthy();
+
+    fireEvent.press(getByLabelText("Open the Shared tab"));
+
+    // The Shared section is now showing its tasks.
+    expect(getByText("Unlock the building")).toBeTruthy();
+    expect(getByText("Set the thermostat")).toBeTruthy();
+  });
+
+  it("offers no Shared jump when the team has no shared tasks", () => {
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [allTeamsRow(["task-1"])],
+      crew: [myCrewRow("Greeter")],
+      shared: [],
+    });
+    const { queryByLabelText, getByText } = render(<ServingTasksScreen />);
+
+    expect(queryByLabelText("Open the Shared tab")).toBeNull();
+    expect(getByText(/Check All teams/)).toBeTruthy();
+  });
+});
+
+/**
+ * A plan created by `createEventDraftImpl` has no tasks and nothing backfills
+ * it — tasks only appear when someone links a task template from the rostering
+ * grid. This lets a leader do that from serving mode, via the SAME existing
+ * `setPlanTaskTemplate` mutation.
+ */
+describe("ServingTasksScreen — leader affordance on a task-less plan", () => {
+  const mockSetPlanTaskTemplate = jest.fn().mockResolvedValue({});
+
+  beforeEach(() => {
+    mockIsServingMode = true;
+    mockMutation.mockImplementation((ref: string) =>
+      ref === "setPlanTaskTemplate" ? mockSetPlanTaskTemplate : jest.fn(),
+    );
+  });
+  afterEach(() => {
+    mockUser = { is_admin: false };
+    mockIsEffectivelyOffline = false;
+    mockMutation.mockImplementation(() => jest.fn());
+    jest.clearAllMocks();
+  });
+
+  const TEMPLATES = [
+    { _id: "tmpl-1", name: "Sunday Production", itemCount: 12 },
+    { _id: "tmpl-2", name: "Midweek", itemCount: 1 },
+    { _id: "tmpl-empty", name: "Draft", itemCount: 0 },
+  ];
+
+  it("links a saved task template via the existing setPlanTaskTemplate", async () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
+    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Sunday Production · 12 tasks")).toBeTruthy();
+    // A template with no items would link cleanly and still leave the plan
+    // empty, so it isn't offered.
+    expect(getByText("Midweek · 1 task")).toBeTruthy();
+
+    await fireEvent.press(getByLabelText("Add tasks from Sunday Production"));
+
+    expect(mockSetPlanTaskTemplate).toHaveBeenCalledWith({
+      planId: "plan-1",
+      templateId: "tmpl-1",
+    });
+  });
+
+  it("omits an item-less template rather than offering a no-op", () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
+    const { queryByLabelText } = render(<ServingTasksScreen />);
+
+    expect(queryByLabelText("Add tasks from Draft")).toBeNull();
+  });
+
+  it("points at the manual path instead of dead-ending when there are no templates", () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: [] });
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText(/no saved task lists yet/)).toBeTruthy();
+    expect(getByText(/Use the Edit tab above/)).toBeTruthy();
+  });
+
+  it("hides the affordance from a non-leader", () => {
+    mockUser = { is_admin: false };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
+    const { queryByLabelText, getByText } = render(<ServingTasksScreen />);
+
+    expect(queryByLabelText("Add tasks from Sunday Production")).toBeNull();
+    // …but the diagnosis itself is still shown.
+    expect(getByText(NO_PLAN_TASKS_MESSAGE)).toBeTruthy();
+  });
+
+  it("hides the affordance offline (a plan-wide write with no dedupe key)", () => {
+    mockUser = { is_admin: true };
+    mockIsEffectivelyOffline = true;
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, { taskTemplates: TEMPLATES });
+    const { queryByLabelText } = render(<ServingTasksScreen />);
+
+    expect(queryByLabelText("Add tasks from Sunday Production")).toBeNull();
+  });
+
+  it("is not offered when the plan already has tasks", () => {
+    mockUser = { is_admin: true };
+    mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
+      allTeams: [allTeamsRow(["task-1"])],
+      crew: [myCrewRow("Greeter")],
+      taskTemplates: TEMPLATES,
+    });
+    const { queryByLabelText } = render(<ServingTasksScreen />);
+
+    expect(queryByLabelText("Add tasks from Sunday Production")).toBeNull();
   });
 });
 
@@ -325,6 +588,10 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
           return AUTHOR_ROLES;
         case REF.listPlanTasks:
           return planTasks;
+        case REF.listTaskTemplates:
+          // These tests are about the Edit surface, not the empty-state
+          // template affordance — leave the group with no saved templates.
+          return [];
         default:
           return undefined;
       }
@@ -658,7 +925,7 @@ describe("ServingTasksScreen — whatsapp-shell skin", () => {
     mockQueries({ before: [personalTask()], during: [], after: [] });
     const { getByText, getAllByText } = render(<ServingTasksScreen />);
 
-    expect(getByText(NO_PRELOAD_MESSAGE)).toBeTruthy();
+    expect(getByText(NO_PLAN_TASKS_MESSAGE)).toBeTruthy();
     expect(getByText("Bring water bottle")).toBeTruthy();
     expect(getAllByText("Add my own task")).toHaveLength(3);
     expect(getByText("Mine")).toBeTruthy();
