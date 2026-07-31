@@ -392,7 +392,12 @@ independent of Increase:
 | Landmine (a) fixed — explicit, non-defaulted `INCREASE_API_BASE_URL`/environment flag | ☐ Not done | Prevents a sandbox key silently pointing at the production host or vice versa |
 | Landmine (b) fixed — explicit environment flag instead of `.includes("sandbox")` | ☐ Not done | Prevents a misconfigured URL silently submitting fabricated beneficial-owner data to the real Increase API |
 | Community General Account provisioned by code, not just documented in ADR-032 | ☐ Not done | `apps/convex/functions/finance/onboarding.ts` never creates it today — general-fund (non-group) donations have no Increase Account to land in |
-| Allocation switched from gross donation totals to Stripe balance-transaction NET amounts | ☐ Not done | `apps/convex/functions/finance/ARCHITECTURE.md`'s "Known Seams & TODOs": allocation currently under-covers payouts by roughly the processing fee, leaving a tail of stuck-pending donations (alert-only today, not silently wrong, but not production-honest either) |
+| Allocation switched from gross donation totals to Stripe balance-transaction NET amounts | ☐ Not done | **ARCHITECTURE.md understates this.** It is not "a tail of stuck-pending donations" — it is a deterministic total stall. `planAllocations` matches GROSS donation totals against a NET payout, and `break`s (not `continue`s) on the first item that doesn't fit, so in the common one-donation-per-payout case the queue never advances again. Group Accounts stay at zero while `funds.balanceCents` reports the money is there, and the nightly invariant compares gross to gross so it never fires. Money never reaches a group fund |
+| Allocation survives partial failure | ☐ Not done | `runAllocation` claims the payout in `processedStripePayouts` *before* transferring, then loops with no per-item error handling. One transient Increase error strands every remaining donation permanently — the redelivered webhook is ignored as "already processed" and `retryStaleAllocations` is alert-only |
+| Per-community kill switch exists | ☐ Not done | Only the app-wide `group-giving` flag ships. One church's incident cannot be contained without disabling giving for every community — unacceptable blast radius once more than one church is live (see §7.2) |
+| Finance notifications exist (push + email) | ☐ Not done | There are **no** notifications anywhere in finance — a finance admin learns an expense needs approval only by opening the app; an admin learns onboarding went live only by re-checking the screen. ADR-032 §2 explicitly promises "push + email when live" |
+| No UI claims an unenforced control | ☐ Not done | Card creation advertises limits that "reset every Monday" and a "Require receipts" toggle, and the hub says charges over $200 need a second approver — none of which exist for card spend. Shipping copy that overstates financial controls to a church is a trust and liability problem, not a polish issue |
+| Group leaders cannot self-escalate to `finance_admin` | ☐ Not done | `requireFundRoleOrGroupLeader` returns early for any active group leader regardless of `minRole`, so a leader can grant themselves `finance_admin`, issue themselves a card, and spend the fund — and can defeat the two-approver rule by granting `manager` to a second account they control |
 | Card spend limits enforced at the bank, not just advisory | ☐ Not done | `cards.ts`: `spendLimitCents`/`limitPeriod` are documented as **advisory only** — Increase enforces no automatic period reset tied to them; real per-swipe enforcement needs Increase's real-time-authorization webhook, not yet built |
 | Reimbursement ACH payout destination wired up | ☐ Not done | `expenses.ts`'s `getPayoutDestination` **returns `null` unconditionally** — every reimbursement blocks at "no destination found" until the member bank-linking UI ships |
 | Nightly reconcile shows zero drift for at least one production community over a real billing cycle | ☐ Not started | Proves the ledger-vs-bank invariant actually holds outside the smoke test |
@@ -409,12 +414,21 @@ If something goes wrong after the first real dollar moves in production:
    `updateCardStatus` (Increase `PATCH /cards/{id}` → `"disabled"`) on any
    affected card immediately — this is reversible and doesn't require
    understanding the root cause yet.
-2. **Community-level fund freeze.** `onboarding.ts`'s `freezeFundForArchivedGroup`
-   pattern only exists for group archival today — there is no general
-   "freeze this community's giving" admin action yet. Until one exists, the
-   fastest manual stop is disabling the `group-giving` flag for that
-   community (`churchFeatures.givingEnabled`) to block new donations/expenses
-   at the application layer, plus manually pausing outbound transfers by not
+2. **Community-level fund freeze — does not exist.** `onboarding.ts`'s
+   `freezeFundForArchivedGroup` is an `internalMutation` reachable only by
+   archiving a group; there is no admin "freeze this community's giving"
+   action. There is also **no per-community flag**: ADR-032 §6 proposed
+   `churchFeatures.givingEnabled`, but it was never built. The only switch
+   shipped is the single app-wide `group-giving` flag
+   (`apps/convex/lib/finance/flag.ts`), so the sole application-layer stop
+   is **all-or-nothing across every community** — you cannot contain one
+   church's incident without taking giving away from all of them. With more
+   than one pilot church live that is an unacceptable blast radius, so a
+   per-community kill switch is a **go-live blocker, not a nicety**. Note
+   too that freezing a fund does not stop its cards (`card_capture` is in
+   `FROZEN_ALLOWED_KINDS` in `lib/finance/ledger.ts`) — cards are bank
+   objects and must be disabled at Increase. Alongside that, pause outbound
+   transfers by not
    running the allocation/reimbursement crons for that community (they're
    global crons today — see `functions/finance/jobs.ts`'s
    `registerFinanceCrons` — so a targeted pause needs a manual code change or
