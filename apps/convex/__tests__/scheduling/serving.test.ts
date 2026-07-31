@@ -40,6 +40,7 @@ async function insertPlan(
   world: Awaited<ReturnType<typeof setup>>["world"],
   title: string,
   eventDate: number,
+  status: "draft" | "published" = "published",
 ) {
   return (await t.run(async (ctx: any) =>
     ctx.db.insert("eventPlans", {
@@ -48,7 +49,7 @@ async function insertPlan(
       title,
       eventDate,
       times: [{ label: "9 AM", startsAt: eventDate }],
-      status: "published",
+      status,
       createdAt: Date.now(),
       createdById: world.groupLeaderId,
       updatedAt: Date.now(),
@@ -640,6 +641,98 @@ describe("getServingEligibility", () => {
     );
     expect(res.plans).toEqual([]);
     expect(res.upcomingPlans).toEqual([]);
+  });
+
+  it("excludes an unpublished (draft) future plan from upcomingPlans", async () => {
+    // Preview is new capability: before it, a draft's run sheet and tasks were
+    // only reachable inside the 12h same-day window. Offering a draft weeks
+    // early would expose still-being-written content to anyone holding an
+    // unconfirmed assignment.
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const nextWeek = Date.now() + 7 * DAY;
+    const draft = await insertPlan(t, world, "Draft Sunday", nextWeek, "draft");
+    await insertAssignment(t, world, {
+      planId: draft,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: nextWeek,
+      status: "unconfirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.upcomingPlans).toEqual([]);
+  });
+
+  it("still makes a same-day draft plan eligible (plans stays status-agnostic)", async () => {
+    // Only `upcomingPlans` filters on status. A volunteer standing at the venue
+    // must not be locked out of serving mode because the plan was never
+    // formally published.
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const today = Date.now();
+    const draft = await insertPlan(t, world, "Draft Today", today, "draft");
+    await insertAssignment(t, world, {
+      planId: draft,
+      teamId: world.teamId,
+      roleId: world.roleId,
+      userId: world.channelMemberId,
+      eventDate: today,
+      status: "confirmed",
+    });
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.plans.map((p) => p.title)).toEqual(["Draft Today"]);
+    expect(res.eligible).toBe(true);
+  });
+
+  it("caps upcomingPlans at the limit, keeping the soonest ones", async () => {
+    // Membership is now resolved in soonest-first order and the loop stops at
+    // the cap (so a volunteer scheduled weekly a year out doesn't pay for a
+    // per-plan membership scan). This pins the observable half of that — the
+    // cap and the soonest-first ordering it selects on. The read-count saving
+    // itself isn't visible from the query result, so it isn't asserted here.
+    const { t, world } = await setup();
+    const meTok = (await generateTokens(world.channelMemberId)).accessToken;
+    const base = Date.now();
+
+    // Inserted latest-first so the ordering can't come from insertion order.
+    for (let week = 14; week >= 1; week--) {
+      const when = base + week * 7 * DAY;
+      const plan = await insertPlan(t, world, `Week ${week}`, when);
+      await insertAssignment(t, world, {
+        planId: plan,
+        teamId: world.teamId,
+        roleId: world.roleId,
+        userId: world.channelMemberId,
+        eventDate: when,
+        status: "confirmed",
+      });
+    }
+
+    const res = await t.query(
+      api.functions.scheduling.serving.getServingEligibility,
+      { token: meTok },
+    );
+    expect(res.upcomingPlans.map((p) => p.title)).toEqual([
+      "Week 1",
+      "Week 2",
+      "Week 3",
+      "Week 4",
+      "Week 5",
+      "Week 6",
+      "Week 7",
+      "Week 8",
+      "Week 9",
+      "Week 10",
+    ]);
   });
 
   it("excludes a future plan whose group the caller has left", async () => {

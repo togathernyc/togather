@@ -204,9 +204,12 @@ type UpcomingServingPlan = {
  * meaningful without locking them out. With multiple active plans the choice is
  * ambiguous, so we never auto-enter and the client offers a manual chip instead.
  *
- * `upcomingPlans` is a SEPARATE, soonest-first list of plans that are still in
- * the future (before the same-day window opens) and that the user holds a
- * non-declined assignment on, capped at `UPCOMING_PLANS_LIMIT`. It exists so the
+ * `upcomingPlans` is a SEPARATE, soonest-first list of PUBLISHED plans that are
+ * still in the future (before the same-day window opens) and that the user holds
+ * a non-declined assignment on, capped at `UPCOMING_PLANS_LIMIT`. Draft plans are
+ * excluded: opening one early would expose a run sheet and tasks still being
+ * written, weeks ahead, to anyone holding an unconfirmed assignment. (Same-day
+ * `plans` stays status-agnostic — see the loop.) It exists so the
  * client can offer "open this event early to prepare" from My Schedule; it does
  * NOT make anyone eligible and never feeds `autoEnter`. The client opens exactly
  * ONE of them at a time (`eventModeStore.previewPlanId`) and scopes every
@@ -235,16 +238,66 @@ export const getServingEligibility = query({
     const entries: (ServingPlan & { autoEnter: boolean })[] = [];
     const upcoming: UpcomingServingPlan[] = [];
 
+    // `isActiveGroupMember` is 2 serial reads and a volunteer's plans cluster
+    // into a handful of groups, so memoise it per group for this call. Without
+    // it a weekly assignment a year out costs ~100 redundant reads of the same
+    // group doc on every invalidation of this (reactive) query.
+    const membershipByGroup = new Map<string, boolean>();
+    const isActiveMember = async (groupId: Id<"groups">): Promise<boolean> => {
+      const key = groupId as string;
+      const cached = membershipByGroup.get(key);
+      if (cached !== undefined) return cached;
+      const active = await isActiveGroupMember(ctx, groupId, userId);
+      membershipByGroup.set(key, active);
+      return active;
+    };
+
+    // Split first, membership-check second. The upcoming list is capped at
+    // `UPCOMING_PLANS_LIMIT`, so checking membership in soonest-first order and
+    // stopping at the cap bounds the work instead of only trimming the result.
+    const sameDayPlans: Doc<"eventPlans">[] = [];
+    const upcomingCandidates: Doc<"eventPlans">[] = [];
+
     for (const planIdStr of planIds) {
       const plan = await ctx.db.get(planIdStr as Id<"eventPlans">);
       if (!plan) continue;
 
+      // The event is over — neither servable nor worth preparing for.
+      if (now > planEndsAt(plan)) continue;
+
+      if (now < planStartsAt(plan) - SAME_DAY_LEAD_MS) {
+        // Before the same-day window: openable EARLY to prepare, but not
+        // eligible and never auto-entered — `plans` stays strictly same-day.
+        // Only PUBLISHED plans though: a draft's run sheet and tasks are still
+        // being written, and preview would otherwise expose them weeks ahead to
+        // anyone holding an unconfirmed assignment. (The same-day `plans` array
+        // deliberately keeps its status-agnostic behaviour — a volunteer
+        // standing at the venue must not be locked out by an unpublished plan.)
+        if (plan.status !== "published") continue;
+        upcomingCandidates.push(plan);
+        continue;
+      }
+
+      sameDayPlans.push(plan);
+    }
+
+    upcomingCandidates.sort((a, b) => planStartsAt(a) - planStartsAt(b));
+    for (const plan of upcomingCandidates) {
+      if (upcoming.length >= UPCOMING_PLANS_LIMIT) break;
+      if (!(await isActiveMember(plan.groupId))) continue;
+      upcoming.push({
+        planId: plan._id as string,
+        groupId: plan.groupId as string,
+        title: plan.title,
+        startsAt: planStartsAt(plan),
+        endsAt: planEndsAt(plan),
+      });
+    }
+
+    for (const plan of sameDayPlans) {
+      const planIdStr = plan._id as string;
       const startsAt = planStartsAt(plan);
       const endsAt = planEndsAt(plan);
-      const sameDayStart = startsAt - SAME_DAY_LEAD_MS;
-
-      // The event is over — neither servable nor worth preparing for.
-      if (now > endsAt) continue;
 
       // A stale assignment can outlive group membership: `groupMembers.remove`
       // soft-deletes (sets `leftAt`) but leaves the `roleAssignments` row
@@ -253,20 +306,7 @@ export const getServingEligibility = query({
       // never-answered assignment would regain serving access (and the roster's
       // teammate phone numbers). Confirmed-only never surfaced this because an
       // unanswered assignment is unconfirmed.
-      if (!(await isActiveGroupMember(ctx, plan.groupId, userId))) continue;
-
-      // Before the same-day window: openable EARLY to prepare, but not eligible
-      // and never auto-entered — `plans` stays strictly same-day.
-      if (now < sameDayStart) {
-        upcoming.push({
-          planId: plan._id as string,
-          groupId: plan.groupId as string,
-          title: plan.title,
-          startsAt,
-          endsAt,
-        });
-        continue;
-      }
+      if (!(await isActiveMember(plan.groupId))) continue;
 
       // The user's assignments on this plan (any status), from the set above.
       const planAssignments = nonDeclined.filter(
@@ -302,9 +342,10 @@ export const getServingEligibility = query({
       });
     }
 
-    // Soonest-first so the first entry is the natural default.
+    // Soonest-first so the first entry is the natural default. (`upcoming` is
+    // already in that order — its candidates were sorted before the capped
+    // membership pass above.)
     entries.sort((a, b) => a.startsAt - b.startsAt);
-    upcoming.sort((a, b) => a.startsAt - b.startsAt);
 
     const plans: ServingPlan[] = entries.map(
       ({ autoEnter: _autoEnter, ...plan }) => plan,
@@ -324,7 +365,7 @@ export const getServingEligibility = query({
       autoEnter,
       activePlan,
       plans,
-      upcomingPlans: upcoming.slice(0, UPCOMING_PLANS_LIMIT),
+      upcomingPlans: upcoming,
     };
   },
 });
