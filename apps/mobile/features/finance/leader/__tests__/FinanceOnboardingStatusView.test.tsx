@@ -44,6 +44,25 @@ describe("FinanceOnboardingStatusView", () => {
     expect(screen.getByText("We need a clearer photo ID.")).toBeTruthy();
   });
 
+  it("maps the raw stripe_blocked enum to human copy instead of leaking it", () => {
+    render(
+      <FinanceOnboardingStatusView
+        {...baseProps}
+        onboardingStatus="stripe_blocked"
+        blockedReason="stripe_blocked"
+      />
+    );
+
+    expect(screen.queryByText("stripe_blocked")).toBeNull();
+    expect(
+      screen.getByText(
+        "Stripe needs more information — continue identity verification below."
+      )
+    ).toBeTruthy();
+    // The actionable fix is the identity flow — the CTA must stay available.
+    expect(screen.getByText("Continue identity verification")).toBeTruthy();
+  });
+
   it("shows the live banner and hides all action buttons once fully live", () => {
     render(
       <FinanceOnboardingStatusView

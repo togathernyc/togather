@@ -62,6 +62,7 @@ import type * as functions_ee_proposals from "../functions/ee/proposals.js";
 import type * as functions_eventBlasts from "../functions/eventBlasts.js";
 import type * as functions_eventInvites from "../functions/eventInvites.js";
 import type * as functions_eventSeries from "../functions/eventSeries.js";
+import type * as functions_finance_cards from "../functions/finance/cards.js";
 import type * as functions_finance_expenses from "../functions/finance/expenses.js";
 import type * as functions_finance_giving from "../functions/finance/giving.js";
 import type * as functions_finance_jobs from "../functions/finance/jobs.js";
@@ -309,6 +310,7 @@ declare const fullApi: ApiFromModules<{
   "functions/eventBlasts": typeof functions_eventBlasts;
   "functions/eventInvites": typeof functions_eventInvites;
   "functions/eventSeries": typeof functions_eventSeries;
+  "functions/finance/cards": typeof functions_finance_cards;
   "functions/finance/expenses": typeof functions_finance_expenses;
   "functions/finance/giving": typeof functions_finance_giving;
   "functions/finance/jobs": typeof functions_finance_jobs;

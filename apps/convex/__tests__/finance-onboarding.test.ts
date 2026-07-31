@@ -27,8 +27,13 @@ import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
-import { isValidEin, fingerprintIntake } from "../functions/finance/onboarding";
+import {
+  isValidEin,
+  fingerprintIntake,
+  normalizeWebsite,
+} from "../functions/finance/onboarding";
 import { verifyIncreaseWebhookSignature } from "../lib/finance/increase";
+import { choosePayoutDestination } from "../lib/finance/stripeConnect";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -246,6 +251,47 @@ describe("isValidEin", () => {
 });
 
 // ============================================================================
+// normalizeWebsite
+// ============================================================================
+
+describe("normalizeWebsite", () => {
+  test("prefixes https:// on bare domains (churches type these)", () => {
+    expect(normalizeWebsite("firstchurch.org")).toBe("https://firstchurch.org");
+    expect(normalizeWebsite("www.firstchurch.org")).toBe("https://www.firstchurch.org");
+  });
+
+  test("passes through already-schemed URLs and trims whitespace", () => {
+    expect(normalizeWebsite("https://example.org")).toBe("https://example.org");
+    expect(normalizeWebsite("  http://example.org  ")).toBe("http://example.org");
+  });
+
+  test("drops empty and whitespace-only values", () => {
+    expect(normalizeWebsite(undefined)).toBeUndefined();
+    expect(normalizeWebsite("")).toBeUndefined();
+    expect(normalizeWebsite("   ")).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// choosePayoutDestination
+// ============================================================================
+
+describe("choosePayoutDestination", () => {
+  const minted = { routingNumber: "074920909", accountNumber: "9498589619" };
+
+  test("production attaches the real Increase receiving-account number", () => {
+    expect(choosePayoutDestination(false, minted)).toEqual(minted);
+  });
+
+  test("test mode attaches Stripe's documented test bank account (real numbers are rejected)", () => {
+    expect(choosePayoutDestination(true, minted)).toEqual({
+      routingNumber: "110000000",
+      accountNumber: "000123456789",
+    });
+  });
+});
+
+// ============================================================================
 // fingerprintIntake
 // ============================================================================
 
@@ -313,6 +359,42 @@ describe("startOnboarding", () => {
     );
     expect(auditEvents).toHaveLength(1);
     expect(auditEvents[0].action).toBe("onboarding.status_changed");
+
+    // The status query echoes the stored intake so "Edit church details"
+    // prefills instead of reopening a blank form.
+    const status = await t.query(api.functions.finance.onboarding.getOnboardingStatus, {
+      token: adminToken,
+      communityId,
+    });
+    expect(status.intake).toEqual({
+      legalName: "Test Church Inc",
+      ein: "12-3456789",
+      website: "https://example.com",
+      statementDescriptor: undefined,
+      address: ADDRESS,
+    });
+  });
+
+  test("normalizes a bare-domain website to https:// on store", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, adminToken } = await seedOnboardingFixture(t);
+
+    await t.mutation(api.functions.finance.onboarding.startOnboarding, {
+      token: adminToken,
+      communityId,
+      legalName: "Test Church Inc",
+      ein: "12-3456789",
+      website: "firstchurch.org",
+      address: ADDRESS,
+    });
+
+    const finance = await t.run((ctx) =>
+      ctx.db
+        .query("communityFinance")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .first(),
+    );
+    expect(finance?.website).toBe("https://firstchurch.org");
   });
 
   test("rejects a non-admin caller", async () => {

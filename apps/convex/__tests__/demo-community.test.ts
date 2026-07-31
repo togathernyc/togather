@@ -9,7 +9,7 @@
  */
 
 import { convexTest } from "convex-test";
-import { expect, test, describe, vi } from "vitest";
+import { expect, test, describe, vi, afterEach } from "vitest";
 import schema from "../schema";
 import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
@@ -19,6 +19,25 @@ import type { Id } from "../_generated/dataModel";
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
 vi.useFakeTimers();
+
+// `vi.useFakeTimers()` above is a SUITE-WIDE fake clock — it is not reset
+// between tests in this file. `createDemoCommunity` schedules
+// `seedMemberActivity` via a real `ctx.scheduler.runAfter(0, …)`, and most
+// tests here never drain it (they don't touch member-health scoring), so
+// its `setTimeout(0)` callback stays registered on the shared fake-timer
+// queue after that test's own `t` (and its `global.Convex`) is gone.
+// Whichever LATER test first calls `vi.runAllTimers()` (via
+// finishAllScheduledFunctions) then fires every orphaned callback left by
+// every earlier test at once, each racing against a `global.Convex` that
+// has long since moved on to a different `convexTest()` instance —
+// throwing convex-test's "Write outside of transaction" (suppressed as
+// expected noise in vitest.setup.ts). That's real thrown-and-caught work
+// piling onto whichever test happens to trigger the drain. Clear the queue
+// after every test so a test's own undrained scheduled function is
+// discarded instead of accumulating for a later test to pay for.
+afterEach(() => {
+  vi.clearAllTimers();
+});
 
 const COMMUNITY_ROLES = {
   MEMBER: 1,
@@ -935,6 +954,17 @@ describe("getDemoStatus", () => {
 });
 
 describe("demo conversion (go live)", () => {
+  // This test's single `finishAllScheduledFunctions` call drains TWO real
+  // pipelines back to back: createDemoCommunity's own seedMemberActivity ->
+  // communityScoreComputation chain (batched cross-group attendance +
+  // per-group scoring across ~100 seeded members), and
+  // handleCheckoutCompleted's purgeDemoSeedUsers (deletes ~100 placeholder
+  // members and everything keyed to them, one query/delete at a time). That
+  // is genuinely a lot of real synchronous work, not a hang: baseline is
+  // ~1.5s, but it measurably scales with CPU contention — reproduced at
+  // 6.3-6.6s under forced 2x-oversubscribed parallel load (2 full suites at
+  // 10 threads each on a 10-core box), which blew the default 5s budget.
+  // Widened narrowly on just this test rather than raised globally.
   test("checkout completion leaves demo mode and purges placeholder members", async () => {
     const t = convexTest(schema, modules);
     const { userId, token } = await createUser(t, "Conv", "+15555550150");
@@ -1031,10 +1061,15 @@ describe("demo conversion (go live)", () => {
         c.groupId === announcementGroup?._id && c.channelType === "main",
     );
     expect(announcementMain?.memberCount).toBe(1);
-  });
+  }, 20000);
 });
 
 describe("demo conversion race + purge safety (codex review)", () => {
+  // Same shape as "checkout completion" above — one drain covers
+  // createDemoCommunity's score-computation chain plus purgeDemoSeedUsers
+  // (scheduled by the first, winning checkout). Reproduced at 5.3-6.0s
+  // under the same forced 2x-oversubscribed parallel load; see the comment
+  // above.
   test("a second completed checkout for a different subscription never overwrites the first", async () => {
     const t = convexTest(schema, modules);
     const { token } = await createUser(t, "Race", "+15555550160");
@@ -1065,7 +1100,7 @@ describe("demo conversion race + purge safety (codex review)", () => {
     expect(community?.stripeSubscriptionId).toBe("sub_first");
     expect(community?.isDemo).toBe(false);
     expect(community?.billingModel).toBe("per_active_user");
-  });
+  }, 20000);
 
   test("purge deletes only seeded demo members, never other placeholder users", async () => {
     const t = convexTest(schema, modules);

@@ -54,6 +54,11 @@ const FROZEN_ALLOWED_KINDS: ReadonlySet<LedgerKind> = new Set([
   "sweep",
   "transfer",
   "refund",
+  // A card authorization made before the freeze settles after it — the bank
+  // transaction has already happened, so refusing the entry can't stop the
+  // spend; it just loses the record (webhook retries expire against an
+  // indefinitely-frozen archived fund). Same in-flight reasoning as refunds.
+  "card_capture",
 ]);
 
 // ============================================================================

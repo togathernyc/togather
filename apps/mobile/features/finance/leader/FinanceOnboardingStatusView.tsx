@@ -78,6 +78,17 @@ export function FinanceOnboardingStatusView({
   const provisioningFailed = !!provisioningError;
   const provisioning = formSubmitted && !providersReady && !provisioningFailed;
 
+  // blockedReason arrives as the raw status enum when there's no stored
+  // provider error (webhook-driven blocks carry no message today) — map it
+  // to human copy instead of leaking "stripe_blocked" to a church admin.
+  // For a Stripe block the actionable fix IS the identity flow below.
+  const friendlyBlockedReason =
+    blockedReason === "stripe_blocked"
+      ? "Stripe needs more information — continue identity verification below."
+      : blockedReason === "increase_blocked"
+        ? "Our banking partner needs more information. We're on it — check back soon."
+        : blockedReason;
+
   const identityState: ChecklistItemState = paymentsVerified
     ? "done"
     : onboardingStatus === "stripe_blocked"
@@ -101,14 +112,14 @@ export function FinanceOnboardingStatusView({
       title: "Identity verification",
       description: "Stripe verifies your representative's identity",
       state: identityState,
-      blockedReason: identityState === "blocked" ? (provisioningError ?? blockedReason) : null,
+      blockedReason: identityState === "blocked" ? (provisioningError ?? friendlyBlockedReason) : null,
     },
     {
       key: "bank",
       title: "Bank accounts",
       description: "Receiving and general accounts for your community",
       state: bankState,
-      blockedReason: bankState === "blocked" ? (provisioningError ?? blockedReason) : null,
+      blockedReason: bankState === "blocked" ? (provisioningError ?? friendlyBlockedReason) : null,
     },
   ];
 

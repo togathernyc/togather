@@ -1,14 +1,17 @@
 /**
  * GivingHubScreen — data wrapper for the leader/admin group-giving hub
- * (ADR-032 §2 CTA, §4 approvals queue). Resolves the group's fund, the
- * viewer's fund role, and the expense queue, then hands plain props to the
- * presentational GivingHubView.
+ * (ADR-032 §2 CTA, §4 approvals queue; group-fund cards phase). Resolves the
+ * group's fund, the viewer's fund role, the fund overview (balance +
+ * month-to-date), the card list, and the pending-expense queue, then hands
+ * plain props to the presentational GivingHubView.
  */
 import React, { useMemo, useState } from "react";
-import { View, StyleSheet, TouchableOpacity, Text } from "react-native";
+import { View, StyleSheet, TouchableOpacity, Text, Share, Platform, ActionSheetIOS, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Clipboard from "expo-clipboard";
+import { DOMAIN_CONFIG } from "@togather/shared";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
 import type { Id } from "@services/api/convex";
@@ -17,8 +20,9 @@ import { DragHandle } from "@components/ui/DragHandle";
 import { ToastManager } from "@components/ui";
 import { useMembersPage } from "@features/leader-tools/hooks/useMembersPage";
 import { formatError } from "@/utils/error-handling";
-import { GivingHubView, type GivingHubState, type GivingHubTab } from "./GivingHubView";
-import type { GivingExpense } from "./types";
+import { GivingHubView, type GivingHubState } from "./GivingHubView";
+import { SubmitReimbursementSheet } from "../member/SubmitReimbursementSheet";
+import type { FundCard, GivingExpense, GivingHubActivityEntry, GivingHubBalanceSummary } from "./types";
 
 export function GivingHubScreen() {
   const { colors } = useTheme();
@@ -30,9 +34,9 @@ export function GivingHubScreen() {
 
   const { group, isLoadingGroup, handleBack } = useMembersPage(groupId);
 
-  const [tab, setTab] = useState<GivingHubTab>("pending");
   const [processingExpenseId, setProcessingExpenseId] = useState<string | null>(null);
   const [isEnablingGiving, setIsEnablingGiving] = useState(false);
+  const [showReimbursement, setShowReimbursement] = useState(false);
 
   const givingContext = useAuthenticatedQuery(
     api.functions.finance.giving.getGivingContext,
@@ -41,15 +45,24 @@ export function GivingHubScreen() {
 
   const fundId = givingContext?.fundId as Id<"funds"> | undefined;
 
+  const overview = useAuthenticatedQuery(
+    api.functions.finance.giving.getFundOverview,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
   const myFundRole = useAuthenticatedQuery(
     api.functions.finance.roles.getMyFundRole,
     fundId ? { fundId } : "skip",
   );
 
-  const statusFilter = tab === "all" ? undefined : tab;
   const expensesRaw = useAuthenticatedQuery(
     api.functions.finance.expenses.listExpenses,
-    fundId ? { fundId, status: statusFilter } : "skip",
+    fundId ? { fundId, status: "pending" } : "skip",
+  );
+
+  const cardsRaw = useAuthenticatedQuery(
+    api.functions.finance.cards.listFundCards,
+    fundId ? { fundId } : "skip",
   );
 
   const approveExpense = useAuthenticatedMutation(api.functions.finance.expenses.approveExpense);
@@ -69,8 +82,42 @@ export function GivingHubScreen() {
     [expensesRaw],
   );
 
+  const cards: FundCard[] = useMemo(
+    () => (cardsRaw?.cards ?? []).map(toFundCard),
+    [cardsRaw],
+  );
+
+  const balance: GivingHubBalanceSummary | undefined = useMemo(() => {
+    if (!overview) return undefined;
+    return {
+      fundName: overview.fund.name,
+      balanceCents: overview.balanceCents,
+      monthDonationsCents: overview.monthToDate.donationsCents,
+      monthDonationCount: overview.monthToDate.donationCount,
+      monthSpentCents: overview.monthToDate.spentCents,
+    };
+  }, [overview]);
+
+  const activity: GivingHubActivityEntry[] | undefined = useMemo(() => {
+    if (!overview) return undefined;
+    return overview.activity.map((entry: any) => ({
+      id: String(entry.id),
+      kind: entry.kind,
+      amountCents: entry.amountCents,
+      direction: entry.direction,
+      createdAt: entry.createdAt,
+      donorName: entry.donorName ?? null,
+    }));
+  }, [overview]);
+
   const canApprove =
     myFundRole?.role === "manager" || myFundRole?.role === "finance_admin" || isCommunityAdmin;
+
+  // Mirrors createFundCard's own gate (finance_admin, incl. the
+  // community-admin override) — a group leader without a finance role can
+  // view the card list but must not be shown an affordance that can only
+  // error on submit. Comes straight from listFundCards, not derived here.
+  const canManageCards = !!cardsRaw?.viewerCanManageCards;
 
   const handleApprove = async (expenseId: string) => {
     if (processingExpenseId) return;
@@ -118,6 +165,28 @@ export function GivingHubScreen() {
     }
   };
 
+  const handleShareFund = async () => {
+    if (!group?.shortId) return;
+    const groupUrl = DOMAIN_CONFIG.groupShareUrl(group.shortId);
+    const groupName = group?.name || "Group";
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ["Cancel", "Copy Link", "Share"], cancelButtonIndex: 0 },
+        async (buttonIndex) => {
+          if (buttonIndex === 1) {
+            await Clipboard.setStringAsync(groupUrl);
+            Alert.alert("Link Copied", "Group link has been copied to clipboard.");
+          } else if (buttonIndex === 2) {
+            await Share.share({ message: `${groupName}\n${groupUrl}`, url: groupUrl });
+          }
+        },
+      );
+    } else {
+      await Share.share({ message: `${groupName}\n${groupUrl}` });
+    }
+  };
+
   return (
     <>
       <DragHandle />
@@ -136,8 +205,11 @@ export function GivingHubScreen() {
       <GivingHubView
         state={state}
         groupName={group?.name || "this group"}
-        tab={tab}
-        onTabChange={setTab}
+        givingLive={!!givingContext?.givingLive}
+        balance={balance}
+        cards={cards}
+        isLoadingCards={fundId != null && cardsRaw === undefined}
+        canManageCards={canManageCards}
         expenses={expenses}
         isLoadingExpenses={fundId != null && expensesRaw === undefined}
         canApprove={!!canApprove}
@@ -145,10 +217,25 @@ export function GivingHubScreen() {
         processingExpenseId={processingExpenseId}
         onApprove={handleApprove}
         onDeny={handleDeny}
+        activity={activity}
         onEnableGiving={handleEnableGiving}
         isEnablingGiving={isEnablingGiving}
         onViewRoles={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles`)}
+        onGivePress={() => router.push(`/groups/${groupId}/give` as any)}
+        onReimbursePress={() => setShowReimbursement(true)}
+        onCreateCardPress={() => router.push(`/(user)/leader-tools/${groupId}/giving/cards/new` as any)}
+        onSharePress={group?.shortId ? handleShareFund : undefined}
+        onViewCard={(cardId) => router.push(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any)}
+        onViewAllActivity={() => router.push(`/groups/${groupId}/fund` as any)}
       />
+
+      {fundId && (
+        <SubmitReimbursementSheet
+          visible={showReimbursement}
+          fundId={fundId}
+          onClose={() => setShowReimbursement(false)}
+        />
+      )}
     </>
   );
 }
@@ -173,6 +260,20 @@ function toGivingExpense(raw: any): GivingExpense {
       displayName: raw.submitter?.displayName ?? null,
       profileImage: raw.submitter?.profileImage ?? raw.submitter?.profile_photo ?? null,
     },
+  };
+}
+
+function toFundCard(raw: any): FundCard {
+  return {
+    id: String(raw.id),
+    name: raw.name,
+    holderUserId: String(raw.holderUserId),
+    holderName: raw.holderName,
+    last4: raw.last4,
+    status: raw.status,
+    spendLimitCents: raw.spendLimitCents ?? null,
+    limitPeriod: raw.limitPeriod ?? null,
+    createdAt: raw.createdAt,
   };
 }
 
