@@ -26,9 +26,11 @@ import { internalMutation, internalQuery } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {
   getEntity,
+  getTransaction,
   getIncreaseWebhookSecret,
   verifyIncreaseWebhookSignature,
 } from "../../lib/finance/increase";
@@ -94,6 +96,117 @@ export const applyIncreaseEntityStatus = internalMutation({
         from: finance.onboardingStatus,
         to: nextStatus,
         reason: `increase_entity_${args.status}`,
+      },
+    });
+  },
+});
+
+// ============================================================================
+// recordCardSettlement — turns a card_settlement transaction into a
+// `card_charge` expense + ledger debit (functions/finance/cards.ts owns the
+// card object itself; this is the settlement side). Idempotent on the
+// Increase transaction id — a redelivered transaction.created webhook must
+// not create a second expense or post a second ledger debit.
+// ============================================================================
+
+export const recordCardSettlement = internalMutation({
+  args: {
+    increaseCardId: v.string(),
+    increaseTransactionId: v.string(),
+    accountId: v.string(),
+    /** Absolute cents — the webhook dispatcher already stripped the sign (transaction.amount is a signed debit). */
+    amountCents: v.number(),
+    merchantDescription: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db
+      .query("cards")
+      .withIndex("by_increaseCardId", (q) =>
+        q.eq("increaseCardId", args.increaseCardId),
+      )
+      .first();
+    if (!card) {
+      // A card_settlement transaction on a card this app didn't issue
+      // (shouldn't happen once cards.ts is the only card issuer on the
+      // platform's Increase account, but log rather than throw — throwing
+      // would just retry against a permanently-missing card).
+      console.error(
+        `[finance] recordCardSettlement: no card found for Increase card ${args.increaseCardId} (transaction ${args.increaseTransactionId})`,
+      );
+      return;
+    }
+
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) {
+      console.error(
+        `[finance] recordCardSettlement: card ${card._id}'s fund ${card.fundId} not found`,
+      );
+      return;
+    }
+
+    // Defense-in-depth, mirroring the Stripe account cross-checks above: a
+    // transaction's account_id must match the fund's OWN Increase Account
+    // before anything is credited/debited — a mismatch (e.g. a stale/
+    // misrouted card record) is rejected and audited, never silently trusted.
+    if (fund.increaseAccountId !== args.accountId) {
+      console.error(
+        `[finance] recordCardSettlement: account mismatch on fund ${fund._id} — transaction.account_id=${args.accountId} expected=${fund.increaseAccountId ?? "none"}`,
+      );
+      await logFinanceAudit(ctx, {
+        communityId: fund.communityId,
+        fundId: fund._id,
+        action: "webhook.rejected_account_mismatch",
+        details: {
+          eventAccount: args.accountId,
+          expectedAccount: fund.increaseAccountId ?? null,
+          increaseTransactionId: args.increaseTransactionId,
+        },
+      });
+      return;
+    }
+
+    const existingExpense = await ctx.db
+      .query("expenses")
+      .withIndex("by_increaseTransactionId", (q) =>
+        q.eq("increaseTransactionId", args.increaseTransactionId),
+      )
+      .first();
+    if (existingExpense) {
+      return; // Already recorded — a redelivered webhook is a no-op.
+    }
+
+    const timestamp = now();
+    const expenseId = await ctx.db.insert("expenses", {
+      fundId: fund._id,
+      submitterId: card.holderUserId,
+      amountCents: args.amountCents,
+      kind: "card_charge",
+      description: args.merchantDescription,
+      status: "pending",
+      cardId: card._id,
+      increaseTransactionId: args.increaseTransactionId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    await postLedgerEntry(ctx, {
+      fundId: fund._id,
+      direction: "debit",
+      amountCents: args.amountCents,
+      kind: "card_capture",
+      idempotencyKey: `card-settlement:${args.increaseTransactionId}`,
+      increaseObjectId: args.increaseTransactionId,
+    });
+
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "expense.card_charge_recorded",
+      details: {
+        expenseId,
+        cardId: card._id,
+        amountCents: args.amountCents,
+        increaseTransactionId: args.increaseTransactionId,
       },
     });
   },
@@ -170,10 +283,48 @@ export async function handleIncreaseWebhookRequest(
         );
         break;
       }
+      // Card-settlement transaction sync (ADR-032 §3 Phase 3, cards.ts):
+      // turns a card swipe into a `card_charge` expense + ledger debit. Same
+      // "individual Event carries only an id" shape as entity.*, above.
+      case "transaction.created": {
+        const transaction = await getTransaction(event.associated_object_id);
+        if (transaction.source.category !== "card_settlement") {
+          // Not a card charge (e.g. an ACH/AccountTransfer settling) —
+          // nothing for cards.ts to do; log-and-ignore rather than error,
+          // since transaction.created fires for every transaction kind.
+          console.log(
+            `[IncreaseWebhook] Ignoring transaction.created (category=${transaction.source.category})`,
+          );
+          break;
+        }
+        const cardSettlement = transaction.source.card_settlement;
+        if (!cardSettlement) {
+          console.error(
+            `[IncreaseWebhook] transaction.created: category=card_settlement but no card_settlement details on transaction ${transaction.id}`,
+          );
+          break;
+        }
+        await ctx.runMutation(
+          internal.functions.finance.webhooks.recordCardSettlement,
+          {
+            increaseCardId: cardSettlement.card_id,
+            increaseTransactionId: transaction.id,
+            accountId: transaction.account_id,
+            // transaction.amount is signed cents (negative = debit); a card
+            // settlement is always a debit, so store the absolute value —
+            // ledgerEntries/expenses encode direction via `kind`/`direction`,
+            // never via a negative amountCents (postLedgerEntry enforces
+            // amountCents > 0).
+            amountCents: Math.abs(transaction.amount),
+            merchantDescription:
+              cardSettlement.merchant_name ?? transaction.description,
+          },
+        );
+        break;
+      }
       // Every other category (account.*, account_transfer.*, ach_transfer.*,
-      // card.*, transaction.created, ...) belongs to later ADR-032 phases
-      // (allocation job, cards, reimbursements) — explicitly ignored, not
-      // silently dropped, until those phases wire their own dispatch here.
+      // card.*, ...) belongs to later ADR-032 phases — explicitly ignored,
+      // not silently dropped, until those phases wire their own dispatch here.
       default:
         console.log(
           `[IncreaseWebhook] Ignoring event category: ${event.category}`,
