@@ -33,10 +33,21 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 interface InboxGroupCollapseState {
   /** Group IDs the user has explicitly collapsed. Absence = expanded (default). */
   collapsedGroupIds: Record<string, true>;
+  /**
+   * Whether the persisted state has finished rehydrating from AsyncStorage.
+   * Rehydration is async, so on first render this store still holds its
+   * default `collapsedGroupIds: {}` — a previously-collapsed group would
+   * briefly render expanded, then snap shut once the saved copy lands.
+   * Mirrors `eventModeStore.ts`'s `hasHydrated`. Not persisted — it describes
+   * this session's hydration, not user state.
+   */
+  hasHydrated: boolean;
   /** Flip one group's collapsed state. */
   toggleCollapsed: (groupId: string) => void;
   /** Whether a group is currently collapsed (`false` when never toggled). */
   isCollapsed: (groupId: string) => boolean;
+  /** Mark rehydration complete (called once from `onRehydrateStorage`). */
+  setHasHydrated: (value: boolean) => void;
   /** Wipe everything (logout / community-switch cleanup). */
   clearAll: () => void;
 }
@@ -45,6 +56,7 @@ export const useInboxGroupCollapse = create<InboxGroupCollapseState>()(
   persist(
     (set, get) => ({
       collapsedGroupIds: {},
+      hasHydrated: false,
 
       toggleCollapsed: (groupId) => {
         set((state) => {
@@ -60,12 +72,24 @@ export const useInboxGroupCollapse = create<InboxGroupCollapseState>()(
 
       isCollapsed: (groupId) => Boolean(get().collapsedGroupIds[groupId]),
 
+      setHasHydrated: (value: boolean) => {
+        set({ hasHydrated: value });
+      },
+
       clearAll: () => set({ collapsedGroupIds: {} }),
     }),
     {
       name: "inbox-group-collapse",
       storage: createJSONStorage(() => AsyncStorage),
       partialize: (state) => ({ collapsedGroupIds: state.collapsedGroupIds }),
+      // Runs after every rehydration attempt — the normal path, the empty
+      // first-launch case, AND the error path (a failed AsyncStorage read /
+      // deserialize passes `state === undefined`). Flip the flag
+      // unconditionally via the store handle so a failed read degrades to
+      // the default (expanded) rather than leaving consumers gated forever.
+      onRehydrateStorage: () => () => {
+        useInboxGroupCollapse.setState({ hasHydrated: true });
+      },
     },
   ),
 );

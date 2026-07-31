@@ -74,4 +74,32 @@ describe("inboxGroupCollapse", () => {
       true,
     );
   });
+
+  describe("hasHydrated", () => {
+    // A "starts false before rehydration resolves" test isn't reliably
+    // expressible here: the official AsyncStorage jest mock resolves on a
+    // microtask, same as `jest.isolateModulesAsync`'s own await, so by the
+    // time control returns to the test hydration has already settled either
+    // way. On a real device the AsyncStorage read crosses the native bridge
+    // and is genuinely slower than first render — that's the flash this flag
+    // exists to prevent (see `eventModeStore.ts`, which has the same gap in
+    // its own test suite for the same reason).
+
+    it("flips true once rehydration resolves, even with no saved state", async () => {
+      let freshModule: typeof import("../inboxGroupCollapse");
+      await jest.isolateModulesAsync(async () => {
+        freshModule = require("../inboxGroupCollapse");
+        await freshModule.useInboxGroupCollapse.persist.rehydrate();
+      });
+
+      expect(freshModule!.useInboxGroupCollapse.getState().hasHydrated).toBe(true);
+    });
+
+    it("setHasHydrated sets the flag directly", () => {
+      useInboxGroupCollapse.getState().setHasHydrated(false);
+      expect(useInboxGroupCollapse.getState().hasHydrated).toBe(false);
+      useInboxGroupCollapse.getState().setHasHydrated(true);
+      expect(useInboxGroupCollapse.getState().hasHydrated).toBe(true);
+    });
+  });
 });

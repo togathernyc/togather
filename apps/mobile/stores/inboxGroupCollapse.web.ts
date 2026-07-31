@@ -17,8 +17,16 @@ import { useSyncExternalStore } from 'react';
 
 interface InboxGroupCollapseState {
   collapsedGroupIds: Record<string, true>;
+  /**
+   * Always `true` on web — persisted state loads synchronously from
+   * localStorage (no async rehydration), so there's nothing to wait for.
+   * Mirrors the native store's flag for API parity.
+   */
+  hasHydrated: boolean;
   toggleCollapsed: (groupId: string) => void;
   isCollapsed: (groupId: string) => boolean;
+  /** No-op on web (state is already hydrated); present for API parity. */
+  setHasHydrated: (value: boolean) => void;
   clearAll: () => void;
 }
 
@@ -62,6 +70,7 @@ function emit(): void {
 
 const state: InboxGroupCollapseState = {
   collapsedGroupIds: loadPersisted(),
+  hasHydrated: true,
   toggleCollapsed: (groupId) => {
     const next = { ...state.collapsedGroupIds };
     if (next[groupId]) {
@@ -75,6 +84,9 @@ const state: InboxGroupCollapseState = {
     emit();
   },
   isCollapsed: (groupId) => Boolean(state.collapsedGroupIds[groupId]),
+  setHasHydrated: () => {
+    // No-op: web hydrates synchronously in loadPersisted().
+  },
   clearAll: () => {
     state.collapsedGroupIds = {};
     snapshot = makeSnapshot();
@@ -86,8 +98,10 @@ const state: InboxGroupCollapseState = {
 function makeSnapshot(): InboxGroupCollapseState {
   return {
     collapsedGroupIds: state.collapsedGroupIds,
+    hasHydrated: state.hasHydrated,
     toggleCollapsed: state.toggleCollapsed,
     isCollapsed: state.isCollapsed,
+    setHasHydrated: state.setHasHydrated,
     clearAll: state.clearAll,
   };
 }
