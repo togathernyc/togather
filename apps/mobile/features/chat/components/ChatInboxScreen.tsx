@@ -332,6 +332,10 @@ export function ChatInboxScreen({
   // `isCollapsed` getter) so this component re-renders when it changes.
   const collapsedGroupIds = useInboxGroupCollapse((s) => s.collapsedGroupIds);
   const toggleGroupCollapsed = useInboxGroupCollapse((s) => s.toggleCollapsed);
+  // Collapse state rehydrates from AsyncStorage asynchronously, so on the first
+  // frames every group looks expanded. Without this gate a collapsed group
+  // renders open and then snaps shut — which reads as "it didn't remember".
+  const collapseHydrated = useInboxGroupCollapse((s) => s.hasHydrated);
   const { getInboxChannels, setInboxChannels } = useInboxCache();
   // Device network state. Drives the loading strategy: online we hold for a
   // complete first paint; with no network we fall back to cached channels.
@@ -1598,19 +1602,20 @@ export function ChatInboxScreen({
   }
 
   // Hold the loading state until the whole first paint is ready: the persisted
-  // serving-mode flag has hydrated (so we know which inbox to build), the channel
-  // backbone has loaded, and every active auxiliary subscription (resources, DMs,
-  // requests, notifications, serving extras) has resolved once. Waiting for all of
+  // serving-mode flag and group-collapse state have hydrated (so we know which
+  // inbox to build and which groups are collapsed), the channel backbone has
+  // loaded, and every active auxiliary subscription (resources, DMs, requests,
+  // notifications, serving extras) has resolved once. Waiting for all of
   // them means the inbox appears complete instead of having rows, resources, and
   // DMs pop in and re-sort piecemeal.
   const firstPaintComplete =
-    eventModeHydrated && !isLoading && !auxDataLoading;
+    eventModeHydrated && collapseHydrated && !isLoading && !auxDataLoading;
   // Offline is the one exception: the live queries can never resolve, so rather
   // than spin forever we fall back to whatever channels are cached (once the
   // serving-mode flag has hydrated, so the cache key is correct). Web always
   // reports a network, so it always waits for the complete paint.
   const offlineStaleFallback =
-    !isNetworkAvailable && eventModeHydrated && isStale;
+    !isNetworkAvailable && eventModeHydrated && collapseHydrated && isStale;
   const showLoadingSpinner = !firstPaintComplete && !offlineStaleFallback;
 
   if (showLoadingSpinner) {
