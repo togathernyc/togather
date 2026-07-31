@@ -2388,7 +2388,7 @@ function AuthorRoleAndSegments({
                 style={[
                   styles.pillText,
                   wa && waStyles.pillText,
-                  { color: active ? "#fff" : colors.textSecondary },
+                  { color: active ? colors.onAccent : colors.textSecondary },
                 ]}
               >
                 {role.teamName} · {role.roleName}
@@ -2629,7 +2629,7 @@ function AuthorTaskRow({
                 <Text style={{ color: colors.textSecondary }}>Cancel</Text>
               </Pressable>
               <Pressable onPress={onDelete} style={styles.textButton}>
-                <Text style={{ color: colors.error ?? "#c00" }}>Delete</Text>
+                <Text style={{ color: colors.error }}>Delete</Text>
               </Pressable>
               <Pressable
                 onPress={() => onSave(editTitle.trim() || title)}

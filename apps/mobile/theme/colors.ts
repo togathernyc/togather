@@ -92,6 +92,12 @@ export type ThemeColors = {
   /** §1 `mention.blue` — sender names, @mentions, and read receipt ticks.
    *  Fixed neutral color, never brand-mapped (§1.3). */
   mentionBlue: string;
+
+  /** Text/icons drawn ON a fill painted with the community's `primaryColor`
+   *  (selected pills, filled chips — see `useCommunityTheme`). The fill is the
+   *  community's saturated brand color in BOTH themes, so unlike
+   *  `textInverse`/`buttonPrimaryText` this must not flip with light/dark. */
+  onAccent: string;
 };
 
 export const lightColors: ThemeColors = {
@@ -158,6 +164,8 @@ export const lightColors: ThemeColors = {
   chatWallpaper: '#ECE5DD',
   bubbleIncoming: '#FFFFFF',
   mentionBlue: '#0068C9',
+
+  onAccent: '#ffffff',
 };
 
 export const darkColors: ThemeColors = {
@@ -224,6 +232,8 @@ export const darkColors: ThemeColors = {
   chatWallpaper: '#0B141A',
   bubbleIncoming: '#1F2C34',
   mentionBlue: '#53BDEB',
+
+  onAccent: '#ffffff',
 };
 
 /**
