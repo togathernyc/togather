@@ -759,6 +759,9 @@ describe("submitExpense", () => {
     const t = convexTest(schema, modules);
     const { fundId, memberUserId } = await seedExpenseFixture(t);
 
+    // Still a refusal — but the message is the "no provenance at all" one,
+    // which is also what an upload picked before this check shipped gets, and
+    // it tells the member the thing that actually fixes it.
     await expect(
       t.mutation(api.functions.finance.expenses.submitExpense, {
         token: await tokenFor(memberUserId),
@@ -768,7 +771,7 @@ describe("submitExpense", () => {
         description: "Made-up key",
         receiptKey: "r2:uploads/totally-invented.jpg",
       }),
-    ).rejects.toThrow(/wasn't uploaded from this account/i);
+    ).rejects.toThrow(/re-attach the photo/i);
   });
 
   test("accepts the submitter's own uploaded receipt", async () => {

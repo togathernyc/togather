@@ -8,7 +8,13 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query, action, internalMutation } from "../_generated/server";
+import {
+  mutation,
+  query,
+  action,
+  internalMutation,
+  type ActionCtx,
+} from "../_generated/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { requireAuth, requireAuthFromTokenAction } from "../lib/auth";
@@ -287,6 +293,38 @@ export const recordUploadGrant = internalMutation({
 });
 
 /**
+ * Write the provenance row WITHOUT letting it break the upload.
+ *
+ * The grant is evidence for one finance-only check (`submitExpense`), but the
+ * presign actions it hangs off serve every upload in the product — chat
+ * images, profile photos, group covers, event posters. Awaiting it bare made
+ * a write conflict on `uploadGrants` able to stop the entire app from
+ * uploading anything, which is a far worse failure than the one it prevents.
+ *
+ * Safe to swallow because the security property is enforced at the READ:
+ * `submitExpense` refuses a receipt with no grant, so a lost row costs one
+ * user one re-attach, never a false accept.
+ */
+export async function recordUploadGrantBestEffort(
+  ctx: { runMutation: ActionCtx["runMutation"] },
+  grant: {
+    storagePath: string;
+    userId: Id<"users">;
+    folder: string;
+    contentType: string;
+  },
+): Promise<void> {
+  try {
+    await ctx.runMutation(internal.functions.uploads.recordUploadGrant, grant);
+  } catch (error) {
+    console.error(
+      `[uploads] could not record the upload grant for ${grant.storagePath} — the upload proceeds, but a receipt using this key will be refused`,
+      error,
+    );
+  }
+}
+
+/**
  * Get presigned URL for R2 upload (action - can call external APIs)
  *
  * Use this for all new image uploads. R2 is S3-compatible with:
@@ -377,8 +415,9 @@ export const getR2UploadUrl = action({
 
     const storagePath = `r2:${key}`; // This is what gets stored in the database
     // Record provenance BEFORE returning the URL, so the key is attributable
-    // the instant the client can start using it (see recordUploadGrant).
-    await ctx.runMutation(internal.functions.uploads.recordUploadGrant, {
+    // the instant the client can start using it — but never at the cost of
+    // the upload itself (see recordUploadGrantBestEffort).
+    await recordUploadGrantBestEffort(ctx, {
       storagePath,
       userId: uploaderId,
       folder: args.folder,
@@ -488,7 +527,7 @@ export const getR2FileUploadUrl = action({
     });
 
     const storagePath = `r2:${key}`;
-    await ctx.runMutation(internal.functions.uploads.recordUploadGrant, {
+    await recordUploadGrantBestEffort(ctx, {
       storagePath,
       userId: uploaderId,
       folder: args.folder,
