@@ -53,6 +53,7 @@ import { StackedMemberAvatars } from "./StackedMemberAvatars";
 import { EnableNotificationsBanner } from "@features/notifications/components/EnableNotificationsBanner";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { useServingPlans } from "@features/serving/hooks/useServingPlans";
+import { shouldAutoExitServing } from "@features/serving/utils/servingAutoExit";
 import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   WaAvatar,
@@ -363,6 +364,8 @@ export function ChatInboxScreen({
   // then stripping it down to the serving-mode view a beat later.
   const eventModeHydrated = useEventModeStore((s) => s.hasHydrated);
   const enterServingMode = useEventModeStore((s) => s.enter);
+  const exitServingMode = useEventModeStore((s) => s.exit);
+  const previewPlanId = useEventModeStore((s) => s.previewPlanId);
   const autoEnterBlocked = useEventModeStore((s) => s.autoEnterBlocked);
   const eventTasksEnabled =
     (community?.churchFeatures as { eventTasksEnabled?: boolean } | undefined)
@@ -527,6 +530,35 @@ export function ChatInboxScreen({
       enterServingMode();
     }
   }, [servingEligibility, isServingMode, enterServingMode, autoEnterBlocked]);
+
+  // Serving mode auto-exit. Nothing but the Exit tab ever cleared the persisted
+  // serving flag, and an empty `servingPlanIds` now means "empty serving inbox"
+  // rather than "no filter" — so once the day's plans age out, a volunteer who
+  // never tapped Exit would be stranded on an empty Chats list, Runsheet and
+  // Tasks. `eligiblePlanIds` already folds in the offline cache, so this only
+  // fires on a genuinely resolved, genuinely empty result (see
+  // `shouldAutoExitServing`). Uses the same `exit()` the Exit tab does, so it
+  // also sets `autoEnterBlocked` for the session — harmless here, since with
+  // zero eligible plans the backend isn't asking for auto-entry anyway, and the
+  // manual chip still appears the moment a plan becomes eligible again.
+  useEffect(() => {
+    if (
+      shouldAutoExitServing({
+        inServingMode,
+        previewPlanId,
+        eligibilityResolved: servingEligibility !== undefined,
+        planCount: eligiblePlanIds.length,
+      })
+    ) {
+      exitServingMode();
+    }
+  }, [
+    inServingMode,
+    previewPlanId,
+    servingEligibility,
+    eligiblePlanIds,
+    exitServingMode,
+  ]);
 
   // Show the manual re-entry chip when eligible but not currently serving.
   const showServingChip = !!servingEligibility?.eligible && !isServingMode;
