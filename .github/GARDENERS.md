@@ -21,9 +21,11 @@ into a hardened GitHub Actions workflow.
 
 > [!IMPORTANT]
 > **SHADOW MODE.** Every gardener has read-only repository permissions and can
-> only produce **issues and comments**. None can open a pull request, push a
-> branch, or edit a file. Evaluate the output for two weeks before granting any
-> write scope — checklist at the bottom.
+> only produce **issues, comments, and — for Cost Report alone — an in-place
+> rewrite of its own standing issue body** (`update-issue`, constrained to
+> `body` and to titles matching `[gardeners] `). None can open a pull request,
+> push a branch, or edit a file. Evaluate the output for two weeks before
+> granting any write scope — checklist at the bottom.
 
 This is a plain document, not a workflow. Editing it changes nothing. It lives in
 `.github/` rather than `.github/workflows/` on purpose: gh-aw's tooling treats
@@ -86,6 +88,52 @@ Two things about this are worth knowing before you change it:
   may redline it locally — that is a linter false positive, not a failure.
   (`actionlint` 1.7.12, which `gh aw lint` bundles, accepts it.)
 
+### Reading the firewall config
+
+Every gardener runs behind the AWF egress firewall. What is worth understanding
+before you touch `network:` — because the obvious reading is backwards:
+
+> [!WARNING]
+> **`network.allowed` is ADDITIVE over the engine's baseline. It cannot narrow
+> anything.** Listing ecosystem identifiers only ever *widens* egress. An earlier
+> revision of these gardeners used `allowed: [github, node, threat-detection]`
+> believing it was a restriction; it compiled ci-doctor to **88** domains against
+> **55** for plain `defaults` — a 60% increase, including `telemetry.vercel.com`,
+> `storage.googleapis.com`, and four `*.githubcopilot.com` hosts. `registry.npmjs.org`
+> was already in the baseline, so `node` bought nothing.
+
+The only true narrowing lever is **`network.blocked`**, which emits a separate
+`blockDomains` list that takes precedence at request time. Note it does *not*
+shrink `allowDomains` in the lock file — the effective set is
+`allowDomains − blockDomains`, so counting one list alone will mislead you.
+
+Measured at the current head:
+
+| Gardener | `allowDomains` | blocked out | **effective** |
+|---|---:|---:|---:|
+| CI Doctor | 55 | 5 | **50** |
+| Large Files | 43 | 0 | **43** |
+| Docs Drift | 43 | 0 | **43** |
+| Cost Report | 43 | 0 | **43** |
+
+The codex baseline is smaller than claude's, which is why the three Ollama
+gardeners sit lower despite adding `ollama.com`. `blocked` removes nothing there
+because those ecosystems are absent from the codex baseline to begin with; it is
+kept for consistency and to stay correct if the baseline changes.
+
+**The baseline itself is irreducible in this gh-aw version** short of blocking
+individual infrastructure domains by name — OCSP/CRL endpoints, Ubuntu archives,
+certificate and schema hosts. Doing that risks breaking TLS validation or
+container start-up in ways that cannot be verified without a live run, so it has
+not been attempted. Reproduce any of the above with:
+
+```bash
+python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
+  g=lambda k: set(re.findall(r'\\\\?\"([^\"\\\\]+)\\\\?\"', re.search(k+r'\\\\?\":\[(.*?)\]', s).group(1))); \
+  a,b=g('allowDomains'),g('blockDomains'); print(len(a), len(a&b), len(a-b))" \
+  .github/workflows/gardener-ci-doctor.lock.yml
+```
+
 ### Reading the cost caps
 
 `gh-aw` meters agent spend in **AI Credits (AIC)**. **1 AIC = $0.01 USD.**
@@ -102,6 +150,27 @@ Two things about this are worth knowing before you change it:
 The four daily caps sum to 1000 AIC = **$10/day repo-wide**. The guardrail is
 enforced per workflow per triggering user, not globally — that $10 is an
 arithmetic budget across the four, not one number GitHub enforces.
+
+> [!NOTE]
+> **"200 AIC" is not the same ceiling for each gardener.** It is a dollar
+> budget, so at each model's declared price it buys wildly different amounts of
+> work:
+>
+> | Gardener | Model | ~Input tokens per 200 AIC |
+> |---|---|---:|
+> | Large Files | `deepseek-v4-flash` ($0.14/1M) | **~14M** |
+> | Docs Drift, Cost Report | `glm-5.2` ($1.40/1M) | **~1.4M** |
+> | CI Doctor | claude (default) | **~a few hundred thousand** |
+>
+> (Input-only, for scale; output costs 2–3× more, so real runs land lower.)
+>
+> The practical consequence: on the three Ollama gardeners the AIC cap is so
+> loose it will almost never be what stops a run. **`max-turns: 30` and
+> `timeout-minutes: 15` are the real per-run bounds there** — the cap is a
+> backstop against a pathological loop, not a working budget. On CI Doctor the
+> cap is genuinely close enough to bind. Tune the turns and the timeout if you
+> want to change how much work an Ollama gardener does; tuning its AIC will
+> mostly do nothing.
 
 #### The dollar figures mean two different things
 
@@ -140,6 +209,54 @@ Since we compile with `--no-models-dev-lookup`, that declaration is not a
 fallback any more; it is **the** pricing. If you add an Ollama-backed gardener
 and forget it, the proxy rejects every request rather than running unmetered —
 loud, and in the safe direction.
+
+---
+
+## Where your code goes
+
+Running these agents sends repository content to third-party inference
+providers. That is an ordinary decision and it was made deliberately — the
+per-gardener model split below is the repo owner's choice, on his own Ollama
+plan — but it is his decision to make, and you should know you are making it
+before you set `GARDENERS_ENABLED`.
+
+| Gardener | Sends | To | Under |
+|---|---|---|---|
+| **Large Files** | The full text of the largest source file it finds, plus a listing of every tracked source path | `ollama.com` | the owner's Ollama Cloud account |
+| **Docs Drift** | Up to **8 days of merged-commit diffs**, plus the docs and onboarding-guide files it checks them against | `ollama.com` | the owner's Ollama Cloud account |
+| **Cost Report** | Workflow run metadata and token-usage figures — no source | `ollama.com` | the owner's Ollama Cloud account |
+| **CI Doctor** | **CI logs** from failed runs, which routinely quote source, file paths, and test output | `api.anthropic.com` | the owner's Anthropic API key |
+
+This repository is public (AGPL-3.0), so none of this is confidential
+disclosure. It would be if the setup were copied to a private repo — which is
+exactly the situation to re-read this table in.
+
+### What the providers say they do with it
+
+Both published policies are favourable, and both are quoted rather than
+paraphrased so you can check them:
+
+- **Ollama** ([privacy policy](https://ollama.com/privacy)) — *"When using
+  cloud-hosted models, we process your prompts and responses transiently to
+  provide the service and never train on it."* Elsewhere: content *"is not stored
+  beyond the time required to fulfill the request"*, and *"We do not use your
+  inputs or outputs to train any AI models."*
+- **Anthropic** ([privacy centre](https://privacy.anthropic.com/en/articles/7996868-is-my-data-used-for-model-training))
+  — *"By default, we will not use your inputs or outputs from our commercial
+  products"* to train models.
+
+Policies change and neither is a contract you negotiated. If that matters for
+your use, read the current versions rather than trusting this snapshot.
+
+### Sending nothing to Ollama
+
+One line per gardener puts it back on Claude only — replace the `engine:` block
+with `engine: claude` and drop `model:` / `models:` / `max-turn-cache-misses:`
+and the `ollama.com` entry in `network.allowed`. Full steps in
+[Move a gardener back onto Claude](#move-a-gardener-back-onto-claude).
+
+To send nothing to *any* third party, do not set `GARDENERS_ENABLED`. There is no
+configuration in which these agents do useful work without an external model.
 
 ---
 
@@ -310,10 +427,12 @@ models:
 
 network:
   allowed:
-    - github
-    - node
-    - threat-detection
+    - defaults
     - "ollama.com"              # REQUIRED — the firewall blocks it otherwise
+  blocked:
+    - python
+    - playwright
+    - containers
 
 max-turn-cache-misses: 40       # Ollama has no prompt caching; default 5 is too low
 ```
@@ -322,6 +441,12 @@ gh-aw reads `OPENAI_BASE_URL` at compile time, extracts the hostname, and points
 the AWF proxy at it (`"targets":{"openai":{"host":"ollama.com"}}` in the lock
 file). **The host must also appear in `network.allowed`** or every request is
 firewalled.
+
+Also pin `CODEX_API_KEY` to the same secret. Left alone, gh-aw wires
+`CODEX_API_KEY: ${{ secrets.CODEX_API_KEY || secrets.OPENAI_API_KEY }}` — so the
+day someone adds an unrelated `OPENAI_API_KEY` repo secret, it would be handed to
+a CLI whose OpenAI host is `ollama.com`. Naming it explicitly removes the
+fallback.
 
 Current Ollama Cloud models worth considering — all support tool calling:
 `glm-5.2` (976k ctx), `deepseek-v4-flash` (1M, cheapest), `kimi-k3` (1M),
@@ -372,7 +497,7 @@ secrets can be deleted.
 
 | Secret | Used by | Notes |
 |---|---|---|
-| `OLLAMA_API_KEY` | Large Files, Docs Drift, Cost Report | From ollama.com. Passed as `OPENAI_API_KEY` to the codex engine. |
+| `OLLAMA_API_KEY` | Large Files, Docs Drift, Cost Report | From ollama.com. Passed to the codex engine as **both** `OPENAI_API_KEY` and `CODEX_API_KEY`, pinned explicitly — see the warning below. |
 | `ANTHROPIC_API_KEY` | CI Doctor | Set a **small, capped budget** on this key in the Anthropic console — a second line of defence behind the AIC caps. |
 
 Both are plain repository secrets:
@@ -381,6 +506,19 @@ Both are plain repository secrets:
 gh secret set OLLAMA_API_KEY
 gh secret set ANTHROPIC_API_KEY
 ```
+
+> [!WARNING]
+> **Do not add an `OPENAI_API_KEY` repository secret expecting it to be ignored.**
+> The codex engine's default wiring is
+> `CODEX_API_KEY: ${{ secrets.CODEX_API_KEY || secrets.OPENAI_API_KEY }}` — an
+> undeclared fallback that would quietly hand an unrelated OpenAI key to a CLI
+> whose OpenAI host is `ollama.com`, i.e. send your OpenAI credential to Ollama.
+>
+> All three Ollama gardeners pin `CODEX_API_KEY` explicitly in `engine.env`,
+> which removes the fallback — verify with
+> `grep 'CODEX_API_KEY:' .github/workflows/gardener-large-files.lock.yml`; every
+> occurrence should read `secrets.OLLAMA_API_KEY` and none should contain `||`.
+> **If you add a new codex-based gardener, pin it too.**
 
 > [!NOTE]
 > Neither flows through the 1Password → GitHub → Convex pipeline in
@@ -497,8 +635,9 @@ Regenerate all of them with `gh aw compile --no-models-dev-lookup`.
 
 ## Guardrails these agents are told to respect
 
-Two repo-specific rules are written into every gardener's prompt, because getting
-them wrong is expensive:
+Both of these rules are now written into all four gardeners' prompts — verify
+with `grep -c 'check-native-instance' .github/workflows/gardener-*.md` — because
+getting them wrong is expensive:
 
 1. **No dependency or lockfile changes, ever.** A `pnpm install` re-resolution in
    this repo can silently break native video and GIF rendering in the Expo app —

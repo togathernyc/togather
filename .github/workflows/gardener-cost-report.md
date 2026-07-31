@@ -35,6 +35,10 @@ engine:
   env:
     OPENAI_BASE_URL: "https://ollama.com/v1"
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+    # Pinned deliberately — see gardener-large-files.md. Removes gh-aw's
+    # `secrets.CODEX_API_KEY || secrets.OPENAI_API_KEY` fallback, so an unrelated
+    # OPENAI_API_KEY secret can never become this gardener's credential.
+    CODEX_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: glm-5.2
 
 # THE pricing the AWF proxy meters against, not a fallback — see
@@ -50,14 +54,15 @@ permissions:
   issues: read
   pull-requests: read
 
-# Narrowed from `defaults` (~50 domains). This gardener reads run metadata and
-# downloads usage artifacts from GitHub.
+# MEASURED — see gardener-large-files.md. `allowed:` only widens; 43 domains.
 network:
   allowed:
-    - github
-    - node
-    - threat-detection
-    - "ollama.com"
+    - defaults
+    - "ollama.com"      # the model endpoint — not in the baseline, must be named
+  blocked:
+    - python
+    - playwright
+    - containers
 
 timeout-minutes: 15
 
@@ -284,5 +289,12 @@ in `.github/GARDENERS.md`.*
   the product; the notes are a footnote.
 - **Do not propose changes to the gardeners' schedules or caps.** Surface the
   data; the owner decides. If something looks wrong, say what you observed.
+- **Never propose a dependency or lockfile change.** Adding, removing, or
+  re-resolving a dependency in this repo can silently break native rendering in
+  the Expo app in ways CI cannot detect (see `CLAUDE.md` → "JS Changes Can Break
+  Native Rendering"). Dependency and lockfile changes are human-only. Nothing in
+  a cost report should ever require one.
+- **Never suggest weakening a CI guard.** `check-react-consistency` and
+  `check-native-instance` exist because those bugs reached production twice.
 
 Begin.

@@ -40,6 +40,12 @@ engine:
   env:
     OPENAI_BASE_URL: "https://ollama.com/v1"
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+    # Pinned deliberately. gh-aw otherwise wires
+    # `CODEX_API_KEY: ${{ secrets.CODEX_API_KEY || secrets.OPENAI_API_KEY }}`,
+    # so the day anyone adds an unrelated OPENAI_API_KEY repo secret it would be
+    # handed to a CLI whose OpenAI host is ollama.com. Naming it here removes the
+    # fallback: these gardeners use the Ollama key or nothing.
+    CODEX_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: deepseek-v4-flash
 
 # THE pricing the AWF proxy meters against, not a fallback: we compile with
@@ -59,12 +65,17 @@ permissions:
 # Narrowed from `defaults` (~50 domains incl. pypi, ubuntu archives, playwright,
 # sentry). The firewall is the backstop behind prompt injection; this gardener
 # reads source files and needs GitHub plus its model endpoint, nothing else.
+# MEASURED: `allowed:` is ADDITIVE over the engine baseline and never shrinks it,
+# so listing ecosystems only widens egress. Was [github, node, threat-detection,
+# ollama.com] at 50 domains; `defaults` + the model host compiles to 43.
 network:
   allowed:
-    - github            # api.github.com, github.com, *.githubusercontent.com
-    - node              # registry.npmjs.org — the engine CLI is installed via npm
-    - threat-detection
-    - "ollama.com"      # the model endpoint
+    - defaults
+    - "ollama.com"      # the model endpoint — not in the baseline, must be named
+  blocked:
+    - python
+    - playwright
+    - containers
 
 timeout-minutes: 15
 
@@ -228,6 +239,9 @@ See `.github/GARDENERS.md`.*
   ways CI cannot detect (see `CLAUDE.md` → "JS Changes Can Break Native
   Rendering"). Dependency and lockfile changes are human-only. If the only way to
   shrink a file would involve a new package, say so and file nothing.
+- **Never suggest weakening a CI guard.** `check-react-consistency` and
+  `check-native-instance` exist because those bugs reached production twice. A
+  refactor that would require skipping either is not a refactor worth filing.
 - **Do not propose splitting a file that is long for a good reason** — a single
   exhaustive switch, a schema definition, a generated-adjacent constants table.
   If length is inherent, skip it and move to the next candidate; if the top three

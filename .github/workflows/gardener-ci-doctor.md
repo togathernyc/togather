@@ -47,14 +47,18 @@ permissions:
   issues: read
   pull-requests: read
 
-# Narrowed from `defaults` (~50 domains). This matters most here: ci-doctor is
-# the one gardener that ingests untrusted text (CI logs), so the firewall is its
-# backstop. api.anthropic.com is added automatically by the claude engine.
+# MEASURED, not aspirational: `allowed:` is ADDITIVE over the engine baseline and
+# can never shrink it, so naming ecosystems here only widens egress. This was
+# previously [github, node, threat-detection] and compiled to 88 domains — worse
+# than plain `defaults` (55), and npm was already in the baseline anyway.
+# `blocked:` is the only real narrowing lever; it removes 5. Effective: 50.
 network:
   allowed:
-    - github
-    - node
-    - threat-detection
+    - defaults
+  blocked:
+    - python
+    - playwright
+    - containers
 
 timeout-minutes: 15
 

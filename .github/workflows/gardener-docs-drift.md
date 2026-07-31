@@ -35,6 +35,10 @@ engine:
   env:
     OPENAI_BASE_URL: "https://ollama.com/v1"
     OPENAI_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
+    # Pinned deliberately — see gardener-large-files.md. Removes gh-aw's
+    # `secrets.CODEX_API_KEY || secrets.OPENAI_API_KEY` fallback, so an unrelated
+    # OPENAI_API_KEY secret can never become this gardener's credential.
+    CODEX_API_KEY: "${{ secrets.OLLAMA_API_KEY }}"
 model: glm-5.2
 
 # THE pricing the AWF proxy meters against, not a fallback: we compile with
@@ -51,13 +55,15 @@ permissions:
   issues: read
   pull-requests: read
 
-# Narrowed from `defaults` (~50 domains). This gardener reads git history and docs.
+# MEASURED — see gardener-large-files.md. `allowed:` only widens; 43 domains.
 network:
   allowed:
-    - github
-    - node
-    - threat-detection
-    - "ollama.com"
+    - defaults
+    - "ollama.com"      # the model endpoint — not in the baseline, must be named
+  blocked:
+    - python
+    - playwright
+    - containers
 
 timeout-minutes: 15
 
@@ -211,6 +217,10 @@ See `.github/GARDENERS.md`.*
 - **Cap yourself at the ten most consequential findings.** A wall of nits gets
   ignored; rank by how likely the stale doc is to mislead someone.
 - **Never propose dependency or lockfile edits.** Those are human-only in this
-  repo (see `CLAUDE.md`).
+  repo (see `CLAUDE.md` → "JS Changes Can Break Native Rendering").
+- **Never suggest weakening a CI guard.** `check-react-consistency` and
+  `check-native-instance` exist because those bugs reached production twice. If a
+  doc describes one of them, a drift finding is "the doc is stale", never
+  "the guard should go".
 
 Begin.
