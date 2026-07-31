@@ -13,6 +13,7 @@ import { modules } from "../test.setup";
 import { api } from "../_generated/api";
 import { generateTokens } from "../lib/auth";
 import type { Id } from "../_generated/dataModel";
+import { drainScheduledFunctions } from "./helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -22,7 +23,19 @@ process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 // transaction was still open" — intermittently locally, consistently in CI.
 // Yielding to the microtask + timer queues between tests lets the harness
 // unwind before the next test starts.
+//
+// A non-leader `meetings.index.create`/`update` here also schedules
+// `notifyEventCreatedByMember` (and, on completion-status changes,
+// followup/community score recomputation) via runAfter(0, ...) — this file's
+// whole point is member-created events, so many tests hit that branch.
+// `activeHandle` is set by each test right after it creates its `t`, and
+// drained here on real timers (see helpers/drainScheduledFunctions.ts).
+let activeHandle: ReturnType<typeof convexTest> | null = null;
 afterEach(async () => {
+  if (activeHandle) {
+    await drainScheduledFunctions(activeHandle);
+    activeHandle = null;
+  }
   await new Promise((resolve) => setImmediate(resolve));
 });
 
@@ -167,6 +180,7 @@ const FUTURE = () => Date.now() + 24 * 60 * 60 * 1000;
 describe("meetings.create — member flow", () => {
   test("active member can create an event", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
@@ -183,6 +197,7 @@ describe("meetings.create — member flow", () => {
 
   test("non-member is rejected", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     await expect(
@@ -198,6 +213,7 @@ describe("meetings.create — member flow", () => {
 
   test("non-leader cannot attach seriesId", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const seriesId = await t.run(async (ctx) =>
@@ -224,6 +240,7 @@ describe("meetings.create — member flow", () => {
 
   test("second future event from same non-leader is capped", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     await t.mutation(api.functions.meetings.index.create, {
@@ -260,6 +277,7 @@ describe("meetings.create — member flow", () => {
     // still file a separate event for someone else as long as they don't
     // include themselves in the new event's hostUserIds.
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Member hosts their own future event (default hostUserIds = [creator]).
@@ -286,6 +304,7 @@ describe("meetings.create — member flow", () => {
     // The cap counts hostUserIds — if the new event includes the creator as
     // a host alongside someone else, it still counts.
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     await t.mutation(api.functions.meetings.index.create, {
@@ -310,6 +329,7 @@ describe("meetings.create — member flow", () => {
 
   test("leaders are unthrottled by the cap", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Two back-to-back creations by the leader should both succeed.
@@ -337,6 +357,7 @@ describe("meetings.create — member flow", () => {
 describe("meetings — CWE children + cover", () => {
   test("CWE child inherits parent coverImage on getByShortId when its own is empty", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const groupTypeId = await t.run(async (ctx) =>
@@ -386,6 +407,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("update on a CWE child with empty location succeeds — location is inherited", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Build a community-wide parent + a child meeting linked to it.
@@ -442,6 +464,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("CWE update writes coverImage to parent only, leaving leader overrides intact", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const groupTypeId = await t.run(async (ctx) =>
@@ -519,6 +542,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("createCommunityWideEvent does not stamp coverImage on children", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const groupTypeId = await t.run(async (ctx) =>
@@ -581,6 +605,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("coverImage: \"\" clears the cover (both meetings.update and communityWideEvents.update)", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Standalone meeting — leader clears their own cover.
@@ -641,6 +666,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("tbd accepts empty location + link", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const id = await t.mutation(api.functions.meetings.index.create, {
@@ -655,6 +681,7 @@ describe("meetings — CWE children + cover", () => {
 
   test("getByShortId surfaces the host list; legacy rows with no hosts show none", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Member-led: the create mutation defaults hostUserIds to [creator], so
@@ -724,6 +751,7 @@ describe("meetings — CWE children + cover", () => {
 describe("meetings.update/cancel — perms", () => {
   test("creator can update their own event; another member cannot", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
@@ -751,6 +779,7 @@ describe("meetings.update/cancel — perms", () => {
 
   test("creator cannot cascade series-wide update to siblings they don't lead", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const seriesId = await t.run(async (ctx) =>
@@ -797,6 +826,7 @@ describe("meetings.update/cancel — perms", () => {
 
   test("leader can apply series-wide cancel; bare host cannot", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const seriesId = await t.run(async (ctx) =>
@@ -841,6 +871,7 @@ describe("meetings.update/cancel — perms", () => {
 
   test("group leader and community admin can both cancel a member's event", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId1 = await t.mutation(api.functions.meetings.index.create, {
@@ -878,6 +909,7 @@ describe("meetings.update/cancel — perms", () => {
 describe("meetingReports", () => {
   test("createReport → leader listReportsForGroup → resolveReport", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
@@ -919,6 +951,7 @@ describe("meetingReports", () => {
 
   test("re-reporting a dismissed event reopens it as pending", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
@@ -968,6 +1001,7 @@ describe("meetingReports", () => {
 
   test("host cannot report their own event", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // `create` defaults hostUserIds to [creator], so the filer is seated
@@ -991,6 +1025,7 @@ describe("meetingReports", () => {
 
   test("filer cannot report a delegated event they filed (hostUserIds empty)", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     // Insert directly so hostUserIds stays empty (delegated/legacy state).
@@ -1021,6 +1056,7 @@ describe("meetingReports", () => {
 
   test("rejects invalid reason", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {
@@ -1048,6 +1084,7 @@ describe("meetingReports", () => {
 describe("leave community — future-meeting ownership", () => {
   test("creator leaving community transfers future meetings to primary admin", async () => {
     const t = convexTest(schema, modules);
+    activeHandle = t;
     const s = await seed(t);
 
     const meetingId = await t.mutation(api.functions.meetings.index.create, {

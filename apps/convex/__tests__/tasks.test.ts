@@ -1056,6 +1056,12 @@ describe("tasks functions", () => {
         content: "Can someone follow up with me this week?",
       },
     );
+    // submitTaskRequest posts the reach-out card via sendMessage, which
+    // schedules onMessageSent via runAfter(0, ...). Left running, the
+    // still-open transaction trips convex-test's guard on the next
+    // convexTest() call — possibly in an unrelated later test file, since
+    // global.Convex outlives this one.
+    await t.finishInProgressScheduledFunctions();
 
     const linkedTask = await t.run(async (ctx) => ctx.db.get(reachOutTaskId));
     expect(linkedTask?.sourceType).toBe("reach_out");

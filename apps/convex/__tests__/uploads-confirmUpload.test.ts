@@ -119,6 +119,11 @@ describe("confirmUpload — user profile photo", () => {
       entityId: userId,
       folder: "profiles",
     });
+    // A "user" entity confirmUpload schedules syncUserProfileToChannels via
+    // runAfter(0, ...). Left running, the still-open transaction trips
+    // convex-test's guard on the next convexTest() call — possibly in an
+    // unrelated later test file, since global.Convex outlives this one.
+    await t.finishInProgressScheduledFunctions();
 
     expect(result.success).toBe(true);
     expect(result.url).toBeDefined();

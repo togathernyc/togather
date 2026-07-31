@@ -19,6 +19,7 @@ import { api, internal } from "../_generated/api";
 import { modules } from "../test.setup";
 import type { Id } from "../_generated/dataModel";
 import { generateTokens } from "../lib/auth";
+import { drainScheduledFunctions } from "./helpers/drainScheduledFunctions";
 
 // Set up JWT secret for testing - must be at least 32 characters
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
@@ -292,6 +293,10 @@ describe("archived communities block access", () => {
       token: setup.outsiderToken,
       communityId: setup.communityId,
     });
+    // A new membership schedules 4 background syncs (PCO, clearstream,
+    // flodesk, placeholder-task linking) via runAfter(0, ...); drain them
+    // (see helpers/drainScheduledFunctions.ts for why).
+    await drainScheduledFunctions(t);
 
     const membership = await t.run(async (ctx) => {
       return await ctx.db
