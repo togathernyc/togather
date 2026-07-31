@@ -308,7 +308,12 @@ export function EventsList({
   return (
     <View style={styles.container}>
       <WaSectionLabel variant="header">Events</WaSectionLabel>
-      <View onLayout={handleLayout} style={styles.scrollViewContainer}>
+      {/* testID: the centering test measures this viewport to drive the scroll. */}
+      <View
+        testID="events-list-viewport"
+        onLayout={handleLayout}
+        style={styles.scrollViewContainer}
+      >
         <ScrollView
           ref={scrollViewRef}
           horizontal
