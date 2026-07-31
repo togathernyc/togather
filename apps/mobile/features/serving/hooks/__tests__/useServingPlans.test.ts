@@ -68,6 +68,27 @@ describe("useServingPlans", () => {
     expect(result.current.map((p) => p.planId)).toEqual([NEXT_MONTH.planId]);
   });
 
+  it("converges on normal serving mode when the previewed event's day arrives", () => {
+    // Regression: `getServingEligibility` moves a plan out of `upcomingPlans`
+    // and into `plans` 12h before it starts. Nothing else clears the persisted
+    // `previewPlanId` on that transition (the inbox's auto-enter effect
+    // short-circuits because the user is already in serving mode), so resolving
+    // the preview only out of `upcomingPlans` blanked the Inbox, Runsheet and
+    // Tasks on the morning the volunteer was actually serving.
+    useEventModeStore.setState({ previewPlanId: NEXT_WEEK.planId });
+    const transitioned = {
+      plans: [NEXT_WEEK],
+      upcomingPlans: [NEXT_MONTH],
+    };
+
+    const { result } = renderHook(() => useServingPlans(transitioned));
+
+    expect(result.current).toEqual([NEXT_WEEK]);
+    // ...and the stale preview id is cleared, so it stays converged.
+    expect(useEventModeStore.getState().previewPlanId).toBeNull();
+    expect(useEventModeStore.getState().isServingMode).toBe(true);
+  });
+
   it("returns nothing when the previewed plan is no longer offered", () => {
     useEventModeStore.setState({ previewPlanId: "plan_unassigned" });
     const { result } = renderHook(() => useServingPlans(ELIGIBILITY));
