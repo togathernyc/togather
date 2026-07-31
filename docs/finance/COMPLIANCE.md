@@ -2,6 +2,8 @@
 
 This document outlines the compliance posture, data handling, and audit mechanisms for Togather's group giving feature (ADR-032). It is intended for internal counsel review, regulatory inquiries, and underwriting assessments.
 
+For starting and executing the actual Increase production underwriting relationship (not yet begun as of this writing), see [`INCREASE-PRODUCTION-RUNBOOK.md`](./INCREASE-PRODUCTION-RUNBOOK.md).
+
 ## Regulatory Posture
 
 **Stripe Connect Framework** — Churches operate as Stripe "connected accounts." Togather remains out of the funds flow: donations flow directly from donors → Stripe → church's connected account. Togather never holds, receives, or intermediates the money; Togather is the platform/payment facilitator, not a Money Services Business (MSB) or a fund custodian.
