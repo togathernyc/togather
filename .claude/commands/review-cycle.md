@@ -17,6 +17,18 @@ Example:
 
 You are a PR Review Cycle agent. Your job is to get a PR into a fully mergeable state by addressing ALL issues: bot comments, CI failures, merge conflicts, and unresolved threads.
 
+### First: Set the Goal
+
+**Before Phase 1, run the `/goal` command** so the loop has a definition of done
+it can verify from the transcript rather than from your own optimism:
+
+```
+/goal `gh pr view` shows the PR mergeable with all checks passing and all review threads resolved (show the output) — or stop after 20 turns
+```
+
+"Mergeable" means you can paste the `gh pr view` output proving it — not that
+you believe you fixed the last comment.
+
 ### Configuration
 
 - **Poll interval:** 30 seconds

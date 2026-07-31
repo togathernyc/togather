@@ -16,3 +16,44 @@
 
 # Shared packages affect multiple apps
 /packages/ @togathernyc
+
+# ---------------------------------------------------------------------------
+# Human-only review paths
+#
+# CI cannot catch the failure modes here, so a green build is not evidence that
+# these changes are safe. They need a person to look.
+#
+# - Dependency graph (lockfile, mobile package.json, native-deps.json): a JS-only
+#   dependency change can silently re-key the Expo native module graph onto a
+#   second React/react-native instance, which blanks native video and GIF
+#   rendering on a real device while typecheck, tests, and the bundle all pass.
+#   See docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md.
+# - Auth: a regression locks people out or lets the wrong people in, and tests
+#   assert the code's behaviour rather than the policy it should encode.
+# - Billing / finance: moves real money. Wrong is expensive and hard to unwind.
+# - Migrations: run once against production data. There is no second attempt.
+#
+# NOTE: last matching pattern wins in CODEOWNERS, so these override the
+# defaults above. Enforcement additionally requires "Require review from Code
+# Owners" on the branch protection rule for main.
+# ---------------------------------------------------------------------------
+
+# Dependency graph / native safety (ADR-013)
+/pnpm-lock.yaml @lilseyi
+/apps/mobile/package.json @lilseyi
+/apps/mobile/native-deps.json @lilseyi
+
+# Auth
+/apps/convex/functions/auth/ @lilseyi
+
+# Billing, payments, and the money ledger
+/apps/convex/functions/billing.ts @lilseyi
+/apps/convex/functions/ee/billing.ts @lilseyi
+/apps/convex/functions/finance/ @lilseyi
+/apps/convex/lib/finance/ @lilseyi
+
+# Migrations - run once against production data
+# (migrations.ts is a sibling of migrations/, so the directory glob misses it)
+/apps/convex/migrations/ @lilseyi
+/apps/convex/functions/migrations/ @lilseyi
+/apps/convex/functions/migrations.ts @lilseyi

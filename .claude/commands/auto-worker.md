@@ -16,6 +16,21 @@ Or run a single task cycle manually:
 
 ---
 
+## FIRST: Set the Goal
+
+**Before Phase 0, run the `/goal` command.** The loop needs a definition of done
+it can check against the transcript, otherwise it keeps going on vibes.
+
+```
+/goal The current backlog task's PR is open, CI checks are green (show `gh pr checks` output), and the review agent's findings are addressed or explicitly deferred — or stop after 25 turns
+```
+
+State it in terms of evidence you can point at in the transcript — command
+output, a PR number, a screenshot path — not "the feature works". The turn cap
+is a floor, not a target: if the task is done in 5 turns, stop at 5.
+
+---
+
 ## CRITICAL: Orchestrator Pattern
 
 **YOU ARE AN ORCHESTRATOR, NOT A DOER.**
