@@ -48,4 +48,17 @@ describe("eventModeStore", () => {
     useEventModeStore.getState().enterPreview("plan_b");
     expect(useEventModeStore.getState().previewPlanId).toBe("plan_b");
   });
+
+  // Logout / community-switch cleanup (AuthProvider). On a shared device user
+  // B must not land in user A's serving state — and must still be allowed to
+  // auto-enter, which `exit()` would have blocked.
+  it("clearAll resets to defaults without blocking auto-enter", () => {
+    useEventModeStore.getState().enterPreview("plan_a");
+    useEventModeStore.getState().exit();
+    useEventModeStore.getState().clearAll();
+    const s = useEventModeStore.getState();
+    expect(s.isServingMode).toBe(false);
+    expect(s.previewPlanId).toBeNull();
+    expect(s.autoEnterBlocked).toBe(false);
+  });
 });

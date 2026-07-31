@@ -47,6 +47,12 @@ interface EventModeState {
   enterPreview: (planId: string) => void;
   /** Exit serving mode. */
   exit: () => void;
+  /**
+   * Wipe everything back to defaults (logout / community-switch cleanup).
+   * Unlike `exit`, this does NOT set `autoEnterBlocked`. Mirrors the native
+   * store.
+   */
+  clearAll: () => void;
 }
 
 const STORAGE_KEY = 'event-mode';
@@ -133,6 +139,14 @@ const state: EventModeState = {
     persist();
     emit();
   },
+  clearAll: () => {
+    state.isServingMode = false;
+    state.autoEnterBlocked = false;
+    state.previewPlanId = null;
+    snapshot = makeSnapshot();
+    persist();
+    emit();
+  },
 };
 
 function makeSnapshot(): EventModeState {
@@ -145,6 +159,7 @@ function makeSnapshot(): EventModeState {
     enter: state.enter,
     enterPreview: state.enterPreview,
     exit: state.exit,
+    clearAll: state.clearAll,
   };
 }
 

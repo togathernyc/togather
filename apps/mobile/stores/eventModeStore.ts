@@ -55,6 +55,12 @@ interface EventModeState {
   enterPreview: (planId: string) => void;
   /** Exit serving mode. */
   exit: () => void;
+  /**
+   * Wipe everything back to defaults (logout / community-switch cleanup).
+   * Unlike `exit`, this does NOT set `autoEnterBlocked` — the next user of a
+   * shared device must still be allowed to auto-enter serving mode.
+   */
+  clearAll: () => void;
 }
 
 export const useEventModeStore = create<EventModeState>()(
@@ -81,6 +87,14 @@ export const useEventModeStore = create<EventModeState>()(
         set({
           isServingMode: false,
           autoEnterBlocked: true,
+          previewPlanId: null,
+        });
+      },
+
+      clearAll: () => {
+        set({
+          isServingMode: false,
+          autoEnterBlocked: false,
           previewPlanId: null,
         });
       },
