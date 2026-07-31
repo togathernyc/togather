@@ -952,13 +952,18 @@ export function RosterGridScreen() {
     return out;
   }, [data, visibleRoles, visibleTeamIds, isolatedTeamId, openOnly]);
 
-  /** Members after team scope + search + open/available/needs-availability filters. */
-  const visibleMembers = useMemo(() => {
+  /**
+   * Members after search + open/available/needs-availability filters, but
+   * BEFORE team scope — so `visibleMembers` (below) and the "N hidden by
+   * team scope" notice can both derive from the same base list without
+   * duplicating this filter chain. Team scope is applied as a separate pass
+   * so the notice can count exactly the people scope alone removes.
+   */
+  const membersMatchingNonScopeFilters = useMemo(() => {
     if (!data) return [];
     const q = debouncedSearch.trim().toLowerCase();
     const eventIds = events.map((ev) => ev._id as string);
     return data.members.filter((m) => {
-      if (!memberInTeamScope(m.cells, visibleTeamIds, roleTeamMap)) return false;
       if (q && !m.userName.toLowerCase().includes(q)) return false;
       if (availableOnly && m.availableCount === 0) return false;
       if (needsAvailabilityOnly && !memberNeedsAvailability(m.cells, eventIds))
@@ -983,9 +988,29 @@ export function RosterGridScreen() {
     needsAvailabilityOnly,
     openOnly,
     filterMemberSet,
-    visibleTeamIds,
-    roleTeamMap,
   ]);
+
+  /** Members after team scope + search + open/available/needs-availability filters. */
+  const visibleMembers = useMemo(
+    () =>
+      membersMatchingNonScopeFilters.filter((m) =>
+        memberInTeamScope(m.cells, visibleTeamIds, roleTeamMap),
+      ),
+    [membersMatchingNonScopeFilters, visibleTeamIds, roleTeamMap],
+  );
+
+  /**
+   * How many people the current team scope alone is hiding from the People
+   * tab — everyone who matches every OTHER active filter but doesn't hold a
+   * role on an in-scope team (ADR-025's "opt-in scope" default, see
+   * `memberInTeamScope`). Never-assigned volunteers are the most common case
+   * (#688 review): the scoping is intentional, but it must not be silent, so
+   * this backs a visible "N hidden — show everyone" notice rather than
+   * changing the predicate itself.
+   */
+  const teamScopeHiddenCount = visibleTeamIds
+    ? membersMatchingNonScopeFilters.length - visibleMembers.length
+    : 0;
 
   /**
    * Open roles for an event, computed client-side (the "Place <name>" menu
@@ -1637,6 +1662,33 @@ export function RosterGridScreen() {
       <LegendItem icon="close" color={colors.destructive} label="Declined" colors={colors} />
       <LegendItem icon="add" color={colors.textTertiary} label="Open" colors={colors} open />
       <LegendItem icon="warning" color={colors.destructive} label="Double-booked" colors={colors} />
+    </View>
+  );
+
+  /**
+   * Quiet notice that the People tab is narrowed to the current team scope,
+   * with a one-tap way back to everyone — the escape hatch OpenRolesMenu
+   * already uses ("Show roles on every team"), so the pattern feels
+   * consistent across the screen. `memberInTeamScope`'s predicate is
+   * unchanged (#688 review): a never-assigned volunteer is still scoped out
+   * by design, but never silently.
+   */
+  const renderTeamScopeHiddenNotice = () => (
+    <View style={[styles.scopeNotice, { borderColor: colors.border }]}>
+      <Ionicons name="eye-off-outline" size={14} color={colors.textSecondary} />
+      <Text style={[styles.scopeNoticeText, { color: colors.textSecondary }]}>
+        {teamScopeHiddenCount} {teamScopeHiddenCount === 1 ? "person" : "people"} hidden by team scope
+      </Text>
+      <Pressable
+        onPress={() => setTeamScope("all")}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Show everyone, not just my teams"
+      >
+        <Text style={[styles.scopeNoticeAction, { color: colors.link }]}>
+          Show everyone
+        </Text>
+      </Pressable>
     </View>
   );
 
@@ -2304,6 +2356,7 @@ export function RosterGridScreen() {
       {renderHeaderBar(true)}
       {isWide ? renderDesktopToolbar() : renderFilterBar()}
       {renderLegend()}
+      {mode === "people" && teamScopeHiddenCount > 0 && renderTeamScopeHiddenNotice()}
 
       {/* On desktop the grid and the docked assign panel share a row so the
           grid stays visible beside the panel; on mobile the grid takes the
@@ -4633,6 +4686,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   legendText: { fontSize: 11 },
+  scopeNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    // Horizontal inset comes from the screen container's GUTTER.
+    paddingVertical: 7,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  scopeNoticeText: { fontSize: 12, flexShrink: 1 },
+  scopeNoticeAction: { fontSize: 12, fontWeight: "700", marginLeft: "auto" },
   matrixHeaderRow: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth },
   corner: { justifyContent: "flex-end", paddingHorizontal: 12, paddingBottom: 8, gap: 3 },
   cornerKicker: { fontSize: 10, fontWeight: "700", letterSpacing: 1 },
