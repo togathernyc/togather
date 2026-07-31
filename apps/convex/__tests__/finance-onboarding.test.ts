@@ -232,6 +232,24 @@ async function insertCommunityFinance(
   });
 }
 
+/**
+ * A community whose OWN giving onboarding is finished. `enableGroupGiving`
+ * refuses anything less (a fund provisioned under a half-onboarded community
+ * would silently end up with no bank account behind it), so every per-group
+ * test has to get the community live first.
+ */
+async function makeCommunityLive(
+  t: ReturnType<typeof convexTest>,
+  communityId: Id<"communities">,
+) {
+  return await insertCommunityFinance(t, communityId, {
+    onboardingStatus: "live",
+    stripeConnectedAccountId: "acct_live",
+    increaseEntityId: "entity_live",
+    increaseReceivingAccountId: "account_receiving_live",
+  });
+}
+
 // ============================================================================
 // isValidEin
 // ============================================================================
@@ -517,6 +535,71 @@ describe("recordProvisioned", () => {
     expect(auditEvents.filter((e) => e.action === "fund.created")).toHaveLength(1);
   });
 
+  test("binds the General fund to the community's General Account", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioned, {
+      communityId,
+      stripeConnectedAccountId: "acct_test123",
+      increaseEntityId: "entity_test123",
+      increaseReceivingAccountId: "account_receiving123",
+      increaseGeneralAccountId: "account_general123",
+    });
+
+    const generalFund = await t.run((ctx) =>
+      ctx.db
+        .query("funds")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .filter((q) => q.eq(q.field("type"), "general"))
+        .first(),
+    );
+    // Without this the fund had no bank account: general-fund donations were
+    // booked "allocated" with no transfer, and nightly reconcile skipped it.
+    expect(generalFund?.increaseAccountId).toBe("account_general123");
+  });
+
+  test("heals a General fund that predates the General Account", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId } = await seedOnboardingFixture(t);
+    await insertCommunityFinance(t, communityId, { onboardingStatus: "collecting" });
+
+    // The shape every already-provisioned community is in today.
+    const generalFundId = await t.run(async (ctx) => {
+      const timestamp = Date.now();
+      return await ctx.db.insert("funds", {
+        communityId,
+        name: "General Fund",
+        type: "general" as const,
+        status: "active" as const,
+        balanceCents: 12_345,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+    });
+
+    await t.mutation(internal.functions.finance.onboarding.recordProvisioned, {
+      communityId,
+      stripeConnectedAccountId: "acct_test123",
+      increaseEntityId: "entity_test123",
+      increaseReceivingAccountId: "account_receiving123",
+      increaseGeneralAccountId: "account_general123",
+    });
+
+    const fund = await t.run((ctx) => ctx.db.get(generalFundId));
+    expect(fund?.increaseAccountId).toBe("account_general123");
+    expect(fund?.balanceCents).toBe(12_345); // history untouched
+
+    const funds = await t.run((ctx) =>
+      ctx.db
+        .query("funds")
+        .withIndex("by_community", (q) => q.eq("communityId", communityId))
+        .collect(),
+    );
+    expect(funds).toHaveLength(1); // healed, not duplicated
+  });
+
   test("never regresses an already-live community", async () => {
     const t = convexTest(schema, modules);
     const { communityId } = await seedOnboardingFixture(t);
@@ -773,6 +856,7 @@ describe("enableGroupGiving", () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId, adminToken, leaderUserId, leaderTwoUserId } =
       await seedOnboardingFixture(t);
+    await makeCommunityLive(t, communityId);
 
     const result = await t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
       token: adminToken,
@@ -813,6 +897,7 @@ describe("enableGroupGiving", () => {
   test("is idempotent: calling twice does not duplicate the fund or roles", async () => {
     const t = convexTest(schema, modules);
     const { communityId, groupId, adminToken } = await seedOnboardingFixture(t);
+    await makeCommunityLive(t, communityId);
 
     const first = await t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
       token: adminToken,
@@ -846,9 +931,66 @@ describe("enableGroupGiving", () => {
     expect(allRoles).toHaveLength(2);
   });
 
+  test("refuses until the community's own giving is live", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, adminToken } = await seedOnboardingFixture(t);
+
+    // No communityFinance row at all — the admin never started onboarding.
+    await expect(
+      t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
+        token: adminToken,
+        communityId,
+        groupId,
+      }),
+    ).rejects.toThrow(/Set up giving for this community first/i);
+
+    // Nothing half-created: no fund, no leader grants, no audit trail — the
+    // old failure mode was a success toast over a fund with no bank account.
+    const funds = await t.run((ctx) =>
+      ctx.db
+        .query("funds")
+        .withIndex("by_group", (q) => q.eq("groupId", groupId))
+        .collect(),
+    );
+    expect(funds).toHaveLength(0);
+  });
+
+  test("refuses mid-onboarding and while blocked, with copy an admin can act on", async () => {
+    const t = convexTest(schema, modules);
+    const { communityId, groupId, adminToken } = await seedOnboardingFixture(t);
+    const financeId = await insertCommunityFinance(t, communityId, {
+      onboardingStatus: "verifying",
+      stripeConnectedAccountId: "acct_x",
+      increaseEntityId: "entity_x",
+      increaseReceivingAccountId: "account_x",
+    });
+
+    await expect(
+      t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
+        token: adminToken,
+        communityId,
+        groupId,
+      }),
+    ).rejects.toThrow(/isn't finished yet/i);
+
+    for (const blocked of ["stripe_blocked", "increase_blocked"] as const) {
+      await t.run(async (ctx) => {
+        await ctx.db.patch(financeId, { onboardingStatus: blocked });
+      });
+      await expect(
+        t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
+          token: adminToken,
+          communityId,
+          groupId,
+        }),
+      ).rejects.toThrow(/needs attention/i);
+    }
+  });
+
   test("rejects a group that belongs to a different community", async () => {
     const t = convexTest(schema, modules);
     const { communityId, otherCommunityGroupId, adminToken } = await seedOnboardingFixture(t);
+    await makeCommunityLive(t, communityId);
 
     await expect(
       t.mutation(api.functions.finance.onboarding.enableGroupGiving, {
@@ -1241,6 +1383,7 @@ describe("enableGroupGiving on a frozen fund (unarchive lifecycle)", () => {
   test("reactivates the frozen fund of an un-archived group", async () => {
     const t = convexTest(schema, modules);
     const s = await seedOnboardingFixture(t);
+    await makeCommunityLive(t, s.communityId);
     const { accessToken: token } = await generateTokens(s.adminUserId);
 
     // Enable once, freeze (as the archive cascade does), then re-enable on
@@ -1275,6 +1418,7 @@ describe("enableGroupGiving on a frozen fund (unarchive lifecycle)", () => {
   test("closed funds are not silently reopened", async () => {
     const t = convexTest(schema, modules);
     const s = await seedOnboardingFixture(t);
+    await makeCommunityLive(t, s.communityId);
     const { accessToken: token } = await generateTokens(s.adminUserId);
 
     const { fundId } = await t.mutation(
