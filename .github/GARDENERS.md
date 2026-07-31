@@ -115,7 +115,10 @@ only knows *list* prices:
   is a flat-rate subscription), so gh-aw falls back to the same model's list
   price at its *original* provider — Zhipu's for `glm-5.2`, DeepSeek's for
   `deepseek-v4-flash`. Those numbers are a **throttle, not an invoice**: they
-  still cut a runaway run off, which is the useful part.
+  still cut a runaway run off, which is the useful part. The rates actually in
+  force are baked into each lock file as `GH_AW_INFO_MODEL_COSTS`; read them
+  there rather than trusting a number quoted in prose, because they move (see
+  below).
 
   **Your real exposure on the Ollama path is the Ollama Cloud subscription
   itself** ($20/mo Pro, with session limits resetting every 5 hours and weekly
@@ -173,6 +176,23 @@ Sanity check that the change landed:
 git diff --stat .github/workflows/          # both .md and .lock.yml should appear
 grep 'cron:' .github/workflows/gardener-large-files.lock.yml
 ```
+
+> [!NOTE]
+> **`gh aw compile` is not reproducible across days, and that is expected.**
+> For models outside gh-aw's embedded catalogue — which includes every Ollama
+> model we use — the compiler fetches pricing from models.dev *at compile time*
+> and bakes it into the lock file as `GH_AW_INFO_MODEL_COSTS`. When those list
+> prices change upstream, a recompile produces a diff in the three Ollama
+> gardeners' lock files even though nobody touched a `.md`.
+>
+> That is a genuine refresh, not corruption — commit it. It does mean "recompile
+> and confirm the diff is empty" is **not** a valid integrity check for those
+> three; compare everything *except* `GH_AW_INFO_MODEL_COSTS`. `gh aw compile
+> --no-models-dev-lookup` makes the output deterministic by skipping the lookup
+> and leaning on each workflow's `models.default-ai-credits-pricing` fallback,
+> at the cost of the imputed dollars drifting from reality over time. We use the
+> default (live lookup); switching is a one-flag decision worth making
+> deliberately rather than by accident.
 
 ### Schedule syntax
 
@@ -258,9 +278,9 @@ engine:
 model: glm-5.2
 
 models:
-  default-ai-credits-pricing:   # fallback so the proxy never 400s
-    input: 1.40
-    output: 4.40
+  default-ai-credits-pricing:   # fallback so the proxy never 400s ($/1M tokens)
+    input: 1.40                 # deliberately conservative — erring high makes
+    output: 4.40                # the cap bind sooner, which is the safe direction
 
 network:
   allowed:
@@ -481,33 +501,51 @@ Before granting any gardener write scope (`create-pull-request` instead of
 - [ ] Any daily guardrail trip? That means a gardener was skipped silently.
 - [ ] Did the CI Doctor's failure signatures group sensibly, or did it file
       near-duplicates?
-- [ ] **Did the Ollama-backed gardeners complete their tool calls cleanly?** This
-      is the least-proven part of the setup — see the caveat below.
+- [ ] **Did the Ollama-backed gardeners complete their tool calls cleanly?** The
+      endpoint and model IDs are confirmed; sustained tool-calling over a full run
+      is the one thing left that only a live run can answer — see below.
 
 Grant write scope to **one** gardener first, not all four.
 
-### The Ollama path has never executed
+### The Ollama path has never executed end-to-end
 
 It compiles, and the wiring is verified in the lock files (proxy retarget,
-firewall allowlist, AIC caps, and model pricing all resolve). What has *not* been
-proven is a live run, and there are three known risks:
+firewall allowlist, AIC caps, and model pricing all resolve).
 
-1. **`https://ollama.com/v1` is not in Ollama's official docs.** models.dev lists
-   it as the `ollama-cloud` API base and it is almost certainly right, but the
-   documented cloud base URL is `https://ollama.com/api`, and every documented
-   OpenAI-compatible example points at a *local* daemon. Probe it before trusting
-   it:
-   ```bash
-   curl -H "Authorization: Bearer $OLLAMA_API_KEY" https://ollama.com/v1/models
-   ```
-2. **`tool_choice` is unsupported.** Tool *calling* works; *forcing* a specific
-   tool does not. These agents lean heavily on tool calls, so this is the most
-   likely source of a runtime failure.
-3. **Model tag strings may need a `:cloud` suffix** (`glm-5.2:cloud`). models.dev
-   lists the bare names against `/v1`, which is what we use.
+**The endpoint and the model IDs are now confirmed against the live API**
+(probed 2026-07-31, unauthenticated):
 
-**If an Ollama gardener fails at runtime, the rollback is four lines** — swap its
-`engine:` block for `engine: claude`, drop `model:` / `models:` /
+| Probe | Result |
+|---|---|
+| `POST https://ollama.com/v1/chat/completions` | **401** — the endpoint exists and requires auth |
+| `GET https://ollama.com/v1/models` | **200** — returns the cloud catalogue |
+| `glm-5.2` in that catalogue | **exact match** |
+| `deepseek-v4-flash` in that catalogue | **exact match** |
+| Any `:cloud`-suffixed IDs | **none** — every ID is a bare name |
+
+So the OpenAI-compatible base URL is real despite not appearing in Ollama's own
+docs (which document `https://ollama.com/api` for cloud and only show the `/v1`
+shape against a local daemon), and the bare model names in these workflows are
+the correct strings. There is no `:cloud` suffix to worry about — the API does
+not offer one.
+
+Re-run the check yourself any time:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://ollama.com/v1/models
+curl -s https://ollama.com/v1/models | python3 -c \
+  "import json,sys; print([m['id'] for m in json.load(sys.stdin)['data']])"
+```
+
+**One unknown remains: tool-calling quality on a live run.** Every model in the
+catalogue advertises tool support, and `tool_choice` — which Ollama does *not*
+support — is about *forcing* a specific tool, not calling one. But these
+gardeners drive a lot of tool calls per run, and how reliably an open model
+sustains that over 30 turns is exactly the sort of thing that only shows up in
+practice. Treat the first run of each as the real test.
+
+**If an Ollama gardener does fail at runtime, the rollback is four lines** — swap
+its `engine:` block for `engine: claude`, drop `model:` / `models:` /
 `max-turn-cache-misses:` and the `ollama.com` network line, recompile, commit.
 See [Move a gardener back onto Claude](#move-a-gardener-back-onto-claude).
 
