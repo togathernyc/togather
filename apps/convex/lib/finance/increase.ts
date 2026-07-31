@@ -344,6 +344,77 @@ export async function createAchTransfer(
 }
 
 // ============================================================================
+// Cards — POST /cards, PATCH /cards/{id} (ADR-032 §3 Phase 3, cards.ts).
+// create_a_card_parameters / card.
+// ============================================================================
+
+export interface IncreaseCard {
+  id: string;
+  status: string;
+  last4: string;
+}
+
+/**
+ * Create a virtual card bound to an Account. Increase enforces spend
+ * segregation at the bank level (a card can never move money outside its
+ * bound Account) — there's no separate authorization decisioner to configure
+ * here beyond the description.
+ */
+export async function createCard(
+  accountId: string,
+  description: string,
+  idempotencyKey: string,
+): Promise<IncreaseCard> {
+  return await increaseRequest<IncreaseCard>("/cards", {
+    method: "POST",
+    idempotencyKey,
+    body: { account_id: accountId, description },
+  });
+}
+
+/** PATCH /cards/{id} — freeze ("disabled"), reactivate ("active"), or permanently cancel ("canceled") a card. */
+export async function updateCardStatus(
+  cardId: string,
+  status: "active" | "disabled" | "canceled",
+): Promise<{ id: string; status: string }> {
+  return await increaseRequest<{ id: string; status: string }>(
+    `/cards/${cardId}`,
+    { method: "PATCH", body: { status } },
+  );
+}
+
+// ============================================================================
+// Transactions — GET /transactions/{id} (transaction). Individual Events for
+// transaction.created carry only the id (same pattern as entity.created/
+// entity.updated — see getEntity above), so the webhook handler fetches the
+// current transaction before dispatching.
+// ============================================================================
+
+export interface IncreaseTransaction {
+  id: string;
+  account_id: string;
+  /** Signed cents — negative is a debit (money leaving the Account), which is what a card settlement always is. */
+  amount: number;
+  description: string;
+  source: {
+    category: string;
+    card_settlement?: {
+      card_id: string;
+      merchant_name?: string | null;
+    };
+  };
+}
+
+export async function getTransaction(
+  transactionId: string,
+): Promise<IncreaseTransaction> {
+  return await increaseRequest<IncreaseTransaction>(
+    `/transactions/${transactionId}`,
+    { method: "GET" },
+  );
+}
+
+// ============================================================================
 // Balances — GET /accounts/{id}/balance (balance_lookup)
 // ============================================================================
 

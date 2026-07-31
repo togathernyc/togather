@@ -3816,7 +3816,11 @@ export default defineSchema({
     updatedAt: v.number(), // Unix timestamp ms
   })
     .index("by_community", ["communityId"])
-    .index("by_group", ["groupId"]),
+    .index("by_group", ["groupId"])
+    // Webhook lookup: the card-settlement transaction sync (functions/finance/
+    // webhooks.ts's recordCardSettlement) resolves a fund from the Increase
+    // account id on the transaction, to cross-check it against the card's fund.
+    .index("by_increaseAccountId", ["increaseAccountId"]),
 
   /**
    * Append-only ledger — the single source of attribution/audit history.
@@ -3913,11 +3917,26 @@ export default defineSchema({
     fundId: v.id("funds"),
     holderUserId: v.id("users"),
     increaseCardId: v.optional(v.string()),
+    // Display name the finance_admin picked at creation, e.g. "Groceries &
+    // supplies" — shown on the fund's card list, distinct from the holder.
+    name: v.optional(v.string()),
+    // Last 4 digits of the card PAN, echoed back by Increase on creation —
+    // purely for display (e.g. "Groceries •••• 4242"); never the full PAN.
+    last4: v.optional(v.string()),
     // Mirrors Increase's own card status string (e.g. "active", "canceled",
     // "frozen") rather than a locally-enumerated union, since we pass it
-    // through from the card-status webhook without reinterpreting it.
+    // through from the card-status webhook without reinterpreting it. Also
+    // covers our own pre-provisioning states "pending" (row inserted, the
+    // provisionCard action hasn't returned yet) and "failed" (it errored).
     status: v.string(),
     spendLimitCents: v.optional(v.number()),
+    // Advisory period the spend limit is meant to cover — Increase enforces
+    // no automatic per-period reset (see cards.ts's module comment: real-time
+    // authorization-based limit enforcement is Phase 2), so this is display
+    // guidance only ("$200/week") until that lands.
+    limitPeriod: v.optional(
+      v.union(v.literal("week"), v.literal("month"), v.literal("charge")),
+    ),
     controls: v.optional(v.any()), // Merchant-category / velocity controls, provider-shaped
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms
@@ -3955,12 +3974,21 @@ export default defineSchema({
     approverId: v.optional(v.id("users")),
     secondApproverId: v.optional(v.id("users")), // Set only when the two-approver threshold applies
     increaseTransferId: v.optional(v.string()), // Set once the reimbursement ACH transfer is initiated
+    // Set only for kind "card_charge" — the card whose swipe created this
+    // expense (functions/finance/webhooks.ts's recordCardSettlement).
+    cardId: v.optional(v.id("cards")),
+    // Increase transaction id backing a card_charge expense — dedupe key so a
+    // redelivered transaction.created webhook doesn't create a second
+    // expense for the same swipe (see by_increaseTransactionId below).
+    increaseTransactionId: v.optional(v.string()),
     createdAt: v.number(), // Unix timestamp ms
     updatedAt: v.number(), // Unix timestamp ms
   })
     .index("by_fund_status", ["fundId", "status"])
     .index("by_submitter", ["submitterId"])
-    .index("by_increaseTransferId", ["increaseTransferId"]),
+    .index("by_increaseTransferId", ["increaseTransferId"])
+    .index("by_card", ["cardId"])
+    .index("by_increaseTransactionId", ["increaseTransactionId"]),
 
   /**
    * One row per Stripe payout that has had an allocation pass run against

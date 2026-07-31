@@ -1,0 +1,136 @@
+/**
+ * CreateCardScreen — data wrapper for the "New virtual card" sheet
+ * (group-fund cards phase). Resolves the fund, eligible cardholders (fund
+ * roles of cardholder or higher), and issues the card via `createFundCard`.
+ */
+import React, { useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useAuthenticatedQuery, useAuthenticatedMutation, api } from "@services/api/convex";
+import type { Id } from "@services/api/convex";
+import { ToastManager } from "@components/ui";
+import { formatError } from "@/utils/error-handling";
+import { CreateCardView, type LimitSelection } from "./CreateCardView";
+import { financeDisplayName } from "./utils";
+import type { CardholderCandidate, CardLimitPeriod } from "./types";
+
+const CARDHOLDER_ROLES = new Set(["cardholder", "manager", "finance_admin"]);
+
+export function CreateCardScreen() {
+  const router = useRouter();
+  const { group_id } = useLocalSearchParams<{ group_id: string }>();
+  const groupId = group_id || "";
+
+  const givingContext = useAuthenticatedQuery(
+    api.functions.finance.giving.getGivingContext,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+  const fundId = givingContext?.fundId as Id<"funds"> | undefined;
+
+  const overview = useAuthenticatedQuery(
+    api.functions.finance.giving.getFundOverview,
+    groupId ? { groupId: groupId as Id<"groups"> } : "skip",
+  );
+
+  const rolesRaw = useAuthenticatedQuery(
+    api.functions.finance.roles.listFundRoles,
+    fundId ? { fundId } : "skip",
+  );
+
+  const createFundCard = useAuthenticatedMutation(api.functions.finance.cards.createFundCard);
+
+  const [selectedHolderUserId, setSelectedHolderUserId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [limitSelection, setLimitSelection] = useState<LimitSelection>("none");
+  const [amountText, setAmountText] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const candidates: CardholderCandidate[] = useMemo(
+    () =>
+      (rolesRaw ?? [])
+        .filter((r: any) => r.isActive && CARDHOLDER_ROLES.has(r.role))
+        .map((r: any) => ({
+          userId: String(r.userId),
+          name: financeDisplayName({
+            id: String(r.user?.id ?? r.userId),
+            firstName: r.user?.firstName ?? null,
+            lastName: r.user?.lastName ?? null,
+            displayName: r.user?.displayName ?? null,
+          }),
+          role: r.role,
+        })),
+    [rolesRaw],
+  );
+
+  const amountCents = limitSelection === "none" ? null : parseDollarsToCents(amountText);
+  const canSubmit =
+    !!selectedHolderUserId &&
+    name.trim().length > 0 &&
+    !isSubmitting &&
+    (limitSelection === "none" || amountCents !== null);
+
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.push(`/(user)/leader-tools/${groupId}/giving` as any);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!canSubmit || !fundId || !selectedHolderUserId) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const cardId = await createFundCard({
+        fundId,
+        holderUserId: selectedHolderUserId as Id<"users">,
+        name: name.trim(),
+        ...(limitSelection !== "none"
+          ? { spendLimitCents: amountCents as number, limitPeriod: limitSelection as CardLimitPeriod }
+          : {}),
+      });
+      ToastManager.success("Card created");
+      router.replace(`/(user)/leader-tools/${groupId}/giving/cards/${cardId}` as any);
+    } catch (err) {
+      setError(formatError(err, "Couldn't create this card. Please try again."));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <CreateCardView
+      fundName={givingContext?.fundName || "this fund"}
+      fundBalanceCents={overview?.balanceCents ?? 0}
+      candidates={candidates}
+      isLoadingCandidates={fundId != null && rolesRaw === undefined}
+      selectedHolderUserId={selectedHolderUserId}
+      onSelectHolder={setSelectedHolderUserId}
+      onGrantRolePress={() => router.push(`/(user)/leader-tools/${groupId}/giving/roles` as any)}
+      name={name}
+      onNameChange={setName}
+      limitSelection={limitSelection}
+      onChangeLimitSelection={(selection) => {
+        setLimitSelection(selection);
+        setAmountText("");
+      }}
+      amountText={amountText}
+      onAmountChange={setAmountText}
+      isSubmitting={isSubmitting}
+      error={error}
+      canSubmit={canSubmit}
+      onSubmit={handleSubmit}
+      onClose={handleBack}
+    />
+  );
+}
+
+/** Parses a user-typed dollar string into integer cents, or `null` if invalid. */
+function parseDollarsToCents(text: string): number | null {
+  const trimmed = text.trim().replace(/^\$/, "");
+  if (!trimmed || !/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const dollars = Number(trimmed);
+  if (!Number.isFinite(dollars) || dollars <= 0) return null;
+  return Math.round(dollars * 100);
+}
