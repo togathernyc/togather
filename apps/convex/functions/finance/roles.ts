@@ -67,6 +67,7 @@ export const listFundRoles = query({
   args: { token: v.string(), fundId: v.id("funds") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
     await requireFundRoleOrGroupLeader(ctx, args.fundId, userId, "manager");
 
     const rows = await ctx.db
@@ -118,6 +119,8 @@ export const getMyFundRole = query({
   args: { token: v.string(), fundId: v.id("funds") },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
+    await requireGroupGivingEnabled(ctx);
+
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
       throw new Error("Fund not found");
@@ -155,6 +158,17 @@ export const getMyFundRole = query({
  * only ever have one ACTIVE role per fund, so an existing active grant is
  * revoked in the same call before the new one is inserted — never two active
  * rows for the same (user, fund).
+ *
+ * NO SELF-ESCALATION VIA THE LEADER CARVE-OUT. ADR-032 §4 lets group leaders
+ * grant finance roles on their own group's fund ("Granted by group leaders
+ * and finance admins") — that bootstrap path is intentional and stays. What
+ * it must never become is a one-tap privilege ladder: a leader with no fund
+ * role could otherwise grant THEMSELVES finance_admin and, from there, issue
+ * themselves a card (`createFundCard` gates on finance_admin) and spend the
+ * fund alone. So a caller who is only through the gate because they lead the
+ * group cannot name themselves as the target. Granting to someone else still
+ * works — the ADR's bootstrap — and it costs a second, willing human, which
+ * is the point.
  */
 export const grantFundRole = mutation({
   args: {
@@ -165,8 +179,19 @@ export const grantFundRole = mutation({
   },
   handler: async (ctx, args) => {
     const callerId = await requireAuth(ctx, args.token);
-    await requireFundRoleOrGroupLeader(ctx, args.fundId, callerId, "finance_admin");
+    const via = await requireFundRoleOrGroupLeader(
+      ctx,
+      args.fundId,
+      callerId,
+      "finance_admin",
+    );
     await requireGroupGivingEnabled(ctx);
+
+    if (via === "group_leader" && args.userId === callerId) {
+      throw new Error(
+        "You can't give yourself a finance role on your group's fund — a finance admin or community admin has to grant it to you",
+      );
+    }
 
     const fund = await ctx.db.get(args.fundId);
     if (!fund) {
@@ -228,6 +253,15 @@ export const grantFundRole = mutation({
  * be left with zero finance_admins by a non-admin caller — someone must hold
  * the keys. A community admin (who can already do anything on the fund) may
  * still revoke the last one, e.g. to hand the fund off during an offboard.
+ *
+ * DELIBERATELY NOT behind `requireGroupGivingEnabled`, unlike `grantFundRole`.
+ * Revoking is de-escalation: it only ever takes power away. Flipping the
+ * group-giving kill switch off is most likely during an incident, which is
+ * precisely when someone needs to strip a compromised finance_admin — gating
+ * this would lock the incident response out along with the feature. Same
+ * reasoning as `setCardFrozen` / `cancelCard` in cards.ts and `denyExpense`
+ * in expenses.ts. The flag still blocks every path that ADDS power or moves
+ * money, so a revoke with the flag off can't be a step toward anything.
  */
 export const revokeFundRole = mutation({
   args: { token: v.string(), fundId: v.id("funds"), userId: v.id("users") },

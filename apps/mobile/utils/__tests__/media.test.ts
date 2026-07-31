@@ -18,6 +18,25 @@ describe('getMediaUrl', () => {
     expect(getMediaUrl('file:///tmp/a.jpg')).toBe('file:///tmp/a.jpg');
   });
 
+  test('returns web picker blob: URIs as-is', () => {
+    // Regression: on web, expo-image-picker hands back a `blob:` object URL,
+    // not `file://`. Dropping it made every just-picked image preview
+    // (reimbursement receipts, profile/group photos) fall through to
+    // AppImage's gray placeholder instead of showing the picked photo.
+    const blobUri = 'blob:http://localhost:8081/6b9f-1f2e';
+    expect(getMediaUrl(blobUri)).toBe(blobUri);
+  });
+
+  test('refuses inline data: payloads', () => {
+    // `blob:`/`file://` are references that only resolve locally, so a
+    // server-supplied one is inert. `data:` carries its payload inline, and
+    // `chatMessages.attachments[].url` is an unvalidated string — trusting it
+    // here would let any group member render an unbounded, uncacheable,
+    // untransformable blob in everyone else's chat. The picker never emits
+    // one, so refusing costs nothing.
+    expect(getMediaUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg==')).toBeUndefined();
+  });
+
   test('expands r2: paths to the CDN URL', () => {
     expect(getMediaUrl('r2:chat/a.jpg')).toBe(`${CDN}/chat/a.jpg`);
   });
@@ -59,5 +78,13 @@ describe('getMediaUrlWithTransform', () => {
 
   test('returns undefined when the path cannot be resolved', () => {
     expect(getMediaUrlWithTransform(undefined, { width: 400 })).toBeUndefined();
+  });
+
+  test('leaves local preview URIs untransformed', () => {
+    // Callers pass optimizedWidth for the eventual CDN copy; a not-yet-uploaded
+    // local pick has nothing to transform and must survive verbatim.
+    for (const local of ['file:///tmp/a.jpg', 'blob:http://localhost:8081/6b9f-1f2e']) {
+      expect(getMediaUrlWithTransform(local, { width: 600 })).toBe(local);
+    }
   });
 });

@@ -22,6 +22,8 @@
  * dev/staging (see docs/secrets.md).
  */
 
+import type { IncreaseSpendingLimitInterval } from "./cardPolicy";
+
 // ============================================================================
 // Lazy env reads (mirrors lib/resend.ts's getResendClient pattern — reading
 // at call time, not module load, so codegen/import never fails on a missing
@@ -354,21 +356,66 @@ export interface IncreaseCard {
   last4: string;
 }
 
+/** One entry of `authorization_controls.usage.multi_use.spending_limits`. */
+export interface IncreaseCardSpendingLimit {
+  interval: IncreaseSpendingLimitInterval;
+  /** Integer cents. Increase calls this `settlement_amount`. */
+  settlementAmountCents: number;
+}
+
+/**
+ * Build the `authorization_controls` body Increase enforces at authorization
+ * time — no round trip to us, no real-time-decision webhook needed
+ * (https://increase.com/documentation/launch-a-card-program, "Set spending
+ * limits with `authorization_controls.usage.multi_use.spending_limits`…
+ * enforced at authorization time without a round trip to your server").
+ *
+ * Always emitted, even for "no limit": Increase replaces the whole controls
+ * object on PATCH, so clearing a limit means sending `multi_use` with an
+ * EMPTY `spending_limits` array. Omitting the field would leave whatever the
+ * card already had — a silent no-op on the one path (lowering/removing a
+ * limit) where silence is most expensive.
+ */
+function buildAuthorizationControls(
+  spendingLimit: IncreaseCardSpendingLimit | null,
+): Record<string, unknown> {
+  return {
+    usage: {
+      category: "multi_use",
+      multi_use: {
+        spending_limits: spendingLimit
+          ? [
+              {
+                interval: spendingLimit.interval,
+                settlement_amount: spendingLimit.settlementAmountCents,
+              },
+            ]
+          : [],
+      },
+    },
+  };
+}
+
 /**
  * Create a virtual card bound to an Account. Increase enforces spend
  * segregation at the bank level (a card can never move money outside its
- * bound Account) — there's no separate authorization decisioner to configure
- * here beyond the description.
+ * bound Account); `spendingLimit`, when given, adds a second, tighter cap
+ * the bank also enforces per authorization.
  */
 export async function createCard(
   accountId: string,
   description: string,
   idempotencyKey: string,
+  spendingLimit: IncreaseCardSpendingLimit | null = null,
 ): Promise<IncreaseCard> {
   return await increaseRequest<IncreaseCard>("/cards", {
     method: "POST",
     idempotencyKey,
-    body: { account_id: accountId, description },
+    body: {
+      account_id: accountId,
+      description,
+      authorization_controls: buildAuthorizationControls(spendingLimit),
+    },
   });
 }
 
@@ -380,6 +427,24 @@ export async function updateCardStatus(
   return await increaseRequest<{ id: string; status: string }>(
     `/cards/${cardId}`,
     { method: "PATCH", body: { status } },
+  );
+}
+
+/**
+ * PATCH /cards/{id} — replace the card's spending limit at the bank. Pass
+ * `null` to remove the limit entirely (see buildAuthorizationControls for why
+ * that still sends a body rather than omitting the field).
+ */
+export async function updateCardSpendingLimit(
+  cardId: string,
+  spendingLimit: IncreaseCardSpendingLimit | null,
+): Promise<{ id: string; status: string }> {
+  return await increaseRequest<{ id: string; status: string }>(
+    `/cards/${cardId}`,
+    {
+      method: "PATCH",
+      body: { authorization_controls: buildAuthorizationControls(spendingLimit) },
+    },
   );
 }
 

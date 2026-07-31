@@ -48,6 +48,7 @@ const balance: GivingHubBalanceSummary = {
   monthDonationsCents: 64000,
   monthDonationCount: 12,
   monthSpentCents: 21238,
+  monthFeesCents: 1886,
 };
 
 const baseProps = {
@@ -89,6 +90,25 @@ describe("GivingHubView", () => {
       expect(screen.getByText("$1,284.50")).toBeTruthy();
       expect(screen.getByText("Giving is live")).toBeTruthy();
       expect(screen.getByText("$640.00")).toBeTruthy();
+    });
+
+    it("shows Stripe fees beside 'spent' rather than folded into it", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      // Spend is the group's own outgoings only ($212.38). The processing
+      // fees Stripe kept ($18.86) get their own line — a fee bucketed into
+      // "spent" reports spending on a group that spent nothing, and a fee
+      // shown nowhere leaves "given" minus "spent" not reconciling.
+      expect(screen.getByText("$212.38")).toBeTruthy();
+      expect(screen.getByText("+ $18.86 fees")).toBeTruthy();
+    });
+
+    it("omits the fees line entirely when there are none", () => {
+      render(
+        <GivingHubView {...baseProps} balance={{ ...balance, monthFeesCents: 0 }} />,
+      );
+
+      expect(screen.queryByText(/fees/)).toBeNull();
     });
 
     it("hides the 'Giving is live' chip when givingLive is false", () => {
@@ -139,6 +159,22 @@ describe("GivingHubView", () => {
 
       fireEvent.press(screen.getByTestId("giving-hub-card-card-1"));
       expect(onViewCard).toHaveBeenCalledWith("card-1");
+    });
+
+    // A card swipe has no approval gate at all: nothing surfaces a
+    // card_charge for approval and canPay refuses the kind, so the only
+    // control is the bank-enforced limit. Assert the CLAIM is absent, not one
+    // historical sentence — the previous version of this test matched an
+    // exact string, so a reworded "Anything over $200 needs a second
+    // approver" shipped straight past it.
+    it("claims no approval control over card spend — only the bank-enforced limit", () => {
+      render(<GivingHubView {...baseProps} />);
+
+      expect(screen.queryByText(/second approver/i)).toBeNull();
+      expect(screen.queryByText(/\$200/)).toBeNull();
+      expect(screen.queryByText(/sign-off/i)).toBeNull();
+      expect(screen.getByText(/bank declines anything over a card's/i)).toBeTruthy();
+      expect(screen.getByText(/as soon as it settles/i)).toBeTruthy();
     });
 
     it("shows the 'Create a virtual card…' action and New card tile when canManageCards is true", () => {

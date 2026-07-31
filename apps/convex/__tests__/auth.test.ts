@@ -560,6 +560,9 @@ describe("createUserInternal", () => {
       lastName: "User",
       email: "new@example.com",
     });
+    // createUserInternal schedules linkPlaceholderTasksForUser via runAfter(0, ...);
+    // left running it strands global.Convex's transaction for the next convexTest() call.
+    await t.finishInProgressScheduledFunctions();
 
     expect(userId).toBeDefined();
 
@@ -633,6 +636,7 @@ describe("createUserInternal", () => {
       firstName: "New",
       lastName: "User",
     });
+    await t.finishInProgressScheduledFunctions();
 
     expect(userId).toBeDefined();
 
@@ -1035,6 +1039,7 @@ describe("Auth Flow Integration Tests", () => {
         lastName: "User",
         email: "new@example.com",
       });
+      await t.finishInProgressScheduledFunctions();
 
       expect(userId).toBeDefined();
 

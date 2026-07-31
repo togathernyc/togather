@@ -3745,6 +3745,42 @@ export default defineSchema({
     .index("by_gridKey", ["gridKey"])
     .index("by_gridKey_user", ["gridKey", "userId"]),
 
+  /**
+   * Provenance for an R2 object key: who it was minted for.
+   *
+   * Written by both producers of `r2:` keys — functions/uploads.ts's
+   * getR2UploadUrl / getR2FileUploadUrl (at presign time, before the bytes
+   * exist) and lib/r2.ts's putR2Object when a server-side upload names the
+   * member it is for via `grantTo`. Server-side uploads that belong to the
+   * system rather than a person (PCO song files, dev-assistant config) pass
+   * nothing on purpose: no row means nobody can claim the key.
+   *
+   * WHY: an `r2:<key>` string is just a string. Any caller can put any
+   * `r2:` value into a field that stores one, so a feature that treats the
+   * key as evidence ("here is MY receipt") has no way to tell an object the
+   * caller uploaded from one they merely learned the key of — e.g. from
+   * another member's expense receipt URL. This table is the record that says
+   * who the key was minted for, so those features can check.
+   *
+   * Consumed today by `submitExpense` (functions/finance/expenses.ts), which
+   * refuses a reimbursement receipt whose key wasn't minted for the
+   * submitter. A key with NO row (minted before this table existed, or whose
+   * best-effort grant write failed) is refused too, with a message that asks
+   * the member to re-attach the photo rather than accusing them — the fix is
+   * one re-upload, and expenses already stored are unaffected because the
+   * check runs only at submit.
+   */
+  uploadGrants: defineTable({
+    /** The `r2:<key>` storage path exactly as returned to the client. */
+    storagePath: v.string(),
+    userId: v.id("users"),
+    folder: v.string(),
+    contentType: v.string(),
+    createdAt: v.number(), // Unix timestamp ms
+  })
+    .index("by_storagePath", ["storagePath"])
+    .index("by_user", ["userId"]),
+
   // =============================================================================
   // GROUP GIVING (ADR-032) — Stripe (acquiring) + Increase (banking) + our own
   // append-only ledger for attribution/audit. See docs/architecture/decisions/
@@ -3894,6 +3930,10 @@ export default defineSchema({
    * Stripe-bulk-payout -> Increase-AccountTransfer allocation job (ADR-032
    * §3); "n/a" covers donations made before Increase went live for the
    * community, which never need allocating out of a receiving Account.
+   * "refunded" is terminal and means the donor got the whole gift back, so
+   * nothing will ever be allocated for it — every allocation query selects on
+   * `allocationStatus === "pending"`, so this one flag is what keeps a
+   * refunded gift out of the planner, the retry cron, AND the pending sum.
    */
   donations: defineTable({
     fundId: v.id("funds"),
@@ -3904,10 +3944,47 @@ export default defineSchema({
     allocationStatus: v.union(
       v.literal("pending"),
       v.literal("allocated"),
+      v.literal("refunded"),
       v.literal("n/a"),
     ),
+    // Stripe's CUMULATIVE `amount_refunded` for this donation's charge, as of
+    // the last `charge.refunded` we processed (giving.ts
+    // recordDonationRefund). Absent means never refunded. Allocation reads it
+    // so a partially-refunded gift is only ever transferred/counted at what
+    // is actually left of it.
+    refundedCents: v.optional(v.number()),
     recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
+    // The Stripe payout this donation was matched into by planAllocations
+    // (functions/finance/jobs.ts). Stamped once, at plan time, and never
+    // re-stamped — it is what makes allocation replay-safe per DONATION
+    // rather than per payout: a redelivered `payout.paid` re-processes only
+    // the donations already bound to that payout id and still "pending".
+    // Optional/backfill-safe: donations recorded before net matching shipped
+    // (and any donation not yet paid out) simply have neither field.
+    allocationPayoutId: v.optional(v.string()),
+    // Integer cents allocation will move for this donation out of that
+    // payout: the Stripe balance-transaction NET (gross minus Stripe's
+    // processing fee) — what the bulk payout physically delivered, and
+    // therefore the ceiling on what we can transfer on to the group's
+    // Increase Account — CAPPED at the unrefunded gross. The cap matters when
+    // a partial refund's own balance transaction settles in a different
+    // payout: the charge still appears here at its full net while the ledger
+    // has already taken the refund debit, and transferring the full net would
+    // move money the donor got back (jobs.ts `allocationAmountCents`). The
+    // gross (amountCents + feeCoverCents) is what the ledger credited at
+    // donation time; the difference is posted as a "fee" debit once the
+    // allocation transfer lands (see jobs.ts recordAllocation).
+    payoutNetCents: v.optional(v.number()),
+    // LEASE, not a marker: set in the same transaction that selects this
+    // donation for a transfer, and cleared when that transfer resolves either
+    // way. A second pass (a redelivered `payout.paid`, or the hourly retry
+    // cron racing an in-flight `runAllocation`) skips a donation whose lease
+    // is still live, so two passes can never both issue the same
+    // `alloc:{donationId}` transfer concurrently. Stale leases expire after
+    // ALLOCATION_LEASE_TTL_MS (jobs.ts) so a crashed pass can't strand an
+    // item forever.
+    allocationTransferStartedAt: v.optional(v.number()),
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_fund", ["fundId"])
@@ -3937,10 +4014,13 @@ export default defineSchema({
     // provisionCard action hasn't returned yet) and "failed" (it errored).
     status: v.string(),
     spendLimitCents: v.optional(v.number()),
-    // Advisory period the spend limit is meant to cover — Increase enforces
-    // no automatic per-period reset (see cards.ts's module comment: real-time
-    // authorization-based limit enforcement is Phase 2), so this is display
-    // guidance only ("$200/week") until that lands.
+    // The period the spend limit covers. Both fields are a MIRROR of a
+    // control Increase actually enforces: cards.ts translates them into
+    // `authorization_controls.usage.multi_use.spending_limits` at card
+    // creation and on every change, and Increase declines authorizations
+    // past the cap without calling us. Reset semantics are Increase's, and
+    // UTC: "week" resets Mondays at midnight UTC, "month" on the 1st,
+    // "charge" applies per authorization (lib/finance/cardPolicy.ts).
     limitPeriod: v.optional(
       v.union(v.literal("week"), v.literal("month"), v.literal("charge")),
     ),
@@ -3995,17 +4075,31 @@ export default defineSchema({
     .index("by_submitter", ["submitterId"])
     .index("by_increaseTransferId", ["increaseTransferId"])
     .index("by_card", ["cardId"])
+    // Card charges inside one spend-limit window. `by_card` alone can only be
+    // read whole, and the over-limit drift check (webhooks.ts's
+    // `auditOverLimitCardCharge`) would then grow with a card's entire
+    // lifetime history until it hit Convex's read limits. The window is a
+    // time range, so `createdAt` has to be in the index for it to be bounded.
+    .index("by_card_created", ["cardId", "createdAt"])
     .index("by_increaseTransactionId", ["increaseTransactionId"]),
 
   /**
    * One row per Stripe payout that has had an allocation pass run against
-   * it. Payout-LEVEL replay protection: a redelivered `payout.paid` webhook
-   * must not run a second allocation pass, because the first pass already
-   * marked its donations "allocated" — a second planAllocations would grab
-   * the NEXT pending donations and move money that payout never contained
-   * (Codex review, PR #653). Per-donation idempotency keys can't catch that;
-   * this table does. Insert-if-absent via claimPayout (functions/finance/
-   * jobs.ts) is transactional under Convex OCC.
+   * it — a record of when the payout was first seen, plus the payout amount
+   * we matched against.
+   *
+   * This used to be the ONLY replay protection: a redelivered `payout.paid`
+   * was dropped outright, because the old gross-total matcher would have
+   * grabbed the NEXT pending donations on a re-plan and moved money the
+   * payout never contained (Codex review, PR #653). That also meant a
+   * partially-failed pass could never be retried. Replay protection now
+   * lives on the donation rows themselves (`donations.allocationPayoutId` —
+   * matched by Stripe payment-intent id out of the payout's own balance
+   * transactions, so a re-plan can only ever re-select the SAME donations),
+   * which makes a redelivery a safe resume of the unfinished items. This row
+   * remains as the audit/bookkeeping record of the FIRST pass over a payout
+   * (`payoutCents` is never re-written by a later pass — the per-pass detail
+   * lives in `financeAuditEvents` instead).
    */
   processedStripePayouts: defineTable({
     communityId: v.id("communities"),

@@ -158,9 +158,15 @@ export function GroupDetailScreen() {
   // ledger activity) just to learn whether a fund exists for this group; the
   // tile shows no balance, so the heavier query only runs once the member
   // taps through to the fund screen.
+  //
+  // Gated on `isMember` for the same reason as GroupInfoScreen's copy of this
+  // query: non-members land here from a share link / Explore and get
+  // GroupNonMemberView, so the subscription is waste — and until
+  // `getGivingContext` was made to fail open, its throw came back through
+  // Convex during render and crashed them into the root ErrorBoundary.
   const givingContext = useAuthenticatedQuery(
     api.functions.finance.giving.getGivingContext,
-    group?._id ? { groupId: group._id as Id<"groups"> } : "skip",
+    group?._id && isMember ? { groupId: group._id as Id<"groups"> } : "skip",
   );
   const hasGivingFund = !!givingContext;
 

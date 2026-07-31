@@ -15,6 +15,7 @@ import schema from "../schema";
 import { api } from "../_generated/api";
 import { modules } from "../test.setup";
 import { generateTokens } from "../lib/auth";
+import { drainScheduledFunctions } from "./helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -268,31 +269,12 @@ describe("event check-in — permissions", () => {
 });
 
 // `markAttendance` schedules two background jobs (followup + community score
-// recompute) via plain `runAfter(0, …)`. Left running, the job is still open
-// when the next `convexTest()` calls `setConvexGlobal`, which throws "test
-// began while previous transaction was still open" — and `global.Convex`
-// outlives the file, so under contention the throw can land on a later test
-// in this same file (or a different one in the same worker). Every check-in
-// is therefore drained on real timers, the same way the messaging suite
-// drains `sendMessage`'s scheduled work (see waThreadReplies.test.ts).
-// Deliberately NOT `vi.useFakeTimers()`: fake timers are installed
-// process-wide and share the same worker-global lifetime, so a file that
-// installs them owns a second way to strand another file's scheduled work.
-//
-// A single `finishInProgressScheduledFunctions()` call right after the
-// mutation is not enough on its own: a zero-delay job may still be PENDING
-// (its `setTimeout(0)` hasn't fired yet) at that instant — the function only
-// awaits jobs already IN_PROGRESS (see the same race documented in
-// auth/placeholder-claim.test.ts) — and under real CPU contention that race
-// is losable. Yield to the real macrotask queue first so the pending timer
-// gets to run, then drain, repeating a couple of times to also cover a job
-// that itself schedules another.
-async function drainScheduledFunctions(t: ReturnType<typeof convexTest>) {
-  for (let i = 0; i < 5; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await t.finishInProgressScheduledFunctions();
-  }
-}
+// recompute) via plain `runAfter(0, …)`. Left undrained, that leaks into
+// other test files in the same worker — see `helpers/drainScheduledFunctions.ts`
+// for the full mechanism. Deliberately NOT `vi.useFakeTimers()`: it's
+// installed process-wide and shares the same worker-global lifetime, so a
+// file that installs it owns a second way to strand another file's
+// scheduled work.
 
 describe("event check-in — check in / undo", () => {
   test("a leader checks a Going attendee in, then undoes it", async () => {

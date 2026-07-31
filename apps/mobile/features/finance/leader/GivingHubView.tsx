@@ -191,7 +191,17 @@ export function GivingHubView({
               value={formatCents(balance.monthDonationsCents)}
               sub={`${balance.monthDonationCount} ${balance.monthDonationCount === 1 ? "gift" : "gifts"}`}
             />
-            <StatTile label="SPENT THIS MONTH" value={formatCents(balance.monthSpentCents)} />
+            <StatTile
+              label="SPENT THIS MONTH"
+              value={formatCents(balance.monthSpentCents)}
+              // Processing fees aren't spend, but hiding them makes "given"
+              // minus "spent" fail to reconcile against the balance above.
+              sub={
+                balance.monthFeesCents > 0
+                  ? `+ ${formatCents(balance.monthFeesCents)} fees`
+                  : undefined
+              }
+            />
             <StatTile
               label="PENDING"
               value={formatCents(pendingTotalCents)}
@@ -269,7 +279,8 @@ export function GivingHubView({
             </View>
           )}
           <Text style={[styles.footerNote, { color: colors.textSecondary }]}>
-            Cards spend directly from this fund's bank account. Charges over $200 need a second approver.
+            Cards spend directly from this fund's bank account, and the bank declines anything over a card's
+            limit. Every charge lands in the fund's activity as soon as it settles.
           </Text>
         </View>
 

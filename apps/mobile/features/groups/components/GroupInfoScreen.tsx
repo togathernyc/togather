@@ -211,6 +211,28 @@ export function GroupInfoScreen() {
   const groupGivingFlag = useQuery(api.functions.admin.featureFlags.getFeatureFlag, {
     key: "group-giving",
   });
+  // ...and whether THIS group actually has a fund. Giving is a member-level
+  // capability (ADR-032 §4: "Give; see transparency summary" is ticked for
+  // Member), so this drives its own non-leader-gated card below — the Leader
+  // tools row above only opens the management hub. Reuses the lightweight
+  // `getGivingContext` GroupDetailScreen already leans on for the same
+  // question (not `getFundOverview`, which pulls ledger activity a card
+  // showing no balance has no use for). Returns null when the flag is off or
+  // no fund exists; the flag is still checked separately below so the row
+  // can't flash in while that query is in flight.
+  //
+  // Gated on `isMember` because non-members reach this route too (share link
+  // / Explore — see the GroupNonMemberView branch below) and have no giving
+  // row to render, so the subscription is pure waste for them. It's also the
+  // client half of a belt-and-braces fix: `getGivingContext` used to THROW
+  // for a non-member, and Convex re-throws that during render, which put the
+  // root ErrorBoundary in front of the join CTA. The server now returns null
+  // instead; skipping here means a regression there can't reach this screen.
+  const givingContext = useAuthenticatedQuery(
+    api.functions.finance.giving.getGivingContext,
+    group?._id && isMember ? { groupId: group._id as Id<"groups"> } : "skip",
+  );
+  const hasGivingFund = !!givingContext;
   const canEditGroup = useMemo(() => {
     if (!group || !user?.id) return false;
     if (user.is_admin === true) return true;
@@ -769,6 +791,29 @@ export function GroupInfoScreen() {
         {/* 5. CHANNELS — rendered exactly as-is; not modified (out of
             scope for this restyle pass — see file-header deferral note). */}
         {group._id && <ChannelsSection groupId={group._id} userRole={group.user_role} />}
+
+        {/* 5b. GIVING — every member's door into the fund: give, and see the
+            transparency summary (ADR-032 §4 grants both at Member level).
+            Sits here, in the member band between Channels and Leader tools,
+            because that's where this screen keeps everything a member can
+            actually use — below the leader block it would be buried under a
+            card most members never render, and in Details it would read as
+            metadata rather than a place to go. Mirrors the flag-off
+            GroupDetailScreen, where the same tile sits above leader-only
+            Rostering. The Leader tools "Giving" row stays as-is: it opens the
+            management hub, this opens the member surface. */}
+        {group._id && groupGivingFlag === true && hasGivingFund && (
+          <View style={styles.waSection}>
+            <WaInsetGroup header="Giving">
+              <WaCell
+                icon="cash-outline"
+                title="Group fund"
+                description="Give, and see where the money goes."
+                onPress={() => router.push(`/groups/${group._id}/fund` as any)}
+              />
+            </WaInsetGroup>
+          </View>
+        )}
 
         {/* 6. LEADER TOOLS — leader/admin only, WaInsetGroup of navigational
             WaCells (plain monochrome glyphs per §3.2), reusing today's

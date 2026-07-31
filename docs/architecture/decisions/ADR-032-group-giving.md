@@ -126,15 +126,20 @@ and can delegate from there.
   fees as a charge), ACH debit offered for large gifts. `payment_intent.
   succeeded` writes `donations` + a credit `ledgerEntries` row and sends the
   Resend receipt from the church's name/EIN.
-- **Allocation**: Stripe pays out in bulk (T+2) to the receiving Account. An
-  allocation job splits each payout into group Accounts via Increase
-  AccountTransfers, driven by donation metadata; `donations.allocationStatus`
-  tracks it. This is the one place the seam between vendors shows, and it is
-  a background job, not a user-facing flow.
+- **Allocation**: Stripe pays out in bulk (T+2) to the receiving Account,
+  **net** of processing fees. An allocation job asks Stripe which charges
+  composed the payout and at what net (balance transactions), then splits
+  those nets into group Accounts via Increase AccountTransfers;
+  `donations.allocationStatus` tracks it and the `gross − net` fee is posted
+  to the ledger as the transfer lands. This is the one place the seam between
+  vendors shows, and it is a background job, not a user-facing flow.
 - **Card spend**: Increase Card bound to the group's Account, spend limit,
   digital wallet token (Apple/Google Pay). Authorization is scoped by the
-  Account balance natively. The card-transaction webhook writes the debit
-  entry and triggers the receipt-nudge push.
+  Account balance natively, and the per-card spend limit is enforced natively
+  too — Increase's `authorization_controls.usage.multi_use.spending_limits`
+  declines an over-limit authorization at the bank, without a round trip to
+  us. The card-transaction webhook writes the debit entry and triggers the
+  receipt-nudge push.
 - **Reimbursement**: member submits amount + receipt (R2) → manager approves →
   Increase ACH transfer from the group's Account to the member's linked bank.
   Idempotency key = expense id.
@@ -169,6 +174,14 @@ configurable two-approver threshold (default $200); receipt-required policy
 with push nudges. Enforcement via `requireFundRole(ctx, fundId, userId,
 minRole)` in `lib/helpers.ts`, mirroring `requireGroupLeaderOrCommunityAdmin`.
 
+The leader row of the "Assign finance roles" line is a **grant to others,
+not to self**. `requireFundRoleOrGroupLeader`'s carve-out ignores the
+required role level — that's what makes the bootstrap possible — so a leader
+allowed to name themselves would have a one-tap path to `finance_admin`, a
+card, and the fund's balance with no second human involved. `grantFundRole`
+therefore refuses a self-targeted grant from a caller whose only standing is
+"leads this group". Finance admins and community admins are unaffected.
+
 ### 5. Schema (new tables, `apps/convex/schema.ts`)
 
 ```
@@ -187,7 +200,10 @@ fundRoles         fundId, userId, role: "finance_admin" | "manager"
                       | "cardholder", grantedBy, grantedAt, revokedAt?
 donations         fundId, donorUserId?, amountCents, feeCoverCents,
                   stripePaymentIntentId, allocationStatus, recurringId?,
-                  receiptEmailStatus
+                  receiptEmailStatus,
+                  allocationPayoutId?, payoutNetCents?  (the payout this gift
+                  was matched into and the NET it delivered — see §3
+                  Allocation and Phase-2 requirement 6)
 cards             fundId, holderUserId, increaseCardId, status,
                   spendLimitCents, controls
 expenses          fundId, submitterId, amountCents,
@@ -217,7 +233,13 @@ provider object id.
   drift alarm, receipt-nudge digest, January statements batch.
 - **Mobile**: giving section slots into `GroupDetailScreen` between Check-in
   and Rostering, gated like Rostering (`isLeader || isAdmin` for management
-  surfaces; everyone sees Give + transparency). New routes under
+  surfaces; everyone sees Give + transparency). Behind the `whatsapp-shell`
+  flag the group page is `GroupInfoScreen` instead, so the same pair of
+  entry points lives there too: a member-level "Giving → Group fund" card
+  between Channels and Leader tools (→ `groups/[group_id]/fund`), and the
+  leader-only "Giving" row inside Leader tools (→ the management hub). Both
+  screens must carry the member door — leader-gating it strands members with
+  no way to give at all. New routes under
   `app/(user)/leader-tools/[group_id]/giving/` and a public
   `groups/[group_id]/give` sheet. **No new native dependencies** — payment
   sheet via `@stripe/stripe-react-native` must be classified in
@@ -305,9 +327,27 @@ already flagged in `functions/finance/ARCHITECTURE.md`:
 5. **Offboarding runbook.** A church leaving Togather gets its full balance
    ACH'd to its verified bank and its Increase accounts closed — tooling +
    terms-of-service clause, not a support ticket.
-6. **Net-amount allocation.** Allocation matching must switch from gross
-   donation totals to Stripe balance-transaction per-charge NET amounts
-   (already documented as a hard go-live prerequisite in ARCHITECTURE.md).
+6. **Net-amount allocation.** ✅ **Done** — allocation matching now reads
+   Stripe balance-transaction per-PaymentIntent NET amounts for the payout
+   (`getPayoutComposition`) instead of gross donation totals, which also
+   means the payout tells us exactly which donations it contained rather
+   than the job inferring membership from a running total. Falls out of
+   that: allocation is retried per (payout, donation) rather than dropped
+   whole on a redelivered webhook, so one failed Increase transfer no longer
+   strands the rest of the batch; and the fee Stripe kept is posted as a
+   `fee` ledger debit when the transfer lands, which is what makes the
+   §3 invariant satisfiable and a stalled allocation visible as drift.
+   Reversals (refunds and chargeback `adjustment`s) are netted against their
+   own charge rather than discarded, so a gift refunded before its payout
+   contributes nothing and is never transferred into a group's spendable
+   Account; a fully refunded gift is additionally flipped to a terminal
+   `donations.allocationStatus: "refunded"`. Concurrency between an
+   in-flight payout webhook and the hourly retry cron is closed by a
+   per-donation transfer lease taken in the selection mutation. See
+   `functions/finance/ARCHITECTURE.md` → "Known Seams & TODOs" for the full
+   recovery semantics, the refund/dispute states, and the one case that is
+   deliberately left drifting (a refund arriving after allocation needs a
+   bank-side clawback that is not designed yet).
 
 ## Open questions
 

@@ -26,6 +26,7 @@ import { internalMutation, internalQuery } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import { logFinanceAudit } from "../../lib/finance/audit";
+import { cardLimitWindowStart } from "../../lib/finance/cardPolicy";
 import { postLedgerEntry } from "../../lib/finance/ledger";
 import { now } from "../../lib/utils";
 import {
@@ -207,6 +208,99 @@ export const recordCardSettlement = internalMutation({
         cardId: card._id,
         amountCents: args.amountCents,
         increaseTransactionId: args.increaseTransactionId,
+      },
+    });
+
+    // SCHEDULED, not called inline. A Convex mutation is one transaction, so
+    // an inline drift check that threw — on a bug, or on the read limits its
+    // window query could reach — would roll back the expense AND the ledger
+    // debit above, and Increase would retry the webhook straight back into
+    // the same failure. Scheduling is atomic with this transaction (it only
+    // happens if the settlement commits) while running in its own, which is
+    // the only arrangement where "the audit can never affect the money path"
+    // is actually true rather than merely intended.
+    await ctx.scheduler.runAfter(
+      0,
+      internal.functions.finance.webhooks.auditOverLimitCardCharge,
+      { cardId: card._id, expenseId, atMs: timestamp },
+    );
+  },
+});
+
+/**
+ * Drift check: did a settled charge push this card past the limit the bank
+ * is supposed to be enforcing?
+ *
+ * Increase enforces `spendLimitCents`/`limitPeriod` at authorization time
+ * (cards.ts, lib/finance/increase.ts), so in the normal case this never
+ * fires. It fires when our stored limit and the bank's disagree — a card
+ * issued before limits were wired through, a `setCardLimit` whose provider
+ * call failed after the audit row landed, or a settlement that exceeds its
+ * own authorization (forced posts, tip adjustments). Those are exactly the
+ * cases where a fund's finance admins need a record, and the only way to
+ * catch them is to compare after the money has moved.
+ *
+ * Audit-only by design: the charge already settled, so there is nothing to
+ * block — this makes the stored limit a real monitoring control rather than
+ * a number nobody ever reads back.
+ *
+ * Runs as its OWN transaction, scheduled by `recordCardSettlement` — see the
+ * comment at that call site for why it must never share the settlement's.
+ */
+export const auditOverLimitCardCharge = internalMutation({
+  args: {
+    cardId: v.id("cards"),
+    expenseId: v.id("expenses"),
+    /** Settlement time, so the window matches the one the settlement fell in. */
+    atMs: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const card = await ctx.db.get(args.cardId);
+    if (!card) return;
+    const fund = await ctx.db.get(card.fundId);
+    if (!fund) return;
+
+    const limitCents = card.spendLimitCents;
+    const limitPeriod = card.limitPeriod;
+    if (limitCents === undefined || limitPeriod === undefined) return;
+
+    const windowStart = cardLimitWindowStart(limitPeriod, args.atMs);
+    let windowTotalCents: number;
+    if (windowStart === null) {
+      // "charge" — a per-transaction cap, so the window is this charge alone.
+      windowTotalCents = (await ctx.db.get(args.expenseId))?.amountCents ?? 0;
+    } else {
+      // Bounded by the index range, not filtered in JS: a card in weekly use
+      // for years must not make this read grow without limit. The expense for
+      // this charge is already inserted, so it's counted here rather than
+      // added on top.
+      const charges = await ctx.db
+        .query("expenses")
+        .withIndex("by_card_created", (q) =>
+          q.eq("cardId", args.cardId).gte("createdAt", windowStart),
+        )
+        .collect();
+      windowTotalCents = charges
+        .filter((e) => e.kind === "card_charge")
+        .reduce((sum, e) => sum + e.amountCents, 0);
+    }
+
+    if (windowTotalCents <= limitCents) return;
+
+    console.error(
+      `[finance] card ${card._id} settled past its ${limitPeriod} limit: ${windowTotalCents} > ${limitCents} cents`,
+    );
+    await logFinanceAudit(ctx, {
+      communityId: fund.communityId,
+      fundId: fund._id,
+      action: "card.limit_exceeded",
+      details: {
+        cardId: card._id,
+        expenseId: args.expenseId,
+        spendLimitCents: limitCents,
+        limitPeriod,
+        windowTotalCents,
+        windowStart,
       },
     });
   },
@@ -673,7 +767,16 @@ export async function handleFinanceStripeEvent(
       return;
     }
 
-    case "payout.paid": {
+    // Both events mean "this payout's composition is readable now". Stripe
+    // attributes balance transactions to a payout ASYNCHRONOUSLY, which is
+    // exactly what `payout.reconciliation_completed` announces — a query at
+    // `payout.paid` alone can come back partial or empty, and an empty plan
+    // has no automatic recovery (see jobs.ts `runAllocation`). Running both
+    // is safe: allocation is idempotent per (payout, donation), so the second
+    // pass either finds nothing left to do or finishes the tail the first
+    // one couldn't see yet.
+    case "payout.paid":
+    case "payout.reconciliation_completed": {
       // Payouts fire on the CONNECTED account, so the payload has no
       // metadata of ours — resolve the community from event.account.
       if (!event.account) {
@@ -692,6 +795,33 @@ export async function handleFinanceStripeEvent(
         stripePayoutId: payout.id,
         payoutCents: payout.amount,
       });
+      return;
+    }
+
+    case "payout.failed": {
+      // Stripe can follow `payout.paid` with `payout.failed` when the bank
+      // rejects it. Anything the paid event bound to this payout has to be
+      // unbound, or the hourly retry cron — which resumes bound items
+      // unconditionally now — spends forever trying to move money out of a
+      // receiving Account that never received it.
+      if (!event.account) {
+        return;
+      }
+      const finance = await ctx.runQuery(
+        internal.functions.finance.webhooks.getCommunityFinanceByStripeAccount,
+        { stripeConnectedAccountId: event.account },
+      );
+      if (!finance) {
+        return;
+      }
+      const payout = event.data.object;
+      const { unbound } = await ctx.runMutation(
+        internal.functions.finance.jobs.unbindFailedPayout,
+        { communityId: finance.communityId, stripePayoutId: payout.id },
+      );
+      console.error(
+        `[finance] payout.failed: ${payout.id} for community ${finance.communityId} — unbound ${unbound} donation(s)`,
+      );
       return;
     }
 

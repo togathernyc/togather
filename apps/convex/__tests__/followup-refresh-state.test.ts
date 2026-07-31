@@ -1,13 +1,26 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import schema from "../schema";
 import { modules } from "../test.setup";
 import { api, internal } from "../_generated/api";
 import { generateTokens } from "../lib/auth";
+import { drainScheduledFunctions } from "./helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
-vi.useFakeTimers();
+// `refreshFollowupScores` schedules `computeCommunityScores` via a plain
+// `runAfter(0, …)`, which itself schedules further work of its own (e.g.
+// pre-archive notices) — left undrained, that leaks into other test files
+// in the same worker; see `helpers/drainScheduledFunctions.ts` for the full
+// mechanism.
+//
+// Deliberately NOT `vi.useFakeTimers()` (this file used to call it at
+// module scope with no matching `afterEach(vi.useRealTimers)` — that is
+// exactly the hazard the helper's doc comment warns about: fake timers are
+// installed process-wide and share the same worker-global lifetime, so a
+// file that installs them without resetting owns a second way to strand
+// another file's scheduled work, and it also freezes the `setTimeout(0)` a
+// scheduled job needs to progress in the first place).
 
 async function seedFollowupRefreshFixture(t: ReturnType<typeof convexTest>) {
   const baseTs = Date.now();
@@ -134,6 +147,7 @@ describe("followup refresh state + lastActiveAt", () => {
         groupId: fixture.groupId,
       }
     );
+    await drainScheduledFunctions(t);
 
     // New pipeline returns { success: true } and schedules communityScoreComputation
     expect((result as any).success).toBe(true);
@@ -146,6 +160,7 @@ describe("followup refresh state + lastActiveAt", () => {
         groupId: fixture.groupId,
       }
     );
+    await drainScheduledFunctions(t);
     expect((second as any).success).toBe(true);
   });
 
@@ -168,6 +183,7 @@ describe("followup refresh state + lastActiveAt", () => {
         groupId: fixture.groupId,
       }
     );
+    await drainScheduledFunctions(t);
 
     expect((first as any).success).toBe(true);
     expect((second as any).success).toBe(true);

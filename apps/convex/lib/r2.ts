@@ -10,6 +10,10 @@
  * bucket and resolve through the same URL resolver.
  */
 
+import { internal } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+
 /** Generate an R2 object key under `folder`, sanitizing the file name. */
 function buildObjectKey(folder: string, fileName: string): string {
   const uuid = crypto.randomUUID();
@@ -23,6 +27,15 @@ function buildObjectKey(folder: string, fileName: string): string {
  * Upload bytes to R2 and return the database storage path (`r2:<key>`),
  * resolvable to a public URL via `getMediaUrl`.
  *
+ * PROVENANCE (`grantTo`): this is the SECOND producer of `r2:` keys, alongside
+ * the presigned-URL actions in `functions/uploads.ts`. Anything that treats an
+ * `r2:` key as evidence of who uploaded it — today only `submitExpense`'s
+ * receipt check — reads `uploadGrants`, and a key with no row there is refused.
+ * So a server-side upload made ON BEHALF OF a member must pass `grantTo`, or
+ * that member's own file would be rejected as not theirs. Uploads that belong
+ * to the system rather than to a person (PCO song files, dev-assistant config)
+ * pass nothing, deliberately: no row means no user can claim the key.
+ *
  * @throws Error if R2 env vars are not configured.
  */
 export async function putR2Object(args: {
@@ -30,6 +43,8 @@ export async function putR2Object(args: {
   fileName: string;
   contentType: string;
   body: ArrayBuffer;
+  /** Attribute the resulting key to a user, so they can use it as a receipt. */
+  grantTo?: { ctx: ActionCtx; userId: Id<"users"> };
 }): Promise<{ key: string; storagePath: string }> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
@@ -58,5 +73,29 @@ export async function putR2Object(args: {
     })
   );
 
-  return { key, storagePath: `r2:${key}` };
+  const storagePath = `r2:${key}`;
+
+  if (args.grantTo) {
+    // Best-effort, exactly like the presign path: the bytes are already in
+    // R2, so throwing here would fail an upload that actually succeeded. A
+    // missing row costs the user a re-upload, never a false accept.
+    try {
+      await args.grantTo.ctx.runMutation(
+        internal.functions.uploads.recordUploadGrant,
+        {
+          storagePath,
+          userId: args.grantTo.userId,
+          folder: args.folder,
+          contentType: args.contentType,
+        },
+      );
+    } catch (error) {
+      console.error(
+        `[r2] could not record the upload grant for ${storagePath} — the object is stored, but it can't be used as a receipt`,
+        error,
+      );
+    }
+  }
+
+  return { key, storagePath };
 }

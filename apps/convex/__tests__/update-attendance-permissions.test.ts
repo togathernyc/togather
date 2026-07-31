@@ -11,6 +11,7 @@ import schema from "../schema";
 import { api } from "../_generated/api";
 import { modules } from "../test.setup";
 import { generateTokens } from "../lib/auth";
+import { drainScheduledFunctions } from "./helpers/drainScheduledFunctions";
 
 process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-minimum-32-chars";
 
@@ -169,6 +170,11 @@ describe("updateAttendance permissions", () => {
       targetUserId: regularUserId,
       status: 1,
     });
+    // updateAttendance schedules computeSingleMemberScore and
+    // recomputeForGroupMember (which itself schedules a nested
+    // computeSingleCommunityMember) via runAfter(0, ...); drain them (see
+    // helpers/drainScheduledFunctions.ts for why).
+    await drainScheduledFunctions(t);
 
     expect(result.status).toBe(1);
     expect(result.odUserId).toEqual(regularUserId);
