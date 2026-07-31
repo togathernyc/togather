@@ -209,22 +209,27 @@ describe("splitDonationAmounts (fee-cover double-count fix)", () => {
   });
 });
 
-describe("claimPayout (payout.paid replay protection)", () => {
-  test("second claim of the same stripePayoutId returns false", async () => {
+describe("planAllocations (payout.paid replay protection)", () => {
+  test("re-planning the same payout records it once and reports alreadyClaimed", async () => {
     const t = convexTest(schema, modules);
     const s = await seedWithoutFlag(t);
 
-    const first = await t.mutation(internal.functions.finance.jobs.claimPayout, {
+    // Settlement paths are deliberately NOT flag-gated (see this file's
+    // header): a payout that arrives while the flag is off must still
+    // allocate, and must still be replay-safe.
+    const args = {
       communityId: s.communityId,
       stripePayoutId: "po_replay_test",
       payoutCents: 12345,
-    });
-    const second = await t.mutation(internal.functions.finance.jobs.claimPayout, {
-      communityId: s.communityId,
-      stripePayoutId: "po_replay_test",
-      payoutCents: 12345,
-    });
-    expect(first).toBe(true);
-    expect(second).toBe(false);
+      charges: [],
+    };
+    const first = await t.mutation(internal.functions.finance.jobs.planAllocations, args);
+    const second = await t.mutation(internal.functions.finance.jobs.planAllocations, args);
+
+    expect(first.alreadyClaimed).toBe(false);
+    expect(second.alreadyClaimed).toBe(true);
+    expect(
+      await t.run((ctx) => ctx.db.query("processedStripePayouts").collect()),
+    ).toHaveLength(1);
   });
 });

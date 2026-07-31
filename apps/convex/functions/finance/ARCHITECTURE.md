@@ -10,9 +10,9 @@
 
 **functions/finance/roles.ts** — Fund role (finance_admin / manager / cardholder) lifecycle. Exports `grantFundRole` (mutation: community-admin-only role assignment), `revokeFundRole` (mutation: soft-delete via revokedAt), and `getFundRoles` (query: list active roles on a fund).
 
-**functions/finance/jobs.ts** — Allocation, reconciliation, and payout-retry background jobs. Exports `planAllocations` (internal: decides which pending donations a payout covers — oldest-first, whole-only), `recordAllocation` (internal: flips donation.allocationStatus + audit log), `runAllocation` (internal action: pairs planAllocations with Increase transfers), `runNightlyReconcileAllCommunities` (cron: nightly invariant check per community), `retryStuckReimbursements` (cron: re-schedules `payReimbursement` for reimbursements stuck "approved" > 6h with no transfer — a backstop for a crashed/interrupted payout, safe because `createAchTransfer`'s idempotency key collapses a retry to the same transfer), and `registerFinanceCrons` (registers all three crons — reconcile daily at 07:00 UTC, allocation-retry hourly at :45, stuck-reimbursement-retry hourly at :20).
+**functions/finance/jobs.ts** — Allocation, reconciliation, and payout-retry background jobs. Exports `planAllocations` (internal: binds a payout's donations to it, matching Stripe balance-transaction per-charge NET amounts by PaymentIntent id and stamping `donations.allocationPayoutId` / `payoutNetCents`; skips — never `break`s on — an item it can't fit), `recordAllocation` (internal: flips donation.allocationStatus, posts the realised Stripe fee as a `fee` ledger debit, audit-logs the transfer id), `recordAllocationFailure` (internal: audits `allocation.transfer_failed` for one item that didn't transfer, leaving it pending and retryable), `runAllocation` (internal action: reads the payout's composition from Stripe, plans, then transfers item-by-item with per-item error isolation), `listResumableAllocations` (internal: payout-bound donations whose transfer never landed), `runNightlyReconcileAllCommunities` (cron: nightly invariant check per community), `retryStaleAllocations` (cron: resumes stranded payout-bound allocations, alerts on donations no payout has covered yet), `retryStuckReimbursements` (cron: re-schedules `payReimbursement` for reimbursements stuck "approved" > 6h with no transfer — a backstop for a crashed/interrupted payout, safe because `createAchTransfer`'s idempotency key collapses a retry to the same transfer), and `registerFinanceCrons` (registers all three crons — reconcile daily at 07:00 UTC, allocation-retry hourly at :45, stuck-reimbursement-retry hourly at :20).
 
-**functions/finance/webhooks.ts** — Stripe payment/payout/refund/dispute and Increase event dispatch + signature verification. Handles Stripe routing to `recordDonationSucceeded` (payment_intent.succeeded, with a server-side connected-account cross-check against the fund's own `communityFinance` before crediting — see `getFundFinanceForWebhook`), `recordDonationRefund` (charge.refunded, same account cross-check via `getDonationFundForWebhook`), `recordDonationDisputed` (charge.dispute.created, audit-only), `planAllocations` (payout.paid), Increase Entity/Account status updates (entity.created, account.created), `recordCardSettlement` (transaction.created with `source.category === "card_settlement"` — turns a card swipe into a `card_charge` expense + ledger debit, see cards.ts below), and webhook signature verification via Increase's idempotency behavior (documented in lib/finance/increase.ts).
+**functions/finance/webhooks.ts** — Stripe payment/payout/refund/dispute and Increase event dispatch + signature verification. Handles Stripe routing to `recordDonationSucceeded` (payment_intent.succeeded, with a server-side connected-account cross-check against the fund's own `communityFinance` before crediting — see `getFundFinanceForWebhook`), `recordDonationRefund` (charge.refunded, same account cross-check via `getDonationFundForWebhook`), `recordDonationDisputed` (charge.dispute.created, audit-only), `runAllocation` (payout.paid), Increase Entity/Account status updates (entity.created, account.created), `recordCardSettlement` (transaction.created with `source.category === "card_settlement"` — turns a card swipe into a `card_charge` expense + ledger debit, see cards.ts below), and webhook signature verification via Increase's idempotency behavior (documented in lib/finance/increase.ts).
 
 **functions/finance/cards.ts** — Group-fund virtual cards (ADR-032 §3 Phase 3). Exports `listFundCards` / `getCardDetail` (cardholder+/leader/admin-gated reads; `getCardDetail` includes the card's last 20 `card_charge` expenses), `createFundCard` (mutation: finance_admin issues a card to a cardholder+ holder — rejects a non-`active` fund, a fund with no `increaseAccountId`, or a community whose `communityFinance.onboardingStatus` isn't `"live"`; inserts a `"pending"` row, audits `card.created`, then schedules `provisionCard`, an internalAction that calls Increase's `createCard` and records the result via `recordCardProvisioned`/`recordCardProvisionFailed` — same provider-write-then-record shape as onboarding.ts's `provisionProviders`), `setCardFrozen` (mutation: the holder can self-freeze, but only a finance_admin can unfreeze — a compromised holder must not be able to re-enable their own frozen card), and `cancelCard` (mutation: finance_admin-only, irreversible). Both lifecycle mutations schedule the shared `applyCardStatus` internalAction (`updateCardStatus` at Increase, then `recordCardStatus` persists whatever status Increase actually confirmed). `spendLimitCents`/`limitPeriod` are **advisory only** — Increase enforces no automatic period reset tied to them; real per-swipe enforcement needs Increase's real-time-authorization webhook, out of scope here (Phase 2 follow-up, see "Known Seams & TODOs"). The settlement side — turning a confirmed card swipe into an expense — is `webhooks.ts`'s `recordCardSettlement`, not this file.
 
@@ -22,9 +22,11 @@
 
 1. `createDonationIntent` (Stripe PaymentIntent on connected account) → donor card charged
 2. Stripe webhook: `payment_intent.succeeded` → `recordDonationSucceeded` (writes donations row + credit to ledger + schedules receipt email)
-3. Stripe bulk payout (T+2) arrives at Increase receiving Account
-4. Webhook: `payout.paid` → `planAllocations` + `runAllocation` (Increase AccountTransfer to group Account + flip allocationStatus)
-5. Nightly cron: `runNightlyReconcileAllCommunities` → invariant check (ledger balance == bank balance + pending)
+3. Stripe bulk payout (T+2) arrives at Increase receiving Account — **net** of Stripe's processing fees
+4. Webhook: `payout.paid` → `runAllocation`: read the payout's per-charge NET amounts from Stripe (`listPayoutChargeNets`) → `planAllocations` binds each matching donation to the payout → one Increase AccountTransfer per group-fund donation, at its NET, each isolated from the others → `recordAllocation` flips allocationStatus and posts the `gross − net` difference as a `fee` ledger debit
+5. Nightly cron: `runNightlyReconcileAllCommunities` → invariant check (ledger balance == bank balance + pending, pending summed on the same NET basis step 4 transfers)
+
+**Why NET, not gross (ADR-032 Phase-2 requirement 6).** A payout delivers the sum of its charges' nets. Matching donations by gross — what the donor was charged and what the ledger was credited — could never fit a donation inside the payout carrying it, which deterministically stalled allocation on the ordinary one-donation-per-payout case. Stripe's balance transactions for a payout also say exactly *which* charges it contained, so membership is read rather than inferred from a running total, and a donation is matched by PaymentIntent identity.
 
 **Reimbursement → Approve → Pay**
 
@@ -47,7 +49,9 @@
   - `role.granted` — Finance role assigned to a user
   - `role.revoked` — Finance role soft-deleted
   - `donation.recorded` — Stripe donation succeeded; webhook-driven
-  - `donation.allocated` — Increase AccountTransfer completed; includes transfer id in details
+  - `donation.allocated` — Increase AccountTransfer completed; details carry the transfer id, the payout id, and the net/gross/fee breakdown of the balance change
+  - `allocation.transfer_failed` — One item of an allocation pass didn't transfer; the donation stays `pending` with its payout binding, so the next pass (webhook redelivery or the hourly retry) picks up exactly it
+  - `allocation.stale_pending` — Donations pending allocation for > 3 days; details include how many stranded items that run managed to resume
   - `reconcile.drift` — Nightly invariant failed (ledger ≠ bank + pending)
   - `expense.submitted` — Member reimbursement created
   - `expense.approved` — First or second approval
@@ -74,7 +78,8 @@ Every external write (Stripe, Increase API calls) is idempotency-keyed to safely
 - **`finance:stripe-account:{communityId}`** — Community Stripe connected account creation (used in onboarding.ts createConnectedAccount)
 - **`finance:entity:{communityId}`** — Increase Entity creation (communityFinance.increaseEntityId — used in increase.ts createEntity)
 - **`donation:{paymentIntentId}`** — Donation ledger credit (giving.ts recordDonationSucceeded + ledger posting)
-- **`alloc:{donationId}`** — Allocation ledger entry for the AccountTransfer (jobs.ts recordAllocation + postLedgerEntry)
+- **`alloc:{donationId}`** — Increase AccountTransfer for one allocated donation (jobs.ts `executeAllocationItems` → `createAccountTransfer`). Doing double duty as replay protection: if a transfer succeeded but the action died before recording it, the retry resolves to the SAME transfer at Increase instead of moving money twice.
+- **`alloc-fee:{donationId}`** — The `fee` ledger debit for the Stripe processing fee realised when that donation's allocation lands (jobs.ts recordAllocation + postLedgerEntry)
 - **`reimb:{expenseId}`** — Reimbursement ledger debit + ACH initiation (expenses.ts payReimbursement + postLedgerEntry)
 - **`refund:{chargeId}:{cumulativeAmountRefundedCents}`** — Refund ledger debit (giving.ts recordDonationRefund + postLedgerEntry). The CUMULATIVE amount (Stripe's own running total, not a per-event delta) is part of the key, so a redelivered `charge.refunded` webhook with the same cumulative amount dedupes to one entry, while a later refund step (e.g. partial → full) gets its own key and posts its own entry.
 - **`donation-intent:{fundId}:{idempotencyNonce}`** — Stripe's own REQUEST-level idempotency key on `paymentIntents.create` (giving.ts createDonationIntent), not a ledger key — prevents a double-tap on the give sheet from creating two PaymentIntents. Only sent when the client provides `idempotencyNonce`.
@@ -110,12 +115,14 @@ Ledger posting adds `:debit` or `:credit` suffix to distinguish the paired trans
 
 ## Testing
 
-Four finance test files in `apps/convex/__tests__/`:
+Finance test files in `apps/convex/__tests__/`:
 
 - **finance-ledger.test.ts** — Tests `postLedgerEntry`, `deriveBalance`, `checkInvariant`, paired-transfer semantics; validates dedup by idempotencyKey and the append-only invariant
 - **finance-onboarding.test.ts** — Tests `startOnboarding` (form validation — EIN format, address shape), status machine transitions, idempotency of external provisioning calls
 - **finance-expenses.test.ts** — Tests `submitExpense`, `approveExpense`, `denyExpense`, two-approver $200 threshold, policy violations (non-members can't submit, expired roles can't approve)
-- **finance-giving.test.ts** — Tests `planAllocations` (oldest-first, whole-only selection), `recordAllocation` semantics, reconcile drift detection; exercises allocation/reconcile directly without Increase provider (lazy-imported in actions so tests never load it)
+- **finance-giving.test.ts** — Tests the donation lifecycle (`recordDonationSucceeded`/`Refund`/`Disputed`, transparency reads), plus `recordAllocation` semantics, `computePendingAllocationCents`, and reconcile drift detection; exercises them directly without the Increase provider (lazy-imported in actions so these tests never load it)
+- **finance-allocation.test.ts** — Tests the payout seam end to end: NET matching (including the exact stall — a lone donation whose gross exceeds its payout's net), skip-don't-stall selection, per-donation replay protection, partial-failure isolation and resume (transfer 2 of 3 fails → 1 and 3 land, a redelivery finishes 2 and re-transfers nothing), no-op replay of a completed payout, `retryStaleAllocations` recovery vs. alert-only, and drift on a stranded allocation. Unlike the other suites this one drives the `runAllocation` **action**, with `listPayoutChargeNets` and `createAccountTransfer` mocked at the module boundary — and deliberately no suite-wide fake timers, so an awaited action can't silently no-op
+- **finance-payout-nets.test.ts** — Tests `listPayoutChargeNets` against a mocked `stripe` SDK: NET extraction, PaymentIntent mapping via the expanded `source`, paging, and the skipping of fee/payout/refund rows and malformed nets
 - **finance-cards.test.ts** — Tests `createFundCard` (pending row + audit, holder-role gate, caller gate, fund-readiness gates), `listFundCards`/`getCardDetail` viewer gating, `setCardFrozen` permissions (self-freeze vs. finance_admin-only unfreeze), `cancelCard` (finance_admin-only), and `recordCardSettlement` (idempotency, account-mismatch rejection, missing-card log-not-throw)
 
 ## Known Seams & TODOs
@@ -128,16 +135,62 @@ Four finance test files in `apps/convex/__tests__/`:
   away from the managed Increase account via the Express Dashboard) must be
   detected and surfaced.
 
-- **Allocation matches GROSS donation amounts against a NET payout.** A Stripe
-  payout is net of processing fees, while `planAllocations` sums gross
-  donation totals — so a payout will under-cover its own donations by roughly
-  the fee amount, leaving a tail of donations pending (surfaced by the
-  `allocation.stale_pending` alert; no money moves incorrectly because the
-  stale backstop is alert-only and payout replays are blocked by
-  `processedStripePayouts`). Before Phase-2 go-live, allocation must switch to
-  balance-transaction-based per-charge NET amounts (`stripe.balanceTransactions`
-  for the payout) instead of gross donation totals. Tracked from the Codex
-  review on PR #653.
+- **Net-amount allocation — DONE** (ADR-032 Phase-2 requirement 6, was a hard
+  go-live prerequisite). Allocation matches Stripe balance-transaction
+  per-charge NET amounts (`listPayoutChargeNets` in lib/finance/stripeConnect.ts,
+  `GET /v1/balance_transactions?payout=…&expand[]=data.source` on the
+  connected account, paged), not gross donation totals. The old gross matcher
+  compared a gross donation against a fee-reduced payout, so the common
+  one-donation-per-payout case never fit — and it `break`ed on the first
+  non-fitting item, so the queue never advanced and every later payout stalled
+  the same way. Selection now skips (`continue`) rather than stopping, and
+  membership comes from Stripe rather than a running total.
+
+  **Partial-failure recovery semantics.** Each Increase transfer in a pass is
+  wrapped individually: one failure costs that donation only, is audited as
+  `allocation.transfer_failed`, and leaves the donation `pending` with its
+  `allocationPayoutId` / `payoutNetCents` stamp intact. Replay protection is
+  therefore per-**(payout, donation)**, not per payout: a redelivered
+  `payout.paid` re-derives the same donation set from Stripe, drops the ones
+  already flipped to `"allocated"`, and finishes only the tail. Exactly-once
+  rests on two independent locks — `recordAllocation` no-ops on an
+  already-allocated donation, and the `alloc:{donationId}` Increase
+  idempotency key collapses the genuinely ambiguous case (transfer landed,
+  action died before recording) into the same transfer instead of a second
+  movement of money. `processedStripePayouts` is now only the bookkeeping
+  record of a pass, not the gate. Stripe is queried *before* anything is
+  written, so an unreachable Stripe leaves the payout wholly untouched for the
+  next attempt. `retryStaleAllocations` (hourly) resumes stranded
+  payout-bound donations for real now — the payout id and the exact delivered
+  net are on the row, so nothing has to be guessed — and stays alert-only for
+  donations no payout has covered yet (fabricating a payout amount there would
+  still be wrong; Codex review, PR #653).
+
+  **Ledger consequence: allocation posts a `fee` debit.** The donation credit
+  is gross, the bank only ever holds net, so ADR-032's invariant
+  (`funds.balanceCents === Increase balance + pending allocations`) is only
+  satisfiable if the fee is realised somewhere. `recordAllocation` posts it
+  (`gross − net`, key `alloc-fee:{donationId}`) when the transfer lands — and
+  that timing is deliberate. `computePendingAllocationCents` counts a donation
+  at gross while it's still in the Stripe pipeline and at net once a payout
+  has bound it, so the three states read:
+  in-pipeline `ledger gross / bank 0 / pending gross` → ok;
+  bound but stalled `ledger gross / bank 0 / pending net` → **drift = fee**;
+  allocated `ledger net / bank net / pending 0` → ok. Summing pending at gross
+  throughout (as it used to) made a stalled allocation self-consistent, which
+  is why the deterministic stall was invisible to the nightly alarm. `"fee"`
+  is in `FROZEN_ALLOWED_KINDS` for the same in-flight reason as refunds: Stripe
+  already kept the money, so a fund frozen between gift and allocation must
+  still record it.
+
+  **Still open (pre-existing, unchanged here):** general-fund donations are
+  recorded as allocated without any transfer, because `recordProvisioned`
+  never provisions a separate General Increase Account (ADR-032 §1's topology
+  says there is one) — unearmarked money simply stays in the receiving
+  Account. The General fund has no `increaseAccountId`, so
+  `getFundsWithIncreaseAccount` excludes it from reconcile and nothing
+  alarms; it just means the General fund's ledger balance isn't backed by a
+  bank account of its own yet. Provisioning that Account is Phase-2 work.
 
 **Member payout destination stub** (expenses.ts `getPayoutDestination`) — Phase 2 follow-up. Currently returns `null` (every expense blocks at "no destination found"). Awaiting linking flow to ship; structure is in place (`payReimbursement` action + `recordReimbursementPaid` mutation + Increase ACH client calls). Replace the stub with a real lookup once the UI for members to link their bank account lands.
 

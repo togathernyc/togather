@@ -3901,6 +3901,22 @@ export default defineSchema({
     ),
     recurringId: v.optional(v.string()), // Stripe subscription/recurring-donation id, if recurring
     receiptEmailStatus: v.string(), // "pending" | "sent" | "failed" — Resend receipt from the church's name/EIN
+    // The Stripe payout this donation was matched into by planAllocations
+    // (functions/finance/jobs.ts). Stamped once, at plan time, and never
+    // re-stamped — it is what makes allocation replay-safe per DONATION
+    // rather than per payout: a redelivered `payout.paid` re-processes only
+    // the donations already bound to that payout id and still "pending".
+    // Optional/backfill-safe: donations recorded before net matching shipped
+    // (and any donation not yet paid out) simply have neither field.
+    allocationPayoutId: v.optional(v.string()),
+    // Integer cents this donation actually contributed to that payout — the
+    // Stripe balance-transaction NET (gross minus Stripe's processing fee),
+    // which is what the bulk payout physically delivered and therefore the
+    // only amount we can transfer on to the group's Increase Account. The
+    // gross (amountCents + feeCoverCents) is what the ledger credited at
+    // donation time; the difference is posted as a "fee" debit once the
+    // allocation transfer lands (see jobs.ts recordAllocation).
+    payoutNetCents: v.optional(v.number()),
     createdAt: v.number(), // Unix timestamp ms
   })
     .index("by_fund", ["fundId"])
@@ -3992,13 +4008,19 @@ export default defineSchema({
 
   /**
    * One row per Stripe payout that has had an allocation pass run against
-   * it. Payout-LEVEL replay protection: a redelivered `payout.paid` webhook
-   * must not run a second allocation pass, because the first pass already
-   * marked its donations "allocated" — a second planAllocations would grab
-   * the NEXT pending donations and move money that payout never contained
-   * (Codex review, PR #653). Per-donation idempotency keys can't catch that;
-   * this table does. Insert-if-absent via claimPayout (functions/finance/
-   * jobs.ts) is transactional under Convex OCC.
+   * it — a record of when the payout was first seen, plus the payout amount
+   * we matched against.
+   *
+   * This used to be the ONLY replay protection: a redelivered `payout.paid`
+   * was dropped outright, because the old gross-total matcher would have
+   * grabbed the NEXT pending donations on a re-plan and moved money the
+   * payout never contained (Codex review, PR #653). That also meant a
+   * partially-failed pass could never be retried. Replay protection now
+   * lives on the donation rows themselves (`donations.allocationPayoutId` —
+   * matched by Stripe payment-intent id out of the payout's own balance
+   * transactions, so a re-plan can only ever re-select the SAME donations),
+   * which makes a redelivery a safe resume of the unfinished items. This row
+   * remains as the audit/bookkeeping record of the pass.
    */
   processedStripePayouts: defineTable({
     communityId: v.id("communities"),

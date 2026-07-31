@@ -4,8 +4,9 @@
  *
  * Covers functions/finance/giving.ts (getFundOverview aggregates + donor-name
  * gating, getGivingContext live-gating, recordDonationSucceeded idempotency)
- * functions/finance/jobs.ts (planAllocations, recordAllocation,
- * computePendingAllocationCents, recordReconcileResult), and
+ * functions/finance/jobs.ts (recordAllocation, computePendingAllocationCents,
+ * recordReconcileResult — payout matching and the allocation action itself
+ * are covered in __tests__/finance-allocation.test.ts), and
  * lib/finance/receipts.ts (buildDonationReceiptEmail content). The live
  * Stripe/Resend/Increase paths (createDonationIntent, sendDonationReceipt's
  * actual send, runAllocation/runNightlyReconcile's provider calls) are
@@ -1071,94 +1072,11 @@ async function seedJobsFixture(t: ReturnType<typeof convexTest>): Promise<JobsFi
   });
 }
 
-describe("planAllocations", () => {
-  test("selects pending donations oldest-first across the whole community, whole donations only, with leftover", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, fundAId, fundBId } = await seedJobsFixture(t);
-
-    await t.run(async (ctx) => {
-      // Oldest, on fund A: total 1000.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 1000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_1",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 1_000,
-      });
-      // Second oldest, on fund B: total 2100.
-      await ctx.db.insert("donations", {
-        fundId: fundBId,
-        amountCents: 2000,
-        feeCoverCents: 100,
-        stripePaymentIntentId: "pi_2",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 2_000,
-      });
-      // Newest, on fund A: total 5000 — doesn't fit in a 3100-cent payout.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 5000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_3",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 3_000,
-      });
-      // Already allocated — must never be selected, even though it's oldest.
-      await ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 999,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_0_already_allocated",
-        allocationStatus: "allocated",
-        receiptEmailStatus: "sent",
-        createdAt: 500,
-      });
-    });
-
-    const result = await t.mutation(internal.functions.finance.jobs.planAllocations, {
-      communityId,
-      payoutCents: 3100,
-      stripePayoutId: "po_test_1",
-    });
-
-    expect(result.plan).toHaveLength(2);
-    expect(result.plan[0]).toMatchObject({ fundId: fundAId, amountCents: 1000 });
-    expect(result.plan[1]).toMatchObject({ fundId: fundBId, amountCents: 2100 });
-    expect(result.leftoverCents).toBe(0);
-  });
-
-  test("leftoverCents reflects a payout that doesn't exactly cover whole donations", async () => {
-    const t = convexTest(schema, modules);
-    const { communityId, fundAId } = await seedJobsFixture(t);
-
-    await t.run((ctx) =>
-      ctx.db.insert("donations", {
-        fundId: fundAId,
-        amountCents: 1000,
-        feeCoverCents: 0,
-        stripePaymentIntentId: "pi_solo",
-        allocationStatus: "pending",
-        receiptEmailStatus: "sent",
-        createdAt: 1_000,
-      }),
-    );
-
-    // Payout is $9.90 more than the one donation — e.g. Stripe's processing
-    // fee taken out of the gross payout, never matching a whole donation.
-    const result = await t.mutation(internal.functions.finance.jobs.planAllocations, {
-      communityId,
-      payoutCents: 1990,
-      stripePayoutId: "po_test_2",
-    });
-
-    expect(result.plan).toHaveLength(1);
-    expect(result.leftoverCents).toBe(990);
-  });
-});
+// `planAllocations` selection (NET matching, skip-don't-stall, per-donation
+// replay protection) lives in __tests__/finance-allocation.test.ts alongside
+// the `runAllocation` action it feeds — this file keeps the two pieces that
+// stand alone from a payout: recordAllocation and the pending-sum used by
+// reconcile.
 
 describe("recordAllocation", () => {
   test("flips allocationStatus and audit-logs without changing the fund's balanceCents", async () => {
