@@ -1553,9 +1553,12 @@ describe("ServingTasksScreen — task provenance (Mine)", () => {
     expect(getByText("Production · Camera")).toBeTruthy();
   });
 
-  it("still labels rows when the crew section never resolved (offline)", () => {
-    // The task `roles` alone carry enough to decide, so a venue with no signal
-    // and no cached crew list doesn't silently lose the labels.
+  it("labels NOTHING until the crew section resolves", () => {
+    // The two sections are independent subscriptions and the tasks usually win
+    // the race. Deciding from them would render an unlabelled list and then
+    // grow a meta line on EVERY row a beat later — a full-list reflow on a
+    // checklist of toggle Pressables, where a tap already in flight lands on
+    // the neighbouring task's checkbox.
     mockQueries(
       {
         before: [
@@ -1573,10 +1576,31 @@ describe("ServingTasksScreen — task provenance (Mine)", () => {
       DEFAULT_PLANS,
       { crew: undefined },
     );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Set up chairs")).toBeTruthy();
+    expect(queryByText("Production · Camera")).toBeNull();
+    expect(queryByText("Hospitality · Greeter")).toBeNull();
+  });
+
+  it("labels rows for a role the plan has no tasks for", () => {
+    // The viewer holds Camera AND Usher; the plan only has Camera tasks. Only
+    // the crew rows know about Usher — the task roles are a strict subset — so
+    // reading them would call this a single-role volunteer and drop the labels.
+    // That degradation would bite hardest offline, at the venue, which is
+    // exactly where "which roster is this from?" gets asked.
+    mockQueries(
+      {
+        before: [templateTask({ roles: [rolePair("Camera", PRODUCTION)] })],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      { crew: [myCrewRow("Camera", PRODUCTION), myCrewRow("Usher")] },
+    );
     const { getByText } = render(<ServingTasksScreen />);
 
     expect(getByText("Production · Camera")).toBeTruthy();
-    expect(getByText("Hospitality · Greeter")).toBeTruthy();
   });
 
   it("keeps the labels under the whatsapp-shell flag", () => {

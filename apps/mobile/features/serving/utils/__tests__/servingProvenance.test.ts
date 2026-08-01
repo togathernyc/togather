@@ -59,8 +59,10 @@ describe("distinctRolePairs", () => {
 });
 
 describe("heldRolePairs", () => {
-  it("is empty when neither source has resolved", () => {
-    expect(heldRolePairs(undefined, undefined)).toEqual([]);
+  it("is null — not empty — while the crew rows are unresolved", () => {
+    // The distinction is the whole point: `[]` would mean "holds nothing" and
+    // is a decision; `null` means "don't decide yet".
+    expect(heldRolePairs(undefined)).toBeNull();
   });
 
   it("keeps only the viewer's own crew rows", () => {
@@ -68,17 +70,17 @@ describe("heldRolePairs", () => {
       { ...CAMERA_PROD, isCurrentUser: true },
       { ...SOUND_PROD, isCurrentUser: false },
     ];
-    expect(heldRolePairs(crew, undefined)).toEqual([CAMERA_PROD]);
+    expect(heldRolePairs(crew)).toEqual([CAMERA_PROD]);
   });
 
-  it("unions the crew rows with the roles the tasks matched on", () => {
-    // Offline, whichever section was cached is enough to decide — so the two
-    // sources are unioned rather than one being preferred.
-    const crew = [{ ...CAMERA_PROD, isCurrentUser: true }];
-    expect(heldRolePairs(crew, [CAMERA_PROD, GREETER_HOSP])).toEqual([
-      CAMERA_PROD,
-      GREETER_HOSP,
-    ]);
+  it("reports every role the viewer holds, including task-less ones", () => {
+    // getCrewTasks emits a row per (member, role) even when that role has zero
+    // tasks on the plan — which is why it, and not the task rows, is the source.
+    const crew = [
+      { ...CAMERA_PROD, isCurrentUser: true },
+      { ...GREETER_HOSP, isCurrentUser: true },
+    ];
+    expect(heldRolePairs(crew)).toEqual([CAMERA_PROD, GREETER_HOSP]);
   });
 });
 
@@ -86,6 +88,14 @@ describe("shouldShowTaskProvenance / shouldShowTeamNames", () => {
   it("says nothing for the single-role volunteer", () => {
     expect(shouldShowTaskProvenance([CAMERA_PROD])).toBe(false);
     expect(shouldShowTaskProvenance([])).toBe(false);
+  });
+
+  it("says nothing while the crew rows are unresolved", () => {
+    // Otherwise the labels pop in when the second subscription lands and reflow
+    // every row of a checklist whose rows are tap targets — and offline, where
+    // "crew" may never have been cached, they would stay wrongly absent.
+    expect(shouldShowTaskProvenance(null)).toBe(false);
+    expect(shouldShowTeamNames(null)).toBe(false);
   });
 
   it("labels rows once the viewer holds two pairs", () => {
@@ -159,6 +169,10 @@ describe("formatSharedTaskTeams", () => {
         [CAMERA_PROD, GREETER_HOSP],
       ),
     ).toBe("Production, Hospitality");
+  });
+
+  it("is null while the crew rows are unresolved — plain 'Team task' stands", () => {
+    expect(formatSharedTaskTeams(["Production"], null)).toBeNull();
   });
 
   it("is null when the task carries no team names at all", () => {

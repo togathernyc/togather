@@ -19,12 +19,28 @@
  *     (`shouldShowTeamNames`). Two roles on a single team need only the role
  *     names to be told apart.
  *
- * The pairs are read from the queries the Tasks screen already runs — the
- * viewer's own `getCrewTasks` rows (what they HOLD) unioned with the `roles`
- * each `getMyServingTasks` item now carries (what they were MATCHED on). The
- * union matters offline: whichever of the two sections has a cached copy is
- * enough to decide, and the crew list alone would also miss a role whose
- * assignment resolves but whose crew row hasn't loaded.
+ * The pairs come from ONE source: the viewer's own `getCrewTasks` rows. That is
+ * the only complete answer to "what do I hold on this plan?" — it emits a row
+ * per (member, role) even for roles with zero tasks. The `roles` on each
+ * `getMyServingTasks` item are a strict SUBSET (a role with no matching task
+ * can never appear there), so unioning them in can never add a pair the crew
+ * rows lack, but reading them WITHOUT the crew rows silently under-reports:
+ * a viewer holding Camera + Usher on a Camera-only plan looks single-role and
+ * every row loses its label.
+ *
+ * So the decision is deliberately all-or-nothing on the crew rows resolving
+ * (`heldRolePairs` returns `null` until they do, and every rule below reads
+ * `null` as "say nothing"):
+ *
+ *   • Two independent subscriptions meant the tasks usually landed first, and
+ *     the labels then popped in a beat later — a full-list layout shift on a
+ *     checklist of toggle `Pressable`s, where a tap already in flight lands on
+ *     the neighbouring task's checkbox.
+ *   • Offline the two sections are cached by separate effects, so `"mine"`
+ *     could be present with `"crew"` missing. Deciding from the subset there
+ *     would make the labels LEAST reliable at the venue — exactly where the
+ *     volunteer is asking which roster a task came from. Unlabelled is honest;
+ *     wrongly-unlabelled-because-we-guessed is not.
  */
 
 /**
@@ -76,16 +92,19 @@ export function distinctRolePairs(
 }
 
 /**
- * Every (team, role) pair the viewer holds on a plan, from the two sources the
- * Tasks screen already has. Either may be `undefined` (unresolved, or never
- * cached offline) — the union of what IS available is used.
+ * Every (team, role) pair the viewer holds on a plan, from their own
+ * `getCrewTasks` rows — the one complete source (see the module header).
+ *
+ * `null` means "not known yet": the query hasn't resolved and, offline, no
+ * cached copy exists. Callers must render no provenance at all in that state
+ * rather than deciding from the task rows, which can only under-report.
  */
 export function heldRolePairs(
   crew: ReadonlyArray<{ isCurrentUser: boolean } & RolePair> | undefined,
-  taskRoles: ReadonlyArray<RolePair> | undefined,
-): RolePair[] {
+): RolePair[] | null {
+  if (crew === undefined) return null;
   const pairs: RolePair[] = [];
-  for (const row of crew ?? []) {
+  for (const row of crew) {
     if (!row.isCurrentUser) continue;
     // Projected, not spread: a crew row carries a member's whole card, and
     // leaking that through would make two structurally different objects for
@@ -97,31 +116,27 @@ export function heldRolePairs(
       teamName: row.teamName,
     });
   }
-  for (const role of taskRoles ?? []) {
-    pairs.push({
-      roleId: role.roleId,
-      roleName: role.roleName,
-      teamId: role.teamId,
-      teamName: role.teamName,
-    });
-  }
   return distinctRolePairs(pairs);
 }
 
 /**
  * Whether task rows should say which role they came from. False for the
- * single-role volunteer — their list stays exactly as clean as it was.
+ * single-role volunteer — their list stays exactly as clean as it was — and
+ * false while `heldPairs` is `null` (unresolved), so the answer never flips
+ * mid-scroll.
  */
 export function shouldShowTaskProvenance(
-  heldPairs: ReadonlyArray<RolePair>,
+  heldPairs: ReadonlyArray<RolePair> | null,
 ): boolean {
+  if (!heldPairs) return false;
   return heldPairs.length > 1;
 }
 
 /** Whether the team needs naming too — only when the viewer spans >1 team. */
 export function shouldShowTeamNames(
-  heldPairs: ReadonlyArray<RolePair>,
+  heldPairs: ReadonlyArray<RolePair> | null,
 ): boolean {
+  if (!heldPairs) return false;
   return new Set(heldPairs.map((p) => p.teamId)).size > 1;
 }
 
@@ -177,10 +192,11 @@ export function formatTaskProvenance(
  *
  * `teamNames` are the task's OWN teams (a team-level task can span several),
  * which is the provenance question being answered — not the viewer's teams.
+ * `null` heldPairs (unresolved) means the plain "Team task" copy stands.
  */
 export function formatSharedTaskTeams(
   teamNames: ReadonlyArray<string> | undefined,
-  heldPairs: ReadonlyArray<RolePair>,
+  heldPairs: ReadonlyArray<RolePair> | null,
 ): string | null {
   if (!shouldShowTeamNames(heldPairs)) return null;
   const names = (teamNames ?? []).filter(Boolean);

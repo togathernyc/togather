@@ -782,15 +782,14 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   const myTemplateTaskCount = allTasks.filter((t) => !t.isPersonal).length;
 
   // --- Provenance ------------------------------------------------------------
-  // Every (team, role) the viewer holds on THIS plan. Drives whether task rows
-  // name the role that rostered them at all — a single-role volunteer's list
-  // stays untouched. See `utils/servingProvenance.ts` for the rules.
+  // Every (team, role) the viewer holds on THIS plan, from the crew rows alone —
+  // the only complete source. `null` until they resolve (offline: until the
+  // cached copy loads), which suppresses every label rather than deciding from
+  // the task rows, whose roles are a subset that can only under-report. See
+  // `utils/servingProvenance.ts` for why that matters here specifically.
   // (Not memoised: `allTasks` is rebuilt every render anyway, and this is a
   // handful of array passes over a list that is already being mapped to rows.)
-  const heldPairs = heldRolePairs(
-    effCrew,
-    allTasks.flatMap((t) => t.roles ?? []),
-  );
+  const heldPairs = heldRolePairs(effCrew);
   const showProvenance = shouldShowTaskProvenance(heldPairs);
   const showTeamNames = shouldShowTeamNames(heldPairs);
 
