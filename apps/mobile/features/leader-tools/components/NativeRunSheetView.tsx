@@ -53,11 +53,6 @@ const VIEW_MODE_OPTIONS: Array<{ key: ViewMode; label: string }> = [
   { key: "mine", label: "Mine" },
 ];
 
-/** Current-item highlight, mirroring the PCO run sheet (RunSheetScreen). */
-const CURRENT_ITEM_BG_LIGHT = "#FFF9E6";
-const CURRENT_ITEM_BG_DARK = "#2a2700";
-const CURRENT_ITEM_BORDER = "#D4A017";
-
 /** When an item happens relative to the event's service times. */
 type Segment = "before" | "during" | "after";
 const SEGMENT_OPTIONS: Array<{ key: Segment; label: string }> = [
@@ -257,7 +252,7 @@ export function PlanRunSheet({
    */
   embedded?: boolean;
 }) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { isNetworkAvailable } = useConnectionStatus();
   const { user } = useAuth();
@@ -661,7 +656,6 @@ export function PlanRunSheet({
                       clockMs={clockTimes[item._id]}
                       peopleByRole={peopleByRole}
                       colors={colors}
-                      isDark={isDark}
                       isCurrent={item._id === currentItemId}
                       isExpanded={expandedItemIds.has(item._id)}
                       onToggleExpand={() => toggleItemExpanded(item._id)}
@@ -706,7 +700,6 @@ function ReadOnlyRow({
   clockMs,
   peopleByRole,
   colors,
-  isDark,
   isCurrent,
   isExpanded,
   onToggleExpand,
@@ -717,7 +710,6 @@ function ReadOnlyRow({
   clockMs: number | null;
   peopleByRole: Record<string, string[]>;
   colors: ReturnType<typeof useTheme>["colors"];
-  isDark: boolean;
   isCurrent: boolean;
   isExpanded: boolean;
   onToggleExpand: () => void;
@@ -765,9 +757,12 @@ function ReadOnlyRow({
       style={[
         styles.row,
         { backgroundColor: colors.surfaceSecondary },
+        // Live "happening now" highlight, mirroring the PCO run sheet
+        // (RunSheetScreen). Theme-sourced so light/dark comes from the palette
+        // rather than an `isDark` branch on module-level hex constants.
         isCurrent && {
-          backgroundColor: isDark ? CURRENT_ITEM_BG_DARK : CURRENT_ITEM_BG_LIGHT,
-          borderLeftColor: CURRENT_ITEM_BORDER,
+          backgroundColor: colors.runSheetCurrentItem,
+          borderLeftColor: colors.runSheetCurrentItemAccent,
           borderLeftWidth: 4,
         },
       ]}
