@@ -907,13 +907,28 @@ function ReadOnlyRow({
         // Live "happening now" highlight, mirroring the PCO run sheet
         // (RunSheetScreen). Theme-sourced so light/dark comes from the palette
         // rather than an `isDark` branch on module-level hex constants.
-        isCurrent && {
-          backgroundColor: colors.runSheetCurrentItem,
-          borderLeftColor: colors.runSheetCurrentItemAccent,
-          borderLeftWidth: 4,
-        },
+        //
+        // Flag-on the leading strip is a separate inset view, not a border —
+        // see `waStyles.currentStrip`. Flag-off keeps the 4pt border on its
+        // 12pt radius, where it still reads as a strip.
+        isCurrent &&
+          (wa
+            ? { backgroundColor: colors.runSheetCurrentItem }
+            : {
+                backgroundColor: colors.runSheetCurrentItem,
+                borderLeftColor: colors.runSheetCurrentItemAccent,
+                borderLeftWidth: 4,
+              }),
       ]}
     >
+      {wa && isCurrent ? (
+        <View
+          style={[
+            waStyles.currentStrip,
+            { backgroundColor: colors.runSheetCurrentItemAccent },
+          ]}
+        />
+      ) : null}
       <View style={styles.timeCol}>
         <Text
           style={[styles.timeText, wa && waStyles.timeText, { color: colors.text }]}
@@ -1251,6 +1266,33 @@ const waStyles = StyleSheet.create({
     minHeight: WA_CELL_MIN_HEIGHT,
     gap: 12,
     marginTop: WA_SECTION_HEADER_GAP,
+  },
+  /**
+   * "Happening now" leading strip.
+   *
+   * NOT `borderLeftWidth` flag-on. RN clips a border to the corner radius, and
+   * at `WA_GROUP_RADIUS` (24) on a ~54–76pt row that leaves only ~6–28pt of
+   * straight left edge — the "strip" renders as a thin crescent pinched at
+   * both ends, which is not the marker the token's doc describes.
+   *
+   * An absolutely-positioned child instead, INSET clear of both corner arcs
+   * (`left: 6` sits outside the arc, which reaches x≈2.2 at y=14 for r=24) so
+   * it needs no `overflow: "hidden"` to look right and can't be clipped into a
+   * sliver by a row height we didn't predict. It rides in the row's own 16pt
+   * padding, so it never crowds the time column.
+   *
+   * This is the option that degrades most gracefully unverified: the
+   * alternative — shrinking the radius on the current row — would change the
+   * highlighted card's SHAPE relative to its neighbours, and re-shape a
+   * different row every time the live clock advances.
+   */
+  currentStrip: {
+    position: "absolute",
+    left: 6,
+    top: 14,
+    bottom: 14,
+    width: 4,
+    borderRadius: 2,
   },
   timeText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
   durationText: { fontSize: WA_TYPE_FOOTNOTE, marginTop: 2 },

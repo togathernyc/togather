@@ -246,6 +246,23 @@ describe("PlanRunSheet — flag-off rendering is untouched", () => {
     expect(queryByText("Worship Set")).toBeNull();
   });
 
+  it("keeps the happening-now row on its 4pt left border", () => {
+    mockSheet([ASSIGNED_ITEM]);
+    const { getByText, UNSAFE_root } = renderSheet();
+
+    const row = styleOfAncestorWith(getByText("Opening Song"), "borderLeftWidth");
+    expect(row.backgroundColor).toBe(THEME.runSheetCurrentItem);
+    expect(row.borderLeftColor).toBe(THEME.runSheetCurrentItemAccent);
+    expect(row.borderLeftWidth).toBe(4);
+
+    // …and no strip view is introduced flag-off.
+    const strip = UNSAFE_root
+      .findAllByType(require("react-native").View)
+      .map((v: { props: { style?: unknown } }) => flatten(v.props.style))
+      .find((st) => st.position === "absolute");
+    expect(strip).toBeUndefined();
+  });
+
   it("keeps the pre-redesign type scale and borderless pills", () => {
     mockSheet([ASSIGNED_ITEM]);
     const { getByText } = renderSheet();
@@ -396,14 +413,30 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     expect(row.backgroundColor).not.toBe(THEME.surfaceSecondary);
   });
 
-  it("paints the happening-now row from theme tokens, not hex literals", () => {
+  it("marks the happening-now row with an inset strip, not a clipped border", () => {
     mockSheet([ASSIGNED_ITEM]);
-    const { getByText } = renderSheet();
+    const { getByText, UNSAFE_root } = renderSheet();
 
-    const row = styleOfAncestorWith(getByText("Opening Song"), "borderLeftWidth");
+    const row = styleOfAncestorWith(getByText("Opening Song"), "borderRadius");
     expect(row.backgroundColor).toBe(THEME.runSheetCurrentItem);
-    expect(row.borderLeftColor).toBe(THEME.runSheetCurrentItemAccent);
-    expect(row.borderLeftWidth).toBe(4);
+
+    // A 4pt `borderLeftWidth` on a 24pt radius renders as a crescent, because
+    // RN clips borders to the corner arc. The strip is its own absolutely
+    // positioned child instead, inset clear of both arcs.
+    expect(row.borderLeftWidth).toBeUndefined();
+    const strip = UNSAFE_root
+      .findAllByType(require("react-native").View)
+      .map((v: { props: { style?: unknown } }) => flatten(v.props.style))
+      .find((st) => st.backgroundColor === THEME.runSheetCurrentItemAccent);
+    expect(strip).toBeDefined();
+    expect(strip?.position).toBe("absolute");
+    expect(strip?.width).toBe(4);
+    // Inset past the radius arc: at r=24 the row's left edge is at x≈2.2 when
+    // y=14, so a strip at x=6 is fully inside the card without needing
+    // `overflow: "hidden"` to hide an overhang.
+    expect(Number(strip?.left)).toBeGreaterThan(2.2);
+    expect(Number(strip?.top)).toBeGreaterThanOrEqual(12);
+    expect(Number(strip?.bottom)).toBeGreaterThanOrEqual(12);
   });
 
   it("keeps the leader-tools editing affordances (canEdit=true)", () => {
