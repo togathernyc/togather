@@ -587,3 +587,115 @@ describe("NativeRunSheetView — plan tabs", () => {
     );
   });
 });
+
+/* ---------------------------------------------------------------------------
+ * Flag-off structural parity harness
+ *
+ * The assertions above spot-check flag-off: the chip, `toUpperCase()`, three
+ * font sizes, one pill, the happening-now fill. That leaves flag-off row
+ * geometry, sheet padding, `planTitle`/`ranges`/`editText`, header-row margins,
+ * `assignWrap` direction and `notePreview` italics unpinned — any of which a
+ * "flag-on only" edit could silently take with it.
+ *
+ * These snapshots pin the WHOLE flag-off tree instead. They are normalized so
+ * they compare structurally rather than incidentally: style arrays are
+ * flattened (`[styles.x, false, {…}]` ≡ `[styles.x, {…}]`, which is exactly the
+ * shape every `wa && waStyles.x` entry produces), handlers collapse to a marker,
+ * and wall-clock strings are scrubbed so the snapshot doesn't depend on when or
+ * where it runs.
+ * ------------------------------------------------------------------------- */
+
+/** Wall-clock strings vary by run and timezone; the structure doesn't. */
+const scrubText = (text: string) =>
+  text
+    .replace(/\b\d{1,2}:\d{2}\s?[AP]M\b/g, "<TIME>")
+    .replace(/\b(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat), \w{3} \d{1,2}\b/g, "<DATE>");
+
+const normalize = (node: unknown): unknown => {
+  if (typeof node === "string") return scrubText(node);
+  if (node === null || typeof node !== "object") return node;
+  if (Array.isArray(node)) return node.map(normalize);
+  const { type, props, children } = node as {
+    type: string;
+    props?: Record<string, unknown>;
+    children?: unknown[] | null;
+  };
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props ?? {})) {
+    if (typeof value === "function") out[key] = "[fn]";
+    else if (key === "style" || key === "contentContainerStyle")
+      out[key] = flatten(value);
+    else out[key] = normalize(value);
+  }
+  return { type, props: out, children: children ? children.map(normalize) : null };
+};
+
+/** Everything a run sheet row can carry, so no branch goes unpinned. */
+const RICH_ITEMS = [
+  item({ _id: "hdr-1", type: "header", title: "Worship Set", durationSec: 0 }),
+  item({
+    _id: "item-1",
+    title: "Opening Song",
+    songDetails: { key: "G", bpm: 72 },
+    description: "Band enters from stage left",
+    notes: [{ category: "Sound", content: "Track 4" }],
+    assignments: [
+      { roleId: "role-vocals", roleName: "Vocals", roleColor: VOCALS_COLOR },
+      { roleId: "role-sound", roleName: "Sound", roleColor: null },
+    ],
+  }),
+  item({ _id: "item-2", segment: "before", type: "note", title: "Doors open" }),
+];
+
+describe("PlanRunSheet / NativeRunSheetView — flag-off parity is pinned structurally", () => {
+  // `SERVICE_START` is `Date.now()`, so item-1's [start, start+600s) window
+  // contains now and the isCurrent branch fires in every case below.
+  it.each([true, false])("standalone sheet, canEdit=%s", (canEdit) => {
+    mockSheet(RICH_ITEMS);
+    expect(normalize(renderSheet(canEdit).toJSON())).toMatchSnapshot();
+  });
+
+  it.each([true, false])("embedded sheet, canEdit=%s", (canEdit) => {
+    mockSheet(RICH_ITEMS);
+    const tree = render(
+      <PlanRunSheet
+        embedded
+        planId={"plan-1" as never}
+        groupId={"group-1" as never}
+        canEdit={canEdit}
+        onEdit={jest.fn()}
+        onRehearse={jest.fn()}
+      />,
+    ).toJSON();
+    expect(normalize(tree)).toMatchSnapshot();
+  });
+
+  it("expanded row", () => {
+    mockSheet(RICH_ITEMS);
+    const view = renderSheet();
+    fireEvent.press(view.getByText("Opening Song"));
+    expect(normalize(view.toJSON())).toMatchSnapshot();
+  });
+
+  it("Mine view", () => {
+    mockSheet(RICH_ITEMS);
+    const view = renderSheet();
+    fireEvent.press(view.getByLabelText("Show mine run sheet items"));
+    expect(normalize(view.toJSON())).toMatchSnapshot();
+  });
+
+  it("collapsed header", () => {
+    mockSheet(RICH_ITEMS);
+    const view = renderSheet();
+    fireEvent.press(view.getByText("WORSHIP SET"));
+    expect(normalize(view.toJSON())).toMatchSnapshot();
+  });
+
+  it("plan tabs + sheet, via NativeRunSheetView", () => {
+    mockSheet(RICH_ITEMS);
+    const tree = render(
+      <NativeRunSheetView groupId={"group-1" as never} canEdit />,
+    ).toJSON();
+    expect(normalize(tree)).toMatchSnapshot();
+  });
+});

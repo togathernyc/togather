@@ -572,9 +572,11 @@ export function PlanRunSheet({
   }
 
   const Root = embedded ? View : ScrollView;
-  // No flag-on override: `WA_GROUP_MARGIN`/`WA_SECTION_HEADER_GAP` are 16/8,
-  // exactly what `styles.sheet` already is.
-  const sheetStyle = [styles.sheet];
+  // Passed bare, not as `[styles.sheet, …]`: there is no flag-on override to
+  // compose with (`WA_GROUP_MARGIN`/`WA_SECTION_HEADER_GAP` are 16/8, exactly
+  // what `styles.sheet` already is), and an array wrapper would change the
+  // prop's shape for flag-off too.
+  const sheetStyle = styles.sheet;
   const rootProps = embedded
     ? { style: sheetStyle }
     : { contentContainerStyle: sheetStyle };
