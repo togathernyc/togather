@@ -259,7 +259,7 @@ describe("PlanRunSheet — flag-off rendering is untouched", () => {
     const strip = UNSAFE_root
       .findAllByType(require("react-native").View)
       .map((v: { props: { style?: unknown } }) => flatten(v.props.style))
-      .find((st) => st.position === "absolute");
+      .find((st: Record<string, unknown>) => st.position === "absolute");
     expect(strip).toBeUndefined();
   });
 
@@ -427,7 +427,8 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     const strip = UNSAFE_root
       .findAllByType(require("react-native").View)
       .map((v: { props: { style?: unknown } }) => flatten(v.props.style))
-      .find((st) => st.backgroundColor === THEME.runSheetCurrentItemAccent);
+      .find((st: Record<string, unknown>) =>
+        st.backgroundColor === THEME.runSheetCurrentItemAccent);
     expect(strip).toBeDefined();
     expect(strip?.position).toBe("absolute");
     expect(strip?.width).toBe(4);
