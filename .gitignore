@@ -245,3 +245,4 @@ apps/mobile/secrets/
 /*.csv
 apps/mobile/build-output/
 shots/
+# ci-trigger
