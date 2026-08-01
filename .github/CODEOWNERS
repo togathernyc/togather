@@ -28,6 +28,12 @@
 #   second React/react-native instance, which blanks native video and GIF
 #   rendering on a real device while typecheck, tests, and the bundle all pass.
 #   See docs/architecture/ADR-013-mobile-versioning-and-ota-updates.md.
+#   apps/convex/package.json is in here for the same class of reason: its
+#   react and react-dom pins are load-bearing despite apps/convex shipping no
+#   React code. Dropping either one re-keys a second `convex` instance (which
+#   silently empties the generated api/internal types) or skews react/react-dom
+#   (which threw on every verification email in production while CI was green).
+#   CLAUDE.md spells both out.
 # - Auth: a regression locks people out or lets the wrong people in, and tests
 #   assert the code's behaviour rather than the policy it should encode.
 # - Billing / finance: moves real money. Wrong is expensive and hard to unwind.
@@ -48,6 +54,7 @@
 /pnpm-lock.yaml @lilseyi
 /apps/mobile/package.json @lilseyi
 /apps/mobile/native-deps.json @lilseyi
+/apps/convex/package.json @lilseyi
 
 # Auth - the directory plus the central modules that live outside it
 /apps/convex/functions/auth/ @lilseyi
