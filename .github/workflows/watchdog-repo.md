@@ -35,9 +35,20 @@ tracker-id: togather-watchdog-repo
 max-ai-credits: 50         # ~$0.50 per run
 max-daily-ai-credits: 200  # ~$2.00 / 24h — this watchdog's slice of the $12/day repo budget
 max-turns: 25
-# Ollama does not do prompt caching, so every turn is a cache miss. The default
-# of 5 would have the proxy block the run partway through.
-max-turn-cache-misses: 40
+# Effectively disabled. `maxCacheMisses` counts CONSECUTIVE responses that had
+# input tokens and no cache read; a cache HIT is the only thing that resets the
+# streak. Ollama does no prompt caching at all, so on this path the streak is
+# simply the request count and the guard is a hard request cap wearing a
+# different name — it cannot ever detect what it was built to detect.
+#
+# MEASURED, not theorised: gardener run 30686121841 died on
+# `403 Maximum consecutive cache misses exceeded (40/40)` — a healthy run, killed
+# at its 40th request. `0` does not mean unlimited (the schema rejects it:
+# "must be at least 1"), so 200 is the practical stand-in.
+#
+# The real per-run bounds on this path are `max-turns`, `timeout-minutes` and
+# `max-ai-credits`, all set above. See .github/GARDENERS.md § Watchdog.
+max-turn-cache-misses: 200
 
 # Ollama Cloud via the OpenAI-compatible endpoint (see GARDENERS.md). `glm-5.2`
 # like Cost Report — this run is arithmetic and date comparison over API output,
@@ -102,10 +113,12 @@ safe-outputs:
     title-prefix: "[watchdog] "
     labels: [watchdog:report]
     max: 1
-    # 6d, matching the gardeners: the maintenance sweep that closes expired
-    # issues runs at 00:37 UTC, and 6d closes a report the morning before the
-    # equivalent-day run rather than eleven hours after it.
-    expires: 6d
+    # 1d, NOT the gardeners' 6d. That value is derived from a *weekly* cadence —
+    # "close last week's report the morning before this week's run" — and this
+    # workflow files one issue per DAY. Copying 6d would leave six open
+    # `[watchdog]` issues standing at once, each a snapshot of a day that has
+    # already resolved itself, which is the opposite of "silence is the product".
+    expires: 1d
     deduplicate-by-title: true
   # Later runs the same day rewrite that issue's body in place, so there is one
   # report per day rather than four.
@@ -193,14 +206,25 @@ The gardeners are the other scheduled agents in this repo. When one fails
 repeatedly it is usually a missing secret or a model that stopped existing, and
 because their whole design is to be quiet, nobody notices for weeks.
 
+**Query each workflow by name, one call each** — do not list the repo's failures
+once and filter afterwards:
+
 ```bash
-gh run list --status failure --created ">=<24h cutoff>" --limit 50 \
-  --json workflowName,conclusion,createdAt,url
+for wf in gardener-large-files gardener-docs-drift gardener-ci-doctor \
+          gardener-cost-report watchdog-repo; do
+  gh run list --workflow="$wf.lock.yml" --status failure \
+    --created ">=<24h cutoff>" --limit 20 \
+    --json workflowName,conclusion,createdAt,url
+done
 ```
 
-Count failures **per workflow** for any run whose `workflowName` starts with
-`Gardener:` or `Watchdog:`. Report a workflow only if it failed at all in the
-window; give the count and link the most recent run.
+`--limit` is applied **before** any filtering you do downstream, so a single
+unscoped `gh run list --limit 50` on a heavy CI day returns fifty `CI` failures
+and pushes every gardener failure off the end — the sweep then reports nothing,
+which reads as an all-clear. Scoping per workflow makes it exact.
+
+Report a workflow only if it failed at all in the window; give the count and
+link the most recent run.
 
 > [!IMPORTANT]
 > **Exclude your own in-flight run.** This workflow appears in its own

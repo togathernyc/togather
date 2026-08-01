@@ -265,12 +265,16 @@ parentheses)
 
 | Gardener | Per-run cap | Daily cap |
 |---|---:|---:|
-| Large Files | 300 AIC ($3.00) | 200 AIC ($2.00) |
-| Docs Drift | 300 AIC ($3.00) | 200 AIC ($2.00) |
+| Large Files | 200 AIC ($2.00) | 200 AIC ($2.00) |
+| Docs Drift | 200 AIC ($2.00) | 200 AIC ($2.00) |
 | CI Doctor | 200 AIC ($2.00) | 400 AIC ($4.00) |
-| Cost Report | 300 AIC ($3.00) | 200 AIC ($2.00) |
+| Cost Report | 200 AIC ($2.00) | 200 AIC ($2.00) |
 | Watchdog (repo) | 50 AIC ($0.50) | 200 AIC ($2.00) |
 | **Repo-wide daily ceiling** | | **1200 AIC ($12.00)** |
+
+Note for the watchdog row: 4 runs/day × 50 AIC is exactly its 200 AIC daily cap,
+so a day on which every sweep bills its full per-run ceiling blocks the fourth.
+Worth flagging if you see it happen; it has not yet.
 
 <Flag explicitly if any run got within 80% of its per-run cap, or if any daily
 guardrail actually tripped — a tripped guardrail means a gardener was skipped
