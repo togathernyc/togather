@@ -291,17 +291,57 @@ the normal case.
 
 | Check | Trips when | Escalation |
 |---|---|---|
-| **Liveness** | an `agent:in-progress` issue has no open PR and no branch commit or issue activity for 45 min | report |
-| **Orphaned claim** | the same, past 2h, **and** no agent process anywhere on the host | **relabels** `agent:in-progress` → `agent:ready`, comments why, reports |
-| **Spend pace** | `ccusage`'s active 5-hour block is at or over the ceiling (default $10) | **page** at the ceiling, report at 80% |
-| **Overnight health** | `stop-epoch` says the run should still be working but no session is alive | **page** if the queue is non-empty, report if it is empty |
+| **Liveness** | an `agent:in-progress` issue has no open PR and no branch commit (local or remote) or issue activity for 45 min | report |
+| **Orphaned claim** | the same, past 2h, **and** no agent process on the host, **and** no remote branch activity | **relabels** `agent:in-progress` → `agent:ready`, comments why, reports |
+| **Spend pace** | `ccusage`'s active 5-hour block passes $25 (report) or $40 (page) | report at $25; **page** at $40 *only if no unattended run is in flight* |
+| **Overnight health** | `stop-epoch` says the run should still be working but no session is alive | **page** if the queue is non-empty or unknown, report if it is empty |
 | **caffeinate leak** | the pidfile's process is still holding the machine awake >1h past `stop-epoch` | report |
-| **Gardener failures** | a `Gardener:` or `Watchdog:` workflow failed in the last day | report |
+| **Gardener failures** | a `Gardener:`/`Watchdog:` workflow failed in the last day (queried per workflow, so a busy CI day cannot crowd it out) | report |
+| **Spend check disabled** | `ccusage` is not on the launchd PATH | report, once a day |
 
-"Liveness" reads three signals and takes the newest: an **open linked PR** (which
-means the issue is finished, not stalled — never flagged), a **commit on the
-branch the supervisor would have created** for it (`<init>/<slug>`, derived with
-overnight.md's own slugify), and the **issue's own `updatedAt`**.
+"Liveness" reads four signals and takes the newest: an **open linked PR** (which
+means the issue is finished, not stalled — never flagged), a **local commit on
+the branch the supervisor would have created** for it (`<init>/<slug>`, derived
+with overnight.md's own slugify), **the same branch on `origin`** (via
+`git ls-remote`, which asks the remote without writing to the local ref store,
+so it cannot race anyone's checkout), and the **issue's own `updatedAt`**.
+
+### Which layer owns the reclaim
+
+**The watchdog does, at 2h.** `overnight.md` § 0.5 performs the identical repair
+at **12h** — same relabel, same "no open PR" precondition. Once the launchd job
+is installed the watchdog always gets there first, so § 0.5 becomes a backstop
+that effectively never fires, and **the real window is 2 hours, not 12**. If you
+read § 0.5 in six months and believe 12h, this is the paragraph that corrects
+you. On a host without the local watchdog installed, § 0.5 is still the only
+reclaimer and 12h is still the window.
+
+The watchdog is deliberately the tighter of the two because it can afford to be:
+it runs every 30 minutes and can check whether a session is *actually alive*,
+which the supervisor's start-of-night sweep cannot.
+
+### The reclaim's blind spot, stated plainly
+
+Reclaiming requires **all three**: no agent process on this Mac, no local or
+remote branch activity, and no issue activity for 2h. The remote-branch check is
+what covers agents that are not local processes — Cursor Cloud agents, Conductor
+sessions, CI agents (see `CLAUDE.md` § "Agent Backend Selection"), any of which
+push to `origin` and are otherwise invisible to `pgrep`.
+
+**The residual risk:** a remote agent that claimed an issue and has pushed
+nothing for 2h can still be falsely reclaimed, and the cost is two agents on one
+issue. There is no signal left at that point to tell it from an abandoned claim.
+
+The mitigation is a convention on the agent side, not more machinery here:
+**an agent that claims an issue should comment on it when it claims it, and again
+on any long silent stretch.** A comment moves `updatedAt`, which is one of the
+four liveness signals, so it makes a working agent visible. The reclaim comment
+the watchdog leaves says this too, so an agent that gets reclaimed learns why.
+
+If any lookup the decision depends on fails — the linked-PR query, the remote
+ref list — the watchdog **does not reclaim**. It reports the claim as
+"unverified" and re-checks in 30 minutes. Failing closed costs a delay; failing
+open costs duplicated work.
 
 Every threshold is in `scripts/watchdog.config.sh`. Nothing else needs editing,
 and `WATCHDOG_DRY_RUN=1 ./scripts/watchdog.sh` runs every check while mutating
@@ -318,9 +358,17 @@ and even then it separates the two volumes:
   `[watchdog]`, updated in place. An orphan reclaim goes here: it is a *repair*,
   the queue is strictly better afterwards, and nobody needs waking for it.
 - **Page** — a Telegram message, and only for findings that mean the night is
-  being wasted or money is running away: a dead overnight run with issues still
-  queued, or spend past the ceiling. An unchanged page will not re-send for 6h;
-  a page whose content *changes* goes out immediately.
+  being wasted or money is running away with nobody watching: a dead overnight
+  run with issues still queued, or spend past $40 while no unattended run is in
+  flight. An unchanged page will not re-send for 6h; a genuinely *new* condition
+  goes out immediately.
+
+  The cooldown works because the digest is taken over each finding's **identity**
+  (`spend-runaway`, `overnight-dead:<stop-epoch>`) and never over its rendered
+  text. Every page interpolates something that moves between sweeps — a live
+  cost, an age, a countdown — so a digest over the prose differs on every run and
+  suppresses nothing at all. That version shipped in the first draft of this PR
+  and would have paged every 30 minutes through the night.
 
 Telegram uses the same `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` credentials as
 the overnight supervisor's morning report (setup in overnight.md § 8.4). launchd
@@ -330,6 +378,32 @@ put them anyway. **Do not put the bot token in the plist**: it is a bearer
 credential in a URL path and `~/Library/LaunchAgents` is world-readable and gets
 backed up. If both are missing the page still lands in the report issue, and the
 log says so.
+
+### `max-turn-cache-misses` is not a usable guard on the Ollama path
+
+> [!WARNING]
+> **Measured on a live run.** Gardener run `30686121841` failed with
+> `403 Maximum consecutive cache misses exceeded (40/40)` — a perfectly healthy
+> run, killed at its 40th request.
+
+`maxCacheMisses` counts **consecutive** responses that had input tokens and no
+cache read, and **only a cache hit resets the streak**. Ollama does no prompt
+caching whatsoever, so on that path the streak is just the request count: the
+guard degrades into a hard request cap wearing a different name, and can never
+detect the runaway loop it exists to catch.
+
+The repo watchdog therefore sets `max-turn-cache-misses: 200`, which is a
+stand-in for "off" — `0` is rejected by the schema (*must be at least 1*). The
+real per-run bounds on the Ollama path are **`max-turns`, `timeout-minutes` and
+`max-ai-credits`**, which is what the [cost caps](#reading-the-cost-caps)
+section already says binds in practice.
+
+> [!IMPORTANT]
+> **The three Ollama gardeners still carry `max-turn-cache-misses: 40` and have
+> the same defect.** They are left alone here because this change's scope is the
+> watchdog, but the first long run any of them attempts after
+> `GARDENERS_ENABLED` is set will die the same way. Raise all three to 200 before
+> relying on them.
 
 ### One-time setup
 
@@ -341,9 +415,15 @@ gh label create "watchdog:report" --color 5319E7 \
   --description "Filed by the fleet watchdog - read, do not hand-edit"
 ```
 
-Then install the launchd job (see the plist header) and, for the repo half,
+Then install the launchd job (the plist header is the runbook — it templates the
+repo path, `$HOME`, **and** your node bin directory, so `ccusage` keeps resolving
+across node upgrades) and, for the repo half,
 `gh variable set GARDENERS_ENABLED --body true` — the same switch as the
 gardeners, on purpose: one variable turns the entire automated fleet off.
+
+`launchctl bootstrap gui/$UID <plist>` is the modern spelling; `bootout` removes
+it and `kickstart` forces a sweep now. `load`/`unload`/`start` still work but
+warn.
 
 ---
 
@@ -683,7 +763,8 @@ these ship behind `GARDENERS_ENABLED` — set the secrets first, then the variab
 **All five at once** — the `GARDENERS_ENABLED` variable, effective immediately,
 no recompile. The repo watchdog shares this switch deliberately: one variable
 turns the whole automated fleet off. (The *local* watchdog is a launchd job and
-is unaffected — `launchctl unload` is its switch.)
+is unaffected — `launchctl bootout gui/$UID/com.supa.fleet-watchdog` is its
+switch.)
 
 ```bash
 gh variable set GARDENERS_ENABLED --body true      # on
