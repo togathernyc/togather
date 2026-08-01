@@ -12,6 +12,12 @@
 # stays in the history forever. See .claude/commands/overnight.md Phase 3.
 .claude/logs/overnight/
 
+# Fleet watchdog state: its log, its single-flight lock, and the ledger that
+# stops an unchanged page re-sending every 30 minutes. Machine-local by nature —
+# two developers running the watchdog would otherwise conflict on every line.
+# See scripts/watchdog.sh.
+.claude/logs/watchdog/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
