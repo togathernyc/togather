@@ -1345,12 +1345,18 @@ function TaskRow({
                   size={12}
                   color={colors.textTertiary}
                 />
+                {/* Capped like the plan title (1 line) and the header
+                    subtitle (2): two roles across two teams reads
+                    "Production · Camera & Usher, Hospitality · Greeter", which
+                    with real team names wraps several lines deep on EVERY row
+                    of the checklist. */}
                 <Text
                   style={[
                     styles.taskMeta,
                     wa && waStyles.taskMeta,
                     { color: colors.textTertiary },
                   ]}
+                  numberOfLines={2}
                 >
                   {provenance}
                 </Text>
@@ -1848,7 +1854,12 @@ function SharedTaskRow({
           <View style={styles.taskMetaRow}>
             <View style={styles.teamCue}>
               <Ionicons name="people" size={12} color={colors.textTertiary} />
-              <Text style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}>
+              {/* Capped for the same reason as the Mine rows' provenance: a
+                  shared task names every team it spans. */}
+              <Text
+                style={[styles.taskMeta, wa && waStyles.taskMeta, { color: colors.textTertiary }]}
+                numberOfLines={2}
+              >
                 {teamLabel ? `${teamLabel} team task` : "Team task"}
               </Text>
             </View>

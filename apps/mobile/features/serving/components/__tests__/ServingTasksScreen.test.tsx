@@ -1603,6 +1603,40 @@ describe("ServingTasksScreen — task provenance (Mine)", () => {
     expect(getByText("Production · Camera")).toBeTruthy();
   });
 
+  it("caps the label's height so a long one can't push the list around", () => {
+    // "Production · Camera & Usher, Hospitality · Greeter" with real team names
+    // wraps several lines deep, on every row — the plan title and the header
+    // subtitle are both capped for the same reason.
+    mockQueries(
+      {
+        before: [
+          templateTask({
+            roles: [rolePair("Camera", PRODUCTION), rolePair("Sound", PRODUCTION)],
+          }),
+          templateTask({
+            key: "t2",
+            taskId: "task-2",
+            title: "Greet at the door",
+            roles: [rolePair("Greeter")],
+          }),
+        ],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [
+          myCrewRow("Camera", PRODUCTION),
+          myCrewRow("Sound", PRODUCTION),
+          myCrewRow("Greeter"),
+        ],
+      },
+    );
+    const { getByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Production · Camera & Sound").props.numberOfLines).toBe(2);
+  });
+
   it("adds no chrome for two DISTINCT roles that share a name on one team", () => {
     // Nothing stops a team defining "Camera" twice (`createRole` only rejects
     // an empty name). Both rows would be stamped with an identical bare
