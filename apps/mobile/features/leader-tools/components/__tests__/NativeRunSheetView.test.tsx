@@ -14,6 +14,8 @@ import React from "react";
 import { render, fireEvent } from "@testing-library/react-native";
 import { NativeRunSheetView, PlanRunSheet } from "../NativeRunSheetView";
 import { useAuthenticatedQuery } from "@services/api/convex";
+import { waRoleInk } from "@components/wa";
+import { DEFAULT_ROLE_COLOR } from "@features/scheduling/utils/format";
 
 const REF = {
   listEvents: "api.functions.scheduling.events.listEvents",
@@ -40,7 +42,9 @@ jest.mock("@services/api/convex", () => ({
 
 const THEME = {
   background: "#ffffff",
+  backgroundGrouped: "#F2F2F2",
   surface: "#ffffff",
+  surfaceGrouped: "#FFFFFF",
   surfaceSecondary: "#f5f5f5",
   separator: "#E5E5E5",
   text: "#1a1a1a",
@@ -278,10 +282,12 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     mockSheet([ASSIGNED_ITEM]);
     const { getByText } = renderSheet();
 
-    // The role name is its own nested Text carrying the role's color as INK
-    // (§5/§1.3's sender-name device), semibold.
+    // The role name is its own nested Text carrying the role's HUE as INK
+    // (§5/§1.3's sender-name device), semibold — re-lit for the theme so it
+    // clears WCAG AA, which the raw swatch hex does not (see waRoleInk).
     const roleName = getByText("Vocals");
-    expect(flatten(roleName.props.style).color).toBe(VOCALS_COLOR);
+    expect(flatten(roleName.props.style).color).toBe(waRoleInk(VOCALS_COLOR, false));
+    expect(flatten(roleName.props.style).color).not.toBe(VOCALS_COLOR);
     expect(flatten(roleName.props.style).fontWeight).toBe("600");
 
     // The people stay on the quiet subtitle ink, at the 15pt subtitle size.
@@ -301,7 +307,9 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     const { getByText } = renderSheet();
 
     // No `roleColor` falls back to the neutral default rather than vanishing.
-    expect(flatten(getByText("Sound").props.style).color).toBe("#6E7781");
+    expect(flatten(getByText("Sound").props.style).color).toBe(
+      waRoleInk(DEFAULT_ROLE_COLOR, false),
+    );
   });
 
   it("uses sentence-case segment labels, not ALL-CAPS (§3.2/S3.5)", () => {
@@ -372,6 +380,20 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     expect(row.borderRadius).toBe(24);
     expect(row.padding).toBe(16);
     expect(row.minHeight).toBe(54);
+  });
+
+  it("makes the row a real card: bg.card fill, not the invisible one", () => {
+    // No service times ⇒ no happening-now row, so this reads the RESTING fill
+    // rather than the amber state override.
+    mockSheet([ASSIGNED_ITEM], { ...EVENT, times: [] });
+    const { getByText } = renderSheet();
+
+    // `surfaceSecondary` on the flag-off canvas was 1.09:1 (1.03 in Knicks
+    // light) — a 24pt-radius card you cannot see. `bg.card` on the
+    // `bg.grouped` canvas the container now paints reads at 1.12–1.47:1.
+    const row = styleOfAncestorWith(getByText("Opening Song"), "borderRadius");
+    expect(row.backgroundColor).toBe(THEME.surfaceGrouped);
+    expect(row.backgroundColor).not.toBe(THEME.surfaceSecondary);
   });
 
   it("paints the happening-now row from theme tokens, not hex literals", () => {
@@ -459,6 +481,34 @@ describe("NativeRunSheetView — plan tabs", () => {
     expect(otherPill.backgroundColor).toBe(THEME.surface);
     expect(otherPill.borderColor).toBe(THEME.separator);
     expect(otherPill.borderWidth).toBe(1);
+  });
+
+  it("paints a bg.grouped canvas so the pills and rows are visible at all", () => {
+    mockWhatsappShell = true;
+    mockSheet([ASSIGNED_ITEM]);
+    const { getByText } = render(
+      <NativeRunSheetView groupId={"group-1" as never} canEdit={false} />,
+    );
+
+    // The unselected pill's `surface` fill is #ffffff, and so is `background`
+    // — flag-on it was white-on-white, 1.00:1, with only a 1.26:1 hairline.
+    const canvas = styleOfAncestorWith(getByText(/^Evening ·/), "flex");
+    expect(canvas.backgroundColor).toBe(THEME.backgroundGrouped);
+    expect(canvas.backgroundColor).not.toBe(
+      styleOfAncestorWith(getByText(/^Evening ·/), "backgroundColor")
+        .backgroundColor,
+    );
+  });
+
+  it("keeps the flag-off canvas on `background`", () => {
+    mockSheet([ASSIGNED_ITEM]);
+    const { getByText } = render(
+      <NativeRunSheetView groupId={"group-1" as never} canEdit={false} />,
+    );
+
+    expect(
+      styleOfAncestorWith(getByText(/^Evening ·/), "flex").backgroundColor,
+    ).toBe(THEME.background);
   });
 
   it("keeps the borderless gray tabs flag-off", () => {

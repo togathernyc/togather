@@ -170,9 +170,18 @@ export function NativeRunSheetView({
   const activePlanId =
     selectedId ?? initialPlanId ?? effectivePlans?.[0]?._id ?? null;
 
+  // §1 canvas. This component OWNS the leader-tools canvas, so flag-on it
+  // paints `bg.grouped` and lets its cards/pills be `bg.card` — the inset-
+  // grouped pairing the rest of the flag-on app uses (YouScreen,
+  // AttendanceScreen, GroupInfoScreen). On the flag-off `background` canvas
+  // a white pill was literally invisible (1.00:1 fill-vs-canvas in default
+  // light) and the rows sat at 1.03–1.09:1; on `backgroundGrouped` they read
+  // at 1.12–1.47:1 across all four palettes.
+  const canvas = wa ? colors.backgroundGrouped : colors.background;
+
   if (effectivePlans === undefined) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <View style={[styles.centered, { backgroundColor: canvas }]}>
         <ActivityIndicator size="small" color={colors.text} />
       </View>
     );
@@ -180,7 +189,7 @@ export function NativeRunSheetView({
 
   if (effectivePlans.length === 0) {
     return (
-      <View style={[styles.centered, { backgroundColor: colors.background }]}>
+      <View style={[styles.centered, { backgroundColor: canvas }]}>
         <Ionicons name="list-outline" size={28} color={colors.textTertiary} />
         <Text
           style={[
@@ -197,7 +206,7 @@ export function NativeRunSheetView({
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: canvas }]}>
       {/* Upcoming-plan tabs (only when there's more than one) */}
       {effectivePlans.length > 1 ? (
         <ScrollView
@@ -882,7 +891,10 @@ function ReadOnlyRow({
       style={[
         styles.row,
         wa && waStyles.row,
-        { backgroundColor: colors.surfaceSecondary },
+        // §1 `bg.card` flag-on: both consumers now paint a `bg.grouped`
+        // canvas, so the row is a real inset-grouped card instead of a
+        // 1.03–1.09:1 ghost of one.
+        { backgroundColor: wa ? colors.surfaceGrouped : colors.surfaceSecondary },
         // Live "happening now" highlight, mirroring the PCO run sheet
         // (RunSheetScreen). Theme-sourced so light/dark comes from the palette
         // rather than an `isDark` branch on module-level hex constants.
@@ -1180,11 +1192,14 @@ const styles = StyleSheet.create({
  *    selected = accent fill with `onAccent` ink; unselected = card fill with
  *    a 1px `separator` border, not a gray `surfaceSecondary` blob.
  *  - Rows take §3.2 cell anatomy — 24pt radius, 16pt padding, 54pt minimum
- *    height. They keep `surfaceSecondary` as their fill rather than
- *    `surfaceGrouped`/`bg.card`: this component doesn't own its canvas (both
- *    consumers render it over `colors.background`, which is white in light
- *    mode), so a `bg.card` fill would make every row invisible. Painting the
- *    canvas `bg.grouped` is a consumer-level change, not a skin.
+ *    height — and §1's `bg.card` fill on a `bg.grouped` canvas. Both halves
+ *    of that pairing are set here: `NativeRunSheetView`'s own container owns
+ *    the leader-tools canvas, and `ServingRunsheetScreen`'s ScrollView (which
+ *    this file's other consumer already skins) owns serving mode's. On the
+ *    flag-off `background` canvas the card fill was a ghost — 1.09:1 in
+ *    default light, 1.03:1 in Knicks light — and an unselected white pill was
+ *    invisible outright at 1.00:1. Grouped, they land at 1.12–1.47:1 in all
+ *    four palettes.
  *  - Type moves onto the S7 scale (20 / 17 / 15 / 13) — the pre-pass sizes
  *    ran "1–2pt small and one weight light throughout".
  *  - Italics (`notePreview`) aren't in the system at all.
