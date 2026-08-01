@@ -29,16 +29,14 @@ import { useWhatsappShell } from "@hooks/useWhatsappShell";
 import {
   WA_CELL_MIN_HEIGHT,
   WA_CELL_PADDING,
-  WA_GROUP_MARGIN,
   WA_GROUP_RADIUS,
   WA_GROUP_SPACING,
   WA_SECTION_HEADER_GAP,
   WA_SECTION_LABEL_SIZE,
   WA_TYPE_FOOTNOTE,
-  WA_TYPE_ROW_TITLE,
-  WA_TYPE_SECTION_HEADER,
-  WA_TYPE_SUBTITLE,
   WA_TYPE_HEADER_BLOCK,
+  WA_TYPE_ROW_TITLE,
+  WA_TYPE_SUBTITLE,
   WA_WEIGHT_BOLD,
   WA_WEIGHT_REGULAR,
   WA_WEIGHT_SEMIBOLD,
@@ -574,7 +572,9 @@ export function PlanRunSheet({
   }
 
   const Root = embedded ? View : ScrollView;
-  const sheetStyle = [styles.sheet, wa && waStyles.sheet];
+  // No flag-on override: `WA_GROUP_MARGIN`/`WA_SECTION_HEADER_GAP` are 16/8,
+  // exactly what `styles.sheet` already is.
+  const sheetStyle = [styles.sheet];
   const rootProps = embedded
     ? { style: sheetStyle }
     : { contentContainerStyle: sheetStyle };
@@ -1236,16 +1236,29 @@ const waStyles = StyleSheet.create({
   emptyText: { fontSize: WA_TYPE_SUBTITLE, lineHeight: 21 },
 
   // Plan tabs + All/Mine — §7 pill vocabulary (fills set at the call sites).
-  tab: { paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1 },
+  // `styles.tab`'s `maxWidth: 220` was sized for 14pt padding and no border.
+  // Flag-on adds 2pt of padding and a 1px border per side, all of which count
+  // inside `maxWidth` — so `{title} · {date}` truncated ~6pt sooner than
+  // flag-off. Lift the cap by exactly the chrome added.
+  tab: { paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1, maxWidth: 226 },
   tabText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
   viewModePill: { paddingHorizontal: 16, paddingVertical: 9, borderWidth: 1 },
   viewModeText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 
   // Sheet + header block
-  sheet: { padding: WA_GROUP_MARGIN, gap: WA_SECTION_HEADER_GAP },
+  //
+  // §2 type role: this title is the SCREEN's header block, not a section
+  // header — it names the whole sheet, once, at the top, and after the
+  // embedded guard above it only renders in the standalone leader-tools
+  // tool. §2 puts that at 22 Bold; 20-semibold is "section header (landing
+  // screens)", which is the role `ServingRunsheetScreen`'s own per-plan
+  // header legitimately occupies. Sizing up also fixes the direction of
+  // travel: the earlier 20/600 made the title LIGHTER than flag-off's
+  // 20/700, where WA-VISUAL-DELTAS S7's finding is that the pre-pass ran one
+  // weight LIGHT throughout.
   planTitle: {
-    fontSize: WA_TYPE_SECTION_HEADER,
-    fontWeight: WA_WEIGHT_SEMIBOLD,
+    fontSize: WA_TYPE_HEADER_BLOCK,
+    fontWeight: WA_WEIGHT_BOLD,
   },
   ranges: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
   editText: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },

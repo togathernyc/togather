@@ -487,6 +487,19 @@ describe("PlanRunSheet — whatsapp-shell skin", () => {
     expect(getByText("Sound: Track 4")).toBeTruthy();
   });
 
+  it("puts the standalone plan title on §2's screen-header-block role", () => {
+    mockSheet([ASSIGNED_ITEM]);
+    const { getByText } = renderSheet();
+
+    // 22 Bold, not 20 semibold: this names the whole sheet, once, at the top.
+    // 20/600 is the "section header (landing screens)" role — which is what
+    // `ServingRunsheetScreen`'s own per-plan header is — and it also made the
+    // title LIGHTER than flag-off's 20/700, the opposite of S7's finding.
+    const title = flatten(getByText("Sunday Gathering").props.style);
+    expect(title.fontSize).toBe(22);
+    expect(title.fontWeight).toBe("700");
+  });
+
   it("keeps the empty and unavailable states, restyled", () => {
     mockSheet([]);
     const { getByText } = renderSheet();
@@ -514,6 +527,22 @@ describe("NativeRunSheetView — plan tabs", () => {
     expect(otherPill.backgroundColor).toBe(THEME.surface);
     expect(otherPill.borderColor).toBe(THEME.separator);
     expect(otherPill.borderWidth).toBe(1);
+  });
+
+  it("lifts the tab max width by the chrome the pill treatment adds", () => {
+    mockWhatsappShell = true;
+    mockSheet([ASSIGNED_ITEM]);
+    const { getByText } = render(
+      <NativeRunSheetView groupId={"group-1" as never} canEdit={false} />,
+    );
+
+    // maxWidth is border-box in RN, so the +2 padding and 1px border per side
+    // would otherwise truncate `{title} · {date}` ~6pt sooner than flag-off.
+    const pill = styleOfAncestorWith(getByText(/^Evening ·/), "maxWidth");
+    expect(pill.maxWidth).toBe(
+      220 + 2 * (Number(pill.paddingHorizontal) - 14) + 2 * Number(pill.borderWidth),
+    );
+    expect(pill.maxWidth).toBe(226);
   });
 
   it("paints a bg.grouped canvas so the pills and rows are visible at all", () => {
