@@ -27,10 +27,19 @@ tracker-id: togather-gardener-large-files
 # Per-run is held at or below the daily slice so one run cannot blow the day's budget.
 max-ai-credits: 200        # ~$2.00 per run
 max-daily-ai-credits: 200  # ~$2.00 / 24h — this gardener's slice of the $10/day repo budget
-max-turns: 30
-# Ollama does not do prompt caching, so every turn is a cache miss. The default of
-# 5 would have the proxy block the run partway through.
-max-turn-cache-misses: 40
+# Raised from 30 after the 2026-08-01 live probe: the agent was still mid-scan of
+# a 3,000-line file when the run died. Cost is nowhere near binding here (200 AIC
+# buys ~14M input tokens on this model), so turns and the 15-minute timeout are
+# the practical bounds — give the scan room to finish.
+max-turns: 60
+# NOT a cache guard on this provider — Ollama does no prompt caching, so every
+# single request counts as a "consecutive miss" and this degrades into a plain
+# request counter. The 2026-08-01 probe (run 30686121841) died at exactly 40/40 with
+# `403 Maximum consecutive cache misses exceeded`, mid-scan, after ~40 perfectly
+# healthy tool-executing turns. It cannot be disabled (schema enforces minimum 1),
+# so it is parked far above the turn budget. Bounded by turns/credits/timeout
+# instead. See .github/GARDENERS.md.
+max-turn-cache-misses: 200
 
 # Ollama Cloud via the OpenAI-compatible endpoint. gh-aw reads OPENAI_BASE_URL at
 # compile time and retargets the AWF API proxy at ollama.com, so traffic is still
@@ -62,9 +71,6 @@ permissions:
   issues: read
   pull-requests: read
 
-# Narrowed from `defaults` (~50 domains incl. pypi, ubuntu archives, playwright,
-# sentry). The firewall is the backstop behind prompt injection; this gardener
-# reads source files and needs GitHub plus its model endpoint, nothing else.
 # MEASURED: `allowed:` is ADDITIVE over the engine baseline and never shrinks it,
 # so listing ecosystems only widens egress. Was [github, node, threat-detection,
 # ollama.com] at 50 domains; `defaults` + the model host compiles to 43.
@@ -164,7 +170,17 @@ If it is **500 lines or more**, continue.
 
 ## Phase 3 — Understand the file before proposing anything
 
-Read the whole file. Then map its structure:
+Read the whole file — **in one call, not in pages.**
+
+> [!IMPORTANT]
+> Your context window is over a million tokens. A 3,000-line source file is a
+> rounding error against that, so read it in a single call rather than paging
+> through it in slices. Every extra request is a turn you do not get back, and a
+> live run on 2026-08-01 exhausted its request budget partway through a 3,000-line
+> file doing exactly this. If a file is genuinely too large to read at once, read
+> it in **two or three large chunks**, never in dozens of small ones.
+
+Then map its structure:
 
 ```bash
 grep -n "^export \|^const \|^function \|^async function \|^class \|^interface \|^type \|^export default" <FILE>

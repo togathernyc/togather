@@ -25,7 +25,11 @@ tracker-id: togather-gardener-docs-drift
 max-ai-credits: 200        # ~$2.00 per run — held at or below the daily slice
 max-daily-ai-credits: 200  # ~$2.00 / 24h
 max-turns: 30
-max-turn-cache-misses: 40  # Ollama has no prompt caching; every turn is a miss
+# NOT a cache guard on this provider — Ollama does no prompt caching, so every
+# request counts as a "consecutive miss" and this is really a request counter.
+# A sibling gardener died at exactly 40/40 mid-run on 2026-08-01 (run 30686121841). Cannot be
+# disabled (schema minimum is 1), so parked far above the turn budget.
+max-turn-cache-misses: 200
 
 # Ollama Cloud via the OpenAI-compatible endpoint (see GARDENERS.md). glm-5.2
 # rather than the flash tier: deciding what counts as drift takes more judgment
