@@ -97,7 +97,7 @@ import {
   diagnoseMineEmpty,
   mineEmptyCopy,
   myRoleNamesFromCrew,
-  planTaskCountFromAllTeams,
+  planTaskCountsFromAllTeams,
   shouldOfferSharedJump,
   type MineEmptyFacts,
   type MineEmptyReason,
@@ -768,7 +768,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   // data these four queries already carry. See `servingTaskEmptyState.ts`.
   const mineFacts = useMemo(
     () => ({
-      planTaskCount: planTaskCountFromAllTeams(effAllTeams),
+      planTaskCounts: planTaskCountsFromAllTeams(effAllTeams),
       myRoleNames: myRoleNamesFromCrew(effCrew),
       myTemplateTaskCount,
       // `null`, not 0, while unresolved — offline this NEVER self-corrects when

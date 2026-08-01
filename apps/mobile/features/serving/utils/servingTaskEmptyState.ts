@@ -45,13 +45,32 @@ export type MineEmptyReason =
   | "no-plan-tasks"
   /** The viewer holds no non-declined role on this plan (rostering gap). */
   | "not-rostered"
+  /**
+   * Every task on the plan is TEAM-LEVEL — cause #2 above. Nothing is missing
+   * and nothing is misassigned; the tasks simply live on "Shared". Split out of
+   * `role-mismatch`, which said they were "for other roles" — false, since
+   * team-level tasks are for the viewer's OWN team.
+   */
+  | "team-level-only"
   /** Tasks exist; none name a role the viewer holds. */
   | "role-mismatch";
 
+/**
+ * How a plan's tasks split. `total` is what "this event has N tasks" may claim;
+ * `teamLevel` is the part of it that belongs to whole TEAMS rather than roles,
+ * and therefore may never be described as being "for other roles".
+ */
+export interface PlanTaskCounts {
+  /** Distinct tasks on the whole plan (every team, every role). */
+  total: number;
+  /** Of `total`, the ones with no roles (`roleIds: []`) — see `teamLevel`. */
+  teamLevel: number;
+}
+
 /** The facts `diagnoseMineEmpty` reasons over. `null` means "not loaded yet". */
 export interface MineEmptyFacts {
-  /** Distinct tasks on the whole plan (every team, every role). */
-  planTaskCount: number | null;
+  /** The plan's task split, or `null` while `getAllTeamsTasks` is unresolved. */
+  planTaskCounts: PlanTaskCounts | null;
   /** Names of the roles the viewer holds on this plan, in display order. */
   myRoleNames: string[] | null;
   /** Preloaded (non-personal) tasks in the viewer's own "Mine" list. */
@@ -70,21 +89,42 @@ export interface MineEmptyFacts {
 }
 
 /**
- * Distinct plan-wide task count from `getAllTeamsTasks`.
+ * Distinct plan-wide task counts from `getAllTeamsTasks`, split by scope.
  *
  * A task that spans several teams is listed once per team, so the rows must be
  * de-duplicated by `taskId` — `taskCount` summed across teams would over-count.
  * Returns `null` while the query is unresolved.
+ *
+ * `getAllTeamsTasks` counts TEAM-LEVEL tasks into each team they span, with an
+ * empty `roleNames` (see the `roleIds.length === 0` branch in `eventTasks.ts`).
+ * They are therefore inside `total`, which is why the copy has to know how many
+ * of the total they are: a sentence about "this event's N tasks" that treats
+ * team-level ones as belonging to other roles contradicts itself.
+ *
+ * A role task that spans teams carries that team's roles in every row, so
+ * "team-level" is "no row names a role".
  */
-export function planTaskCountFromAllTeams(
-  teams: ReadonlyArray<{ tasks: ReadonlyArray<{ taskId: string }> }> | undefined,
-): number | null {
+export function planTaskCountsFromAllTeams(
+  teams:
+    | ReadonlyArray<{
+        tasks: ReadonlyArray<{ taskId: string; roleNames: readonly string[] }>;
+      }>
+    | undefined,
+): PlanTaskCounts | null {
   if (teams === undefined) return null;
-  const ids = new Set<string>();
+  const teamLevelById = new Map<string, boolean>();
   for (const team of teams) {
-    for (const task of team.tasks) ids.add(task.taskId);
+    for (const task of team.tasks) {
+      const teamLevel =
+        (teamLevelById.get(task.taskId) ?? true) && task.roleNames.length === 0;
+      teamLevelById.set(task.taskId, teamLevel);
+    }
   }
-  return ids.size;
+  let teamLevel = 0;
+  for (const isTeamLevel of teamLevelById.values()) {
+    if (isTeamLevel) teamLevel += 1;
+  }
+  return { total: teamLevelById.size, teamLevel };
 }
 
 /**
@@ -124,19 +164,26 @@ export function myRoleNamesFromCrew(
  *     not on the roster" would send them after the wrong problem.
  *  4. `not-rostered` — must precede `role-mismatch`, which would otherwise
  *     claim "none of these tasks match your role" to someone holding no role.
- *  5. `role-mismatch`.
+ *     It also precedes `team-level-only`, whose copy sends the viewer to
+ *     "Shared" — a tab that is empty for someone on no team at all.
+ *  5. `team-level-only` — nothing is misassigned, so this must be told apart
+ *     from `role-mismatch` before that one gets to blame other roles.
+ *  6. `role-mismatch`.
  */
 export function diagnoseMineEmpty(facts: MineEmptyFacts): MineEmptyReason {
   if (facts.myTemplateTaskCount > 0) return "has-tasks";
   if (
-    facts.planTaskCount === null ||
+    facts.planTaskCounts === null ||
     facts.myRoleNames === null ||
     facts.sharedTaskCount === null
   ) {
     return "loading";
   }
-  if (facts.planTaskCount === 0) return "no-plan-tasks";
+  if (facts.planTaskCounts.total === 0) return "no-plan-tasks";
   if (facts.myRoleNames.length === 0) return "not-rostered";
+  if (facts.planTaskCounts.teamLevel === facts.planTaskCounts.total) {
+    return "team-level-only";
+  }
   return "role-mismatch";
 }
 
@@ -204,10 +251,33 @@ export function mineEmptyCopy(
         hint: "Tasks follow roles, and you don't hold one here — your assignment was removed, or you declined it. If that's not right, check with your team lead.",
       };
 
+    // Nothing here is anybody's mistake: the plan is authored, just entirely at
+    // TEAM level. `role-mismatch` used to swallow this case and tell the viewer
+    // the tasks were "for other roles" — in the same breath as pointing them at
+    // "Shared … for your whole team", which is the opposite claim.
+    case "team-level-only": {
+      const roles = facts.myRoleNames ?? [];
+      const total = facts.planTaskCounts?.total ?? 0;
+      const scope =
+        total === 1
+          ? "This event's only task is for a whole team rather than a single role, so it isn't in Mine."
+          : `All ${total} of this event's tasks are for whole teams rather than single roles, so none of them are in Mine.`;
+      return {
+        title: "This event's tasks are for whole teams, not roles.",
+        hint: [
+          roles.length > 0 ? `You're serving as ${formatRoleList(roles)}.` : null,
+          scope,
+          sharedHint,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      };
+    }
+
     case "role-mismatch": {
       const roles = facts.myRoleNames ?? [];
       const roleWord = roles.length === 1 ? "role" : "roles";
-      // `planTaskCount` is PLAN-wide, across every team. Leading with it read as
+      // The count is PLAN-wide, across every team. Leading with it read as
       // "20 tasks exist and you were skipped" — for a Kids volunteer on a plan
       // where Worship authored all 20 and Kids authored none, that points at a
       // non-problem. Say "across all teams" out loud instead, and restore the
@@ -217,14 +287,28 @@ export function mineEmptyCopy(
       // whose nearest antecedent is the ROLE named in the sentence before it —
       // so "You're serving as Camera. Its 2 tasks … are for other roles." read
       // as Camera's own tasks being for other roles, which contradicts itself.
+      //
+      // Only the ROLE-SCOPED tasks are for other roles. The team-level ones are
+      // for whole teams — the viewer's own included — so they get counted out
+      // loud and separately rather than folded into the "for other roles" claim
+      // (`diagnoseMineEmpty` has already peeled off the all-team-level plan, so
+      // `roleScoped` is at least 1 here).
+      const counts = facts.planTaskCounts;
+      const roleScoped = counts === null ? 0 : counts.total - counts.teamLevel;
       const planWide =
-        facts.planTaskCount === null
+        counts === null
           ? null
-          : `This event's ${pluralTasks(facts.planTaskCount)} — across all teams — ${
-              facts.planTaskCount === 1
-                ? "is for another role"
-                : "are for other roles"
-            }.`;
+          : counts.teamLevel === 0
+            ? `This event's ${pluralTasks(roleScoped)} — across all teams — ${
+                roleScoped === 1 ? "is for another role" : "are for other roles"
+              }.`
+            : `Of this event's ${pluralTasks(counts.total)} — across all teams — ${
+                roleScoped === 1 ? "1 is for another role" : `${roleScoped} are for other roles`
+              } and ${
+                counts.teamLevel === 1
+                  ? "1 is for a whole team"
+                  : `${counts.teamLevel} are for whole teams`
+              }.`;
       return {
         title: `None of this event's tasks are assigned to your ${roleWord}.`,
         hint: [
@@ -243,7 +327,7 @@ export function mineEmptyCopy(
 /**
  * Whether the notice should offer its one-tap jump to the "Shared" tab.
  *
- * Only for the two states where whole-team tasks are a genuine next place to
+ * Only for the states where whole-team tasks are a genuine next place to
  * look. `no-plan-tasks` is excluded on purpose: a stale-cache mix (an empty
  * all-teams snapshot next to a cached shared list) could otherwise render
  * "This event has no tasks set up yet." directly above "Open Shared (2)".
@@ -252,6 +336,12 @@ export function shouldOfferSharedJump(
   reason: MineEmptyReason,
   facts: MineEmptyFacts,
 ): boolean {
-  if (reason !== "role-mismatch" && reason !== "not-rostered") return false;
+  if (
+    reason !== "role-mismatch" &&
+    reason !== "not-rostered" &&
+    reason !== "team-level-only"
+  ) {
+    return false;
+  }
   return (facts.sharedTaskCount ?? 0) > 0;
 }

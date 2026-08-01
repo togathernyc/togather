@@ -189,8 +189,13 @@ const DEFAULT_PLANS: EligiblePlan[] = [
   { planId: "plan-1", title: "Sunday Gathering", startsAt: 0 },
 ];
 
-/** An `getAllTeamsTasks` row. Only `tasks[].taskId` is read for the count. */
-function allTeamsRow(taskIds: string[], teamId = "team-1") {
+/**
+ * An `getAllTeamsTasks` row. `tasks[].taskId` feeds the plan-wide count and
+ * `roleNames` decides the task's scope — EMPTY means team-level, exactly as the
+ * backend returns it — which the empty-state copy splits on. Defaults to
+ * role-scoped; pass `[]` for the all-team-level plan.
+ */
+function allTeamsRow(taskIds: string[], teamId = "team-1", roleNames = ["Camera"]) {
   return {
     teamId,
     teamName: "Hospitality",
@@ -201,7 +206,7 @@ function allTeamsRow(taskIds: string[], teamId = "team-1") {
       taskId,
       title: taskId,
       segment: "before",
-      roleNames: [],
+      roleNames,
       completed: false,
       howToType: "none",
     })),
@@ -392,17 +397,24 @@ describe("ServingTasksScreen — Shared discoverability from an empty Mine", () 
   afterEach(() => jest.clearAllMocks());
 
   it("advertises Shared and jumps to it when Mine is empty but Shared has tasks", () => {
+    // The premise of this whole describe: every task on the plan is TEAM-level,
+    // which is why Shared holds them all.
     mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
-      allTeams: [allTeamsRow(["task-1", "task-2"])],
+      allTeams: [allTeamsRow(["task-1", "task-2"], "team-1", [])],
       crew: [myCrewRow("Greeter")],
       shared: [
         sharedRow("task-1", "Unlock the building"),
         sharedRow("task-2", "Set the thermostat"),
       ],
     });
-    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    const { getByText, getByLabelText, queryByText } = render(<ServingTasksScreen />);
 
     expect(getByText(/Shared has 2 tasks for your whole team\./)).toBeTruthy();
+    // …and the same notice must not call those very tasks somebody else's.
+    expect(queryByText(/are for other roles/)).toBeNull();
+    expect(
+      getByText("This event's tasks are for whole teams, not roles."),
+    ).toBeTruthy();
 
     fireEvent.press(getByLabelText("Open the Shared tab"));
 
