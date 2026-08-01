@@ -183,3 +183,41 @@ describe("ServingTeamScreen — whatsapp-shell skin", () => {
     expect(getByLabelText("Back")).toBeTruthy();
   });
 });
+
+/**
+ * Two same-day plans used to stack as two sections headed by identical
+ * strings ("Untitled event plan · Sun, Aug 3"), giving a volunteer no way to
+ * tell which campus rostered them.
+ */
+describe("ServingTeamScreen — plan header provenance", () => {
+  it("names the group under the plan title", () => {
+    (useAuthenticatedQuery as jest.Mock).mockReturnValue({
+      plans: [{ ...ROSTER.plans[0], groupName: "FOUNT Brooklyn" }],
+    });
+    const { getByText } = render(<ServingTeamScreen />);
+    expect(getByText("FOUNT Brooklyn")).toBeTruthy();
+  });
+
+  it("tells two identically-titled same-day plans apart", () => {
+    (useAuthenticatedQuery as jest.Mock).mockReturnValue({
+      plans: [
+        { ...ROSTER.plans[0], groupName: "FOUNT Brooklyn" },
+        {
+          ...ROSTER.plans[0],
+          planId: "plan-2",
+          groupName: "FOUNT Manhattan",
+        },
+      ],
+    });
+    const { getAllByText, getByText } = render(<ServingTeamScreen />);
+    expect(getAllByText("Sunday Gathering")).toHaveLength(2);
+    expect(getByText("FOUNT Brooklyn")).toBeTruthy();
+    expect(getByText("FOUNT Manhattan")).toBeTruthy();
+  });
+
+  it("renders no subtitle when the plan carries no group name", () => {
+    const { getByText, queryByText } = render(<ServingTeamScreen />);
+    expect(getByText("Sunday Gathering")).toBeTruthy();
+    expect(queryByText("undefined")).toBeNull();
+  });
+});

@@ -55,6 +55,7 @@ import {
 } from "@components/ui/ActionMenuSheet";
 import { useStartDirectMessage } from "@features/chat/hooks/useStartDirectMessage";
 import { useEventModeStore } from "@/stores/eventModeStore";
+import { planSubtitle } from "../utils/servingProvenance";
 
 /** The person shape returned per team by `getServingTeamRoster`. */
 type RosterPerson = {
@@ -225,21 +226,37 @@ export function ServingTeamScreen() {
           {plans.map((plan) => (
             <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
               <View style={[styles.planHeader, wa && waStyles.planHeader]}>
-                <Text
-                  style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
-                  numberOfLines={1}
-                >
-                  {plan.title}
-                </Text>
-                <Text
-                  style={[
-                    styles.planDate,
-                    wa && waStyles.planDate,
-                    { color: colors.textTertiary },
-                  ]}
-                >
-                  {formatPlanDate(plan.eventDate)}
-                </Text>
+                <View style={styles.planHeaderRow}>
+                  <Text
+                    style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {plan.title}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.planDate,
+                      wa && waStyles.planDate,
+                      { color: colors.textTertiary },
+                    ]}
+                  >
+                    {formatPlanDate(plan.eventDate)}
+                  </Text>
+                </View>
+                {/* Which campus this section belongs to — two same-day plans
+                    otherwise stack under identical headers. */}
+                {planSubtitle(plan.groupName) ? (
+                  <Text
+                    style={[
+                      styles.planGroup,
+                      wa && waStyles.planGroup,
+                      { color: colors.textSecondary },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {planSubtitle(plan.groupName)}
+                  </Text>
+                ) : null}
               </View>
 
               {plan.teams.length === 0 ? (
@@ -460,14 +477,13 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 15, textAlign: "center" },
   planSection: { paddingTop: 20 },
   planHeader: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 8,
     paddingHorizontal: 16,
     marginBottom: 10,
   },
+  planHeaderRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
   planTitle: { fontSize: 16, fontWeight: "700", flexShrink: 1 },
   planDate: { fontSize: 13, fontWeight: "500" },
+  planGroup: { fontSize: 13, fontWeight: "600", marginTop: 2 },
   planEmpty: { fontSize: 13, paddingHorizontal: 16, paddingBottom: 8 },
   teamsRow: { paddingHorizontal: 16, gap: 12 },
   teamColumn: { width: TEAM_COL_WIDTH, gap: 8 },
@@ -530,6 +546,7 @@ const waStyles = StyleSheet.create({
   // §2 landing section header: ~20pt semibold, sentence case.
   planTitle: { fontSize: WA_TYPE_SECTION_HEADER, fontWeight: WA_WEIGHT_SEMIBOLD },
   planDate: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  planGroup: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
   planEmpty: { fontSize: WA_TYPE_SUBTITLE, paddingHorizontal: WA_GROUP_MARGIN },
 
   // Type grew (names 14 -> 17pt, roles 12 -> 13pt), so the column widens to

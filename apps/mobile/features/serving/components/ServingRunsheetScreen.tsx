@@ -33,13 +33,18 @@ import {
 import { PlanRunSheet } from "@features/leader-tools/components/NativeRunSheetView";
 import { useEventModeStore } from "@/stores/eventModeStore";
 import { useServingPlans } from "../hooks/useServingPlans";
+import { planSubtitle } from "../utils/servingProvenance";
 
 type ServingPlan = {
   planId: string;
   groupId: string;
+  /** The campus that rostered the viewer — the section header's subtitle. */
+  groupName?: string;
   title: string;
   startsAt: number;
   endsAt: number;
+  /** The viewer's own teams on this plan. */
+  teamNames?: string[];
 };
 
 type EligibilityResult = {
@@ -136,21 +141,37 @@ export function ServingRunsheetScreen() {
       {plans.map((plan) => (
         <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
           <View style={[styles.planHeader, wa && waStyles.planHeader]}>
-            <Text
-              style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
-              numberOfLines={1}
-            >
-              {plan.title}
-            </Text>
-            <Text
-              style={[
-                styles.planDate,
-                wa && waStyles.planDate,
-                { color: colors.textTertiary },
-              ]}
-            >
-              {formatPlanDate(plan.startsAt)}
-            </Text>
+            <View style={styles.planHeaderRow}>
+              <Text
+                style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                {plan.title}
+              </Text>
+              <Text
+                style={[
+                  styles.planDate,
+                  wa && waStyles.planDate,
+                  { color: colors.textTertiary },
+                ]}
+              >
+                {formatPlanDate(plan.startsAt)}
+              </Text>
+            </View>
+            {/* Which campus/teams this section is — without it two same-day
+                plans stack under identical headers. */}
+            {planSubtitle(plan.groupName, plan.teamNames) ? (
+              <Text
+                style={[
+                  styles.planGroup,
+                  wa && waStyles.planGroup,
+                  { color: colors.textSecondary },
+                ]}
+                numberOfLines={1}
+              >
+                {planSubtitle(plan.groupName, plan.teamNames)}
+              </Text>
+            ) : null}
           </View>
           <PlanRunSheet
             embedded
@@ -186,14 +207,13 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 15, textAlign: "center" },
   planSection: { paddingTop: 20 },
   planHeader: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    gap: 8,
     paddingHorizontal: 16,
     marginBottom: 10,
   },
+  planHeaderRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
   planTitle: { fontSize: 16, fontWeight: "700", flexShrink: 1 },
   planDate: { fontSize: 13, fontWeight: "500" },
+  planGroup: { fontSize: 13, fontWeight: "600", marginTop: 2 },
 });
 
 /**
@@ -214,4 +234,5 @@ const waStyles = StyleSheet.create({
   },
   planTitle: { fontSize: WA_TYPE_SECTION_HEADER, fontWeight: WA_WEIGHT_SEMIBOLD },
   planDate: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_REGULAR },
+  planGroup: { fontSize: WA_TYPE_SUBTITLE, fontWeight: WA_WEIGHT_SEMIBOLD },
 });
