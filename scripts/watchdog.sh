@@ -57,7 +57,11 @@ NOW=$(date +%s)
 # first-run case.
 log() {
   local size
-  size=$(wc -c <"$LOG" 2>/dev/null || echo 0)
+  # `2>/dev/null` comes BEFORE the input redirect on purpose. Redirections are
+  # applied left to right, so with `<"$LOG" 2>/dev/null` the missing-file error
+  # is reported on a stderr that has not been silenced yet — one stray line in
+  # launchd.err.log on the first run after every install.
+  size=$(wc -c 2>/dev/null <"$LOG" || echo 0)
   if [ "${size:-0}" -gt "$WATCHDOG_LOG_MAX_BYTES" ]; then
     tail -n "$WATCHDOG_LOG_KEEP_LINES" "$LOG" >"$LOG.roll" 2>/dev/null \
       && mv "$LOG.roll" "$LOG"
@@ -222,9 +226,18 @@ fi
 BRANCH_REFS=$(git for-each-ref --format='%(committerdate:unix) %(refname:short)' \
   refs/heads refs/remotes/origin 2>/dev/null)
 
-# One network call for the whole loop rather than one per issue.
-REMOTE_REFS=$(git ls-remote --heads origin 2>/dev/null)
-REMOTE_REFS_OK=$?
+# One network call for the whole loop rather than one per issue — and none at all
+# when there is nothing to look up. The gate above passes on SESSION_COUNT, so the
+# ordinary weekday shape (a live session, zero claims) reaches here with nothing
+# to check; without this condition that is 48 pointless round trips to origin a
+# day. OK defaults to 0 for the skipped case so the fail-closed check below never
+# reads an unset value.
+REMOTE_REFS=""
+REMOTE_REFS_OK=0
+if [ "$IN_PROGRESS_COUNT" -gt 0 ]; then
+  REMOTE_REFS=$(git ls-remote --heads origin 2>/dev/null)
+  REMOTE_REFS_OK=$?
+fi
 
 RECLAIMED=""
 

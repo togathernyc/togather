@@ -37,18 +37,32 @@ WATCHDOG_RECLAIM=${WATCHDOG_RECLAIM:-1}
 # Spend pace
 # ---------------------------------------------------------------------------
 
-# Dollars per ccusage 5-hour block. Two thresholds, because one number cannot
-# do both jobs and a single $10 ceiling produced a page every 30 minutes during
-# ordinary interactive work — measured $53 in a block, 26 minutes in, with
-# nothing unusual happening.
+# Dollars per ccusage 5-hour block. Two thresholds, because one number cannot do
+# both jobs:
 #
 #   CEILING — a line in the daily report. "This block is expensive."
 #   PAGE    — a Telegram message. "This is running away."
 #
-# Set against the owner's measured baseline: heavy parallel work reaches ~$50 a
-# block, so $25 is genuinely notable and $40 is genuinely alarming.
-WATCHDOG_SPEND_CEILING_USD=${WATCHDOG_SPEND_CEILING_USD:-25}
-WATCHDOG_SPEND_PAGE_USD=${WATCHDOG_SPEND_PAGE_USD:-40}
+# CALIBRATED AGAINST MEASURED DATA, 2026-08-01. The full series of completed
+# blocks on this machine over the preceding three days:
+#
+#   2026-07-29T02:00Z    $6.48     2026-07-30T12:00Z   $38.82
+#   2026-07-29T13:00Z  $186.52     2026-07-31T05:00Z   $75.47
+#   2026-07-29T18:00Z  $248.65     2026-07-31T14:00Z  $144.02
+#   2026-07-29T23:00Z  $313.53     2026-07-31T19:00Z  $280.77
+#   2026-07-30T04:00Z  $205.59     2026-08-01T00:00Z  $100.00
+#
+# 10 of 14 blocks clear $40; median non-zero ~$165; observed maximum $313.53.
+# Earlier drafts used $10 then $40, both anchored to a PARTIAL block sampled 26
+# minutes in ($53) that went on to finish at $194.99 — so they fired on ordinary
+# attended work, which is how you end up muting the bot and silently losing the
+# dead-run page with it.
+#
+# $300 is above every completed block but one; $400 is meaningfully past the
+# observed maximum. Re-measure after a fortnight and move them if the workload
+# shifts — this is a calibration, not a constant.
+WATCHDOG_SPEND_CEILING_USD=${WATCHDOG_SPEND_CEILING_USD:-300}
+WATCHDOG_SPEND_PAGE_USD=${WATCHDOG_SPEND_PAGE_USD:-400}
 
 # Report at this fraction of the ceiling, one band below it.
 WATCHDOG_SPEND_WARN_FRACTION=${WATCHDOG_SPEND_WARN_FRACTION:-0.8}
