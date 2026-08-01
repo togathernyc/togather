@@ -83,6 +83,13 @@ network:
     - playwright
     - containers
 
+# INERT on engine:codex — gh-aw v0.83.4 emits this as a step-level timeout for
+# engine:claude but drops it entirely for codex, so this agent job has no
+# wall-clock limit and falls back to Actions' 360-minute default. No frontmatter
+# key fixes it (the engine schema has no timeout field). Kept because it costs
+# nothing and starts working if gh-aw closes the gap; verify with
+#   grep -c 'timeout-minutes: 15' <this workflow>.lock.yml
+# Real bounds here: max-turns and the AI-credit cap, both enforced in the proxy.
 timeout-minutes: 15
 
 concurrency:

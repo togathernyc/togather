@@ -145,7 +145,31 @@ python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
 - `max-daily-ai-credits` — rolling 24-hour guardrail, checked *before* the agent
   starts. When exceeded the activation job skips the run entirely and nothing is
   billed. Omitting this key leaves the guardrail *off*.
-- `max-turns: 30` and `timeout-minutes: 15` are the two non-financial bounds.
+- `max-turns: 30` is the other non-financial bound. `timeout-minutes: 15` is
+  **only real on CI Doctor** — see the warning below.
+
+> [!CAUTION]
+> **`timeout-minutes` is silently dropped for `engine: codex` in gh-aw v0.83.4.**
+> The compiler emits it as a step-level timeout on the agent execution step for
+> `engine: claude`, but the codex step builder never emits it at all. Verified:
+> `grep -c 'timeout-minutes: 15'` returns **1** in
+> `gardener-ci-doctor.lock.yml` and **0** in all three codex lock files. There is
+> no frontmatter key that fixes this — the engine schema has no timeout field,
+> and `engine.command` / `engine.harness` replace the executable rather than
+> bound it.
+>
+> **So the three Ollama gardeners' agent jobs have no wall-clock limit of their
+> own** and fall back to GitHub Actions' default job ceiling of **360 minutes**.
+> Their real bounds are the AI-credit cap and `max-turns`, both enforced inside
+> the AWF proxy — and both demonstrably do terminate a run, since the
+> analogous cache-miss guard is exactly what stopped
+> [run 30686121841](https://github.com/togathernyc/togather/actions/runs/30686121841)
+> mid-flight.
+>
+> The `timeout-minutes: 15` line is deliberately left in those three workflows:
+> it is inert today but costs nothing and will start working if gh-aw closes the
+> gap. Do not treat it as a live control until `grep` says otherwise. This looks
+> like an upstream bug and is worth reporting to github/gh-aw.
 
 The four daily caps sum to 1000 AIC = **$10/day repo-wide**. The guardrail is
 enforced per workflow per triggering user, not globally — that $10 is an
@@ -164,13 +188,16 @@ arithmetic budget across the four, not one number GitHub enforces.
 >
 > (Input-only, for scale; output costs 2–3× more, so real runs land lower.)
 >
-> The practical consequence: on the three Ollama gardeners the AIC cap is so
-> loose it will almost never be what stops a run. **`max-turns: 30` and
-> `timeout-minutes: 15` are the real per-run bounds there** — the cap is a
-> backstop against a pathological loop, not a working budget. On CI Doctor the
-> cap is genuinely close enough to bind. Tune the turns and the timeout if you
-> want to change how much work an Ollama gardener does; tuning its AIC will
-> mostly do nothing.
+> The practical consequence: on the three Ollama gardeners the AIC cap is loose
+> enough that it will rarely be the first thing to stop a run — **`max-turns` is
+> the binding bound there**, since `timeout-minutes` is inert for `engine: codex`
+> (see the caution above). The cap is a backstop against a pathological loop
+> rather than a working budget, and with no wall-clock limit it is also the only
+> thing standing between a wedged run and GitHub's 360-minute job ceiling. On CI
+> Doctor both the cap and the timeout are real and close enough to bind.
+>
+> To change how much work an Ollama gardener does, tune `max-turns`. Tuning its
+> AIC or its `timeout-minutes` will mostly do nothing.
 
 #### The dollar figures mean two different things
 
@@ -193,9 +220,10 @@ only knows *list* prices:
 
   **Your real exposure on the Ollama path is the Ollama Cloud subscription
   itself** ($20/mo Pro, with session limits resetting every 5 hours and weekly
-  limits every 7 days) — not anything in the table above. The 15-minute
-  `timeout-minutes` is the other hard bound and is deliberately tight for that
-  reason.
+  limits every 7 days) — not anything in the table above. Note there is **no
+  wall-clock backstop** on these three: `timeout-minutes` does not compile for
+  `engine: codex`, so a wedged run is bounded by the credit cap, `max-turns`, and
+  GitHub's 360-minute job ceiling rather than by 15 minutes.
 
 Metering works on the Ollama path at all only because gh-aw routes **every**
 engine through the AWF API proxy sidecar; the proxy is retargeted at `ollama.com`
@@ -742,8 +770,8 @@ Two follow-on changes from the same run:
 
 - **`gardener-large-files` now has `max-turns: 60`** (was 30). It was still
   mid-scan when it died, and cost is nowhere near binding on this model — 200 AIC
-  buys roughly 14M input tokens — so turns and the 15-minute timeout are what
-  actually bound it. It needed the room.
+  buys roughly 14M input tokens — so `max-turns` is what actually bounds it
+  (`timeout-minutes` is inert on codex). It needed the room.
 - **Its prompt now insists on reading a file in one call, not in pages.** The run
   was paging a 3,000-line file in ~250-line slices against a **million-token**
   context window, spending its request budget on pagination. Fewer, larger reads
