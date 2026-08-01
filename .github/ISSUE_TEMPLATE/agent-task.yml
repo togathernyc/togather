@@ -18,6 +18,15 @@ body:
         for you). Queueing does not start a run — a run starts when `/overnight`
         is invoked.
 
+        **If you are not a maintainer of this repo, this form will not run
+        anything.** `togathernyc/togather` is public, so the label alone proves
+        nothing about who filed the issue. Before claiming any issue the
+        orchestrator checks the author's repo association and skips anything
+        that is not `OWNER`, `MEMBER`, or `COLLABORATOR` — the label is the
+        owner's inbox, not an execution trigger. Issues from outside
+        contributors are very welcome; they just go through normal human triage.
+        Please use the Bug report or Feature request templates for those.
+
   - type: textarea
     id: description
     attributes:
