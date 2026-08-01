@@ -38,8 +38,11 @@ import {
   WA_TYPE_ROW_TITLE,
   WA_TYPE_SECTION_HEADER,
   WA_TYPE_SUBTITLE,
+  WA_TYPE_HEADER_BLOCK,
+  WA_WEIGHT_BOLD,
   WA_WEIGHT_REGULAR,
   WA_WEIGHT_SEMIBOLD,
+  waRoleInk,
 } from "@components/wa";
 import { useAuth } from "@providers/AuthProvider";
 import { useAuthenticatedQuery, api } from "@services/api/convex";
@@ -289,7 +292,7 @@ export function PlanRunSheet({
    */
   embedded?: boolean;
 }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   // Flag-on restyle only — see the `waStyles` block at the bottom of this file.
   const wa = useWhatsappShell();
@@ -759,6 +762,7 @@ export function PlanRunSheet({
                       clockMs={clockTimes[item._id]}
                       peopleByRole={peopleByRole}
                       colors={colors}
+                      isDark={isDark}
                       wa={wa}
                       isCurrent={item._id === currentItemId}
                       isExpanded={expandedItemIds.has(item._id)}
@@ -804,6 +808,7 @@ function ReadOnlyRow({
   clockMs,
   peopleByRole,
   colors,
+  isDark,
   wa,
   isCurrent,
   isExpanded,
@@ -815,6 +820,8 @@ function ReadOnlyRow({
   clockMs: number | null;
   peopleByRole: Record<string, string[]>;
   colors: ReturnType<typeof useTheme>["colors"];
+  /** Which theme is painting, so `waRoleInk` can pick the readable band. */
+  isDark: boolean;
   /** `whatsapp-shell` flag — restyle only, never a behavior branch. */
   wa: boolean;
   isCurrent: boolean;
@@ -955,6 +962,12 @@ function ReadOnlyRow({
               // colored semibold text, no container, never the brand accent) —
               // so a volunteer still finds their role by color, and it's the
               // same hue their leader picked in Rostering.
+              //
+              // The RAW swatch hex can't be that ink: `ROLE_COLORS` was picked
+              // to read as a fill, and 8 of its 9 values fail WCAG AA as 15pt
+              // text (amber `#FFB224` at 1.65:1 light, violet `#6E56CF` at
+              // 2.83:1 dark). `waRoleInk` keeps the author's HUE and re-lights
+              // it per theme so every value clears 4.5:1 — see waRoleInk.ts.
               if (wa) {
                 return (
                   <Text
@@ -962,7 +975,12 @@ function ReadOnlyRow({
                     style={[waStyles.assignText, { color: colors.textSecondary }]}
                     numberOfLines={1}
                   >
-                    <Text style={[waStyles.assignRole, { color: roleColor }]}>
+                    <Text
+                      style={[
+                        waStyles.assignRole,
+                        { color: waRoleInk(roleColor, isDark) },
+                      ]}
+                    >
                       {a.roleName}
                     </Text>
                     {people}
@@ -1149,7 +1167,11 @@ const styles = StyleSheet.create({
  *    assignment becomes one plain subtitle line (§7's sanctioned "plain
  *    descriptive text"), with the role's own hue kept as text ink the way
  *    WhatsApp colors group-chat sender names (§5/§1.3): colored semibold
- *    text, no fill. The people stay in `text.secondary`.
+ *    text, no fill. The people stay in `text.secondary`. The ink is derived
+ *    through `waRoleInk` rather than used raw — the authored swatch hexes
+ *    read as fills, not as 15pt type, and 8 of the 9 fail WCAG AA if painted
+ *    straight onto a row (see waRoleInk.ts for the numbers and for why we
+ *    kept the authored hue instead of hashing onto `WA_SENDER_HUES`).
  *  - ALL-CAPS labels are dead (§3.2/S3.5). Segment labels and item header
  *    rows become sentence-case 15pt gray; note categories lose
  *    `textTransform` and letter-spacing. The `toUpperCase()` calls are

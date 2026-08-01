@@ -26,6 +26,8 @@ export {
 } from './waAvatarColor';
 export type { WaAvatarPalette } from './waAvatarColor';
 
+export { waRoleInk, waHexToHueSaturation } from './waRoleInk';
+
 export { formatWaListTimestamp } from './waListTimestamp';
 
 export { WaSeparator } from './WaSeparator';
