@@ -21,12 +21,12 @@ function lastAlertButtons(): Button[] {
 describe("confirmAsync", () => {
   afterEach(() => {
     jest.restoreAllMocks();
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "ios";
   });
 
   it("spells the confirm action out on web, where the button is always 'OK'", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "web";
     const confirm = jest.fn().mockReturnValue(true);
     // @ts-expect-error — jsdom window stub.
@@ -48,7 +48,7 @@ describe("confirmAsync", () => {
   });
 
   it("leaves a plain OK/Cancel confirm unadorned", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "web";
     const confirm = jest.fn().mockReturnValue(false);
     // @ts-expect-error — jsdom window stub.
@@ -64,7 +64,7 @@ describe("confirmAsync", () => {
 describe("chooseAsync", () => {
   afterEach(() => {
     jest.restoreAllMocks();
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "ios";
   });
 
@@ -76,7 +76,7 @@ describe("chooseAsync", () => {
   };
 
   it("keeps the title and message on the web fallback's SECOND dialog", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "web";
     // Decline the first (primary) question, accept the second.
     const confirm = jest
@@ -100,7 +100,7 @@ describe("chooseAsync", () => {
   });
 
   it("glosses a custom cancel label on the second web dialog", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "web";
     const confirm = jest.fn().mockReturnValue(false);
     // @ts-expect-error — jsdom window stub.
@@ -113,7 +113,7 @@ describe("chooseAsync", () => {
   });
 
   it("names both web actions on the first dialog too", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "web";
     const confirm = jest.fn().mockReturnValue(true);
     // @ts-expect-error — jsdom window stub.
@@ -126,7 +126,7 @@ describe("chooseAsync", () => {
   });
 
   it("puts the primary action at the TOP of the iOS stack", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "ios";
     jest.spyOn(Alert, "alert").mockImplementation(() => {});
 
@@ -145,7 +145,7 @@ describe("chooseAsync", () => {
   });
 
   it("puts the primary action in Android's positive (rightmost) slot", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "android";
     jest.spyOn(Alert, "alert").mockImplementation(() => {});
 
@@ -160,7 +160,7 @@ describe("chooseAsync", () => {
   });
 
   it("resolves with the button the user actually pressed", async () => {
-    // @ts-expect-error — test-only platform override.
+    // Test-only platform override.
     Platform.OS = "ios";
     jest.spyOn(Alert, "alert").mockImplementation(() => {});
 

@@ -47,12 +47,22 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
-import { parseDuplicatePlanDate } from "../utils/duplicatePlanDate";
+import { errorMessage } from "@utils/error-handling";
+import {
+  parseDuplicatePlanDate,
+  savePlanDate,
+} from "../utils/duplicatePlanDate";
 
-/** Best-effort human message from a thrown value (mirrors DateColumnHeaderEditor). */
+/**
+ * Best-effort human message from a thrown value.
+ *
+ * Delegates to the shared extractor rather than reading `.message` directly: a
+ * real Convex client puts the payload on `.data` and leaves `.message` as a
+ * hybrid stacktrace with the serialized JSON embedded in it — which is what a
+ * leader was shown when a mutation failed.
+ */
 function errMessage(e: unknown): string {
-  const err = e as { data?: { message?: string }; message?: string };
-  return err?.data?.message ?? err?.message ?? "Please try again.";
+  return errorMessage(e, "Please try again.");
 }
 import { NeededRolesModal } from "./NeededRolesModal";
 import { TimesEditor } from "./TimesEditor";
@@ -223,34 +233,12 @@ export function EventEditorPanel({
 
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
-      if (!date) return;
-      try {
-        await updateEvent({ planId, eventDate: date.getTime() });
-      } catch (e: any) {
-        // A group may hold only one plan per local day unless the leader says
-        // otherwise — moving a plan alongside an existing service is a real
-        // thing to want, so ask instead of just refusing.
-        const duplicate = parseDuplicatePlanDate(e);
-        if (!duplicate) {
-          notify("Couldn't update date", e?.message ?? "Please try again.");
-          return;
-        }
-        const ok = await confirmAsync({
-          title: `Already a plan on ${duplicate.dayLabel}`,
-          message: `"${duplicate.existingPlanTitle}" is already on that date. Move this plan there anyway, so the day has two?`,
-          confirmText: "Move it there",
-        });
-        if (!ok) return;
-        try {
-          await updateEvent({
-            planId,
-            eventDate: date.getTime(),
-            allowSameDay: true,
-          });
-        } catch (e2) {
-          notify("Couldn't update date", errMessage(e2));
-        }
-      }
+      await savePlanDate({
+        date,
+        save: (eventDate, allowSameDay) =>
+          updateEvent({ planId, eventDate, allowSameDay }),
+        onError: (m) => notify("Couldn't update date", m),
+      });
     },
     [updateEvent, planId],
   );
@@ -315,11 +303,11 @@ export function EventEditorPanel({
     try {
       const result = await duplicateEvent({ planId });
       openCopy(result.planId);
-    } catch (e: any) {
+    } catch (e) {
       // The copy lands a week out, so duplicating twice collides.
       const duplicate = parseDuplicatePlanDate(e);
       if (!duplicate) {
-        notify("Couldn't duplicate", e?.message ?? "Please try again.");
+        notify("Couldn't duplicate", errMessage(e));
         return;
       }
       const ok = await confirmAsync({

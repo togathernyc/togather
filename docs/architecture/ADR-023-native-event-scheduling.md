@@ -290,6 +290,37 @@ roleAssignments: defineTable({
   columns with the same ⚠ "double-booked" language it already uses for a
   person staffed twice in a day.
 
+  Three constraints on the guard, each learned the hard way:
+
+  - **A plan that stays on its own local day is not rescheduling.** Excluding
+    the plan from itself by id is not enough — the web date picker rebuilds a
+    picked value at local *midnight*, dropping the time of day, so re-picking
+    the same date sends a different millisecond. On a Sunday that legitimately
+    holds a 9 AM and an 11 AM plan the *sibling* then matched and the edit
+    threw. `updateEvent` passes `currentEventDate`, and the guard returns early
+    when the local day is unchanged.
+  - **A corrupt `eventDate` must never be contagious.** It is a Convex
+    `v.number()` (float64), so `NaN`/`Infinity`/out-of-range pass validation
+    and make `Intl.DateTimeFormat.format` throw `RangeError`. Because the guard
+    maps the formatter over every sibling and `rosterMatrix` over every plan,
+    one bad row would take down creation *and* the roster grid for the whole
+    group. `localDayKey` yields an `INVALID_DAY_KEY` sentinel that matches
+    nothing in either direction, and callers skip those rows.
+  - **Bound the read.** The sibling lookup is a ±36 h range scan on
+    `eventPlans.by_group_date`, not a `.collect()` of the group's whole plan
+    history. Two instants on one local day are at most ~26 h apart (a
+    DST-extended day), so the scan is provably complete — and it keeps
+    concurrent edits to unrelated dates from OCC-conflicting. The `Intl`
+    formatters are memoized per timezone for the same reason: constructing one
+    costs ~100× using one.
+
+  On the client, every date editor goes through `savePlanDate`
+  (`features/scheduling/utils/duplicatePlanDate.ts`) rather than hand-rolling
+  the catch. The three editors (roster column header, desktop panel,
+  full-screen editor) had already drifted once — the full-screen editor is
+  where both "＋ Add date" and "Duplicate" *send* the leader to set a date, and
+  it was the one that dead-ended on the raw error.
+
 ## Availability collection (follow-up)
 
 Phase 1 shipped without any way to gather "who can serve which date". This

@@ -56,9 +56,13 @@ import {
 import type { Id } from "@services/api/convex";
 import { useAuth } from "@providers/AuthProvider";
 import { confirmAsync, notify } from "@/utils/platformAlert";
+import { errorMessage } from "@utils/error-handling";
 import { NeededRolesModal } from "./NeededRolesModal";
 import { DuplicateDateFlag } from "./DuplicateDateFlag";
-import { parseDuplicatePlanDate } from "../utils/duplicatePlanDate";
+import {
+  parseDuplicatePlanDate,
+  savePlanDate,
+} from "../utils/duplicatePlanDate";
 
 type Colors = ReturnType<typeof useTheme>["colors"];
 
@@ -84,10 +88,16 @@ type EventDoc = {
   roles: EventRole[];
 };
 
-/** Best-effort human message from a thrown value (Convex error or Error). */
+/**
+ * Best-effort human message from a thrown value.
+ *
+ * Delegates to the shared extractor rather than reading `.message` directly: a
+ * real Convex client puts the payload on `.data` and leaves `.message` as a
+ * hybrid stacktrace with the serialized JSON embedded in it — which is what a
+ * leader was shown when a mutation failed.
+ */
 function errMessage(e: unknown): string {
-  const err = e as { data?: { message?: string }; message?: string };
-  return err?.data?.message ?? err?.message ?? "Please try again.";
+  return errorMessage(e, "Please try again.");
 }
 
 function formatTimeLabel(date: Date): string {
@@ -226,44 +236,12 @@ export function DateColumnHeaderEditor({
 
   const handleChangeDate = useCallback(
     async (date: Date | null) => {
-      if (!date) return;
-      const ms = date.getTime();
-      // Guard against intermediate/invalid values while typing into the native
-      // date input. Editing the year digit-by-digit briefly yields a complete
-      // but absurd date (e.g. year 0026); without this guard that gets saved as
-      // `eventDate`, shoving the plan into the far past so it drops out of the
-      // upcoming-only grid and looks like the plan was deleted. Only persist a
-      // valid, plausibly-dated value; ignore the keystrokes in between.
-      if (Number.isNaN(ms)) return;
-      const year = date.getFullYear();
-      if (year < 2000 || year > 3000) return;
-      try {
-        await updateEvent({ planId: event._id, eventDate: ms });
-      } catch (e) {
-        // Rescheduling onto an already-planned day is blocked for the same
-        // reason creating one there is — but moving a plan to sit alongside an
-        // existing service is a real thing to want, so offer it.
-        const duplicate = parseDuplicatePlanDate(e);
-        if (!duplicate) {
-          notify("Couldn't update date", errMessage(e));
-          return;
-        }
-        const ok = await confirmAsync({
-          title: `Already a plan on ${duplicate.dayLabel}`,
-          message: `"${duplicate.existingPlanTitle}" is already on that date. Move this plan there anyway, so the day has two?`,
-          confirmText: "Move it there",
-        });
-        if (!ok) return;
-        try {
-          await updateEvent({
-            planId: event._id,
-            eventDate: ms,
-            allowSameDay: true,
-          });
-        } catch (e2) {
-          notify("Couldn't update date", errMessage(e2));
-        }
-      }
+      await savePlanDate({
+        date,
+        save: (eventDate, allowSameDay) =>
+          updateEvent({ planId: event._id, eventDate, allowSameDay }),
+        onError: (m) => notify("Couldn't update date", m),
+      });
     },
     [updateEvent, event._id],
   );

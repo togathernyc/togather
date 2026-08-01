@@ -74,6 +74,12 @@ const timeValidator = v.object({
  * Error code thrown when a plan would land on a local calendar day the group
  * already has a plan on. The client keys off this to offer a choice ("open the
  * one you have" vs "add another") instead of dead-ending on a raw error.
+ *
+ * MIRRORED by `DUPLICATE_PLAN_DATE` in
+ * `apps/mobile/features/scheduling/utils/duplicatePlanDate.ts`. Changing this
+ * VALUE silently turns every date collision back into an unhandled error on
+ * every client — the mobile test `duplicatePlanDate.test.ts` reads this file
+ * and fails if the two drift.
  */
 export const DUPLICATE_PLAN_DATE = "DUPLICATE_PLAN_DATE";
 
