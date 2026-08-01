@@ -89,6 +89,7 @@ import {
   buildRoleCatalog,
   canAuthorPlanTasks,
   isTeamLevelTask,
+  roleTaskCounts,
   tasksForRole,
   type RoleCatalogEntry,
 } from "../utils/taskAuthoring";
@@ -2315,6 +2316,15 @@ function AuthorSection({
     [planTasks, selectedRole],
   );
 
+  // Badge numbers for the role pills. Deliberately NOT `bySegment`-derived:
+  // these count each role's OWN tasks, excluding the team-level ones
+  // `tasksForRole` folds in — see `roleTaskCounts`. A leader has to be able to
+  // spot the role with none WITHOUT tapping through every pill.
+  const countsByRoleId = useMemo(
+    () => roleTaskCounts(planTasks ?? [], roleCatalog),
+    [planTasks, roleCatalog],
+  );
+
   const [addingSegment, setAddingSegment] = useState<Segment | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -2351,6 +2361,7 @@ function AuthorSection({
           selectedRoleId={selectedRoleId}
           selectedRole={selectedRole}
           onSelectRole={setSelectedRoleId}
+          countsByRoleId={countsByRoleId}
           bySegment={bySegment}
           planId={planId}
           isEffectivelyOffline={isEffectivelyOffline}
@@ -2381,6 +2392,7 @@ function AuthorRoleAndSegments({
   selectedRoleId,
   selectedRole,
   onSelectRole,
+  countsByRoleId,
   bySegment,
   planId,
   isEffectivelyOffline,
@@ -2399,6 +2411,8 @@ function AuthorRoleAndSegments({
   selectedRoleId: string | null;
   selectedRole: RoleCatalogEntry | undefined;
   onSelectRole: (roleId: string) => void;
+  /** Each role's OWN task count (team-level excluded) — see `roleTaskCounts`. */
+  countsByRoleId: Record<string, number>;
   bySegment: Record<Segment, AuthorTask[]>;
   planId: Id<"eventPlans">;
   isEffectivelyOffline: boolean;
@@ -2426,13 +2440,20 @@ function AuthorRoleAndSegments({
       >
         {roleCatalog.map((role) => {
           const active = role.roleId === selectedRoleId;
+          const count = countsByRoleId[role.roleId] ?? 0;
+          // A role nobody has authored for is the thing a leader is scanning
+          // for, so it gets the warning tint rather than the quiet default —
+          // legible at a glance without tapping through every pill.
+          const empty = count === 0;
           return (
             <Pressable
               key={role.roleId}
               onPress={() => onSelectRole(role.roleId)}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks`}
+              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks, ${
+                empty ? "no tasks yet" : `${count} ${count === 1 ? "task" : "tasks"}`
+              }`}
               style={[
                 styles.pill,
                 wa && waStyles.pill,
@@ -2450,6 +2471,35 @@ function AuthorRoleAndSegments({
               >
                 {role.teamName} · {role.roleName}
               </Text>
+              <View
+                style={[
+                  styles.pillBadge,
+                  wa && waStyles.pillBadge,
+                  {
+                    backgroundColor: empty
+                      ? colors.warning
+                      : active
+                        ? colors.onAccent
+                        : colors.background,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pillBadgeText,
+                    wa && waStyles.pillBadgeText,
+                    {
+                      color: empty
+                        ? colors.onAccent
+                        : active
+                          ? primaryColor
+                          : colors.textTertiary,
+                    },
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
             </Pressable>
           );
         })}

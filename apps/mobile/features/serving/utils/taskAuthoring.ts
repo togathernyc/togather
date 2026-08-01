@@ -142,3 +142,38 @@ export function buildRoleCatalog(
       a.roleName.localeCompare(b.roleName),
   );
 }
+
+/**
+ * How many tasks each role in the catalog has OF ITS OWN, for the badge on the
+ * Edit surface's role pills. Keyed by `roleId`; every role in the catalog gets
+ * an entry, so a role with none reads `0` rather than `undefined`.
+ *
+ * TEAM-LEVEL tasks (`roleIds: []`) are deliberately EXCLUDED — this count is
+ * NOT `tasksForRole(...).length`. That function folds a team's team-level tasks
+ * into every role on that team (on purpose — see its docblock), which is right
+ * for the body list but wrong for the badge: the whole point of the badge is
+ * spotting the role nobody has authored for. On a plan whose Worship team has
+ * one "Sound check" team-level task, a `tasksForRole`-based count would put
+ * "1" on Drums, Vocals, Bass and Keys alike and hide exactly the gap a manager
+ * is scanning for. Team-level tasks are still visible — and still captioned
+ * "Whole team" — in the body once a pill is selected.
+ *
+ * A task naming several roles counts once for each of them; that's real work
+ * for each of those roles.
+ */
+export function roleTaskCounts(
+  tasks: readonly AuthorableTask[],
+  roleCatalog: readonly Pick<RoleCatalogEntry, "roleId">[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const role of roleCatalog) counts[role.roleId] = 0;
+  for (const task of tasks) {
+    if (isTeamLevelTask(task)) continue;
+    for (const roleId of task.roleIds) {
+      // Ignore roles outside the catalog: `listPlanTasks` is plan-wide and can
+      // name a role on a team whose `listRoles` hasn't resolved yet.
+      if (roleId in counts) counts[roleId] += 1;
+    }
+  }
+  return counts;
+}

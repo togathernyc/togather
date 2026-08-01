@@ -796,7 +796,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     fireEvent.press(getByLabelText("Edit"));
     expect(getByText("Set up welcome table")).toBeTruthy();
 
-    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks, no tasks yet"));
 
     expect(queryByText("Set up welcome table")).toBeNull();
     // All three segments (Before/During/After) are empty for the Usher role.
@@ -828,7 +828,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     expect(getAllByText("No tasks yet for this role.")).toHaveLength(2);
 
     // Still visible after switching to a role that owns no tasks of its own.
-    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks, no tasks yet"));
     expect(getByText("Unlock the building")).toBeTruthy();
   });
 
@@ -865,7 +865,7 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     expect(getByText("Check-in table setup")).toBeTruthy();
     expect(queryByText("Sound check")).toBeNull();
 
-    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+    fireEvent.press(getByLabelText("View and edit Worship Sound tasks, no tasks yet"));
 
     expect(getByText("Sound check")).toBeTruthy();
     expect(queryByText("Check-in table setup")).toBeNull();
@@ -887,8 +887,88 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     fireEvent.press(getByLabelText("Edit"));
 
     expect(getByText("Clear the stage")).toBeTruthy();
-    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+    fireEvent.press(getByLabelText("View and edit Worship Sound tasks, no tasks yet"));
     expect(getByText("Clear the stage")).toBeTruthy();
+  });
+
+  // A leader had to tap every pill to find the role nobody had authored for.
+  // The badge counts each role's OWN tasks, so a gap is visible without tapping.
+  it("badges each role pill with its own task count", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        teamIds: ["team-1"],
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+      {
+        _id: "task-2",
+        teamIds: ["team-1"],
+        roleIds: ["role-greeter"],
+        segment: "after",
+        title: "Pack down",
+        sortOrder: 1,
+      },
+    ]);
+    const { getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(getByLabelText("View and edit Hospitality Greeter tasks, 2 tasks")).toBeTruthy();
+    expect(
+      getByLabelText("View and edit Hospitality Usher tasks, no tasks yet"),
+    ).toBeTruthy();
+  });
+
+  // The badge must NOT reuse the body list's length. `tasksForRole` folds a
+  // team's team-level tasks into every role on that team, so a count derived
+  // from it would read "1" for Greeter AND Usher here — hiding the fact that
+  // neither role has a single task of its own, which is the one thing the
+  // badge exists to surface.
+  it("does not count a team-level task towards any role's badge", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-shared",
+        teamIds: ["team-1"],
+        roleIds: [],
+        segment: "before",
+        title: "Unlock the building",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText, getByText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(
+      getByLabelText("View and edit Hospitality Greeter tasks, no tasks yet"),
+    ).toBeTruthy();
+    expect(
+      getByLabelText("View and edit Hospitality Usher tasks, no tasks yet"),
+    ).toBeTruthy();
+    // …while the body still shows it, captioned as whole-team.
+    expect(getByText("Unlock the building")).toBeTruthy();
+    expect(getByText("Whole team — not just this role")).toBeTruthy();
+  });
+
+  it("uses the singular in the badge label for exactly one task", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        teamIds: ["team-1"],
+        roleIds: ["role-usher"],
+        segment: "during",
+        title: "Count attendance",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(getByLabelText("View and edit Hospitality Usher tasks, 1 task")).toBeTruthy();
   });
 
   it("adds a task for the selected role via createTask", async () => {

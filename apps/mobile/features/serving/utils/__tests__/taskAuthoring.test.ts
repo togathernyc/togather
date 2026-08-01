@@ -2,6 +2,7 @@ import {
   buildRoleCatalog,
   canAuthorPlanTasks,
   isTeamLevelTask,
+  roleTaskCounts,
   tasksForRole,
   type AuthorableTask,
 } from "../taskAuthoring";
@@ -201,5 +202,84 @@ describe("buildRoleCatalog", () => {
 
   it("returns an empty catalog for no teams", () => {
     expect(buildRoleCatalog([], {})).toEqual([]);
+  });
+});
+
+describe("roleTaskCounts", () => {
+  const catalog = [
+    { roleId: "role-a" },
+    { roleId: "role-b" },
+    { roleId: "role-c" },
+  ];
+
+  it("counts each role's OWN tasks and gives an unauthored role 0", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "after", sortOrder: 1 },
+      { teamIds: ["team-1"], roleIds: ["role-b"], segment: "during", sortOrder: 0 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 2,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  // The badge exists to make a gap visible. `tasksForRole` folds a team's
+  // team-level tasks into EVERY role on that team, so counting its output
+  // would put "1" on all four Worship roles and hide the very gap a manager is
+  // scanning for. Team-level tasks stay visible (captioned "Whole team") in
+  // the body — they just don't inflate the badge.
+  it("excludes team-level tasks, unlike tasksForRole", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "before", sortOrder: 1 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    // The body list for role-b is NOT empty — it shows the team-level task —
+    // which is exactly why the badge must not reuse this number.
+    expect(
+      tasksForRole(tasks, { roleId: "role-b", teamId: "team-1" }).before,
+    ).toHaveLength(1);
+  });
+
+  it("counts a multi-role task once for each role it names", () => {
+    const tasks: AuthorableTask[] = [
+      {
+        teamIds: ["team-1"],
+        roleIds: ["role-a", "role-b"],
+        segment: "during",
+        sortOrder: 0,
+      },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  it("ignores roles outside the catalog (another team's roles may not have loaded)", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-2"], roleIds: ["role-z"], segment: "before", sortOrder: 0 },
+    ];
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+  });
+
+  it("returns an entry per catalog role for an empty plan, and {} for an empty catalog", () => {
+    expect(roleTaskCounts([], catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleTaskCounts([], [])).toEqual({});
   });
 });
