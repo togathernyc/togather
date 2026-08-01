@@ -142,6 +142,14 @@ export function planTaskCountsFromAllTeams(
  * ("did I miss a roster?") this copy exists to settle. When a role name DOES
  * appear on more than one team, it is qualified with its team ("Camera
  * (Production)"); unambiguous names stay bare so the common case reads clean.
+ *
+ * The final de-dupe is on the resulting DISPLAY STRING, not the pair. Nothing
+ * stops ONE team defining two roles both called "Camera" (`createRole` only
+ * rejects an empty name), and those two pairs qualify to the same bare
+ * "Camera" — printed per-pair that reads "You're serving as Camera and
+ * Camera." Collapsing identical strings keeps the cross-team case intact (the
+ * team qualifier makes those strings differ) while an unsayable duplicate says
+ * itself once.
  */
 export function myRoleNamesFromCrew(
   crew: ReadonlyArray<{ isCurrentUser: boolean } & RolePair> | undefined,
@@ -156,11 +164,15 @@ export function myRoleNamesFromCrew(
     teamsPerName.set(p.roleName, teams);
   }
 
-  return pairs.map((p) =>
-    (teamsPerName.get(p.roleName)?.size ?? 0) > 1
-      ? `${p.roleName} (${p.teamName})`
-      : p.roleName,
-  );
+  const names: string[] = [];
+  for (const p of pairs) {
+    const name =
+      (teamsPerName.get(p.roleName)?.size ?? 0) > 1
+        ? `${p.roleName} (${p.teamName})`
+        : p.roleName;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 /**

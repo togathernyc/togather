@@ -102,6 +102,20 @@ describe("shouldShowTaskProvenance / shouldShowTeamNames", () => {
     expect(shouldShowTaskProvenance([CAMERA_PROD, SOUND_PROD])).toBe(true);
   });
 
+  it("stays quiet for two same-named roles on ONE team", () => {
+    // Both would render the identical bare label "Camera" (the team is not
+    // named — the viewer is on one team), so stamping it under every row
+    // resolves nothing.
+    const dupe: RolePair = { ...CAMERA_PROD, roleId: "team-prod:Camera-2" };
+    expect(shouldShowTaskProvenance([CAMERA_PROD, dupe])).toBe(false);
+  });
+
+  it("still labels two same-named roles on DIFFERENT teams", () => {
+    // Here the labels differ ("Production · Camera" vs "Hospitality · Camera"),
+    // so they do tell the rows apart.
+    expect(shouldShowTaskProvenance([CAMERA_PROD, CAMERA_HOSP])).toBe(true);
+  });
+
   it("omits team names while the viewer is on one team", () => {
     expect(shouldShowTeamNames([CAMERA_PROD, SOUND_PROD])).toBe(false);
   });

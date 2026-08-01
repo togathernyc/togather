@@ -142,6 +142,19 @@ describe("myRoleNamesFromCrew", () => {
     const names = myRoleNamesFromCrew([crewRow("Camera"), crewRow("Camera")]);
     expect(names).toEqual(["Camera"]);
   });
+
+  // `createRole` only rejects an empty name, so ONE team can hold two distinct
+  // roles both called "Camera". They are two pairs, but they qualify to the
+  // same string — printed per-pair the copy read "You're serving as Camera and
+  // Camera." De-duping on the display string collapses them without touching
+  // the cross-team case above, where the team qualifier makes them differ.
+  it("collapses two DISTINCT roles sharing a name on ONE team", () => {
+    const names = myRoleNamesFromCrew([
+      { ...crewRow("Camera"), roleId: "team-1:camera-a" },
+      { ...crewRow("Camera"), roleId: "team-1:camera-b" },
+    ]);
+    expect(names).toEqual(["Camera"]);
+  });
 });
 
 describe("diagnoseMineEmpty", () => {

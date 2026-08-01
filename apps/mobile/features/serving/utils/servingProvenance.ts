@@ -124,12 +124,18 @@ export function heldRolePairs(
  * single-role volunteer — their list stays exactly as clean as it was — and
  * false while `heldPairs` is `null` (unresolved), so the answer never flips
  * mid-scroll.
+ *
+ * Counted by (team, role NAME), not by pair: nothing stops ONE team defining
+ * two roles both called "Camera", and stamping an identical "Camera" under
+ * every row resolves nothing — it is noise dressed as an explanation. Two
+ * TEAMS with a same-named role still count as two, because the label then
+ * names the team and the rows really do read differently.
  */
 export function shouldShowTaskProvenance(
   heldPairs: ReadonlyArray<RolePair> | null,
 ): boolean {
   if (!heldPairs) return false;
-  return heldPairs.length > 1;
+  return new Set(heldPairs.map((p) => `${p.teamId}::${p.roleName}`)).size > 1;
 }
 
 /** Whether the team needs naming too — only when the viewer spans >1 team. */

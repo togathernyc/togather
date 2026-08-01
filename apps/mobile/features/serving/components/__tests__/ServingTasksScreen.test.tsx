@@ -1603,6 +1603,32 @@ describe("ServingTasksScreen — task provenance (Mine)", () => {
     expect(getByText("Production · Camera")).toBeTruthy();
   });
 
+  it("adds no chrome for two DISTINCT roles that share a name on one team", () => {
+    // Nothing stops a team defining "Camera" twice (`createRole` only rejects
+    // an empty name). Both rows would be stamped with an identical bare
+    // "Camera" — noise that resolves nothing — so the gate has to count role
+    // NAMES per team, not raw pairs.
+    mockQueries(
+      {
+        before: [templateTask({ roles: [rolePair("Camera", PRODUCTION)] })],
+        during: [],
+        after: [],
+      },
+      DEFAULT_PLANS,
+      {
+        crew: [
+          { ...myCrewRow("Camera", PRODUCTION), roleId: "team-prod:camera-a" },
+          { ...myCrewRow("Camera", PRODUCTION), roleId: "team-prod:camera-b" },
+        ],
+      },
+    );
+    const { getByText, queryByText } = render(<ServingTasksScreen />);
+
+    expect(getByText("Set up chairs")).toBeTruthy();
+    expect(queryByText("Camera")).toBeNull();
+    expect(queryByText("Production · Camera")).toBeNull();
+  });
+
   it("keeps the labels under the whatsapp-shell flag", () => {
     mockWhatsappShell = true;
     mockQueries(
