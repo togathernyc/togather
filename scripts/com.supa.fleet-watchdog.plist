@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Fleet watchdog — launchd agent. NOT INSTALLED BY MERGING THIS FILE.
+
+  This is a template. `__REPO_PATH__` and `__HOME__` are substituted at install
+  time because a launchd plist cannot expand $HOME or any other variable: every
+  path in it must be absolute and literal.
+
+  Install (from the repo root):
+
+      mkdir -p ~/Library/LaunchAgents .claude/logs/watchdog
+      sed -e "s|__REPO_PATH__|$PWD|g" -e "s|__HOME__|$HOME|g" \
+        scripts/com.supa.fleet-watchdog.plist \
+        > ~/Library/LaunchAgents/com.supa.fleet-watchdog.plist
+      plutil -lint ~/Library/LaunchAgents/com.supa.fleet-watchdog.plist
+      launchctl load ~/Library/LaunchAgents/com.supa.fleet-watchdog.plist
+
+  Verify it is registered, and force one run now:
+
+      launchctl list | grep fleet-watchdog
+      launchctl start com.supa.fleet-watchdog
+      tail -5 .claude/logs/watchdog/watchdog.log
+
+  Uninstall:
+
+      launchctl unload ~/Library/LaunchAgents/com.supa.fleet-watchdog.plist
+      rm ~/Library/LaunchAgents/com.supa.fleet-watchdog.plist
+
+  Before installing, create the label the report issue needs (one time):
+
+      gh label create "watchdog:report" --color 5319E7 \
+        --description "Filed by the fleet watchdog - read, do not hand-edit"
+
+  PATH is spelled out below because launchd does NOT read your shell profile.
+  A job that inherits the bare launchd PATH cannot find `gh`, `jq` or `ccusage`,
+  and the watchdog would abort on every run with nothing but a log line to show
+  for it. Adjust the node path if you are not on nvm 22.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.supa.fleet-watchdog</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>__REPO_PATH__/scripts/watchdog.sh</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>__REPO_PATH__</string>
+
+	<!-- Every 30 minutes. If the Mac was asleep, launchd fires once on wake
+	     rather than replaying every missed interval. -->
+	<key>StartInterval</key>
+	<integer>1800</integer>
+
+	<!-- Deliberately false. Loading the job should not immediately do work; the
+	     first sweep happens on the next interval, by which point you have had a
+	     chance to read the config. -->
+	<key>RunAtLoad</key>
+	<false/>
+
+	<!-- The script's own log is the record. These two catch what escapes it:
+	     an abort before the log exists, or a stack trace from bash itself. -->
+	<key>StandardOutPath</key>
+	<string>__REPO_PATH__/.claude/logs/watchdog/launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>__REPO_PATH__/.claude/logs/watchdog/launchd.err.log</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.nvm/versions/node/v22.22.0/bin</string>
+		<!-- Telegram credentials are NOT set here. A plist in ~/Library is
+		     world-readable and gets backed up; the bot token is a bearer
+		     credential in a URL path. watchdog.sh reads both from the keychain
+		     when they are absent from the environment:
+		       security add-generic-password -a "$USER" -s TELEGRAM_BOT_TOKEN -w '<token>'
+		       security add-generic-password -a "$USER" -s TELEGRAM_CHAT_ID  -w '<id>'
+		     Overriding a threshold here is fine, e.g.:
+		     <key>WATCHDOG_SPEND_CEILING_USD</key><string>25</string> -->
+	</dict>
+
+	<!-- Low priority: this is a background sweep, never worth stealing cycles
+	     from the agent sessions it is watching. -->
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>5</integer>
+</dict>
+</plist>
