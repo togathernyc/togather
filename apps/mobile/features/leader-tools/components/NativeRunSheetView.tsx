@@ -582,11 +582,20 @@ export function PlanRunSheet({
     <Root {...(rootProps as object)}>
       <View style={styles.sheetHeader}>
         <View style={styles.sheetHeaderText}>
-          <Text
-            style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
-          >
-            {effEvent.title}
-          </Text>
+          {/* Embedded, the wrapper (`ServingRunsheetScreen`) already renders
+              this exact string as its own section header. Flag-off the two
+              are different type roles — 16/700 there, 20/700 here — so the
+              pair reads as a header plus a subheader and both stay. Flag-on
+              they'd both be 20pt/600: the same string twice, at the same
+              size, directly stacked. Drop ours; the wrapper's is the one
+              carrying the date and the campus/teams subtitle. */}
+          {wa && embedded ? null : (
+            <Text
+              style={[styles.planTitle, wa && waStyles.planTitle, { color: colors.text }]}
+            >
+              {effEvent.title}
+            </Text>
+          )}
           {times.length > 0 ? (
             <Text
               style={[
