@@ -65,6 +65,24 @@ const timeValidator = v.object({
 });
 
 /**
+ * The title a plan gets when its creator didn't name it.
+ *
+ * Both no-title entry points ("Add date" on the roster grid, and the
+ * quick-start bootstrap) used to hardcode the literal string "Untitled event
+ * plan", which shipped straight into serving mode's headers and read like
+ * missing data rather than an unnamed plan.
+ *
+ * Derived from the GROUP, not the date: both callers create the plan at a
+ * placeholder date the leader then changes in the editor, so a date-derived
+ * title would be actively wrong the moment they did. The date is rendered
+ * beside the title everywhere it matters anyway.
+ */
+export function defaultPlanTitle(groupName: string | undefined): string {
+  const name = (groupName ?? "").trim();
+  return name ? `${name} event` : "New event";
+}
+
+/**
  * Insert a `draft` event plan for a campus group. The shared implementation
  * behind the `createEvent` mutation, reused by `quickStartRostering`. Callers
  * MUST have already authorized the scheduler — this helper does no auth.
@@ -106,13 +124,17 @@ export async function createEventDraftImpl(
 /**
  * Create a dated event for a campus group. New events start in `draft`.
  *
+ * `title` is optional: the roster grid's "Add date" creates a plan the leader
+ * names later, so omitting it falls back to `defaultPlanTitle` rather than
+ * making the client invent a placeholder.
+ *
  * Auth: group leader or community admin.
  */
 export const createEvent = mutation({
   args: {
     token: v.string(),
     groupId: v.id("groups"),
-    title: v.string(),
+    title: v.optional(v.string()),
     eventDate: v.number(),
     times: v.array(timeValidator),
     notes: v.optional(v.string()),
@@ -125,7 +147,7 @@ export const createEvent = mutation({
     const planId = await createEventDraftImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
-      title: args.title,
+      title: args.title?.trim() || defaultPlanTitle(group.name),
       eventDate: args.eventDate,
       times: args.times,
       createdById: userId,

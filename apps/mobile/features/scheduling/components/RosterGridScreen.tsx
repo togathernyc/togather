@@ -1293,6 +1293,9 @@ export function RosterGridScreen() {
   // Create a new draft plan at the neutral default date (next Sunday 9 AM, same
   // as the editor's default). The reactive rosterMatrix self-refreshes → a new
   // date column appears; the leader sets the real date in the plan editor.
+  // The title is left to the backend (`defaultPlanTitle`, derived from the
+  // group) — this used to send the literal "Untitled event plan", which shipped
+  // through to serving mode's plan headers and read like a bug.
   const handleAddDate = useCallback(async () => {
     if (creatingEvent) return;
     setCreatingEvent(true);
@@ -1300,7 +1303,6 @@ export function RosterGridScreen() {
       const date = nextSundayAtNine();
       await createEvent({
         groupId,
-        title: "Untitled event plan",
         eventDate: date.getTime(),
         times: [{ label: "9:00 AM", startsAt: date.getTime() }],
       });
