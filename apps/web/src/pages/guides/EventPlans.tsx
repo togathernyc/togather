@@ -170,6 +170,17 @@ export function EventPlans() {
           <Term>Set needed roles</Term>. Everything auto-saves as you go.
         </P>
         <P>
+          A group holds <strong>one plan per date</strong>. If you try to add a
+          second plan on a date you have already planned, Together asks whether
+          you meant to open the plan you have, or to add another — so an extra
+          tap can't quietly leave you with two identical-looking dates. Two
+          plans on one day is still allowed when you say so; usually, though,
+          two services on a Sunday belong on <em>one</em> plan as two{" "}
+          <Term>service times</Term>. If a date does end up with more than one
+          plan, every column for that date is flagged with a{" "}
+          <Term>Double-booked</Term> warning on the roster grid.
+        </P>
+        <P>
           A plan starts as a <Term>Draft</Term>. Each plan card shows a
           fill-progress bar reading{" "}
           <Term>{"{filled}/{needed} filled"}</Term> with a{" "}

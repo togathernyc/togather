@@ -76,11 +76,19 @@ import {
   memberInTeamScope,
   memberNeedsAvailability,
 } from "../utils/rosterFilters";
+import {
+  useAddPlanDate,
+  nextSundayAtNine,
+} from "../hooks/useAddPlanDate";
 import { useStartDirectMessage } from "@features/chat/hooks/useStartDirectMessage";
 import { AssignSheet } from "./AssignSheet";
 import { GridPresenceBar } from "./GridPresenceBar";
 import { EventEditorPanel } from "./EventEditorPanel";
 import { DateColumnHeaderEditor } from "./DateColumnHeaderEditor";
+import {
+  DuplicateDateFlag,
+  duplicateDateLabel,
+} from "./DuplicateDateFlag";
 import { TeamChannelToggle } from "./TeamChannelToggle";
 
 // ---------------------------------------------------------------------------
@@ -122,6 +130,13 @@ type RosterEvent = {
   pendingCount: number;
   /** The same count per serving team, keyed by team id — the publish picker. */
   pendingByTeam: Record<string, number>;
+  /**
+   * How many of the group's plans sit on this plan's local day, itself
+   * included. `1` is the normal case; anything higher means the date column is
+   * ambiguous and gets the ⚠ "double-booked" flag. Duplicates predating the
+   * creation guard still exist in production, so the grid has to show them.
+   */
+  sameDatePlanCount: number;
 };
 
 type RosterTeam = {
@@ -277,15 +292,6 @@ function webTitle(title: string): Record<string, unknown> {
   return { title };
 }
 
-/** Next Sunday at 9:00 AM local time — the neutral default for a new plan. */
-function nextSundayAtNine(): Date {
-  const d = new Date();
-  const daysUntilSunday = (7 - d.getDay()) % 7 || 7;
-  d.setDate(d.getDate() + daysUntilSunday);
-  d.setHours(9, 0, 0, 0);
-  return d;
-}
-
 /** Debounce a value by `delay` ms — same pattern as AssignSheet. */
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -395,11 +401,6 @@ export function RosterGridScreen() {
 
   const assignRole = useAuthenticatedMutation(
     api.functions.scheduling.assignments.assignRole,
-  );
-  // Create a plan straight from the grid (the "＋ Add date" column / quick-start
-  // CTA). The reactive rosterMatrix query self-refreshes to show the new column.
-  const createEvent = useAuthenticatedMutation(
-    api.functions.scheduling.events.createEvent,
   );
   const quickStartRostering = useAuthenticatedMutation(
     api.functions.scheduling.quickStart.quickStartRostering,
@@ -1290,28 +1291,28 @@ export function RosterGridScreen() {
     [sharingLink, createAvailabilityLink, groupId],
   );
 
-  // Create a new draft plan at the neutral default date (next Sunday 9 AM, same
-  // as the editor's default). The reactive rosterMatrix self-refreshes → a new
-  // date column appears; the leader sets the real date in the plan editor.
-  // The title is left to the backend (`defaultPlanTitle`, derived from the
-  // group) — this used to send the literal "Untitled event plan", which shipped
-  // through to serving mode's plan headers and read like a bug.
+  const openPlanRoute = useCallback(
+    (planId: string) => {
+      router.push(`/rostering/${groupId}/event/${planId}` as never);
+    },
+    [router, groupId],
+  );
+
+  // Creating a draft plan at the neutral default date, and resolving the case
+  // where the group already has one that day. See useAddPlanDate.
+  const { addPlanDate } = useAddPlanDate({ groupId, onOpenPlan: openPlanRoute });
+
   const handleAddDate = useCallback(async () => {
     if (creatingEvent) return;
     setCreatingEvent(true);
     try {
-      const date = nextSundayAtNine();
-      await createEvent({
-        groupId,
-        eventDate: date.getTime(),
-        times: [{ label: "9:00 AM", startsAt: date.getTime() }],
-      });
+      await addPlanDate("ask");
     } catch (e) {
       surfaceError("Couldn't add date", e);
     } finally {
       setCreatingEvent(false);
     }
-  }, [creatingEvent, createEvent, groupId, surfaceError]);
+  }, [creatingEvent, addPlanDate, surfaceError]);
 
   // One-tap bootstrap for a brand-new group: starter team + roles + a draft
   // plan, then into the editor to own the date. Idempotent on the backend.
@@ -1327,14 +1328,17 @@ export function RosterGridScreen() {
         startsAt: nextSundayAtNine().getTime(),
       });
       if (result.planId) {
-        router.push(`/rostering/${groupId}/event/${result.planId}` as never);
+        openPlanRoute(result.planId);
         return;
       }
       // `alreadySetUp` with no new plan → the group already had teams or only
       // past plans (hidden by the default upcoming filter), so quick-start
       // created nothing. Fall back to creating/opening a plan so the CTA is
       // never a dead tap that just clears its spinner on the empty screen.
-      await handleAddDate();
+      // Calls the shared creator directly rather than `handleAddDate`, which
+      // would fight this handler over the `creatingEvent` flag and re-surface
+      // the same failure twice.
+      await addPlanDate("open");
     } catch (e) {
       surfaceError("Couldn't set up rostering", e);
     } finally {
@@ -1344,9 +1348,9 @@ export function RosterGridScreen() {
     settingUp,
     quickStartRostering,
     groupId,
-    router,
+    openPlanRoute,
     surfaceError,
-    handleAddDate,
+    addPlanDate,
   ]);
 
   // Inline "＋ Add role" under a team section → existing `createRole` mutation
@@ -1761,13 +1765,19 @@ export function RosterGridScreen() {
               );
             }
 
+            // Another plan of this group sits on the same date — the header on
+            // its own can't tell them apart, which is exactly how a leader ends
+            // up editing one plan while rostered on the other.
+            const duplicateDate = ev.sameDatePlanCount > 1;
             return (
               <TouchableOpacity
                 key={ev._id}
                 activeOpacity={0.6}
                 onPress={() => openPlanPanel(ev._id)}
                 accessibilityRole="button"
-                accessibilityLabel={`${ev.title}, ${weekday(ev.eventDate)} ${monthDay(ev.eventDate)} — open plan details`}
+                accessibilityLabel={`${ev.title}, ${weekday(ev.eventDate)} ${monthDay(ev.eventDate)} — open plan details${
+                  duplicateDate ? `. ${duplicateDateLabel(ev.sameDatePlanCount)}` : ""
+                }`}
                 style={[
                   styles.headerCell,
                   { width: CELL_W, height: HEADER_H, borderLeftColor: colors.border },
@@ -1789,9 +1799,15 @@ export function RosterGridScreen() {
                 <Text style={[styles.headerCellWk, { color: colors.textSecondary }]}>
                   {weekday(ev.eventDate)}
                 </Text>
-                <Text style={[styles.headerCellDate, { color: colors.text }]}>
-                  {monthDay(ev.eventDate)}
-                </Text>
+                <View style={styles.headerCellDateRow}>
+                  <Text style={[styles.headerCellDate, { color: colors.text }]}>
+                    {monthDay(ev.eventDate)}
+                  </Text>
+                  <DuplicateDateFlag
+                    sameDatePlanCount={ev.sameDatePlanCount}
+                    colors={colors}
+                  />
+                </View>
                 <View style={styles.headerCellTally}>{tally}</View>
               </TouchableOpacity>
             );
@@ -4721,6 +4737,7 @@ const styles = StyleSheet.create({
   headerCellTitle: { fontSize: 9, flexShrink: 1 },
   headerCellWk: { fontSize: 10 },
   headerCellDate: { fontSize: 13, fontWeight: "700" },
+  headerCellDateRow: { flexDirection: "row", alignItems: "center", gap: 3 },
   headerCellTally: { flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 },
   headerCellTallyText: { fontSize: 11, fontWeight: "700" },
   addDateCell: {
