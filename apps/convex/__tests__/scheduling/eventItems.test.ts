@@ -34,13 +34,18 @@ async function setupSchedulingWorld() {
 
 const DAY = 86400000;
 
-/** Create a draft event plan and return its id. */
+/**
+ * Create a draft event plan and return its id. `dayOffset` exists so a test
+ * needing two plans puts them on different days — a group may only hold one
+ * plan per calendar day unless the leader explicitly opts in.
+ */
 async function createPlan(
   t: ReturnType<typeof convexTest>,
   token: string,
   groupId: Id<"groups">,
+  dayOffset = 7,
 ): Promise<Id<"eventPlans">> {
-  const eventDate = Date.now() + 7 * DAY;
+  const eventDate = Date.now() + dayOffset * DAY;
   const { planId } = await t.mutation(
     api.functions.scheduling.events.createEvent,
     {
@@ -222,7 +227,7 @@ describe("reorderItems", () => {
     const { t, world } = await setupSchedulingWorld();
     const token = (await generateTokens(world.groupLeaderId)).accessToken;
     const planA = await createPlan(t, token, world.groupId);
-    const planB = await createPlan(t, token, world.groupId);
+    const planB = await createPlan(t, token, world.groupId, 14);
 
     const { itemId: onA } = await t.mutation(
       api.functions.scheduling.eventItems.createItem,

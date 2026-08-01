@@ -339,6 +339,8 @@ describe("double-booking detection", () => {
         times: [{ label: "9 AM", startsAt: eventDate }],
       })
     ).planId;
+    // A second plan on an already-planned day is the deliberate multi-service
+    // case, so it needs the explicit opt-in the duplicate-date guard requires.
     const planB = (
       await t.mutation(api.functions.scheduling.events.createEvent, {
         token: leaderToken,
@@ -346,6 +348,7 @@ describe("double-booking detection", () => {
         title: "11 AM Service",
         eventDate,
         times: [{ label: "11 AM", startsAt: eventDate }],
+        allowSameDay: true,
       })
     ).planId;
 
@@ -401,6 +404,7 @@ describe("double-booking detection", () => {
         title: "11 AM Service",
         eventDate: midday,
         times: [{ label: "11 AM", startsAt: midday }],
+        allowSameDay: true,
       })
     ).planId;
 

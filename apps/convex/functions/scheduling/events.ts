@@ -18,6 +18,7 @@ import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
+import { localDayKey, localDayLabel, resolveTimeZone } from "../../lib/localDay";
 import {
   requireGroupMember,
   requireGroupScheduler,
@@ -65,6 +66,76 @@ const timeValidator = v.object({
 });
 
 /**
+ * Error code thrown when a plan would land on a local calendar day the group
+ * already has a plan on. The client keys off this to offer a choice ("open the
+ * one you have" vs "add another") instead of dead-ending on a raw error.
+ */
+export const DUPLICATE_PLAN_DATE = "DUPLICATE_PLAN_DATE";
+
+/**
+ * Reject a plan that would land on a day this group already has one, unless the
+ * caller explicitly opted in.
+ *
+ * WHY an error and not idempotent reuse: two services on one Sunday (9 AM and
+ * 11 AM) is normal church practice, so silently returning the existing plan
+ * would make a legitimate second plan impossible to create. And silently
+ * creating one — today's behavior — is what produced three indistinguishable
+ * plans on one date, where a leader authored tasks on one plan while being
+ * rostered on another. A typed error is the only option that both blocks the
+ * accident and keeps the deliberate case reachable: the client turns it into a
+ * choice, and "add another" re-calls with `allowSameDay: true`.
+ *
+ * Demo-seeded plans are excluded — a demo Sunday must never block a real one.
+ *
+ * @throws ConvexError with `{ code: DUPLICATE_PLAN_DATE, ... }` data.
+ */
+export async function assertPlanDateFree(
+  ctx: MutationCtx,
+  args: {
+    groupId: Id<"groups">;
+    communityId: Id<"communities">;
+    eventDate: number;
+    /** The plan being moved — never collides with itself. */
+    excludePlanId?: Id<"eventPlans">;
+    /** Caller confirmed they want a second plan on this day. */
+    allowSameDay?: boolean;
+  },
+): Promise<void> {
+  if (args.allowSameDay) return;
+
+  const community = await ctx.db.get(args.communityId);
+  const timeZone = resolveTimeZone(community?.timezone);
+  const targetDay = localDayKey(args.eventDate, timeZone);
+
+  const siblings = await ctx.db
+    .query("eventPlans")
+    .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+    .collect();
+  const clashes = siblings
+    .filter(
+      (p) =>
+        p._id !== args.excludePlanId &&
+        !p.isDemoSeed &&
+        localDayKey(p.eventDate, timeZone) === targetDay,
+    )
+    .sort((a, b) => a.createdAt - b.createdAt);
+  if (clashes.length === 0) return;
+
+  const existing = clashes[0];
+  const dayLabel = localDayLabel(args.eventDate, timeZone);
+  throw new ConvexError({
+    code: DUPLICATE_PLAN_DATE,
+    message: `"${existing.title}" is already scheduled on ${dayLabel}.`,
+    dayLabel,
+    existingPlanId: existing._id,
+    existingPlanTitle: existing.title,
+    existingEventDate: existing.eventDate,
+    /** How many other plans already sit on this day (usually 1). */
+    existingCount: clashes.length,
+  });
+}
+
+/**
  * The title a plan gets when its creator didn't name it.
  *
  * Both no-title entry points ("Add date" on the roster grid, and the
@@ -86,6 +157,10 @@ export function defaultPlanTitle(groupName: string | undefined): string {
  * Insert a `draft` event plan for a campus group. The shared implementation
  * behind the `createEvent` mutation, reused by `quickStartRostering`. Callers
  * MUST have already authorized the scheduler — this helper does no auth.
+ *
+ * Guards the group's local calendar day (see `assertPlanDateFree`): both entry
+ * points default to a DETERMINISTIC "next Sunday 9 AM", so without this a
+ * second tap silently produced a byte-identical second plan.
  */
 export async function createEventDraftImpl(
   ctx: MutationCtx,
@@ -98,12 +173,21 @@ export async function createEventDraftImpl(
     createdById: Id<"users">;
     notes?: string;
     meetingIds?: Id<"meetings">[];
+    /** Caller confirmed a deliberate second plan on an occupied day. */
+    allowSameDay?: boolean;
   },
 ): Promise<Id<"eventPlans">> {
   const title = args.title.trim();
   if (!title) {
     throw new ConvexError("Event title cannot be empty");
   }
+
+  await assertPlanDateFree(ctx, {
+    groupId: args.groupId,
+    communityId: args.communityId,
+    eventDate: args.eventDate,
+    allowSameDay: args.allowSameDay,
+  });
 
   const nowMs = Date.now();
   return ctx.db.insert("eventPlans", {
@@ -131,6 +215,10 @@ export async function createEventDraftImpl(
  * throws, matching `updateEvent`. Silently renaming it to "<Group> event" would
  * drop the leader's input with no client error path to notice it.
  *
+ * `allowSameDay` is the leader's explicit "yes, a second service that day" —
+ * without it a plan on an already-planned local day throws
+ * `DUPLICATE_PLAN_DATE`.
+ *
  * Auth: group leader or community admin.
  */
 export const createEvent = mutation({
@@ -142,6 +230,7 @@ export const createEvent = mutation({
     times: v.array(timeValidator),
     notes: v.optional(v.string()),
     meetingIds: v.optional(v.array(v.id("meetings"))),
+    allowSameDay: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -157,6 +246,7 @@ export const createEvent = mutation({
       createdById: userId,
       notes: args.notes,
       meetingIds: args.meetingIds,
+      allowSameDay: args.allowSameDay,
     });
 
     return { planId };
@@ -172,6 +262,10 @@ const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * source. Assignees (`roleAssignments`), `meetingIds`, and `pcoPlanId` are
  * deliberately NOT copied — duplication seeds a fresh roster to fill.
  *
+ * The copy's derived date is guarded the same way `createEvent`'s is: duplicating
+ * twice, or duplicating a plan whose next-week slot is already planned, throws
+ * `DUPLICATE_PLAN_DATE` unless the caller passes `allowSameDay`.
+ *
  * Auth: group leader or community admin for the event's group (same as
  * `createEvent`).
  */
@@ -179,6 +273,7 @@ export const duplicateEvent = mutation({
   args: {
     token: v.string(),
     planId: v.id("eventPlans"),
+    allowSameDay: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
@@ -204,6 +299,13 @@ export const duplicateEvent = mutation({
       const weeksBehind = Math.ceil((todayStart - eventDate) / ONE_WEEK_MS);
       eventDate += weeksBehind * ONE_WEEK_MS;
     }
+
+    await assertPlanDateFree(ctx, {
+      groupId: source.groupId,
+      communityId: group.communityId,
+      eventDate,
+      allowSameDay: args.allowSameDay,
+    });
 
     // Shift each time's absolute `startsAt` by the same offset the event moved,
     // so the copied times stay aligned with the new date (the label, e.g.
@@ -318,6 +420,10 @@ export const duplicateEvent = mutation({
 /**
  * Update an event's editable fields. Only provided fields change.
  *
+ * Rescheduling onto a local day the group already has a plan on throws
+ * `DUPLICATE_PLAN_DATE` unless `allowSameDay` is set — otherwise the date
+ * picker was a back door around `createEvent`'s guard.
+ *
  * Auth: group leader or community admin for the event's group.
  */
 export const updateEvent = mutation({
@@ -329,12 +435,27 @@ export const updateEvent = mutation({
     times: v.optional(v.array(timeValidator)),
     notes: v.optional(v.string()),
     meetingIds: v.optional(v.array(v.id("meetings"))),
+    allowSameDay: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireAuth(ctx, args.token);
     await requirePlanScheduler(ctx, args.planId, userId);
 
     const existing = await ctx.db.get(args.planId);
+
+    if (
+      existing &&
+      args.eventDate !== undefined &&
+      args.eventDate !== existing.eventDate
+    ) {
+      await assertPlanDateFree(ctx, {
+        groupId: existing.groupId,
+        communityId: existing.communityId,
+        eventDate: args.eventDate,
+        excludePlanId: args.planId,
+        allowSameDay: args.allowSameDay,
+      });
+    }
 
     const patch: Partial<Doc<"eventPlans">> = { updatedAt: Date.now() };
     if (args.title !== undefined) {
