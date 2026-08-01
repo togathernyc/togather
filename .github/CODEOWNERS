@@ -77,3 +77,29 @@
 /apps/convex/functions/admin/migrations.ts @lilseyi
 /apps/convex/functions/meetings/migrations.ts @lilseyi
 /apps/convex/functions/notifications/migrations.ts @lilseyi
+
+# Agent safety machinery - the rules that decide what an unattended run may do
+#
+# The paths above are dangerous because CI cannot vouch for the change. These
+# are dangerous for a different reason: they are the constraints themselves.
+# A change here does not break this run, it changes what the NEXT run is
+# allowed to do - loosen the completion gate, add a merge command to the allow
+# list, edit the overnight merge policy - and every later run inherits it. An
+# unattended agent must never be able to widen its own permissions, so a run
+# can never land a change to the machinery that bounds it.
+#
+# Applies to .claude/ wholesale, not just overnight.md: auto-worker.md,
+# review-cycle.md, and the hooks all steer unattended sessions too.
+/.claude/ @lilseyi
+/.github/CODEOWNERS @lilseyi
+
+# Workspace roots - reshape the dependency graph for every app at once, which
+# is the ADR-013 native-rendering hazard applied repo-wide.
+/package.json @lilseyi
+/pnpm-workspace.yaml @lilseyi
+
+# Convex schema and crons - deploy-convex.yml fires on push to main, so these
+# reach the staging backend the moment they land. There is no preview step in
+# between and no second attempt on a bad schema change.
+/apps/convex/schema.ts @lilseyi
+/apps/convex/crons.ts @lilseyi
