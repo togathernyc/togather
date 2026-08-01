@@ -74,6 +74,25 @@ describe("planTaskCountsFromAllTeams", () => {
   });
 });
 
+/**
+ * A `getCrewTasks` row for the viewer. Role ids are team-scoped, so the id is
+ * derived from (team, role) — two teams with a "Camera" are two distinct roles.
+ */
+function crewRow(
+  roleName: string,
+  team: { teamId: string; teamName: string } = {
+    teamId: "team-1",
+    teamName: "Hospitality",
+  },
+) {
+  return {
+    isCurrentUser: true as boolean,
+    roleId: `${team.teamId}:${roleName}`,
+    roleName,
+    ...team,
+  };
+}
+
 describe("myRoleNamesFromCrew", () => {
   it("returns null while the query is unresolved", () => {
     expect(myRoleNamesFromCrew(undefined)).toBeNull();
@@ -86,12 +105,42 @@ describe("myRoleNamesFromCrew", () => {
 
   it("keeps only the viewer's own rows, de-duplicated, in order", () => {
     const names = myRoleNamesFromCrew([
-      { isCurrentUser: true, roleName: "Greeter" },
-      { isCurrentUser: false, roleName: "Camera 1" },
-      { isCurrentUser: true, roleName: "Usher" },
-      { isCurrentUser: true, roleName: "Greeter" },
+      crewRow("Greeter"),
+      { ...crewRow("Camera 1"), isCurrentUser: false },
+      crewRow("Usher"),
+      crewRow("Greeter"),
     ]);
     expect(names).toEqual(["Greeter", "Usher"]);
+  });
+
+  // The de-dupe key used to be the role NAME alone, so two teams that each
+  // define a "Camera" collapsed to one entry and the copy said "You're serving
+  // as Camera" to someone holding both — understating the roster, which is the
+  // very doubt this sentence exists to settle.
+  it("keeps a role name held on two different teams as two entries", () => {
+    const names = myRoleNamesFromCrew([
+      crewRow("Camera", { teamId: "team-prod", teamName: "Production" }),
+      crewRow("Camera", { teamId: "team-hosp", teamName: "Hospitality" }),
+    ]);
+    expect(names).toEqual(["Camera (Production)", "Camera (Hospitality)"]);
+  });
+
+  it("leaves unambiguous role names unqualified alongside a colliding one", () => {
+    const names = myRoleNamesFromCrew([
+      crewRow("Camera", { teamId: "team-prod", teamName: "Production" }),
+      crewRow("Camera", { teamId: "team-hosp", teamName: "Hospitality" }),
+      crewRow("Greeter", { teamId: "team-hosp", teamName: "Hospitality" }),
+    ]);
+    expect(names).toEqual([
+      "Camera (Production)",
+      "Camera (Hospitality)",
+      "Greeter",
+    ]);
+  });
+
+  it("still collapses the SAME role on the same team (a double-written row)", () => {
+    const names = myRoleNamesFromCrew([crewRow("Camera"), crewRow("Camera")]);
+    expect(names).toEqual(["Camera"]);
   });
 });
 
