@@ -223,7 +223,9 @@ export function ServingTeamScreen() {
         <ScrollView
           contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
         >
-          {plans.map((plan) => (
+          {plans.map((plan) => {
+            const subtitle = planSubtitle(plan.groupName);
+            return (
             <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
               <View style={[styles.planHeader, wa && waStyles.planHeader]}>
                 <View style={styles.planHeaderRow}>
@@ -245,7 +247,7 @@ export function ServingTeamScreen() {
                 </View>
                 {/* Which campus this section belongs to — two same-day plans
                     otherwise stack under identical headers. */}
-                {planSubtitle(plan.groupName) ? (
+                {subtitle ? (
                   <Text
                     style={[
                       styles.planGroup,
@@ -254,7 +256,7 @@ export function ServingTeamScreen() {
                     ]}
                     numberOfLines={1}
                   >
-                    {planSubtitle(plan.groupName)}
+                    {subtitle}
                   </Text>
                 ) : null}
               </View>
@@ -328,7 +330,8 @@ export function ServingTeamScreen() {
                 </ScrollView>
               )}
             </View>
-          ))}
+            );
+          })}
         </ScrollView>
       )}
 

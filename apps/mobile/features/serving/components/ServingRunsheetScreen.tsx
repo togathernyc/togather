@@ -138,7 +138,9 @@ export function ServingRunsheetScreen() {
         paddingBottom: insets.bottom + 24,
       }}
     >
-      {plans.map((plan) => (
+      {plans.map((plan) => {
+        const subtitle = planSubtitle(plan.groupName, plan.teamNames);
+        return (
         <View key={plan.planId} style={[styles.planSection, wa && waStyles.planSection]}>
           <View style={[styles.planHeader, wa && waStyles.planHeader]}>
             <View style={styles.planHeaderRow}>
@@ -160,7 +162,7 @@ export function ServingRunsheetScreen() {
             </View>
             {/* Which campus/teams this section is — without it two same-day
                 plans stack under identical headers. */}
-            {planSubtitle(plan.groupName, plan.teamNames) ? (
+            {subtitle ? (
               <Text
                 style={[
                   styles.planGroup,
@@ -169,7 +171,7 @@ export function ServingRunsheetScreen() {
                 ]}
                 numberOfLines={1}
               >
-                {planSubtitle(plan.groupName, plan.teamNames)}
+                {subtitle}
               </Text>
             ) : null}
           </View>
@@ -190,7 +192,8 @@ export function ServingRunsheetScreen() {
             }
           />
         </View>
-      ))}
+        );
+      })}
     </ScrollView>
   );
 }
