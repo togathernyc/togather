@@ -512,6 +512,12 @@ at all, which is a configuration problem, not a pass.
 > is not green the PR is left open. This rule has no overnight exception,
 > because 3am is exactly when the reasoning for an exception sounds best.
 
+`NO_CHECKS` is the expected result for a **stacked PR**: `ci.yml` triggers on
+`pull_request: branches: [main]` only, so a PR based on another branch gets no
+checks at all. Treating that as not-green is the correct outcome, not a bug to
+work around — the checks appear once the parent merges and GitHub retargets the
+base to `main`. Phase 4 opens PRs against `main` precisely so this is rare.
+
 ### 6.2 Does the diff touch a protected path?
 
 `.github/CODEOWNERS` marks paths CI cannot vouch for. **Any hit means the PR is
