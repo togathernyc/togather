@@ -89,6 +89,8 @@ import {
   buildRoleCatalog,
   canAuthorPlanTasks,
   isTeamLevelTask,
+  roleCoveredTaskCounts,
+  roleTaskCounts,
   tasksForRole,
   type RoleCatalogEntry,
 } from "../utils/taskAuthoring";
@@ -96,7 +98,7 @@ import {
   diagnoseMineEmpty,
   mineEmptyCopy,
   myRoleNamesFromCrew,
-  planTaskCountFromAllTeams,
+  planTaskCountsFromAllTeams,
   shouldOfferSharedJump,
   type MineEmptyFacts,
   type MineEmptyReason,
@@ -420,7 +422,7 @@ export function ServingTasksScreen() {
  * the parent — only the per-plan reconcile lives here.
  */
 function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { primaryColor } = useCommunityTheme();
   const { user } = useAuth();
   const planId = plan.planId as Id<"eventPlans">;
@@ -767,7 +769,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
   // data these four queries already carry. See `servingTaskEmptyState.ts`.
   const mineFacts = useMemo(
     () => ({
-      planTaskCount: planTaskCountFromAllTeams(effAllTeams),
+      planTaskCounts: planTaskCountsFromAllTeams(effAllTeams),
       myRoleNames: myRoleNamesFromCrew(effCrew),
       myTemplateTaskCount,
       // `null`, not 0, while unresolved — offline this NEVER self-corrects when
@@ -1056,6 +1058,7 @@ function ServingTasksPlanSection({ plan, wa }: { plan: EligiblePlan; wa: boolean
             groupId={groupId}
             isEffectivelyOffline={isEffectivelyOffline}
             colors={colors}
+            isDark={isDark}
             primaryColor={primaryColor}
             wa={wa}
           />
@@ -2251,6 +2254,7 @@ function AuthorSection({
   groupId,
   isEffectivelyOffline,
   colors,
+  isDark,
   primaryColor,
   wa,
 }: {
@@ -2258,6 +2262,7 @@ function AuthorSection({
   groupId: Id<"groups">;
   isEffectivelyOffline: boolean;
   colors: ThemeColors;
+  isDark: boolean;
   primaryColor: string;
   wa: boolean;
 }) {
@@ -2315,6 +2320,24 @@ function AuthorSection({
     [planTasks, selectedRole],
   );
 
+  // Badge numbers for the role pills. Deliberately NOT `bySegment`-derived:
+  // these count each role's OWN tasks, excluding the team-level ones
+  // `tasksForRole` folds in — see `roleTaskCounts`. A leader has to be able to
+  // spot the role with none WITHOUT tapping through every pill.
+  const countsByRoleId = useMemo(
+    () => roleTaskCounts(planTasks ?? [], roleCatalog),
+    [planTasks, roleCatalog],
+  );
+
+  // What the pill's WARNING tint is allowed to mean: nothing at all reaches a
+  // volunteer in this role. A role whose team authored everything at team level
+  // has an own-count of 0 but is fully covered — alarming on that told a leader
+  // their finished event was unauthored.
+  const coveredByRoleId = useMemo(
+    () => roleCoveredTaskCounts(planTasks ?? [], roleCatalog),
+    [planTasks, roleCatalog],
+  );
+
   const [addingSegment, setAddingSegment] = useState<Segment | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -2351,6 +2374,9 @@ function AuthorSection({
           selectedRoleId={selectedRoleId}
           selectedRole={selectedRole}
           onSelectRole={setSelectedRoleId}
+          countsByRoleId={countsByRoleId}
+          coveredByRoleId={coveredByRoleId}
+          planHasTasks={planTasks.length > 0}
           bySegment={bySegment}
           planId={planId}
           isEffectivelyOffline={isEffectivelyOffline}
@@ -2362,6 +2388,7 @@ function AuthorSection({
           updateTask={updateTask}
           deleteTask={deleteTask}
           colors={colors}
+          isDark={isDark}
           primaryColor={primaryColor}
           wa={wa}
         />
@@ -2381,6 +2408,9 @@ function AuthorRoleAndSegments({
   selectedRoleId,
   selectedRole,
   onSelectRole,
+  countsByRoleId,
+  coveredByRoleId,
+  planHasTasks,
   bySegment,
   planId,
   isEffectivelyOffline,
@@ -2392,6 +2422,7 @@ function AuthorRoleAndSegments({
   updateTask,
   deleteTask,
   colors,
+  isDark,
   primaryColor,
   wa,
 }: {
@@ -2399,6 +2430,12 @@ function AuthorRoleAndSegments({
   selectedRoleId: string | null;
   selectedRole: RoleCatalogEntry | undefined;
   onSelectRole: (roleId: string) => void;
+  /** Each role's OWN task count (team-level excluded) — see `roleTaskCounts`. */
+  countsByRoleId: Record<string, number>;
+  /** Own + team-level, i.e. everything that reaches the role — the tint's input. */
+  coveredByRoleId: Record<string, number>;
+  /** False for a brand-new plan, where an all-orange row would be noise. */
+  planHasTasks: boolean;
   bySegment: Record<Segment, AuthorTask[]>;
   planId: Id<"eventPlans">;
   isEffectivelyOffline: boolean;
@@ -2413,9 +2450,15 @@ function AuthorRoleAndSegments({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   deleteTask: (args: any) => Promise<unknown>;
   colors: ThemeColors;
+  isDark: boolean;
   primaryColor: string;
   wa: boolean;
 }) {
+  // Dark ink for the warning badge. `colors.warning` is a mid-orange in every
+  // palette, so white on it measures ~2.1–2.6:1 — well under AA for 11pt/700
+  // text. These two tokens are the theme's dark ink in all four palettes
+  // (light/dark x default/Knicks), which lands at 6:1 or better on the orange.
+  const alarmInk = isDark ? colors.textInverse : colors.text;
   return (
     <>
       <ScrollView
@@ -2426,13 +2469,32 @@ function AuthorRoleAndSegments({
       >
         {roleCatalog.map((role) => {
           const active = role.roleId === selectedRoleId;
+          const count = countsByRoleId[role.roleId] ?? 0;
+          const covered = coveredByRoleId[role.roleId] ?? 0;
+          // The tint is an ALARM, so it fires only when NOTHING reaches this
+          // role — not merely when the role has no tasks of its own. A team
+          // whose plan is written entirely as "Whole team" tasks is fully
+          // authored; tinting all of its roles told the leader the opposite.
+          // Suppressed entirely on a task-less plan: every role is uncovered
+          // there, and a wall of orange adds nothing to the empty-state notice
+          // and "Populate from template" already on screen.
+          const uncovered = planHasTasks && covered === 0;
           return (
             <Pressable
               key={role.roleId}
               onPress={() => onSelectRole(role.roleId)}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
-              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks`}
+              // The badge counts the role's OWN tasks, so the label has to say
+              // so: "no tasks yet" was an absolute claim that a screen reader
+              // then contradicted by reading out the team-level tasks in the
+              // list below. The team-level tally is spoken too, since it is
+              // the reason the number is 0 — and the reason there's no tint.
+              accessibilityLabel={`View and edit ${role.teamName} ${role.roleName} tasks, ${count} ${
+                count === 1 ? "task" : "tasks"
+              } of its own${
+                count === 0 && covered > 0 ? `, ${covered} for the whole team` : ""
+              }`}
               style={[
                 styles.pill,
                 wa && waStyles.pill,
@@ -2450,6 +2512,46 @@ function AuthorRoleAndSegments({
               >
                 {role.teamName} · {role.roleName}
               </Text>
+              <View
+                style={[
+                  styles.pillBadge,
+                  wa && waStyles.pillBadge,
+                  // A solid warning fill alone DISAPPEARS on the selected pill
+                  // whenever the community's primary color is orange-ish
+                  // (Knicks mode makes both `#F58426` exactly), leaving a bare
+                  // floating number. The dark-ink ring is what keeps the chip
+                  // readable as a chip against any pill background, in either
+                  // direction: where the fill matches the pill, the ring
+                  // contrasts; where the ring matches, the fill does.
+                  uncovered
+                    ? {
+                        backgroundColor: colors.warning,
+                        borderWidth: 1,
+                        borderColor: alarmInk,
+                      }
+                    : {
+                        backgroundColor: active
+                          ? colors.onAccent
+                          : colors.background,
+                      },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.pillBadgeText,
+                    wa && waStyles.pillBadgeText,
+                    {
+                      color: uncovered
+                        ? alarmInk
+                        : active
+                          ? primaryColor
+                          : colors.textTertiary,
+                    },
+                  ]}
+                >
+                  {count}
+                </Text>
+              </View>
             </Pressable>
           );
         })}

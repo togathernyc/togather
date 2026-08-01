@@ -1,5 +1,5 @@
 import React from "react";
-import { render, fireEvent } from "@testing-library/react-native";
+import { render, fireEvent, within } from "@testing-library/react-native";
 import { ServingTasksScreen } from "../ServingTasksScreen";
 import { useAuthenticatedQuery, useAuthenticatedMutation } from "@services/api/convex";
 
@@ -83,16 +83,23 @@ jest.mock("@hooks/useTheme", () => ({
       surface: "#fafafa",
       border: "#e5e5e5",
       text: "#000",
+      textInverse: "#1a1a1a",
       textSecondary: "#666",
       textTertiary: "#999",
       error: "#c00",
+      warning: "#FF9500",
+      onAccent: "#ffffff",
     },
     isDark: false,
   }),
 }));
 
+// A community's brand color is arbitrary — the Edit surface's role pills use it
+// as the SELECTED pill's background, so tests flip it to pin what happens when
+// it collides with `colors.warning` (Knicks mode makes both `#F58426`).
+let mockPrimaryColor = "#D9A441";
 jest.mock("@hooks/useCommunityTheme", () => ({
-  useCommunityTheme: () => ({ primaryColor: "#D9A441" }),
+  useCommunityTheme: () => ({ primaryColor: mockPrimaryColor }),
 }));
 
 // The screen is restyled behind `whatsapp-shell`. Default the suite to
@@ -159,6 +166,21 @@ const mockMutation = useAuthenticatedMutation as jest.Mock;
 
 const EMPTY_MINE = { before: [], during: [], after: [] };
 
+/** Flattens a possibly-nested RN style prop into one object. */
+const flatten = (style: unknown): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  const walk = (node: unknown) => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (typeof node === "object") Object.assign(out, node);
+  };
+  walk(style);
+  return out;
+};
+
 function templateTask(overrides: Record<string, unknown> = {}) {
   return {
     key: "t1",
@@ -189,8 +211,13 @@ const DEFAULT_PLANS: EligiblePlan[] = [
   { planId: "plan-1", title: "Sunday Gathering", startsAt: 0 },
 ];
 
-/** An `getAllTeamsTasks` row. Only `tasks[].taskId` is read for the count. */
-function allTeamsRow(taskIds: string[], teamId = "team-1") {
+/**
+ * An `getAllTeamsTasks` row. `tasks[].taskId` feeds the plan-wide count and
+ * `roleNames` decides the task's scope — EMPTY means team-level, exactly as the
+ * backend returns it — which the empty-state copy splits on. Defaults to
+ * role-scoped; pass `[]` for the all-team-level plan.
+ */
+function allTeamsRow(taskIds: string[], teamId = "team-1", roleNames = ["Camera"]) {
   return {
     teamId,
     teamName: "Hospitality",
@@ -201,7 +228,7 @@ function allTeamsRow(taskIds: string[], teamId = "team-1") {
       taskId,
       title: taskId,
       segment: "before",
-      roleNames: [],
+      roleNames,
       completed: false,
       howToType: "none",
     })),
@@ -392,17 +419,24 @@ describe("ServingTasksScreen — Shared discoverability from an empty Mine", () 
   afterEach(() => jest.clearAllMocks());
 
   it("advertises Shared and jumps to it when Mine is empty but Shared has tasks", () => {
+    // The premise of this whole describe: every task on the plan is TEAM-level,
+    // which is why Shared holds them all.
     mockQueries(EMPTY_MINE, DEFAULT_PLANS, {
-      allTeams: [allTeamsRow(["task-1", "task-2"])],
+      allTeams: [allTeamsRow(["task-1", "task-2"], "team-1", [])],
       crew: [myCrewRow("Greeter")],
       shared: [
         sharedRow("task-1", "Unlock the building"),
         sharedRow("task-2", "Set the thermostat"),
       ],
     });
-    const { getByText, getByLabelText } = render(<ServingTasksScreen />);
+    const { getByText, getByLabelText, queryByText } = render(<ServingTasksScreen />);
 
     expect(getByText(/Shared has 2 tasks for your whole team\./)).toBeTruthy();
+    // …and the same notice must not call those very tasks somebody else's.
+    expect(queryByText(/are for other roles/)).toBeNull();
+    expect(
+      getByText("This event's tasks are for whole teams, not roles."),
+    ).toBeTruthy();
 
     fireEvent.press(getByLabelText("Open the Shared tab"));
 
@@ -796,7 +830,9 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     fireEvent.press(getByLabelText("Edit"));
     expect(getByText("Set up welcome table")).toBeTruthy();
 
-    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+    fireEvent.press(
+      getByLabelText("View and edit Hospitality Usher tasks, 0 tasks of its own"),
+    );
 
     expect(queryByText("Set up welcome table")).toBeNull();
     // All three segments (Before/During/After) are empty for the Usher role.
@@ -827,8 +863,14 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     // Only Before has the task; During/After stay empty.
     expect(getAllByText("No tasks yet for this role.")).toHaveLength(2);
 
-    // Still visible after switching to a role that owns no tasks of its own.
-    fireEvent.press(getByLabelText("View and edit Hospitality Usher tasks"));
+    // Still visible after switching to a role that owns no tasks of its own —
+    // and the pill says exactly that, rather than "no tasks yet", which the
+    // list below would immediately contradict.
+    fireEvent.press(
+      getByLabelText(
+        "View and edit Hospitality Usher tasks, 0 tasks of its own, 1 for the whole team",
+      ),
+    );
     expect(getByText("Unlock the building")).toBeTruthy();
   });
 
@@ -865,7 +907,11 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     expect(getByText("Check-in table setup")).toBeTruthy();
     expect(queryByText("Sound check")).toBeNull();
 
-    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+    fireEvent.press(
+      getByLabelText(
+        "View and edit Worship Sound tasks, 0 tasks of its own, 1 for the whole team",
+      ),
+    );
 
     expect(getByText("Sound check")).toBeTruthy();
     expect(queryByText("Check-in table setup")).toBeNull();
@@ -887,8 +933,225 @@ describe("ServingTasksScreen — Edit surface (leader authoring)", () => {
     fireEvent.press(getByLabelText("Edit"));
 
     expect(getByText("Clear the stage")).toBeTruthy();
-    fireEvent.press(getByLabelText("View and edit Worship Sound tasks"));
+    fireEvent.press(
+      getByLabelText(
+        "View and edit Worship Sound tasks, 0 tasks of its own, 1 for the whole team",
+      ),
+    );
     expect(getByText("Clear the stage")).toBeTruthy();
+  });
+
+  // A leader had to tap every pill to find the role nobody had authored for.
+  // The badge counts each role's OWN tasks, so a gap is visible without tapping.
+  it("badges each role pill with its own task count", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        teamIds: ["team-1"],
+        roleIds: ["role-greeter"],
+        segment: "before",
+        title: "Set up welcome table",
+        sortOrder: 0,
+      },
+      {
+        _id: "task-2",
+        teamIds: ["team-1"],
+        roleIds: ["role-greeter"],
+        segment: "after",
+        title: "Pack down",
+        sortOrder: 1,
+      },
+    ]);
+    const { getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(
+      getByLabelText("View and edit Hospitality Greeter tasks, 2 tasks of its own"),
+    ).toBeTruthy();
+    expect(
+      getByLabelText("View and edit Hospitality Usher tasks, 0 tasks of its own"),
+    ).toBeTruthy();
+  });
+
+  // The badge must NOT reuse the body list's length. `tasksForRole` folds a
+  // team's team-level tasks into every role on that team, so a count derived
+  // from it would read "1" for Greeter AND Usher here — hiding the fact that
+  // neither role has a single task of its own, which is the one thing the
+  // badge exists to surface.
+  it("does not count a team-level task towards any role's badge", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-shared",
+        teamIds: ["team-1"],
+        roleIds: [],
+        segment: "before",
+        title: "Unlock the building",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText, getByText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(
+      getByLabelText(
+        "View and edit Hospitality Greeter tasks, 0 tasks of its own, 1 for the whole team",
+      ),
+    ).toBeTruthy();
+    expect(
+      getByLabelText(
+        "View and edit Hospitality Usher tasks, 0 tasks of its own, 1 for the whole team",
+      ),
+    ).toBeTruthy();
+    // …while the body still shows it, captioned as whole-team.
+    expect(getByText("Unlock the building")).toBeTruthy();
+    expect(getByText("Whole team — not just this role")).toBeTruthy();
+  });
+
+  it("uses the singular in the badge label for exactly one task", () => {
+    mockUser = { is_admin: true };
+    mockAuthorQueries([
+      {
+        _id: "task-1",
+        teamIds: ["team-1"],
+        roleIds: ["role-usher"],
+        segment: "during",
+        title: "Count attendance",
+        sortOrder: 0,
+      },
+    ]);
+    const { getByLabelText } = render(<ServingTasksScreen />);
+    fireEvent.press(getByLabelText("Edit"));
+
+    expect(
+      getByLabelText("View and edit Hospitality Usher tasks, 1 task of its own"),
+    ).toBeTruthy();
+  });
+
+  /**
+   * The pill badge's WARNING tint. It is an alarm, so it may only mean "nothing
+   * reaches a volunteer in this role" — never merely "this role has no tasks of
+   * its own", which is the normal shape of a plan authored at team level.
+   */
+  describe("role pill badge tint", () => {
+    /** The badge `<View>` wrapping a pill's count, plus its `<Text>`. */
+    const badgeOf = (pill: ReturnType<typeof within>, count: string) => {
+      const text = within(pill as never).getByText(count);
+      // `.parent` walks composite wrappers too (RN's `Text`), so climb to the
+      // nearest host View — the badge itself.
+      let view = text.parent;
+      while (view && view.type !== "View") view = view.parent;
+      return {
+        text: flatten(text.props.style),
+        view: flatten(view!.props.style),
+      };
+    };
+
+    it("does NOT alarm for a role whose team authored everything at team level", () => {
+      // The "Whole team" pattern: a Worship lead writes the entire plan as
+      // team-level tasks. Every role's own count is 0, but the event is fully
+      // authored — tinting the whole row told the leader the opposite.
+      mockUser = { is_admin: true };
+      mockAuthorQueries([
+        {
+          _id: "task-shared",
+          teamIds: ["team-1"],
+          roleIds: [],
+          segment: "before",
+          title: "Unlock the building",
+          sortOrder: 0,
+        },
+      ]);
+      const { getByLabelText } = render(<ServingTasksScreen />);
+      fireEvent.press(getByLabelText("Edit"));
+
+      const usher = getByLabelText(
+        "View and edit Hospitality Usher tasks, 0 tasks of its own, 1 for the whole team",
+      );
+      const badge = badgeOf(usher as never, "0");
+      expect(badge.view.backgroundColor).not.toBe("#FF9500");
+      expect(badge.view.borderWidth).toBeUndefined();
+    });
+
+    it("alarms for a role that nothing on the plan covers", () => {
+      mockUser = { is_admin: true };
+      mockAuthorQueries([
+        {
+          _id: "task-1",
+          teamIds: ["team-1"],
+          roleIds: ["role-greeter"],
+          segment: "before",
+          title: "Set up welcome table",
+          sortOrder: 0,
+        },
+      ]);
+      const { getByLabelText } = render(<ServingTasksScreen />);
+      fireEvent.press(getByLabelText("Edit"));
+
+      const usher = getByLabelText(
+        "View and edit Hospitality Usher tasks, 0 tasks of its own",
+      );
+      const badge = badgeOf(usher as never, "0");
+      expect(badge.view.backgroundColor).toBe("#FF9500");
+      // White on mid-orange measures ~2.2:1 — under AA for this 11pt/700 text.
+      expect(badge.text.color).not.toBe("#ffffff");
+      expect(badge.text.color).toBe("#000");
+    });
+
+    // Knicks mode sets `primaryColor` to the SAME `#F58426` as `colors.warning`,
+    // and any community may pick an orange brand color. The selected pill is
+    // filled with `primaryColor`, so a solid warning badge dissolved into it and
+    // left a bare floating number.
+    it("keeps the badge visible when the brand color IS the warning color", () => {
+      mockPrimaryColor = "#FF9500";
+      mockUser = { is_admin: true };
+      // Only Usher is authored, so the DEFAULT-selected first pill (Greeter) is
+      // both active and uncovered — the exact collision.
+      mockAuthorQueries([
+        {
+          _id: "task-1",
+          teamIds: ["team-1"],
+          roleIds: ["role-usher"],
+          segment: "before",
+          title: "Count attendance",
+          sortOrder: 0,
+        },
+      ]);
+      const { getByLabelText } = render(<ServingTasksScreen />);
+      fireEvent.press(getByLabelText("Edit"));
+
+      const greeter = getByLabelText(
+        "View and edit Hospitality Greeter tasks, 0 tasks of its own",
+      );
+      const pill = flatten(greeter.props.style);
+      const badge = badgeOf(greeter as never, "0");
+
+      // The premise: fill and pill background have collapsed to one color.
+      expect(pill.backgroundColor).toBe(badge.view.backgroundColor);
+      // …so the chip's edge is what keeps it a chip.
+      expect(badge.view.borderWidth).toBeGreaterThan(0);
+      expect(badge.view.borderColor).not.toBe(badge.view.backgroundColor);
+      expect(badge.view.borderColor).not.toBe(pill.backgroundColor);
+      mockPrimaryColor = "#D9A441";
+    });
+
+    // `createEventDraftImpl` makes task-less plans and Edit is where a leader
+    // lands to fix that — the empty-state notice and "Populate from template"
+    // already say so, so a whole row of orange is noise, not information.
+    it("leaves every pill quiet on a brand-new plan with no tasks at all", () => {
+      mockUser = { is_admin: true };
+      mockAuthorQueries([]);
+      const { getByLabelText } = render(<ServingTasksScreen />);
+      fireEvent.press(getByLabelText("Edit"));
+
+      for (const role of ["Greeter", "Usher"]) {
+        const pill = getByLabelText(
+          `View and edit Hospitality ${role} tasks, 0 tasks of its own`,
+        );
+        expect(badgeOf(pill as never, "0").view.backgroundColor).not.toBe("#FF9500");
+      }
+    });
   });
 
   it("adds a task for the selected role via createTask", async () => {
@@ -1003,21 +1266,6 @@ describe("ServingTasksScreen — whatsapp-shell skin", () => {
     mockWhatsappShell = false;
     jest.clearAllMocks();
   });
-
-  /** Flattens a possibly-nested RN style prop into one object. */
-  const flatten = (style: unknown): Record<string, unknown> => {
-    const out: Record<string, unknown> = {};
-    const walk = (node: unknown) => {
-      if (!node) return;
-      if (Array.isArray(node)) {
-        node.forEach(walk);
-        return;
-      }
-      if (typeof node === "object") Object.assign(out, node);
-    };
-    walk(style);
-    return out;
-  };
 
   const mockCrew = () => {
     mockQuery.mockImplementation((ref: string) => {
