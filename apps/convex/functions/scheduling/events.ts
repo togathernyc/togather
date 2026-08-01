@@ -125,8 +125,11 @@ export async function createEventDraftImpl(
  * Create a dated event for a campus group. New events start in `draft`.
  *
  * `title` is optional: the roster grid's "Add date" creates a plan the leader
- * names later, so omitting it falls back to `defaultPlanTitle` rather than
- * making the client invent a placeholder.
+ * names later, so OMITTING it falls back to `defaultPlanTitle` rather than
+ * making the client invent a placeholder. Passing an explicit blank/whitespace
+ * title is a different thing entirely — a form the user left empty — and still
+ * throws, matching `updateEvent`. Silently renaming it to "<Group> event" would
+ * drop the leader's input with no client error path to notice it.
  *
  * Auth: group leader or community admin.
  */
@@ -147,7 +150,8 @@ export const createEvent = mutation({
     const planId = await createEventDraftImpl(ctx, {
       groupId: args.groupId,
       communityId: group.communityId,
-      title: args.title?.trim() || defaultPlanTitle(group.name),
+      title:
+        args.title === undefined ? defaultPlanTitle(group.name) : args.title,
       eventDate: args.eventDate,
       times: args.times,
       createdById: userId,

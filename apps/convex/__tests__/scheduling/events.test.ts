@@ -657,25 +657,30 @@ describe("createEvent default title", () => {
     expect(plan.title).toBe("Brooklyn Campus event");
   });
 
-  it("falls back for a whitespace-only title too", async () => {
-    const { t, world } = await setupSchedulingWorld();
-    const leaderToken = (await generateTokens(world.groupLeaderId)).accessToken;
-    const eventDate = Date.now() + 7 * DAY;
+  // Omitting the title and submitting an empty one are different intents: the
+  // first is "Add date" (name it later), the second is a form the leader left
+  // blank. Only the first may be defaulted — defaulting the second would drop
+  // their input with no error for the client to surface, and `updateEvent`
+  // rejects a blank rename, so accepting one here would be incoherent.
+  it.each([["   "], [""]])(
+    "rejects an explicitly blank title (%j) rather than defaulting it",
+    async (title) => {
+      const { t, world } = await setupSchedulingWorld();
+      const leaderToken = (await generateTokens(world.groupLeaderId))
+        .accessToken;
+      const eventDate = Date.now() + 7 * DAY;
 
-    const { planId } = await t.mutation(
-      api.functions.scheduling.events.createEvent,
-      {
-        token: leaderToken,
-        groupId: world.groupId,
-        title: "   ",
-        eventDate,
-        times: [{ label: "9 AM", startsAt: eventDate }],
-      },
-    );
-
-    const plan = await t.run(async (ctx: any) => ctx.db.get(planId));
-    expect(plan.title).toBe("Brooklyn Campus event");
-  });
+      await expect(
+        t.mutation(api.functions.scheduling.events.createEvent, {
+          token: leaderToken,
+          groupId: world.groupId,
+          title,
+          eventDate,
+          times: [{ label: "9 AM", startsAt: eventDate }],
+        }),
+      ).rejects.toThrow("Event title cannot be empty");
+    },
+  );
 
   it("still honours an explicit title", async () => {
     const { t, world } = await setupSchedulingWorld();
