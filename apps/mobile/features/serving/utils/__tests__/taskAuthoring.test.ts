@@ -2,6 +2,7 @@ import {
   buildRoleCatalog,
   canAuthorPlanTasks,
   isTeamLevelTask,
+  roleCoveredTaskCounts,
   roleTaskCounts,
   tasksForRole,
   type AuthorableTask,
@@ -281,5 +282,77 @@ describe("roleTaskCounts", () => {
       "role-c": 0,
     });
     expect(roleTaskCounts([], [])).toEqual({});
+  });
+});
+
+/**
+ * The count the WARNING tint is allowed to read. `roleTaskCounts` answers a
+ * different question and must never drive an alarm — a plan authored entirely
+ * as "Whole team" tasks is fully authored, but every role's own count is 0.
+ */
+describe("roleCoveredTaskCounts", () => {
+  const catalog = [
+    { roleId: "role-a", teamId: "team-1" },
+    { roleId: "role-b", teamId: "team-1" },
+    { roleId: "role-c", teamId: "team-2" },
+  ];
+
+  it("counts a team-level task for every role on ITS team, and no others", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+    ];
+    // The badge number stays 0 for all three — that gap is real and worth
+    // showing — but nothing on team-1 is UNCOVERED, so nothing may alarm.
+    expect(roleTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleCoveredTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 0,
+    });
+  });
+
+  it("agrees with the length of the role's own body list", () => {
+    const tasks: AuthorableTask[] = [
+      { teamIds: ["team-1"], roleIds: [], segment: "before", sortOrder: 0 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "during", sortOrder: 1 },
+      { teamIds: ["team-1"], roleIds: ["role-a"], segment: "after", sortOrder: 2 },
+    ];
+    const covered = roleCoveredTaskCounts(tasks, catalog);
+    for (const role of catalog) {
+      const buckets = tasksForRole(tasks, role);
+      const shown =
+        buckets.before.length + buckets.during.length + buckets.after.length;
+      expect(covered[role.roleId]).toBe(shown);
+    }
+    expect(covered["role-a"]).toBe(3);
+  });
+
+  it("counts a multi-team team-level task under every team it spans", () => {
+    const tasks: AuthorableTask[] = [
+      {
+        teamIds: ["team-1", "team-2"],
+        roleIds: [],
+        segment: "before",
+        sortOrder: 0,
+      },
+    ];
+    expect(roleCoveredTaskCounts(tasks, catalog)).toEqual({
+      "role-a": 1,
+      "role-b": 1,
+      "role-c": 1,
+    });
+  });
+
+  it("returns an entry per catalog role for an empty plan, and {} for an empty catalog", () => {
+    expect(roleCoveredTaskCounts([], catalog)).toEqual({
+      "role-a": 0,
+      "role-b": 0,
+      "role-c": 0,
+    });
+    expect(roleCoveredTaskCounts([], [])).toEqual({});
   });
 });
