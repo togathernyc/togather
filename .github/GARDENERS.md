@@ -1,6 +1,8 @@
 # Gardeners — operator guide
 
-Four scheduled maintenance agents ("gardeners") for this repo, built with
+Five scheduled maintenance agents for this repo — four "gardeners" plus the repo
+half of the **[Watchdog](#watchdog)**, which is gardener-shaped but watches the
+agent fleet rather than the code — built with
 [GitHub Agentic Workflows](https://github.github.com/gh-aw/) (`gh-aw`). Each is a
 Markdown file with YAML frontmatter under `.github/workflows/` that **compiles**
 into a hardened GitHub Actions workflow.
@@ -42,6 +44,7 @@ in `gh aw list`.
 | **Docs Drift** | `gardener-docs-drift.md` | Diffs the last week of merged changes against `docs/` and the `apps/web` onboarding guides | `codex` → **Ollama** · `glm-5.2` | Weekly · **Thu 09:15 ET** | 200 AIC | 200 AIC | 1 issue, `[gardener:docs-drift]` |
 | **CI Doctor** | `gardener-ci-doctor.md` | Diagnoses `CI` failures on `main`, grouped by failure signature; plus a weekly roll-up | **`claude`** · default | On CI failure (main) **+** weekly · **Mon 09:15 ET** | 200 AIC ($2.00) | 400 AIC ($4.00) | ≤2 issues, `[gardener:ci-doctor]` |
 | **Cost Report** | `gardener-cost-report.md` | The visibility surface — keeps one standing issue with a per-gardener cost & activity table | `codex` → **Ollama** · `glm-5.2` | Weekly · **Fri 09:15 ET** | 200 AIC | 200 AIC | 1 standing issue, `[gardeners]` |
+| **Watchdog (repo)** | `watchdog-repo.md` | Sweeps for stuck claims, failing gardeners, and green agent PRs nobody has reviewed — see [Watchdog](#watchdog) | `codex` → **Ollama** · `glm-5.2` | **Every 6h** (00/06/12/18 ET) | 50 AIC | 200 AIC | 1 issue/day, `[watchdog]` |
 
 Three gardeners run on an open model through the owner's Ollama Cloud
 subscription; **CI Doctor deliberately does not.** It reads noisy CI logs and
@@ -59,6 +62,7 @@ billed.
 | Large Files, Docs Drift | `on.skip-if-match` — if last week's issue is still open, the run exits before the model starts. **This means an unaddressed issue suppresses the next run.** Combined with `expires: 6d` (below), that is at most a one-week pause, not a permanent stall. |
 | CI Doctor | No skip — it must run per failure. Dedupes by *failure signature*: it comments on an existing issue for a repeat rather than filing a new one. Hard cap of 2 issues per run. |
 | Cost Report | No skip — it must run to refresh the standing issue. `deduplicate-by-title` plus update-in-place keeps it to one. |
+| Watchdog (repo) | No skip, for a stronger reason: `skip-if-match` would silence the watchdog precisely when its last sweep found something, which is when you need it most. One issue per day, rewritten in place by the day's later runs. |
 
 **Why `expires: 6d` and not 7d.** The maintenance sweep that closes expired
 issues runs daily at 00:37 UTC. With a 7-day expiry on a weekly gardener, the
@@ -115,6 +119,7 @@ Measured at the current head:
 | Large Files | 43 | 0 | **43** |
 | Docs Drift | 43 | 0 | **43** |
 | Cost Report | 43 | 0 | **43** |
+| Watchdog (repo) | 43 | 0 | **43** |
 
 The codex baseline is smaller than claude's, which is why the three Ollama
 gardeners sit lower despite adding `ollama.com`. `blocked` removes nothing there
@@ -171,9 +176,10 @@ python3 -c "import re,sys; s=open(sys.argv[1]).read(); \
 > gap. Do not treat it as a live control until `grep` says otherwise. This looks
 > like an upstream bug and is worth reporting to github/gh-aw.
 
-The four daily caps sum to 1000 AIC = **$10/day repo-wide**. The guardrail is
-enforced per workflow per triggering user, not globally — that $10 is an
-arithmetic budget across the four, not one number GitHub enforces.
+The five daily caps sum to 1200 AIC = **$12/day repo-wide** (the repo watchdog
+added the fifth 200). The guardrail is enforced per workflow per triggering
+user, not globally — that $12 is an arithmetic budget across the five, not one
+number GitHub enforces.
 
 > [!NOTE]
 > **"200 AIC" is not the same ceiling for each gardener.** It is a dollar
@@ -183,7 +189,7 @@ arithmetic budget across the four, not one number GitHub enforces.
 > | Gardener | Model | ~Input tokens per 200 AIC |
 > |---|---|---:|
 > | Large Files | `deepseek-v4-flash` ($0.14/1M) | **~14M** |
-> | Docs Drift, Cost Report | `glm-5.2` ($1.40/1M) | **~1.4M** |
+> | Docs Drift, Cost Report, Watchdog | `glm-5.2` ($1.40/1M) | **~1.4M** |
 > | CI Doctor | claude (default) | **~a few hundred thousand** |
 >
 > (Input-only, for scale; output costs 2–3× more, so real runs land lower.)
@@ -240,6 +246,107 @@ loud, and in the safe direction.
 
 ---
 
+## Watchdog
+
+The gardeners watch the **code**. The watchdog watches the **agents** — it is the
+manager layer above the orchestrators, and the only thing in this repo whose job
+is noticing that an automated run has stopped without saying so.
+
+It never edits code, never implements anything, and never opens a pull request.
+It detects, it diagnoses cheaply, and it escalates. The respawn ladder — retry,
+re-plan, give up — lives inside the overnight supervisor
+(`.claude/commands/overnight.md`), which is the right place for it: a supervisor
+can see its own units of work. What a supervisor cannot see is that *it* died,
+that it is burning money, or that it walked away from a claimed issue. That is
+the gap this fills.
+
+### Two halves, because one machine cannot see both sides
+
+| | **Local half** | **Repo half** |
+|---|---|---|
+| What | `scripts/watchdog.sh` + a launchd job | `.github/workflows/watchdog-repo.md` |
+| Runs | every 30 min, on the owner's Mac | every 6h, on GitHub Actions |
+| Costs | **$0** — bash, `gh`, `ccusage`. No model call anywhere in it | ~$0.50/run capped, `glm-5.2` on Ollama |
+| Can act? | **Yes**, narrowly: releases orphaned claims | **No.** Read-only, reports only |
+| Sees | live processes, real spend, the overnight marker files | issue/PR history, workflow runs, review state |
+
+The split is not redundancy. Each half checks things the other physically
+cannot. Only the local half can answer "is a `claude` process alive right
+now?" — which is the difference between *slow* and *dead*, and the only safe
+basis for releasing someone's claim. Only the repo half can see a pull request
+that has been green and unreviewed for a day, because that happens while the
+laptop is closed.
+
+**The local half is not installed by merging anything.** It is a launchd job on
+one machine; install steps are in the header comment of
+`scripts/com.supa.fleet-watchdog.plist`. The repo half ships disabled behind the
+same `GARDENERS_ENABLED` variable as the gardeners.
+
+### What the local half checks
+
+Every 30 minutes, in this order. It **exits immediately** — under a second, and
+$0 — when there is no agent process running, no `agent:in-progress` issue, and
+no overnight marker file. On an idle machine that is every single run, and it is
+the normal case.
+
+| Check | Trips when | Escalation |
+|---|---|---|
+| **Liveness** | an `agent:in-progress` issue has no open PR and no branch commit or issue activity for 45 min | report |
+| **Orphaned claim** | the same, past 2h, **and** no agent process anywhere on the host | **relabels** `agent:in-progress` → `agent:ready`, comments why, reports |
+| **Spend pace** | `ccusage`'s active 5-hour block is at or over the ceiling (default $10) | **page** at the ceiling, report at 80% |
+| **Overnight health** | `stop-epoch` says the run should still be working but no session is alive | **page** if the queue is non-empty, report if it is empty |
+| **caffeinate leak** | the pidfile's process is still holding the machine awake >1h past `stop-epoch` | report |
+| **Gardener failures** | a `Gardener:` or `Watchdog:` workflow failed in the last day | report |
+
+"Liveness" reads three signals and takes the newest: an **open linked PR** (which
+means the issue is finished, not stalled — never flagged), a **commit on the
+branch the supervisor would have created** for it (`<init>/<slug>`, derived with
+overnight.md's own slugify), and the **issue's own `updatedAt`**.
+
+Every threshold is in `scripts/watchdog.config.sh`. Nothing else needs editing,
+and `WATCHDOG_DRY_RUN=1 ./scripts/watchdog.sh` runs every check while mutating
+nothing — including printing the report body it would have filed.
+
+### Silence is the feature
+
+An all-clear appends **one line to a local log and does nothing else**. No issue,
+no notification. The design assumption is that you will stop reading anything
+that talks to you every 30 minutes, so it only talks when something is wrong —
+and even then it separates the two volumes:
+
+- **Report** — one issue per day, labelled `watchdog:report`, title-prefixed
+  `[watchdog]`, updated in place. An orphan reclaim goes here: it is a *repair*,
+  the queue is strictly better afterwards, and nobody needs waking for it.
+- **Page** — a Telegram message, and only for findings that mean the night is
+  being wasted or money is running away: a dead overnight run with issues still
+  queued, or spend past the ceiling. An unchanged page will not re-send for 6h;
+  a page whose content *changes* goes out immediately.
+
+Telegram uses the same `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` credentials as
+the overnight supervisor's morning report (setup in overnight.md § 8.4). launchd
+does not read your shell profile, so the script falls back to the macOS keychain
+when they are absent from the environment — which is where those docs tell you to
+put them anyway. **Do not put the bot token in the plist**: it is a bearer
+credential in a URL path and `~/Library/LaunchAgents` is world-readable and gets
+backed up. If both are missing the page still lands in the report issue, and the
+log says so.
+
+### One-time setup
+
+The report issue needs its label to exist first — `gh issue create` fails on an
+unknown label, and the script's log will tell you that is what happened:
+
+```bash
+gh label create "watchdog:report" --color 5319E7 \
+  --description "Filed by the fleet watchdog - read, do not hand-edit"
+```
+
+Then install the launchd job (see the plist header) and, for the repo half,
+`gh variable set GARDENERS_ENABLED --body true` — the same switch as the
+gardeners, on purpose: one variable turns the entire automated fleet off.
+
+---
+
 ## Where your code goes
 
 Running these agents sends repository content to third-party inference
@@ -254,6 +361,7 @@ before you set `GARDENERS_ENABLED`.
 | **Docs Drift** | Up to **8 days of merged-commit diffs**, plus the docs and onboarding-guide files it checks them against | `ollama.com` | the owner's Ollama Cloud account |
 | **Cost Report** | Workflow run metadata and token-usage figures — no source | `ollama.com` | the owner's Ollama Cloud account |
 | **CI Doctor** | **CI logs** from failed runs, which routinely quote source, file paths, and test output | `api.anthropic.com` | the owner's Anthropic API key |
+| **Watchdog (repo)** | Issue and PR metadata — numbers, titles, timestamps, check conclusions. No source, no diffs, no log text | `ollama.com` | the owner's Ollama Cloud account |
 
 This repository is public (AGPL-3.0), so none of this is confidential
 disclosure. It would be if the setup were copied to a private repo — which is
@@ -533,7 +641,7 @@ secrets can be deleted.
 
 | Secret | Used by | Notes |
 |---|---|---|
-| `OLLAMA_API_KEY` | Large Files, Docs Drift, Cost Report | From ollama.com. Passed to the codex engine as **both** `OPENAI_API_KEY` and `CODEX_API_KEY`, pinned explicitly — see the warning below. |
+| `OLLAMA_API_KEY` | Large Files, Docs Drift, Cost Report, Watchdog (repo) | From ollama.com. Passed to the codex engine as **both** `OPENAI_API_KEY` and `CODEX_API_KEY`, pinned explicitly — see the warning below. |
 | `ANTHROPIC_API_KEY` | CI Doctor | Set a **small, capped budget** on this key in the Anthropic console — a second line of defence behind the AIC caps. |
 
 Both are plain repository secrets:
@@ -572,8 +680,10 @@ these ship behind `GARDENERS_ENABLED` — set the secrets first, then the variab
 
 ## Turning gardeners off and on
 
-**All four at once** — the `GARDENERS_ENABLED` variable, effective immediately,
-no recompile:
+**All five at once** — the `GARDENERS_ENABLED` variable, effective immediately,
+no recompile. The repo watchdog shares this switch deliberately: one variable
+turns the whole automated fleet off. (The *local* watchdog is a launchd job and
+is unaffected — `launchctl unload` is its switch.)
 
 ```bash
 gh variable set GARDENERS_ENABLED --body true      # on
