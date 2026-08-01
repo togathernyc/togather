@@ -409,6 +409,111 @@ describe("updateEvent duplicate-date guard", () => {
       "11 AM Service",
     );
   });
+
+  it("lets a plan move WITHIN its own local day even when another plan shares that day", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+
+    // The multi-service Sunday this whole feature exists to allow.
+    await createPlan(t, token, world.groupId, "9 AM Service", SUN_9AM);
+    const { planId: eleven } = await createPlan(
+      t,
+      token,
+      world.groupId,
+      "11 AM Service",
+      SUN_11AM,
+      true,
+    );
+
+    // The web date picker rebuilds a picked date at LOCAL MIDNIGHT, dropping
+    // the time of day — so re-picking "the same date" sends a different
+    // millisecond. Excluding the plan from itself does not save this: the 9 AM
+    // plan is a real, different plan on the same day.
+    const localMidnightSun2 = Date.UTC(2026, 7, 2, 4, 0); // 00:00 ET
+    await t.mutation(api.functions.scheduling.events.updateEvent, {
+      token,
+      planId: eleven,
+      eventDate: localMidnightSun2,
+    });
+    expect((await t.run(async (ctx) => ctx.db.get(eleven)))!.eventDate).toBe(
+      localMidnightSun2,
+    );
+
+    // Leaving the day is still guarded.
+    await createPlan(t, token, world.groupId, "Next Week", SUN_9AM + 7 * DAY);
+    let thrown: unknown;
+    try {
+      await t.mutation(api.functions.scheduling.events.updateEvent, {
+        token,
+        planId: eleven,
+        eventDate: SUN_9AM + 7 * DAY + 2 * 3600000,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expectDuplicateError(thrown);
+  });
+});
+
+describe("corrupt eventDate rows", () => {
+  /**
+   * `eventDate` is a Convex `v.number()`, i.e. a float64 — `NaN` and
+   * `Infinity` both pass validation, and `Intl.DateTimeFormat.format` throws
+   * `RangeError: Invalid time value` on them. The guard maps the formatter
+   * over every sibling plan and `rosterMatrix` over every plan in the group,
+   * so one bad row (a bad client, an import, a migration) would otherwise turn
+   * every create into an untyped 500 and make the grid unloadable.
+   */
+  async function insertCorruptPlan(
+    t: ReturnType<typeof convexTest>,
+    world: Awaited<ReturnType<typeof setupSchedulingWorld>>["world"],
+    eventDate: number,
+  ) {
+    return t.run(async (ctx) =>
+      ctx.db.insert("eventPlans", {
+        groupId: world.groupId,
+        communityId: world.communityId,
+        title: "Corrupt",
+        eventDate,
+        times: [],
+        status: "draft" as const,
+        createdAt: Date.now(),
+        createdById: world.groupLeaderId,
+        updatedAt: Date.now(),
+      }),
+    );
+  }
+
+  it("does not stop the group creating a plan", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    await insertCorruptPlan(t, world, NaN);
+
+    const { planId } = await createPlan(
+      t,
+      token,
+      world.groupId,
+      "Sunday Service",
+      SUN_9AM,
+    );
+    expect(planId).toBeTruthy();
+  });
+
+  it("does not stop the roster grid loading, and is never flagged double-booked", async () => {
+    const { t, world } = await setupSchedulingWorld();
+    const token = (await generateTokens(world.groupLeaderId)).accessToken;
+    // Two corrupt rows: they must not be bucketed together either.
+    await insertCorruptPlan(t, world, NaN);
+    await insertCorruptPlan(t, world, Infinity);
+
+    const matrix = await t.query(api.functions.scheduling.roster.rosterMatrix, {
+      token,
+      groupId: world.groupId,
+    });
+    for (const event of matrix.events) {
+      expect(event.sameDatePlanCount).toBe(1);
+    }
+  });
 });
 
 describe("rosterMatrix same-date flag", () => {

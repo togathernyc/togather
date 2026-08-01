@@ -2939,6 +2939,12 @@ export default defineSchema({
     isDemoSeed: v.optional(v.boolean()),
   })
     .index("by_group", ["groupId"])
+    // The same-day guard (`assertPlanDateFree`) only cares about plans within
+    // a day of the target date. Without this index it had to `.collect()` the
+    // group's ENTIRE plan history, which put every plan of the group in the
+    // mutation's read set — so two leaders editing unrelated dates would
+    // OCC-conflict.
+    .index("by_group_date", ["groupId", "eventDate"])
     .index("by_community_date", ["communityId", "eventDate"])
     // Forward-propagation lookups: all plans linked to a given template.
     .index("by_task_template", ["taskTemplateId"])

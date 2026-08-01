@@ -33,28 +33,87 @@ export function resolveTimeZone(tz: string | undefined | null): string {
 }
 
 /**
+ * Constructing an `Intl.DateTimeFormat` is ~100× the cost of using one (500
+ * calls: 55 ms constructed per call vs 0.5 ms hoisted). `assertPlanDateFree`
+ * formats EVERY sibling plan of a group on every create/duplicate/date-update,
+ * and `rosterMatrix` formats every plan on every re-run of a reactive query —
+ * so the formatters are built once per zone and reused. A church has one
+ * timezone, so these maps hold one entry each.
+ */
+const dayKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+const dayLabelFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dayKeyFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = dayKeyFormatters.get(timeZone);
+  if (!fmt) {
+    // "en-CA" formats as YYYY-MM-DD, which is both the key and sort order.
+    fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    dayKeyFormatters.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
+function dayLabelFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = dayLabelFormatters.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    dayLabelFormatters.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
+/**
+ * The key returned for a timestamp that isn't a real instant.
+ *
+ * `eventDate` is a Convex `v.number()`, i.e. a float64 — `NaN`, `±Infinity`
+ * and out-of-range values all pass validation, and `Intl.DateTimeFormat.format`
+ * throws `RangeError: Invalid time value` on every one of them. One such row
+ * (a bad client, an import, a migration) would otherwise take down plan
+ * creation AND the roster grid for its whole group, since both map this over
+ * every plan. Callers MUST treat this key as "unknown day": never a match, in
+ * either direction. {@link isValidDayKey} is the check.
+ */
+export const INVALID_DAY_KEY = "invalid-date";
+
+/** False for the {@link INVALID_DAY_KEY} sentinel — never compare those. */
+export function isValidDayKey(key: string): boolean {
+  return key !== INVALID_DAY_KEY;
+}
+
+/**
  * The calendar day `atMs` falls on in `timeZone`, as a sortable `YYYY-MM-DD`
- * key. Two timestamps share a local day iff their keys are equal.
+ * key. Two timestamps share a local day iff their keys are equal AND the key
+ * is valid — see {@link INVALID_DAY_KEY}.
  *
  * @param atMs Unix ms instant.
  * @param timeZone An already-resolved IANA zone (see {@link resolveTimeZone}).
  */
 export function localDayKey(atMs: number, timeZone: string): string {
-  // "en-CA" formats as YYYY-MM-DD, which is both the key and sort order.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(atMs));
+  if (!Number.isFinite(atMs)) return INVALID_DAY_KEY;
+  try {
+    return dayKeyFormatter(timeZone).format(new Date(atMs));
+  } catch {
+    // |atMs| > 8.64e15 is finite but outside the Date range.
+    return INVALID_DAY_KEY;
+  }
 }
 
 /** "Sun, Aug 3" in `timeZone` — for user-facing collision messages. */
 export function localDayLabel(atMs: number, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(new Date(atMs));
+  if (!Number.isFinite(atMs)) return "an unknown date";
+  try {
+    return dayLabelFormatter(timeZone).format(new Date(atMs));
+  } catch {
+    return "an unknown date";
+  }
 }

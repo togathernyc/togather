@@ -21,7 +21,7 @@ import { query } from "../../_generated/server";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
 import { isLeaderRole } from "../../lib/helpers";
-import { localDayKey, resolveTimeZone } from "../../lib/localDay";
+import { isValidDayKey, localDayKey, resolveTimeZone } from "../../lib/localDay";
 import {
   isGroupScheduler,
   managedTeamIdsInGroup,
@@ -135,16 +135,22 @@ export const rosterMatrix = query({
     const community = group ? await ctx.db.get(group.communityId) : null;
     const timeZone = resolveTimeZone(community?.timezone);
     const plansPerLocalDay = new Map<string, number>();
+    // A plan whose `eventDate` isn't a real instant has no local day, so it
+    // can neither be double-booked nor double-book anything else. Excluded
+    // rather than bucketed, so one corrupt row can't flag every other one.
     for (const p of allPlans) {
       if (p.isDemoSeed) continue;
       const key = localDayKey(p.eventDate, timeZone);
+      if (!isValidDayKey(key)) continue;
       plansPerLocalDay.set(key, (plansPerLocalDay.get(key) ?? 0) + 1);
     }
     /** Total plans (this one included) sharing its local day. 1 = unique. */
-    const sameDatePlanCount = (plan: Doc<"eventPlans">): number =>
-      plan.isDemoSeed
-        ? 1
-        : (plansPerLocalDay.get(localDayKey(plan.eventDate, timeZone)) ?? 1);
+    const sameDatePlanCount = (plan: Doc<"eventPlans">): number => {
+      if (plan.isDemoSeed) return 1;
+      const key = localDayKey(plan.eventDate, timeZone);
+      if (!isValidDayKey(key)) return 1;
+      return plansPerLocalDay.get(key) ?? 1;
+    };
 
     // --- Fan out the three per-plan reads. ---
     const perPlan = await Promise.all(

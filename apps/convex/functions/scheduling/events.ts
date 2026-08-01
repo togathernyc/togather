@@ -18,7 +18,12 @@ import type { MutationCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { requireAuth } from "../../lib/auth";
-import { localDayKey, localDayLabel, resolveTimeZone } from "../../lib/localDay";
+import {
+  isValidDayKey,
+  localDayKey,
+  localDayLabel,
+  resolveTimeZone,
+} from "../../lib/localDay";
 import {
   requireGroupMember,
   requireGroupScheduler,
@@ -73,6 +78,16 @@ const timeValidator = v.object({
 export const DUPLICATE_PLAN_DATE = "DUPLICATE_PLAN_DATE";
 
 /**
+ * How far either side of the target instant a same-local-day plan can sit.
+ *
+ * Two instants on the same local calendar day are at most ~26 h apart (a
+ * 25-hour DST-extended day, plus slack), whatever the zone — so a range scan
+ * this wide provably contains every possible collision while keeping the
+ * mutation's read set tiny. 36 h is that bound with a wide safety margin.
+ */
+const SAME_DAY_SCAN_MS = 36 * 60 * 60 * 1000;
+
+/**
  * Reject a plan that would land on a day this group already has one, unless the
  * caller explicitly opted in.
  *
@@ -97,6 +112,12 @@ export async function assertPlanDateFree(
     eventDate: number;
     /** The plan being moved — never collides with itself. */
     excludePlanId?: Id<"eventPlans">;
+    /**
+     * The date the plan being moved is on TODAY. A move that stays within the
+     * same local day isn't a move as far as this guard is concerned — see
+     * `updateEvent`, which passes it.
+     */
+    currentEventDate?: number;
     /** Caller confirmed they want a second plan on this day. */
     allowSameDay?: boolean;
   },
@@ -106,10 +127,28 @@ export async function assertPlanDateFree(
   const community = await ctx.db.get(args.communityId);
   const timeZone = resolveTimeZone(community?.timezone);
   const targetDay = localDayKey(args.eventDate, timeZone);
+  // A date we can't place on a calendar can't be shown to collide with one.
+  if (!isValidDayKey(targetDay)) return;
+
+  // Nothing to check when the plan isn't leaving the day it is already on:
+  // the web date picker rebuilds the value at local midnight, so simply
+  // re-picking the current date yields a different millisecond, and on a day
+  // that legitimately holds two services the OTHER plan would match.
+  if (
+    args.currentEventDate !== undefined &&
+    localDayKey(args.currentEventDate, timeZone) === targetDay
+  ) {
+    return;
+  }
 
   const siblings = await ctx.db
     .query("eventPlans")
-    .withIndex("by_group", (q) => q.eq("groupId", args.groupId))
+    .withIndex("by_group_date", (q) =>
+      q
+        .eq("groupId", args.groupId)
+        .gte("eventDate", args.eventDate - SAME_DAY_SCAN_MS)
+        .lte("eventDate", args.eventDate + SAME_DAY_SCAN_MS),
+    )
     .collect();
   const clashes = siblings
     .filter(
@@ -453,6 +492,12 @@ export const updateEvent = mutation({
         communityId: existing.communityId,
         eventDate: args.eventDate,
         excludePlanId: args.planId,
+        // Excluding the plan from itself is not enough: on a day that already
+        // holds two services, nudging one plan's time (or just re-picking its
+        // own date in the web picker, which snaps to local midnight) changes
+        // the millisecond without changing the day — and the SIBLING would
+        // match. A plan that never leaves its local day isn't rescheduling.
+        currentEventDate: existing.eventDate,
         allowSameDay: args.allowSameDay,
       });
     }
